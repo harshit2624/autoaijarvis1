@@ -18,11 +18,7 @@ const crypto    = require("crypto");
 const fetch     = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 require("dotenv").config();
 
-const app = express();
-
-// ── Raw body needed for webhook HMAC verification ──────────────────────────
-app.use("/webhooks", express.raw({ type: "application/json" }));
-app.use(express.json());
+const app = express();\n\napp.use(express.static('.'));\n\n// ── Raw body needed for webhook HMAC verification ──────────────────────────\napp.use("/webhooks", express.raw({ type: "application/json" }));\napp.use(express.json());
 
 // ── CORS — allow your deployed frontend URL ────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*").split(",").map(s => s.trim());

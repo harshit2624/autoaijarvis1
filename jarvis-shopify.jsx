@@ -174,7 +174,7 @@ Be concise, smart, and data-driven. Under 3 sentences unless details requested.`
     setFeatureLoading(false);
   }
 
-  const filteredOrders = filterStatus === "all" ? orders : orders.filter(o => o.status === filterStatus);
+  const [searchQuery, setSearchQuery] = useState(\"\");\n\n  const filteredOrders = orders\n    .filter(o => filterStatus === \"all\" || o.status === filterStatus)\n    .filter(o => !searchQuery || \n      o.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||\n      o.product.toLowerCase().includes(searchQuery.toLowerCase()) ||\n      o.id.toLowerCase().includes(searchQuery.toLowerCase())\n    );
 
   // ── Styles ──────────────────────────────────────────────────────────────
   const S = {
