@@ -18,7 +18,13 @@ const crypto    = require("crypto");
 const fetch     = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 require("dotenv").config();
 
-const app = express();\n\napp.use(express.static('.'));\n\n// ── Raw body needed for webhook HMAC verification ──────────────────────────\napp.use("/webhooks", express.raw({ type: "application/json" }));\napp.use(express.json());
+const app = express();
+
+app.use(express.static('.'));
+
+// ── Raw body needed for webhook HMAC verification ──────────────────────────
+app.use("/webhooks", express.raw({ type: "application/json" }));
+app.use(express.json());
 
 // ── CORS — allow your deployed frontend URL ────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*").split(",").map(s => s.trim());
@@ -71,6 +77,10 @@ async function getAccessToken() {
   const data = await res.json();
   tokenCache = { token: data.access_token, expiresAt: now + data.expires_in * 1000 };
   console.log(`✅  Token obtained — scopes: ${data.scope}`);
+  if (!data.scope?.includes("read_all_orders")) {
+    console.warn("⚠️  WARNING: 'read_all_orders' scope is missing — Orders API will only return the last 60 days.");
+    console.warn("   Fix: Shopify Admin → Settings → Apps → Develop apps → your app → Configuration → add 'read_all_orders' → reinstall.");
+  }
   return tokenCache.token;
 }
 
@@ -82,6 +92,50 @@ async function shopifyREST(path) {
   });
   if (!res.ok) throw new Error(`Shopify REST error ${res.status} on ${path}`);
   return res.json();
+}
+
+// ── Shopify REST helper — returns body + headers (for pagination) ──────────
+async function shopifyRESTRaw(path) {
+  const token = await getAccessToken();
+  const res = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01${path}`, {
+    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Shopify REST error ${res.status} on ${path}`);
+  const data = await res.json();
+  return { data, link: res.headers.get("link") || "" };
+}
+
+// ── Fetch ALL orders using cursor-based pagination ─────────────────────────
+// Shopify's default window is ~60 days. Pass created_at_min to go further back.
+// Note: date filters only go on the FIRST request — page_info cursors carry the
+// full query context, so subsequent pages only need limit + page_info.
+async function fetchAllOrders(status = "any", createdAtMin = null, createdAtMax = null) {
+  const allOrders = [];
+
+  // Build first-page query
+  const params = new URLSearchParams({ limit: "250", status });
+  if (createdAtMin) params.set("created_at_min", createdAtMin);
+  if (createdAtMax) params.set("created_at_max", createdAtMax);
+
+  let { data, link } = await shopifyRESTRaw(`/orders.json?${params}`);
+  allOrders.push(...(data.orders || []));
+  console.log(`📄  Page 1 — fetched ${data.orders?.length ?? 0} (total: ${allOrders.length})`);
+
+  // Follow next-page cursors until exhausted
+  while (link) {
+    const match = link.match(/<([^>]+)>;\s*rel="next"/);
+    if (!match) break;
+    const pageInfo = new URL(match[1]).searchParams.get("page_info");
+    if (!pageInfo) break;
+
+    // When paginating with page_info, ONLY limit is allowed alongside it
+    ({ data, link } = await shopifyRESTRaw(`/orders.json?limit=250&page_info=${pageInfo}`));
+    allOrders.push(...(data.orders || []));
+    console.log(`📄  Page +1 — fetched ${data.orders?.length ?? 0} (total: ${allOrders.length})`);
+  }
+
+  console.log(`✅  fetchAllOrders complete — ${allOrders.length} total`);
+  return allOrders;
 }
 
 // ── Shopify GraphQL helper ─────────────────────────────────────────────────
@@ -119,13 +173,12 @@ app.get("/health", (_, res) => res.json({
 // ── GET /orders ───────────────────────────────────────────────────────────
 app.get("/orders", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit) || 50, 250);
-    const status = req.query.status || "any";
+    const status       = req.query.status        || "any";
+    const createdAtMin = req.query.created_at_min || null;
+    const createdAtMax = req.query.created_at_max || null;
 
-    let url = `/orders.json?limit=${limit}&status=${status === "any" ? "any" : status}`;
-
-    const data  = await shopifyREST(url);
-    const orders = (data.orders || []).map(o => ({
+    const raw    = await fetchAllOrders(status, createdAtMin, createdAtMax);
+    const orders = raw.map(o => ({
       id:        o.name,
       shopifyId: o.id,
       customer:  o.customer
@@ -181,9 +234,9 @@ app.get("/orders/stats", async (req, res) => {
 // ── GET /orders/export — CSV download ─────────────────────────────────────
 app.get("/orders/export", async (req, res) => {
   try {
-    const data = await shopifyREST("/orders.json?status=any&limit=250");
+    const raw  = await fetchAllOrders("any");
     const rows = [["Order","Customer","Email","Product","Items","Amount","Currency","Status","Financial","Date","City","Country"]];
-    (data.orders || []).forEach(o => {
+    raw.forEach(o => {
       rows.push([
         o.name,
         o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "Guest",
@@ -240,6 +293,53 @@ app.post("/webhooks/orders", (req, res) => {
   }
 
   res.status(200).json({ received: true });
+});
+
+// ── POST /chat — JARVIS AI chat (proxies to Anthropic, keeps API key server-side)
+app.post("/chat", async (req, res) => {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) {
+    return res.status(503).json({ error: "ANTHROPIC_API_KEY not set in environment." });
+  }
+
+  const { messages, context } = req.body;
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: "messages array required." });
+  }
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type":         "application/json",
+        "x-api-key":            ANTHROPIC_KEY,
+        "anthropic-version":    "2023-06-01",
+      },
+      body: JSON.stringify({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        system: `You are JARVIS, a sharp e-commerce assistant for a Shopify store called CrosCrow.
+You have access to live store data. Answer concisely — 1-3 sentences max unless a list is needed.
+Always use real numbers from the data provided. Be direct, no filler.
+${context ? `\nLive store snapshot:\n${JSON.stringify(context, null, 2)}` : ""}`,
+        messages: messages.map(m => ({
+          role:    m.role === "bot" ? "assistant" : "user",
+          content: m.text,
+        })),
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Anthropic error ${response.status}`);
+    }
+
+    const data = await response.json();
+    res.json({ reply: data.content?.[0]?.text || "No response." });
+  } catch (err) {
+    console.error("❌ /chat:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Utility ────────────────────────────────────────────────────────────────
