@@ -198,6 +198,7 @@ db.exec(`
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     shopify_tag TEXT NOT NULL,
     stage       TEXT NOT NULL,
+    priority    INTEGER DEFAULT 99,
     created_at  TEXT DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS vendor_shipping_partners (
@@ -251,16 +252,18 @@ function applyTagMappings(orderId, tags, financialStatus) {
     }
   }
 
-  // Step 3: apply stage from tag_mappings (first match wins)
-  const mappings = db.prepare("SELECT * FROM tag_mappings").all();
+  // Step 3: apply stage from tag_mappings — lowest priority number wins
+  // Sorted by priority ASC so first match = highest priority tag
+  const mappings = db.prepare("SELECT * FROM tag_mappings ORDER BY priority ASC, id ASC").all();
+  let winner = null;
   for (const m of mappings) {
     const hit = orderTags.find(t => t.toLowerCase() === m.shopify_tag.toLowerCase().trim());
-    if (hit) {
-      db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
-        ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
-        .run(sid, m.stage, now);
-      break;
-    }
+    if (hit) { winner = m; break; }
+  }
+  if (winner) {
+    db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
+      ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
+      .run(sid, winner.stage, now);
   }
 }
 
@@ -1633,16 +1636,23 @@ app.get("/admin/order-tags", adminAuth, async (req, res) => {
 });
 
 app.get("/admin/tag-mappings", adminAuth, (req, res) => {
-  res.json({ mappings: db.prepare("SELECT * FROM tag_mappings ORDER BY id").all() });
+  res.json({ mappings: db.prepare("SELECT * FROM tag_mappings ORDER BY priority ASC, id ASC").all() });
+});
+
+app.put("/admin/tag-mappings/:id/priority", adminAuth, (req, res) => {
+  const { priority } = req.body || {};
+  if (priority === undefined) return res.status(400).json({ error: "priority required" });
+  db.prepare("UPDATE tag_mappings SET priority=? WHERE id=?").run(Number(priority), req.params.id);
+  res.json({ ok: true });
 });
 
 app.post("/admin/tag-mappings", adminAuth, (req, res) => {
-  const { shopify_tag, stage } = req.body || {};
+  const { shopify_tag, stage, priority = 99 } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
   const existing = db.prepare("SELECT id FROM tag_mappings WHERE lower(shopify_tag)=lower(?)").get(shopify_tag);
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
-  const { lastInsertRowid } = db.prepare("INSERT INTO tag_mappings (shopify_tag, stage, created_at) VALUES (?,?,?)")
-    .run(shopify_tag.trim(), stage, new Date().toISOString());
+  const { lastInsertRowid } = db.prepare("INSERT INTO tag_mappings (shopify_tag, stage, priority, created_at) VALUES (?,?,?,?)")
+    .run(shopify_tag.trim(), stage, Number(priority), new Date().toISOString());
   res.json({ success: true, id: lastInsertRowid });
 });
 
@@ -2030,11 +2040,20 @@ app.get("/admin/debug-tracking", adminAuth, async (req, res) => {
 
     if (partner === "delhivery") {
       const url = `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}`;
-      log.push({ step: "fetching", url });
+      log.push({ step: "fetching_with_token", url });
       const r = await fetch(url, { headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/json" } });
       const raw = await r.json();
-      log.push({ step: "raw_response", status: r.status, body: raw });
-      const status = raw?.ShipmentData?.[0]?.Shipment?.Status?.Status || null;
+      log.push({ step: "auth_response", status: r.status, success: raw.Success, body: raw });
+
+      let finalRaw = raw;
+      if (!raw.Success || !raw.ShipmentData?.length) {
+        log.push({ step: "token_failed_trying_public" });
+        const r2 = await fetch(url, { headers: { "Content-Type": "application/json" } });
+        finalRaw = await r2.json();
+        log.push({ step: "public_response", status: r2.status, success: finalRaw.Success, body: finalRaw });
+      }
+
+      const status = finalRaw?.ShipmentData?.[0]?.Shipment?.Status?.Status || finalRaw?.ShipmentData?.[0]?.Shipment?.status || null;
       log.push({ step: "parsed_status", status });
       return res.json({ status, log });
     }
@@ -2159,11 +2178,22 @@ async function fetchDeliveryStatus(partner, creds, awb) {
     return status;
   }
   if (partner === "delhivery") {
-    const dlRes = await fetch(
+    // Try authenticated API first, fall back to public tracking endpoint
+    let dlRes = await fetch(
       `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}`,
       { headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/json" } }
     ).then(r => r.json());
-    const status = dlRes?.ShipmentData?.[0]?.Shipment?.Status?.Status || "";
+
+    if (!dlRes.Success || !dlRes.ShipmentData?.length) {
+      // Fall back to public API (no auth needed)
+      dlRes = await fetch(
+        `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}`,
+        { headers: { "Content-Type": "application/json" } }
+      ).then(r => r.json());
+    }
+
+    const shipment = dlRes?.ShipmentData?.[0]?.Shipment;
+    const status = shipment?.Status?.Status || shipment?.status || "";
     return status;
   }
   return "";

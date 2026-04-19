@@ -1813,8 +1813,10 @@
     const [tagInput,    setTagInput]    = useState('');
     const [showDrop,    setShowDrop]    = useState(false);
     const [newStage,    setNewStage]    = useState('confirmed');
+    const [newPriority, setNewPriority] = useState('');
     const [adding,      setAdding]      = useState(false);
     const [syncing,     setSyncing]     = useState(false);
+    const [editingPri,  setEditingPri]  = useState({}); // id → value
     const [msg,         setMsg]         = useState(null);
     const [syncResult,  setSyncResult]  = useState(null);
 
@@ -1825,7 +1827,7 @@
     };
 
     const loadTags = () => {
-      if (shopifyTags.length) return; // already loaded
+      if (shopifyTags.length) return;
       setTagsLoading(true);
       fetch(`${API}/admin/order-tags`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setShopifyTags(d.tags||[])).catch(()=>{}).finally(()=>setTagsLoading(false));
@@ -1836,21 +1838,34 @@
     const addMapping = async () => {
       if (!newTag.trim()) { setMsg({type:'error',text:'Tag name required.'}); return; }
       setAdding(true); setMsg(null);
+      // Auto-assign next priority if not set
+      const pri = newPriority !== '' ? parseInt(newPriority) : (mappings.length > 0 ? Math.max(...mappings.map(m=>m.priority||99)) + 1 : 1);
       try {
         const r = await fetch(`${API}/admin/tag-mappings`,{
           method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-          body: JSON.stringify({ shopify_tag: newTag.trim(), stage: newStage }),
+          body: JSON.stringify({ shopify_tag: newTag.trim(), stage: newStage, priority: pri }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
-        setMsg({type:'success',text:`Mapping added: "${newTag}" → ${newStage}`});
-        setNewTag(''); setTagInput(''); load();
+        setMsg({type:'success',text:`Added: "${newTag}" → ${newStage} (priority ${pri})`});
+        setNewTag(''); setTagInput(''); setNewPriority(''); load();
       } catch(e) { setMsg({type:'error',text:e.message}); }
       setAdding(false);
     };
 
     const deleteMapping = async id => {
       await fetch(`${API}/admin/tag-mappings/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+      load();
+    };
+
+    const savePriority = async (id, val) => {
+      const num = parseInt(val);
+      if (isNaN(num)) return;
+      await fetch(`${API}/admin/tag-mappings/${id}/priority`,{
+        method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+        body: JSON.stringify({ priority: num }),
+      });
+      setEditingPri(p=>({...p,[id]:undefined}));
       load();
     };
 
@@ -1871,10 +1886,10 @@
       <div className="page">
         {/* How it works banner */}
         <div style={{background:'var(--indigo-dim)',border:'1px solid var(--indigo)',borderRadius:10,padding:'12px 16px',marginBottom:20,fontSize:12,color:'var(--text)'}}>
-          <div style={{fontWeight:700,color:'var(--indigo)',marginBottom:6}}>🏷 How Tag Mappings Work</div>
+          <div style={{fontWeight:700,color:'var(--indigo)',marginBottom:6}}>🏷 Priority-Based Tag Mappings</div>
           <div style={{lineHeight:1.8,color:'var(--text-muted)'}}>
-            Add your Shopify order tags here and map them to a stage. When you click <strong>Sync Now</strong>, all orders are scanned — any order whose tag matches will be automatically moved to that stage.<br/>
-            Example: tag <code style={{background:'var(--bg-card)',padding:'1px 5px',borderRadius:4}}>Confirmed</code> → stage <strong>Confirmed</strong> · tag <code style={{background:'var(--bg-card)',padding:'1px 5px',borderRadius:4}}>delivered</code> → stage <strong>Delivered</strong>
+            Each tag has a <strong>priority number</strong> — lower number wins. If an order has multiple mapped tags (e.g. <code style={{background:'var(--bg-card)',padding:'1px 5px',borderRadius:4}}>Confirmed</code> + <code style={{background:'var(--bg-card)',padding:'1px 5px',borderRadius:4}}>Delivered</code>), the tag with the <strong>lowest priority number</strong> sets the stage — no matter the tag order in Shopify.
+            <br/>Example: Delivered=1, In Transit=2, Confirmed=3 → an order with all three tags always goes to <strong>Delivered</strong>.
           </div>
         </div>
 
@@ -1883,7 +1898,7 @@
           <div className="card-header"><span className="card-title">Add Tag Mapping</span></div>
           <div style={{padding:16}}>
             {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end',overflow:'visible'}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 80px auto',gap:12,alignItems:'end',overflow:'visible'}}>
               <div style={{position:'relative',overflow:'visible'}}>
                 <label className="form-label">
                   Shopify Tag
@@ -1919,8 +1934,13 @@
                   {ALL_STAGES.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="form-label">Priority</label>
+                <input className="form-input" type="number" min="1" placeholder="auto"
+                  value={newPriority} onChange={e=>setNewPriority(e.target.value)}/>
+              </div>
               <button className="btn btn-indigo" onClick={addMapping} disabled={adding||!newTag.trim()}>
-                {adding?<><span className="spin">↻</span> Adding…</>:'+ Add Mapping'}
+                {adding?<><span className="spin">↻</span> Adding…</>:'+ Add'}
               </button>
             </div>
           </div>
@@ -1930,19 +1950,47 @@
         <div className="card" style={{marginBottom:16}}>
           <div className="card-header">
             <span className="card-title">Current Mappings</span>
-            <span className="card-sub">{mappings.length} configured</span>
+            <span className="card-sub">sorted by priority · lowest wins</span>
           </div>
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>#</th><th>Shopify Tag</th><th>→</th><th>Stage</th><th>Added</th><th>Action</th></tr></thead>
+              <thead><tr>
+                <th style={{width:90}}>Priority</th>
+                <th>Shopify Tag</th>
+                <th>→</th>
+                <th>Stage</th>
+                <th>Added</th>
+                <th>Action</th>
+              </tr></thead>
               <tbody>
                 {loading ? Array.from({length:3}).map((_,i)=><SkelRow key={i} cols={6}/>) :
                  mappings.length===0 ? (
                    <tr><td colSpan={6}><div className="empty"><div className="empty-icon">🏷</div><div className="empty-title">No mappings yet</div><div className="empty-sub">Add your first tag mapping above.</div></div></td></tr>
                  ) :
                  mappings.map((m,i)=>(
-                   <tr key={m.id}>
-                     <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                   <tr key={m.id} style={{background: i===0 ? '#0d1f10' : 'transparent'}}>
+                     <td>
+                       <div style={{display:'flex',alignItems:'center',gap:6}}>
+                         <div style={{width:24,height:24,borderRadius:'50%',background: i===0?'#10b981':i===1?'#fbbf24':'var(--bg-card2)',
+                           display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,
+                           color: i===0?'#000':i===1?'#000':'var(--text-muted)',flexShrink:0}}>
+                           {m.priority??99}
+                         </div>
+                         {editingPri[m.id] !== undefined ? (
+                           <input type="number" min="1" style={{width:46,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:4,color:'var(--text)',padding:'2px 4px',fontSize:11}}
+                             value={editingPri[m.id]}
+                             onChange={e=>setEditingPri(p=>({...p,[m.id]:e.target.value}))}
+                             onBlur={()=>savePriority(m.id, editingPri[m.id])}
+                             onKeyDown={e=>e.key==='Enter'&&savePriority(m.id, editingPri[m.id])}
+                             autoFocus/>
+                         ) : (
+                           <span style={{fontSize:10,color:'var(--text-muted)',cursor:'pointer',textDecoration:'underline dotted'}}
+                             onClick={()=>setEditingPri(p=>({...p,[m.id]:String(m.priority??99)}))}>
+                             edit
+                           </span>
+                         )}
+                       </div>
+                     </td>
                      <td>
                        <span style={{background:'var(--bg-hover)',border:'1px solid var(--border-hi)',borderRadius:5,padding:'3px 9px',fontFamily:'monospace',fontSize:12,color:'var(--text)'}}>
                          {m.shopify_tag}
@@ -1956,7 +2004,7 @@
                      </td>
                      <td className="td-mut">{m.created_at?fmtDate(m.created_at):'—'}</td>
                      <td>
-                       <button className="btn btn-danger btn-sm" onClick={()=>deleteMapping(m.id)}>✕ Remove</button>
+                       <button className="btn btn-danger btn-sm" onClick={()=>deleteMapping(m.id)}>✕</button>
                      </td>
                    </tr>
                  ))}
@@ -1969,7 +2017,7 @@
         <div className="card">
           <div className="card-header">
             <span className="card-title">Sync Orders from Tags</span>
-            <span className="card-sub">Scans all Shopify orders and applies mappings to set their stage</span>
+            <span className="card-sub">Scans all Shopify orders and applies priority mappings</span>
           </div>
           <div style={{padding:16}}>
             {syncResult && (
@@ -1982,7 +2030,7 @@
                 {syncing?<><span className="spin">↻</span> Syncing all orders…</>:'⟳ Sync Now'}
               </button>
               <span style={{fontSize:11,color:'var(--text-muted)'}}>
-                {mappings.length===0?'Add at least one mapping first.':'First match wins — order with multiple mapped tags uses the first matching mapping.'}
+                {mappings.length===0?'Add at least one mapping first.':'Lowest priority number wins — order with multiple tags always moves to the highest-priority stage.'}
               </span>
             </div>
           </div>
