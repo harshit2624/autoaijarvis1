@@ -197,6 +197,15 @@ db.exec(`
     stage       TEXT NOT NULL,
     created_at  TEXT DEFAULT ''
   );
+  CREATE TABLE IF NOT EXISTS vendor_shipping_partners (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_name  TEXT NOT NULL,
+    partner      TEXT NOT NULL,
+    credentials  TEXT NOT NULL,
+    active       INTEGER DEFAULT 1,
+    connected_at TEXT DEFAULT '',
+    UNIQUE(vendor_name, partner)
+  );
 `);
 
 // Derive payment_type from Shopify financial_status
@@ -1449,6 +1458,177 @@ app.get("/vendor/settlements/:id", vendorAuth, (req, res) => {
   const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || {};
   const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
   res.json({ settlement: s, orders, croscrow, vendorProfile });
+});
+
+// ── Shipping Partners ──────────────────────────────────────────────────────
+
+// GET /vendor/shipping/partners
+app.get("/vendor/shipping/partners", vendorAuth, (req, res) => {
+  const rows = db.prepare("SELECT partner, active, connected_at FROM vendor_shipping_partners WHERE vendor_name=?").all(req.vendor);
+  res.json({ partners: rows });
+});
+
+// POST /vendor/shipping/partners — save/update credentials
+app.post("/vendor/shipping/partners", vendorAuth, (req, res) => {
+  const { partner, credentials } = req.body || {};
+  if (!partner || !credentials) return res.status(400).json({ error: "partner and credentials required" });
+  const allowed = ["shiprocket", "delhivery"];
+  if (!allowed.includes(partner)) return res.status(400).json({ error: "Unknown partner" });
+  db.prepare(`INSERT INTO vendor_shipping_partners (vendor_name, partner, credentials, active, connected_at)
+    VALUES (?,?,?,1,?)
+    ON CONFLICT(vendor_name, partner) DO UPDATE SET credentials=excluded.credentials, active=1, connected_at=excluded.connected_at`)
+    .run(req.vendor, partner, JSON.stringify(credentials), new Date().toISOString());
+  res.json({ success: true });
+});
+
+// DELETE /vendor/shipping/partners/:partner — disconnect
+app.delete("/vendor/shipping/partners/:partner", vendorAuth, (req, res) => {
+  db.prepare("DELETE FROM vendor_shipping_partners WHERE vendor_name=? AND partner=?").run(req.vendor, req.params.partner);
+  res.json({ success: true });
+});
+
+// POST /vendor/orders/:shopifyId/create-shipment — create shipment via connected partner
+app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, res) => {
+  try {
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    if (!partner) return res.status(400).json({ error: "partner required" });
+
+    const row = db.prepare("SELECT credentials FROM vendor_shipping_partners WHERE vendor_name=? AND partner=? AND active=1")
+      .get(req.vendor, partner);
+    if (!row) return res.status(404).json({ error: "Partner not connected. Go to Shipping Settings to connect." });
+
+    const creds = JSON.parse(row.credentials);
+
+    // Fetch order from Shopify
+    const { order: shopifyOrder } = await shopifyREST(`/orders/${req.params.shopifyId}.json`);
+
+    if (!shopifyOrder) return res.status(404).json({ error: "Order not found on Shopify" });
+
+    const addr   = shopifyOrder.shipping_address || {};
+    const items  = (shopifyOrder.line_items || []).filter(li => (li.vendor || "").toLowerCase() === req.vendor.toLowerCase());
+    const cod    = shopifyOrder.financial_status !== "paid";
+    const codAmt = cod ? parseFloat(shopifyOrder.total_price || 0) : 0;
+
+    let result;
+
+    if (partner === "shiprocket") {
+      // Authenticate
+      const authRes = await fetch("https://apiv2.shiprocket.in/v1/external/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: creds.email, password: creds.password }),
+      }).then(r => r.json());
+      if (!authRes.token) return res.status(400).json({ error: "Shiprocket auth failed. Check credentials." });
+
+      const srToken = authRes.token;
+      const payload = {
+        order_id:         shopifyOrder.name,
+        order_date:       shopifyOrder.created_at,
+        pickup_location:  creds.pickup_location || "Primary",
+        billing_customer_name:  addr.first_name || shopifyOrder.customer?.first_name || "Customer",
+        billing_last_name:      addr.last_name  || shopifyOrder.customer?.last_name  || "",
+        billing_address:        addr.address1   || "",
+        billing_address_2:      addr.address2   || "",
+        billing_city:           addr.city        || "",
+        billing_pincode:        addr.zip         || "",
+        billing_state:          addr.province    || "",
+        billing_country:        addr.country     || "India",
+        billing_email:          shopifyOrder.email || "",
+        billing_phone:          addr.phone || "",
+        shipping_is_billing:    true,
+        order_items: items.map(li => ({
+          name:     li.title,
+          sku:      li.sku || li.title.slice(0, 40),
+          units:    li.quantity,
+          selling_price: parseFloat(li.price || 0),
+        })),
+        payment_method: cod ? "COD" : "Prepaid",
+        sub_total:      parseFloat(shopifyOrder.subtotal_price || 0),
+        length, breadth, height, weight,
+      };
+      if (cod) payload.collect_amount = codAmt;
+
+      const srRes = await fetch("https://apiv2.shiprocket.in/v1/external/orders/create/adhoc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${srToken}` },
+        body: JSON.stringify(payload),
+      }).then(r => r.json());
+
+      if (srRes.status_code === 1) {
+        result = { success: true, orderId: srRes.order_id, shipmentId: srRes.shipment_id, awb: srRes.awb_code };
+      } else {
+        return res.status(400).json({ error: srRes.message || JSON.stringify(srRes) });
+      }
+
+    } else if (partner === "delhivery") {
+      const shipData = {
+        shipments: [{
+          waybill:     "",
+          name:        `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || "Customer",
+          add:         addr.address1 || "",
+          add2:        addr.address2 || "",
+          city:        addr.city     || "",
+          pin:         addr.zip      || "",
+          state:       addr.province || "",
+          country:     addr.country  || "India",
+          phone:       addr.phone    || "",
+          order:       shopifyOrder.name,
+          payment_mode:cod ? "COD" : "Pre-paid",
+          return_pin:  creds.return_pincode || addr.zip || "",
+          return_city: creds.return_city    || addr.city || "",
+          return_phone:creds.return_phone   || addr.phone || "",
+          return_name: creds.company_name   || "Croscrow",
+          return_add:  creds.return_address || "",
+          return_state:creds.return_state   || addr.province || "",
+          return_country: "India",
+          products_desc: items.map(li => li.title).join(", "),
+          hs_code:     "",
+          cod_amount:  cod ? codAmt : 0,
+          cod_info:    cod ? "COD" : "",
+          order_date:  shopifyOrder.created_at,
+          total_amount:parseFloat(shopifyOrder.total_price || 0),
+          shipment_width: breadth,
+          shipment_height: height,
+          weight,
+          seller_name: req.vendor,
+          seller_add:  creds.return_address || "",
+          seller_city: creds.return_city    || "",
+          seller_state:creds.return_state   || "",
+          seller_pin:  creds.return_pincode || "",
+          seller_inv_no: shopifyOrder.name,
+        }],
+      };
+      const dlBody = new URLSearchParams();
+      dlBody.append("format", "json");
+      dlBody.append("data", JSON.stringify(shipData));
+      const dlRes = await fetch("https://track.delhivery.com/api/cmu/create.json", {
+        method: "POST",
+        headers: {
+          "Authorization": `Token ${creds.api_token}`,
+          "Content-Type":  "application/x-www-form-urlencoded",
+        },
+        body: dlBody.toString(),
+      }).then(r => r.json());
+
+      if (dlRes.packages?.[0]?.waybill) {
+        result = { success: true, awb: dlRes.packages[0].waybill };
+      } else {
+        return res.status(400).json({ error: dlRes.rmk || JSON.stringify(dlRes) });
+      }
+    }
+
+    // Auto-save AWB to order_meta
+    if (result?.awb) {
+      db.prepare(`INSERT INTO order_meta (shopify_id, awb, courier, updated_at) VALUES (?,?,?,?)
+        ON CONFLICT(shopify_id) DO UPDATE SET awb=excluded.awb, courier=excluded.courier, updated_at=excluded.updated_at`)
+        .run(String(shopifyOrder.id), result.awb, partner, new Date().toISOString());
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error("❌ /create-shipment:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Utility ────────────────────────────────────────────────────────────────
