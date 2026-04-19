@@ -522,7 +522,7 @@ app.post("/webhooks/orders", (req, res) => {
 });
 
 // ── POST /jarvis — self-contained analytics engine (no external API needed)
-app.post("/jarvis", adminAuth, async (req, res) => {
+app.post("/jarvis", async (req, res) => {
   try {
     const { query = "" } = req.body;
     const q = query.toLowerCase().trim();
