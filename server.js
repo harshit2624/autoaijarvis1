@@ -567,6 +567,22 @@ async function buildStoreSnapshot() {
     });
   });
 
+  // Repeat customers
+  const customerOrderCount = {};
+  allOrders.forEach(o => {
+    const email = o.email || o.customer?.email;
+    const name  = o.billing_address?.name || o.customer?.first_name || email || "Unknown";
+    if (!email) return;
+    if (!customerOrderCount[email]) customerOrderCount[email] = { email, name, orders: 0, revenue: 0 };
+    customerOrderCount[email].orders++;
+    customerOrderCount[email].revenue += parseFloat(o.total_price || 0);
+  });
+  const repeatCustomers = Object.values(customerOrderCount)
+    .filter(c => c.orders > 1)
+    .sort((a, b) => b.orders - a.orders)
+    .slice(0, 20)
+    .map(c => ({ ...c, revenue: Math.round(c.revenue) }));
+
   // Settlements
   const settl = db.prepare("SELECT status, COUNT(*) as c, SUM(net_payable) as s FROM settlements GROUP BY status").all();
 
@@ -618,6 +634,8 @@ async function buildStoreSnapshot() {
     topProducts,
     topVendors,
     pendingCODTopCities: topPendingCities,
+    repeatCustomers,
+    totalUniqueCustomers: Object.keys(customerOrderCount).length,
     settlements: settl,
     dailyTrend,
     vendorRTORate: Object.entries(vendTotal).map(([v,t])=>({
