@@ -206,35 +206,38 @@ function paymentTypeFromFinancial(financialStatus) {
 function applyTagMappings(orderId, tags, financialStatus) {
   const now = new Date().toISOString();
   const payType = paymentTypeFromFinancial(financialStatus || "pending");
+  const sid = String(orderId);
 
-  // Ensure row exists with correct payment_type
+  // Step 1: set payment_type from Shopify financial_status
   db.prepare(`INSERT INTO order_meta (shopify_id, payment_type) VALUES (?, ?)
     ON CONFLICT(shopify_id) DO UPDATE SET payment_type=excluded.payment_type, updated_at=?`)
-    .run(String(orderId), payType, now);
+    .run(sid, payType, now);
 
   if (!tags) return;
-  const mappings = db.prepare("SELECT * FROM tag_mappings").all();
-  if (!mappings.length) return;
-
   const orderTags = tags.split(",").map(t => t.trim());
 
-  for (const m of mappings) {
-    const matched = orderTags.find(t => t.toLowerCase() === m.shopify_tag.toLowerCase().trim());
-    if (matched) {
-      // Extract leading number for advance (e.g. "99 partial collected" → 99)
-      const advanceMatch = matched.match(/^(\d+)\s+partial/i);
-      const advancePaid  = advanceMatch ? parseFloat(advanceMatch[1]) : null;
+  // Step 2: scan ALL tags for partial advance pattern — independent of mappings
+  // e.g. "99 partial", "150 partial collected", "500 Partial" → advance_paid
+  for (const tag of orderTags) {
+    const advMatch = tag.match(/^(\d+(?:\.\d+)?)\s+partial/i);
+    if (advMatch) {
+      const advancePaid = parseFloat(advMatch[1]);
+      db.prepare(`INSERT INTO order_meta (shopify_id, advance_paid, payment_type) VALUES (?,?,?)
+        ON CONFLICT(shopify_id) DO UPDATE SET advance_paid=excluded.advance_paid, payment_type='cod', updated_at=?`)
+        .run(sid, advancePaid, "cod", now);
+      break;
+    }
+  }
 
-      if (advancePaid !== null) {
-        db.prepare(`INSERT INTO order_meta (shopify_id, stage, payment_type, advance_paid) VALUES (?,?,?,?)
-          ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, payment_type='cod', advance_paid=excluded.advance_paid, updated_at=?`)
-          .run(String(orderId), m.stage, "cod", advancePaid, now);
-      } else {
-        db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
-          ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
-          .run(String(orderId), m.stage, now);
-      }
-      break; // first match wins
+  // Step 3: apply stage from tag_mappings (first match wins)
+  const mappings = db.prepare("SELECT * FROM tag_mappings").all();
+  for (const m of mappings) {
+    const hit = orderTags.find(t => t.toLowerCase() === m.shopify_tag.toLowerCase().trim());
+    if (hit) {
+      db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
+        ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
+        .run(sid, m.stage, now);
+      break;
     }
   }
 }
