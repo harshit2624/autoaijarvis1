@@ -640,11 +640,13 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
         const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
         const meta = metaMap[String(o.id)] || {};
         const payType = meta.payment_type || (o.financial_status === "paid" ? "prepaid" : "cod");
-        // Shipping split by vendor count — COD only
+        // Shipping + advance split equally by vendor count — COD only
         const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+        const vendorCount = ordVendors.size || 1;
         const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
-        const shippingCharge = payType !== "prepaid" && ordVendors.size > 0
-          ? parseFloat((orderShipping / ordVendors.size).toFixed(2)) : 0;
+        const shippingCharge = payType !== "prepaid"
+          ? parseFloat((orderShipping / vendorCount).toFixed(2)) : 0;
+        const advancePaid = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
         return {
           id:           o.name,
           shopifyId:    String(o.id),
@@ -659,7 +661,9 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           currency:     o.currency ?? "INR",
           myRevenue:    parseFloat(myRevenue.toFixed(2)),
           shippingCharge,
+          advancePaid,
           totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
+          remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
           myItems: myItems.map(li => ({
             id:        li.id,
             title:     li.title,
