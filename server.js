@@ -639,6 +639,12 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
         const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
         const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
         const meta = metaMap[String(o.id)] || {};
+        const payType = meta.payment_type || (o.financial_status === "paid" ? "prepaid" : "cod");
+        // Shipping split by vendor count — COD only
+        const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+        const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+        const shippingCharge = payType !== "prepaid" && ordVendors.size > 0
+          ? parseFloat((orderShipping / ordVendors.size).toFixed(2)) : 0;
         return {
           id:           o.name,
           shopifyId:    String(o.id),
@@ -652,6 +658,8 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
           myRevenue:    parseFloat(myRevenue.toFixed(2)),
+          shippingCharge,
+          totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
           myItems: myItems.map(li => ({
             id:        li.id,
             title:     li.title,

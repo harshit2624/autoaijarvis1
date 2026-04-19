@@ -582,6 +582,8 @@
                 <div className="detail-row"><span className="dr-label">Status</span>      <span className="dr-val"><Badge status={order.status}/></span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span>     <span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
                 <div className="detail-row"><span className="dr-label">Your Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
+                {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CrosCrow)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
+                {order.shippingCharge>0 && <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}><span className="dr-label" style={{fontWeight:700}}>Total to Collect</span><span className="dr-val" style={{color:'var(--teal)',fontWeight:700}}>{fmtCur(order.totalCollectable, order.currency)}</span></div>}
               </div>
 
               <div className="detail-box">
@@ -727,12 +729,12 @@
           <div className="tbl-wrap">
             <table>
               <thead><tr>
-                <th>Order</th><th>Customer</th><th>Items</th><th>Revenue</th><th>Status</th><th>Date</th><th/>
+                <th>Order</th><th>Customer</th><th>Items</th><th>Revenue</th><th>Shipping</th><th>Total Collect</th><th>Status</th><th>Date</th><th/>
               </tr></thead>
               <tbody>
-                {loading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={7}/>) :
+                {loading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={9}/>) :
                  recent.length===0 ? (
-                  <tr><td colSpan={7}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders yet</div></div></td></tr>
+                  <tr><td colSpan={9}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders yet</div></div></td></tr>
                  ) :
                  recent.map(o=>(
                   <tr key={o.id} onClick={()=>onOpenOrder(o)}>
@@ -740,6 +742,8 @@
                     <td>{o.customer||'Guest'}</td>
                     <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{o.myItems.reduce((s,i)=>s+i.quantity,0)} item{o.myItems.reduce((s,i)=>s+i.quantity,0)!==1?'s':''}</span></td>
                     <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                    <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
+                    <td className="td-amt" style={{color:'var(--teal)',fontWeight:700}}>{fmtCur(o.totalCollectable,o.currency)}</td>
                     <td><Badge status={o.status}/></td>
                     <td className="td-muted">{fmtDate(o.date)}</td>
                     <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
@@ -831,6 +835,8 @@
                 <th>Items</th>
                 <th>Products</th>
                 <th className={`sort ${sort==='amount'?'sorted':''}`} onClick={()=>hSort('amount')}>Revenue {arrow('amount')}</th>
+                <th>Shipping</th>
+                <th>Total Collect</th>
                 <th>Status</th>
                 <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
                 <th style={{width:28}}/>
@@ -858,6 +864,8 @@
                       <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{qty} item{qty!==1?'s':''}</span></td>
                       <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-dim)',fontSize:11}}>{o.myItems.map(i=>i.title).join(', ')}</td>
                       <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                      <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
+                      <td className="td-amt" style={{color:'var(--teal)',fontWeight:700}}>{fmtCur(o.totalCollectable,o.currency)}</td>
                       <td><Badge status={o.status}/></td>
                       <td className="td-muted">{fmtDate(o.date)}</td>
                       <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
