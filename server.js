@@ -1144,7 +1144,9 @@ app.get("/admin/settlements", adminAuth, (req, res) => {
 app.get("/admin/settlements/:id", adminAuth, (req, res) => {
   const settlement = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
   if (!settlement) return res.status(404).json({ error: "Not found." });
-  const orders      = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
+  const orders = db.prepare(`SELECT so.*, COALESCE(om.shipping_charge,0) as shipping_charge
+    FROM settlement_orders so LEFT JOIN order_meta om ON om.shopify_id=so.shopify_order_id
+    WHERE so.settlement_id=?`).all(req.params.id);
   const croscrow    = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
   const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(settlement.vendor_name) || {};
   res.json({ settlement, orders, croscrow, vendorProfile });
@@ -1403,7 +1405,10 @@ app.get("/vendor/settlements/:id", vendorAuth, (req, res) => {
   if (!s) return res.status(404).json({ error: "Not found." });
   const croscrow      = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
   const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || {};
-  res.json({ settlement: s, orders: db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id), croscrow, vendorProfile });
+  const orders = db.prepare(`SELECT so.*, COALESCE(om.shipping_charge,0) as shipping_charge
+    FROM settlement_orders so LEFT JOIN order_meta om ON om.shopify_id=so.shopify_order_id
+    WHERE so.settlement_id=?`).all(req.params.id);
+  res.json({ settlement: s, orders, croscrow, vendorProfile });
 });
 
 // ── Utility ────────────────────────────────────────────────────────────────

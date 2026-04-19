@@ -457,11 +457,14 @@
     const s = settlement;
     const isCredit = s.net_payable < 0;
 
-    const prepaidOrders  = (orders||[]).filter(o => o.payment_type === 'prepaid');
-    const codOrders      = (orders||[]).filter(o => o.payment_type !== 'prepaid');
+    const prepaidOrders   = (orders||[]).filter(o => o.payment_type === 'prepaid');
+    const codOrders       = (orders||[]).filter(o => o.payment_type !== 'prepaid');
     const prepaidDiscount = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0)*0.1, 0);
-    const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0), 0); // full MRP collected by CrosCrow
-    const taxableValue   = (s.gross_revenue||0) - prepaidDiscount;
+    // CrosCrow collects MRP - 10% discount from prepaid customer
+    const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + ((o.my_revenue||0)*0.9), 0);
+    const taxableValue    = (s.gross_revenue||0) - prepaidDiscount;
+    // COD shipping charges collected by vendor → goes to CrosCrow
+    const totalCodShipping = codOrders.reduce((sum,o) => sum + (o.shipping_charge||0), 0);
 
     const fileName = `${s.vendor_name.replace(/\s+/g,'-')}_${s.period_start}_${s.period_end}_${s.invoice_no}`;
 
@@ -482,9 +485,9 @@
           .inv-grid > div { display: flex; flex-direction: column; gap: 2px; }
           .inv-label  { font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: #888; }
           .inv-val    { font-weight: 700; font-size: 11px; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9px; table-layout: fixed; }
-          th { padding: 5px 5px; background: #f0f0f0; text-align: left; font-size: 7.5px; letter-spacing: 0.3px; text-transform: uppercase; border-bottom: 1px solid #ccc; }
-          td { padding: 5px 5px; border-bottom: 1px solid #eee; word-break: break-word; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 8.5px; table-layout: fixed; }
+          th { padding: 4px 4px; background: #f0f0f0; text-align: left; font-size: 7px; letter-spacing: 0.3px; text-transform: uppercase; border-bottom: 1px solid #ccc; }
+          td { padding: 4px 4px; border-bottom: 1px solid #eee; word-break: break-word; }
           .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
           .inv-summary { background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 10px 13px; font-size: 10px; }
           .inv-row { display: flex; justify-content: space-between; padding: 3px 0; }
@@ -563,17 +566,17 @@
               {/* Order table */}
               <table className="inv-table">
                 <colgroup>
-                  <col className="c-no"/><col className="c-ord"/><col className="c-mrp"/>
-                  <col className="c-typ"/><col className="c-disc"/><col className="c-base"/>
-                  <col className="c-pct"/><col className="c-comm"/><col className="c-gst"/>
-                  <col className="c-adv"/><col className="c-pre"/><col className="c-net"/>
+                  <col style={{width:'3%'}}/><col style={{width:'10%'}}/><col style={{width:'8%'}}/>
+                  <col style={{width:'7%'}}/><col style={{width:'8%'}}/><col style={{width:'8%'}}/>
+                  <col style={{width:'5%'}}/><col style={{width:'8%'}}/><col style={{width:'7%'}}/>
+                  <col style={{width:'7%'}}/><col style={{width:'8%'}}/><col style={{width:'8%'}}/><col style={{width:'8%'}}/>
                 </colgroup>
                 <thead>
                   <tr>
                     <th>#</th><th>Order</th><th>MRP</th><th>Type</th>
                     <th>Disc(10%)</th><th>Tax Base</th><th>Comm%</th>
                     <th>Commission</th><th>GST 18%</th><th>Advance</th>
-                    <th>Prepaid Collected</th><th>Net</th>
+                    <th>Prepaid Collected</th><th>Shipping(COD)</th><th>Net</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -581,7 +584,8 @@
                     const isPrepaid = o.payment_type === 'prepaid';
                     const disc  = isPrepaid ? (o.my_revenue||0)*0.1 : 0;
                     const base  = (o.my_revenue||0) - disc;
-                    const prepCollected = isPrepaid ? (o.my_revenue||0) : 0;
+                    const prepCollected = isPrepaid ? base : 0; // MRP - 10% disc
+                    const shipping = (!isPrepaid && (o.shipping_charge||0)>0) ? o.shipping_charge : 0;
                     return (
                       <tr key={i}>
                         <td>{i+1}</td>
@@ -595,6 +599,7 @@
                         <td>₹{(o.gst||0).toFixed(2)}</td>
                         <td style={{color:'#555'}}>{(o.advance_paid||0)>0?`₹${(o.advance_paid||0).toFixed(2)}`:'—'}</td>
                         <td style={{color:'#10b981',fontWeight:600}}>{isPrepaid?`₹${prepCollected.toFixed(2)}`:'—'}</td>
+                        <td style={{color:'#3b82f6'}}>{shipping>0?`₹${shipping.toFixed(2)}`:'—'}</td>
                         <td style={{fontWeight:700,color:o.net<0?'#10b981':'#ef4444'}}>
                           {o.net<0?'−':''}₹{Math.abs(o.net||0).toFixed(2)}
                         </td>
@@ -631,7 +636,7 @@
                   <div className="inv-pay-hdr">Payment Collection Breakdown</div>
                   {prepaidCollected > 0 && (
                     <div className="inv-pay-row">
-                      <span style={{color:'#888'}}>Prepaid Amount Collected by CrosCrow</span>
+                      <span style={{color:'#888'}}>Prepaid Collected by CrosCrow (MRP − 10%)</span>
                       <span style={{fontWeight:700,color:'#10b981'}}>₹{prepaidCollected.toFixed(2)}</span>
                     </div>
                   )}
@@ -643,10 +648,16 @@
                   )}
                   {codOrders.length>0 && (
                     <div className="inv-pay-row">
-                      <span style={{color:'#888'}}>COD Orders (collect from customer)</span>
+                      <span style={{color:'#888'}}>COD Orders Value (collect from customer)</span>
                       <span style={{fontWeight:700,color:'#f59e0b'}}>
-                        ₹{codOrders.reduce((s,o)=>s+(o.my_revenue||0),0).toFixed(2)}
+                        ₹{codOrders.reduce((sum,o)=>sum+(o.my_revenue||0),0).toFixed(2)}
                       </span>
+                    </div>
+                  )}
+                  {totalCodShipping > 0 && (
+                    <div className="inv-pay-row">
+                      <span style={{color:'#888'}}>COD Shipping Collected by Vendor → CrosCrow</span>
+                      <span style={{fontWeight:700,color:'#3b82f6'}}>₹{totalCodShipping.toFixed(2)}</span>
                     </div>
                   )}
                   <div className="inv-pay-row" style={{borderTop:'2px solid #ddd',fontWeight:700}}>
