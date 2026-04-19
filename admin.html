@@ -349,9 +349,10 @@
     const refreshDelivery = async () => {
       setRefreshing(true);
       try {
-        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`, { headers:{ Authorization:`Bearer ${token}` } });
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/delivery-status`, { headers:{ Authorization:`Bearer ${token}` } });
         const d = await r.json();
         if (d.status) setDelivStatus(d.status);
+        if (d.message) setMsg({ type:'error', text: d.message });
       } catch(_) {}
       setRefreshing(false);
     };
@@ -1641,6 +1642,153 @@
   }
 
   /* ══════════════════════════════════
+     SHIPPING CREDENTIALS VIEW
+  ══════════════════════════════════ */
+  const SHIPPING_PARTNERS = [
+    {
+      id: 'delhivery',
+      name: 'Delhivery',
+      logo: '📦',
+      color: '#d4430c',
+      fields: [{ key:'api_token', label:'API Token', type:'password', placeholder:'Paste your Delhivery API token here' }],
+      help: 'Go to Delhivery dashboard → Settings → API → copy your API token.',
+    },
+    {
+      id: 'shiprocket',
+      name: 'Shiprocket',
+      logo: '🚀',
+      color: '#e8612a',
+      fields: [
+        { key:'email',    label:'Email',    type:'text',     placeholder:'your@email.com' },
+        { key:'password', label:'Password', type:'password', placeholder:'Shiprocket password' },
+      ],
+      help: 'Use the same email & password you log into Shiprocket with.',
+    },
+  ];
+
+  function ShippingCreds({ token }) {
+    const [connected, setConnected] = useState({});
+    const [forms,     setForms]     = useState({});
+    const [saving,    setSaving]    = useState({});
+    const [msg,       setMsg]       = useState(null);
+    const [syncing,   setSyncing]   = useState(false);
+    const [syncResult,setSyncResult]= useState(null);
+
+    const load = () => {
+      fetch(`${API}/admin/shipping-creds`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{
+          const map = {};
+          (d.partners||[]).forEach(p=>{ map[p.partner] = p; });
+          setConnected(map);
+        }).catch(()=>{});
+    };
+    useEffect(()=>{ load(); }, [token]);
+
+    const setField = (partnerId, key, val) =>
+      setForms(f=>({ ...f, [partnerId]: { ...(f[partnerId]||{}), [key]: val } }));
+
+    const save = async (partner) => {
+      setSaving(s=>({...s,[partner.id]:true})); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/shipping-creds`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ partner: partner.id, credentials: forms[partner.id]||{} }),
+        });
+        if (!r.ok) throw new Error((await r.json()).error);
+        setMsg({ type:'success', text:`${partner.name} connected successfully!` });
+        setForms(f=>({...f,[partner.id]:{}}));
+        load();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(s=>({...s,[partner.id]:false}));
+    };
+
+    const disconnect = async (partnerId) => {
+      await fetch(`${API}/admin/shipping-creds/${partnerId}`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } });
+      load();
+    };
+
+    const syncAll = async () => {
+      setSyncing(true); setSyncResult(null);
+      try {
+        const r = await fetch(`${API}/admin/shipping/sync-status`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setSyncResult(d);
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSyncing(false);
+    };
+
+    return (
+      <div className="page">
+        <div style={{background:'#0d1f10',border:'1px solid #1a4a2a',borderRadius:10,padding:'12px 16px',marginBottom:20,fontSize:12,color:'var(--text)'}}>
+          <div style={{fontWeight:700,color:'#10b981',marginBottom:6}}>🚚 Global Shipping Credentials</div>
+          <div style={{lineHeight:1.8,color:'var(--text-muted)'}}>
+            Connect your shipping partners here once. JARVIS will use these credentials to track <strong>any order</strong> — whether fulfilled through this panel or directly on Shopify — as long as an AWB number is available.
+          </div>
+        </div>
+
+        {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:16}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
+          {SHIPPING_PARTNERS.map(partner => {
+            const isConnected = !!connected[partner.id];
+            return (
+              <div key={partner.id} className="card" style={{overflow:'visible',borderColor: isConnected ? '#1a4a2a' : 'var(--border)'}}>
+                <div style={{padding:'16px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <span style={{fontSize:22}}>{partner.logo}</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{partner.name}</div>
+                      {isConnected
+                        ? <div style={{fontSize:10,color:'#10b981'}}>● Connected · {connected[partner.id]?.connected_at?.slice(0,10)}</div>
+                        : <div style={{fontSize:10,color:'var(--text-muted)'}}>○ Not connected</div>}
+                    </div>
+                  </div>
+                  {isConnected && <button className="btn btn-ghost btn-sm" onClick={()=>disconnect(partner.id)} style={{color:'#f87171',fontSize:10}}>Disconnect</button>}
+                </div>
+                <div style={{padding:16}}>
+                  {isConnected ? (
+                    <div style={{fontSize:12,color:'var(--text-muted)',textAlign:'center',padding:'8px 0'}}>
+                      ✓ Credentials saved. Tracking is active for all {partner.name} AWBs.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:12,lineHeight:1.6}}>{partner.help}</div>
+                      {partner.fields.map(f=>(
+                        <div key={f.key} style={{marginBottom:10}}>
+                          <label className="form-label">{f.label}</label>
+                          <input className="form-input" type={f.type} placeholder={f.placeholder}
+                            value={(forms[partner.id]||{})[f.key]||''}
+                            onChange={e=>setField(partner.id, f.key, e.target.value)}/>
+                        </div>
+                      ))}
+                      <button className="btn btn-green" style={{width:'100%',marginTop:4}} onClick={()=>save(partner)} disabled={saving[partner.id]}>
+                        {saving[partner.id] ? <><span className="spin">↻</span> Connecting…</> : `Connect ${partner.name}`}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="card">
+          <div style={{padding:16,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>Bulk Sync Delivery Status</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>Refresh delivery status for all orders with an AWB number using connected partners.</div>
+              {syncResult && <div style={{fontSize:11,color:'#10b981',marginTop:6}}>✓ Updated {syncResult.updated} orders{syncResult.message?` · ${syncResult.message}`:''}</div>}
+            </div>
+            <button className="btn btn-indigo" onClick={syncAll} disabled={syncing}>
+              {syncing ? <><span className="spin">↻</span> Syncing…</> : '↻ Sync All Now'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      TAG MAPPINGS VIEW
   ══════════════════════════════════ */
   const ALL_STAGES = [
@@ -2038,6 +2186,7 @@
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'settings',    icon:'⚙', label:'Settings',     section:'finance' },
       { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
+      { id:'shippingcreds', icon:'🚚', label:'Shipping Partners', section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -2088,6 +2237,7 @@
           {view==='settlements' && <Settlements token={token}/>}
           {view==='settings'    && <Settings    token={token}/>}
           {view==='tagmappings' && <TagMappings token={token}/>}
+          {view==='shippingcreds' && <ShippingCreds token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>
       </div>

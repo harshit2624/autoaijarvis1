@@ -209,6 +209,12 @@ db.exec(`
     connected_at TEXT DEFAULT '',
     UNIQUE(vendor_name, partner)
   );
+  CREATE TABLE IF NOT EXISTS global_shipping_creds (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    partner      TEXT NOT NULL UNIQUE,
+    credentials  TEXT NOT NULL,
+    connected_at TEXT DEFAULT ''
+  );
 `);
 
 // Derive payment_type from Shopify financial_status
@@ -1986,6 +1992,101 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     res.json(result);
   } catch (err) {
     console.error("❌ /create-shipment:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin Global Shipping Credentials ────────────────────────────────────────
+app.get("/admin/shipping-creds", adminAuth, (req, res) => {
+  const rows = db.prepare("SELECT id, partner, connected_at FROM global_shipping_creds").all();
+  res.json({ partners: rows });
+});
+
+app.post("/admin/shipping-creds", adminAuth, (req, res) => {
+  const { partner, credentials } = req.body || {};
+  if (!partner || !credentials) return res.status(400).json({ error: "partner and credentials required" });
+  db.prepare(`INSERT INTO global_shipping_creds (partner, credentials, connected_at) VALUES (?,?,?)
+    ON CONFLICT(partner) DO UPDATE SET credentials=excluded.credentials, connected_at=excluded.connected_at`)
+    .run(partner, JSON.stringify(credentials), new Date().toISOString());
+  res.json({ ok: true });
+});
+
+app.delete("/admin/shipping-creds/:partner", adminAuth, (req, res) => {
+  db.prepare("DELETE FROM global_shipping_creds WHERE partner=?").run(req.params.partner);
+  res.json({ ok: true });
+});
+
+// Admin delivery status refresh — uses global creds
+app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) => {
+  try {
+    const { shopifyId } = req.params;
+    // Get AWB from our DB or Shopify fulfillments
+    let meta = db.prepare("SELECT awb, courier, delivery_status FROM order_meta WHERE shopify_id=?").get(shopifyId) || {};
+    let awb = meta.awb;
+    let courier = (meta.courier || "").toLowerCase();
+
+    if (!awb) {
+      // Fall back to Shopify fulfillment data
+      const { data } = await shopifyRESTRaw(`/orders/${shopifyId}.json?fields=fulfillments`);
+      const fulfillment = (data.order?.fulfillments || []).find(f => f.tracking_number);
+      if (fulfillment) {
+        awb = fulfillment.tracking_number;
+        courier = (fulfillment.tracking_company || "").toLowerCase();
+      }
+    }
+    if (!awb) return res.json({ status: "", awb: "" });
+
+    // Try global creds for the detected courier
+    const detectPartner = c => {
+      if (c.includes("delhivery")) return "delhivery";
+      if (c.includes("shiprocket")) return "shiprocket";
+      if (c.includes("bluedart") || c.includes("blue dart")) return "bluedart";
+      if (c.includes("dtdc")) return "dtdc";
+      if (c.includes("xpressbees")) return "xpressbees";
+      return c;
+    };
+    const partner = detectPartner(courier);
+    const credRow = db.prepare("SELECT credentials FROM global_shipping_creds WHERE partner=?").get(partner);
+    if (!credRow) return res.json({ status: meta.delivery_status || "", awb, message: `No global credentials saved for ${partner}` });
+
+    const creds = JSON.parse(credRow.credentials);
+    const status = await fetchDeliveryStatus(partner, creds, awb);
+    if (status) db.prepare(`INSERT INTO order_meta (shopify_id, awb, courier, delivery_status, delivery_status_updated_at)
+      VALUES (?,?,?,?,?) ON CONFLICT(shopify_id) DO UPDATE SET delivery_status=excluded.delivery_status,
+      delivery_status_updated_at=excluded.delivery_status_updated_at`)
+      .run(shopifyId, awb, courier, status, new Date().toISOString());
+
+    res.json({ status, awb });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin bulk sync delivery status for all orders with AWB
+app.post("/admin/shipping/sync-status", adminAuth, async (req, res) => {
+  try {
+    const allCreds = db.prepare("SELECT partner, credentials FROM global_shipping_creds").all();
+    if (!allCreds.length) return res.json({ updated: 0, message: "No global shipping credentials configured" });
+
+    const orders = db.prepare("SELECT shopify_id, awb, courier FROM order_meta WHERE awb != '' AND awb IS NOT NULL").all();
+    let updated = 0;
+    for (const o of orders) {
+      const partner = (o.courier || "").toLowerCase().includes("delhivery") ? "delhivery"
+        : (o.courier || "").toLowerCase().includes("shiprocket") ? "shiprocket" : (o.courier || "").toLowerCase();
+      const credRow = allCreds.find(c => c.partner === partner);
+      if (!credRow) continue;
+      try {
+        const creds = JSON.parse(credRow.credentials);
+        const status = await fetchDeliveryStatus(partner, creds, o.awb);
+        if (status) {
+          db.prepare("UPDATE order_meta SET delivery_status=?, delivery_status_updated_at=? WHERE shopify_id=?")
+            .run(status, new Date().toISOString(), o.shopify_id);
+          updated++;
+        }
+      } catch {}
+    }
+    res.json({ updated });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
