@@ -1697,11 +1697,11 @@
                   const filtered = shopifyTags.filter(t=>t.toLowerCase().includes(tagInput.toLowerCase()) && !mappings.find(m=>m.shopify_tag.toLowerCase()===t.toLowerCase()));
                   if (!filtered.length) return null;
                   return (
-                    <div style={{position:'absolute',top:'100%',left:0,right:0,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,zIndex:100,maxHeight:200,overflowY:'auto',boxShadow:'0 8px 24px #00000060'}}>
+                    <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'#0d1f2d',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,maxHeight:260,overflowY:'auto',boxShadow:'0 12px 40px #000000aa'}}>
                       {filtered.map(t=>(
                         <div key={t} onMouseDown={()=>{ setNewTag(t); setTagInput(t); setShowDrop(false); }}
-                          style={{padding:'8px 12px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',transition:'background 0.1s'}}
-                          onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+                          style={{padding:'10px 14px',cursor:'pointer',fontSize:13,color:'#e2e8f0',borderBottom:'1px solid #1a3040',transition:'background 0.1s'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='#1a3a50'}
                           onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                           🏷 {t}
                         </div>
