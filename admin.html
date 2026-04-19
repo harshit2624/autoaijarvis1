@@ -218,21 +218,45 @@
     @keyframes sp { to { transform: rotate(360deg); } }
 
     /* ── Invoice ── */
-    .invoice-wrap { background: #fff; color: #111; padding: 32px; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; max-width: 680px; margin: 0 auto; }
-    .inv-header { border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 20px; }
-    .inv-title  { font-size: 20px; font-weight: 800; letter-spacing: 2px; }
-    .inv-sub    { font-size: 10px; color: #666; letter-spacing: 1px; }
-    .inv-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; font-size: 11px; }
-    .inv-grid div { display: flex; flex-direction: column; gap: 3px; }
-    .inv-label  { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #666; }
-    .inv-val    { font-weight: 600; }
-    .inv-table  { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }
-    .inv-table th { padding: 6px 10px; background: #f4f4f4; text-align: left; font-size: 9px; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid #ddd; }
-    .inv-table td { padding: 7px 10px; border-bottom: 1px solid #eee; }
-    .inv-summary { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 16px; font-size: 11px; }
-    .inv-row { display: flex; justify-content: space-between; padding: 4px 0; }
-    .inv-total { border-top: 2px solid #111; margin-top: 8px; padding-top: 8px; font-weight: 800; font-size: 13px; }
-    .inv-footer { margin-top: 24px; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 12px; }
+    .invoice-wrap { background: #fff; color: #111; padding: 24px 26px; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; width: 100%; box-sizing: border-box; }
+    .inv-header { border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 14px; }
+    .inv-title  { font-size: 17px; font-weight: 800; letter-spacing: 1px; }
+    .inv-sub    { font-size: 9px; color: #666; letter-spacing: 1px; }
+    .inv-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-bottom: 14px; font-size: 10.5px; }
+    .inv-grid div { display: flex; flex-direction: column; gap: 2px; }
+    .inv-label  { font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: #888; }
+    .inv-val    { font-weight: 700; font-size: 11px; }
+    .inv-table  { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9px; table-layout: fixed; }
+    .inv-table th { padding: 5px 5px; background: #f0f0f0; text-align: left; font-size: 7.5px; letter-spacing: 0.3px; text-transform: uppercase; border-bottom: 1px solid #ccc; }
+    .inv-table td { padding: 5px 5px; border-bottom: 1px solid #eee; word-break: break-word; }
+    .inv-table col.c-no   { width:4%  } .inv-table col.c-ord  { width:11% }
+    .inv-table col.c-mrp  { width:9%  } .inv-table col.c-typ  { width:7%  }
+    .inv-table col.c-disc { width:9%  } .inv-table col.c-base { width:9%  }
+    .inv-table col.c-pct  { width:5%  } .inv-table col.c-comm { width:9%  }
+    .inv-table col.c-gst  { width:8%  } .inv-table col.c-adv  { width:8%  }
+    .inv-table col.c-pre  { width:9%  } .inv-table col.c-net  { width:8%  }
+    .inv-summary { background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 10px 13px; font-size: 10px; }
+    .inv-row { display: flex; justify-content: space-between; padding: 3px 0; }
+    .inv-total { border-top: 2px solid #111; margin-top: 6px; padding-top: 6px; font-weight: 800; font-size: 12px; }
+    .inv-footer { margin-top: 18px; font-size: 9px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }
+    .inv-pay-box { margin-top: 12px; border: 1px solid #ddd; border-radius: 5px; overflow: hidden; }
+    .inv-pay-hdr { background: #f0f0f0; padding: 5px 10px; font-size: 7.5px; letter-spacing: 1px; text-transform: uppercase; color: #666; font-weight: 700; }
+    .inv-pay-row { display: flex; justify-content: space-between; padding: 4px 10px; border-top: 1px solid #eee; font-size: 10px; }
+
+    @media print {
+      .no-print { display: none !important; }
+      body { background: white !important; margin: 0; }
+      .overlay { position: static !important; background: none !important; padding: 0 !important; }
+      .modal { box-shadow: none !important; border: none !important; max-width: 100% !important; width: 100% !important; border-radius: 0 !important; }
+      .modal-header { display: none !important; }
+      .modal-body { overflow: visible !important; max-height: none !important; }
+      .modal-footer { display: none !important; }
+      .invoice-wrap { padding: 12px 14px; }
+      .inv-table { font-size: 8px; }
+      .inv-table th { font-size: 7px; padding: 4px 4px; }
+      .inv-table td { padding: 4px 4px; }
+      @page { margin: 10mm; size: A4; }
+    }
 
     /* ── Pagination ── */
     .pager { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-card2); }
@@ -243,7 +267,6 @@
     .pbtn.cur { background: var(--indigo); color: #fff; border-color: var(--indigo); font-weight: 700; }
     .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    @media print { .no-print { display: none !important; } body { background: white; } }
   </style>
 </head>
 <body>
@@ -448,84 +471,114 @@
     const s = settlement;
     const isCredit = s.net_payable < 0;
 
-    // Compute prepaid discount from order lines
-    const prepaidDiscount = (orders||[]).reduce((sum, o) => {
-      if (o.payment_type === 'prepaid') return sum + (o.my_revenue||0) * 0.1;
-      return sum;
-    }, 0);
-    const taxableValue = (s.gross_revenue||0) - prepaidDiscount;
+    const prepaidOrders  = (orders||[]).filter(o => o.payment_type === 'prepaid');
+    const codOrders      = (orders||[]).filter(o => o.payment_type !== 'prepaid');
+    const prepaidDiscount = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0)*0.1, 0);
+    const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0), 0); // full MRP collected by CrosCrow
+    const taxableValue   = (s.gross_revenue||0) - prepaidDiscount;
+
+    const fileName = `${s.vendor_name.replace(/\s+/g,'-')}_${s.period_start}_${s.period_end}_${s.invoice_no}.pdf`;
+
+    const handlePrint = () => {
+      const prev = document.title;
+      document.title = fileName;
+      window.print();
+      document.title = prev;
+    };
+
     return (
       <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-        <div className="modal" style={{maxWidth:720}}>
+        <div className="modal" style={{maxWidth:820,width:'95vw'}}>
           <div className="modal-header no-print">
             <div className="modal-title">Invoice — {s.invoice_no}</div>
             <div style={{display:'flex',gap:8}}>
-              <button className="btn btn-ghost btn-sm" onClick={()=>window.print()}>⎙ Print</button>
+              <button className="btn btn-ghost btn-sm" onClick={handlePrint}>⎙ Print / Save PDF</button>
               <button className="modal-close" onClick={onClose}>✕</button>
             </div>
           </div>
-          <div className="modal-body" style={{padding:0}}>
+          <div className="modal-body" style={{padding:0,maxHeight:'80vh',overflowY:'auto'}}>
             <div className="invoice-wrap">
+              {/* Header */}
               <div className="inv-header">
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
                   <div>
-                    <div className="inv-title">CrosCrow</div>
+                    <div className="inv-title">{croscrow.company_name||'CrosCrow'}</div>
                     <div className="inv-sub">Marketplace · GST Compliant Invoice</div>
+                    {croscrow.website && <div style={{fontSize:9,color:'#888'}}>{croscrow.website}</div>}
                   </div>
                   <div style={{textAlign:'right'}}>
-                    <div style={{fontWeight:800,fontSize:14}}>{isCredit ? 'CREDIT NOTE' : 'TAX INVOICE'}</div>
-                    <div style={{fontSize:11,color:'#666'}}>{s.invoice_no}</div>
-                    <div style={{fontSize:11,color:'#666'}}>{fmtDate(s.created_at)}</div>
+                    <div style={{fontWeight:800,fontSize:13,letterSpacing:1}}>{isCredit ? 'CREDIT NOTE' : 'TAX INVOICE'}</div>
+                    <div style={{fontSize:10,color:'#666',marginTop:2}}>{s.invoice_no}</div>
+                    <div style={{fontSize:10,color:'#666'}}>{fmtDate(s.created_at)}</div>
                   </div>
                 </div>
               </div>
+
+              {/* From / To / Period / Status */}
               <div className="inv-grid">
                 <div>
                   <span className="inv-label">From (Marketplace)</span>
                   <span className="inv-val">{croscrow.company_name||'CrosCrow Marketplace'}</span>
-                  {croscrow.address && <span style={{fontSize:10,color:'#666'}}>{croscrow.address}{croscrow.city?', '+croscrow.city:''}{croscrow.state?', '+croscrow.state:''} {croscrow.pincode||''}</span>}
-                  {croscrow.gst_no  && <span style={{fontSize:10,color:'#666'}}>GSTIN: {croscrow.gst_no}</span>}
-                  {croscrow.pan_no  && <span style={{fontSize:10,color:'#666'}}>PAN: {croscrow.pan_no}</span>}
-                  {croscrow.email   && <span style={{fontSize:10,color:'#666'}}>{croscrow.email}</span>}
+                  {croscrow.address && <span style={{fontSize:9,color:'#666'}}>{croscrow.address}{croscrow.city?', '+croscrow.city:''}{croscrow.state?', '+croscrow.state:''} {croscrow.pincode||''}</span>}
+                  {croscrow.gst_no  && <span style={{fontSize:9,color:'#666'}}>GSTIN: {croscrow.gst_no}</span>}
+                  {croscrow.pan_no  && <span style={{fontSize:9,color:'#666'}}>PAN: {croscrow.pan_no}</span>}
+                  {croscrow.email   && <span style={{fontSize:9,color:'#666'}}>{croscrow.email}</span>}
                 </div>
                 <div>
                   <span className="inv-label">To (Vendor)</span>
                   <span className="inv-val">{s.vendor_name}</span>
-                  {vendorProfile.address && <span style={{fontSize:10,color:'#666'}}>{vendorProfile.address}{vendorProfile.city?', '+vendorProfile.city:''}{vendorProfile.state?', '+vendorProfile.state:''} {vendorProfile.pincode||''}</span>}
-                  {vendorProfile.gst_no  && <span style={{fontSize:10,color:'#666'}}>GSTIN: {vendorProfile.gst_no}</span>}
-                  {vendorProfile.pan_no  && <span style={{fontSize:10,color:'#666'}}>PAN: {vendorProfile.pan_no}</span>}
-                  {vendorProfile.email   && <span style={{fontSize:10,color:'#666'}}>{vendorProfile.email}</span>}
+                  {vendorProfile.address && <span style={{fontSize:9,color:'#666'}}>{vendorProfile.address}{vendorProfile.city?', '+vendorProfile.city:''}{vendorProfile.state?', '+vendorProfile.state:''} {vendorProfile.pincode||''}</span>}
+                  {vendorProfile.gst_no  && <span style={{fontSize:9,color:'#666'}}>GSTIN: {vendorProfile.gst_no}</span>}
+                  {vendorProfile.pan_no  && <span style={{fontSize:9,color:'#666'}}>PAN: {vendorProfile.pan_no}</span>}
+                  {vendorProfile.email   && <span style={{fontSize:9,color:'#666'}}>{vendorProfile.email}</span>}
                 </div>
                 <div>
                   <span className="inv-label">Settlement Period</span>
                   <span className="inv-val">{fmtDate(s.period_start)} – {fmtDate(s.period_end)}</span>
+                  <span style={{fontSize:9,color:'#666'}}>{s.total_orders} orders</span>
                 </div>
                 <div>
                   <span className="inv-label">Payment Status</span>
                   <span className="inv-val" style={{color:s.status==='paid'?'#10b981':'#f59e0b'}}>{s.status.toUpperCase()}</span>
-                  {s.paid_at && <span style={{fontSize:10,color:'#666'}}>Paid: {fmtDate(s.paid_at)}</span>}
+                  {s.paid_at && <span style={{fontSize:9,color:'#666'}}>Paid: {fmtDate(s.paid_at)}</span>}
                 </div>
               </div>
 
+              {/* Order table */}
               <table className="inv-table">
-                <thead><tr><th>#</th><th>Order</th><th>MRP Value</th><th>Type</th><th>Discount</th><th>Taxable Base</th><th>Comm%</th><th>Commission</th><th>GST(18%)</th><th>Advance</th><th>Net</th></tr></thead>
+                <colgroup>
+                  <col className="c-no"/><col className="c-ord"/><col className="c-mrp"/>
+                  <col className="c-typ"/><col className="c-disc"/><col className="c-base"/>
+                  <col className="c-pct"/><col className="c-comm"/><col className="c-gst"/>
+                  <col className="c-adv"/><col className="c-pre"/><col className="c-net"/>
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>#</th><th>Order</th><th>MRP</th><th>Type</th>
+                    <th>Disc(10%)</th><th>Tax Base</th><th>Comm%</th>
+                    <th>Commission</th><th>GST 18%</th><th>Advance</th>
+                    <th>Prepaid Collected</th><th>Net</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {(orders||[]).map((o,i)=>{
                     const isPrepaid = o.payment_type === 'prepaid';
                     const disc  = isPrepaid ? (o.my_revenue||0)*0.1 : 0;
                     const base  = (o.my_revenue||0) - disc;
+                    const prepCollected = isPrepaid ? (o.my_revenue||0) : 0;
                     return (
                       <tr key={i}>
                         <td>{i+1}</td>
-                        <td>{o.order_name}</td>
+                        <td style={{fontWeight:600}}>{o.order_name}</td>
                         <td>₹{(o.my_revenue||0).toFixed(2)}</td>
-                        <td style={{textTransform:'uppercase',fontSize:9,color:isPrepaid?'#e67e22':'inherit'}}>{o.payment_type}</td>
-                        <td style={{color:'#e67e22'}}>{isPrepaid?`− ₹${disc.toFixed(2)}`:'—'}</td>
+                        <td style={{textTransform:'uppercase',fontSize:8,color:isPrepaid?'#e67e22':'#666'}}>{o.payment_type}</td>
+                        <td style={{color:'#e67e22'}}>{isPrepaid?`−₹${disc.toFixed(2)}`:'—'}</td>
                         <td style={{fontWeight:600}}>₹{base.toFixed(2)}</td>
-                        <td>{o.commission_pct}%</td>
+                        <td style={{color:'#666'}}>{o.commission_pct}%</td>
                         <td>₹{(o.commission||0).toFixed(2)}</td>
                         <td>₹{(o.gst||0).toFixed(2)}</td>
-                        <td>₹{(o.advance_paid||0).toFixed(2)}</td>
+                        <td style={{color:'#555'}}>{(o.advance_paid||0)>0?`₹${(o.advance_paid||0).toFixed(2)}`:'—'}</td>
+                        <td style={{color:'#10b981',fontWeight:600}}>{isPrepaid?`₹${prepCollected.toFixed(2)}`:'—'}</td>
                         <td style={{fontWeight:700,color:o.net<0?'#10b981':'#ef4444'}}>
                           {o.net<0?'−':''}₹{Math.abs(o.net||0).toFixed(2)}
                         </td>
@@ -535,34 +588,73 @@
                 </tbody>
               </table>
 
-              <div className="inv-summary">
-                <div className="inv-row"><span>Total Orders</span><span>{s.total_orders}</span></div>
-                <div className="inv-row"><span>Gross Revenue (Product Value)</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
-                {prepaidDiscount > 0 && <>
-                  <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount (10% on prepaid orders)</span><span>− ₹{prepaidDiscount.toFixed(2)}</span></div>
-                  <div className="inv-row" style={{fontWeight:600,borderTop:'1px solid #ddd',paddingTop:6,marginTop:2}}><span>Taxable Value (Commission Base)</span><span>₹{taxableValue.toFixed(2)}</span></div>
-                </>}
-                <div className="inv-row"><span>Platform Commission ({s.custom_commission_pct||20}%)</span><span>₹{(s.commission||0).toFixed(2)}</span></div>
-                <div className="inv-row"><span>GST on Commission (18%)</span><span>₹{(s.gst_amount||0).toFixed(2)}</span></div>
-                <div className="inv-row"><span>Advance Deducted</span><span>− ₹{(s.advance_total||0).toFixed(2)}</span></div>
-                {(s.extra_discount||0) > 0     && <div className="inv-row"><span>Extra Discount Applied</span><span>− ₹{(s.extra_discount).toFixed(2)}</span></div>}
-                {(s.extra_advance||0) > 0      && <div className="inv-row"><span>Additional Advance</span><span>− ₹{(s.extra_advance).toFixed(2)}</span></div>}
-                {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Charge Adjustment</span><span>{s.shipping_adjustment>0?'+ ':'− '}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
-                <div className="inv-row inv-total">
-                  <span>{isCredit ? '↑ CrosCrow Pays Vendor' : '↓ Vendor Pays CrosCrow'}</span>
-                  <span>₹{Math.abs(s.net_payable||0).toFixed(2)}</span>
+              {/* Two column layout: summary + payment breakdown */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,alignItems:'start'}}>
+                {/* Left: Financial summary */}
+                <div className="inv-summary">
+                  <div style={{fontSize:8,letterSpacing:1,textTransform:'uppercase',color:'#888',marginBottom:6,fontWeight:700}}>Commission Summary</div>
+                  <div className="inv-row"><span>Gross Revenue (MRP)</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
+                  {prepaidDiscount > 0 && <>
+                    <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount (10%)</span><span>−₹{prepaidDiscount.toFixed(2)}</span></div>
+                    <div className="inv-row" style={{fontWeight:600,borderTop:'1px solid #ddd',paddingTop:4,marginTop:2}}><span>Taxable Base</span><span>₹{taxableValue.toFixed(2)}</span></div>
+                  </>}
+                  <div className="inv-row"><span>Commission ({s.custom_commission_pct||20}%)</span><span>₹{(s.commission||0).toFixed(2)}</span></div>
+                  <div className="inv-row"><span>GST on Commission (18%)</span><span>₹{(s.gst_amount||0).toFixed(2)}</span></div>
+                  {(s.advance_total||0)>0   && <div className="inv-row" style={{color:'#555'}}><span>Advance Collected</span><span>−₹{(s.advance_total||0).toFixed(2)}</span></div>}
+                  {(s.extra_discount||0)>0  && <div className="inv-row" style={{color:'#555'}}><span>Extra Discount</span><span>−₹{(s.extra_discount).toFixed(2)}</span></div>}
+                  {(s.extra_advance||0)>0   && <div className="inv-row" style={{color:'#555'}}><span>Extra Advance</span><span>−₹{(s.extra_advance).toFixed(2)}</span></div>}
+                  {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Adj.</span><span>{s.shipping_adjustment>0?'+':'−'}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
+                  <div className="inv-row inv-total">
+                    <span>{isCredit ? '↑ CrosCrow Pays Vendor' : '↓ Vendor Pays CrosCrow'}</span>
+                    <span>₹{Math.abs(s.net_payable||0).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Right: Payment collection breakdown */}
+                <div className="inv-pay-box">
+                  <div className="inv-pay-hdr">Payment Collection Breakdown</div>
+                  {prepaidCollected > 0 && (
+                    <div className="inv-pay-row">
+                      <span style={{color:'#888'}}>Prepaid Amount Collected by CrosCrow</span>
+                      <span style={{fontWeight:700,color:'#10b981'}}>₹{prepaidCollected.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(s.advance_total||0)>0 && (
+                    <div className="inv-pay-row">
+                      <span style={{color:'#888'}}>Advance / Partial COD Collected</span>
+                      <span style={{fontWeight:700,color:'#3b82f6'}}>₹{(s.advance_total||0).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {codOrders.length>0 && (
+                    <div className="inv-pay-row">
+                      <span style={{color:'#888'}}>COD Orders (collect from customer)</span>
+                      <span style={{fontWeight:700,color:'#f59e0b'}}>
+                        ₹{codOrders.reduce((s,o)=>s+(o.my_revenue||0),0).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="inv-pay-row" style={{borderTop:'2px solid #ddd',fontWeight:700}}>
+                    <span>Net Settlement Amount</span>
+                    <span style={{color:isCredit?'#10b981':'#ef4444'}}>
+                      {isCredit?'CC pays ':'Vendor pays '}₹{Math.abs(s.net_payable||0).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
+
               {s.invoice_notes && (
-                <div style={{marginTop:16,background:'#f9f9f9',border:'1px solid #ddd',borderRadius:6,padding:12,fontSize:11}}>
-                  <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#666',marginBottom:4}}>Notes</div>
+                <div style={{marginTop:14,background:'#f9f9f9',border:'1px solid #ddd',borderRadius:5,padding:10,fontSize:10}}>
+                  <div style={{fontSize:8,letterSpacing:1,textTransform:'uppercase',color:'#888',marginBottom:3}}>Notes</div>
                   <div>{s.invoice_notes}</div>
                 </div>
               )}
 
               <div className="inv-footer">
-                <div>This is a computer-generated statement. For queries, contact settlements@croscrow.com</div>
-                <div style={{marginTop:4}}>CrosCrow Marketplace · All rights reserved.</div>
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span>Computer-generated settlement statement · {s.invoice_no}</span>
+                  <span>{croscrow.email||'settlements@croscrow.com'}</span>
+                </div>
+                <div style={{marginTop:3}}>{croscrow.company_name||'CrosCrow Marketplace'} · All rights reserved · {fmtDate(s.created_at)}</div>
               </div>
             </div>
           </div>
