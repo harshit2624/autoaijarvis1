@@ -334,15 +334,27 @@
      ORDER DETAIL / EDIT MODAL
   ══════════════════════════════════ */
   function OrderModal({ order, token, onClose, onUpdated }) {
-    const [stage,   setStage]   = useState(order.stage || 'new');
-    const [payType, setPayType] = useState(order.paymentType || 'cod');
-    const [advance, setAdvance] = useState(String(order.advancePaid || ''));
-    const [notes,   setNotes]   = useState(order.notes || '');
-    const [awb,     setAwb]     = useState(order.awb || '');
-    const [courier, setCourier] = useState(order.courier || '');
-    const [trackUrl,setTrackUrl]= useState(order.trackingUrl || '');
-    const [saving,  setSaving]  = useState(false);
-    const [msg,     setMsg]     = useState(null);
+    const [stage,      setStage]      = useState(order.stage || 'new');
+    const [payType,    setPayType]    = useState(order.paymentType || 'cod');
+    const [advance,    setAdvance]    = useState(String(order.advancePaid || ''));
+    const [notes,      setNotes]      = useState(order.notes || '');
+    const [awb,        setAwb]        = useState(order.awb || '');
+    const [courier,    setCourier]    = useState(order.courier || '');
+    const [trackUrl,   setTrackUrl]   = useState(order.trackingUrl || '');
+    const [delivStatus,setDelivStatus]= useState(order.deliveryStatus || '');
+    const [refreshing, setRefreshing] = useState(false);
+    const [saving,     setSaving]     = useState(false);
+    const [msg,        setMsg]        = useState(null);
+
+    const refreshDelivery = async () => {
+      setRefreshing(true);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        if (d.status) setDelivStatus(d.status);
+      } catch(_) {}
+      setRefreshing(false);
+    };
 
     const save = async () => {
       setSaving(true); setMsg(null);
@@ -381,10 +393,19 @@
                 <div className="detail-box-title">Order Info</div>
                 <div className="detail-row"><span className="dr-label">Order ID</span><span className="dr-val" style={{color:'var(--indigo)'}}>{order.id}</span></div>
                 <div className="detail-row"><span className="dr-label">Customer</span><span className="dr-val">{order.customer}</span></div>
+                {order.email && <div className="detail-row"><span className="dr-label">Email</span><span className="dr-val" style={{fontSize:10}}>{order.email}</span></div>}
                 <div className="detail-row"><span className="dr-label">Vendors</span><span className="dr-val">{order.vendors?.join(', ')||'—'}</span></div>
                 <div className="detail-row"><span className="dr-label">Order Value</span><span className="dr-val" style={{color:'var(--cyan)'}}>{fmtCur(order.orderValue)}</span></div>
                 <div className="detail-row"><span className="dr-label">Shipping</span><span className="dr-val">{fmtCur(order.shippingCharge)}</span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
+                {order.tags && <div className="detail-row" style={{alignItems:'flex-start'}}>
+                  <span className="dr-label">Tags</span>
+                  <span className="dr-val" style={{flexWrap:'wrap',display:'flex',gap:4}}>
+                    {order.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(
+                      <span key={t} style={{fontSize:9,padding:'2px 6px',borderRadius:3,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0'}}>{t}</span>
+                    ))}
+                  </span>
+                </div>}
               </div>
               <div className="detail-box">
                 <div className="detail-box-title">Line Items</div>
@@ -429,6 +450,16 @@
                 <div>
                   <label className="form-label">Tracking URL</label>
                   <input className="form-input" placeholder="https://…" value={trackUrl} onChange={e=>setTrackUrl(e.target.value)}/>
+                </div>
+                <div>
+                  <label className="form-label" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    Delivery Status
+                    {awb && <button onClick={refreshDelivery} disabled={refreshing} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,padding:0}}>{refreshing?'…':'↻ Refresh'}</button>}
+                  </label>
+                  {delivStatus
+                    ? <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:12,color: delivStatus==='Delivered'?'#10b981':delivStatus.toLowerCase().includes('transit')?'#06b6d4':delivStatus.toLowerCase().includes('rto')?'#f87171':'#fbbf24',fontWeight:600}}>{delivStatus}</div>
+                    : <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:11,color:'var(--text-muted)'}}>{awb ? 'Click ↻ Refresh to fetch live status' : 'No AWB yet'}</div>
+                  }
                 </div>
                 <div className="form-full">
                   <label className="form-label">Internal Notes</label>
@@ -830,17 +861,25 @@
             <table>
               <thead><tr>
                 <th>#</th><th>Order</th><th>Customer</th><th>Vendors</th>
-                <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Date</th><th/>
+                <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Delivery</th><th>Date</th><th/>
               </tr></thead>
               <tbody>
-                {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={10}/>) :
+                {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={11}/>) :
                  rows.length===0 ? (
-                   <tr><td colSpan={10}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr>
+                   <tr><td colSpan={11}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr>
                  ) :
-                 rows.map((o,i)=>(
+                 rows.map((o,i)=>{
+                   const ds = o.deliveryStatus;
+                   const dsColor = ds==='Delivered'?'#10b981':ds&&ds.toLowerCase().includes('transit')?'#06b6d4':ds&&(ds.toLowerCase().includes('rto')||ds.toLowerCase().includes('return'))?'#f87171':ds?'#fbbf24':'var(--text-muted)';
+                   return (
                    <tr key={o.id} style={{cursor:'pointer'}} onClick={()=>setModal(o)}>
                      <td className="td-mut">{(cur-1)*PER+i+1}</td>
-                     <td className="td-id">{o.id}</td>
+                     <td>
+                       <div className="td-id">{o.id}</div>
+                       {o.tags && o.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(
+                         <span key={t} style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:3,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0',marginTop:2,marginRight:2}}>{t}</span>
+                       ))}
+                     </td>
                      <td>
                        <div style={{display:'flex',alignItems:'center',gap:7}}>
                          <div style={{width:22,height:22,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'var(--indigo)',flexShrink:0}}>
@@ -857,10 +896,19 @@
                      <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
                      <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
                      <td><StageBadge stage={o.stage}/></td>
+                     <td>
+                       {o.awb ? (
+                         <div>
+                           <div style={{fontSize:10,color:dsColor,fontWeight:600}}>{ds||'Dispatched'}</div>
+                           <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'monospace'}}>{o.awb}</div>
+                         </div>
+                       ) : <span style={{color:'var(--text-muted)',fontSize:11}}>—</span>}
+                     </td>
                      <td className="td-mut">{fmtDate(o.date)}</td>
                      <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>✏</td>
                    </tr>
-                 ))}
+                   );
+                 })}
               </tbody>
             </table>
           </div>

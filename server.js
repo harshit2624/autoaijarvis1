@@ -1245,6 +1245,8 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         awb:            meta.awb || "",
         courier:        meta.courier || "",
         trackingUrl:    meta.tracking_url || "",
+        deliveryStatus: meta.delivery_status || "",
+        tags:           o.tags || "",
         lineItems:      (o.line_items || []).map(li => ({
           title: li.title, vendor: li.vendor, qty: li.quantity,
           price: parseFloat(li.price || 0), sku: li.sku || "",
