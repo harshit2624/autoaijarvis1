@@ -195,17 +195,45 @@ db.exec(`
   );
 `);
 
-// Helper: apply tag mappings to a single order (updates order_meta if tag matched)
-function applyTagMappings(orderId, tags) {
+// Derive payment_type from Shopify financial_status
+function paymentTypeFromFinancial(financialStatus) {
+  if (financialStatus === "paid")            return "prepaid";
+  if (financialStatus === "partially_paid")  return "partial";
+  return "cod"; // pending, voided, refunded, etc.
+}
+
+// Apply tag mappings + auto-detect payment_type for one order
+function applyTagMappings(orderId, tags, financialStatus) {
+  const now = new Date().toISOString();
+  const payType = paymentTypeFromFinancial(financialStatus || "pending");
+
+  // Ensure row exists with correct payment_type
+  db.prepare(`INSERT INTO order_meta (shopify_id, payment_type) VALUES (?, ?)
+    ON CONFLICT(shopify_id) DO UPDATE SET payment_type=excluded.payment_type, updated_at=?`)
+    .run(String(orderId), payType, now);
+
   if (!tags) return;
   const mappings = db.prepare("SELECT * FROM tag_mappings").all();
   if (!mappings.length) return;
-  const orderTags = tags.toLowerCase().split(",").map(t => t.trim());
+
+  const orderTags = tags.split(",").map(t => t.trim());
+
   for (const m of mappings) {
-    if (orderTags.includes(m.shopify_tag.toLowerCase().trim())) {
-      db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?, ?)
-        ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
-        .run(String(orderId), m.stage, new Date().toISOString());
+    const matched = orderTags.find(t => t.toLowerCase() === m.shopify_tag.toLowerCase().trim());
+    if (matched) {
+      // Extract leading number for advance (e.g. "99 partial collected" → 99)
+      const advanceMatch = matched.match(/^(\d+)\s+partial/i);
+      const advancePaid  = advanceMatch ? parseFloat(advanceMatch[1]) : null;
+
+      if (advancePaid !== null) {
+        db.prepare(`INSERT INTO order_meta (shopify_id, stage, payment_type, advance_paid) VALUES (?,?,?,?)
+          ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, payment_type='cod', advance_paid=excluded.advance_paid, updated_at=?`)
+          .run(String(orderId), m.stage, "cod", advancePaid, now);
+      } else {
+        db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
+          ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
+          .run(String(orderId), m.stage, now);
+      }
       break; // first match wins
     }
   }
@@ -1218,28 +1246,20 @@ app.delete("/admin/tag-mappings/:id", adminAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Sync: scan ALL orders and apply tag mappings to order_meta
+// Sync: scan ALL orders — set payment_type from financial_status + apply tag mappings
 app.post("/admin/tag-mappings/sync", adminAuth, async (req, res) => {
   try {
-    const mappings = db.prepare("SELECT * FROM tag_mappings").all();
-    if (!mappings.length) return res.json({ updated: 0, message: "No mappings configured." });
-
     const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
     let updated = 0;
+    const before = db.prepare("SELECT shopify_id, stage, payment_type, advance_paid FROM order_meta").all();
+    const beforeMap = Object.fromEntries(before.map(r => [r.shopify_id, r]));
+
     for (const o of allOrders) {
-      if (!o.tags) continue;
-      const orderTags = o.tags.toLowerCase().split(",").map(t => t.trim());
-      for (const m of mappings) {
-        if (orderTags.includes(m.shopify_tag.toLowerCase().trim())) {
-          const existing = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(String(o.id));
-          if (existing?.stage !== m.stage) {
-            db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?, ?)
-              ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
-              .run(String(o.id), m.stage, new Date().toISOString());
-            updated++;
-          }
-          break;
-        }
+      const prev = beforeMap[String(o.id)];
+      applyTagMappings(o.id, o.tags, o.financial_status);
+      const after = db.prepare("SELECT stage, payment_type, advance_paid FROM order_meta WHERE shopify_id=?").get(String(o.id));
+      if (!prev || prev.stage !== after?.stage || prev.payment_type !== after?.payment_type || prev.advance_paid !== after?.advance_paid) {
+        updated++;
       }
     }
     res.json({ success: true, updated, total: allOrders.length });
