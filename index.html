@@ -3,37 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JARVIS — Shopify Orders</title>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <title>CrosCrow — Portal</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
-
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:           #060b14;
-      --bg-card:      #0a1628;
-      --bg-card2:     #0d1f3c;
-      --bg-hover:     #0f2544;
-      --border:       #1e3a5f;
-      --border-hi:    #2a4d7a;
-      --cyan:         #22d3ee;
-      --cyan-dim:     #0891b2;
-      --green:        #4ade80;
-      --green-bg:     #052e16;
-      --yellow:       #fbbf24;
-      --yellow-bg:    #422006;
-      --red:          #f87171;
-      --red-bg:       #2d0a0a;
-      --orange:       #fb923c;
-      --orange-bg:    #431407;
-      --purple:       #a78bfa;
-      --purple-bg:    #1e1b4b;
-      --text:         #e2e8f0;
-      --text-muted:   #64748b;
-      --text-dim:     #94a3b8;
+      --bg:       #060b10;
+      --card:     #0a1520;
+      --border:   #1a3040;
+      --green:    #10b981;
+      --indigo:   #6366f1;
+      --text:     #e2e8f0;
+      --muted:    #4b7a8e;
+      --dim:      #7db8ae;
     }
 
     body {
@@ -41,990 +24,156 @@
       color: var(--text);
       font-family: 'IBM Plex Mono', monospace;
       min-height: 100vh;
-      overflow-x: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
-    /* ── Scrollbar ── */
-    ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
+    .wrap {
+      width: 100%;
+      max-width: 820px;
+      padding: 40px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+    }
 
     /* ── Header ── */
-    .header {
-      position: sticky; top: 0; z-index: 200;
-      background: rgba(6,11,20,0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
-      height: 58px;
-      display: flex; align-items: center;
-      padding: 0 24px;
-      justify-content: space-between;
+    .brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
     }
-    .header-brand { display: flex; align-items: center; gap: 12px; }
-    .logo {
-      width: 34px; height: 34px;
-      background: linear-gradient(135deg, var(--cyan) 0%, var(--cyan-dim) 100%);
-      border-radius: 8px;
+    .brand-logo {
+      width: 60px; height: 60px; border-radius: 14px;
+      background: linear-gradient(135deg, #10b981, #059669);
       display: flex; align-items: center; justify-content: center;
-      font-size: 15px; font-weight: 800; color: #000; letter-spacing: -1px;
-      flex-shrink: 0;
+      font-size: 24px; font-weight: 800; color: #000;
+      box-shadow: 0 0 40px #10b98130;
     }
-    .brand-name { font-size: 15px; font-weight: 700; letter-spacing: 3px; color: var(--text); }
-    .brand-sub  { font-size: 9px; letter-spacing: 3px; color: var(--text-muted); text-transform: uppercase; margin-top: 1px; }
-
-    .header-right { display: flex; align-items: center; gap: 10px; }
-    .live-badge {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 10px; color: var(--text-muted); letter-spacing: 1px;
+    .brand-name {
+      font-size: 22px; font-weight: 700; letter-spacing: 4px; color: var(--text);
     }
-    .pulse-dot {
-      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
-      animation: pulse 2.2s ease-in-out infinite;
+    .brand-sub {
+      font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase;
     }
-    @keyframes pulse { 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:0.3; transform:scale(0.8);} }
 
-    /* ── Buttons ── */
-    .btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer;
-      font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
-      letter-spacing: 1px; text-decoration: none; transition: all 0.15s;
-      white-space: nowrap;
-    }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
-    .btn-ghost:hover:not(:disabled) { background: var(--bg-card2); color: var(--text); border-color: var(--border-hi); }
-    .btn-cyan  { background: var(--cyan); color: #000; }
-    .btn-cyan:hover:not(:disabled)  { background: #38bdf8; }
-    .btn-green { background: transparent; color: var(--green); border: 1px solid #1a4731; }
-    .btn-green:hover:not(:disabled) { background: var(--green-bg); }
-    .btn-spin svg { animation: spin 0.8s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── Main layout ── */
-    .main { padding: 20px 24px 40px; max-width: 1440px; margin: 0 auto; }
-
-    /* ── Stats grid ── */
-    .stats-grid {
+    /* ── Cards ── */
+    .cards {
       display: grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap: 12px;
-      margin-bottom: 20px;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      width: 100%;
     }
-    @media (max-width: 1200px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
-    @media (max-width:  640px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } }
 
-    .stat-card {
-      background: var(--bg-card);
+    .portal-card {
+      background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 16px;
-      position: relative; overflow: hidden;
-      transition: border-color 0.15s, transform 0.15s;
+      border-radius: 16px;
+      padding: 36px 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+      cursor: pointer;
     }
-    .stat-card:hover { border-color: var(--border-hi); transform: translateY(-1px); }
-    .stat-card::after {
-      content: ''; position: absolute;
-      top: 0; left: 0; right: 0; height: 2px; border-radius: 10px 10px 0 0;
+    .portal-card:hover {
+      transform: translateY(-3px);
     }
-    .sc-cyan::after   { background: var(--cyan); }
-    .sc-green::after  { background: var(--green); }
-    .sc-purple::after { background: var(--purple); }
-    .sc-yellow::after { background: var(--yellow); }
-    .sc-red::after    { background: var(--red); }
-    .sc-orange::after { background: var(--orange); }
-
-    .stat-icon { position: absolute; top: 12px; right: 12px; font-size: 16px; opacity: 0.25; }
-    .stat-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
-    .stat-val   { font-size: 22px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
-    .stat-sub   { font-size: 10px; color: var(--text-muted); }
-    .sc-cyan   .stat-val { color: var(--cyan); }
-    .sc-green  .stat-val { color: var(--green); }
-    .sc-purple .stat-val { color: var(--purple); }
-    .sc-yellow .stat-val { color: var(--yellow); }
-    .sc-red    .stat-val { color: var(--red); }
-    .sc-orange .stat-val { color: var(--orange); }
-
-    /* ── Filters bar ── */
-    .filters-bar {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 16px;
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-      margin-bottom: 14px;
+    .portal-card.vendor {
+      border-color: #1a3d35;
+    }
+    .portal-card.vendor:hover {
+      border-color: var(--green);
+      box-shadow: 0 0 40px #10b98118;
+    }
+    .portal-card.admin {
+      border-color: #1e2440;
+    }
+    .portal-card.admin:hover {
+      border-color: var(--indigo);
+      box-shadow: 0 0 40px #6366f118;
     }
 
-    .search-wrap { position: relative; flex: 1; min-width: 200px; }
-    .search-ico  { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 14px; pointer-events: none; }
-    .search-input {
-      width: 100%; background: var(--bg-card2); border: 1px solid var(--border);
-      border-radius: 6px; padding: 8px 12px 8px 32px;
-      color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
-      outline: none; transition: border-color 0.15s;
+    .card-icon {
+      width: 56px; height: 56px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
     }
-    .search-input::placeholder { color: var(--text-muted); }
-    .search-input:focus { border-color: var(--cyan); }
-    .search-clear {
-      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-      background: none; border: none; color: var(--text-muted); cursor: pointer;
-      font-size: 14px; line-height: 1; padding: 2px;
-    }
-    .search-clear:hover { color: var(--text); }
+    .vendor .card-icon { background: #0d2e26; }
+    .admin  .card-icon { background: #1a1b3a; }
 
-    .filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
-    .ftab {
-      padding: 6px 12px; border-radius: 6px; font-size: 10px; font-weight: 600;
-      cursor: pointer; border: 1px solid var(--border); background: transparent;
-      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
-      letter-spacing: 1px; transition: all 0.15s; white-space: nowrap;
+    .card-title {
+      font-size: 15px; font-weight: 700; letter-spacing: 2px;
     }
-    .ftab:hover  { background: var(--bg-card2); color: var(--text); }
-    .ftab.active { background: var(--cyan); color: #000; border-color: var(--cyan); }
+    .vendor .card-title { color: var(--green); }
+    .admin  .card-title { color: var(--indigo); }
 
-    .sort-select {
-      background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px;
-      padding: 8px 28px 8px 10px; color: var(--text);
+    .card-desc {
+      font-size: 11px; color: var(--muted); text-align: center; line-height: 1.7; letter-spacing: 0.5px;
+    }
+
+    .card-btn {
+      padding: 11px 28px; border-radius: 8px; border: none;
       font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-      outline: none; cursor: pointer; appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-      background-repeat: no-repeat; background-position: right 9px center;
-      transition: border-color 0.15s;
+      font-weight: 700; letter-spacing: 2px; cursor: pointer;
+      transition: opacity 0.15s;
+      width: 100%;
     }
-    .sort-select:focus { border-color: var(--cyan); }
+    .card-btn:hover { opacity: 0.85; }
+    .vendor .card-btn { background: var(--green); color: #000; }
+    .admin  .card-btn { background: var(--indigo); color: #fff; }
 
-    .results-info { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
-
-    /* ── Date range bar ── */
-    .date-bar {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 14px;
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-      margin-bottom: 14px;
-    }
-    .date-bar-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
-    .date-presets { display: flex; gap: 4px; flex-wrap: wrap; }
-    .dpbtn {
-      padding: 5px 11px; border-radius: 5px; font-size: 10px; font-weight: 600;
-      cursor: pointer; border: 1px solid var(--border); background: transparent;
-      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
-      letter-spacing: 1px; transition: all 0.15s; white-space: nowrap;
-    }
-    .dpbtn:hover  { background: var(--bg-card2); color: var(--text); }
-    .dpbtn.active { background: var(--bg-card2); color: var(--cyan); border-color: var(--cyan-dim); }
-    .date-divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
-    .custom-dates { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .date-input {
-      background: var(--bg-card2); border: 1px solid var(--border); border-radius: 5px;
-      padding: 6px 10px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
-      font-size: 11px; outline: none; transition: border-color 0.15s; color-scheme: dark;
-    }
-    .date-input:focus { border-color: var(--cyan); }
-    .date-to-label { font-size: 10px; color: var(--text-muted); }
-    .date-range-display { margin-left: auto; font-size: 10px; color: var(--text-muted); white-space: nowrap; }
-
-    /* ── Table card ── */
-    .table-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    .table-scroll { overflow-x: auto; }
-
-    table { width: 100%; border-collapse: collapse; }
-
-    thead tr { background: var(--bg-card2); border-bottom: 1px solid var(--border); }
-    th {
-      padding: 11px 16px; text-align: left;
-      font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
-      color: var(--text-muted); white-space: nowrap; user-select: none;
-    }
-    th.sortable { cursor: pointer; transition: color 0.1s; }
-    th.sortable:hover { color: var(--text-dim); }
-    th.sorted { color: var(--cyan); }
-    .sort-arrow { display: inline-block; margin-left: 4px; font-size: 8px; vertical-align: middle; }
-
-    tbody tr {
-      border-bottom: 1px solid var(--border);
-      cursor: pointer; transition: background 0.1s;
-    }
-    tbody tr:last-child { border-bottom: none; }
-    tbody tr:hover   { background: var(--bg-hover); }
-    tbody tr.is-open { background: var(--bg-card2); border-bottom: none; }
-    td { padding: 11px 16px; font-size: 12px; vertical-align: middle; }
-
-    .td-num      { color: var(--text-muted); font-size: 11px; width: 36px; }
-    .td-id       { color: var(--cyan); font-weight: 700; white-space: nowrap; }
-    .td-amt      { color: var(--green); font-weight: 600; white-space: nowrap; }
-    .td-date     { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
-    .td-expand   { width: 28px; text-align: center; }
-
-    .customer-cell { display: flex; align-items: center; gap: 8px; }
-    .avatar {
-      width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
-      background: var(--bg-card2); border: 1px solid var(--border);
-      color: var(--cyan); font-size: 9px; font-weight: 700;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .customer-name { font-size: 12px; white-space: nowrap; }
-
-    .items-chip {
-      display: inline-flex; align-items: center;
-      background: var(--bg-card2); border: 1px solid var(--border);
-      border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--text-dim);
-      white-space: nowrap;
+    /* ── Footer ── */
+    .footer {
+      font-size: 10px; color: var(--muted); letter-spacing: 1px;
     }
 
-    .product-cell {
-      max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      color: var(--text-dim); font-size: 11px;
+    /* ── Ambient glow ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 600px 400px at 20% 50%, #10b98106 0%, transparent 70%),
+        radial-gradient(ellipse 600px 400px at 80% 50%, #6366f106 0%, transparent 70%);
     }
-
-    /* ── Badge ── */
-    .badge {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 9px; border-radius: 20px;
-      font-size: 10px; font-weight: 700; letter-spacing: 1px; white-space: nowrap;
-    }
-    .bdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-
-    .b-fulfilled   { background: var(--green-bg);  color: var(--green);  } .b-fulfilled  .bdot { background: var(--green);  }
-    .b-unfulfilled { background: var(--yellow-bg); color: var(--yellow); } .b-unfulfilled .bdot { background: var(--yellow); }
-    .b-pending     { background: var(--yellow-bg); color: var(--yellow); } .b-pending     .bdot { background: var(--yellow); }
-    .b-partial     { background: var(--orange-bg); color: var(--orange); } .b-partial     .bdot { background: var(--orange); }
-    .b-cancelled   { background: var(--red-bg);    color: var(--red);    } .b-cancelled   .bdot { background: var(--red);    }
-    .b-refunded    { background: var(--purple-bg); color: var(--purple); } .b-refunded    .bdot { background: var(--purple); }
-
-    /* ── Expand chevron ── */
-    .chevron { color: var(--text-muted); font-size: 11px; transition: transform 0.2s; display: inline-block; }
-    .chevron.open { transform: rotate(90deg); color: var(--cyan); }
-
-    /* ── Expanded detail row ── */
-    .detail-row td { padding: 0; border-bottom: 2px solid var(--cyan); }
-    .detail-inner {
-      padding: 14px 56px;
-      display: flex; gap: 40px; flex-wrap: wrap;
-      background: linear-gradient(to bottom, var(--bg-card2), var(--bg));
-    }
-    .dg-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
-    .dg-val   { font-size: 13px; }
-
-    /* ── Error banner ── */
-    .error-banner {
-      background: var(--red-bg); border: 1px solid #5a1a1a; border-radius: 8px;
-      padding: 12px 16px; display: flex; align-items: center; gap: 10px;
-      font-size: 12px; color: var(--red); margin-bottom: 16px;
-    }
-    .error-banner .btn { margin-left: auto; padding: 5px 10px; }
-
-    /* ── Nav tabs ── */
-    .nav-tabs { display: flex; gap: 4px; }
-    .nav-tab {
-      padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: 600;
-      cursor: pointer; border: none; background: transparent;
-      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
-      letter-spacing: 1px; transition: all 0.15s;
-    }
-    .nav-tab:hover  { background: var(--bg-card2); color: var(--text); }
-    .nav-tab.active { background: var(--bg-card2); color: var(--cyan); }
-
-    /* ── Chat panel ── */
-    .chat-panel {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
-      display: flex; flex-direction: column; height: calc(100vh - 180px); min-height: 400px;
-    }
-    .chat-header {
-      padding: 14px 18px; border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 10px;
-    }
-    .chat-title { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 1px; }
-    .chat-sub   { font-size: 10px; color: var(--text-muted); margin-left: auto; }
-    .chat-messages {
-      flex: 1; overflow-y: auto; padding: 16px 18px;
-      display: flex; flex-direction: column; gap: 12px;
-    }
-    .msg { display: flex; gap: 10px; align-items: flex-start; }
-    .msg.user { flex-direction: row-reverse; }
-    .msg-avatar {
-      width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 700;
-    }
-    .msg.bot  .msg-avatar { background: var(--bg-card2); border: 1px solid var(--border); color: var(--cyan); }
-    .msg.user .msg-avatar { background: var(--cyan); color: #000; }
-    .msg-bubble {
-      max-width: 72%; padding: 10px 14px; border-radius: 10px;
-      font-size: 13px; line-height: 1.6; white-space: pre-wrap;
-    }
-    .msg.bot  .msg-bubble { background: var(--bg-card2); color: var(--text); border: 1px solid var(--border); }
-    .msg.user .msg-bubble { background: var(--cyan-dim); color: #e0f7ff; }
-    .typing-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); animation: tdot 1.2s infinite; margin-right: 3px; }
-    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes tdot { 0%,60%,100%{opacity:0.2; transform:scale(0.8);} 30%{opacity:1; transform:scale(1.1);} }
-    .chat-input-row {
-      padding: 14px 18px; border-top: 1px solid var(--border);
-      display: flex; gap: 8px; align-items: flex-end;
-    }
-    .chat-textarea {
-      flex: 1; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px;
-      padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
-      font-size: 13px; resize: none; outline: none; transition: border-color 0.15s;
-      max-height: 120px; line-height: 1.5;
-    }
-    .chat-textarea::placeholder { color: var(--text-muted); }
-    .chat-textarea:focus { border-color: var(--cyan); }
-    .chat-send {
-      width: 38px; height: 38px; border-radius: 8px; border: none;
-      background: var(--cyan); color: #000; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      transition: background 0.15s; flex-shrink: 0;
-    }
-    .chat-send:hover:not(:disabled) { background: #38bdf8; }
-    .chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
-    .chat-suggestions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 18px 12px; }
-    .suggestion {
-      padding: 5px 11px; border-radius: 20px; font-size: 11px; cursor: pointer;
-      border: 1px solid var(--border); background: transparent; color: var(--text-muted);
-      font-family: 'IBM Plex Mono', monospace; transition: all 0.15s;
-    }
-    .suggestion:hover { background: var(--bg-card2); color: var(--cyan); border-color: var(--cyan-dim); }
-
-    /* ── Loading skeleton ── */
-    .skel {
-      background: linear-gradient(90deg, var(--bg-card2) 25%, var(--bg-hover) 50%, var(--bg-card2) 75%);
-      background-size: 200% 100%; border-radius: 4px;
-      animation: shimmer 1.4s ease-in-out infinite;
-    }
-    @keyframes shimmer { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
-
-    /* ── Empty state ── */
-    .empty {
-      text-align: center; padding: 64px 20px; color: var(--text-muted);
-    }
-    .empty-icon { font-size: 44px; margin-bottom: 14px; opacity: 0.4; }
-    .empty-title { font-size: 14px; margin-bottom: 6px; color: var(--text-dim); }
-    .empty-sub   { font-size: 11px; }
-
-    /* ── Pagination ── */
-    .pagination {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-card2);
-    }
-    .page-info { font-size: 11px; color: var(--text-muted); }
-    .page-btns { display: flex; gap: 3px; align-items: center; }
-    .pbtn {
-      min-width: 30px; height: 30px; border-radius: 6px;
-      border: 1px solid var(--border); background: transparent;
-      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
-      font-size: 12px; cursor: pointer; display: flex; align-items: center;
-      justify-content: center; transition: all 0.15s; padding: 0 6px;
-    }
-    .pbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
-    .pbtn.cur { background: var(--cyan); color: #000; border-color: var(--cyan); font-weight: 700; }
-    .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
-    .pdots { color: var(--text-muted); font-size: 12px; padding: 0 3px; }
   </style>
 </head>
 <body>
-<div id="root"></div>
-<script type="text/babel">
-  const { useState, useEffect, useCallback, useMemo } = React;
+  <div class="wrap">
+    <div class="brand">
+      <div class="brand-logo">C</div>
+      <div class="brand-name">CROSCROW</div>
+      <div class="brand-sub">Operations Portal</div>
+    </div>
 
-  const PROXY_URL = 'http://localhost:3001';
-  const PER_PAGE  = 25;
-
-  /* ─── helpers ─── */
-  const initials = n => n ? n.split(' ').map(x => x[0]).join('').toUpperCase().slice(0,2) : '?';
-  const fmtCur   = (v, c='USD') => {
-    try { return new Intl.NumberFormat('en-US',{style:'currency',currency:c,maximumFractionDigits:2}).format(v||0); }
-    catch { return `${c} ${(v||0).toFixed(2)}`; }
-  };
-  const fmtDate  = s => { const d=new Date(s); return isNaN(d)?s:d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
-  const fmtTime  = d => d ? d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '—';
-
-  /* ─── Badge ─── */
-  const STATUS_LABEL = {
-    fulfilled:'FULFILLED', unfulfilled:'PENDING', pending:'PENDING',
-    partial:'PARTIAL', cancelled:'CANCELLED', refunded:'REFUNDED',
-  };
-  function Badge({ status='unfulfilled' }) {
-    const cls = `badge b-${status in STATUS_LABEL ? status : 'unfulfilled'}`;
-    return <span className={cls}><span className="bdot"/>{STATUS_LABEL[status] || status.toUpperCase()}</span>;
-  }
-
-  /* ─── StatCard ─── */
-  function StatCard({ color, icon, label, value, sub }) {
-    return (
-      <div className={`stat-card sc-${color}`}>
-        <span className="stat-icon">{icon}</span>
-        <div className="stat-label">{label}</div>
-        <div className="stat-val">{value}</div>
-        {sub && <div className="stat-sub">{sub}</div>}
-      </div>
-    );
-  }
-
-  /* ─── Skeleton row (9 cols) ─── */
-  function SkeletonRow() {
-    return (
-      <tr>
-        {[36,50,120,60,140,70,90,70,28].map((w,i) => (
-          <td key={i} style={{padding:'13px 16px'}}>
-            <div className="skel" style={{height:11,width:w}}/>
-          </td>
-        ))}
-      </tr>
-    );
-  }
-
-  /* ─── Main dashboard ─── */
-  function Dashboard() {
-    const [orders, setOrders]         = useState([]);
-    const [loading, setLoading]       = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError]           = useState(null);
-    const [search, setSearch]         = useState('');
-    const [statusFilter, setFilter]   = useState('all');
-    const [sortBy, setSortBy]         = useState('date');
-    const [sortDir, setSortDir]       = useState('desc');
-    const [page, setPage]             = useState(1);
-    const [openId, setOpenId]         = useState(null);
-    const [lastRefresh, setLast]      = useState(null);
-
-    // Tab navigation
-    const [tab, setTab] = useState('orders');
-
-    // Chat state
-    const [chatMessages, setChatMessages] = useState([
-      { role:'bot', text:"Hey! I'm JARVIS. Ask me anything about your store — revenue, top products, pending orders, anything." }
-    ]);
-    const [chatInput, setChatInput]   = useState('');
-    const [chatLoading, setChatLoading] = useState(false);
-    const chatEndRef = React.useRef(null);
-    React.useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior:'smooth' }); }, [chatMessages, chatLoading]);
-
-    const sendChat = async (text) => {
-      const msg = (text || chatInput).trim();
-      if (!msg || chatLoading) return;
-      setChatInput('');
-      const updated = [...chatMessages, { role:'user', text: msg }];
-      setChatMessages(updated);
-      setChatLoading(true);
-      try {
-        const res = await fetch(`${PROXY_URL}/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: updated,
-            context: {
-              totalOrders: stats.total,
-              revenue: stats.revenue,
-              avgOrder: stats.avg,
-              fulfilled: stats.fulfilled,
-              pending: stats.pending,
-              cancelled: stats.cancelled,
-              recentOrders: orders.slice(0, 8).map(o => ({
-                id: o.id, customer: o.customer, product: o.product,
-                amount: o.amount, status: o.status, date: o.date,
-              })),
-            },
-          }),
-        });
-        const data = await res.json();
-        setChatMessages(m => [...m, { role:'bot', text: data.reply || data.error || 'No response.' }]);
-      } catch {
-        setChatMessages(m => [...m, { role:'bot', text: "Couldn't reach the server. Make sure it's running." }]);
-      }
-      setChatLoading(false);
-    };
-
-    const handleChatKey = e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
-    };
-
-    // Date range — default "All time" overrides Shopify's 60-day window
-    const [datePreset, setDatePreset] = useState('all');
-    const [customFrom, setCustomFrom] = useState('');
-    const [customTo,   setCustomTo]   = useState('');
-    const [dateRange,  setDateRange]  = useState({ min: '2000-01-01T00:00:00Z', max: null });
-
-    /* fetch */
-    const fetchOrders = useCallback(async (isRefresh=false) => {
-      isRefresh ? setRefreshing(true) : setLoading(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams();
-        if (dateRange.min) params.set('created_at_min', dateRange.min);
-        if (dateRange.max) params.set('created_at_max', dateRange.max);
-        const qs = params.toString();
-        const res = await fetch(`${PROXY_URL}/orders${qs ? '?' + qs : ''}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = await res.json();
-        setOrders(body.orders || body || []);
-        setLast(new Date());
-      } catch(e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    }, [dateRange]);
-
-    useEffect(() => { fetchOrders(); }, [fetchOrders]);
-
-    /* stats */
-    const stats = useMemo(() => {
-      const total    = orders.length;
-      const revenue  = orders.reduce((s,o) => s + (parseFloat(o.amount)||0), 0);
-      const fulfilled= orders.filter(o => o.status==='fulfilled').length;
-      const pending  = orders.filter(o => ['unfulfilled','pending'].includes(o.status)).length;
-      const cancelled= orders.filter(o => o.status==='cancelled').length;
-      const avg      = total ? revenue/total : 0;
-      return { total, revenue, avg, fulfilled, pending, cancelled };
-    }, [orders]);
-
-    /* filter + sort */
-    const filtered = useMemo(() => {
-      let list = [...orders];
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        list = list.filter(o =>
-          String(o.id).toLowerCase().includes(q) ||
-          (o.customer||'').toLowerCase().includes(q) ||
-          (o.product||'').toLowerCase().includes(q) ||
-          (o.email||'').toLowerCase().includes(q)
-        );
-      }
-      if (statusFilter !== 'all') {
-        list = list.filter(o =>
-          statusFilter === 'pending'
-            ? ['unfulfilled','pending'].includes(o.status)
-            : o.status === statusFilter
-        );
-      }
-      list.sort((a,b) => {
-        if (sortBy==='amount') {
-          const va=parseFloat(a.amount)||0, vb=parseFloat(b.amount)||0;
-          return sortDir==='desc' ? vb-va : va-vb;
-        }
-        if (sortBy==='customer') {
-          const va=(a.customer||'').toLowerCase(), vb=(b.customer||'').toLowerCase();
-          return sortDir==='asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-        }
-        /* default: date */
-        const va=new Date(a.date||0).getTime(), vb=new Date(b.date||0).getTime();
-        return sortDir==='desc' ? vb-va : va-vb;
-      });
-      return list;
-    }, [orders, search, statusFilter, sortBy, sortDir]);
-
-    const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-    const curPage    = Math.min(page, totalPages);
-    const paginated  = filtered.slice((curPage-1)*PER_PAGE, curPage*PER_PAGE);
-
-    const handleSort = col => {
-      if (sortBy===col) setSortDir(d => d==='desc'?'asc':'desc');
-      else { setSortBy(col); setSortDir('desc'); }
-      setPage(1);
-    };
-    const handleSearch = e => { setSearch(e.target.value); setPage(1); };
-    const handleFilter = f  => { setFilter(f); setPage(1); };
-
-    const subDays = days => { const d = new Date(); d.setDate(d.getDate() - days); return d.toISOString(); };
-    const PRESETS = {
-      '7d':  { min: () => subDays(7),   max: null, label: 'Last 7 days' },
-      '30d': { min: () => subDays(30),  max: null, label: 'Last 30 days' },
-      '90d': { min: () => subDays(90),  max: null, label: 'Last 90 days' },
-      '1y':  { min: () => subDays(365), max: null, label: 'Last year' },
-      'all': { min: () => '2000-01-01T00:00:00Z', max: null, label: 'All time' },
-    };
-
-    const handlePreset = p => {
-      setDatePreset(p);
-      if (p === 'custom') return;
-      const preset = PRESETS[p];
-      setDateRange({ min: preset.min(), max: preset.max });
-      setPage(1);
-    };
-
-    const handleCustomApply = () => {
-      if (!customFrom && !customTo) return;
-      setDatePreset('custom');
-      setDateRange({
-        min: customFrom ? new Date(customFrom + 'T00:00:00Z').toISOString() : null,
-        max: customTo   ? new Date(customTo   + 'T23:59:59Z').toISOString() : null,
-      });
-      setPage(1);
-    };
-
-    const dateRangeLabel = () => {
-      if (datePreset !== 'custom') return PRESETS[datePreset]?.label ?? '';
-      const parts = [];
-      if (customFrom) parts.push(`From ${customFrom}`);
-      if (customTo)   parts.push(`To ${customTo}`);
-      return parts.join(' · ') || 'Custom';
-    };
-
-    /* pagination buttons */
-    const pageNums = () => {
-      if (totalPages<=7) return Array.from({length:totalPages},(_,i)=>i+1);
-      const p=[];
-      if (curPage<=4)            p.push(1,2,3,4,5,'…',totalPages);
-      else if (curPage>=totalPages-3) p.push(1,'…',totalPages-4,totalPages-3,totalPages-2,totalPages-1,totalPages);
-      else p.push(1,'…',curPage-1,curPage,curPage+1,'…',totalPages);
-      return p;
-    };
-
-    const SortTH = ({col,children,style}) => (
-      <th className={`sortable ${sortBy===col?'sorted':''}`} onClick={()=>handleSort(col)} style={style}>
-        {children}
-        {sortBy===col && <span className="sort-arrow">{sortDir==='desc'?'▼':'▲'}</span>}
-      </th>
-    );
-
-    const pct = (n) => stats.total ? `${Math.round(n/stats.total*100)}% of total` : '—';
-
-    return (
-      <div>
-        {/* ── Header ── */}
-        <header className="header">
-          <div className="header-brand">
-            <div className="logo">J</div>
-            <div>
-              <div className="brand-name">JARVIS</div>
-              <div className="brand-sub">Shopify Orders</div>
-            </div>
-          </div>
-          <div className="nav-tabs">
-            {[['orders','Orders'],['chat','Ask JARVIS']].map(([k,l]) => (
-              <button key={k} className={`nav-tab ${tab===k?'active':''}`} onClick={()=>setTab(k)}>{l}</button>
-            ))}
-          </div>
-
-          <div className="header-right">
-            {lastRefresh && (
-              <span className="live-badge">
-                <span className="pulse-dot"/>
-                {fmtTime(lastRefresh)}
-              </span>
-            )}
-            <button
-              className={`btn btn-ghost ${refreshing?'btn-spin':''}`}
-              onClick={() => fetchOrders(true)}
-              disabled={loading||refreshing}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-              </svg>
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </button>
-            <a className="btn btn-green" href={`${PROXY_URL}/orders/export`} target="_blank" rel="noreferrer">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              Export CSV
-            </a>
-          </div>
-        </header>
-
-        <div className="main">
-          {/* ── Error ── */}
-          {error && (
-            <div className="error-banner">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              <span>Failed to fetch: <strong>{error}</strong> — is the proxy running at {PROXY_URL}?</span>
-              <button className="btn btn-ghost" onClick={() => fetchOrders()}>Retry</button>
-            </div>
-          )}
-
-          {/* ── Stats ── */}
-          <div className="stats-grid">
-            <StatCard color="cyan"   icon="◈" label="Total Orders"  value={stats.total.toLocaleString()}         sub={lastRefresh ? `as of ${fmtDate(lastRefresh)}` : 'loading…'} />
-            <StatCard color="green"  icon="$" label="Total Revenue" value={fmtCur(stats.revenue)}                sub="all orders" />
-            <StatCard color="purple" icon="~" label="Avg Order"     value={fmtCur(stats.avg)}                   sub="per order" />
-            <StatCard color="green"  icon="✓" label="Fulfilled"     value={stats.fulfilled.toLocaleString()}     sub={pct(stats.fulfilled)} />
-            <StatCard color="yellow" icon="○" label="Pending"       value={stats.pending.toLocaleString()}       sub={pct(stats.pending)} />
-            <StatCard color="red"    icon="✕" label="Cancelled"     value={stats.cancelled.toLocaleString()}     sub={pct(stats.cancelled)} />
-          </div>
-
-          {/* ── Chat panel ── */}
-          {tab === 'chat' && (
-            <div className="chat-panel">
-              <div className="chat-header">
-                <div className="logo" style={{width:28,height:28,fontSize:12}}>J</div>
-                <span className="chat-title">JARVIS</span>
-                <span className="chat-sub">Powered by Claude · Your store data is live</span>
-              </div>
-
-              <div className="chat-messages">
-                {chatMessages.map((m, i) => (
-                  <div key={i} className={`msg ${m.role}`}>
-                    <div className="msg-avatar">{m.role==='bot' ? 'J' : 'U'}</div>
-                    <div className="msg-bubble">{m.text}</div>
-                  </div>
-                ))}
-                {chatLoading && (
-                  <div className="msg bot">
-                    <div className="msg-avatar">J</div>
-                    <div className="msg-bubble">
-                      <span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/>
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef}/>
-              </div>
-
-              {chatMessages.length <= 1 && (
-                <div className="chat-suggestions">
-                  {[
-                    "What's my total revenue?",
-                    "How many orders are pending?",
-                    "What's my best selling product?",
-                    "Show recent cancelled orders",
-                  ].map(s => (
-                    <button key={s} className="suggestion" onClick={() => sendChat(s)}>{s}</button>
-                  ))}
-                </div>
-              )}
-
-              <div className="chat-input-row">
-                <textarea
-                  className="chat-textarea"
-                  rows={1}
-                  placeholder="Ask about your orders, revenue, customers…"
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={handleChatKey}
-                />
-                <button className="chat-send" onClick={() => sendChat()} disabled={!chatInput.trim() || chatLoading}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                  </svg>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {tab === 'orders' && <>
-
-          {/* ── Filters ── */}
-          <div className="filters-bar">
-            <div className="search-wrap">
-              <span className="search-ico">⌕</span>
-              <input
-                className="search-input"
-                placeholder="Search order ID, customer, product…"
-                value={search}
-                onChange={handleSearch}
-              />
-              {search && <button className="search-clear" onClick={()=>{setSearch('');setPage(1);}}>✕</button>}
-            </div>
-
-            <div className="filter-tabs">
-              {[
-                {k:'all',       l:'All'},
-                {k:'fulfilled', l:'Fulfilled'},
-                {k:'pending',   l:'Pending'},
-                {k:'partial',   l:'Partial'},
-                {k:'cancelled', l:'Cancelled'},
-                {k:'refunded',  l:'Refunded'},
-              ].map(({k,l}) => (
-                <button key={k} className={`ftab ${statusFilter===k?'active':''}`} onClick={()=>handleFilter(k)}>{l}</button>
-              ))}
-            </div>
-
-            <select
-              className="sort-select"
-              value={sortBy}
-              onChange={e=>{setSortBy(e.target.value);setPage(1);}}
-            >
-              <option value="date">Date</option>
-              <option value="amount">Amount</option>
-              <option value="customer">Customer</option>
-            </select>
-
-            <span className="results-info">
-              {filtered.length.toLocaleString()} result{filtered.length!==1?'s':''}
-              {(search||statusFilter!=='all') ? ` / ${orders.length.toLocaleString()} total` : ''}
-            </span>
-          </div>
-
-          {/* ── Date range bar ── */}
-          <div className="date-bar">
-            <span className="date-bar-label">Range</span>
-            <div className="date-presets">
-              {Object.entries(PRESETS).map(([k, v]) => (
-                <button key={k} className={`dpbtn ${datePreset===k?'active':''}`} onClick={()=>handlePreset(k)}>
-                  {k==='all' ? 'All Time' : k==='1y' ? '1 Year' : k.toUpperCase()}
-                </button>
-              ))}
-              <button className={`dpbtn ${datePreset==='custom'?'active':''}`} onClick={()=>setDatePreset('custom')}>
-                Custom
-              </button>
-            </div>
-
-            {datePreset === 'custom' && (
-              <>
-                <div className="date-divider"/>
-                <div className="custom-dates">
-                  <input
-                    type="date" className="date-input"
-                    value={customFrom} onChange={e=>setCustomFrom(e.target.value)}
-                  />
-                  <span className="date-to-label">→</span>
-                  <input
-                    type="date" className="date-input"
-                    value={customTo} onChange={e=>setCustomTo(e.target.value)}
-                  />
-                  <button className="btn btn-cyan" style={{padding:'6px 12px',fontSize:10}} onClick={handleCustomApply}>
-                    Apply
-                  </button>
-                </div>
-              </>
-            )}
-
-            <span className="date-range-display">{dateRangeLabel()}</span>
-          </div>
-
-          {/* ── Table ── */}
-          <div className="table-card">
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{width:36}}>#</th>
-                    <SortTH col="id">Order</SortTH>
-                    <SortTH col="customer">Customer</SortTH>
-                    <th>Items</th>
-                    <th>Product</th>
-                    <SortTH col="amount">Amount</SortTH>
-                    <th>Status</th>
-                    <SortTH col="date">Date</SortTH>
-                    <th style={{width:28}}/>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading
-                    ? Array.from({length:10}).map((_,i)=><SkeletonRow key={i}/>)
-                    : paginated.length===0
-                      ? (
-                        <tr><td colSpan={9}>
-                          <div className="empty">
-                            <div className="empty-icon">📦</div>
-                            <div className="empty-title">
-                              {search||statusFilter!=='all' ? 'No orders match your filters.' : 'No orders found.'}
-                            </div>
-                            <div className="empty-sub">
-                              {search||statusFilter!=='all'
-                                ? 'Try clearing the search or changing the status filter.'
-                                : 'Check that your Shopify credentials are set in .env and the server is running.'}
-                            </div>
-                          </div>
-                        </td></tr>
-                      )
-                      : paginated.map((o,i) => {
-                        const isOpen = openId===o.id;
-                        const rowN   = (curPage-1)*PER_PAGE + i + 1;
-                        return (
-                          <React.Fragment key={o.id}>
-                            <tr className={isOpen?'is-open':''} onClick={()=>setOpenId(isOpen?null:o.id)}>
-                              <td className="td-num">{rowN}</td>
-                              <td className="td-id">#{o.id}</td>
-                              <td>
-                                <div className="customer-cell">
-                                  <div className="avatar">{initials(o.customer)}</div>
-                                  <span className="customer-name">{o.customer||'Guest'}</span>
-                                </div>
-                              </td>
-                              <td><span className="items-chip">{o.items||1} item{(o.items||1)!==1?'s':''}</span></td>
-                              <td><div className="product-cell">{o.product||'—'}</div></td>
-                              <td className="td-amt">{fmtCur(parseFloat(o.amount)||0, o.currency||'USD')}</td>
-                              <td><Badge status={o.status}/></td>
-                              <td className="td-date">{fmtDate(o.date)}</td>
-                              <td className="td-expand"><span className={`chevron ${isOpen?'open':''}`}>▶</span></td>
-                            </tr>
-
-                            {isOpen && (
-                              <tr className="detail-row">
-                                <td colSpan={9}>
-                                  <div className="detail-inner">
-                                    <div>
-                                      <div className="dg-label">Order ID</div>
-                                      <div className="dg-val" style={{color:'var(--cyan)'}}>#{o.id}</div>
-                                    </div>
-                                    <div>
-                                      <div className="dg-label">Customer</div>
-                                      <div className="dg-val">{o.customer||'Guest'}</div>
-                                    </div>
-                                    {o.email && <div>
-                                      <div className="dg-label">Email</div>
-                                      <div className="dg-val" style={{color:'var(--text-dim)'}}>{o.email}</div>
-                                    </div>}
-                                    <div>
-                                      <div className="dg-label">Amount</div>
-                                      <div className="dg-val" style={{color:'var(--green)'}}>{fmtCur(parseFloat(o.amount)||0, o.currency||'USD')}</div>
-                                    </div>
-                                    <div>
-                                      <div className="dg-label">Status</div>
-                                      <div className="dg-val"><Badge status={o.status}/></div>
-                                    </div>
-                                    <div>
-                                      <div className="dg-label">Items</div>
-                                      <div className="dg-val">{o.items||1} item{(o.items||1)!==1?'s':''}</div>
-                                    </div>
-                                    {o.product && <div>
-                                      <div className="dg-label">Product</div>
-                                      <div className="dg-val" style={{color:'var(--text-dim)'}}>{o.product}</div>
-                                    </div>}
-                                    <div>
-                                      <div className="dg-label">Order Date</div>
-                                      <div className="dg-val">{fmtDate(o.date)}</div>
-                                    </div>
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })
-                  }
-                </tbody>
-              </table>
-            </div>
-
-            {/* ── Pagination ── */}
-            {!loading && filtered.length > PER_PAGE && (
-              <div className="pagination">
-                <span className="page-info">
-                  Showing {(curPage-1)*PER_PAGE+1}–{Math.min(curPage*PER_PAGE,filtered.length)} of {filtered.length.toLocaleString()}
-                </span>
-                <div className="page-btns">
-                  <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={curPage===1}>‹</button>
-                  {pageNums().map((p,i) =>
-                    p==='…'
-                      ? <span key={`d${i}`} className="pdots">…</span>
-                      : <button key={p} className={`pbtn ${curPage===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
-                  )}
-                  <button className="pbtn" onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={curPage===totalPages}>›</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          </>}  {/* end tab === 'orders' */}
-
+    <div class="cards">
+      <a class="portal-card vendor" href="vendor.html">
+        <div class="card-icon">🏪</div>
+        <div class="card-title">VENDOR PORTAL</div>
+        <div class="card-desc">
+          Manage your orders, track fulfillments,<br>view settlements and revenue.
         </div>
-      </div>
-    );
-  }
+        <button class="card-btn">LOGIN AS VENDOR →</button>
+      </a>
 
-  ReactDOM.createRoot(document.getElementById('root')).render(<Dashboard/>);
-</script>
+      <a class="portal-card admin" href="admin.html">
+        <div class="card-icon">⚡</div>
+        <div class="card-title">ADMIN PORTAL</div>
+        <div class="card-desc">
+          Full store control — orders, settlements,<br>JARVIS AI, vendor management.
+        </div>
+        <button class="card-btn">LOGIN AS ADMIN →</button>
+      </a>
+    </div>
+
+    <div class="footer">© CrosCrow · Powered by JARVIS</div>
+  </div>
 </body>
 </html>

@@ -1373,7 +1373,7 @@
           <div className="login-sub">Vendor Portal</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
           <label className="field-label">Vendor / Brand Name</label>
-          <input className="field-input" placeholder="e.g. SICOS" value={uname} onChange={e=>setUname(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
+          <input className="field-input" placeholder="Your Brand Name" value={uname} onChange={e=>setUname(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
           <label className="field-label">Password</label>
           <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
           <button className="login-btn" onClick={login} disabled={loginLoad||!uname||!pass}>{loginLoad?'Signing in…':'Sign In'}</button>
