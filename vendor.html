@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrosCrow — Vendor Portal</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #06100e;
+      --bg-card:   #0a1a17;
+      --bg-card2:  #0d2420;
+      --bg-hover:  #0f2e28;
+      --border:    #1a3d35;
+      --border-hi: #235c51;
+      --green:     #10b981;
+      --green-dim: #064e3b;
+      --green-glow:#05766050;
+      --teal:      #2dd4bf;
+      --red:       #f87171;
+      --red-bg:    #2d0a0a;
+      --yellow:    #fbbf24;
+      --yellow-bg: #422006;
+      --purple:    #a78bfa;
+      --purple-bg: #1e1b4b;
+      --orange:    #fb923c;
+      --orange-bg: #431407;
+      --text:      #e2e8f0;
+      --text-muted:#4b7a6e;
+      --text-dim:  #7db8ae;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Login ── */
+    .login-wrap {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at 50% 0%, #0d2e2610 0%, transparent 70%);
+    }
+    .login-box {
+      width: 380px; background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 36px; box-shadow: 0 0 60px var(--green-glow);
+    }
+    .login-logo {
+      width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 20px;
+      background: linear-gradient(135deg, var(--green), #059669);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800; color: #000;
+    }
+    .login-title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-align: center; color: var(--text); margin-bottom: 4px; }
+    .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 28px; }
+    .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
+    .field-input {
+      width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 7px;
+      padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+      outline: none; transition: border-color 0.15s; margin-bottom: 16px;
+    }
+    .field-input:focus { border-color: var(--green); }
+    .field-input::placeholder { color: var(--text-muted); }
+    .login-btn {
+      width: 100%; padding: 11px; border-radius: 7px; border: none; cursor: pointer;
+      background: var(--green); color: #000; font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px; font-weight: 700; letter-spacing: 2px; transition: background 0.15s;
+      margin-top: 4px;
+    }
+    .login-btn:hover:not(:disabled) { background: #34d399; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-error {
+      background: var(--red-bg); border: 1px solid #5a1a1a; border-radius: 7px;
+      padding: 10px 14px; font-size: 12px; color: var(--red); margin-bottom: 14px;
+    }
+    .login-hint { font-size: 10px; color: var(--text-muted); text-align: center; margin-top: 16px; }
+
+    /* ── App shell ── */
+    .app-shell { display: flex; min-height: 100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 220px; flex-shrink: 0; background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    }
+    .sidebar-brand {
+      padding: 20px 18px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .sidebar-logo {
+      width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--green), #059669);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 800; color: #000;
+    }
+    .sidebar-name { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
+    .sidebar-role { font-size: 9px; color: var(--green); letter-spacing: 1px; }
+
+    .sidebar-vendor {
+      padding: 12px 18px; border-bottom: 1px solid var(--border);
+      font-size: 10px; color: var(--text-muted);
+    }
+    .sidebar-vendor strong { display: block; font-size: 12px; color: var(--text); margin-top: 2px; letter-spacing: 1px; }
+
+    .nav { padding: 12px 10px; flex: 1; }
+    .nav-section { font-size: 9px; letter-spacing: 2px; color: var(--text-muted); padding: 8px 8px 4px; text-transform: uppercase; }
+    .nav-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 10px; border-radius: 7px; cursor: pointer;
+      font-size: 12px; color: var(--text-dim); font-weight: 500;
+      transition: all 0.15s; margin-bottom: 2px; border: none; background: none;
+      width: 100%; text-align: left; font-family: 'IBM Plex Mono', monospace;
+    }
+    .nav-item:hover  { background: var(--bg-hover); color: var(--text); }
+    .nav-item.active { background: var(--green-dim); color: var(--green); }
+    .nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+
+    .sidebar-footer { padding: 14px 10px; border-top: 1px solid var(--border); }
+    .logout-btn {
+      width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px;
+    }
+    .logout-btn:hover { background: var(--red-bg); color: var(--red); border-color: #5a1a1a; }
+
+    /* ── Main content ── */
+    .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .topbar {
+      height: 54px; background: rgba(6,16,14,0.92); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .topbar-title { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
+    .topbar-right { display: flex; align-items: center; gap: 10px; }
+    .topbar-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; color: var(--text-muted); letter-spacing: 1px;
+    }
+    .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+
+    .page { padding: 20px 24px 40px; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
+      letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; text-decoration: none;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-green  { background: var(--green); color: #000; }
+    .btn-green:hover:not(:disabled)  { background: #34d399; }
+    .btn-ghost  { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled)  { background: var(--bg-card2); color: var(--text); }
+    .btn-danger { background: transparent; color: var(--red); border: 1px solid #5a1a1a; }
+    .btn-danger:hover:not(:disabled) { background: var(--red-bg); }
+    .btn-sm { padding: 5px 10px; font-size: 10px; }
+
+    /* ── Stats grid ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; margin-bottom: 20px; }
+    @media(max-width:1100px){ .stats-grid { grid-template-columns: repeat(3,1fr); } }
+    .stat-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px; position: relative; overflow: hidden; transition: border-color 0.15s;
+    }
+    .stat-card:hover { border-color: var(--border-hi); }
+    .stat-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:10px 10px 0 0; }
+    .sc-green::after  { background: var(--green); }
+    .sc-teal::after   { background: var(--teal); }
+    .sc-yellow::after { background: var(--yellow); }
+    .sc-red::after    { background: var(--red); }
+    .sc-purple::after { background: var(--purple); }
+    .stat-icon  { position:absolute; top:12px; right:12px; font-size:16px; opacity:0.2; }
+    .stat-label { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px; }
+    .stat-val   { font-size:22px; font-weight:700; line-height:1; margin-bottom:4px; }
+    .stat-sub   { font-size:10px; color:var(--text-muted); }
+    .sc-green  .stat-val { color: var(--green); }
+    .sc-teal   .stat-val { color: var(--teal); }
+    .sc-yellow .stat-val { color: var(--yellow); }
+    .sc-red    .stat-val { color: var(--red); }
+    .sc-purple .stat-val { color: var(--purple); }
+
+    /* ── Cards / tables ── */
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+      overflow: hidden; margin-bottom: 16px;
+    }
+    .card-header {
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg-card2);
+    }
+    .card-title { font-size: 12px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
+    .card-sub   { font-size: 10px; color: var(--text-muted); }
+
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: var(--bg-card2); border-bottom: 1px solid var(--border); }
+    th {
+      padding: 10px 16px; text-align: left; font-size: 10px;
+      letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted);
+      white-space: nowrap; user-select: none;
+    }
+    th.sort { cursor: pointer; }
+    th.sort:hover { color: var(--text-dim); }
+    th.sorted { color: var(--green); }
+    tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-hover); }
+    td { padding: 11px 16px; font-size: 12px; vertical-align: middle; }
+    .td-id     { color: var(--green); font-weight: 700; }
+    .td-amt    { color: var(--teal);  font-weight: 600; }
+    .td-muted  { color: var(--text-muted); font-size: 11px; }
+
+    /* ── Badge ── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 9px; border-radius: 20px;
+      font-size: 10px; font-weight: 700; letter-spacing: 1px; white-space: nowrap;
+    }
+    .bdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+    .b-fulfilled   { background: var(--green-dim); color: var(--green);  } .b-fulfilled  .bdot { background: var(--green);  }
+    .b-pending     { background: var(--yellow-bg); color: var(--yellow); } .b-pending    .bdot { background: var(--yellow); }
+    .b-cancelled   { background: var(--red-bg);    color: var(--red);    } .b-cancelled  .bdot { background: var(--red);    }
+    .b-partial     { background: var(--orange-bg); color: var(--orange); } .b-partial    .bdot { background: var(--orange); }
+    .b-refunded    { background: var(--purple-bg); color: var(--purple); } .b-refunded   .bdot { background: var(--purple); }
+
+    /* ── Filters bar ── */
+    .filters {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 11px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .search-wrap { position: relative; flex: 1; min-width: 180px; }
+    .search-ico  { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+    .search-input {
+      width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 12px 7px 30px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px; outline: none; transition: border-color 0.15s;
+    }
+    .search-input::placeholder { color: var(--text-muted); }
+    .search-input:focus { border-color: var(--green); }
+    .ftabs { display: flex; gap: 4px; }
+    .ftab {
+      padding: 6px 11px; border-radius: 5px; font-size: 10px; font-weight: 600;
+      cursor: pointer; border: 1px solid var(--border); background: transparent;
+      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
+      letter-spacing: 1px; transition: all 0.15s;
+    }
+    .ftab:hover  { background: var(--bg-card2); color: var(--text); }
+    .ftab.active { background: var(--green); color: #000; border-color: var(--green); }
+    .fselect {
+      background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 26px 7px 10px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; outline: none; cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b7a6e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 8px center;
+    }
+    .fselect:focus { border-color: var(--green); }
+    .fcount { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+    /* ── Skeleton ── */
+    .skel {
+      background: linear-gradient(90deg, var(--bg-card2) 25%, var(--bg-hover) 50%, var(--bg-card2) 75%);
+      background-size: 200% 100%; border-radius: 4px;
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    @keyframes shimmer { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+
+    /* ── Empty ── */
+    .empty { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+    .empty-icon  { font-size: 42px; opacity: 0.35; margin-bottom: 12px; }
+    .empty-title { font-size: 14px; color: var(--text-dim); margin-bottom: 6px; }
+    .empty-sub   { font-size: 11px; }
+
+    /* ── Pagination ── */
+    .pager {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-card2);
+    }
+    .pager-info { font-size: 11px; color: var(--text-muted); }
+    .pbtns { display: flex; gap: 3px; }
+    .pbtn {
+      min-width: 30px; height: 30px; border-radius: 5px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s; padding: 0 6px;
+    }
+    .pbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+    .pbtn.cur { background: var(--green); color: #000; border-color: var(--green); font-weight: 700; }
+    .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* ── Modal overlay ── */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 500;
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 24px 16px; overflow-y: auto;
+    }
+    .modal {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+      width: 100%; max-width: 720px; box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+    }
+    .modal-header {
+      padding: 18px 22px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg-card2); border-radius: 12px 12px 0 0;
+    }
+    .modal-title { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .modal-close {
+      background: none; border: none; color: var(--text-muted); font-size: 18px;
+      cursor: pointer; padding: 4px; line-height: 1;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 22px; }
+    .modal-footer {
+      padding: 16px 22px; border-top: 1px solid var(--border);
+      display: flex; gap: 8px; justify-content: flex-end;
+    }
+
+    /* ── Detail sections ── */
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    @media(max-width:600px){ .detail-grid { grid-template-columns: 1fr; } }
+    .detail-box {
+      background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+    }
+    .detail-box-title { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .detail-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .detail-row:last-child { margin-bottom: 0; }
+    .dr-label { font-size: 11px; color: var(--text-muted); }
+    .dr-val   { font-size: 12px; color: var(--text); text-align: right; }
+
+    /* ── Items table inside modal ── */
+    .items-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+    .items-table th { padding: 8px 12px; font-size: 10px; letter-spacing: 1px; color: var(--text-muted); text-transform: uppercase; background: var(--bg-card2); border-bottom: 1px solid var(--border); text-align: left; }
+    .items-table td { padding: 10px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+    .items-table tr:last-child td { border-bottom: none; }
+    .item-done { opacity: 0.45; }
+
+    /* ── Fulfill form ── */
+    .fulfill-section { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .fulfill-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--green); margin-bottom: 14px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media(max-width:500px){ .form-grid { grid-template-columns: 1fr; } }
+    .form-full { grid-column: 1 / -1; }
+    .form-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 5px; }
+    .form-input, .form-select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 12px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px; outline: none; transition: border-color 0.15s;
+    }
+    .form-select { appearance: none; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b7a6e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
+    }
+    .form-input:focus, .form-select:focus { border-color: var(--green); }
+    .form-input::placeholder { color: var(--text-muted); }
+    .tracking-preview { font-size: 11px; color: var(--teal); margin-top: 5px; word-break: break-all; min-height: 14px; }
+
+    /* ── Tags input ── */
+    .tags-wrap { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+    .tag-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--bg-card2); border: 1px solid var(--border); border-radius: 20px;
+      padding: 3px 10px; font-size: 11px; color: var(--text-dim);
+    }
+    .tag-remove { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
+    .tag-remove:hover { color: var(--red); }
+    .tag-add-input {
+      background: none; border: 1px dashed var(--border); border-radius: 20px;
+      padding: 3px 10px; font-size: 11px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
+      outline: none; width: 120px;
+    }
+    .tag-add-input:focus { border-color: var(--green); }
+    .tag-add-input::placeholder { color: var(--text-muted); }
+
+    /* ── Fulfillment history ── */
+    .fulfill-history { margin-top: 16px; }
+    .fh-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    .fh-item:last-child { border-bottom: none; }
+    .fh-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; margin-top: 4px; }
+    .fh-courier { font-size: 12px; font-weight: 600; color: var(--text); }
+    .fh-awb { font-size: 11px; color: var(--teal); }
+    .fh-link { font-size: 10px; color: var(--green); text-decoration: none; }
+    .fh-link:hover { text-decoration: underline; }
+    .fh-date { font-size: 10px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+
+    /* ── Products ── */
+    .product-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px; display: flex; gap: 12px; margin-bottom: 10px; transition: border-color 0.15s;
+    }
+    .product-card:hover { border-color: var(--border-hi); }
+    .product-img {
+      width: 60px; height: 60px; border-radius: 6px; object-fit: cover;
+      background: var(--bg-card2); flex-shrink: 0; border: 1px solid var(--border);
+    }
+    .product-img-placeholder {
+      width: 60px; height: 60px; border-radius: 6px; background: var(--bg-card2);
+      border: 1px solid var(--border); flex-shrink: 0; display: flex; align-items: center;
+      justify-content: center; font-size: 22px; color: var(--border-hi);
+    }
+    .product-info { flex: 1; min-width: 0; }
+    .product-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .product-type  { font-size: 10px; color: var(--text-muted); margin-bottom: 8px; }
+    .variant-row   { display: flex; gap: 16px; font-size: 11px; color: var(--text-dim); flex-wrap: wrap; }
+    .variant-row span { white-space: nowrap; }
+    .inv-low  { color: var(--red);    }
+    .inv-ok   { color: var(--green);  }
+    .inv-zero { color: var(--yellow); }
+    .p-status { padding: 2px 8px; border-radius: 20px; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
+    .p-active   { background: var(--green-dim); color: var(--green); }
+    .p-draft    { background: var(--yellow-bg); color: var(--yellow); }
+    .p-archived { background: var(--bg-card2); color: var(--text-muted); }
+
+    /* ── Settlement / wallet ── */
+    .settle-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 10px; transition: border-color 0.15s; }
+    .settle-card:hover { border-color: var(--border-hi); }
+    .settle-row  { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .settle-row:last-child { margin-bottom: 0; }
+    .wallet-bal  { font-size: 32px; font-weight: 800; color: var(--green); margin: 16px 0 4px; }
+    .tx-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .tx-item:last-child { border-bottom: none; }
+    .tx-dot-cr { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .tx-dot-db { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+    .tx-desc { flex: 1; color: var(--text-dim); }
+    .tx-amt  { font-weight: 700; }
+
+    /* ── Notify toggle ── */
+    .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; cursor: pointer; font-size: 12px; color: var(--text-dim); }
+    .checkbox-row input { accent-color: var(--green); width: 14px; height: 14px; cursor: pointer; }
+
+    /* ── Alert ── */
+    .alert { border-radius: 7px; padding: 10px 14px; font-size: 12px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .alert-success { background: var(--green-dim); color: var(--green); border: 1px solid #1a4731; }
+    .alert-error   { background: var(--red-bg); color: var(--red); border: 1px solid #5a1a1a; }
+    .spin { animation: sp 0.8s linear infinite; display: inline-block; }
+    @keyframes sp { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect, useCallback, useMemo, useRef } = React;
+  const API = 'http://localhost:3001';
+  const PER  = 20;
+
+  /* ── helpers ── */
+  const fmtCur = (v, c='INR') => { try { return new Intl.NumberFormat('en-IN',{style:'currency',currency:c,maximumFractionDigits:0}).format(v||0); } catch { return `₹${(v||0).toFixed(0)}`; } };
+  const fmtDate = s => { const d=new Date(s); return isNaN(d)?s:d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+  const ls = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }, del:(k)=>localStorage.removeItem(k) };
+
+  /* ── Couriers ── */
+  const COURIERS = [
+    { name:'Delhivery',      url: awb => `https://www.delhivery.com/track/package/${awb}` },
+    { name:'BlueDart',       url: awb => `https://www.bluedart.com/tracking?trackNo=${awb}` },
+    { name:'DTDC',           url: awb => `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}` },
+    { name:'Ecom Express',   url: awb => `https://ecomexpress.in/tracking/?awb_field=${awb}` },
+    { name:'XpressBees',     url: awb => `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}` },
+    { name:'Shadowfax',      url: awb => `https://track.shadowfax.in/?awb=${awb}` },
+    { name:'Ekart',          url: awb => `https://ekartlogistics.com/track?trackingId=${awb}` },
+    { name:'Shiprocket',     url: awb => `https://shiprocket.co/tracking/${awb}` },
+    { name:'Amazon Logistics', url: awb => `https://track.amazon.in/tracking/${awb}` },
+    { name:'FedEx',          url: awb => `https://www.fedex.com/fedextrack/?trknbr=${awb}` },
+    { name:'Other',          url: awb => '' },
+  ];
+
+  /* ── Badge ── */
+  const SLABEL = { fulfilled:'FULFILLED', pending:'PENDING', unfulfilled:'PENDING', partial:'PARTIAL', cancelled:'CANCELLED', refunded:'REFUNDED' };
+  function Badge({ status='pending' }) {
+    const s = SLABEL[status] ? status : 'pending';
+    return <span className={`badge b-${s}`}><span className="bdot"/>{SLABEL[s]||status.toUpperCase()}</span>;
+  }
+
+  /* ── StatCard ── */
+  function StatCard({ color, icon, label, value, sub }) {
+    return (
+      <div className={`stat-card sc-${color}`}>
+        <span className="stat-icon">{icon}</span>
+        <div className="stat-label">{label}</div>
+        <div className="stat-val">{value}</div>
+        {sub && <div className="stat-sub">{sub}</div>}
+      </div>
+    );
+  }
+
+  /* ── Skeleton rows ── */
+  function SkelRow({ cols=7 }) {
+    return <tr>{Array.from({length:cols}).map((_,i)=><td key={i} style={{padding:'12px 16px'}}><div className="skel" style={{height:11,width:[40,70,120,60,80,70,60][i]||60}}/></td>)}</tr>;
+  }
+
+  /* ══════════════════════════════════
+     ORDER DETAIL MODAL
+  ══════════════════════════════════ */
+  function OrderModal({ order, token, onClose, onUpdated }) {
+    const [tags,      setTags]      = useState((order.tags||'').split(',').map(t=>t.trim()).filter(Boolean));
+    const [tagInput,  setTagInput]  = useState('');
+    const [courier,   setCourier]   = useState('Delhivery');
+    const [awb,       setAwb]       = useState('');
+    const [trackUrl,  setTrackUrl]  = useState('');
+    const [notify,    setNotify]    = useState(true);
+    const [saving,    setSaving]    = useState(false);
+    const [fulfilling,setFulfilling]= useState(false);
+    const [msg,       setMsg]       = useState(null); // {type, text}
+
+    const courierObj  = COURIERS.find(c=>c.name===courier) || COURIERS[0];
+    const previewUrl  = awb ? courierObj.url(awb) : '';
+
+    useEffect(() => { if (awb) setTrackUrl(previewUrl); }, [awb, courier]);
+
+    const addTag = () => {
+      const t = tagInput.trim();
+      if (t && !tags.includes(t)) setTags(p=>[...p,t]);
+      setTagInput('');
+    };
+    const removeTag = t => setTags(p=>p.filter(x=>x!==t));
+
+    const saveTags = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/tag`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ tags: tags.join(', ') }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:'Tags saved.' });
+        onUpdated();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(false);
+    };
+
+    const fulfill = async () => {
+      if (!awb.trim()) { setMsg({ type:'error', text:'AWB number is required.' }); return; }
+      setFulfilling(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/fulfill`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ courier, awb: awb.trim(), trackingUrl: trackUrl, notifyCustomer: notify }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:'Order fulfilled successfully! Customer notified.' });
+        setAwb(''); setTrackUrl('');
+        onUpdated();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setFulfilling(false);
+    };
+
+    const alreadyFulfilled = order.status === 'fulfilled';
+
+    return (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal">
+          <div className="modal-header">
+            <div>
+              <div className="modal-title">Order {order.id}</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{fmtDate(order.date)} · {order.customer}</div>
+            </div>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+
+          <div className="modal-body">
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+            {/* Order + Shipping info */}
+            <div className="detail-grid">
+              <div className="detail-box">
+                <div className="detail-box-title">Order Info</div>
+                <div className="detail-row"><span className="dr-label">Order ID</span>   <span className="dr-val" style={{color:'var(--green)'}}>{order.id}</span></div>
+                <div className="detail-row"><span className="dr-label">Date</span>        <span className="dr-val">{fmtDate(order.date)}</span></div>
+                <div className="detail-row"><span className="dr-label">Status</span>      <span className="dr-val"><Badge status={order.status}/></span></div>
+                <div className="detail-row"><span className="dr-label">Payment</span>     <span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
+                <div className="detail-row"><span className="dr-label">Your Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
+              </div>
+
+              <div className="detail-box">
+                <div className="detail-box-title">Ship To</div>
+                {order.shippingAddress ? (
+                  <>
+                    <div className="detail-row"><span className="dr-label">Name</span>   <span className="dr-val">{order.shippingAddress.name}</span></div>
+                    <div className="detail-row"><span className="dr-label">Address</span><span className="dr-val" style={{maxWidth:160,textAlign:'right'}}>{order.shippingAddress.line1}{order.shippingAddress.line2 ? ', '+order.shippingAddress.line2 : ''}</span></div>
+                    <div className="detail-row"><span className="dr-label">City</span>   <span className="dr-val">{order.shippingAddress.city}, {order.shippingAddress.state} {order.shippingAddress.zip}</span></div>
+                    <div className="detail-row"><span className="dr-label">Phone</span>  <span className="dr-val">{order.shippingAddress.phone || order.phone || '—'}</span></div>
+                    <div className="detail-row"><span className="dr-label">Email</span>  <span className="dr-val" style={{fontSize:10}}>{order.email || '—'}</span></div>
+                  </>
+                ) : <div style={{color:'var(--text-muted)',fontSize:12}}>No shipping address</div>}
+              </div>
+            </div>
+
+            {/* Items */}
+            <div style={{marginBottom:18}}>
+              <div className="detail-box-title" style={{marginBottom:8}}>Your Items in this Order</div>
+              <table className="items-table">
+                <thead><tr><th>Product</th><th>SKU</th><th>Variant</th><th style={{textAlign:'right'}}>Qty</th><th style={{textAlign:'right'}}>Price</th><th>Status</th></tr></thead>
+                <tbody>
+                  {order.myItems.map(item => (
+                    <tr key={item.id} className={item.fulfilled?'item-done':''}>
+                      <td style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.title}</td>
+                      <td style={{color:'var(--text-muted)',fontSize:11}}>{item.sku||'—'}</td>
+                      <td style={{color:'var(--text-muted)',fontSize:11}}>{item.variant||'—'}</td>
+                      <td style={{textAlign:'right'}}>{item.quantity}</td>
+                      <td style={{textAlign:'right',color:'var(--teal)'}}>{fmtCur(item.price, order.currency)}</td>
+                      <td>{item.fulfilled ? <span style={{color:'var(--green)',fontSize:10}}>✓ Done</span> : <span style={{color:'var(--yellow)',fontSize:10}}>Pending</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Tags */}
+            <div style={{marginBottom:18}}>
+              <div className="detail-box-title" style={{marginBottom:8}}>Status Tags</div>
+              <div className="tags-wrap">
+                {tags.map(t => (
+                  <span key={t} className="tag-chip">{t}<button className="tag-remove" onClick={()=>removeTag(t)}>✕</button></span>
+                ))}
+                <input
+                  className="tag-add-input" placeholder="+ Add tag"
+                  value={tagInput} onChange={e=>setTagInput(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==='Enter'||e.key===','){e.preventDefault();addTag();} }}
+                />
+              </div>
+              <div style={{marginTop:10}}><button className="btn btn-ghost btn-sm" onClick={saveTags} disabled={saving}>{saving?'Saving…':'Save Tags'}</button></div>
+            </div>
+
+            {/* Fulfillment history */}
+            {order.fulfillments.length > 0 && (
+              <div style={{marginBottom:18}}>
+                <div className="detail-box-title" style={{marginBottom:8}}>Fulfillment History</div>
+                <div className="fulfill-history">
+                  {order.fulfillments.map((f,i) => (
+                    <div key={i} className="fh-item">
+                      <div className="fh-dot"/>
+                      <div style={{flex:1}}>
+                        <div className="fh-courier">{f.courier||'Unknown courier'}</div>
+                        <div className="fh-awb">AWB: {f.awb||'—'}</div>
+                        {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="fh-link">Track shipment →</a>}
+                      </div>
+                      <div className="fh-date">{fmtDate(f.date)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Fulfill form */}
+            {!alreadyFulfilled && (
+              <div className="fulfill-section">
+                <div className="fulfill-title">⬡ Fulfill This Order</div>
+                <div className="form-grid">
+                  <div>
+                    <label className="form-label">Courier Partner</label>
+                    <select className="form-select" value={courier} onChange={e=>setCourier(e.target.value)}>
+                      {COURIERS.map(c=><option key={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">AWB / Tracking Number</label>
+                    <input className="form-input" placeholder="Enter AWB number" value={awb} onChange={e=>setAwb(e.target.value)}/>
+                  </div>
+                  <div className="form-full">
+                    <label className="form-label">Tracking URL</label>
+                    <input className="form-input" placeholder="Auto-filled or enter custom URL" value={trackUrl} onChange={e=>setTrackUrl(e.target.value)}/>
+                    {previewUrl && <div className="tracking-preview">→ {previewUrl}</div>}
+                  </div>
+                </div>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={notify} onChange={e=>setNotify(e.target.checked)}/>
+                  Notify customer by email with tracking info
+                </label>
+              </div>
+            )}
+            {alreadyFulfilled && (
+              <div className="alert alert-success" style={{margin:0}}>✓ This order has been fully fulfilled.</div>
+            )}
+          </div>
+
+          {!alreadyFulfilled && (
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn btn-green" onClick={fulfill} disabled={fulfilling||!awb.trim()}>
+                {fulfilling ? <><span className="spin">↻</span> Fulfilling…</> : '⬡ Mark as Fulfilled'}
+              </button>
+            </div>
+          )}
+          {alreadyFulfilled && (
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={onClose}>Close</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     DASHBOARD VIEW
+  ══════════════════════════════════ */
+  function Dashboard({ stats, orders, loading, onOpenOrder }) {
+    const recent = orders.slice(0,8);
+    return (
+      <div className="page">
+        <div className="stats-grid">
+          <StatCard color="green"  icon="◈" label="Total Orders"  value={stats?.total?.toLocaleString()||'—'} sub="all time"/>
+          <StatCard color="teal"   icon="₹" label="Your Revenue"  value={stats ? fmtCur(stats.revenue) : '—'} sub="all time"/>
+          <StatCard color="purple" icon="~" label="Avg Order"     value={stats ? fmtCur(stats.avg) : '—'} sub="per order"/>
+          <StatCard color="green"  icon="✓" label="Fulfilled"     value={stats?.fulfilled?.toLocaleString()||'—'} sub={stats?.total?`${Math.round(stats.fulfilled/stats.total*100)}%`:''}/>
+          <StatCard color="yellow" icon="○" label="Pending"       value={stats?.pending?.toLocaleString()||'—'} sub={stats?.total?`${Math.round(stats.pending/stats.total*100)}%`:''}/>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Recent Orders</span>
+            <span className="card-sub">{orders.length} total</span>
+          </div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Order</th><th>Customer</th><th>Items</th><th>Revenue</th><th>Status</th><th>Date</th><th/>
+              </tr></thead>
+              <tbody>
+                {loading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={7}/>) :
+                 recent.length===0 ? (
+                  <tr><td colSpan={7}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders yet</div></div></td></tr>
+                 ) :
+                 recent.map(o=>(
+                  <tr key={o.id} onClick={()=>onOpenOrder(o)}>
+                    <td className="td-id">{o.id}</td>
+                    <td>{o.customer||'Guest'}</td>
+                    <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{o.myItems.reduce((s,i)=>s+i.quantity,0)} item{o.myItems.reduce((s,i)=>s+i.quantity,0)!==1?'s':''}</span></td>
+                    <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                    <td><Badge status={o.status}/></td>
+                    <td className="td-muted">{fmtDate(o.date)}</td>
+                    <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     ORDERS VIEW
+  ══════════════════════════════════ */
+  function Orders({ orders, loading, onOpenOrder }) {
+    const [search, setSearch]   = useState('');
+    const [filter, setFilter]   = useState('all');
+    const [sort,   setSort]     = useState('date');
+    const [dir,    setDir]      = useState('desc');
+    const [page,   setPage]     = useState(1);
+
+    const filtered = useMemo(()=>{
+      let l=[...orders];
+      if(search.trim()){const q=search.toLowerCase();l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.email||'').toLowerCase().includes(q)||o.myItems.some(i=>i.title.toLowerCase().includes(q)));}
+      if(filter!=='all')l=l.filter(o=>filter==='pending'?['pending','unfulfilled'].includes(o.status):o.status===filter);
+      l.sort((a,b)=>{
+        if(sort==='amount')return dir==='desc'?b.myRevenue-a.myRevenue:a.myRevenue-b.myRevenue;
+        if(sort==='customer')return dir==='asc'?a.customer.localeCompare(b.customer):b.customer.localeCompare(a.customer);
+        return dir==='desc'?new Date(b.date)-new Date(a.date):new Date(a.date)-new Date(b.date);
+      });
+      return l;
+    },[orders,search,filter,sort,dir]);
+
+    const pages = Math.max(1,Math.ceil(filtered.length/PER));
+    const cur   = Math.min(page,pages);
+    const rows  = filtered.slice((cur-1)*PER, cur*PER);
+    const hSort = c=>{if(sort===c)setDir(d=>d==='desc'?'asc':'desc');else{setSort(c);setDir('desc');}setPage(1);};
+    const arrow = c=>sort===c?(dir==='desc'?'▼':'▲'):'';
+
+    return (
+      <div className="page">
+        <div className="filters">
+          <div className="search-wrap">
+            <span className="search-ico">⌕</span>
+            <input className="search-input" placeholder="Search order, customer, product…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
+          </div>
+          <div className="ftabs">
+            {[['all','All'],['fulfilled','Fulfilled'],['pending','Pending'],['cancelled','Cancelled']].map(([k,l])=>(
+              <button key={k} className={`ftab ${filter===k?'active':''}`} onClick={()=>{setFilter(k);setPage(1);}}>{l}</button>
+            ))}
+          </div>
+          <select className="fselect" value={sort} onChange={e=>{setSort(e.target.value);setPage(1);}}>
+            <option value="date">Sort: Date</option>
+            <option value="amount">Sort: Revenue</option>
+            <option value="customer">Sort: Customer</option>
+          </select>
+          <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}{search||filter!=='all'?' (filtered)':''}</span>
+        </div>
+
+        <div className="card">
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th style={{width:36}}>#</th>
+                <th className={`sort ${sort==='id'?'sorted':''}`} onClick={()=>hSort('id')}>Order {arrow('id')}</th>
+                <th className={`sort ${sort==='customer'?'sorted':''}`} onClick={()=>hSort('customer')}>Customer {arrow('customer')}</th>
+                <th>Items</th>
+                <th>Products</th>
+                <th className={`sort ${sort==='amount'?'sorted':''}`} onClick={()=>hSort('amount')}>Revenue {arrow('amount')}</th>
+                <th>Status</th>
+                <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
+                <th style={{width:28}}/>
+              </tr></thead>
+              <tbody>
+                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={9}/>) :
+                 rows.length===0 ? (
+                  <tr><td colSpan={9}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||filter!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
+                 ) :
+                 rows.map((o,i)=>{
+                   const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
+                   const rowN=(cur-1)*PER+i+1;
+                   return (
+                    <tr key={o.id} onClick={()=>onOpenOrder(o)}>
+                      <td className="td-muted">{rowN}</td>
+                      <td className="td-id">{o.id}</td>
+                      <td>
+                        <div style={{display:'flex',alignItems:'center',gap:7}}>
+                          <div style={{width:24,height:24,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'var(--green)',flexShrink:0}}>
+                            {(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}
+                          </div>
+                          <span style={{fontSize:12}}>{o.customer||'Guest'}</span>
+                        </div>
+                      </td>
+                      <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{qty} item{qty!==1?'s':''}</span></td>
+                      <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-dim)',fontSize:11}}>{o.myItems.map(i=>i.title).join(', ')}</td>
+                      <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                      <td><Badge status={o.status}/></td>
+                      <td className="td-muted">{fmtDate(o.date)}</td>
+                      <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
+                    </tr>
+                   );
+                 })}
+              </tbody>
+            </table>
+          </div>
+          {!loading && filtered.length>PER && (
+            <div className="pager">
+              <span className="pager-info">Showing {(cur-1)*PER+1}–{Math.min(cur*PER,filtered.length)} of {filtered.length}</span>
+              <div className="pbtns">
+                <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹</button>
+                {Array.from({length:pages},(_,i)=>i+1).filter(p=>p===1||p===pages||Math.abs(p-cur)<=1).reduce((acc,p,i,arr)=>{
+                  if(i>0&&arr[i-1]!==p-1)acc.push('…');acc.push(p);return acc;
+                },[]).map((p,i)=>
+                  p==='…'?<span key={`d${i}`} style={{color:'var(--text-muted)',padding:'0 4px',fontSize:12}}>…</span>
+                        :<button key={p} className={`pbtn ${cur===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
+                )}
+                <button className="pbtn" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>›</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     PRODUCTS VIEW
+  ══════════════════════════════════ */
+  function Products({ token, vendorName }) {
+    const [products, setProducts] = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [search,   setSearch]   = useState('');
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/products`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setProducts(d.products||[])).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    const visible = search ? products.filter(p=>p.title.toLowerCase().includes(search.toLowerCase())) : products;
+
+    return (
+      <div className="page">
+        <div className="filters" style={{marginBottom:16}}>
+          <div className="search-wrap">
+            <span className="search-ico">⌕</span>
+            <input className="search-input" placeholder="Search products…" value={search} onChange={e=>setSearch(e.target.value)}/>
+          </div>
+          <span className="fcount">{visible.length} product{visible.length!==1?'s':''}</span>
+        </div>
+
+        {loading ? (
+          Array.from({length:5}).map((_,i)=>(
+            <div key={i} className="product-card">
+              <div className="product-img-placeholder"/>
+              <div style={{flex:1}}><div className="skel" style={{height:13,width:200,marginBottom:8}}/><div className="skel" style={{height:10,width:120}}/></div>
+            </div>
+          ))
+        ) : visible.length===0 ? (
+          <div className="empty"><div className="empty-icon">🏷️</div><div className="empty-title">No products found</div><div className="empty-sub">Products for vendor "{vendorName}" will appear here.</div></div>
+        ) : (
+          visible.map(p=>(
+            <div key={p.id} className="product-card">
+              {p.image ? <img src={p.image} alt={p.title} className="product-img"/> : <div className="product-img-placeholder">🏷️</div>}
+              <div className="product-info">
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                  <div className="product-title">{p.title}</div>
+                  <span className={`p-status p-${p.status}`}>{p.status?.toUpperCase()}</span>
+                </div>
+                {p.type && <div className="product-type">{p.type}</div>}
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  {p.variants.map(v=>(
+                    <div key={v.id} className="variant-row">
+                      <span style={{color:'var(--text-dim)'}}>{v.title!=='Default Title'?v.title:'Standard'}</span>
+                      {v.sku && <span>SKU: {v.sku}</span>}
+                      <span>₹{v.price}</span>
+                      <span className={v.inventory===0?'inv-zero':v.inventory<5?'inv-low':'inv-ok'}>
+                        {v.inventory===0?'Out of stock':v.inventory<5?`Low: ${v.inventory} left`:`Stock: ${v.inventory}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     SETTLEMENTS VIEW
+  ══════════════════════════════════ */
+  function Settlements({ token }) {
+    const [settlements, setSettlements] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [detail, setDetail] = useState(null);
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/settlements`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setSettlements(d.settlements||[])).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    const viewDetail = async id => {
+      const r = await fetch(`${API}/vendor/settlements/${id}`,{headers:{Authorization:`Bearer ${token}`}});
+      const d = await r.json();
+      setDetail(d);
+    };
+
+    return (
+      <div className="page">
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Settlement Statements</span>
+            <span className="card-sub">{settlements.length} total</span>
+          </div>
+          {loading ? (
+            <div style={{padding:16}}>{Array.from({length:4}).map((_,i)=><div key={i} className="skel" style={{height:60,borderRadius:8,marginBottom:10}}/>)}</div>
+          ) : settlements.length===0 ? (
+            <div className="empty"><div className="empty-icon">📊</div><div className="empty-title">No settlements yet</div><div className="empty-sub">Settlements are generated by CrosCrow after order delivery.</div></div>
+          ) : settlements.map(s=>{
+            const isCredit = s.net_payable < 0;
+            return (
+              <div key={s.id} className="settle-card" onClick={()=>viewDetail(s.id)} style={{cursor:'pointer'}}>
+                <div className="settle-row">
+                  <div style={{fontWeight:700,color:'var(--text)',fontSize:12}}>{s.invoice_no}</div>
+                  <span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span>
+                </div>
+                <div className="settle-row">
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>{fmtDate(s.period_start)} – {fmtDate(s.period_end)} · {s.total_orders} orders</span>
+                  <span style={{fontWeight:700,color:isCredit?'var(--green)':'var(--red)',fontSize:13}}>
+                    {isCredit?'+ ':'− '}₹{Math.abs(s.net_payable||0).toFixed(2)}
+                    <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:5}}>{isCredit?'receivable':'payable'}</span>
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {detail && (
+          <div className="overlay" onClick={e=>e.target===e.currentTarget&&setDetail(null)}>
+            <div className="modal">
+              <div className="modal-header">
+                <div><div className="modal-title">{detail.settlement.invoice_no}</div><div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{fmtDate(detail.settlement.period_start)} – {fmtDate(detail.settlement.period_end)}</div></div>
+                <button className="modal-close" onClick={()=>setDetail(null)}>✕</button>
+              </div>
+              <div className="modal-body">
+                <div className="detail-grid">
+                  <div className="detail-box">
+                    <div className="detail-box-title">Summary</div>
+                    <div className="detail-row"><span className="dr-label">Total Orders</span><span className="dr-val">{detail.settlement.total_orders}</span></div>
+                    <div className="detail-row"><span className="dr-label">Gross Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(detail.settlement.gross_revenue)}</span></div>
+                    <div className="detail-row"><span className="dr-label">Commission</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{(detail.settlement.commission||0).toFixed(2)}</span></div>
+                    <div className="detail-row"><span className="dr-label">GST (18%)</span><span className="dr-val" style={{color:'var(--orange)'}}>₹{(detail.settlement.gst_amount||0).toFixed(2)}</span></div>
+                    <div className="detail-row"><span className="dr-label">Advance Adj.</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>
+                    <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:4}}>
+                      <span className="dr-label" style={{fontWeight:700}}>Net {detail.settlement.net_payable<0?'Receivable':'Payable'}</span>
+                      <span className="dr-val" style={{color:detail.settlement.net_payable<0?'var(--green)':'var(--red)',fontWeight:700,fontSize:14}}>₹{Math.abs(detail.settlement.net_payable||0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="detail-box">
+                    <div className="detail-box-title">Status</div>
+                    <div className="detail-row"><span className="dr-label">Invoice No</span><span className="dr-val" style={{fontSize:10}}>{detail.settlement.invoice_no}</span></div>
+                    <div className="detail-row"><span className="dr-label">Status</span><span className="dr-val"><span className={`badge b-${detail.settlement.status}`}><span className="bdot"/>{detail.settlement.status.toUpperCase()}</span></span></div>
+                    {detail.settlement.paid_at && <div className="detail-row"><span className="dr-label">Paid On</span><span className="dr-val">{fmtDate(detail.settlement.paid_at)}</span></div>}
+                    <div className="detail-row"><span className="dr-label">Generated</span><span className="dr-val">{fmtDate(detail.settlement.created_at)}</span></div>
+                  </div>
+                </div>
+                <div style={{marginBottom:6,fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>Order Breakdown</div>
+                <table className="items-table">
+                  <thead><tr><th>Order</th><th>Revenue</th><th>Type</th><th>Commission</th><th>GST</th><th>Advance</th><th>Net</th></tr></thead>
+                  <tbody>
+                    {(detail.orders||[]).map((o,i)=>(
+                      <tr key={i}>
+                        <td style={{color:'var(--green)',fontWeight:700}}>{o.order_name}</td>
+                        <td style={{color:'var(--teal)'}}>{fmtCur(o.my_revenue)}</td>
+                        <td style={{fontSize:9,textTransform:'uppercase',color:'var(--text-muted)'}}>{o.payment_type}</td>
+                        <td style={{color:'var(--yellow)'}}>₹{(o.commission||0).toFixed(2)}</td>
+                        <td style={{color:'var(--orange)'}}>₹{(o.gst||0).toFixed(2)}</td>
+                        <td>₹{(o.advance_paid||0).toFixed(2)}</td>
+                        <td style={{color:o.net<0?'var(--green)':'var(--red)',fontWeight:700}}>{o.net<0?'+':'−'}₹{Math.abs(o.net||0).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-ghost" onClick={()=>setDetail(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     WALLET VIEW
+  ══════════════════════════════════ */
+  function Wallet({ token }) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/wallet`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(setData).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    return (
+      <div className="page">
+        <div className="card">
+          <div className="card-header"><span className="card-title">Wallet Balance</span></div>
+          <div style={{padding:'20px 18px',borderBottom:'1px solid var(--border)'}}>
+            {loading ? <div className="skel" style={{height:36,width:160}}/> : (
+              <>
+                <div className="wallet-bal">{fmtCur(data?.balance||0)}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)'}}>Net wallet balance after settlements</div>
+              </>
+            )}
+          </div>
+          <div style={{padding:16}}>
+            <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:12}}>Transaction History</div>
+            {loading ? Array.from({length:5}).map((_,i)=><div key={i} className="skel" style={{height:44,borderRadius:6,marginBottom:8}}/>) :
+             (data?.transactions||[]).length===0 ? (
+               <div className="empty"><div className="empty-icon">₹</div><div className="empty-title">No transactions yet</div></div>
+             ) : (data?.transactions||[]).map(t=>(
+               <div key={t.id} className="tx-item">
+                 <div className={t.type==='credit'?'tx-dot-cr':'tx-dot-db'}/>
+                 <div className="tx-desc">
+                   <div>{t.description}</div>
+                   <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{fmtDate(t.created_at)}</div>
+                 </div>
+                 <div className="tx-amt" style={{color:t.type==='credit'?'var(--green)':'var(--red)'}}>
+                   {t.type==='credit'?'+':'−'}₹{(t.amount||0).toFixed(2)}
+                 </div>
+               </div>
+             ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     MAIN APP
+  ══════════════════════════════════ */
+  function App() {
+    const [auth,    setAuth]    = useState(()=>ls.get('vendor_auth',null));
+    const [view,    setView]    = useState('dashboard');
+    const [orders,  setOrders]  = useState([]);
+    const [stats,   setStats]   = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [lastRef, setLastRef] = useState(null);
+    const [modal,   setModal]   = useState(null); // selected order
+    const [loginErr,setLoginErr]= useState('');
+    const [loginLoad,setLoginLoad]=useState(false);
+
+    /* login */
+    const [uname, setUname] = useState('');
+    const [pass,  setPass]  = useState('');
+
+    const login = async () => {
+      setLoginLoad(true); setLoginErr('');
+      try {
+        const r = await fetch(`${API}/vendor/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:uname,password:pass})});
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error||'Login failed');
+        ls.set('vendor_auth',d);
+        setAuth(d);
+      } catch(e){ setLoginErr(e.message); }
+      setLoginLoad(false);
+    };
+
+    const logout = async () => {
+      if(auth) await fetch(`${API}/vendor/logout`,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`}}).catch(()=>{});
+      ls.del('vendor_auth'); setAuth(null); setOrders([]); setStats(null);
+    };
+
+    /* fetch data */
+    const fetchData = useCallback(async () => {
+      if(!auth) return;
+      setLoading(true);
+      try {
+        const [oRes, sRes] = await Promise.all([
+          fetch(`${API}/vendor/orders`,{headers:{Authorization:`Bearer ${auth.token}`}}),
+          fetch(`${API}/vendor/stats`, {headers:{Authorization:`Bearer ${auth.token}`}}),
+        ]);
+        if(oRes.status===401||sRes.status===401){ logout(); return; }
+        const oData = await oRes.json();
+        const sData = await sRes.json();
+        setOrders(oData.orders||[]);
+        setStats(sData);
+        setLastRef(new Date());
+      } catch{}
+      setLoading(false);
+    },[auth]);
+
+    useEffect(()=>{ if(auth) fetchData(); },[auth]);
+
+    /* ── Login screen ── */
+    if(!auth) return (
+      <div className="login-wrap">
+        <div className="login-box">
+          <div className="login-logo">C</div>
+          <div className="login-title">CROSCROW</div>
+          <div className="login-sub">Vendor Portal</div>
+          {loginErr && <div className="login-error">⚠ {loginErr}</div>}
+          <label className="field-label">Vendor / Brand Name</label>
+          <input className="field-input" placeholder="e.g. SICOS" value={uname} onChange={e=>setUname(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
+          <label className="field-label">Password</label>
+          <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
+          <button className="login-btn" onClick={login} disabled={loginLoad||!uname||!pass}>{loginLoad?'Signing in…':'Sign In'}</button>
+          <div className="login-hint">Contact CrosCrow admin if you need access.</div>
+        </div>
+      </div>
+    );
+
+    const navItems = [
+      { id:'dashboard',   icon:'◈', label:'Dashboard',   section:'main' },
+      { id:'orders',      icon:'◎', label:'My Orders',    section:'main' },
+      { id:'products',    icon:'⬡', label:'My Products',  section:'main' },
+      { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
+      { id:'wallet',      icon:'◉', label:'Wallet',       section:'finance' },
+    ];
+    const sections = [...new Set(navItems.map(n=>n.section))];
+    const sectionLabels = { main:'Store', finance:'Finance' };
+
+    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', settlements:'Settlements', wallet:'Wallet' };
+
+    return (
+      <div className="app-shell">
+        {/* Sidebar */}
+        <aside className="sidebar">
+          <div className="sidebar-brand">
+            <div className="sidebar-logo">C</div>
+            <div>
+              <div className="sidebar-name">CROSCROW</div>
+              <div className="sidebar-role">Vendor Portal</div>
+            </div>
+          </div>
+          <div className="sidebar-vendor">
+            Logged in as<strong>{auth.vendorName}</strong>
+          </div>
+          <nav className="nav">
+            {sections.map(sec=>(
+              <div key={sec}>
+                <div className="nav-section">{sectionLabels[sec]}</div>
+                {navItems.filter(n=>n.section===sec).map(n=>(
+                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
+                    <span className="nav-icon">{n.icon}</span>{n.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="sidebar-footer">
+            <button className="logout-btn" onClick={logout}>
+              <span>↩</span> Sign Out
+            </button>
+          </div>
+        </aside>
+
+        {/* Main */}
+        <div className="content">
+          <div className="topbar">
+            <span className="topbar-title">{pageTitle[view]}</span>
+            <div className="topbar-right">
+              {lastRef && <span className="topbar-badge"><span className="pulse"/>{lastRef.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span>}
+              <button className="btn btn-ghost" style={{fontSize:10,padding:'5px 10px'}} onClick={fetchData} disabled={loading}>
+                {loading ? <span className="spin">↻</span> : '↻'} {loading?'Loading…':'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          {view==='dashboard'   && <Dashboard   stats={stats} orders={orders} loading={loading} onOpenOrder={setModal}/>}
+          {view==='orders'      && <Orders      orders={orders} loading={loading} onOpenOrder={setModal}/>}
+          {view==='products'    && <Products    token={auth.token} vendorName={auth.vendorName}/>}
+          {view==='settlements' && <Settlements token={auth.token}/>}
+          {view==='wallet'      && <Wallet      token={auth.token}/>}
+        </div>
+
+        {/* Order modal */}
+        {modal && (
+          <OrderModal
+            order={modal}
+            token={auth.token}
+            onClose={()=>setModal(null)}
+            onUpdated={()=>{ fetchData(); setModal(null); }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

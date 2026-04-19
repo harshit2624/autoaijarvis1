@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrosCrow — Admin Portal</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #060a14;
+      --bg-card:   #0a1020;
+      --bg-card2:  #0d1428;
+      --bg-hover:  #111830;
+      --border:    #1a2540;
+      --border-hi: #243560;
+      --indigo:    #6366f1;
+      --indigo-dim:#1e1b4b;
+      --indigo-glow:#6366f130;
+      --cyan:      #22d3ee;
+      --green:     #10b981;
+      --green-dim: #064e3b;
+      --red:       #f87171;
+      --red-bg:    #2d0a0a;
+      --yellow:    #fbbf24;
+      --yellow-bg: #422006;
+      --orange:    #fb923c;
+      --orange-bg: #431407;
+      --purple:    #a78bfa;
+      --purple-bg: #1e1b4b;
+      --teal:      #2dd4bf;
+      --text:      #e2e8f0;
+      --text-muted:#4b6a8e;
+      --text-dim:  #7d9ab8;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Login ── */
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 0%, #1e1b4b20 0%, transparent 70%); }
+    .login-box  { width: 380px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 36px; box-shadow: 0 0 60px var(--indigo-glow); }
+    .login-logo { width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 20px; background: linear-gradient(135deg, var(--indigo), #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; color: #fff; }
+    .login-title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-align: center; color: var(--text); margin-bottom: 4px; }
+    .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 28px; }
+    .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
+    .field-input { width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 7px; padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px; outline: none; transition: border-color 0.15s; margin-bottom: 16px; }
+    .field-input:focus { border-color: var(--indigo); }
+    .field-input::placeholder { color: var(--text-muted); }
+    .login-btn  { width: 100%; padding: 11px; border-radius: 7px; border: none; cursor: pointer; background: var(--indigo); color: #fff; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; letter-spacing: 2px; transition: background 0.15s; margin-top: 4px; }
+    .login-btn:hover:not(:disabled) { background: #4f46e5; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-error { background: var(--red-bg); border: 1px solid #5a1a1a; border-radius: 7px; padding: 10px 14px; font-size: 12px; color: var(--red); margin-bottom: 14px; }
+
+    /* ── App shell ── */
+    .app-shell { display: flex; min-height: 100vh; }
+    .sidebar   { width: 230px; flex-shrink: 0; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    .sidebar-brand { padding: 20px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+    .sidebar-logo  { width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0; background: linear-gradient(135deg, var(--indigo), #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #fff; }
+    .sidebar-name  { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
+    .sidebar-role  { font-size: 9px; color: var(--indigo); letter-spacing: 1px; }
+    .nav           { padding: 12px 10px; flex: 1; }
+    .nav-section   { font-size: 9px; letter-spacing: 2px; color: var(--text-muted); padding: 8px 8px 4px; text-transform: uppercase; }
+    .nav-item      { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; cursor: pointer; font-size: 12px; color: var(--text-dim); font-weight: 500; transition: all 0.15s; margin-bottom: 2px; border: none; background: none; width: 100%; text-align: left; font-family: 'IBM Plex Mono', monospace; }
+    .nav-item:hover  { background: var(--bg-hover); color: var(--text); }
+    .nav-item.active { background: var(--indigo-dim); color: var(--indigo); }
+    .nav-icon        { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer  { padding: 14px 10px; border-top: 1px solid var(--border); }
+    .logout-btn { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
+    .logout-btn:hover { background: var(--red-bg); color: var(--red); border-color: #5a1a1a; }
+
+    /* ── Main content ── */
+    .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .topbar  { height: 54px; background: rgba(6,10,20,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .topbar-title { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
+    .topbar-right { display: flex; align-items: center; gap: 10px; }
+    .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--indigo); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+    .page { padding: 20px 24px 40px; }
+
+    /* ── Buttons ── */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-indigo { background: var(--indigo); color: #fff; }
+    .btn-indigo:hover:not(:disabled) { background: #4f46e5; }
+    .btn-green  { background: var(--green); color: #000; }
+    .btn-green:hover:not(:disabled)  { background: #34d399; }
+    .btn-ghost  { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled)  { background: var(--bg-card2); color: var(--text); }
+    .btn-danger { background: transparent; color: var(--red); border: 1px solid #5a1a1a; }
+    .btn-danger:hover:not(:disabled) { background: var(--red-bg); }
+    .btn-sm { padding: 5px 10px; font-size: 10px; }
+
+    /* ── Stats grid ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(160px,1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat-card  { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; position: relative; overflow: hidden; transition: border-color 0.15s; }
+    .stat-card:hover { border-color: var(--border-hi); }
+    .stat-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:10px 10px 0 0; }
+    .sc-indigo::after { background: var(--indigo); }
+    .sc-cyan::after   { background: var(--cyan); }
+    .sc-green::after  { background: var(--green); }
+    .sc-red::after    { background: var(--red); }
+    .sc-yellow::after { background: var(--yellow); }
+    .sc-orange::after { background: var(--orange); }
+    .sc-purple::after { background: var(--purple); }
+    .sc-teal::after   { background: var(--teal); }
+    .stat-icon  { position:absolute; top:12px; right:12px; font-size:16px; opacity:0.2; }
+    .stat-label { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px; }
+    .stat-val   { font-size:22px; font-weight:700; line-height:1; margin-bottom:4px; }
+    .stat-sub   { font-size:10px; color:var(--text-muted); }
+    .sc-indigo .stat-val { color: var(--indigo); }
+    .sc-cyan   .stat-val { color: var(--cyan); }
+    .sc-green  .stat-val { color: var(--green); }
+    .sc-red    .stat-val { color: var(--red); }
+    .sc-yellow .stat-val { color: var(--yellow); }
+    .sc-orange .stat-val { color: var(--orange); }
+    .sc-purple .stat-val { color: var(--purple); }
+    .sc-teal   .stat-val { color: var(--teal); }
+
+    /* ── Card ── */
+    .card        { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-card2); }
+    .card-title  { font-size: 12px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
+    .card-sub    { font-size: 10px; color: var(--text-muted); }
+
+    /* ── Table ── */
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: var(--bg-card2); border-bottom: 1px solid var(--border); }
+    th { padding: 10px 16px; text-align: left; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; user-select: none; }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-hover); }
+    td { padding: 11px 16px; font-size: 12px; vertical-align: middle; }
+    .td-id  { color: var(--indigo); font-weight: 700; }
+    .td-amt { color: var(--cyan); font-weight: 600; }
+    .td-mut { color: var(--text-muted); font-size: 11px; }
+
+    /* ── Badge ── */
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 700; letter-spacing: 1px; white-space: nowrap; }
+    .bdot  { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+    .b-new       { background: var(--indigo-dim); color: var(--indigo); } .b-new       .bdot { background: var(--indigo); }
+    .b-confirmed { background: #0d1f30;           color: var(--cyan);   } .b-confirmed .bdot { background: var(--cyan); }
+    .b-ready     { background: #0d1f30;           color: var(--teal);   } .b-ready     .bdot { background: var(--teal); }
+    .b-pickup    { background: var(--yellow-bg);  color: var(--yellow); } .b-pickup    .bdot { background: var(--yellow); }
+    .b-transit   { background: var(--orange-bg);  color: var(--orange); } .b-transit   .bdot { background: var(--orange); }
+    .b-delivered { background: var(--green-dim);  color: var(--green);  } .b-delivered .bdot { background: var(--green); }
+    .b-rto       { background: var(--red-bg);     color: var(--red);    } .b-rto       .bdot { background: var(--red); }
+    .b-hold      { background: var(--purple-bg);  color: var(--purple); } .b-hold      .bdot { background: var(--purple); }
+    .b-cancelled { background: var(--red-bg);     color: var(--red);    } .b-cancelled .bdot { background: var(--red); }
+    .b-pending   { background: var(--yellow-bg);  color: var(--yellow); } .b-pending   .bdot { background: var(--yellow); }
+    .b-paid      { background: var(--green-dim);  color: var(--green);  } .b-paid      .bdot { background: var(--green); }
+
+    /* ── Stage tabs ── */
+    .stage-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+    .stab { padding: 6px 12px; border-radius: 6px; font-size: 10px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; letter-spacing: 1px; transition: all 0.15s; }
+    .stab:hover  { background: var(--bg-card2); color: var(--text); }
+    .stab.active { background: var(--indigo); color: #fff; border-color: var(--indigo); }
+
+    /* ── Filters ── */
+    .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+    .search-wrap { position: relative; flex: 1; min-width: 180px; }
+    .search-ico  { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+    .search-input { width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px 7px 30px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px; outline: none; transition: border-color 0.15s; }
+    .search-input:focus { border-color: var(--indigo); }
+    .search-input::placeholder { color: var(--text-muted); }
+    .fcount { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+    .fselect { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 26px 7px 10px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 11px; outline: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b6a8e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .fselect:focus { border-color: var(--indigo); }
+
+    /* ── Skeleton ── */
+    .skel { background: linear-gradient(90deg, var(--bg-card2) 25%, var(--bg-hover) 50%, var(--bg-card2) 75%); background-size: 200% 100%; border-radius: 4px; animation: shimmer 1.4s ease-in-out infinite; }
+    @keyframes shimmer { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+
+    /* ── Empty ── */
+    .empty { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+    .empty-icon  { font-size: 42px; opacity: 0.35; margin-bottom: 12px; }
+    .empty-title { font-size: 14px; color: var(--text-dim); margin-bottom: 6px; }
+
+    /* ── Modal ── */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 500; display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; overflow-y: auto; }
+    .modal   { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; width: 100%; max-width: 760px; box-shadow: 0 24px 80px rgba(0,0,0,0.6); }
+    .modal-header { padding: 18px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-card2); border-radius: 12px 12px 0 0; }
+    .modal-title  { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .modal-close  { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 4px; line-height: 1; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body   { padding: 22px; }
+    .modal-footer { padding: 16px 22px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+    /* ── Detail / form ── */
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+    .detail-box  { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .detail-box-title { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .detail-row  { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .detail-row:last-child { margin-bottom: 0; }
+    .dr-label { font-size: 11px; color: var(--text-muted); }
+    .dr-val   { font-size: 12px; color: var(--text); text-align: right; }
+
+    .form-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-full  { grid-column: 1/-1; }
+    .form-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 5px; }
+    .form-input, .form-select { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px; outline: none; transition: border-color 0.15s; }
+    .form-select { appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b6a8e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+    .form-input:focus, .form-select:focus { border-color: var(--indigo); }
+    .form-input::placeholder { color: var(--text-muted); }
+
+    /* ── Alert ── */
+    .alert { border-radius: 7px; padding: 10px 14px; font-size: 12px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .alert-success { background: var(--green-dim); color: var(--green); border: 1px solid #1a4731; }
+    .alert-error   { background: var(--red-bg); color: var(--red); border: 1px solid #5a1a1a; }
+    .spin { animation: sp 0.8s linear infinite; display: inline-block; }
+    @keyframes sp { to { transform: rotate(360deg); } }
+
+    /* ── Invoice ── */
+    .invoice-wrap { background: #fff; color: #111; padding: 32px; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; max-width: 680px; margin: 0 auto; }
+    .inv-header { border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 20px; }
+    .inv-title  { font-size: 20px; font-weight: 800; letter-spacing: 2px; }
+    .inv-sub    { font-size: 10px; color: #666; letter-spacing: 1px; }
+    .inv-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; font-size: 11px; }
+    .inv-grid div { display: flex; flex-direction: column; gap: 3px; }
+    .inv-label  { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #666; }
+    .inv-val    { font-weight: 600; }
+    .inv-table  { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }
+    .inv-table th { padding: 6px 10px; background: #f4f4f4; text-align: left; font-size: 9px; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid #ddd; }
+    .inv-table td { padding: 7px 10px; border-bottom: 1px solid #eee; }
+    .inv-summary { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; padding: 16px; font-size: 11px; }
+    .inv-row { display: flex; justify-content: space-between; padding: 4px 0; }
+    .inv-total { border-top: 2px solid #111; margin-top: 8px; padding-top: 8px; font-weight: 800; font-size: 13px; }
+    .inv-footer { margin-top: 24px; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 12px; }
+
+    /* ── Pagination ── */
+    .pager { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-card2); }
+    .pager-info { font-size: 11px; color: var(--text-muted); }
+    .pbtns { display: flex; gap: 3px; }
+    .pbtn { min-width: 30px; height: 30px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; padding: 0 6px; }
+    .pbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+    .pbtn.cur { background: var(--indigo); color: #fff; border-color: var(--indigo); font-weight: 700; }
+    .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    @media print { .no-print { display: none !important; } body { background: white; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect, useCallback, useMemo, useRef } = React;
+  const API = 'http://localhost:3001';
+  const PER = 25;
+
+  const fmtCur  = (v, c='INR') => { try { return new Intl.NumberFormat('en-IN',{style:'currency',currency:c,maximumFractionDigits:0}).format(v||0); } catch { return `₹${(v||0).toFixed(0)}`; } };
+  const fmtDate = s => { const d=new Date(s); return isNaN(d)?s:d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+  const r2     = n => Math.round((n||0)*100)/100;
+  const ls = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }, del:(k)=>localStorage.removeItem(k) };
+
+  const STAGES = [
+    { id:'all',       label:'All Orders',     color:'indigo', icon:'◈' },
+    { id:'new',       label:'New',            color:'indigo', icon:'◉' },
+    { id:'confirmed', label:'Confirmed',      color:'cyan',   icon:'✓' },
+    { id:'ready',     label:'Ready to Ship',  color:'teal',   icon:'⬡' },
+    { id:'pickup',    label:'Pickup Pending', color:'yellow', icon:'⌛' },
+    { id:'transit',   label:'In Transit',     color:'orange', icon:'↑' },
+    { id:'delivered', label:'Delivered',      color:'green',  icon:'✅' },
+    { id:'rto',       label:'RTO',            color:'red',    icon:'↩' },
+    { id:'hold',      label:'Hold',           color:'purple', icon:'⏸' },
+    { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
+  ];
+
+  function StageBadge({ stage='new' }) {
+    return <span className={`badge b-${stage}`}><span className="bdot"/>{stage.toUpperCase()}</span>;
+  }
+
+  function StatCard({ color, icon, label, value, sub, onClick }) {
+    return (
+      <div className={`stat-card sc-${color}`} style={onClick?{cursor:'pointer'}:{}} onClick={onClick}>
+        <span className="stat-icon">{icon}</span>
+        <div className="stat-label">{label}</div>
+        <div className="stat-val">{value}</div>
+        {sub && <div className="stat-sub">{sub}</div>}
+      </div>
+    );
+  }
+
+  function SkelRow({ cols=8 }) {
+    return <tr>{Array.from({length:cols}).map((_,i)=><td key={i} style={{padding:'12px 16px'}}><div className="skel" style={{height:11,width:[40,70,120,80,70,80,60,60][i]||60}}/></td>)}</tr>;
+  }
+
+  /* ══════════════════════════════════
+     ORDER DETAIL / EDIT MODAL
+  ══════════════════════════════════ */
+  function OrderModal({ order, token, onClose, onUpdated }) {
+    const [stage,   setStage]   = useState(order.stage || 'new');
+    const [payType, setPayType] = useState(order.paymentType || 'cod');
+    const [advance, setAdvance] = useState(String(order.advancePaid || ''));
+    const [notes,   setNotes]   = useState(order.notes || '');
+    const [awb,     setAwb]     = useState(order.awb || '');
+    const [courier, setCourier] = useState(order.courier || '');
+    const [trackUrl,setTrackUrl]= useState(order.trackingUrl || '');
+    const [saving,  setSaving]  = useState(false);
+    const [msg,     setMsg]     = useState(null);
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r1 = await fetch(`${API}/admin/orders/${order.shopifyId}/stage`, {
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ stage }),
+        });
+        const r2 = await fetch(`${API}/admin/orders/${order.shopifyId}/meta`, {
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ payment_type: payType, advance_paid: parseFloat(advance)||0, notes, awb, courier, tracking_url: trackUrl }),
+        });
+        if (!r1.ok || !r2.ok) throw new Error('Save failed.');
+        setMsg({ type:'success', text:'Saved.' });
+        onUpdated();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(false);
+    };
+
+    return (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal">
+          <div className="modal-header">
+            <div>
+              <div className="modal-title">Edit Order {order.id}</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{fmtDate(order.date)} · {order.customer} · {order.vendors?.join(', ')}</div>
+            </div>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+
+          <div className="modal-body">
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+            <div className="detail-grid">
+              <div className="detail-box">
+                <div className="detail-box-title">Order Info</div>
+                <div className="detail-row"><span className="dr-label">Order ID</span><span className="dr-val" style={{color:'var(--indigo)'}}>{order.id}</span></div>
+                <div className="detail-row"><span className="dr-label">Customer</span><span className="dr-val">{order.customer}</span></div>
+                <div className="detail-row"><span className="dr-label">Vendors</span><span className="dr-val">{order.vendors?.join(', ')||'—'}</span></div>
+                <div className="detail-row"><span className="dr-label">Order Value</span><span className="dr-val" style={{color:'var(--cyan)'}}>{fmtCur(order.orderValue)}</span></div>
+                <div className="detail-row"><span className="dr-label">Shipping</span><span className="dr-val">{fmtCur(order.shippingCharge)}</span></div>
+                <div className="detail-row"><span className="dr-label">Payment</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
+              </div>
+              <div className="detail-box">
+                <div className="detail-box-title">Line Items</div>
+                {(order.lineItems||[]).map((li,i)=>(
+                  <div key={i} className="detail-row">
+                    <span className="dr-label" style={{maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{li.title}</span>
+                    <span className="dr-val">{li.qty}× {fmtCur(li.price)} <span style={{color:'var(--text-muted)',fontSize:10}}>({li.vendor})</span></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
+              <div className="detail-box-title" style={{marginBottom:14}}>CrosCrow Metadata</div>
+              <div className="form-grid">
+                <div>
+                  <label className="form-label">Stage / Status</label>
+                  <select className="form-select" value={stage} onChange={e=>setStage(e.target.value)}>
+                    {STAGES.filter(s=>s.id!=='all').map(s=><option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Payment Type</label>
+                  <select className="form-select" value={payType} onChange={e=>setPayType(e.target.value)}>
+                    <option value="cod">COD (Cash on Delivery)</option>
+                    <option value="prepaid">Prepaid</option>
+                    <option value="partial">Partial (Advance)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Advance Paid (₹)</label>
+                  <input className="form-input" type="number" min="0" placeholder="0" value={advance} onChange={e=>setAdvance(e.target.value)}/>
+                </div>
+                <div>
+                  <label className="form-label">Courier</label>
+                  <input className="form-input" placeholder="Delhivery, BlueDart…" value={courier} onChange={e=>setCourier(e.target.value)}/>
+                </div>
+                <div>
+                  <label className="form-label">AWB / Tracking No</label>
+                  <input className="form-input" placeholder="Enter AWB" value={awb} onChange={e=>setAwb(e.target.value)}/>
+                </div>
+                <div>
+                  <label className="form-label">Tracking URL</label>
+                  <input className="form-input" placeholder="https://…" value={trackUrl} onChange={e=>setTrackUrl(e.target.value)}/>
+                </div>
+                <div className="form-full">
+                  <label className="form-label">Internal Notes</label>
+                  <input className="form-input" placeholder="Any internal notes…" value={notes} onChange={e=>setNotes(e.target.value)}/>
+                </div>
+              </div>
+            </div>
+
+            {/* Commission Preview */}
+            {order.myRevenue > 0 && (() => {
+              const commPct = 20; // default; ideally per-vendor
+              const calc = calcCommission(order.myRevenue, payType, commPct, parseFloat(advance)||0);
+              return (
+                <div style={{background:'var(--indigo-dim)',border:'1px solid #3730a3',borderRadius:8,padding:14,fontSize:11}}>
+                  <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--indigo)',marginBottom:10}}>Commission Preview (20%)</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,textAlign:'center'}}>
+                    <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>Base Revenue</div><div style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(calc.base)}</div></div>
+                    <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>Commission</div><div style={{color:'var(--yellow)',fontWeight:700}}>{fmtCur(calc.commission)}</div></div>
+                    <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>GST (18%)</div><div style={{color:'var(--orange)',fontWeight:700}}>{fmtCur(calc.gst)}</div></div>
+                    <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>{calc.type==='payout'?'CrosCrow Pays':'Vendor Owes'}</div><div style={{color:calc.type==='payout'?'var(--green)':'var(--red)',fontWeight:700}}>{fmtCur(Math.abs(calc.net))}</div></div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-indigo" onClick={save} disabled={saving}>
+              {saving ? <><span className="spin">↻</span> Saving…</> : '✓ Save Changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Commission calc (mirrors server)
+  function calcCommission(myRevenue, paymentType, commPct, advancePaid=0) {
+    const rate = (commPct||20)/100;
+    let base = myRevenue;
+    if(paymentType==='prepaid') base = myRevenue*0.9;
+    const commission = r2(base*rate);
+    const gst        = r2(commission*0.18);
+    const invoice    = r2(commission+gst);
+    if(paymentType==='prepaid') {
+      const vendorNet = r2(base-commission-gst);
+      return { base, commission, gst, invoice, net:-vendorNet, type:'payout' };
+    }
+    return { base, commission, gst, invoice, advancePaid, net: r2(invoice-(advancePaid||0)), type:'receivable' };
+  }
+
+  /* ══════════════════════════════════
+     INVOICE MODAL
+  ══════════════════════════════════ */
+  function InvoiceModal({ settlement, orders, onClose }) {
+    const s = settlement;
+    const isCredit = s.net_payable < 0;
+    return (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal" style={{maxWidth:720}}>
+          <div className="modal-header no-print">
+            <div className="modal-title">Invoice — {s.invoice_no}</div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-ghost btn-sm" onClick={()=>window.print()}>⎙ Print</button>
+              <button className="modal-close" onClick={onClose}>✕</button>
+            </div>
+          </div>
+          <div className="modal-body" style={{padding:0}}>
+            <div className="invoice-wrap">
+              <div className="inv-header">
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div>
+                    <div className="inv-title">CrosCrow</div>
+                    <div className="inv-sub">Marketplace · GST Compliant Invoice</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontWeight:800,fontSize:14}}>{isCredit ? 'CREDIT NOTE' : 'TAX INVOICE'}</div>
+                    <div style={{fontSize:11,color:'#666'}}>{s.invoice_no}</div>
+                    <div style={{fontSize:11,color:'#666'}}>{fmtDate(s.created_at)}</div>
+                  </div>
+                </div>
+              </div>
+              <div className="inv-grid">
+                <div>
+                  <span className="inv-label">From (Marketplace)</span>
+                  <span className="inv-val">CrosCrow Marketplace Pvt Ltd</span>
+                  <span style={{fontSize:10,color:'#666'}}>GSTIN: Applied for</span>
+                </div>
+                <div>
+                  <span className="inv-label">To (Vendor)</span>
+                  <span className="inv-val">{s.vendor_name}</span>
+                  <span style={{fontSize:10,color:'#666'}}>Vendor Partner</span>
+                </div>
+                <div>
+                  <span className="inv-label">Settlement Period</span>
+                  <span className="inv-val">{fmtDate(s.period_start)} – {fmtDate(s.period_end)}</span>
+                </div>
+                <div>
+                  <span className="inv-label">Payment Status</span>
+                  <span className="inv-val" style={{color:s.status==='paid'?'#10b981':'#f59e0b'}}>{s.status.toUpperCase()}</span>
+                  {s.paid_at && <span style={{fontSize:10,color:'#666'}}>Paid: {fmtDate(s.paid_at)}</span>}
+                </div>
+              </div>
+
+              <table className="inv-table">
+                <thead><tr><th>#</th><th>Order</th><th>Product Value</th><th>Type</th><th>Comm%</th><th>Commission</th><th>GST(18%)</th><th>Advance</th><th>Net</th></tr></thead>
+                <tbody>
+                  {(orders||[]).map((o,i)=>(
+                    <tr key={i}>
+                      <td>{i+1}</td>
+                      <td>{o.order_name}</td>
+                      <td>₹{(o.my_revenue||0).toFixed(2)}</td>
+                      <td style={{textTransform:'uppercase',fontSize:9}}>{o.payment_type}</td>
+                      <td>{o.commission_pct}%</td>
+                      <td>₹{(o.commission||0).toFixed(2)}</td>
+                      <td>₹{(o.gst||0).toFixed(2)}</td>
+                      <td>₹{(o.advance_paid||0).toFixed(2)}</td>
+                      <td style={{fontWeight:700,color:o.net<0?'#10b981':'#ef4444'}}>
+                        {o.net<0?'−':''}₹{Math.abs(o.net||0).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="inv-summary">
+                <div className="inv-row"><span>Total Orders</span><span>{s.total_orders}</span></div>
+                <div className="inv-row"><span>Gross Revenue</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
+                <div className="inv-row"><span>Platform Commission</span><span>₹{(s.commission||0).toFixed(2)}</span></div>
+                <div className="inv-row"><span>GST on Commission (18%)</span><span>₹{(s.gst_amount||0).toFixed(2)}</span></div>
+                <div className="inv-row"><span>Advance Adjustments</span><span>− ₹{(s.advance_total||0).toFixed(2)}</span></div>
+                <div className="inv-row inv-total">
+                  <span>{isCredit ? '↑ CrosCrow Pays Vendor' : '↓ Vendor Pays CrosCrow'}</span>
+                  <span>₹{Math.abs(s.net_payable||0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="inv-footer">
+                <div>This is a computer-generated statement. For queries, contact settlements@croscrow.com</div>
+                <div style={{marginTop:4}}>CrosCrow Marketplace · All rights reserved.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     DASHBOARD VIEW
+  ══════════════════════════════════ */
+  function Dashboard({ token, onStageClick }) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(()=>{
+      fetch(`${API}/admin/dashboard`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(setData).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    const stages = STAGES.filter(s=>s.id!=='all');
+
+    return (
+      <div className="page">
+        {/* Summary row */}
+        <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
+          <StatCard color="indigo" icon="◈" label="Total Orders"      value={loading?'…':data?.totalOrders?.toLocaleString()||'0'} sub="all time"/>
+          <StatCard color="cyan"   icon="₹" label="Total Revenue"     value={loading?'…':fmtCur(data?.totalRevenue)} sub="across all orders"/>
+          <StatCard color="yellow" icon="⬡" label="Pending Commission" value={loading?'…':fmtCur(data?.pendingCommission)} sub="unsettled"/>
+          <StatCard color="green"  icon="✅" label="Delivered"         value={loading?'…':(data?.stageCounts?.delivered||0)} sub="orders"/>
+          <StatCard color="red"    icon="↩" label="RTO"               value={loading?'…':(data?.stageCounts?.rto||0)} sub="returned"/>
+        </div>
+
+        {/* Stage breakdown */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Order Pipeline</span>
+            <span className="card-sub">Click any stage to filter orders</span>
+          </div>
+          <div style={{padding:'16px',display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
+            {loading ? Array.from({length:9}).map((_,i)=>(
+              <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14}}>
+                <div className="skel" style={{height:10,width:80,marginBottom:8}}/>
+                <div className="skel" style={{height:22,width:40}}/>
+              </div>
+            )) : stages.map(s=>(
+              <div key={s.id}
+                onClick={()=>onStageClick(s.id)}
+                style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14,cursor:'pointer',transition:'border-color 0.15s'}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border-hi)'}
+                onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}
+              >
+                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>{s.icon} {s.label}</div>
+                <div style={{fontSize:24,fontWeight:700,color:`var(--${s.color==='indigo'?'indigo':s.color==='cyan'?'cyan':s.color==='teal'?'teal':s.color==='yellow'?'yellow':s.color==='orange'?'orange':s.color==='green'?'green':s.color==='red'?'red':s.color==='purple'?'purple':'indigo'})`}}>
+                  {data?.stageCounts?.[s.id]||0}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     ORDERS VIEW
+  ══════════════════════════════════ */
+  function Orders({ token, initialStage }) {
+    const [orders,   setOrders]   = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [stage,    setStage]    = useState(initialStage || 'all');
+    const [search,   setSearch]   = useState('');
+    const [page,     setPage]     = useState(1);
+    const [modal,    setModal]    = useState(null);
+
+    const load = useCallback(()=>{
+      setLoading(true);
+      fetch(`${API}/admin/orders?created_at_min=2000-01-01`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setOrders(d.orders||[])).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    useEffect(()=>{ load(); },[load]);
+
+    const filtered = useMemo(()=>{
+      let l=[...orders];
+      if(stage && stage!=='all') l=l.filter(o=>o.stage===stage);
+      if(search.trim()){const q=search.toLowerCase(); l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.vendors||[]).some(v=>v.toLowerCase().includes(q)));}
+      return l;
+    },[orders,stage,search]);
+
+    const pages = Math.max(1,Math.ceil(filtered.length/PER));
+    const cur   = Math.min(page,pages);
+    const rows  = filtered.slice((cur-1)*PER, cur*PER);
+
+    return (
+      <div className="page">
+        <div className="stage-tabs">
+          {STAGES.map(s=>(
+            <button key={s.id} className={`stab ${stage===s.id?'active':''}`} onClick={()=>{setStage(s.id);setPage(1);}}>
+              {s.icon} {s.label} {s.id!=='all'&&orders.length>0?`(${orders.filter(o=>o.stage===s.id).length})`:stage==='all'?`(${orders.length})`:''}
+            </button>
+          ))}
+        </div>
+        <div className="filters">
+          <div className="search-wrap">
+            <span className="search-ico">⌕</span>
+            <input className="search-input" placeholder="Search order, customer, vendor…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>{loading?<span className="spin">↻</span>:'↻'} Refresh</button>
+          <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}</span>
+        </div>
+
+        <div className="card">
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Order</th><th>Customer</th><th>Vendors</th>
+                <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Date</th><th/>
+              </tr></thead>
+              <tbody>
+                {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={10}/>) :
+                 rows.length===0 ? (
+                   <tr><td colSpan={10}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr>
+                 ) :
+                 rows.map((o,i)=>(
+                   <tr key={o.id} style={{cursor:'pointer'}} onClick={()=>setModal(o)}>
+                     <td className="td-mut">{(cur-1)*PER+i+1}</td>
+                     <td className="td-id">{o.id}</td>
+                     <td>
+                       <div style={{display:'flex',alignItems:'center',gap:7}}>
+                         <div style={{width:22,height:22,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'var(--indigo)',flexShrink:0}}>
+                           {(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}
+                         </div>
+                         <div>
+                           <div style={{fontSize:12}}>{o.customer}</div>
+                           {o.email && <div style={{fontSize:10,color:'var(--text-muted)'}}>{o.email}</div>}
+                         </div>
+                       </div>
+                     </td>
+                     <td style={{color:'var(--text-dim)',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(o.vendors||[]).join(', ')||'—'}</td>
+                     <td className="td-amt">{fmtCur(o.orderValue)}</td>
+                     <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
+                     <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
+                     <td><StageBadge stage={o.stage}/></td>
+                     <td className="td-mut">{fmtDate(o.date)}</td>
+                     <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>✏</td>
+                   </tr>
+                 ))}
+              </tbody>
+            </table>
+          </div>
+          {!loading && filtered.length > PER && (
+            <div className="pager">
+              <span className="pager-info">Showing {(cur-1)*PER+1}–{Math.min(cur*PER,filtered.length)} of {filtered.length}</span>
+              <div className="pbtns">
+                <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹</button>
+                {Array.from({length:pages},(_,i)=>i+1).filter(p=>p===1||p===pages||Math.abs(p-cur)<=1).reduce((acc,p,i,arr)=>{ if(i>0&&arr[i-1]!==p-1)acc.push('…');acc.push(p);return acc; },[]).map((p,i)=>
+                  p==='…'?<span key={`d${i}`} style={{color:'var(--text-muted)',padding:'0 4px',fontSize:12}}>…</span>
+                        :<button key={p} className={`pbtn ${cur===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
+                )}
+                <button className="pbtn" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>›</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {modal && <OrderModal order={modal} token={token} onClose={()=>setModal(null)} onUpdated={()=>{load();setModal(null);}}/>}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     VENDORS VIEW
+  ══════════════════════════════════ */
+  function Vendors({ token }) {
+    const [vendors,  setVendors]  = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [editing,  setEditing]  = useState(null); // vendor name
+    const [commVal,  setCommVal]  = useState('');
+    const [saving,   setSaving]   = useState(false);
+    const [search,   setSearch]   = useState('');
+
+    const load = ()=>{
+      setLoading(true);
+      fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setVendors(d.vendors||[])).catch(()=>{}).finally(()=>setLoading(false));
+    };
+
+    useEffect(()=>{ load(); },[token]);
+
+    const visible = search ? vendors.filter(v=>v.name.toLowerCase().includes(search.toLowerCase())) : vendors;
+
+    const startEdit = v => { setEditing(v.name); setCommVal(String(v.commission_pct)); };
+
+    const saveComm = async name => {
+      setSaving(true);
+      await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/config`,{
+        method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+        body: JSON.stringify({ commission_pct: parseFloat(commVal)||20 }),
+      }).catch(()=>{});
+      setSaving(false); setEditing(null); load();
+    };
+
+    return (
+      <div className="page">
+        <div className="filters">
+          <div className="search-wrap">
+            <span className="search-ico">⌕</span>
+            <input className="search-input" placeholder="Search vendor…" value={search} onChange={e=>setSearch(e.target.value)}/>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>{loading?<span className="spin">↻</span>:'↻'} Refresh</button>
+          <span className="fcount">{visible.length} vendor{visible.length!==1?'s':''}</span>
+        </div>
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">Vendors & Commission</span></div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Vendor / Brand</th><th>Commission %</th><th>GST on Commission</th><th>Actions</th></tr></thead>
+              <tbody>
+                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={5}/>) :
+                 visible.length===0 ? (
+                   <tr><td colSpan={5}><div className="empty"><div className="empty-icon">🏪</div><div className="empty-title">No vendors found</div></div></td></tr>
+                 ) :
+                 visible.map((v,i)=>(
+                  <tr key={v.name}>
+                    <td className="td-mut">{i+1}</td>
+                    <td style={{fontWeight:600,color:'var(--text)'}}>{v.name}</td>
+                    <td>
+                      {editing===v.name ? (
+                        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                          <input className="form-input" style={{width:70,padding:'5px 8px'}} type="number" min="0" max="50" step="0.5"
+                            value={commVal} onChange={e=>setCommVal(e.target.value)}
+                            onKeyDown={e=>e.key==='Enter'&&saveComm(v.name)}
+                            autoFocus/>
+                          <button className="btn btn-green btn-sm" disabled={saving} onClick={()=>saveComm(v.name)}>Save</button>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(null)}>✕</button>
+                        </div>
+                      ) : (
+                        <span style={{color:'var(--indigo)',fontWeight:700}}>{v.commission_pct}%</span>
+                      )}
+                    </td>
+                    <td style={{color:'var(--orange)'}}>{(v.commission_pct * 0.18).toFixed(2)}% effective</td>
+                    <td>
+                      {editing!==v.name && (
+                        <button className="btn btn-ghost btn-sm" onClick={()=>startEdit(v)}>✏ Edit Commission</button>
+                      )}
+                    </td>
+                  </tr>
+                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="card" style={{background:'var(--indigo-dim)',borderColor:'#3730a3'}}>
+          <div style={{padding:16}}>
+            <div style={{fontSize:11,color:'var(--indigo)',fontWeight:700,marginBottom:8}}>Commission Logic</div>
+            <div style={{fontSize:11,color:'var(--text-dim)',lineHeight:1.7}}>
+              <div><strong>COD:</strong> Commission% × Order Value + 18% GST = Vendor Invoice (vendor pays CrosCrow)</div>
+              <div><strong>Prepaid:</strong> 10% vendor discount → commission on discounted price. CrosCrow collected full → pays vendor (value − commission − GST)</div>
+              <div><strong>Partial:</strong> COD logic, but advance collected is deducted from final payable</div>
+              <div><strong>Shipping:</strong> Retained 100% by CrosCrow, commission applies only on product value</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     SETTLEMENTS VIEW
+  ══════════════════════════════════ */
+  function Settlements({ token }) {
+    const [settlements, setSettlements] = useState([]);
+    const [loading,     setLoading]     = useState(true);
+    const [vendors,     setVendors]     = useState([]);
+    const [generating,  setGenerating]  = useState(false);
+    const [genVendor,   setGenVendor]   = useState('');
+    const [genStart,    setGenStart]    = useState('');
+    const [genEnd,      setGenEnd]      = useState('');
+    const [genMsg,      setGenMsg]      = useState(null);
+    const [invoice,     setInvoice]     = useState(null); // { settlement, orders }
+
+    const load = ()=>{
+      setLoading(true);
+      Promise.all([
+        fetch(`${API}/admin/settlements`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
+        fetch(`${API}/admin/vendors`,    {headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
+      ]).then(([sd, vd])=>{ setSettlements(sd.settlements||[]); setVendors(vd.vendors||[]); }).catch(()=>{}).finally(()=>setLoading(false));
+    };
+
+    useEffect(()=>{ load(); },[token]);
+
+    const generate = async () => {
+      if(!genVendor||!genStart||!genEnd) { setGenMsg({type:'error',text:'All fields required.'}); return; }
+      setGenerating(true); setGenMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/settlements/generate`,{
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ vendor_name: genVendor, period_start: genStart, period_end: genEnd }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setGenMsg({ type:'success', text:`Settlement generated! ${d.totalOrders} orders — Net: ₹${Math.abs(d.netPayable).toFixed(2)}` });
+        load();
+      } catch(e) { setGenMsg({ type:'error', text: e.message }); }
+      setGenerating(false);
+    };
+
+    const markPaid = async id => {
+      await fetch(`${API}/admin/settlements/${id}/mark-paid`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}});
+      load();
+    };
+
+    const viewInvoice = async id => {
+      const r = await fetch(`${API}/admin/settlements/${id}`,{headers:{Authorization:`Bearer ${token}`}});
+      const d = await r.json();
+      setInvoice(d);
+    };
+
+    return (
+      <div className="page">
+        {/* Generate panel */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><span className="card-title">Generate Settlement</span><span className="card-sub">Only delivered orders are included</span></div>
+          <div style={{padding:16}}>
+            {genMsg && <div className={`alert alert-${genMsg.type}`}>{genMsg.type==='success'?'✓':'⚠'} {genMsg.text}</div>}
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr auto',gap:12,alignItems:'end'}}>
+              <div>
+                <label className="form-label">Vendor</label>
+                <select className="form-select" value={genVendor} onChange={e=>setGenVendor(e.target.value)}>
+                  <option value="">Select vendor…</option>
+                  {vendors.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="form-label">Period Start</label>
+                <input className="form-input" type="date" value={genStart} onChange={e=>setGenStart(e.target.value)}/>
+              </div>
+              <div>
+                <label className="form-label">Period End</label>
+                <input className="form-input" type="date" value={genEnd} onChange={e=>setGenEnd(e.target.value)}/>
+              </div>
+              <button className="btn btn-indigo" onClick={generate} disabled={generating||!genVendor||!genStart||!genEnd}>
+                {generating ? <><span className="spin">↻</span> Generating…</> : '⬡ Generate'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">All Settlements</span><button className="btn btn-ghost btn-sm" onClick={load}>↻ Refresh</button></div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Invoice No</th><th>Vendor</th><th>Period</th><th>Orders</th><th>Commission</th><th>GST</th><th>Net Payable</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>
+                {loading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={9}/>) :
+                 settlements.length===0 ? (
+                   <tr><td colSpan={9}><div className="empty"><div className="empty-icon">📊</div><div className="empty-title">No settlements yet</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Generate your first settlement above.</div></div></td></tr>
+                 ) :
+                 settlements.map(s=>{
+                   const isCredit = s.net_payable < 0;
+                   return (
+                    <tr key={s.id}>
+                      <td className="td-id" style={{fontFamily:'monospace',fontSize:10}}>{s.invoice_no}</td>
+                      <td style={{fontWeight:600}}>{s.vendor_name}</td>
+                      <td className="td-mut">{fmtDate(s.period_start)} – {fmtDate(s.period_end)}</td>
+                      <td>{s.total_orders}</td>
+                      <td style={{color:'var(--yellow)'}}>₹{(s.commission||0).toFixed(2)}</td>
+                      <td style={{color:'var(--orange)'}}>₹{(s.gst_amount||0).toFixed(2)}</td>
+                      <td>
+                        <span style={{color:isCredit?'var(--green)':'var(--red)',fontWeight:700}}>
+                          {isCredit?'↑ ':'↓ '}₹{Math.abs(s.net_payable||0).toFixed(2)}
+                        </span>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{isCredit?'CrosCrow pays':'Vendor pays'}</div>
+                      </td>
+                      <td><span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span></td>
+                      <td>
+                        <div style={{display:'flex',gap:6}}>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>viewInvoice(s.id)}>⎙ Invoice</button>
+                          {s.status==='pending' && <button className="btn btn-green btn-sm" onClick={()=>markPaid(s.id)}>✓ Mark Paid</button>}
+                        </div>
+                      </td>
+                    </tr>
+                   );
+                 })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {invoice && <InvoiceModal settlement={invoice.settlement} orders={invoice.orders} onClose={()=>setInvoice(null)}/>}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     AUDIT LOG VIEW
+  ══════════════════════════════════ */
+  function AuditLog({ token }) {
+    const [logs,    setLogs]    = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(()=>{
+      fetch(`${API}/admin/audit`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setLogs(d.logs||[])).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    return (
+      <div className="page">
+        <div className="card">
+          <div className="card-header"><span className="card-title">Audit Log</span><span className="card-sub">Last 500 actions</span></div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>Time</th></tr></thead>
+              <tbody>
+                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={6}/>) :
+                 logs.length===0 ? (
+                   <tr><td colSpan={6}><div className="empty"><div className="empty-icon">📋</div><div className="empty-title">No logs yet</div></div></td></tr>
+                 ) :
+                 logs.map((l,i)=>(
+                  <tr key={l.id}>
+                    <td className="td-mut">{i+1}</td>
+                    <td style={{color:'var(--indigo)',fontWeight:600}}>{l.actor}</td>
+                    <td><span style={{fontSize:10,padding:'2px 8px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{l.action}</span></td>
+                    <td className="td-mut">{l.target_id}</td>
+                    <td style={{fontSize:10,color:'var(--text-muted)',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
+                    <td className="td-mut">{fmtDate(l.created_at)} {new Date(l.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</td>
+                  </tr>
+                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     MAIN APP
+  ══════════════════════════════════ */
+  function App() {
+    const [token,      setToken]      = useState(()=>ls.get('admin_token',null));
+    const [view,       setView]       = useState('dashboard');
+    const [stageFilter,setStageFilter]= useState('all');
+    const [pass,       setPass]       = useState('');
+    const [loginErr,   setLoginErr]   = useState('');
+    const [loginLoad,  setLoginLoad]  = useState(false);
+
+    const login = async () => {
+      setLoginLoad(true); setLoginErr('');
+      try {
+        const r = await fetch(`${API}/admin/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pass})});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error||'Login failed');
+        ls.set('admin_token', d.token);
+        setToken(d.token);
+      } catch(e) { setLoginErr(e.message); }
+      setLoginLoad(false);
+    };
+
+    const logout = async () => {
+      await fetch(`${API}/admin/logout`,{method:'POST',headers:{Authorization:`Bearer ${token}`}}).catch(()=>{});
+      ls.del('admin_token'); setToken(null);
+    };
+
+    if (!token) return (
+      <div className="login-wrap">
+        <div className="login-box">
+          <div className="login-logo">A</div>
+          <div className="login-title">CROSCROW</div>
+          <div className="login-sub">Admin Portal</div>
+          {loginErr && <div className="login-error">⚠ {loginErr}</div>}
+          <label className="field-label">Admin Password</label>
+          <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
+          <button className="login-btn" onClick={login} disabled={loginLoad||!pass}>{loginLoad?'Signing in…':'Sign In'}</button>
+        </div>
+      </div>
+    );
+
+    const navItems = [
+      { id:'dashboard',   icon:'◈', label:'Dashboard',   section:'main' },
+      { id:'orders',      icon:'◎', label:'Orders',       section:'main' },
+      { id:'vendors',     icon:'🏪', label:'Vendors',      section:'main' },
+      { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
+      { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
+    ];
+    const sections = [...new Set(navItems.map(n=>n.section))];
+    const sectionLabels = { main:'Management', finance:'Finance & Logs' };
+
+    const handleStageClick = stage => { setStageFilter(stage); setView('orders'); };
+
+    const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', settlements:'Settlements', audit:'Audit Log' };
+
+    return (
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="sidebar-brand">
+            <div className="sidebar-logo">A</div>
+            <div><div className="sidebar-name">CROSCROW</div><div className="sidebar-role">Admin Portal</div></div>
+          </div>
+          <nav className="nav">
+            {sections.map(sec=>(
+              <div key={sec}>
+                <div className="nav-section">{sectionLabels[sec]}</div>
+                {navItems.filter(n=>n.section===sec).map(n=>(
+                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
+                    <span className="nav-icon">{n.icon}</span>{n.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="sidebar-footer">
+            <button className="logout-btn" onClick={logout}><span>↩</span> Sign Out</button>
+          </div>
+        </aside>
+
+        <div className="content">
+          <div className="topbar">
+            <span className="topbar-title">{titles[view]||view}</span>
+            <div className="topbar-right">
+              <span style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1,display:'flex',alignItems:'center',gap:6}}>
+                <span className="pulse"/>Admin Mode
+              </span>
+            </div>
+          </div>
+
+          {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick}/>}
+          {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
+          {view==='vendors'     && <Vendors     token={token}/>}
+          {view==='settlements' && <Settlements token={token}/>}
+          {view==='audit'       && <AuditLog    token={token}/>}
+        </div>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
