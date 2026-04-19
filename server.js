@@ -844,27 +844,17 @@ app.post("/jarvis", async (req, res) => {
       console.error("❌ /jarvis:", err.message);
       return res.status(500).json({ error: err.message });
     }
-    // ── Route to Claude ──────────────────────────────────────────────────
+    // ── Route to AI (Groq → Anthropic fallback) ─────────────────────────
     try {
+      const GROQ_KEY      = process.env.GROQ_API_KEY;
       const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-      if (!ANTHROPIC_KEY) {
-        return res.json({ reply: "ANTHROPIC_API_KEY not set in .env — add it to enable AI-powered answers." });
+
+      if (!GROQ_KEY && !ANTHROPIC_KEY) {
+        return res.json({ reply: "No AI key set. Add GROQ_API_KEY (free at console.groq.com) or ANTHROPIC_API_KEY to your .env." });
       }
+
       const snapshot = await buildStoreSnapshot();
-      const msgs = [
-        ...history.filter(m=>m.role&&m.text).map(m=>({
-          role: m.role==="bot"?"assistant":"user",
-          content: m.text,
-        })),
-        { role:"user", content: query },
-      ];
-      const claude = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "x-api-key":ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 700,
-          system: `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify store.
+      const systemPrompt = `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify store.
 You have live access to the full store data snapshot below. Use it to give precise, actionable answers.
 
 Rules:
@@ -877,19 +867,50 @@ Rules:
 - If data for something is zero or missing, say so clearly.
 
 Live Store Snapshot (as of ${new Date().toLocaleString('en-IN')}):
-${JSON.stringify(snapshot, null, 2)}`,
+${JSON.stringify(snapshot, null, 2)}`;
+
+      const msgs = [
+        ...history.filter(m=>m.role&&m.text).map(m=>({
+          role: m.role==="bot"?"assistant":"user",
+          content: m.text,
+        })),
+        { role:"user", content: query },
+      ];
+
+      if (GROQ_KEY) {
+        // Groq — free, fast, OpenAI-compatible
+        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type":"application/json", "Authorization":`Bearer ${GROQ_KEY}` },
+          body: JSON.stringify({
+            model: "llama-3.3-70b-versatile",
+            max_tokens: 700,
+            messages: [{ role:"system", content: systemPrompt }, ...msgs],
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error?.message || `Groq ${r.status}`);
+        return res.json({ reply: d.choices?.[0]?.message?.content || "No response." });
+      }
+
+      // Anthropic fallback
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-api-key":ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 700,
+          system: systemPrompt,
           messages: msgs,
         }),
       });
-      if (!claude.ok) {
-        const e = await claude.json().catch(()=>({}));
-        throw new Error(e.error?.message || `Anthropic ${claude.status}`);
-      }
-      const data = await claude.json();
-      return res.json({ reply: data.content?.[0]?.text || "No response." });
-    } catch (claudeErr) {
-      console.error("❌ /jarvis Claude:", claudeErr.message);
-      return res.status(500).json({ error: claudeErr.message });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error?.message || `Anthropic ${r.status}`);
+      return res.json({ reply: d.content?.[0]?.text || "No response." });
+
+    } catch (aiErr) {
+      console.error("❌ /jarvis AI:", aiErr.message);
+      return res.status(500).json({ error: aiErr.message });
     }
   }
 });
