@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(node -e \"const Database = require\\('better-sqlite3'\\); console.log\\('better-sqlite3 OK'\\)\")",
+      "Bash(node -c server.js)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(lsof -ti:3001)",
+      "Bash(xargs kill *)",
+      "Bash(curl -s http://localhost:3001/health)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://localhost:3001/)"
+    ]
+  }
+}

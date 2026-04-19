@@ -12,11 +12,12 @@
  *   5. Add env vars in Render dashboard (see .env.example)
  */
 
-const express   = require("express");
-const cors      = require("cors");
-const crypto    = require("crypto");
-const fetch     = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
-const Database  = require("better-sqlite3");
+const express    = require("express");
+const cors       = require("cors");
+const crypto     = require("crypto");
+const fetch      = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
+const Database   = require("better-sqlite3");
+const nodemailer = require("nodemailer");
 require("dotenv").config();
 
 const app = express();
@@ -216,6 +217,20 @@ db.exec(`
     credentials  TEXT NOT NULL,
     connected_at TEXT DEFAULT ''
   );
+  CREATE TABLE IF NOT EXISTS email_settings (
+    id    INTEGER PRIMARY KEY CHECK (id = 1),
+    smtp  TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE TABLE IF NOT EXISTS email_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shopify_id TEXT,
+    trigger    TEXT,
+    recipient  TEXT,
+    subject    TEXT,
+    status     TEXT,
+    error      TEXT,
+    sent_at    TEXT
+  );
 `);
 
 // Derive payment_type from Shopify financial_status
@@ -261,9 +276,14 @@ function applyTagMappings(orderId, tags, financialStatus) {
     if (hit) { winner = m; break; }
   }
   if (winner) {
+    const prev = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(sid);
     db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
       ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
       .run(sid, winner.stage, now);
+    // Fire emails only if stage actually changed
+    if (!prev || prev.stage !== winner.stage) {
+      fireStageEmails(sid, winner.stage).catch(()=>{});
+    }
   }
 }
 
@@ -531,6 +551,190 @@ app.post("/webhooks/orders", (req, res) => {
 });
 
 // ── JARVIS store snapshot builder ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// EMAIL ENGINE
+// ══════════════════════════════════════════════════════════════════════════
+
+function getSmtpConfig() {
+  const row = db.prepare("SELECT smtp FROM email_settings WHERE id=1").get();
+  if (!row) return null;
+  try { return JSON.parse(row.smtp); } catch { return null; }
+}
+
+function createTransporter(cfg) {
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: parseInt(cfg.port) || 587,
+    secure: parseInt(cfg.port) === 465,
+    auth: { user: cfg.user, pass: cfg.pass },
+  });
+}
+
+function logEmail(shopifyId, trigger, recipient, subject, status, error='') {
+  db.prepare("INSERT INTO email_log (shopify_id,trigger,recipient,subject,status,error,sent_at) VALUES (?,?,?,?,?,?,?)")
+    .run(String(shopifyId||''), trigger, recipient, subject, status, error, new Date().toISOString());
+}
+
+// ── HTML Email Templates ──────────────────────────────────────────────────
+function emailBase(title, accentColor, bodyHtml) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;}
+  .wrap{max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);}
+  .header{background:${accentColor};padding:32px 36px;}
+  .header-logo{font-size:22px;font-weight:800;color:#fff;letter-spacing:3px;}
+  .header-sub{font-size:12px;color:rgba(255,255,255,0.7);letter-spacing:2px;margin-top:4px;}
+  .body{padding:32px 36px;}
+  .title{font-size:22px;font-weight:700;color:#1a2a3a;margin-bottom:8px;}
+  .subtitle{font-size:14px;color:#6b7280;margin-bottom:28px;}
+  .info-box{background:#f8fafc;border-radius:8px;padding:20px 24px;margin-bottom:20px;}
+  .info-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e5e7eb;font-size:13px;}
+  .info-row:last-child{border-bottom:none;}
+  .info-label{color:#6b7280;font-weight:500;}
+  .info-val{color:#1a2a3a;font-weight:600;text-align:right;}
+  .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;}
+  .items-table{width:100%;border-collapse:collapse;margin-bottom:20px;}
+  .items-table th{background:#f1f5f9;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:left;}
+  .items-table td{padding:11px 14px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#374151;}
+  .footer{background:#f8fafc;padding:20px 36px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #e5e7eb;}
+  .cta{display:inline-block;margin:20px 0;padding:13px 32px;background:${accentColor};color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:14px;}
+</style></head><body>
+<div class="wrap">
+  <div class="header">
+    <div class="header-logo">CROSCROW</div>
+    <div class="header-sub">ORDER NOTIFICATION</div>
+  </div>
+  <div class="body">
+    <div class="title">${title}</div>
+    ${bodyHtml}
+  </div>
+  <div class="footer">© CrosCrow · This is an automated notification · Do not reply to this email</div>
+</div></body></html>`;
+}
+
+function templateOrderConfirmed({ order, forVendor = false }) {
+  const items = (order.line_items || [])
+    .filter(li => !forVendor || li.vendor === forVendor)
+    .map(li => `<tr><td>${li.title}${li.variant_title ? ` (${li.variant_title})` : ''}</td><td style="text-align:center">${li.quantity}</td><td style="text-align:right">₹${parseFloat(li.price).toFixed(2)}</td></tr>`)
+    .join('');
+
+  const body = `
+    <div class="subtitle">${forVendor ? `New order assigned to your brand` : `Your order has been confirmed`}</div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+      <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${order.financial_status === 'paid' ? '✅ Prepaid' : '💵 Cash on Delivery'}</span></div>
+      <div class="info-row"><span class="info-label">Total Amount</span><span class="info-val" style="color:#10b981;font-size:16px">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
+      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val" style="max-width:220px">${order.shipping_address.name}, ${order.shipping_address.city}, ${order.shipping_address.province} ${order.shipping_address.zip}</span></div>` : ''}
+    </div>
+    <table class="items-table">
+      <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th></tr></thead>
+      <tbody>${items}</tbody>
+    </table>
+    ${!forVendor ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">We'll notify you once your order is shipped. Thank you for shopping with CrosCrow!</p>` : `<p style="font-size:13px;color:#6b7280;line-height:1.7">Please prepare this order for dispatch at the earliest. The customer is waiting!</p>`}
+  `;
+  return emailBase(forVendor ? `New Order: ${order.name}` : `Order Confirmed: ${order.name}`, '#10b981', body);
+}
+
+function templateInTransit({ order, awb, courier }) {
+  const body = `
+    <div class="subtitle">Your order is on its way!</div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier || 'Our delivery partner'}</span></div>
+      ${awb ? `<div class="info-row"><span class="info-label">Tracking AWB</span><span class="info-val" style="font-family:monospace;color:#6366f1">${awb}</span></div>` : ''}
+      <div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address?.city || ''}, ${order.shipping_address?.province || ''}</span></div>
+    </div>
+    ${awb && courier ? `<div style="text-align:center"><a class="cta" href="https://www.${(courier||'').toLowerCase().includes('delhivery') ? `delhivery.com/track/package/${awb}` : `shiprocket.co/tracking/${awb}`}">Track Your Order →</a></div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Estimated delivery in 3–7 business days. You'll receive another update once it's delivered.</p>
+  `;
+  return emailBase(`Your Order is Shipped! 🚚`, '#6366f1', body);
+}
+
+function templateDelivered({ order, forRole = 'customer' }) {
+  const titles = { customer: '🎉 Order Delivered!', vendor: `Order Delivered: ${order.name}`, admin: `Delivered: ${order.name}` };
+  const subtitles = {
+    customer: 'Your order has been successfully delivered.',
+    vendor: 'This order has been marked as delivered.',
+    admin: `Order ${order.name} has been delivered to the customer.`,
+  };
+  const body = `
+    <div class="subtitle">${subtitles[forRole]}</div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${order.shipping_address?.name || order.email}</span></div>
+      <div class="info-row"><span class="info-label">Total</span><span class="info-val">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
+      <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${order.financial_status === 'paid' ? '✅ Prepaid' : '💵 COD'}</span></div>
+      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Delivered To</span><span class="info-val">${order.shipping_address.city}, ${order.shipping_address.province}</span></div>` : ''}
+    </div>
+    ${forRole === 'customer' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">We hope you love your purchase! If you have any issues, please contact us.</p>` : ''}
+  `;
+  return emailBase(titles[forRole], '#10b981', body);
+}
+
+// ── Send email helper ─────────────────────────────────────────────────────
+async function sendEmail({ to, subject, html, shopifyId, trigger }) {
+  const cfg = getSmtpConfig();
+  if (!cfg?.host || !cfg?.user || !cfg?.pass) {
+    logEmail(shopifyId, trigger, to, subject, 'skipped', 'SMTP not configured');
+    return;
+  }
+  try {
+    const transporter = createTransporter(cfg);
+    await transporter.sendMail({ from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`, to, subject, html });
+    logEmail(shopifyId, trigger, to, subject, 'sent');
+    console.log(`📧 Email sent [${trigger}] → ${to}`);
+  } catch (err) {
+    logEmail(shopifyId, trigger, to, subject, 'failed', err.message);
+    console.error(`❌ Email failed [${trigger}] → ${to}:`, err.message);
+  }
+}
+
+// ── Fire emails on stage change ───────────────────────────────────────────
+async function fireStageEmails(shopifyId, newStage) {
+  try {
+    const cfg = getSmtpConfig();
+    if (!cfg?.host) return; // no SMTP configured, skip silently
+
+    const token = await getAccessToken();
+    const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}.json`, {
+      headers: { "X-Shopify-Access-Token": token }
+    });
+    if (!r.ok) return;
+    const { order } = await r.json();
+    const meta = db.prepare("SELECT awb, courier FROM order_meta WHERE shopify_id=?").get(String(shopifyId)) || {};
+
+    const adminEmail = cfg.adminEmail;
+    const customerEmail = order.email;
+    const vendors = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+
+    if (newStage === 'confirmed') {
+      // Customer
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmed({ order }), shopifyId, trigger: 'confirmed' });
+      // Each vendor
+      for (const vendor of vendors) {
+        const vendorRow = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name}`, html: templateOrderConfirmed({ order, forVendor: vendor }), shopifyId, trigger: 'confirmed_vendor' });
+      }
+    }
+
+    if (newStage === 'transit') {
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier }), shopifyId, trigger: 'transit' });
+    }
+
+    if (newStage === 'delivered') {
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, forRole: 'customer' }), shopifyId, trigger: 'delivered_customer' });
+      if (adminEmail)    await sendEmail({ to: adminEmail,    subject: `Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'admin' }), shopifyId, trigger: 'delivered_admin' });
+      for (const vendor of vendors) {
+        const vendorRow = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'vendor' }), shopifyId, trigger: 'delivered_vendor' });
+      }
+    }
+  } catch (err) {
+    console.error('❌ fireStageEmails:', err.message);
+  }
+}
+
 // ── JARVIS tool definitions — AI calls these to fetch any data it needs ──────
 const JARVIS_TOOLS = [
   {
@@ -1308,6 +1512,8 @@ app.put("/admin/orders/:id/stage", adminAuth, (req, res) => {
     ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
     .run(id, stage, new Date().toISOString());
   auditLog("admin", "stage_change", id, { stage });
+  // Fire emails async — don't block response
+  fireStageEmails(id, stage).catch(()=>{});
   res.json({ success: true, stage });
 });
 
@@ -1743,14 +1949,62 @@ app.put("/admin/vendors/:name/profile", adminAuth, (req, res) => {
   res.json({ success:true });
 });
 
-// ── GET/PUT /admin/audit ──────────────────────────────────────────────────
+// ── GET /admin/audit ──────────────────────────────────────────────────────
 app.get("/admin/audit", adminAuth, (req, res) => {
   res.json({ logs: db.prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 500").all() });
 });
 
-// ── GET /admin/audit ──────────────────────────────────────────────────────
-app.get("/admin/audit", adminAuth, (req, res) => {
-  res.json({ logs: db.prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 500").all() });
+// ── Email Settings ────────────────────────────────────────────────────────
+app.get("/admin/email-settings", adminAuth, (req, res) => {
+  const row = db.prepare("SELECT smtp FROM email_settings WHERE id=1").get();
+  const smtp = row ? JSON.parse(row.smtp) : {};
+  // Mask password
+  res.json({ smtp: { ...smtp, pass: smtp.pass ? '••••••••' : '' } });
+});
+
+app.post("/admin/email-settings", adminAuth, (req, res) => {
+  const { smtp } = req.body || {};
+  if (!smtp) return res.status(400).json({ error: "smtp config required" });
+  // Don't overwrite password if masked value sent
+  const existing = db.prepare("SELECT smtp FROM email_settings WHERE id=1").get();
+  let merged = smtp;
+  if (existing) {
+    const prev = JSON.parse(existing.smtp);
+    if (smtp.pass === '••••••••') smtp.pass = prev.pass;
+    merged = { ...prev, ...smtp };
+  }
+  db.prepare("INSERT INTO email_settings (id, smtp) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET smtp=excluded.smtp")
+    .run(JSON.stringify(merged));
+  res.json({ ok: true });
+});
+
+app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
+  const { to } = req.body || {};
+  if (!to) return res.status(400).json({ error: "to email required" });
+  const cfg = getSmtpConfig();
+  if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
+  try {
+    const transporter = createTransporter(cfg);
+    await transporter.sendMail({
+      from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`,
+      to, subject: 'CrosCrow SMTP Test ✅',
+      html: emailBase('SMTP is working!', '#10b981', '<p style="color:#6b7280;font-size:14px">Your email configuration is correct. CrosCrow will now send order notifications automatically.</p>'),
+    });
+    res.json({ ok: true, message: `Test email sent to ${to}` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/admin/email-log", adminAuth, (req, res) => {
+  res.json({ logs: db.prepare("SELECT * FROM email_log ORDER BY sent_at DESC LIMIT 200").all() });
+});
+
+// Vendor email update
+app.put("/admin/vendors/:name/email", adminAuth, (req, res) => {
+  const { name } = req.params;
+  const { email } = req.body || {};
+  db.prepare("INSERT INTO vendor_config (vendor_name, email) VALUES (?,?) ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email")
+    .run(name, email || '');
+  res.json({ ok: true });
 });
 
 // ── Vendor wallet + settlements ───────────────────────────────────────────

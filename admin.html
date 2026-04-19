@@ -1686,6 +1686,175 @@
   }
 
   /* ══════════════════════════════════
+     EMAIL SETTINGS VIEW
+  ══════════════════════════════════ */
+  function EmailSettings({ token }) {
+    const [smtp,      setSmtp]      = useState({ host:'', port:'587', user:'', pass:'', fromName:'CrosCrow', fromEmail:'', adminEmail:'' });
+    const [saving,    setSaving]    = useState(false);
+    const [testing,   setTesting]   = useState(false);
+    const [testTo,    setTestTo]    = useState('');
+    const [logs,      setLogs]      = useState([]);
+    const [logsLoad,  setLogsLoad]  = useState(false);
+    const [vendors,   setVendors]   = useState([]);
+    const [vendEmails,setVendEmails]= useState({});
+    const [savingV,   setSavingV]   = useState({});
+    const [msg,       setMsg]       = useState(null);
+
+    useEffect(()=>{
+      fetch(`${API}/admin/email-settings`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ if(d.smtp) setSmtp(s=>({...s,...d.smtp})); }).catch(()=>{});
+      fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{
+          setVendors(d.vendors||[]);
+          const em={};
+          (d.vendors||[]).forEach(v=>{ em[v.name]=v.email||''; });
+          setVendEmails(em);
+        }).catch(()=>{});
+      loadLogs();
+    },[token]);
+
+    const loadLogs = () => {
+      setLogsLoad(true);
+      fetch(`${API}/admin/email-log`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setLogs(d.logs||[])).catch(()=>{}).finally(()=>setLogsLoad(false));
+    };
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/email-settings`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({smtp})});
+        if(!r.ok) throw new Error((await r.json()).error);
+        setMsg({type:'success',text:'SMTP settings saved.'});
+      } catch(e){setMsg({type:'error',text:e.message});}
+      setSaving(false);
+    };
+
+    const test = async () => {
+      if(!testTo) return;
+      setTesting(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/email-settings/test`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({to:testTo})});
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error);
+        setMsg({type:'success',text:d.message}); loadLogs();
+      } catch(e){setMsg({type:'error',text:e.message});}
+      setTesting(false);
+    };
+
+    const saveVendorEmail = async (name) => {
+      setSavingV(v=>({...v,[name]:true}));
+      await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/email`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({email:vendEmails[name]||''})});
+      setSavingV(v=>({...v,[name]:false}));
+    };
+
+    const field = (label, key, type='text', placeholder='') => (
+      <div>
+        <label className="form-label">{label}</label>
+        <input className="form-input" type={type} placeholder={placeholder}
+          value={smtp[key]||''} onChange={e=>setSmtp(s=>({...s,[key]:e.target.value}))}/>
+      </div>
+    );
+
+    const statusColor = s => s==='sent'?'#10b981':s==='failed'?'#f87171':'#fbbf24';
+
+    return (
+      <div className="page">
+        <div style={{background:'#0d1820',border:'1px solid #1a3a5a',borderRadius:10,padding:'12px 16px',marginBottom:20,fontSize:12,color:'var(--text)'}}>
+          <div style={{fontWeight:700,color:'#6366f1',marginBottom:6}}>📧 Email Notifications</div>
+          <div style={{lineHeight:1.8,color:'var(--text-muted)'}}>
+            Configure SMTP once — emails fire automatically on stage changes:
+            <strong> Confirmed</strong> → customer + vendor &nbsp;·&nbsp;
+            <strong> In Transit</strong> → customer &nbsp;·&nbsp;
+            <strong> Delivered</strong> → customer + vendor + admin
+          </div>
+        </div>
+
+        {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:16}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        {/* SMTP Config */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><span className="card-title">SMTP Configuration</span></div>
+          <div style={{padding:16}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              {field('SMTP Host', 'host', 'text', 'smtp.gmail.com')}
+              {field('Port', 'port', 'text', '587')}
+              {field('Username / Email', 'user', 'text', 'you@gmail.com')}
+              {field('Password / App Password', 'pass', 'password', '••••••••')}
+              {field('From Name', 'fromName', 'text', 'CrosCrow')}
+              {field('From Email', 'fromEmail', 'text', 'orders@croscrow.com')}
+              <div style={{gridColumn:'1/-1'}}>
+                <label className="form-label">Admin Email (receives Delivered notifications)</label>
+                <input className="form-input" type="email" placeholder="admin@croscrow.com"
+                  value={smtp.adminEmail||''} onChange={e=>setSmtp(s=>({...s,adminEmail:e.target.value}))}/>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+              <button className="btn btn-indigo" onClick={save} disabled={saving}>
+                {saving?<><span className="spin">↻</span> Saving…</>:'💾 Save Settings'}
+              </button>
+              <input className="form-input" style={{width:220}} type="email" placeholder="Send test email to…"
+                value={testTo} onChange={e=>setTestTo(e.target.value)}/>
+              <button className="btn btn-ghost" onClick={test} disabled={testing||!testTo}>
+                {testing?<><span className="spin">↻</span> Sending…</>:'📤 Send Test'}
+              </button>
+            </div>
+            <div style={{marginTop:12,fontSize:11,color:'var(--text-muted)',lineHeight:1.8}}>
+              <strong style={{color:'var(--text)'}}>Gmail tip:</strong> Use App Password (not your login password). Go to Google Account → Security → 2FA → App Passwords → generate one for "Mail".
+            </div>
+          </div>
+        </div>
+
+        {/* Vendor Emails */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><span className="card-title">Vendor Email Addresses</span><span className="card-sub">For order & delivery notifications</span></div>
+          <div style={{padding:16}}>
+            {vendors.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12}}>No vendors found.</div> :
+            vendors.map(v=>(
+              <div key={v.name} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                <div style={{width:120,fontSize:12,color:'var(--text)',flexShrink:0,fontWeight:600}}>{v.name}</div>
+                <input className="form-input" style={{flex:1}} type="email" placeholder="vendor@email.com"
+                  value={vendEmails[v.name]||''} onChange={e=>setVendEmails(m=>({...m,[v.name]:e.target.value}))}/>
+                <button className="btn btn-ghost btn-sm" onClick={()=>saveVendorEmail(v.name)} disabled={savingV[v.name]}>
+                  {savingV[v.name]?'…':'Save'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Email Log */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Email Log</span>
+            <button className="btn btn-ghost btn-sm" onClick={loadLogs}>↻ Refresh</button>
+          </div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Order</th><th>Trigger</th><th>Recipient</th><th>Subject</th><th>Status</th></tr></thead>
+              <tbody>
+                {logsLoad ? <SkelRow cols={6}/> :
+                 logs.length===0 ? <tr><td colSpan={6}><div className="empty"><div className="empty-icon">📭</div><div className="empty-title">No emails sent yet</div></div></td></tr> :
+                 logs.map(l=>(
+                  <tr key={l.id}>
+                    <td className="td-mut">{l.sent_at?.slice(0,16).replace('T',' ')}</td>
+                    <td className="td-id">{l.shopify_id}</td>
+                    <td style={{fontSize:10,color:'var(--text-muted)'}}>{l.trigger}</td>
+                    <td style={{fontSize:11}}>{l.recipient}</td>
+                    <td style={{fontSize:11,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.subject}</td>
+                    <td><span style={{fontSize:10,fontWeight:700,color:statusColor(l.status)}}>{l.status?.toUpperCase()}</span>
+                      {l.error&&l.status==='failed'&&<div style={{fontSize:9,color:'#f87171',marginTop:2}}>{l.error.slice(0,60)}</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      SHIPPING CREDENTIALS VIEW
   ══════════════════════════════════ */
   const SHIPPING_PARTNERS = [
@@ -2279,6 +2448,7 @@
       { id:'settings',    icon:'⚙', label:'Settings',     section:'finance' },
       { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
       { id:'shippingcreds', icon:'🚚', label:'Shipping Partners', section:'finance' },
+      { id:'emailsettings', icon:'📧', label:'Email Settings', section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -2330,6 +2500,7 @@
           {view==='settings'    && <Settings    token={token}/>}
           {view==='tagmappings' && <TagMappings token={token}/>}
           {view==='shippingcreds' && <ShippingCreds token={token}/>}
+          {view==='emailsettings' && <EmailSettings token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>
       </div>
