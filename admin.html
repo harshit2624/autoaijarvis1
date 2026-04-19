@@ -243,20 +243,6 @@
     .inv-pay-hdr { background: #f0f0f0; padding: 5px 10px; font-size: 7.5px; letter-spacing: 1px; text-transform: uppercase; color: #666; font-weight: 700; }
     .inv-pay-row { display: flex; justify-content: space-between; padding: 4px 10px; border-top: 1px solid #eee; font-size: 10px; }
 
-    @media print {
-      .no-print { display: none !important; }
-      body { background: white !important; margin: 0; }
-      .overlay { position: static !important; background: none !important; padding: 0 !important; }
-      .modal { box-shadow: none !important; border: none !important; max-width: 100% !important; width: 100% !important; border-radius: 0 !important; }
-      .modal-header { display: none !important; }
-      .modal-body { overflow: visible !important; max-height: none !important; }
-      .modal-footer { display: none !important; }
-      .invoice-wrap { padding: 12px 14px; }
-      .inv-table { font-size: 8px; }
-      .inv-table th { font-size: 7px; padding: 4px 4px; }
-      .inv-table td { padding: 4px 4px; }
-      @page { margin: 10mm; size: A4; }
-    }
 
     /* ── Pagination ── */
     .pager { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-card2); }
@@ -477,13 +463,43 @@
     const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0), 0); // full MRP collected by CrosCrow
     const taxableValue   = (s.gross_revenue||0) - prepaidDiscount;
 
-    const fileName = `${s.vendor_name.replace(/\s+/g,'-')}_${s.period_start}_${s.period_end}_${s.invoice_no}.pdf`;
+    const fileName = `${s.vendor_name.replace(/\s+/g,'-')}_${s.period_start}_${s.period_end}_${s.invoice_no}`;
 
     const handlePrint = () => {
-      const prev = document.title;
-      document.title = fileName;
-      window.print();
-      document.title = prev;
+      const invoiceEl = document.getElementById('invoice-print-content');
+      if (!invoiceEl) return;
+      const html = invoiceEl.innerHTML;
+      const win = window.open('', '_blank', 'width=900,height=700');
+      win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #111; }
+          .invoice-wrap { padding: 24px 28px; width: 100%; }
+          .inv-header { border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 14px; }
+          .inv-title  { font-size: 17px; font-weight: 800; letter-spacing: 1px; }
+          .inv-sub    { font-size: 9px; color: #666; letter-spacing: 1px; }
+          .inv-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-bottom: 14px; }
+          .inv-grid > div { display: flex; flex-direction: column; gap: 2px; }
+          .inv-label  { font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: #888; }
+          .inv-val    { font-weight: 700; font-size: 11px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9px; table-layout: fixed; }
+          th { padding: 5px 5px; background: #f0f0f0; text-align: left; font-size: 7.5px; letter-spacing: 0.3px; text-transform: uppercase; border-bottom: 1px solid #ccc; }
+          td { padding: 5px 5px; border-bottom: 1px solid #eee; word-break: break-word; }
+          .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+          .inv-summary { background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 10px 13px; font-size: 10px; }
+          .inv-row { display: flex; justify-content: space-between; padding: 3px 0; }
+          .inv-total { border-top: 2px solid #111; margin-top: 6px; padding-top: 6px; font-weight: 800; font-size: 12px; }
+          .inv-pay-box { border: 1px solid #ddd; border-radius: 5px; overflow: hidden; }
+          .inv-pay-hdr { background: #f0f0f0; padding: 5px 10px; font-size: 7.5px; letter-spacing: 1px; text-transform: uppercase; color: #666; font-weight: 700; }
+          .inv-pay-row { display: flex; justify-content: space-between; padding: 4px 10px; border-top: 1px solid #eee; font-size: 10px; }
+          .inv-footer { margin-top: 18px; font-size: 9px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }
+          .inv-notes  { margin-top: 14px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 10px; font-size: 10px; }
+          @page { margin: 10mm; size: A4; }
+        </style>
+      </head><body><div class="invoice-wrap">${html}</div></body></html>`);
+      win.document.close();
+      win.focus();
+      setTimeout(() => { win.print(); win.close(); }, 400);
     };
 
     return (
@@ -497,7 +513,7 @@
             </div>
           </div>
           <div className="modal-body" style={{padding:0,maxHeight:'80vh',overflowY:'auto'}}>
-            <div className="invoice-wrap">
+            <div className="invoice-wrap" id="invoice-print-content">
               {/* Header */}
               <div className="inv-header">
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
