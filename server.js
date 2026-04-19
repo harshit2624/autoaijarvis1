@@ -522,129 +522,292 @@ app.post("/webhooks/orders", (req, res) => {
 });
 
 // ── JARVIS store snapshot builder ─────────────────────────────────────────
-async function buildStoreSnapshot() {
+// ── JARVIS tool definitions — AI calls these to fetch any data it needs ──────
+const JARVIS_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "get_order_stats",
+      description: "Get order counts and revenue for any time period. Use for: totals, today, this week, this month, any date range, COD vs prepaid split, fulfillment stats.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all","custom"], description: "Time period" },
+          from: { type: "string", description: "ISO date string for custom period start (e.g. 2024-01-01)" },
+          to:   { type: "string", description: "ISO date string for custom period end" },
+        },
+        required: ["period"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_customers",
+      description: "Get customer data. Use for: repeat customers, top spenders, new vs returning, city/location breakdown.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["repeat","top_spenders","all","city_breakdown"], description: "What customer data to fetch" },
+          limit: { type: "number", description: "Max results to return (default 20)" },
+        },
+        required: ["type"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_products",
+      description: "Get product performance data. Use for: top selling products, slow movers, units sold, revenue by product.",
+      parameters: {
+        type: "object",
+        properties: {
+          sort_by: { type: "string", enum: ["units","revenue"], description: "Sort by units sold or revenue" },
+          limit: { type: "number", description: "Max results (default 10)" },
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+        },
+        required: ["sort_by"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_vendor_stats",
+      description: "Get vendor performance: revenue, order counts, RTO rates per vendor. Use for vendor comparisons or specific vendor questions.",
+      parameters: {
+        type: "object",
+        properties: {
+          vendor: { type: "string", description: "Specific vendor name, or omit for all vendors" },
+          include_rto: { type: "boolean", description: "Include RTO rate breakdown (default true)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_settlements",
+      description: "Get settlement data: pending, paid, amounts owed to vendors.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_delivery_stats",
+      description: "Get delivery/shipping status breakdown: in-transit, delivered, RTO, pending dispatch. Use for logistics questions.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_orders_list",
+      description: "Get a list of actual orders with details. Use for: pending orders, COD orders, specific order lookups, RTO orders, orders by vendor.",
+      parameters: {
+        type: "object",
+        properties: {
+          status:   { type: "string", enum: ["pending","fulfilled","cancelled","any"], description: "Fulfillment status filter" },
+          payment:  { type: "string", enum: ["cod","prepaid","any"], description: "Payment type filter" },
+          stage:    { type: "string", description: "Internal stage from order_meta: rto, advance_paid, etc." },
+          vendor:   { type: "string", description: "Filter by vendor name" },
+          period:   { type: "string", enum: ["today","week","month","all"], description: "Time period" },
+          limit:    { type: "number", description: "Max orders to return (default 15)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_city_stats",
+      description: "Get order breakdown by city or state. Use for geographic analysis, where orders come from, top delivery locations.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+          limit:  { type: "number", description: "Top N cities (default 10)" },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
+// ── JARVIS tool executor — runs whichever tool the AI asked for ───────────────
+async function runJarvisTool(name, args) {
   const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
   const metas     = Object.fromEntries(db.prepare("SELECT * FROM order_meta").all().map(m=>[m.shopify_id,m]));
 
-  const now    = new Date();
-  const today  = new Date(now); today.setHours(0,0,0,0);
+  const now      = new Date();
+  const today    = new Date(now); today.setHours(0,0,0,0);
   const weekAgo  = new Date(today); weekAgo.setDate(today.getDate()-7);
   const monthAgo = new Date(today); monthAgo.setDate(today.getDate()-30);
 
-  const todayOrders  = allOrders.filter(o=>new Date(o.created_at)>=today);
-  const weekOrders   = allOrders.filter(o=>new Date(o.created_at)>=weekAgo);
-  const monthOrders  = allOrders.filter(o=>new Date(o.created_at)>=monthAgo);
-
-  const rev = orders => orders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
-  const ff  = orders => orders.filter(o=>o.fulfillment_status==="fulfilled");
-  const pnd = orders => orders.filter(o=>!o.fulfillment_status||o.fulfillment_status==="unfulfilled");
-  const cod = orders => orders.filter(o=>o.financial_status!=="paid");
-  const pre = orders => orders.filter(o=>o.financial_status==="paid");
-  const rto = orders => orders.filter(o=>metas[String(o.id)]?.stage==="rto"||o.financial_status==="cancelled");
-
-  // Top products
-  const prodTally = {};
-  allOrders.forEach(o=>(o.line_items||[]).forEach(li=>{
-    prodTally[li.title]=(prodTally[li.title]||0)+(li.quantity||1);
-  }));
-  const topProducts = Object.entries(prodTally).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,q])=>({name:n,units:q}));
-
-  // Top vendors
-  const vendRev = {};
-  allOrders.forEach(o=>(o.line_items||[]).forEach(li=>{
-    if(li.vendor) vendRev[li.vendor]=(vendRev[li.vendor]||0)+parseFloat(li.price||0)*(li.quantity||1);
-  }));
-  const topVendors = Object.entries(vendRev).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,r])=>({vendor:n,revenue:Math.round(r)}));
-
-  // RTO rate by vendor
-  const vendRTO = {}; const vendTotal = {};
-  allOrders.forEach(o=>{
-    const isRTO = metas[String(o.id)]?.stage==="rto";
-    (o.line_items||[]).forEach(li=>{
-      if(!li.vendor)return;
-      vendTotal[li.vendor]=(vendTotal[li.vendor]||0)+1;
-      if(isRTO) vendRTO[li.vendor]=(vendRTO[li.vendor]||0)+1;
-    });
-  });
-
-  // Repeat customers
-  const customerOrderCount = {};
-  allOrders.forEach(o => {
-    const email = o.email || o.customer?.email;
-    const name  = o.billing_address?.name || o.customer?.first_name || email || "Unknown";
-    if (!email) return;
-    if (!customerOrderCount[email]) customerOrderCount[email] = { email, name, orders: 0, revenue: 0 };
-    customerOrderCount[email].orders++;
-    customerOrderCount[email].revenue += parseFloat(o.total_price || 0);
-  });
-  const repeatCustomers = Object.values(customerOrderCount)
-    .filter(c => c.orders > 1)
-    .sort((a, b) => b.orders - a.orders)
-    .slice(0, 20)
-    .map(c => ({ ...c, revenue: Math.round(c.revenue) }));
-
-  // Settlements
-  const settl = db.prepare("SELECT status, COUNT(*) as c, SUM(net_payable) as s FROM settlements GROUP BY status").all();
-
-  // Pincode / city analysis of pending COD
-  const pendingCOD = pnd(cod(allOrders));
-  const cityTally = {};
-  pendingCOD.forEach(o=>{
-    const city = o.shipping_address?.city||"Unknown";
-    cityTally[city]=(cityTally[city]||0)+1;
-  });
-  const topPendingCities = Object.entries(cityTally).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([c,n])=>({city:c,count:n}));
-
-  // Daily trend (last 14 days)
-  const dailyTrend = [];
-  for(let i=13;i>=0;i--){
-    const d=new Date(today); d.setDate(today.getDate()-i);
-    const next=new Date(d); next.setDate(d.getDate()+1);
-    const dayOrders=allOrders.filter(o=>{const t=new Date(o.created_at);return t>=d&&t<next;});
-    dailyTrend.push({ date:d.toLocaleDateString('en-IN',{day:'numeric',month:'short'}), orders:dayOrders.length, revenue:Math.round(rev(dayOrders)) });
+  function filterByPeriod(orders, period, from, to) {
+    if (period === "today")  return orders.filter(o=>new Date(o.created_at)>=today);
+    if (period === "week")   return orders.filter(o=>new Date(o.created_at)>=weekAgo);
+    if (period === "month")  return orders.filter(o=>new Date(o.created_at)>=monthAgo);
+    if (period === "custom" && from) {
+      const f=new Date(from), t=to?new Date(to):now;
+      return orders.filter(o=>{const d=new Date(o.created_at);return d>=f&&d<=t;});
+    }
+    return orders;
   }
 
-  return {
-    generatedAt: now.toISOString(),
-    totals: {
-      orders: allOrders.length,
-      revenue: Math.round(rev(allOrders)),
-      avgOrderValue: Math.round(allOrders.length?rev(allOrders)/allOrders.length:0),
-      fulfilled: ff(allOrders).length,
-      pending: pnd(allOrders).length,
-      cod: cod(allOrders).length,
-      prepaid: pre(allOrders).length,
-      rto: rto(allOrders).length,
-    },
-    today: {
-      orders: todayOrders.length, revenue: Math.round(rev(todayOrders)),
-      fulfilled: ff(todayOrders).length, pending: pnd(todayOrders).length,
-      cod: cod(todayOrders).length, prepaid: pre(todayOrders).length,
-    },
-    thisWeek: {
-      orders: weekOrders.length, revenue: Math.round(rev(weekOrders)),
-      fulfilled: ff(weekOrders).length, pending: pnd(weekOrders).length,
-      rto: rto(weekOrders).length,
-    },
-    thisMonth: {
-      orders: monthOrders.length, revenue: Math.round(rev(monthOrders)),
-      fulfilled: ff(monthOrders).length, pending: pnd(monthOrders).length,
-      rto: rto(monthOrders).length,
-    },
-    topProducts,
-    topVendors,
-    pendingCODTopCities: topPendingCities,
-    repeatCustomers,
-    totalUniqueCustomers: Object.keys(customerOrderCount).length,
-    settlements: settl,
-    dailyTrend,
-    vendorRTORate: Object.entries(vendTotal).map(([v,t])=>({
-      vendor:v, total:t, rto:vendRTO[v]||0, rtoRate:`${Math.round(((vendRTO[v]||0)/t)*100)}%`
-    })).sort((a,b)=>b.rto-a.rto).slice(0,5),
-  };
+  const rev = os => Math.round(os.reduce((s,o)=>s+parseFloat(o.total_price||0),0));
+  const isCOD  = o => o.financial_status !== "paid";
+  const isRTO  = o => metas[String(o.id)]?.stage==="rto" || o.tags?.includes("RTO");
+
+  if (name === "get_order_stats") {
+    const os = filterByPeriod(allOrders, args.period, args.from, args.to);
+    return {
+      period: args.period,
+      total: os.length,
+      revenue: rev(os),
+      avgOrderValue: Math.round(os.length ? rev(os)/os.length : 0),
+      fulfilled: os.filter(o=>o.fulfillment_status==="fulfilled").length,
+      pending: os.filter(o=>!o.fulfillment_status||o.fulfillment_status==="unfulfilled").length,
+      cancelled: os.filter(o=>o.fulfillment_status==="cancelled").length,
+      cod: os.filter(isCOD).length,
+      prepaid: os.filter(o=>!isCOD(o)).length,
+      rto: os.filter(isRTO).length,
+    };
+  }
+
+  if (name === "get_customers") {
+    const lim = args.limit || 20;
+    const map = {};
+    allOrders.forEach(o=>{
+      const email = o.email || o.customer?.email;
+      const name  = o.billing_address?.name || `${o.customer?.first_name||""} ${o.customer?.last_name||""}`.trim() || email || "Unknown";
+      const city  = o.shipping_address?.city || "Unknown";
+      if (!email) return;
+      if (!map[email]) map[email] = { email, name, city, orders:0, revenue:0, lastOrder: o.created_at };
+      map[email].orders++;
+      map[email].revenue += parseFloat(o.total_price||0);
+      if (new Date(o.created_at) > new Date(map[email].lastOrder)) map[email].lastOrder = o.created_at;
+    });
+    const all = Object.values(map).map(c=>({...c, revenue:Math.round(c.revenue)}));
+
+    if (args.type === "repeat")       return { repeatCustomers: all.filter(c=>c.orders>1).sort((a,b)=>b.orders-a.orders).slice(0,lim), totalRepeat: all.filter(c=>c.orders>1).length };
+    if (args.type === "top_spenders") return { topSpenders: all.sort((a,b)=>b.revenue-a.revenue).slice(0,lim) };
+    if (args.type === "city_breakdown") {
+      const cities = {};
+      all.forEach(c=>{ cities[c.city]=(cities[c.city]||0)+1; });
+      return { topCities: Object.entries(cities).sort((a,b)=>b[1]-a[1]).slice(0,lim).map(([city,count])=>({city,customers:count})) };
+    }
+    return { total: all.length, returning: all.filter(c=>c.orders>1).length, new: all.filter(c=>c.orders===1).length };
+  }
+
+  if (name === "get_products") {
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const lim = args.limit || 10;
+    const tally = {};
+    os.forEach(o=>(o.line_items||[]).forEach(li=>{
+      if(!tally[li.title]) tally[li.title]={name:li.title, vendor:li.vendor, units:0, revenue:0};
+      tally[li.title].units   += li.quantity||1;
+      tally[li.title].revenue += parseFloat(li.price||0)*(li.quantity||1);
+    }));
+    const sorted = Object.values(tally)
+      .map(p=>({...p,revenue:Math.round(p.revenue)}))
+      .sort((a,b)=> args.sort_by==="revenue" ? b.revenue-a.revenue : b.units-a.units)
+      .slice(0,lim);
+    return { period: args.period||"all", products: sorted };
+  }
+
+  if (name === "get_vendor_stats") {
+    const vendRev={}, vendOrders={}, vendRTOc={}, vendTotal={};
+    allOrders.forEach(o=>{
+      const rto = isRTO(o);
+      (o.line_items||[]).forEach(li=>{
+        if(!li.vendor)return;
+        if(args.vendor && li.vendor.toLowerCase()!==args.vendor.toLowerCase())return;
+        vendRev[li.vendor]   = (vendRev[li.vendor]||0)+parseFloat(li.price||0)*(li.quantity||1);
+        vendOrders[li.vendor]= (vendOrders[li.vendor]||0)+1;
+        vendTotal[li.vendor] = (vendTotal[li.vendor]||0)+1;
+        if(rto) vendRTOc[li.vendor]=(vendRTOc[li.vendor]||0)+1;
+      });
+    });
+    return Object.keys(vendRev).map(v=>({
+      vendor: v,
+      revenue: Math.round(vendRev[v]),
+      orders: vendOrders[v],
+      rto: vendRTOc[v]||0,
+      rtoRate: `${Math.round(((vendRTOc[v]||0)/vendTotal[v])*100)}%`,
+    })).sort((a,b)=>b.revenue-a.revenue);
+  }
+
+  if (name === "get_settlements") {
+    return db.prepare("SELECT status, COUNT(*) as count, ROUND(SUM(net_payable),2) as total FROM settlements GROUP BY status").all();
+  }
+
+  if (name === "get_delivery_stats") {
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const statuses = {};
+    os.forEach(o=>{
+      const ds = metas[String(o.id)]?.delivery_status || o.fulfillment_status || "pending";
+      statuses[ds]=(statuses[ds]||0)+1;
+    });
+    return { period: args.period||"all", breakdown: statuses, total: os.length };
+  }
+
+  if (name === "get_orders_list") {
+    let os = filterByPeriod(allOrders, args.period||"all");
+    if (args.status && args.status!=="any") {
+      if (args.status==="pending") os=os.filter(o=>!o.fulfillment_status||o.fulfillment_status==="unfulfilled");
+      else os=os.filter(o=>o.fulfillment_status===args.status);
+    }
+    if (args.payment && args.payment!=="any") {
+      if (args.payment==="cod") os=os.filter(isCOD);
+      else os=os.filter(o=>!isCOD(o));
+    }
+    if (args.stage) os=os.filter(o=>metas[String(o.id)]?.stage===args.stage);
+    if (args.vendor) os=os.filter(o=>(o.line_items||[]).some(li=>li.vendor?.toLowerCase()===args.vendor.toLowerCase()));
+    return os.slice(0,args.limit||15).map(o=>({
+      id: o.id,
+      name: o.name,
+      customer: o.billing_address?.name || o.email,
+      city: o.shipping_address?.city,
+      total: parseFloat(o.total_price||0),
+      payment: isCOD(o)?"COD":"Prepaid",
+      status: o.fulfillment_status||"unfulfilled",
+      stage: metas[String(o.id)]?.stage||null,
+      date: o.created_at?.slice(0,10),
+      vendors: [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))],
+    }));
+  }
+
+  if (name === "get_city_stats") {
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const lim = args.limit || 10;
+    const cities = {}, states = {};
+    os.forEach(o=>{
+      const city  = o.shipping_address?.city||"Unknown";
+      const state = o.shipping_address?.province||"Unknown";
+      cities[city]  = (cities[city]||0)+1;
+      states[state] = (states[state]||0)+1;
+    });
+    return {
+      topCities: Object.entries(cities).sort((a,b)=>b[1]-a[1]).slice(0,lim).map(([city,orders])=>({city,orders})),
+      topStates: Object.entries(states).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([state,orders])=>({state,orders})),
+    };
+  }
+
+  return { error: "Unknown tool" };
 }
 
-// ── POST /jarvis — all queries answered by AI with live store data ─────────
+// ── POST /jarvis — tool-calling AI, fetches only what it needs ───────────────
 app.post("/jarvis", async (req, res) => {
   const { query = "", history = [] } = req.body;
   const GROQ_KEY      = process.env.GROQ_API_KEY;
@@ -654,61 +817,79 @@ app.post("/jarvis", async (req, res) => {
     return res.json({ reply: "No AI key set. Add GROQ_API_KEY (free at console.groq.com) to your .env." });
   }
 
-  try {
-      const snapshot = await buildStoreSnapshot();
-      const systemPrompt = `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify store.
-You have live access to the full store data snapshot below. Use it to give precise, actionable answers.
+  const systemPrompt = `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify store.
+You have tools to fetch any live store data. Always call the right tool(s) to get real data before answering.
 
 Rules:
-- Always use real numbers from the snapshot. Never make up figures.
+- ALWAYS use tools to fetch data. Never guess or make up numbers.
 - Be concise — bullet points preferred. Max 8 lines unless a detailed breakdown is asked.
 - Currency is INR (₹). Format large numbers with commas.
 - Spot patterns, anomalies, and risks proactively when relevant.
-- If asked to compare, calculate ratios and percentages.
-- For vague questions, give the most useful interpretation.
-- If data for something is zero or missing, say so clearly.
+- If data is zero or missing, say so clearly.
+- Today's date: ${new Date().toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}`;
 
-Live Store Snapshot (as of ${new Date().toLocaleString('en-IN')}):
-${JSON.stringify(snapshot, null, 2)}`;
+  const msgs = [
+    ...history.filter(m=>m.role&&m.text).map(m=>({
+      role: m.role==="bot"?"assistant":"user",
+      content: m.text,
+    })),
+    { role:"user", content: query },
+  ];
 
-      const msgs = [
-        ...history.filter(m=>m.role&&m.text).map(m=>({
-          role: m.role==="bot"?"assistant":"user",
-          content: m.text,
-        })),
-        { role:"user", content: query },
-      ];
+  try {
+    if (GROQ_KEY) {
+      // ── Groq tool-calling loop ──────────────────────────────────────────
+      const messages = [{ role:"system", content: systemPrompt }, ...msgs];
+      let finalReply = "";
 
-      if (GROQ_KEY) {
-        // Groq — free, fast, OpenAI-compatible
+      for (let turn = 0; turn < 5; turn++) {
         const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type":"application/json", "Authorization":`Bearer ${GROQ_KEY}` },
           body: JSON.stringify({
             model: "llama-3.3-70b-versatile",
-            max_tokens: 700,
-            messages: [{ role:"system", content: systemPrompt }, ...msgs],
+            max_tokens: 1000,
+            messages,
+            tools: JARVIS_TOOLS,
+            tool_choice: "auto",
           }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error?.message || `Groq ${r.status}`);
-        return res.json({ reply: d.choices?.[0]?.message?.content || "No response." });
+
+        const choice = d.choices?.[0];
+        const msg    = choice?.message;
+
+        if (choice?.finish_reason === "tool_calls" && msg?.tool_calls?.length) {
+          // AI wants data — execute all requested tools in parallel
+          messages.push(msg);
+          const toolResults = await Promise.all(msg.tool_calls.map(async tc => {
+            let args = {};
+            try { args = JSON.parse(tc.function.arguments || "{}"); } catch(_){}
+            console.log(`🔧 JARVIS tool: ${tc.function.name}`, args);
+            const result = await runJarvisTool(tc.function.name, args);
+            return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
+          }));
+          messages.push(...toolResults);
+          continue; // let AI respond with the data
+        }
+
+        finalReply = msg?.content || "No response.";
+        break;
       }
 
-      // Anthropic fallback
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "x-api-key":ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 700,
-          system: systemPrompt,
-          messages: msgs,
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error?.message || `Anthropic ${r.status}`);
-      return res.json({ reply: d.content?.[0]?.text || "No response." });
+      return res.json({ reply: finalReply || "No response after tool calls." });
+    }
+
+    // ── Anthropic fallback ─────────────────────────────────────────────────
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "x-api-key":ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
+      body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:700, system:systemPrompt, messages:msgs }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error?.message || `Anthropic ${r.status}`);
+    return res.json({ reply: d.content?.[0]?.text || "No response." });
 
   } catch (aiErr) {
     console.error("❌ /jarvis AI:", aiErr.message);
