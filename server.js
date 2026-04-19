@@ -1670,6 +1670,8 @@ app.put("/admin/tag-mappings/:id/priority", adminAuth, (req, res) => {
 app.post("/admin/tag-mappings", adminAuth, (req, res) => {
   const { shopify_tag, stage, priority = 99 } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
+  const VALID_STAGES = ["new","confirmed","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  if (!VALID_STAGES.includes(stage)) return res.status(400).json({ error: `Invalid stage '${stage}'. Valid: ${VALID_STAGES.join(", ")}` });
   const existing = db.prepare("SELECT id FROM tag_mappings WHERE lower(shopify_tag)=lower(?)").get(shopify_tag);
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
   const { lastInsertRowid } = db.prepare("INSERT INTO tag_mappings (shopify_tag, stage, priority, created_at) VALUES (?,?,?,?)")
