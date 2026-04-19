@@ -2016,6 +2016,55 @@ app.delete("/admin/shipping-creds/:partner", adminAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Debug endpoint — shows every step of tracking for an AWB
+app.get("/admin/debug-tracking", adminAuth, async (req, res) => {
+  const { awb, partner = "delhivery" } = req.query;
+  if (!awb) return res.json({ error: "Pass ?awb=YOURAWB&partner=delhivery" });
+
+  const log = [];
+  try {
+    const credRow = db.prepare("SELECT credentials FROM global_shipping_creds WHERE partner=?").get(partner);
+    if (!credRow) return res.json({ error: `No credentials saved for ${partner}`, log });
+    const creds = JSON.parse(credRow.credentials);
+    log.push({ step: "creds_loaded", partner, keys: Object.keys(creds) });
+
+    if (partner === "delhivery") {
+      const url = `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}`;
+      log.push({ step: "fetching", url });
+      const r = await fetch(url, { headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/json" } });
+      const raw = await r.json();
+      log.push({ step: "raw_response", status: r.status, body: raw });
+      const status = raw?.ShipmentData?.[0]?.Shipment?.Status?.Status || null;
+      log.push({ step: "parsed_status", status });
+      return res.json({ status, log });
+    }
+
+    if (partner === "shiprocket") {
+      log.push({ step: "authenticating" });
+      const authRes = await fetch("https://apiv2.shiprocket.in/v1/external/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: creds.email, password: creds.password }),
+      }).then(r => r.json());
+      log.push({ step: "auth_response", token: authRes.token ? "✓ received" : "✗ missing", error: authRes.message });
+      if (!authRes.token) return res.json({ error: "Auth failed", log });
+
+      const url = `https://apiv2.shiprocket.in/v1/external/courier/track/awb/${awb}`;
+      log.push({ step: "fetching", url });
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${authRes.token}` } });
+      const raw = await r.json();
+      log.push({ step: "raw_response", status: r.status, body: raw });
+      const status = raw?.tracking_data?.shipment_track?.[0]?.current_status || raw?.tracking_data?.shipment_status_name || null;
+      log.push({ step: "parsed_status", status });
+      return res.json({ status, log });
+    }
+
+    res.json({ error: `partner ${partner} not supported in debug`, log });
+  } catch (err) {
+    log.push({ step: "error", message: err.message });
+    res.json({ error: err.message, log });
+  }
+});
+
 // Admin delivery status refresh — uses global creds
 app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) => {
   try {
@@ -2111,7 +2160,7 @@ async function fetchDeliveryStatus(partner, creds, awb) {
   }
   if (partner === "delhivery") {
     const dlRes = await fetch(
-      `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}&verbose=false`,
+      `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}`,
       { headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/json" } }
     ).then(r => r.json());
     const status = dlRes?.ShipmentData?.[0]?.Shipment?.Status?.Status || "";
