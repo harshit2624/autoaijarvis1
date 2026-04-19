@@ -463,8 +463,8 @@
     // CrosCrow collects MRP - 10% discount from prepaid customer
     const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + ((o.my_revenue||0)*0.9), 0);
     const taxableValue    = (s.gross_revenue||0) - prepaidDiscount;
-    // COD shipping charges collected by vendor → goes to CrosCrow
-    const totalCodShipping = codOrders.reduce((sum,o) => sum + (o.shipping_charge||0), 0);
+    // COD shipping from settlement_orders (stored at generation time from Shopify shipping_lines)
+    const totalCodShipping = (orders||[]).reduce((sum,o) => sum + (o.shipping_charge||0), 0);
 
     const fileName = `${s.vendor_name.replace(/\s+/g,'-')}_${s.period_start}_${s.period_end}_${s.invoice_no}`;
 

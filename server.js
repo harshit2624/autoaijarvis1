@@ -184,6 +184,10 @@ db.exec(`
 ["extra_discount REAL DEFAULT 0","shipping_adjustment REAL DEFAULT 0","extra_advance REAL DEFAULT 0","invoice_notes TEXT DEFAULT ''","custom_commission_pct REAL"].forEach(col => {
   try { db.exec(`ALTER TABLE settlements ADD COLUMN ${col}`); } catch {}
 });
+// ── Migrate: add shipping_charge to settlement_orders
+try { db.exec("ALTER TABLE settlement_orders ADD COLUMN shipping_charge REAL DEFAULT 0"); } catch {}
+// ── Migrate: add total_shipping to settlements
+try { db.exec("ALTER TABLE settlements ADD COLUMN total_shipping REAL DEFAULT 0"); } catch {}
 
 // ── Tag mappings table ────────────────────────────────────────────────────
 db.exec(`
@@ -993,31 +997,40 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName);
     });
 
-    let totalRev = 0, totalComm = 0, totalGst = 0, totalAdv = 0, totalNet = 0;
+    let totalRev = 0, totalComm = 0, totalGst = 0, totalAdv = 0, totalNet = 0, totalShipping = 0;
     const orderDetails = [];
 
     vendorDelivered.forEach(o => {
       const meta    = metaMap[String(o.id)] || {};
+      const payType = meta.payment_type || "cod";
+      const isCod   = payType !== "prepaid";
       const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       const myRev   = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
-      const calc    = calcCommission(myRev, meta.payment_type || "cod", config.commission_pct, meta.advance_paid || 0);
+      const calc    = calcCommission(myRev, payType, config.commission_pct, meta.advance_paid || 0);
 
-      totalRev  += myRev;
-      totalComm += calc.commission;
-      totalGst  += calc.gst;
-      totalAdv  += (meta.advance_paid || 0);
-      totalNet  += calc.net; // negative = CrosCrow owes vendor (prepaid); positive = vendor owes CrosCrow (COD)
+      // Shipping: read from Shopify shipping_lines, split by unique vendor count in order
+      const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+      const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+      const shippingSplit = isCod && ordVendors.size > 0 ? parseFloat((orderShipping / ordVendors.size).toFixed(2)) : 0;
+
+      totalRev      += myRev;
+      totalComm     += calc.commission;
+      totalGst      += calc.gst;
+      totalAdv      += (meta.advance_paid || 0);
+      totalShipping += shippingSplit;
+      totalNet      += calc.net + shippingSplit; // shipping vendor collected → owes CrosCrow (COD only)
 
       orderDetails.push({
         shopify_order_id: String(o.id),
         order_name:       o.name,
         my_revenue:       parseFloat(myRev.toFixed(2)),
-        payment_type:     meta.payment_type || "cod",
+        payment_type:     payType,
         commission_pct:   config.commission_pct,
         commission:       calc.commission,
         gst:              calc.gst,
         advance_paid:     meta.advance_paid || 0,
-        net:              calc.net,
+        shipping_charge:  shippingSplit,
+        net:              parseFloat((calc.net + shippingSplit).toFixed(2)),
       });
     });
 
@@ -1026,19 +1039,19 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     const invoiceNo  = `CC-${vendor_name.toUpperCase().replace(/\s+/g,"").slice(0,6)}-${period_start.slice(0,7).replace("-","")}-${String(Date.now()).slice(-4)}`;
 
     const { lastInsertRowid: settlId } = db.prepare(
-      `INSERT INTO settlements (vendor_name,period_start,period_end,total_orders,gross_revenue,commission,gst_amount,advance_total,net_payable,status,invoice_no,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO settlements (vendor_name,period_start,period_end,total_orders,gross_revenue,commission,gst_amount,advance_total,net_payable,total_shipping,status,invoice_no,created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(vendor_name, period_start, period_end, vendorDelivered.length,
       parseFloat(totalRev.toFixed(2)), parseFloat(totalComm.toFixed(2)),
       parseFloat(totalGst.toFixed(2)), parseFloat(totalAdv.toFixed(2)),
-      netPayable, "pending", invoiceNo, new Date().toISOString());
+      netPayable, parseFloat(totalShipping.toFixed(2)), "pending", invoiceNo, new Date().toISOString());
 
     const ins = db.prepare(
-      `INSERT INTO settlement_orders (settlement_id,shopify_order_id,order_name,my_revenue,payment_type,commission_pct,commission,gst,advance_paid,net)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO settlement_orders (settlement_id,shopify_order_id,order_name,my_revenue,payment_type,commission_pct,commission,gst,advance_paid,shipping_charge,net)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     );
     orderDetails.forEach(od => ins.run(settlId, od.shopify_order_id, od.order_name, od.my_revenue,
-      od.payment_type, od.commission_pct, od.commission, od.gst, od.advance_paid, od.net));
+      od.payment_type, od.commission_pct, od.commission, od.gst, od.advance_paid, od.shipping_charge, od.net));
 
     auditLog("admin", "settlement_generated", String(settlId), { vendor_name, period_start, period_end, netPayable });
     res.json({ success: true, settlementId: settlId, invoiceNo, totalOrders: vendorDelivered.length, netPayable });
@@ -1068,28 +1081,37 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     allOrders.forEach(o => {
       const meta = metaMap[String(o.id)] || {};
       if ((meta.stage || "new") !== "delivered") return;
-      const ordVendorSet = new Set();
+      const payType = meta.payment_type || "cod";
+      const isCod = payType !== "prepaid";
+      // Shipping from Shopify order, split equally by unique vendor count
+      const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+      const ordVendorSet = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+      const shippingPerVendor = ordVendorSet.size > 0 ? orderShipping / ordVendorSet.size : 0;
+
       (o.line_items || []).forEach(li => {
         const vendor = li.vendor;
         if (!vendor) return;
-        ordVendorSet.add(vendor);
-        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, net: 0 };
+        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0 };
         vendorMap[vendor].orders.add(String(o.id));
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
         const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
-        const calc = calcCommission(itemRev, meta.payment_type || "cod", commPct, 0);
+        const calc = calcCommission(itemRev, payType, commPct, 0);
         vendorMap[vendor].gross += itemRev;
-        if (meta.payment_type === "prepaid") vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
+        if (!isCod) vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
         vendorMap[vendor].commission += calc.commission;
         vendorMap[vendor].gst += calc.gst;
         vendorMap[vendor].net += calc.net;
       });
-      // advance split equally among vendors in this order
-      if (ordVendorSet.size > 0 && (meta.advance_paid || 0) > 0) {
-        ordVendorSet.forEach(vendor => {
-          if (vendorMap[vendor]) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
-        });
-      }
+
+      // advance + shipping split equally among vendors in this order (COD only for shipping)
+      ordVendorSet.forEach(vendor => {
+        if (!vendorMap[vendor]) return;
+        if ((meta.advance_paid || 0) > 0) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
+        if (isCod && shippingPerVendor > 0) {
+          vendorMap[vendor].shipping += shippingPerVendor;
+          vendorMap[vendor].net += shippingPerVendor; // shipping vendor collected → owes to CrosCrow
+        }
+      });
     });
 
     const vendors = Object.entries(vendorMap).map(([name, d]) => {
@@ -1100,10 +1122,11 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       const commission = parseFloat(d.commission.toFixed(2));
       const gst = parseFloat(d.gst.toFixed(2));
       const advance = parseFloat(d.advance.toFixed(2));
+      const shipping = parseFloat(d.shipping.toFixed(2));
       const netPayable = parseFloat(d.net.toFixed(2));
       const totalSettled = parseFloat((settledMap[name] || 0).toFixed(2));
       const pendingSettlement = parseFloat((netPayable - totalSettled).toFixed(2));
-      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, netPayable, totalSettled, pendingSettlement };
+      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement };
     }).sort((a, b) => b.gross - a.gross);
 
     // Overall totals
@@ -1115,11 +1138,12 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       acc.commission += v.commission;
       acc.gst += v.gst;
       acc.advance += v.advance;
+      acc.shipping += v.shipping;
       acc.netPayable += v.netPayable;
       acc.totalSettled += v.totalSettled;
       acc.pendingSettlement += v.pendingSettlement;
       return acc;
-    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0 });
+    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, shipping: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0 });
 
     Object.keys(totals).forEach(k => { if (typeof totals[k] === 'number') totals[k] = parseFloat(totals[k].toFixed(2)); });
 
@@ -1144,9 +1168,7 @@ app.get("/admin/settlements", adminAuth, (req, res) => {
 app.get("/admin/settlements/:id", adminAuth, (req, res) => {
   const settlement = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
   if (!settlement) return res.status(404).json({ error: "Not found." });
-  const orders = db.prepare(`SELECT so.*, COALESCE(om.shipping_charge,0) as shipping_charge
-    FROM settlement_orders so LEFT JOIN order_meta om ON om.shopify_id=so.shopify_order_id
-    WHERE so.settlement_id=?`).all(req.params.id);
+  const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
   const croscrow    = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
   const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(settlement.vendor_name) || {};
   res.json({ settlement, orders, croscrow, vendorProfile });
@@ -1358,7 +1380,7 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
     const paidSettlements = db.prepare("SELECT SUM(net_payable) as total_settled FROM settlements WHERE vendor_name=? AND status='paid'").get(req.vendor);
     const totalSettled = paidSettlements?.total_settled || 0;
 
-    let totalOrders = 0, gross = 0, prepaidDiscount = 0, commission = 0, gst = 0, advance = 0, net = 0;
+    let totalOrders = 0, gross = 0, prepaidDiscount = 0, commission = 0, gst = 0, advance = 0, shipping = 0, net = 0;
 
     allOrders.forEach(o => {
       const meta = metaMap[String(o.id)] || {};
@@ -1366,17 +1388,23 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
       const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       if (!myItems.length) return;
       totalOrders++;
+      const payType = meta.payment_type || "cod";
+      const isCod   = payType !== "prepaid";
       const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+      const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+      const shippingSplit = isCod && ordVendors.size > 0 ? orderShipping / ordVendors.size : 0;
+
       myItems.forEach(li => {
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
-        const calc = calcCommission(itemRev, meta.payment_type || "cod", commPct, 0);
+        const calc = calcCommission(itemRev, payType, commPct, 0);
         gross += itemRev;
-        if (meta.payment_type === "prepaid") prepaidDiscount += (itemRev - calc.base);
+        if (!isCod) prepaidDiscount += (itemRev - calc.base);
         commission += calc.commission;
         gst += calc.gst;
         net += calc.net;
       });
       if ((meta.advance_paid || 0) > 0) advance += (meta.advance_paid || 0) / ordVendors.size;
+      if (isCod && shippingSplit > 0) { shipping += shippingSplit; net += shippingSplit; }
     });
 
     const netPayable = parseFloat(net.toFixed(2));
@@ -1387,7 +1415,9 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
       commissionableSale: parseFloat((gross - prepaidDiscount).toFixed(2)),
       commissionPct: commPct,
       commission: parseFloat(commission.toFixed(2)), gst: parseFloat(gst.toFixed(2)),
-      advance: parseFloat(advance.toFixed(2)), netPayable,
+      advance: parseFloat(advance.toFixed(2)),
+      shipping: parseFloat(shipping.toFixed(2)),
+      netPayable,
       totalSettled: parseFloat(totalSettled.toFixed(2)), pendingSettlement,
     });
   } catch (err) {
@@ -1405,9 +1435,7 @@ app.get("/vendor/settlements/:id", vendorAuth, (req, res) => {
   if (!s) return res.status(404).json({ error: "Not found." });
   const croscrow      = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
   const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || {};
-  const orders = db.prepare(`SELECT so.*, COALESCE(om.shipping_charge,0) as shipping_charge
-    FROM settlement_orders so LEFT JOIN order_meta om ON om.shopify_id=so.shopify_order_id
-    WHERE so.settlement_id=?`).all(req.params.id);
+  const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
   res.json({ settlement: s, orders, croscrow, vendorProfile });
 });
 
