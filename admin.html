@@ -1676,12 +1676,12 @@
         </div>
 
         {/* Add mapping */}
-        <div className="card" style={{marginBottom:16}}>
+        <div className="card" style={{marginBottom:16,overflow:'visible'}}>
           <div className="card-header"><span className="card-title">Add Tag Mapping</span></div>
           <div style={{padding:16}}>
             {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end'}}>
-              <div style={{position:'relative'}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end',overflow:'visible'}}>
+              <div style={{position:'relative',overflow:'visible'}}>
                 <label className="form-label">
                   Shopify Tag
                   {tagsLoading && <span style={{marginLeft:8,color:'var(--text-muted)',fontWeight:400}}>⟳ loading…</span>}
