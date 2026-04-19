@@ -1611,6 +1611,17 @@ app.put("/admin/settlements/:id/mark-paid", adminAuth, (req, res) => {
 });
 
 // ── Tag Mapping endpoints ─────────────────────────────────────────────────
+app.get("/admin/order-tags", adminAuth, async (req, res) => {
+  try {
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    const tagSet = new Set();
+    allOrders.forEach(o => {
+      if (o.tags) o.tags.split(",").map(t => t.trim()).filter(Boolean).forEach(t => tagSet.add(t));
+    });
+    res.json({ tags: [...tagSet].sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase())) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/tag-mappings", adminAuth, (req, res) => {
   res.json({ mappings: db.prepare("SELECT * FROM tag_mappings ORDER BY id").all() });
 });

@@ -1602,21 +1602,33 @@
   ];
 
   function TagMappings({ token }) {
-    const [mappings,  setMappings]  = useState([]);
-    const [loading,   setLoading]   = useState(true);
-    const [newTag,    setNewTag]    = useState('');
-    const [newStage,  setNewStage]  = useState('confirmed');
-    const [adding,    setAdding]    = useState(false);
-    const [syncing,   setSyncing]   = useState(false);
-    const [msg,       setMsg]       = useState(null);
-    const [syncResult, setSyncResult] = useState(null);
+    const [mappings,    setMappings]    = useState([]);
+    const [loading,     setLoading]     = useState(true);
+    const [shopifyTags, setShopifyTags] = useState([]);
+    const [tagsLoading, setTagsLoading] = useState(false);
+    const [newTag,      setNewTag]      = useState('');
+    const [tagInput,    setTagInput]    = useState('');
+    const [showDrop,    setShowDrop]    = useState(false);
+    const [newStage,    setNewStage]    = useState('confirmed');
+    const [adding,      setAdding]      = useState(false);
+    const [syncing,     setSyncing]     = useState(false);
+    const [msg,         setMsg]         = useState(null);
+    const [syncResult,  setSyncResult]  = useState(null);
 
     const load = () => {
       setLoading(true);
       fetch(`${API}/admin/tag-mappings`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setMappings(d.mappings||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
-    useEffect(()=>{ load(); },[token]);
+
+    const loadTags = () => {
+      if (shopifyTags.length) return; // already loaded
+      setTagsLoading(true);
+      fetch(`${API}/admin/order-tags`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setShopifyTags(d.tags||[])).catch(()=>{}).finally(()=>setTagsLoading(false));
+    };
+
+    useEffect(()=>{ load(); loadTags(); },[token]);
 
     const addMapping = async () => {
       if (!newTag.trim()) { setMsg({type:'error',text:'Tag name required.'}); return; }
@@ -1629,7 +1641,7 @@
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         setMsg({type:'success',text:`Mapping added: "${newTag}" → ${newStage}`});
-        setNewTag(''); load();
+        setNewTag(''); setTagInput(''); load();
       } catch(e) { setMsg({type:'error',text:e.message}); }
       setAdding(false);
     };
@@ -1669,11 +1681,34 @@
           <div style={{padding:16}}>
             {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end'}}>
-              <div>
-                <label className="form-label">Shopify Tag (exact match, case-insensitive)</label>
-                <input className="form-input" placeholder="e.g. Confirmed, delivered, 99 partial collected…"
-                  value={newTag} onChange={e=>setNewTag(e.target.value)}
+              <div style={{position:'relative'}}>
+                <label className="form-label">
+                  Shopify Tag
+                  {tagsLoading && <span style={{marginLeft:8,color:'var(--text-muted)',fontWeight:400}}>⟳ loading…</span>}
+                  {!tagsLoading && shopifyTags.length>0 && <span style={{marginLeft:8,color:'var(--text-muted)',fontWeight:400}}>({shopifyTags.length} found)</span>}
+                </label>
+                <input className="form-input" placeholder="Search or type a tag…"
+                  value={tagInput}
+                  onChange={e=>{ setTagInput(e.target.value); setNewTag(e.target.value); setShowDrop(true); }}
+                  onFocus={()=>setShowDrop(true)}
+                  onBlur={()=>setTimeout(()=>setShowDrop(false),150)}
                   onKeyDown={e=>e.key==='Enter'&&addMapping()}/>
+                {showDrop && shopifyTags.length>0 && (()=>{
+                  const filtered = shopifyTags.filter(t=>t.toLowerCase().includes(tagInput.toLowerCase()) && !mappings.find(m=>m.shopify_tag.toLowerCase()===t.toLowerCase()));
+                  if (!filtered.length) return null;
+                  return (
+                    <div style={{position:'absolute',top:'100%',left:0,right:0,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,zIndex:100,maxHeight:200,overflowY:'auto',boxShadow:'0 8px 24px #00000060'}}>
+                      {filtered.map(t=>(
+                        <div key={t} onMouseDown={()=>{ setNewTag(t); setTagInput(t); setShowDrop(false); }}
+                          style={{padding:'8px 12px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',transition:'background 0.1s'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+                          onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                          🏷 {t}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
               <div>
                 <label className="form-label">Maps to Stage</label>
