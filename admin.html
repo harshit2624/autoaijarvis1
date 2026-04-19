@@ -1798,32 +1798,46 @@
   /* ══════════════════════════════════
      JARVIS CHAT
   ══════════════════════════════════ */
+  const JARVIS_PRESETS = [
+    { label:"Today's Summary",       query:"today's summary",            icon:"📅" },
+    { label:"Pending Orders",         query:"pending orders",             icon:"⏳" },
+    { label:"This Week",              query:"week summary",               icon:"📆" },
+    { label:"This Month",             query:"month summary",              icon:"🗓" },
+    { label:"Revenue Breakdown",      query:"revenue breakdown",          icon:"💰" },
+    { label:"COD vs Prepaid",         query:"cod vs prepaid",             icon:"💳" },
+    { label:"Top Products",           query:"top products",               icon:"🏆" },
+    { label:"Fulfilled Orders",       query:"fulfilled orders",           icon:"✅" },
+    { label:"Cancelled / RTO",        query:"cancelled rto return",       icon:"❌" },
+    { label:"Vendor Revenue",         query:"vendor revenue",             icon:"🏪" },
+    { label:"Settlements",            query:"settlement payout",          icon:"📄" },
+    { label:"Store Overview",         query:"store overview summary",     icon:"📊" },
+  ];
+
   function JarvisChat({ token }) {
     const [messages, setMessages] = useState([
-      { role:'bot', text:"Hey! I'm JARVIS. Ask me anything about your store — revenue, top products, pending orders, anything." }
+      { role:'bot', text:"⚡ JARVIS online. I run entirely on your store data — no external AI needed.\n\nClick a quick report below or type a question." }
     ]);
-    const [input, setInput]     = useState('');
+    const [input,   setInput]   = useState('');
     const [loading, setLoading] = useState(false);
     const endRef = useRef(null);
     useEffect(() => { endRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages, loading]);
 
-    const send = async (text) => {
-      const msg = (text || input).trim();
-      if (!msg || loading) return;
+    const send = async (query) => {
+      const q = (query || input).trim();
+      if (!q || loading) return;
       setInput('');
-      const updated = [...messages, { role:'user', text: msg }];
-      setMessages(updated);
+      setMessages(m => [...m, { role:'user', text: q }]);
       setLoading(true);
       try {
-        const res = await fetch(`${API}/chat`, {
+        const r = await fetch(`${API}/jarvis`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ messages: updated }),
+          body: JSON.stringify({ query: q }),
         });
-        const data = await res.json();
-        setMessages(m => [...m, { role:'bot', text: data.reply || data.error || 'No response.' }]);
+        const d = await r.json();
+        setMessages(m => [...m, { role:'bot', text: d.reply || d.error || 'No data.' }]);
       } catch {
-        setMessages(m => [...m, { role:'bot', text: "Couldn't reach JARVIS. Make sure the server is running." }]);
+        setMessages(m => [...m, { role:'bot', text: "Couldn't reach JARVIS. Check the server." }]);
       }
       setLoading(false);
     };
@@ -1835,42 +1849,39 @@
         <div className="chat-panel">
           <div className="chat-header">
             <div className="chat-logo">J</div>
-            <div>
-              <div className="chat-title">JARVIS</div>
-            </div>
-            <span className="chat-sub">Powered by Claude · Admin Only</span>
+            <div><div className="chat-title">JARVIS</div></div>
+            <span className="chat-sub">Live store analytics · No external API</span>
+          </div>
+
+          {/* Quick report buttons */}
+          <div style={{padding:'12px 20px 0',display:'flex',flexWrap:'wrap',gap:6,borderBottom:'1px solid var(--border)',paddingBottom:12}}>
+            {JARVIS_PRESETS.map(p => (
+              <button key={p.query} className="suggestion" style={{fontSize:10}} onClick={() => send(p.query)} disabled={loading}>
+                {p.icon} {p.label}
+              </button>
+            ))}
           </div>
 
           <div className="chat-messages">
             {messages.map((m, i) => (
               <div key={i} className={`cmsg ${m.role}`}>
                 <div className="cmsg-av">{m.role==='bot' ? 'J' : 'A'}</div>
-                <div className="cmsg-bubble">{m.text}</div>
+                <div className="cmsg-bubble" style={{whiteSpace:'pre-wrap'}}>{m.text}</div>
               </div>
             ))}
             {loading && (
               <div className="cmsg bot">
                 <div className="cmsg-av">J</div>
-                <div className="cmsg-bubble">
-                  <span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/>
-                </div>
+                <div className="cmsg-bubble"><span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/></div>
               </div>
             )}
             <div ref={endRef}/>
           </div>
 
-          {messages.length <= 1 && (
-            <div className="chat-suggestions">
-              {["What's my total revenue?","How many orders are pending?","Top selling products?","Show recent cancelled orders"].map(s => (
-                <button key={s} className="suggestion" onClick={() => send(s)}>{s}</button>
-              ))}
-            </div>
-          )}
-
           <div className="chat-input-row">
             <textarea
               className="chat-textarea" rows={1}
-              placeholder="Ask about orders, revenue, vendors, settlements…"
+              placeholder="Type a question: 'pending orders this week', 'revenue today', 'top products'…"
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={onKey}

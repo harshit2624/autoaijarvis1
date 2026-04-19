@@ -521,49 +521,223 @@ app.post("/webhooks/orders", (req, res) => {
   res.status(200).json({ received: true });
 });
 
-// ── POST /chat — JARVIS AI chat (proxies to Anthropic, keeps API key server-side)
-app.post("/chat", async (req, res) => {
-  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-  if (!ANTHROPIC_KEY) {
-    return res.status(503).json({ error: "ANTHROPIC_API_KEY not set in environment." });
-  }
-
-  const { messages, context } = req.body;
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: "messages array required." });
-  }
-
+// ── POST /jarvis — self-contained analytics engine (no external API needed)
+app.post("/jarvis", adminAuth, async (req, res) => {
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type":         "application/json",
-        "x-api-key":            ANTHROPIC_KEY,
-        "anthropic-version":    "2023-06-01",
-      },
-      body: JSON.stringify({
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 500,
-        system: `You are JARVIS, a sharp e-commerce assistant for a Shopify store called CrosCrow.
-You have access to live store data. Answer concisely — 1-3 sentences max unless a list is needed.
-Always use real numbers from the data provided. Be direct, no filler.
-${context ? `\nLive store snapshot:\n${JSON.stringify(context, null, 2)}` : ""}`,
-        messages: messages.map(m => ({
-          role:    m.role === "bot" ? "assistant" : "user",
-          content: m.text,
-        })),
-      }),
-    });
+    const { query = "" } = req.body;
+    const q = query.toLowerCase().trim();
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Anthropic error ${response.status}`);
+    const today     = new Date(); today.setHours(0,0,0,0);
+    const todayISO  = today.toISOString();
+    const weekAgo   = new Date(today); weekAgo.setDate(today.getDate() - 7);
+    const monthAgo  = new Date(today); monthAgo.setDate(today.getDate() - 30);
+    const fmtCur    = v => `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
+    const fmtN      = v => Number(v||0).toLocaleString('en-IN');
+
+    // Fetch all orders once
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    const metas     = Object.fromEntries(db.prepare("SELECT * FROM order_meta").all().map(m=>[m.shopify_id,m]));
+
+    const todayOrders  = allOrders.filter(o => new Date(o.created_at) >= today);
+    const weekOrders   = allOrders.filter(o => new Date(o.created_at) >= weekAgo);
+    const monthOrders  = allOrders.filter(o => new Date(o.created_at) >= monthAgo);
+
+    const fulfilled = s => s === "fulfilled";
+    const unfulfilled = s => !s || s === "unfulfilled";
+    const cancelled = s => s === "cancelled";
+
+    // ── Matchers ──────────────────────────────────────────────────────────
+    const is = (...words) => words.some(w => q.includes(w));
+
+    // TODAY
+    if (is("today")) {
+      const filled   = todayOrders.filter(o => fulfilled(o.fulfillment_status)).length;
+      const pending  = todayOrders.filter(o => unfulfilled(o.fulfillment_status)).length;
+      const revenue  = todayOrders.reduce((s,o) => s + parseFloat(o.total_price||0), 0);
+      const cod      = todayOrders.filter(o => o.financial_status !== "paid").length;
+      const prepaid  = todayOrders.filter(o => o.financial_status === "paid").length;
+      return res.json({ reply:
+        `📅 Today's Summary (${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'short'})})\n` +
+        `• Orders received: ${fmtN(todayOrders.length)}\n` +
+        `• Fulfilled: ${fmtN(filled)}  |  Pending: ${fmtN(pending)}\n` +
+        `• Revenue: ${fmtCur(revenue)}\n` +
+        `• COD: ${fmtN(cod)}  |  Prepaid: ${fmtN(prepaid)}`
+      });
     }
 
-    const data = await response.json();
-    res.json({ reply: data.content?.[0]?.text || "No response." });
+    // PENDING / UNFULFILLED
+    if (is("pending", "unfulfilled", "not fulfilled", "open")) {
+      const period = is("week") ? weekOrders : is("month") ? monthOrders : allOrders;
+      const label  = is("week") ? "This Week" : is("month") ? "This Month" : "All Time";
+      const list   = period.filter(o => unfulfilled(o.fulfillment_status));
+      const revenue = list.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      return res.json({ reply:
+        `⏳ Pending Orders — ${label}\n` +
+        `• Count: ${fmtN(list.length)}\n` +
+        `• Value at stake: ${fmtCur(revenue)}\n` +
+        (list.length > 0 ? `• Oldest: ${list.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at))[0]?.name} (${new Date(list[0]?.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})})` : "")
+      });
+    }
+
+    // FULFILLED / SHIPPED
+    if (is("fulfilled", "shipped", "dispatched")) {
+      const period = is("week") ? weekOrders : is("month") ? monthOrders : allOrders;
+      const label  = is("week") ? "This Week" : is("month") ? "This Month" : "All Time";
+      const list   = period.filter(o => fulfilled(o.fulfillment_status));
+      const revenue = list.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      return res.json({ reply:
+        `✅ Fulfilled Orders — ${label}\n` +
+        `• Count: ${fmtN(list.length)}\n` +
+        `• Revenue: ${fmtCur(revenue)}\n` +
+        `• Fulfillment rate: ${period.length ? Math.round(list.length/period.length*100) : 0}%`
+      });
+    }
+
+    // REVENUE
+    if (is("revenue", "sales", "earning", "income", "money")) {
+      const todayRev  = todayOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      const weekRev   = weekOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      const monthRev  = monthOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      const allRev    = allOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      const avgOrder  = allOrders.length ? allRev/allOrders.length : 0;
+      return res.json({ reply:
+        `💰 Revenue Breakdown\n` +
+        `• Today: ${fmtCur(todayRev)}\n` +
+        `• This week: ${fmtCur(weekRev)}\n` +
+        `• This month: ${fmtCur(monthRev)}\n` +
+        `• All time: ${fmtCur(allRev)}\n` +
+        `• Avg order value: ${fmtCur(avgOrder)}`
+      });
+    }
+
+    // COD vs PREPAID
+    if (is("cod", "prepaid", "payment", "cash on delivery")) {
+      const period = is("week") ? weekOrders : is("month") ? monthOrders : allOrders;
+      const label  = is("week") ? "This Week" : is("month") ? "This Month" : "All Time";
+      const codL   = period.filter(o => o.financial_status !== "paid");
+      const preL   = period.filter(o => o.financial_status === "paid");
+      const codRev = codL.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      const preRev = preL.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      return res.json({ reply:
+        `💳 Payment Split — ${label}\n` +
+        `• COD: ${fmtN(codL.length)} orders  (${fmtCur(codRev)})\n` +
+        `• Prepaid: ${fmtN(preL.length)} orders  (${fmtCur(preRev)})\n` +
+        `• COD share: ${period.length ? Math.round(codL.length/period.length*100) : 0}%`
+      });
+    }
+
+    // CANCELLED / RTO
+    if (is("cancel", "rto", "return")) {
+      const period = is("week") ? weekOrders : is("month") ? monthOrders : allOrders;
+      const label  = is("week") ? "This Week" : is("month") ? "This Month" : "All Time";
+      const list   = period.filter(o => cancelled(o.financial_status) || (metas[String(o.id)]?.stage === "rto") || cancelled(o.fulfillment_status));
+      const lostRev = list.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      return res.json({ reply:
+        `❌ Cancelled/RTO — ${label}\n` +
+        `• Count: ${fmtN(list.length)}\n` +
+        `• Lost revenue: ${fmtCur(lostRev)}\n` +
+        `• Cancel rate: ${period.length ? Math.round(list.length/period.length*100) : 0}%`
+      });
+    }
+
+    // TOP PRODUCTS
+    if (is("top product", "best product", "best selling", "popular product", "bestseller")) {
+      const tally = {};
+      allOrders.forEach(o => {
+        (o.line_items||[]).forEach(li => {
+          tally[li.title] = (tally[li.title]||0) + (li.quantity||1);
+        });
+      });
+      const top = Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      return res.json({ reply:
+        `🏆 Top 5 Products (All Time)\n` +
+        top.map(([ name, qty], i) => `${i+1}. ${name.slice(0,45)} — ${fmtN(qty)} units`).join("\n")
+      });
+    }
+
+    // VENDORS
+    if (is("vendor")) {
+      const vendorRevenue = {};
+      allOrders.forEach(o => {
+        (o.line_items||[]).forEach(li => {
+          if (!li.vendor) return;
+          vendorRevenue[li.vendor] = (vendorRevenue[li.vendor]||0) + parseFloat(li.price||0)*(li.quantity||1);
+        });
+      });
+      const top = Object.entries(vendorRevenue).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      return res.json({ reply:
+        `🏪 Vendor Revenue Summary\n` +
+        top.map(([v,r],i) => `${i+1}. ${v} — ${fmtCur(r)}`).join("\n")
+      });
+    }
+
+    // SETTLEMENTS
+    if (is("settlement", "commission", "payout")) {
+      const pending  = db.prepare("SELECT COUNT(*) as c, SUM(net_payable) as s FROM settlements WHERE status='pending'").get();
+      const paid     = db.prepare("SELECT COUNT(*) as c, SUM(net_payable) as s FROM settlements WHERE status='paid'").get();
+      return res.json({ reply:
+        `📄 Settlements\n` +
+        `• Pending: ${fmtN(pending.c)} invoices  (${fmtCur(pending.s)})\n` +
+        `• Paid: ${fmtN(paid.c)} invoices  (${fmtCur(paid.s)})`
+      });
+    }
+
+    // OVERVIEW / SUMMARY (default)
+    if (is("summary", "overview", "all", "report", "dashboard") || q.length < 4) {
+      const totalRev    = allOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      const totalFilled = allOrders.filter(o=>fulfilled(o.fulfillment_status)).length;
+      const totalPend   = allOrders.filter(o=>unfulfilled(o.fulfillment_status)).length;
+      const totalCancel = allOrders.filter(o=>cancelled(o.fulfillment_status)).length;
+      return res.json({ reply:
+        `📊 Store Overview\n` +
+        `• Total orders: ${fmtN(allOrders.length)}\n` +
+        `• Total revenue: ${fmtCur(totalRev)}\n` +
+        `• Fulfilled: ${fmtN(totalFilled)}  |  Pending: ${fmtN(totalPend)}  |  Cancelled: ${fmtN(totalCancel)}\n` +
+        `• Today: ${fmtN(todayOrders.length)} new orders  (${fmtCur(todayOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0))})\n` +
+        `• This week: ${fmtN(weekOrders.length)} orders`
+      });
+    }
+
+    // WEEK SUMMARY
+    if (is("week")) {
+      const filled  = weekOrders.filter(o=>fulfilled(o.fulfillment_status)).length;
+      const pending = weekOrders.filter(o=>unfulfilled(o.fulfillment_status)).length;
+      const revenue = weekOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      return res.json({ reply:
+        `📅 This Week\n` +
+        `• Orders: ${fmtN(weekOrders.length)}\n` +
+        `• Revenue: ${fmtCur(revenue)}\n` +
+        `• Fulfilled: ${fmtN(filled)}  |  Pending: ${fmtN(pending)}`
+      });
+    }
+
+    // MONTH SUMMARY
+    if (is("month")) {
+      const filled  = monthOrders.filter(o=>fulfilled(o.fulfillment_status)).length;
+      const pending = monthOrders.filter(o=>unfulfilled(o.fulfillment_status)).length;
+      const revenue = monthOrders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+      return res.json({ reply:
+        `📅 This Month\n` +
+        `• Orders: ${fmtN(monthOrders.length)}\n` +
+        `• Revenue: ${fmtCur(revenue)}\n` +
+        `• Fulfilled: ${fmtN(filled)}  |  Pending: ${fmtN(pending)}`
+      });
+    }
+
+    // Fallback
+    return res.json({ reply:
+      `I can answer questions about:\n` +
+      `• Today's orders & revenue\n` +
+      `• Pending / fulfilled / cancelled orders\n` +
+      `• Revenue (today / week / month / all time)\n` +
+      `• COD vs Prepaid split\n` +
+      `• Top products\n` +
+      `• Vendor revenue\n` +
+      `• Settlements\n\nTry: "today's summary", "pending orders this week", "top products", "revenue this month"`
+    });
+
   } catch (err) {
-    console.error("❌ /chat:", err.message);
+    console.error("❌ /jarvis:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
