@@ -188,6 +188,9 @@ db.exec(`
 try { db.exec("ALTER TABLE settlement_orders ADD COLUMN shipping_charge REAL DEFAULT 0"); } catch {}
 // ── Migrate: add total_shipping to settlements
 try { db.exec("ALTER TABLE settlements ADD COLUMN total_shipping REAL DEFAULT 0"); } catch {}
+// ── Migrate: delivery_status tracking
+try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status_updated_at TEXT DEFAULT ''"); } catch {}
 
 // ── Tag mappings table ────────────────────────────────────────────────────
 db.exec(`
@@ -673,6 +676,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           advancePaid,
           totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
           remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
+          awb:          meta.awb     || "",
+          courier:      meta.courier || "",
+          trackingUrl:  meta.tracking_url || "",
+          deliveryStatus: meta.delivery_status || "",
           myItems: myItems.map(li => ({
             id:        li.id,
             title:     li.title,
@@ -1635,6 +1642,88 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     res.json(result);
   } catch (err) {
     console.error("❌ /create-shipment:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Delivery Status Tracking ───────────────────────────────────────────────
+
+async function fetchDeliveryStatus(partner, creds, awb) {
+  if (partner === "shiprocket") {
+    const authRes = await fetch("https://apiv2.shiprocket.in/v1/external/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: creds.email, password: creds.password }),
+    }).then(r => r.json());
+    if (!authRes.token) throw new Error("Shiprocket auth failed");
+    const track = await fetch(
+      `https://apiv2.shiprocket.in/v1/external/courier/track/awb/${awb}`,
+      { headers: { "Authorization": `Bearer ${authRes.token}` } }
+    ).then(r => r.json());
+    const status = track?.tracking_data?.shipment_track?.[0]?.current_status
+      || track?.tracking_data?.shipment_status_name
+      || "";
+    return status;
+  }
+  if (partner === "delhivery") {
+    const dlRes = await fetch(
+      `https://track.delhivery.com/api/v1/packages/json/?waybill=${awb}&verbose=false`,
+      { headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/json" } }
+    ).then(r => r.json());
+    const status = dlRes?.ShipmentData?.[0]?.Shipment?.Status?.Status || "";
+    return status;
+  }
+  return "";
+}
+
+// GET /vendor/orders/:shopifyId/delivery-status — fetch live status from partner
+app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res) => {
+  try {
+    const meta = db.prepare("SELECT awb, courier, delivery_status FROM order_meta WHERE shopify_id=?").get(req.params.shopifyId);
+    if (!meta?.awb) return res.json({ status: "", awb: "" });
+
+    const partner = (meta.courier || "").toLowerCase();
+    const partnerRow = db.prepare("SELECT credentials FROM vendor_shipping_partners WHERE vendor_name=? AND partner=? AND active=1")
+      .get(req.vendor, partner);
+
+    let status = meta.delivery_status || "";
+    if (partnerRow) {
+      try {
+        const creds = JSON.parse(partnerRow.credentials);
+        status = await fetchDeliveryStatus(partner, creds, meta.awb);
+        db.prepare("UPDATE order_meta SET delivery_status=?, delivery_status_updated_at=? WHERE shopify_id=?")
+          .run(status, new Date().toISOString(), req.params.shopifyId);
+      } catch {}
+    }
+    res.json({ status, awb: meta.awb });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /vendor/shipping/sync-status — bulk refresh delivery statuses for all orders with AWB
+app.post("/vendor/shipping/sync-status", vendorAuth, async (req, res) => {
+  try {
+    const partners = db.prepare("SELECT partner, credentials FROM vendor_shipping_partners WHERE vendor_name=? AND active=1").all(req.vendor);
+    if (!partners.length) return res.json({ updated: 0 });
+
+    const orders = db.prepare("SELECT shopify_id, awb, courier FROM order_meta WHERE awb != '' AND awb IS NOT NULL").all();
+    let updated = 0;
+    for (const o of orders) {
+      const partner = (o.courier || "").toLowerCase();
+      const partnerRow = partners.find(p => p.partner === partner);
+      if (!partnerRow) continue;
+      try {
+        const creds = JSON.parse(partnerRow.credentials);
+        const status = await fetchDeliveryStatus(partner, creds, o.awb);
+        if (status) {
+          db.prepare("UPDATE order_meta SET delivery_status=?, delivery_status_updated_at=? WHERE shopify_id=?")
+            .run(status, new Date().toISOString(), o.shopify_id);
+          updated++;
+        }
+      } catch {}
+    }
+    res.json({ updated });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

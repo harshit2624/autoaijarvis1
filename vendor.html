@@ -537,10 +537,15 @@
   function OrderModal({ order, token, onClose, onUpdated }) {
     const [tags,      setTags]      = useState((order.tags||'').split(',').map(t=>t.trim()).filter(Boolean));
     const [tagInput,  setTagInput]  = useState('');
-    const [courier,   setCourier]   = useState('Delhivery');
-    const [awb,       setAwb]       = useState('');
-    const [trackUrl,  setTrackUrl]  = useState('');
+    // Pre-populate from saved order_meta if available
+    const initCourier = order.courier
+      ? (COURIERS.find(c => c.name.toLowerCase() === order.courier.toLowerCase())?.name || 'Delhivery')
+      : 'Delhivery';
+    const [courier,   setCourier]   = useState(initCourier);
+    const [awb,       setAwb]       = useState(order.awb || '');
+    const [trackUrl,  setTrackUrl]  = useState(order.trackingUrl || '');
     const [notify,    setNotify]    = useState(true);
+    const [delivStatus, setDelivStatus] = useState(order.deliveryStatus || '');
     const [saving,       setSaving]      = useState(false);
     const [fulfilling,   setFulfilling]  = useState(false);
     const [msg,          setMsg]         = useState(null); // {type, text}
@@ -647,6 +652,19 @@
                 <div className="detail-row"><span className="dr-label">Date</span>        <span className="dr-val">{fmtDate(order.date)}</span></div>
                 <div className="detail-row"><span className="dr-label">Status</span>      <span className="dr-val"><Badge status={order.status}/></span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span>     <span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
+                {order.awb && <div className="detail-row"><span className="dr-label">AWB</span><span className="dr-val" style={{color:'var(--teal)',fontFamily:'monospace'}}>{order.awb}</span></div>}
+                {order.courier && <div className="detail-row"><span className="dr-label">Courier</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.courier}</span></div>}
+                {(order.awb || delivStatus) && <div className="detail-row">
+                  <span className="dr-label">Delivery Status</span>
+                  <span style={{display:'flex',alignItems:'center',gap:6}}>
+                    <span className="dr-val" style={{color: delivStatus?'var(--yellow)':'var(--text-muted)',fontSize:11}}>{delivStatus||'—'}</span>
+                    <button style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}
+                      onClick={async()=>{
+                        const r=await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`,{headers:{Authorization:`Bearer ${token}`}});
+                        const d=await r.json(); if(d.status) setDelivStatus(d.status);
+                      }}>↻ Refresh</button>
+                  </span>
+                </div>}
                 <div className="detail-row"><span className="dr-label">Your Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
                 {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CrosCrow)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
                 {order.advancePaid>0 && <div className="detail-row"><span className="dr-label">Advance / Partial Paid</span><span className="dr-val" style={{color:'var(--green)'}}>− {fmtCur(order.advancePaid, order.currency)}</span></div>}
@@ -880,7 +898,7 @@
   /* ══════════════════════════════════
      ORDERS VIEW
   ══════════════════════════════════ */
-  function Orders({ orders, loading, onOpenOrder }) {
+  function Orders({ orders, loading, onOpenOrder, token, onRefresh }) {
     const [search, setSearch]   = useState('');
     const [stage,  setStage]    = useState('all');
     const [sort,   setSort]     = useState('date');
@@ -930,6 +948,11 @@
             <option value="customer">Sort: Customer</option>
           </select>
           <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}{search||stage!=='all'?' (filtered)':''}</span>
+          <button className="btn btn-ghost btn-sm" style={{fontSize:10,marginLeft:'auto'}} onClick={async()=>{
+            const r=await fetch(`${API}/vendor/shipping/sync-status`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+            const d=await r.json();
+            if(d.updated>0) onRefresh();
+          }}>↻ Sync Delivery Status</button>
         </div>
 
         <div className="card">
@@ -946,17 +969,25 @@
                 <th>Advance</th>
                 <th>Remaining COD</th>
                 <th>Status</th>
+                <th>Delivery</th>
                 <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
                 <th style={{width:28}}/>
               </tr></thead>
               <tbody>
-                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={11}/>) :
+                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={12}/>) :
                  rows.length===0 ? (
-                  <tr><td colSpan={11}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
+                  <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
                  ) :
                  rows.map((o,i)=>{
                    const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
                    const rowN=(cur-1)*PER+i+1;
+                   const dStatus = o.deliveryStatus;
+                   const dColor = dStatus
+                     ? /delivered|delivered/i.test(dStatus) ? 'var(--green)'
+                     : /transit|shipped|dispatched|out for/i.test(dStatus) ? 'var(--teal)'
+                     : /rto|return|undelivered|failed/i.test(dStatus) ? 'var(--red)'
+                     : 'var(--yellow)'
+                     : 'var(--text-muted)';
                    return (
                     <tr key={o.id} onClick={()=>onOpenOrder(o)}>
                       <td className="td-muted">{rowN}</td>
@@ -976,6 +1007,9 @@
                       <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                       <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
                       <td><Badge status={o.status}/></td>
+                      <td style={{fontSize:10,color:dColor,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {dStatus || (o.awb ? <span style={{color:'var(--text-muted)'}}>AWB: {o.awb.slice(0,8)}…</span> : '—')}
+                      </td>
                       <td className="td-muted">{fmtDate(o.date)}</td>
                       <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                     </tr>
@@ -1699,7 +1733,7 @@
           </div>
 
           {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal}/>}
-          {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal}/>}
+          {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
           {view==='settlements' && <Settlements       token={auth.token} stats={stats}/>}
