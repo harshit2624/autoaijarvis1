@@ -444,9 +444,16 @@
   /* ══════════════════════════════════
      INVOICE MODAL
   ══════════════════════════════════ */
-  function InvoiceModal({ settlement, orders, onClose }) {
+  function InvoiceModal({ settlement, orders, croscrow={}, vendorProfile={}, onClose }) {
     const s = settlement;
     const isCredit = s.net_payable < 0;
+
+    // Compute prepaid discount from order lines
+    const prepaidDiscount = (orders||[]).reduce((sum, o) => {
+      if (o.payment_type === 'prepaid') return sum + (o.my_revenue||0) * 0.1;
+      return sum;
+    }, 0);
+    const taxableValue = (s.gross_revenue||0) - prepaidDiscount;
     return (
       <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
         <div className="modal" style={{maxWidth:720}}>
@@ -475,13 +482,19 @@
               <div className="inv-grid">
                 <div>
                   <span className="inv-label">From (Marketplace)</span>
-                  <span className="inv-val">CrosCrow Marketplace Pvt Ltd</span>
-                  <span style={{fontSize:10,color:'#666'}}>GSTIN: Applied for</span>
+                  <span className="inv-val">{croscrow.company_name||'CrosCrow Marketplace'}</span>
+                  {croscrow.address && <span style={{fontSize:10,color:'#666'}}>{croscrow.address}{croscrow.city?', '+croscrow.city:''}{croscrow.state?', '+croscrow.state:''} {croscrow.pincode||''}</span>}
+                  {croscrow.gst_no  && <span style={{fontSize:10,color:'#666'}}>GSTIN: {croscrow.gst_no}</span>}
+                  {croscrow.pan_no  && <span style={{fontSize:10,color:'#666'}}>PAN: {croscrow.pan_no}</span>}
+                  {croscrow.email   && <span style={{fontSize:10,color:'#666'}}>{croscrow.email}</span>}
                 </div>
                 <div>
                   <span className="inv-label">To (Vendor)</span>
                   <span className="inv-val">{s.vendor_name}</span>
-                  <span style={{fontSize:10,color:'#666'}}>Vendor Partner</span>
+                  {vendorProfile.address && <span style={{fontSize:10,color:'#666'}}>{vendorProfile.address}{vendorProfile.city?', '+vendorProfile.city:''}{vendorProfile.state?', '+vendorProfile.state:''} {vendorProfile.pincode||''}</span>}
+                  {vendorProfile.gst_no  && <span style={{fontSize:10,color:'#666'}}>GSTIN: {vendorProfile.gst_no}</span>}
+                  {vendorProfile.pan_no  && <span style={{fontSize:10,color:'#666'}}>PAN: {vendorProfile.pan_no}</span>}
+                  {vendorProfile.email   && <span style={{fontSize:10,color:'#666'}}>{vendorProfile.email}</span>}
                 </div>
                 <div>
                   <span className="inv-label">Settlement Period</span>
@@ -495,37 +508,57 @@
               </div>
 
               <table className="inv-table">
-                <thead><tr><th>#</th><th>Order</th><th>Product Value</th><th>Type</th><th>Comm%</th><th>Commission</th><th>GST(18%)</th><th>Advance</th><th>Net</th></tr></thead>
+                <thead><tr><th>#</th><th>Order</th><th>MRP Value</th><th>Type</th><th>Discount</th><th>Taxable Base</th><th>Comm%</th><th>Commission</th><th>GST(18%)</th><th>Advance</th><th>Net</th></tr></thead>
                 <tbody>
-                  {(orders||[]).map((o,i)=>(
-                    <tr key={i}>
-                      <td>{i+1}</td>
-                      <td>{o.order_name}</td>
-                      <td>₹{(o.my_revenue||0).toFixed(2)}</td>
-                      <td style={{textTransform:'uppercase',fontSize:9}}>{o.payment_type}</td>
-                      <td>{o.commission_pct}%</td>
-                      <td>₹{(o.commission||0).toFixed(2)}</td>
-                      <td>₹{(o.gst||0).toFixed(2)}</td>
-                      <td>₹{(o.advance_paid||0).toFixed(2)}</td>
-                      <td style={{fontWeight:700,color:o.net<0?'#10b981':'#ef4444'}}>
-                        {o.net<0?'−':''}₹{Math.abs(o.net||0).toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
+                  {(orders||[]).map((o,i)=>{
+                    const isPrepaid = o.payment_type === 'prepaid';
+                    const disc  = isPrepaid ? (o.my_revenue||0)*0.1 : 0;
+                    const base  = (o.my_revenue||0) - disc;
+                    return (
+                      <tr key={i}>
+                        <td>{i+1}</td>
+                        <td>{o.order_name}</td>
+                        <td>₹{(o.my_revenue||0).toFixed(2)}</td>
+                        <td style={{textTransform:'uppercase',fontSize:9,color:isPrepaid?'#e67e22':'inherit'}}>{o.payment_type}</td>
+                        <td style={{color:'#e67e22'}}>{isPrepaid?`− ₹${disc.toFixed(2)}`:'—'}</td>
+                        <td style={{fontWeight:600}}>₹{base.toFixed(2)}</td>
+                        <td>{o.commission_pct}%</td>
+                        <td>₹{(o.commission||0).toFixed(2)}</td>
+                        <td>₹{(o.gst||0).toFixed(2)}</td>
+                        <td>₹{(o.advance_paid||0).toFixed(2)}</td>
+                        <td style={{fontWeight:700,color:o.net<0?'#10b981':'#ef4444'}}>
+                          {o.net<0?'−':''}₹{Math.abs(o.net||0).toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
               <div className="inv-summary">
                 <div className="inv-row"><span>Total Orders</span><span>{s.total_orders}</span></div>
-                <div className="inv-row"><span>Gross Revenue</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
-                <div className="inv-row"><span>Platform Commission</span><span>₹{(s.commission||0).toFixed(2)}</span></div>
+                <div className="inv-row"><span>Gross Revenue (Product Value)</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
+                {prepaidDiscount > 0 && <>
+                  <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount (10% on prepaid orders)</span><span>− ₹{prepaidDiscount.toFixed(2)}</span></div>
+                  <div className="inv-row" style={{fontWeight:600,borderTop:'1px solid #ddd',paddingTop:6,marginTop:2}}><span>Taxable Value (Commission Base)</span><span>₹{taxableValue.toFixed(2)}</span></div>
+                </>}
+                <div className="inv-row"><span>Platform Commission ({s.custom_commission_pct||20}%)</span><span>₹{(s.commission||0).toFixed(2)}</span></div>
                 <div className="inv-row"><span>GST on Commission (18%)</span><span>₹{(s.gst_amount||0).toFixed(2)}</span></div>
-                <div className="inv-row"><span>Advance Adjustments</span><span>− ₹{(s.advance_total||0).toFixed(2)}</span></div>
+                <div className="inv-row"><span>Advance Deducted</span><span>− ₹{(s.advance_total||0).toFixed(2)}</span></div>
+                {(s.extra_discount||0) > 0     && <div className="inv-row"><span>Extra Discount Applied</span><span>− ₹{(s.extra_discount).toFixed(2)}</span></div>}
+                {(s.extra_advance||0) > 0      && <div className="inv-row"><span>Additional Advance</span><span>− ₹{(s.extra_advance).toFixed(2)}</span></div>}
+                {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Charge Adjustment</span><span>{s.shipping_adjustment>0?'+ ':'− '}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
                 <div className="inv-row inv-total">
                   <span>{isCredit ? '↑ CrosCrow Pays Vendor' : '↓ Vendor Pays CrosCrow'}</span>
                   <span>₹{Math.abs(s.net_payable||0).toFixed(2)}</span>
                 </div>
               </div>
+              {s.invoice_notes && (
+                <div style={{marginTop:16,background:'#f9f9f9',border:'1px solid #ddd',borderRadius:6,padding:12,fontSize:11}}>
+                  <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#666',marginBottom:4}}>Notes</div>
+                  <div>{s.invoice_notes}</div>
+                </div>
+              )}
 
               <div className="inv-footer">
                 <div>This is a computer-generated statement. For queries, contact settlements@croscrow.com</div>
@@ -803,26 +836,162 @@
   /* ══════════════════════════════════
      SETTLEMENTS VIEW
   ══════════════════════════════════ */
+  /* ── Edit Settlement Modal ── */
+  function EditSettlementModal({ settlement: init, token, onClose, onSaved }) {
+    const [commPct,      setCommPct]      = useState(String(init.custom_commission_pct || ''));
+    const [discount,     setDiscount]     = useState(String(init.extra_discount     || ''));
+    const [shipping,     setShipping]     = useState(String(init.shipping_adjustment || ''));
+    const [extraAdv,     setExtraAdv]     = useState(String(init.extra_advance       || ''));
+    const [notes,        setNotes]        = useState(init.invoice_notes || '');
+    const [saving,       setSaving]       = useState(false);
+    const [msg,          setMsg]          = useState(null);
+    const [preview,      setPreview]      = useState(null); // { netPayable, commission, gst }
+
+    // Live preview
+    useEffect(()=>{
+      const disc  = parseFloat(discount)||0;
+      const ship  = parseFloat(shipping)||0;
+      const adv   = parseFloat(extraAdv)||0;
+      const baseNet = init.net_payable
+        + (init.extra_discount||0)
+        + (init.extra_advance||0)
+        - (init.shipping_adjustment||0);
+      const adjusted = parseFloat((baseNet - disc - adv + ship).toFixed(2));
+      setPreview({ netPayable: adjusted });
+    },[discount, shipping, extraAdv]);
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const body = {
+          extra_discount:      parseFloat(discount)||0,
+          shipping_adjustment: parseFloat(shipping)||0,
+          extra_advance:       parseFloat(extraAdv)||0,
+          invoice_notes:       notes,
+        };
+        if (commPct.trim()) body.custom_commission_pct = parseFloat(commPct);
+        const r = await fetch(`${API}/admin/settlements/${init.id}/edit`,{
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CrosCrow pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}` });
+        onSaved();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(false);
+    };
+
+    const isCredit = (preview?.netPayable ?? init.net_payable) < 0;
+
+    return (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal">
+          <div className="modal-header">
+            <div>
+              <div className="modal-title">Edit Invoice — {init.invoice_no}</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{init.vendor_name} · {fmtDate(init.period_start)} – {fmtDate(init.period_end)}</div>
+            </div>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+
+          <div className="modal-body">
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+            <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14,marginBottom:16}}>
+              <div className="detail-box-title" style={{marginBottom:12}}>Current Figures</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,textAlign:'center',fontSize:11}}>
+                <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Orders</div><div style={{fontWeight:700}}>{init.total_orders}</div></div>
+                <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Gross Revenue</div><div style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(init.gross_revenue)}</div></div>
+                <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Commission</div><div style={{color:'var(--yellow)',fontWeight:700}}>{fmtCur(init.commission)}</div></div>
+                <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>GST (18%)</div><div style={{color:'var(--orange)',fontWeight:700}}>{fmtCur(init.gst_amount)}</div></div>
+              </div>
+            </div>
+
+            <div className="form-grid">
+              <div>
+                <label className="form-label">Commission % Override</label>
+                <input className="form-input" type="number" min="0" max="50" step="0.5" placeholder={`Current: ${init.custom_commission_pct||20}% — blank = no change`} value={commPct} onChange={e=>setCommPct(e.target.value)}/>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Recalculates all order commissions</div>
+              </div>
+              <div>
+                <label className="form-label">Extra Discount (₹)</label>
+                <input className="form-input" type="number" min="0" placeholder="0" value={discount} onChange={e=>setDiscount(e.target.value)}/>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Reduces vendor's payable / increases CrosCrow's payout</div>
+              </div>
+              <div>
+                <label className="form-label">Shipping Charge Adjustment (₹)</label>
+                <input className="form-input" type="number" placeholder="0 (positive adds, negative deducts)" value={shipping} onChange={e=>setShipping(e.target.value)}/>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Shipping is CrosCrow's — positive = vendor owes more</div>
+              </div>
+              <div>
+                <label className="form-label">Additional Advance / Partial (₹)</label>
+                <input className="form-input" type="number" min="0" placeholder="0" value={extraAdv} onChange={e=>setExtraAdv(e.target.value)}/>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Deducted from net payable (already collected)</div>
+              </div>
+              <div className="form-full">
+                <label className="form-label">Invoice Notes (printed on invoice)</label>
+                <input className="form-input" placeholder="e.g. Includes return deduction, special discount applied…" value={notes} onChange={e=>setNotes(e.target.value)}/>
+              </div>
+            </div>
+
+            {/* Live preview */}
+            {preview && (
+              <div style={{background: isCredit?'var(--green-dim)':'var(--red-bg)', border:`1px solid ${isCredit?'#1a4731':'#5a1a1a'}`, borderRadius:8, padding:14, marginTop:16, textAlign:'center'}}>
+                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>Adjusted Net Payable</div>
+                <div style={{fontSize:24,fontWeight:800,color:isCredit?'var(--green)':'var(--red)'}}>
+                  {isCredit?'↑':'↓'} ₹{Math.abs(preview.netPayable).toFixed(2)}
+                </div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{isCredit?'CrosCrow pays vendor':'Vendor pays CrosCrow'}</div>
+              </div>
+            )}
+          </div>
+
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-indigo" onClick={save} disabled={saving}>
+              {saving ? <><span className="spin">↻</span> Saving…</> : '✓ Save Changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function Settlements({ token }) {
+    const [activeTab,   setActiveTab]   = useState('delivered'); // 'delivered' | 'invoices'
+    // ── Tab 1: Delivered Orders (real-time) ───────────────────────────────
+    const [summary,     setSummary]     = useState(null);
+    const [sumLoading,  setSumLoading]  = useState(true);
+    const [expandedV,   setExpandedV]   = useState(null);
+    // ── Tab 2: Settlement Invoices ─────────────────────────────────────────
     const [settlements, setSettlements] = useState([]);
-    const [loading,     setLoading]     = useState(true);
+    const [invLoading,  setInvLoading]  = useState(true);
     const [vendors,     setVendors]     = useState([]);
     const [generating,  setGenerating]  = useState(false);
     const [genVendor,   setGenVendor]   = useState('');
     const [genStart,    setGenStart]    = useState('');
     const [genEnd,      setGenEnd]      = useState('');
     const [genMsg,      setGenMsg]      = useState(null);
-    const [invoice,     setInvoice]     = useState(null); // { settlement, orders }
+    const [invoice,     setInvoice]     = useState(null);
+    const [editing,     setEditing]     = useState(null);
+    const [confirmDel,  setConfirmDel]  = useState(null);
 
-    const load = ()=>{
-      setLoading(true);
+    const loadSummary = () => {
+      setSumLoading(true);
+      fetch(`${API}/admin/delivered-summary`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setSummary(d)).catch(()=>{}).finally(()=>setSumLoading(false));
+    };
+
+    const loadInvoices = () => {
+      setInvLoading(true);
       Promise.all([
         fetch(`${API}/admin/settlements`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
         fetch(`${API}/admin/vendors`,    {headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
-      ]).then(([sd, vd])=>{ setSettlements(sd.settlements||[]); setVendors(vd.vendors||[]); }).catch(()=>{}).finally(()=>setLoading(false));
+      ]).then(([sd, vd])=>{ setSettlements(sd.settlements||[]); setVendors(vd.vendors||[]); }).catch(()=>{}).finally(()=>setInvLoading(false));
     };
 
-    useEffect(()=>{ load(); },[token]);
+    useEffect(()=>{ loadSummary(); loadInvoices(); },[token]);
 
     const generate = async () => {
       if(!genVendor||!genStart||!genEnd) { setGenMsg({type:'error',text:'All fields required.'}); return; }
@@ -834,15 +1003,20 @@
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
-        setGenMsg({ type:'success', text:`Settlement generated! ${d.totalOrders} orders — Net: ₹${Math.abs(d.netPayable).toFixed(2)}` });
-        load();
+        setGenMsg({ type:'success', text:`Invoice generated! ${d.totalOrders} orders — Net: ₹${Math.abs(d.netPayable).toFixed(2)}` });
+        loadInvoices();
       } catch(e) { setGenMsg({ type:'error', text: e.message }); }
       setGenerating(false);
     };
 
     const markPaid = async id => {
       await fetch(`${API}/admin/settlements/${id}/mark-paid`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}});
-      load();
+      loadInvoices(); loadSummary();
+    };
+
+    const deleteSett = async id => {
+      await fetch(`${API}/admin/settlements/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+      setConfirmDel(null); loadInvoices(); loadSummary();
     };
 
     const viewInvoice = async id => {
@@ -851,78 +1025,412 @@
       setInvoice(d);
     };
 
+    const t = summary?.totals || {};
+    const fmt = n => `₹${Math.abs(n||0).toFixed(2)}`;
+
     return (
       <div className="page">
-        {/* Generate panel */}
-        <div className="card" style={{marginBottom:16}}>
-          <div className="card-header"><span className="card-title">Generate Settlement</span><span className="card-sub">Only delivered orders are included</span></div>
-          <div style={{padding:16}}>
-            {genMsg && <div className={`alert alert-${genMsg.type}`}>{genMsg.type==='success'?'✓':'⚠'} {genMsg.text}</div>}
-            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr auto',gap:12,alignItems:'end'}}>
-              <div>
-                <label className="form-label">Vendor</label>
-                <select className="form-select" value={genVendor} onChange={e=>setGenVendor(e.target.value)}>
-                  <option value="">Select vendor…</option>
-                  {vendors.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}
-                </select>
+        {/* Tab switcher */}
+        <div style={{display:'flex',gap:0,marginBottom:20,borderBottom:'2px solid var(--border)'}}>
+          {[['delivered','📦 Delivered Orders'],['invoices','🧾 Settlement Invoices']].map(([id,label])=>(
+            <button key={id} onClick={()=>setActiveTab(id)}
+              style={{padding:'9px 22px',fontSize:12,fontWeight:600,border:'none',background:'transparent',cursor:'pointer',
+                color:activeTab===id?'var(--indigo)':'var(--text-muted)',
+                borderBottom:activeTab===id?'2px solid var(--indigo)':'2px solid transparent',
+                marginBottom:'-2px',transition:'all 0.15s'}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── TAB 1: Delivered Orders ────────────────────────────────────────── */}
+        {activeTab==='delivered' && (
+          <div>
+            {/* Summary stat cards */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
+              {[
+                {label:'Gross Sales',       value:fmt(t.gross),              color:'indigo'},
+                {label:'Prepaid Discount',  value:fmt(t.prepaidDiscount),    color:'yellow'},
+                {label:'Commissionable',    value:fmt(t.commissionableSale), color:'text'},
+                {label:'Commission',        value:fmt(t.commission),         color:'orange'},
+                {label:'GST (18%)',         value:fmt(t.gst),                color:'orange'},
+                {label:'Advance Adjusted',  value:fmt(t.advance),            color:'green'},
+                {label:'Total Settled',     value:fmt(t.totalSettled),       color:'green'},
+                {label:'Pending Settlement',value:fmt(t.pendingSettlement),  color: (t.pendingSettlement||0)<0?'green':'red'},
+              ].map(c=>(
+                <div key={c.label} className="card" style={{padding:'12px 14px'}}>
+                  <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{c.label}</div>
+                  <div style={{fontSize:17,fontWeight:700,color:`var(--${c.color})`}}>{sumLoading?'…':c.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Per-vendor table */}
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Per-Vendor Breakdown</span>
+                <button className="btn btn-ghost btn-sm" onClick={loadSummary}>↻ Refresh</button>
               </div>
-              <div>
-                <label className="form-label">Period Start</label>
-                <input className="form-input" type="date" value={genStart} onChange={e=>setGenStart(e.target.value)}/>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr>
+                    <th>Vendor</th><th>Orders</th><th>Gross Sales</th><th>Prepaid Disc</th>
+                    <th>Commissionable</th><th>Comm%</th><th>Commission</th><th>GST</th>
+                    <th>Advance</th><th>Net Payable</th><th>Settled</th><th>Pending</th>
+                  </tr></thead>
+                  <tbody>
+                    {sumLoading ? Array.from({length:5}).map((_,i)=><SkelRow key={i} cols={12}/>) :
+                     !summary?.vendors?.length ? (
+                       <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No delivered orders found</div><div className="empty-sub">Orders marked as Delivered will appear here automatically.</div></div></td></tr>
+                     ) :
+                     summary.vendors.map(v=>{
+                       const isPayout = v.netPayable < 0;
+                       const isPend   = v.pendingSettlement < 0;
+                       return (
+                         <tr key={v.vendor} style={{cursor:'pointer'}} onClick={()=>setExpandedV(expandedV===v.vendor?null:v.vendor)}>
+                           <td style={{fontWeight:600}}>
+                             <span style={{marginRight:6,fontSize:10,color:'var(--text-muted)'}}>{expandedV===v.vendor?'▼':'▶'}</span>
+                             {v.vendor}
+                           </td>
+                           <td>{v.totalOrders}</td>
+                           <td>₹{v.gross.toFixed(2)}</td>
+                           <td style={{color:'var(--yellow)'}}>{v.prepaidDiscount>0?`₹${v.prepaidDiscount.toFixed(2)}`:'—'}</td>
+                           <td>₹{v.commissionableSale.toFixed(2)}</td>
+                           <td style={{color:'var(--indigo)'}}>{v.commissionPct}%</td>
+                           <td style={{color:'var(--orange)'}}>₹{v.commission.toFixed(2)}</td>
+                           <td style={{color:'var(--orange)'}}>₹{v.gst.toFixed(2)}</td>
+                           <td style={{color:'var(--green)'}}>{v.advance>0?`₹${v.advance.toFixed(2)}`:'—'}</td>
+                           <td>
+                             <span style={{color:isPayout?'var(--green)':'var(--red)',fontWeight:700}}>
+                               {isPayout?'↑ ':'↓ '}₹{Math.abs(v.netPayable).toFixed(2)}
+                             </span>
+                             <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{isPayout?'CC pays':'Vendor pays'}</div>
+                           </td>
+                           <td style={{color:'var(--green)'}}>₹{v.totalSettled.toFixed(2)}</td>
+                           <td>
+                             <span style={{color:isPend?'var(--green)':'var(--red)',fontWeight:600}}>
+                               {isPend?'↑ ':'↓ '}₹{Math.abs(v.pendingSettlement).toFixed(2)}
+                             </span>
+                           </td>
+                         </tr>
+                       );
+                     })}
+                  </tbody>
+                </table>
               </div>
-              <div>
-                <label className="form-label">Period End</label>
-                <input className="form-input" type="date" value={genEnd} onChange={e=>setGenEnd(e.target.value)}/>
+            </div>
+
+            <div style={{marginTop:10,fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>
+              Live calculation from all delivered orders. Totals update when order stages change.
+              To generate an invoice, switch to the Settlement Invoices tab.
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 2: Settlement Invoices ─────────────────────────────────────── */}
+        {activeTab==='invoices' && (
+          <div>
+            {/* Generate panel */}
+            <div className="card" style={{marginBottom:16}}>
+              <div className="card-header"><span className="card-title">Generate Invoice</span><span className="card-sub">Locks delivered orders into a formal settlement invoice</span></div>
+              <div style={{padding:16}}>
+                {genMsg && <div className={`alert alert-${genMsg.type}`}>{genMsg.type==='success'?'✓':'⚠'} {genMsg.text}</div>}
+                <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr auto',gap:12,alignItems:'end'}}>
+                  <div>
+                    <label className="form-label">Vendor</label>
+                    <select className="form-select" value={genVendor} onChange={e=>setGenVendor(e.target.value)}>
+                      <option value="">Select vendor…</option>
+                      {vendors.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Period Start</label>
+                    <input className="form-input" type="date" value={genStart} onChange={e=>setGenStart(e.target.value)}/>
+                  </div>
+                  <div>
+                    <label className="form-label">Period End</label>
+                    <input className="form-input" type="date" value={genEnd} onChange={e=>setGenEnd(e.target.value)}/>
+                  </div>
+                  <button className="btn btn-indigo" onClick={generate} disabled={generating||!genVendor||!genStart||!genEnd}>
+                    {generating ? <><span className="spin">↻</span> Generating…</> : '⬡ Generate'}
+                  </button>
+                </div>
               </div>
-              <button className="btn btn-indigo" onClick={generate} disabled={generating||!genVendor||!genStart||!genEnd}>
-                {generating ? <><span className="spin">↻</span> Generating…</> : '⬡ Generate'}
-              </button>
+            </div>
+
+            <div className="card">
+              <div className="card-header"><span className="card-title">All Invoices</span><button className="btn btn-ghost btn-sm" onClick={loadInvoices}>↻ Refresh</button></div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Invoice No</th><th>Vendor</th><th>Period</th><th>Orders</th><th>Commission</th><th>GST</th><th>Adjustments</th><th>Net Payable</th><th>Status</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {invLoading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={10}/>) :
+                     settlements.length===0 ? (
+                       <tr><td colSpan={10}><div className="empty"><div className="empty-icon">🧾</div><div className="empty-title">No invoices yet</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Generate your first invoice above.</div></div></td></tr>
+                     ) :
+                     settlements.map(s=>{
+                       const isCredit = s.net_payable < 0;
+                       const hasAdj   = (s.extra_discount||0)+(s.shipping_adjustment||0)+(s.extra_advance||0) !== 0;
+                       return (
+                        <tr key={s.id}>
+                          <td>
+                            <div className="td-id" style={{fontFamily:'monospace',fontSize:10}}>{s.invoice_no}</div>
+                            {s.custom_commission_pct && <div style={{fontSize:9,color:'var(--indigo)',marginTop:2}}>Comm: {s.custom_commission_pct}%</div>}
+                          </td>
+                          <td style={{fontWeight:600}}>{s.vendor_name}</td>
+                          <td className="td-mut">{fmtDate(s.period_start)} – {fmtDate(s.period_end)}</td>
+                          <td>{s.total_orders}</td>
+                          <td style={{color:'var(--yellow)'}}>₹{(s.commission||0).toFixed(2)}</td>
+                          <td style={{color:'var(--orange)'}}>₹{(s.gst_amount||0).toFixed(2)}</td>
+                          <td style={{fontSize:10,color:'var(--text-muted)'}}>
+                            {hasAdj ? (
+                              <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                                {(s.extra_discount||0)>0     && <span style={{color:'var(--green)'}}>− Disc ₹{s.extra_discount.toFixed(2)}</span>}
+                                {(s.extra_advance||0)>0      && <span style={{color:'var(--green)'}}>− Adv ₹{s.extra_advance.toFixed(2)}</span>}
+                                {(s.shipping_adjustment||0)!==0 && <span style={{color:'var(--orange)'}}>± Ship ₹{s.shipping_adjustment.toFixed(2)}</span>}
+                              </div>
+                            ) : <span style={{color:'var(--border-hi)'}}>—</span>}
+                          </td>
+                          <td>
+                            <span style={{color:isCredit?'var(--green)':'var(--red)',fontWeight:700}}>
+                              {isCredit?'↑ ':'↓ '}₹{Math.abs(s.net_payable||0).toFixed(2)}
+                            </span>
+                            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{isCredit?'CrosCrow pays':'Vendor pays'}</div>
+                          </td>
+                          <td><span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span></td>
+                          <td>
+                            <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                              <button className="btn btn-ghost btn-sm" onClick={()=>viewInvoice(s.id)}>⎙</button>
+                              {s.status==='pending' && <>
+                                <button className="btn btn-ghost btn-sm" onClick={()=>setEditing(s)}>✏</button>
+                                <button className="btn btn-green btn-sm" onClick={()=>markPaid(s.id)}>✓ Paid</button>
+                                <button className="btn btn-danger btn-sm" onClick={()=>setConfirmDel(s.id)}>✕</button>
+                              </>}
+                            </div>
+                          </td>
+                        </tr>
+                       );
+                     })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {confirmDel && (
+          <div className="overlay" onClick={e=>e.target===e.currentTarget&&setConfirmDel(null)}>
+            <div className="modal" style={{maxWidth:400,marginTop:120}}>
+              <div className="modal-header"><div className="modal-title">Delete Invoice?</div></div>
+              <div className="modal-body">
+                <p style={{fontSize:12,color:'var(--text-dim)',lineHeight:1.7}}>This will permanently delete the invoice, all its order records, and any wallet transactions linked to it. This cannot be undone.</p>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-ghost" onClick={()=>setConfirmDel(null)}>Cancel</button>
+                <button className="btn btn-danger" onClick={()=>deleteSett(confirmDel)}>Delete Permanently</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {editing && <EditSettlementModal settlement={editing} token={token} onClose={()=>setEditing(null)} onSaved={()=>{ setEditing(null); loadInvoices(); loadSummary(); }}/>}
+        {invoice  && <InvoiceModal settlement={invoice.settlement} orders={invoice.orders} croscrow={invoice.croscrow||{}} vendorProfile={invoice.vendorProfile||{}} onClose={()=>setInvoice(null)}/>}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     SETTINGS VIEW
+  ══════════════════════════════════ */
+  function ProfileForm({ title, color='indigo', fields, values, onChange, onSave, saving, msg, readonlyFields=[] }) {
+    return (
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-header">
+          <span className="card-title" style={{color:`var(--${color})`}}>{title}</span>
+        </div>
+        <div style={{padding:16}}>
+          {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+          <div className="form-grid">
+            {fields.map(f=>(
+              <div key={f.key} className={f.full?'form-full':''}>
+                <label className="form-label">{f.label}{f.required&&<span style={{color:'var(--red)'}}> *</span>}</label>
+                <input
+                  className="form-input"
+                  type={f.type||'text'}
+                  placeholder={f.placeholder||''}
+                  value={values[f.key]||''}
+                  onChange={e=>onChange(f.key, e.target.value)}
+                  readOnly={readonlyFields.includes(f.key)}
+                  style={readonlyFields.includes(f.key)?{opacity:0.5,cursor:'not-allowed'}:{}}
+                />
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:14,display:'flex',justifyContent:'flex-end'}}>
+            <button className="btn btn-indigo" onClick={onSave} disabled={saving}>
+              {saving?<><span className="spin">↻</span> Saving…</>:'✓ Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const PROFILE_FIELDS = [
+    { key:'company_name', label:'Company / Brand Name', full:true },
+    { key:'email',        label:'Email Address',        placeholder:'billing@company.com' },
+    { key:'phone',        label:'Phone', placeholder:'+91 98765 43210' },
+    { key:'address',      label:'Address Line', full:true, placeholder:'Street, Building…' },
+    { key:'city',         label:'City' },
+    { key:'state',        label:'State' },
+    { key:'pincode',      label:'Pincode' },
+    { key:'gst_no',       label:'GST Number',  placeholder:'27AAAAA0000A1Z5' },
+    { key:'pan_no',       label:'PAN Number',  placeholder:'AAAAA0000A' },
+    { key:'bank_name',    label:'Bank Name',   placeholder:'HDFC Bank' },
+    { key:'account_no',   label:'Account No',  placeholder:'XXXXXXXXXXXX' },
+    { key:'ifsc',         label:'IFSC Code',   placeholder:'HDFC0001234' },
+    { key:'website',      label:'Website',     placeholder:'https://croscrow.com' },
+  ];
+
+  function Settings({ token }) {
+    const [ccProfile,    setCcProfile]    = useState({});
+    const [vendors,      setVendors]      = useState([]);
+    const [vendorProfiles, setVProfiles]  = useState({});
+    const [activeVendor, setActiveVendor] = useState(null);
+    const [ccSaving,     setCcSaving]     = useState(false);
+    const [vSaving,      setVSaving]      = useState(false);
+    const [ccMsg,        setCcMsg]        = useState(null);
+    const [vMsg,         setVMsg]         = useState(null);
+    const [search,       setSearch]       = useState('');
+
+    useEffect(()=>{
+      fetch(`${API}/admin/croscrow-profile`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(setCcProfile).catch(()=>{});
+      fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setVendors(d.vendors||[])).catch(()=>{});
+    },[token]);
+
+    const loadVendorProfile = async name => {
+      if (vendorProfiles[name]) { setActiveVendor(name); return; }
+      const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/profile`,{headers:{Authorization:`Bearer ${token}`}});
+      const d = await r.json();
+      setVProfiles(p=>({...p,[name]:d}));
+      setActiveVendor(name);
+    };
+
+    const saveCroscrow = async () => {
+      setCcSaving(true); setCcMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/croscrow-profile`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(ccProfile)});
+        if (!r.ok) throw new Error('Save failed');
+        setCcMsg({type:'success',text:'CrosCrow profile saved.'});
+      } catch(e) { setCcMsg({type:'error',text:e.message}); }
+      setCcSaving(false);
+    };
+
+    const saveVendor = async () => {
+      if (!activeVendor) return;
+      setVSaving(true); setVMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(activeVendor)}/profile`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(vendorProfiles[activeVendor]||{})});
+        if (!r.ok) throw new Error('Save failed');
+        setVMsg({type:'success',text:`${activeVendor} profile saved.`});
+        // Refresh vendors list to show updated commission
+        const vr = await fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());
+        setVendors(vr.vendors||[]);
+      } catch(e) { setVMsg({type:'error',text:e.message}); }
+      setVSaving(false);
+    };
+
+    const updateVP = (key, val) => setVProfiles(p=>({...p,[activeVendor]:{...p[activeVendor],[key]:val}}));
+    const currentVP = vendorProfiles[activeVendor] || {};
+    const visible = search ? vendors.filter(v=>v.name.toLowerCase().includes(search.toLowerCase())) : vendors;
+
+    const VENDOR_FIELDS = [
+      ...PROFILE_FIELDS.filter(f=>f.key!=='website'),
+      { key:'commission_pct', label:'Commission %', placeholder:'20', type:'number' },
+    ];
+
+    return (
+      <div className="page">
+        {/* CrosCrow Profile */}
+        <ProfileForm
+          title="⬡ CrosCrow Marketplace — Company Profile"
+          color="indigo"
+          fields={PROFILE_FIELDS}
+          values={ccProfile}
+          onChange={(k,v)=>setCcProfile(p=>({...p,[k]:v}))}
+          onSave={saveCroscrow}
+          saving={ccSaving}
+          msg={ccMsg}
+        />
+
+        {/* Vendor Profiles */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Vendor Profiles</span>
+            <span className="card-sub">Click a vendor to edit their details and commission %</span>
+          </div>
+          <div style={{display:'flex',gap:0,minHeight:400}}>
+            {/* Vendor list */}
+            <div style={{width:220,borderRight:'1px solid var(--border)',flexShrink:0}}>
+              <div style={{padding:'10px 12px',borderBottom:'1px solid var(--border)'}}>
+                <input className="search-input" style={{paddingLeft:10}} placeholder="Search vendor…" value={search} onChange={e=>setSearch(e.target.value)}/>
+              </div>
+              <div style={{overflowY:'auto',maxHeight:500}}>
+                {visible.map(v=>(
+                  <div key={v.name}
+                    onClick={()=>loadVendorProfile(v.name)}
+                    style={{
+                      padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid var(--border)',
+                      background: activeVendor===v.name?'var(--indigo-dim)':'transparent',
+                      transition:'background 0.1s'
+                    }}
+                    onMouseEnter={e=>{ if(activeVendor!==v.name) e.currentTarget.style.background='var(--bg-hover)'; }}
+                    onMouseLeave={e=>{ if(activeVendor!==v.name) e.currentTarget.style.background='transparent'; }}
+                  >
+                    <div style={{fontSize:12,fontWeight:600,color:activeVendor===v.name?'var(--indigo)':'var(--text)'}}>{v.name}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,display:'flex',gap:8}}>
+                      <span>Comm: {v.commission_pct}%</span>
+                      {vendorProfiles[v.name]?.gst_no && <span style={{color:'var(--green)'}}>✓ GST</span>}
+                      {vendorProfiles[v.name]?.email  && <span style={{color:'var(--green)'}}>✓ Email</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Vendor edit form */}
+            <div style={{flex:1,padding:16}}>
+              {!activeVendor ? (
+                <div className="empty"><div className="empty-icon">🏪</div><div className="empty-title">Select a vendor</div><div className="empty-sub">Click any vendor on the left to edit their profile.</div></div>
+              ) : (
+                <>
+                  {vMsg && <div className={`alert alert-${vMsg.type}`}>{vMsg.type==='success'?'✓':'⚠'} {vMsg.text}</div>}
+                  <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:14}}>{activeVendor}</div>
+                  <div className="form-grid">
+                    {VENDOR_FIELDS.map(f=>(
+                      <div key={f.key} className={f.full?'form-full':''}>
+                        <label className="form-label">{f.label}{f.key==='commission_pct'&&<span style={{color:'var(--indigo)',marginLeft:6,fontSize:9}}>← auto-used in settlement</span>}</label>
+                        <input
+                          className="form-input"
+                          type={f.type||'text'}
+                          placeholder={f.placeholder||''}
+                          value={currentVP[f.key]??''}
+                          onChange={e=>updateVP(f.key, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginTop:14,display:'flex',justifyContent:'flex-end'}}>
+                    <button className="btn btn-indigo" onClick={saveVendor} disabled={vSaving}>
+                      {vSaving?<><span className="spin">↻</span> Saving…</>:`✓ Save ${activeVendor}`}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
-
-        <div className="card">
-          <div className="card-header"><span className="card-title">All Settlements</span><button className="btn btn-ghost btn-sm" onClick={load}>↻ Refresh</button></div>
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>Invoice No</th><th>Vendor</th><th>Period</th><th>Orders</th><th>Commission</th><th>GST</th><th>Net Payable</th><th>Status</th><th>Actions</th></tr></thead>
-              <tbody>
-                {loading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={9}/>) :
-                 settlements.length===0 ? (
-                   <tr><td colSpan={9}><div className="empty"><div className="empty-icon">📊</div><div className="empty-title">No settlements yet</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Generate your first settlement above.</div></div></td></tr>
-                 ) :
-                 settlements.map(s=>{
-                   const isCredit = s.net_payable < 0;
-                   return (
-                    <tr key={s.id}>
-                      <td className="td-id" style={{fontFamily:'monospace',fontSize:10}}>{s.invoice_no}</td>
-                      <td style={{fontWeight:600}}>{s.vendor_name}</td>
-                      <td className="td-mut">{fmtDate(s.period_start)} – {fmtDate(s.period_end)}</td>
-                      <td>{s.total_orders}</td>
-                      <td style={{color:'var(--yellow)'}}>₹{(s.commission||0).toFixed(2)}</td>
-                      <td style={{color:'var(--orange)'}}>₹{(s.gst_amount||0).toFixed(2)}</td>
-                      <td>
-                        <span style={{color:isCredit?'var(--green)':'var(--red)',fontWeight:700}}>
-                          {isCredit?'↑ ':'↓ '}₹{Math.abs(s.net_payable||0).toFixed(2)}
-                        </span>
-                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{isCredit?'CrosCrow pays':'Vendor pays'}</div>
-                      </td>
-                      <td><span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span></td>
-                      <td>
-                        <div style={{display:'flex',gap:6}}>
-                          <button className="btn btn-ghost btn-sm" onClick={()=>viewInvoice(s.id)}>⎙ Invoice</button>
-                          {s.status==='pending' && <button className="btn btn-green btn-sm" onClick={()=>markPaid(s.id)}>✓ Mark Paid</button>}
-                        </div>
-                      </td>
-                    </tr>
-                   );
-                 })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {invoice && <InvoiceModal settlement={invoice.settlement} orders={invoice.orders} onClose={()=>setInvoice(null)}/>}
       </div>
     );
   }
@@ -1016,6 +1524,7 @@
       { id:'orders',      icon:'◎', label:'Orders',       section:'main' },
       { id:'vendors',     icon:'🏪', label:'Vendors',      section:'main' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
+      { id:'settings',    icon:'⚙', label:'Settings',     section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -1023,7 +1532,7 @@
 
     const handleStageClick = stage => { setStageFilter(stage); setView('orders'); };
 
-    const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', settlements:'Settlements', audit:'Audit Log' };
+    const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', settlements:'Settlements', settings:'Settings', audit:'Audit Log' };
 
     return (
       <div className="app-shell">
@@ -1063,6 +1572,7 @@
           {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
           {view==='vendors'     && <Vendors     token={token}/>}
           {view==='settlements' && <Settlements token={token}/>}
+          {view==='settings'   && <Settings    token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>
       </div>

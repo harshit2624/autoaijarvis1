@@ -753,12 +753,25 @@
     );
   }
 
+  const STAGES = [
+    { id:'all',       label:'All',           icon:'◈' },
+    { id:'new',       label:'New',           icon:'◉' },
+    { id:'confirmed', label:'Confirmed',     icon:'✓' },
+    { id:'ready',     label:'Ready to Ship', icon:'⬡' },
+    { id:'pickup',    label:'Pickup Pending',icon:'⌛' },
+    { id:'transit',   label:'In Transit',    icon:'↑' },
+    { id:'delivered', label:'Delivered',     icon:'✅' },
+    { id:'rto',       label:'RTO',           icon:'↩' },
+    { id:'hold',      label:'Hold',          icon:'⏸' },
+    { id:'cancelled', label:'Cancelled',     icon:'✕' },
+  ];
+
   /* ══════════════════════════════════
      ORDERS VIEW
   ══════════════════════════════════ */
   function Orders({ orders, loading, onOpenOrder }) {
     const [search, setSearch]   = useState('');
-    const [filter, setFilter]   = useState('all');
+    const [stage,  setStage]    = useState('all');
     const [sort,   setSort]     = useState('date');
     const [dir,    setDir]      = useState('desc');
     const [page,   setPage]     = useState(1);
@@ -766,14 +779,14 @@
     const filtered = useMemo(()=>{
       let l=[...orders];
       if(search.trim()){const q=search.toLowerCase();l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.email||'').toLowerCase().includes(q)||o.myItems.some(i=>i.title.toLowerCase().includes(q)));}
-      if(filter!=='all')l=l.filter(o=>filter==='pending'?['pending','unfulfilled'].includes(o.status):o.status===filter);
+      if(stage!=='all')l=l.filter(o=>(o.stage||'new')===stage);
       l.sort((a,b)=>{
         if(sort==='amount')return dir==='desc'?b.myRevenue-a.myRevenue:a.myRevenue-b.myRevenue;
         if(sort==='customer')return dir==='asc'?a.customer.localeCompare(b.customer):b.customer.localeCompare(a.customer);
         return dir==='desc'?new Date(b.date)-new Date(a.date):new Date(a.date)-new Date(b.date);
       });
       return l;
-    },[orders,search,filter,sort,dir]);
+    },[orders,search,stage,sort,dir]);
 
     const pages = Math.max(1,Math.ceil(filtered.length/PER));
     const cur   = Math.min(page,pages);
@@ -783,22 +796,29 @@
 
     return (
       <div className="page">
+        {/* Stage tabs */}
+        <div className="ftabs" style={{flexWrap:'wrap',gap:4,marginBottom:10}}>
+          {STAGES.map(s=>{
+            const count = s.id==='all' ? orders.length : orders.filter(o=>(o.stage||'new')===s.id).length;
+            return (
+              <button key={s.id} className={`ftab ${stage===s.id?'active':''}`} onClick={()=>{setStage(s.id);setPage(1);}}>
+                {s.icon} {s.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+
         <div className="filters">
           <div className="search-wrap">
             <span className="search-ico">⌕</span>
             <input className="search-input" placeholder="Search order, customer, product…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
-          </div>
-          <div className="ftabs">
-            {[['all','All'],['fulfilled','Fulfilled'],['pending','Pending'],['cancelled','Cancelled']].map(([k,l])=>(
-              <button key={k} className={`ftab ${filter===k?'active':''}`} onClick={()=>{setFilter(k);setPage(1);}}>{l}</button>
-            ))}
           </div>
           <select className="fselect" value={sort} onChange={e=>{setSort(e.target.value);setPage(1);}}>
             <option value="date">Sort: Date</option>
             <option value="amount">Sort: Revenue</option>
             <option value="customer">Sort: Customer</option>
           </select>
-          <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}{search||filter!=='all'?' (filtered)':''}</span>
+          <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}{search||stage!=='all'?' (filtered)':''}</span>
         </div>
 
         <div className="card">
@@ -818,7 +838,7 @@
               <tbody>
                 {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={9}/>) :
                  rows.length===0 ? (
-                  <tr><td colSpan={9}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||filter!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
+                  <tr><td colSpan={9}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
                  ) :
                  rows.map((o,i)=>{
                    const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
@@ -935,52 +955,139 @@
      SETTLEMENTS VIEW
   ══════════════════════════════════ */
   function Settlements({ token }) {
+    const [activeTab,   setActiveTab]   = useState('delivered');
+    // Tab 1: real-time delivered summary
+    const [delSummary,  setDelSummary]  = useState(null);
+    const [delLoading,  setDelLoading]  = useState(true);
+    // Tab 2: invoices
     const [settlements, setSettlements] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [detail, setDetail] = useState(null);
+    const [invLoading,  setInvLoading]  = useState(true);
+    const [detail,      setDetail]      = useState(null);
 
-    useEffect(()=>{
+    const loadDelivered = () => {
+      setDelLoading(true);
+      fetch(`${API}/vendor/delivered-summary`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(setDelSummary).catch(()=>{}).finally(()=>setDelLoading(false));
+    };
+    const loadInvoices = () => {
+      setInvLoading(true);
       fetch(`${API}/vendor/settlements`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>setSettlements(d.settlements||[])).catch(()=>{}).finally(()=>setLoading(false));
-    },[token]);
+        .then(r=>r.json()).then(d=>setSettlements(d.settlements||[])).catch(()=>{}).finally(()=>setInvLoading(false));
+    };
+
+    useEffect(()=>{ loadDelivered(); loadInvoices(); },[token]);
 
     const viewDetail = async id => {
       const r = await fetch(`${API}/vendor/settlements/${id}`,{headers:{Authorization:`Bearer ${token}`}});
-      const d = await r.json();
-      setDetail(d);
+      setDetail(await r.json());
     };
+
+    const d = delSummary || {};
+    const fmt = n => `₹${Math.abs(n||0).toFixed(2)}`;
+    const isPayout = (d.netPayable||0) < 0;
+    const isPend   = (d.pendingSettlement||0) < 0;
 
     return (
       <div className="page">
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">Settlement Statements</span>
-            <span className="card-sub">{settlements.length} total</span>
-          </div>
-          {loading ? (
-            <div style={{padding:16}}>{Array.from({length:4}).map((_,i)=><div key={i} className="skel" style={{height:60,borderRadius:8,marginBottom:10}}/>)}</div>
-          ) : settlements.length===0 ? (
-            <div className="empty"><div className="empty-icon">📊</div><div className="empty-title">No settlements yet</div><div className="empty-sub">Settlements are generated by CrosCrow after order delivery.</div></div>
-          ) : settlements.map(s=>{
-            const isCredit = s.net_payable < 0;
-            return (
-              <div key={s.id} className="settle-card" onClick={()=>viewDetail(s.id)} style={{cursor:'pointer'}}>
-                <div className="settle-row">
-                  <div style={{fontWeight:700,color:'var(--text)',fontSize:12}}>{s.invoice_no}</div>
-                  <span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span>
-                </div>
-                <div className="settle-row">
-                  <span style={{fontSize:11,color:'var(--text-muted)'}}>{fmtDate(s.period_start)} – {fmtDate(s.period_end)} · {s.total_orders} orders</span>
-                  <span style={{fontWeight:700,color:isCredit?'var(--green)':'var(--red)',fontSize:13}}>
-                    {isCredit?'+ ':'− '}₹{Math.abs(s.net_payable||0).toFixed(2)}
-                    <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:5}}>{isCredit?'receivable':'payable'}</span>
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+        {/* Tab switcher */}
+        <div style={{display:'flex',gap:0,marginBottom:20,borderBottom:'2px solid var(--border)'}}>
+          {[['delivered','📦 Delivered Orders'],['invoices','🧾 Settlement Invoices']].map(([id,label])=>(
+            <button key={id} onClick={()=>setActiveTab(id)}
+              style={{padding:'9px 20px',fontSize:12,fontWeight:600,border:'none',background:'transparent',cursor:'pointer',
+                color:activeTab===id?'var(--teal)':'var(--text-muted)',
+                borderBottom:activeTab===id?'2px solid var(--teal)':'2px solid transparent',
+                marginBottom:'-2px',transition:'all 0.15s'}}>
+              {label}
+            </button>
+          ))}
         </div>
 
+        {/* ── TAB 1: Delivered Orders ────────────────────────────────────── */}
+        {activeTab==='delivered' && (
+          <div>
+            <div className="stats-grid" style={{gridTemplateColumns:'repeat(3,1fr)',marginBottom:16}}>
+              <StatCard color="teal"   icon="₹" label="Gross Sales (Delivered)"    value={delLoading?'…':fmt(d.gross)}             sub={`${d.totalOrders||0} delivered orders`}/>
+              <StatCard color="yellow" icon="%" label="Commissionable Sale"         value={delLoading?'…':fmt(d.commissionableSale)} sub={d.prepaidDiscount>0?`after ₹${(d.prepaidDiscount||0).toFixed(2)} prepaid disc`:`Comm: ${d.commissionPct||20}%`}/>
+              <StatCard color="orange" icon="~" label="Commission + GST"            value={delLoading?'…':`${fmt(d.commission)} + ${fmt(d.gst)}`} sub="18% GST on commission"/>
+            </div>
+            <div className="stats-grid" style={{gridTemplateColumns:'repeat(3,1fr)',marginBottom:20}}>
+              <StatCard color="green"  icon="−" label="Advance Adjusted"            value={delLoading?'…':fmt(d.advance)}           sub="deducted from payable"/>
+              <StatCard color="green"  icon="✓" label="Total Settled"               value={delLoading?'…':fmt(d.totalSettled)}      sub="from paid invoices"/>
+              <StatCard color={isPend?'green':'red'} icon="○" label="Pending Settlement"
+                value={delLoading?'…':`${fmt(d.netPayable)} = ${isPend?'−':''}${fmt(d.pendingSettlement)}`}
+                sub={isPend?'CrosCrow owes you':'you owe CrosCrow'}/>
+            </div>
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Net Position</span>
+                <button className="btn btn-ghost btn-sm" onClick={loadDelivered}>↻ Refresh</button>
+              </div>
+              <div style={{padding:'18px 20px'}}>
+                {delLoading ? <div className="skel" style={{height:60}}/> : !d.totalOrders ? (
+                  <div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No delivered orders yet</div><div className="empty-sub">Your delivered orders will appear here automatically.</div></div>
+                ) : (
+                  <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                    {[
+                      {label:'Gross Sales (MRP)',        val:`₹${(d.gross||0).toFixed(2)}`,             color:'var(--teal)'},
+                      d.prepaidDiscount>0 && {label:'Prepaid Discount (10%)', val:`−₹${(d.prepaidDiscount||0).toFixed(2)}`, color:'var(--orange)'},
+                      {label:'Commissionable Sale',      val:`₹${(d.commissionableSale||0).toFixed(2)}`,color:'var(--text)', bold:true},
+                      {label:`Commission (${d.commissionPct||20}%)`,val:`₹${(d.commission||0).toFixed(2)}`,color:'var(--yellow)'},
+                      {label:'GST (18%)',                val:`₹${(d.gst||0).toFixed(2)}`,               color:'var(--orange)'},
+                      d.advance>0 && {label:'Advance Adjusted',val:`−₹${(d.advance||0).toFixed(2)}`, color:'var(--green)'},
+                      {label:'Net Payable (all delivered)', val:`${isPayout?'CrosCrow pays you ':'You pay CrosCrow '}₹${Math.abs(d.netPayable||0).toFixed(2)}`, color:isPayout?'var(--green)':'var(--red)', bold:true},
+                      {label:'Already Settled (paid invoices)', val:`₹${(d.totalSettled||0).toFixed(2)}`, color:'var(--green)'},
+                      {label:'Still Pending',            val:`${isPend?'CC owes you ':'You owe '}₹${Math.abs(d.pendingSettlement||0).toFixed(2)}`, color:isPend?'var(--green)':'var(--red)', bold:true},
+                    ].filter(Boolean).map((row,i)=>(
+                      <div key={i} className="detail-row" style={row.bold?{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:4}:{}}>
+                        <span className="dr-label" style={row.bold?{fontWeight:700}:{}}>{row.label}</span>
+                        <span className="dr-val" style={{color:row.color,fontWeight:row.bold?700:400}}>{row.val}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{marginTop:10,fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>
+              Live calculation from all your delivered orders. To view formal invoices, switch to Settlement Invoices tab.
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 2: Settlement Invoices ─────────────────────────────────── */}
+        {activeTab==='invoices' && (
+          <div>
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Settlement Statements</span>
+                <span className="card-sub">{settlements.length} total</span>
+              </div>
+              {invLoading ? (
+                <div style={{padding:16}}>{Array.from({length:4}).map((_,i)=><div key={i} className="skel" style={{height:60,borderRadius:8,marginBottom:10}}/>)}</div>
+              ) : settlements.length===0 ? (
+                <div className="empty"><div className="empty-icon">🧾</div><div className="empty-title">No invoices yet</div><div className="empty-sub">Invoices are generated by CrosCrow after order delivery.</div></div>
+              ) : settlements.map(s=>{
+                const isCredit = s.net_payable < 0;
+                return (
+                  <div key={s.id} className="settle-card" onClick={()=>viewDetail(s.id)} style={{cursor:'pointer'}}>
+                    <div className="settle-row">
+                      <div style={{fontWeight:700,color:'var(--text)',fontSize:12}}>{s.invoice_no}</div>
+                      <span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span>
+                    </div>
+                    <div className="settle-row">
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>{fmtDate(s.period_start)} – {fmtDate(s.period_end)} · {s.total_orders} orders</span>
+                      <span style={{fontWeight:700,color:isCredit?'var(--green)':'var(--red)',fontSize:13}}>
+                        {isCredit?'+ ':'− '}₹{Math.abs(s.net_payable||0).toFixed(2)}
+                        <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:5}}>{isCredit?'receivable':'payable'}</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Invoice detail modal */}
         {detail && (
           <div className="overlay" onClick={e=>e.target===e.currentTarget&&setDetail(null)}>
             <div className="modal">
@@ -993,10 +1100,21 @@
                   <div className="detail-box">
                     <div className="detail-box-title">Summary</div>
                     <div className="detail-row"><span className="dr-label">Total Orders</span><span className="dr-val">{detail.settlement.total_orders}</span></div>
-                    <div className="detail-row"><span className="dr-label">Gross Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(detail.settlement.gross_revenue)}</span></div>
-                    <div className="detail-row"><span className="dr-label">Commission</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{(detail.settlement.commission||0).toFixed(2)}</span></div>
+                    <div className="detail-row"><span className="dr-label">Gross Revenue (MRP)</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(detail.settlement.gross_revenue)}</span></div>
+                    {(()=>{
+                      const prepDisc = (detail.orders||[]).reduce((s,o)=>o.payment_type==='prepaid'?s+(o.my_revenue||0)*0.1:s, 0);
+                      const taxable  = (detail.settlement.gross_revenue||0) - prepDisc;
+                      return prepDisc > 0 ? (<>
+                        <div className="detail-row"><span className="dr-label" style={{color:'var(--orange)'}}>Prepaid Discount (10%)</span><span className="dr-val" style={{color:'var(--orange)'}}>−₹{prepDisc.toFixed(2)}</span></div>
+                        <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}><span className="dr-label" style={{fontWeight:700}}>Taxable Base</span><span className="dr-val" style={{fontWeight:700}}>{fmtCur(taxable)}</span></div>
+                      </>) : null;
+                    })()}
+                    <div className="detail-row"><span className="dr-label">Commission ({detail.settlement.custom_commission_pct||20}%)</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{(detail.settlement.commission||0).toFixed(2)}</span></div>
                     <div className="detail-row"><span className="dr-label">GST (18%)</span><span className="dr-val" style={{color:'var(--orange)'}}>₹{(detail.settlement.gst_amount||0).toFixed(2)}</span></div>
                     <div className="detail-row"><span className="dr-label">Advance Adj.</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>
+                    {(detail.settlement.extra_discount||0)>0     && <div className="detail-row"><span className="dr-label">Extra Discount</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_discount.toFixed(2)}</span></div>}
+                    {(detail.settlement.extra_advance||0)>0      && <div className="detail-row"><span className="dr-label">Extra Advance</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_advance.toFixed(2)}</span></div>}
+                    {(detail.settlement.shipping_adjustment||0)!==0 && <div className="detail-row"><span className="dr-label">Shipping Adj.</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{detail.settlement.shipping_adjustment.toFixed(2)}</span></div>}
                     <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:4}}>
                       <span className="dr-label" style={{fontWeight:700}}>Net {detail.settlement.net_payable<0?'Receivable':'Payable'}</span>
                       <span className="dr-val" style={{color:detail.settlement.net_payable<0?'var(--green)':'var(--red)',fontWeight:700,fontSize:14}}>₹{Math.abs(detail.settlement.net_payable||0).toFixed(2)}</span>
@@ -1012,19 +1130,26 @@
                 </div>
                 <div style={{marginBottom:6,fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>Order Breakdown</div>
                 <table className="items-table">
-                  <thead><tr><th>Order</th><th>Revenue</th><th>Type</th><th>Commission</th><th>GST</th><th>Advance</th><th>Net</th></tr></thead>
+                  <thead><tr><th>Order</th><th>MRP Value</th><th>Type</th><th>Discount</th><th>Taxable Base</th><th>Commission</th><th>GST</th><th>Advance</th><th>Net</th></tr></thead>
                   <tbody>
-                    {(detail.orders||[]).map((o,i)=>(
+                    {(detail.orders||[]).map((o,i)=>{
+                      const isPrepaid = o.payment_type==='prepaid';
+                      const disc = isPrepaid?(o.my_revenue||0)*0.1:0;
+                      const base = (o.my_revenue||0)-disc;
+                      return (
                       <tr key={i}>
                         <td style={{color:'var(--green)',fontWeight:700}}>{o.order_name}</td>
                         <td style={{color:'var(--teal)'}}>{fmtCur(o.my_revenue)}</td>
-                        <td style={{fontSize:9,textTransform:'uppercase',color:'var(--text-muted)'}}>{o.payment_type}</td>
+                        <td style={{fontSize:9,textTransform:'uppercase',color:isPrepaid?'var(--orange)':'var(--text-muted)'}}>{o.payment_type}</td>
+                        <td style={{color:'var(--orange)'}}>{isPrepaid?`−₹${disc.toFixed(2)}`:'—'}</td>
+                        <td style={{fontWeight:600}}>₹{base.toFixed(2)}</td>
                         <td style={{color:'var(--yellow)'}}>₹{(o.commission||0).toFixed(2)}</td>
                         <td style={{color:'var(--orange)'}}>₹{(o.gst||0).toFixed(2)}</td>
                         <td>₹{(o.advance_paid||0).toFixed(2)}</td>
                         <td style={{color:o.net<0?'var(--green)':'var(--red)',fontWeight:700}}>{o.net<0?'+':'−'}₹{Math.abs(o.net||0).toFixed(2)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1079,6 +1204,92 @@
                  </div>
                </div>
              ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     PROFILE VIEW
+  ══════════════════════════════════ */
+  function Profile({ token }) {
+    const [profile, setProfile] = useState({});
+    const [saving,  setSaving]  = useState(false);
+    const [msg,     setMsg]     = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/profile`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(setProfile).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    const upd = (k,v) => setProfile(p=>({...p,[k]:v}));
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/profile`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(profile)});
+        if (!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Profile saved successfully.'});
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const FIELDS = [
+      { key:'email',      label:'Email Address',    placeholder:'billing@brand.com' },
+      { key:'phone',      label:'Phone Number',     placeholder:'+91 98765 43210' },
+      { key:'address',    label:'Address',          placeholder:'Street, Area…', full:true },
+      { key:'city',       label:'City' },
+      { key:'state',      label:'State' },
+      { key:'pincode',    label:'Pincode' },
+      { key:'gst_no',     label:'GST Number',       placeholder:'27AAAAA0000A1Z5' },
+      { key:'pan_no',     label:'PAN Number',       placeholder:'AAAAA0000A' },
+      { key:'bank_name',  label:'Bank Name',        placeholder:'HDFC Bank' },
+      { key:'account_no', label:'Account Number',   placeholder:'XXXXXXXXXXXX' },
+      { key:'ifsc',       label:'IFSC Code',        placeholder:'HDFC0001234' },
+    ];
+
+    return (
+      <div className="page">
+        <div className="card" style={{marginBottom:14}}>
+          <div className="card-header">
+            <span className="card-title">My Profile</span>
+            <span className="card-sub">Used in invoice generation · Commission % is set by CrosCrow admin</span>
+          </div>
+          <div style={{padding:16}}>
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+            {loading ? <div className="skel" style={{height:200,borderRadius:8}}/> : (
+              <>
+                {/* Read-only: commission shown */}
+                <div style={{background:'var(--green-dim)',border:'1px solid #1a4731',borderRadius:8,padding:12,marginBottom:16,display:'flex',gap:24,alignItems:'center'}}>
+                  <div>
+                    <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:3}}>Your Commission Rate</div>
+                    <div style={{fontSize:22,fontWeight:800,color:'var(--green)'}}>{profile.commission_pct||20}%</div>
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text-dim)'}}>Set by CrosCrow · Contact admin to change</div>
+                </div>
+
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                  {FIELDS.map(f=>(
+                    <div key={f.key} className={f.full?'form-full':''} style={f.full?{gridColumn:'1/-1'}:{}}>
+                      <label className="form-label">{f.label}</label>
+                      <input
+                        className="form-input" type="text"
+                        placeholder={f.placeholder||''}
+                        value={profile[f.key]||''}
+                        onChange={e=>upd(f.key,e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginTop:14,display:'flex',justifyContent:'flex-end'}}>
+                  <button className="btn btn-green" onClick={save} disabled={saving}>
+                    {saving?<><span className="spin">↻</span> Saving…</>:'✓ Save Profile'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1165,11 +1376,12 @@
       { id:'products',    icon:'⬡', label:'My Products',  section:'main' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'wallet',      icon:'◉', label:'Wallet',       section:'finance' },
+      { id:'profile',     icon:'⚙', label:'My Profile',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Store', finance:'Finance' };
 
-    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', settlements:'Settlements', wallet:'Wallet' };
+    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', settlements:'Settlements', wallet:'Wallet', profile:'My Profile' };
 
     return (
       <div className="app-shell">
@@ -1219,8 +1431,9 @@
           {view==='dashboard'   && <Dashboard   stats={stats} orders={orders} loading={loading} onOpenOrder={setModal}/>}
           {view==='orders'      && <Orders      orders={orders} loading={loading} onOpenOrder={setModal}/>}
           {view==='products'    && <Products    token={auth.token} vendorName={auth.vendorName}/>}
-          {view==='settlements' && <Settlements token={auth.token}/>}
+          {view==='settlements' && <Settlements token={auth.token} stats={stats}/>}
           {view==='wallet'      && <Wallet      token={auth.token}/>}
+          {view==='profile'     && <Profile     token={auth.token}/>}
         </div>
 
         {/* Order modal */}

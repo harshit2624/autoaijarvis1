@@ -142,6 +142,49 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
   return { base, commission, gst, invoice, advancePaid: advancePaid || 0, net, type: "receivable" };
 }
 
+// ── Profile tables ────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS croscrow_profile (
+    id           INTEGER PRIMARY KEY DEFAULT 1,
+    company_name TEXT DEFAULT 'CrosCrow Marketplace',
+    email        TEXT DEFAULT '',
+    phone        TEXT DEFAULT '',
+    address      TEXT DEFAULT '',
+    city         TEXT DEFAULT '',
+    state        TEXT DEFAULT '',
+    pincode      TEXT DEFAULT '',
+    gst_no       TEXT DEFAULT '',
+    pan_no       TEXT DEFAULT '',
+    bank_name    TEXT DEFAULT '',
+    account_no   TEXT DEFAULT '',
+    ifsc         TEXT DEFAULT '',
+    website      TEXT DEFAULT ''
+  );
+  INSERT OR IGNORE INTO croscrow_profile (id) VALUES (1);
+
+  CREATE TABLE IF NOT EXISTS vendor_profiles (
+    vendor_name  TEXT PRIMARY KEY,
+    email        TEXT DEFAULT '',
+    phone        TEXT DEFAULT '',
+    address      TEXT DEFAULT '',
+    city         TEXT DEFAULT '',
+    state        TEXT DEFAULT '',
+    pincode      TEXT DEFAULT '',
+    gst_no       TEXT DEFAULT '',
+    pan_no       TEXT DEFAULT '',
+    bank_name    TEXT DEFAULT '',
+    account_no   TEXT DEFAULT '',
+    ifsc         TEXT DEFAULT '',
+    commission_pct REAL,
+    updated_at   TEXT DEFAULT ''
+  );
+`);
+
+// ── Migrate: add editable columns to settlements (safe to run on existing DB)
+["extra_discount REAL DEFAULT 0","shipping_adjustment REAL DEFAULT 0","extra_advance REAL DEFAULT 0","invoice_notes TEXT DEFAULT ''","custom_commission_pct REAL"].forEach(col => {
+  try { db.exec(`ALTER TABLE settlements ADD COLUMN ${col}`); } catch {}
+});
+
 // ── Admin auth ────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CrosCrowAdmin@00";
 const adminSessions  = new Map();
@@ -477,14 +520,19 @@ app.get("/vendor/list", async (req, res) => {
 });
 
 async function getVendorList() {
-  let all = [], page = 1;
-  while (true) {
-    const data = await shopifyREST(`/products.json?limit=250&fields=vendor&page=${page}`);
-    const batch = data.products || [];
-    all.push(...batch);
-    if (batch.length < 250) break;
-    page++;
+  let all = [];
+  let { data, link } = await shopifyRESTRaw(`/products.json?limit=250&fields=vendor`);
+  all.push(...(data.products || []));
+
+  while (link) {
+    const match = link.match(/<([^>]+)>;\s*rel="next"/);
+    if (!match) break;
+    const pageInfo = new URL(match[1]).searchParams.get("page_info");
+    if (!pageInfo) break;
+    ({ data, link } = await shopifyRESTRaw(`/products.json?limit=250&fields=vendor&page_info=${pageInfo}`));
+    all.push(...(data.products || []));
   }
+
   return [...new Set(all.map(p => p.vendor).filter(Boolean))].sort();
 }
 
@@ -521,11 +569,15 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     );
     const vName = req.vendor.toLowerCase();
 
+    const metas   = db.prepare("SELECT * FROM order_meta").all();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+
     const orders = allOrders
       .filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName))
       .map(o => {
         const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
         const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+        const meta = metaMap[String(o.id)] || {};
         return {
           id:           o.name,
           shopifyId:    String(o.id),
@@ -534,6 +586,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           phone:        o.shipping_address?.phone ?? o.customer?.phone ?? "",
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
+          stage:        meta.stage || "new",
           financial:    o.financial_status ?? "—",
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
@@ -869,7 +922,10 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 
     const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
     const vName  = vendor_name.toLowerCase();
-    const config = db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(vendor_name) || { commission_pct: 20 };
+    // Commission priority: vendor_profiles → vendor_config → default 20%
+    const vProfile = db.prepare("SELECT commission_pct FROM vendor_profiles WHERE vendor_name=?").get(vendor_name);
+    const vConfig  = db.prepare("SELECT commission_pct FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+    const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
     const metas  = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
 
@@ -880,7 +936,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName);
     });
 
-    let totalRev = 0, totalComm = 0, totalGst = 0, totalAdv = 0;
+    let totalRev = 0, totalComm = 0, totalGst = 0, totalAdv = 0, totalNet = 0;
     const orderDetails = [];
 
     vendorDelivered.forEach(o => {
@@ -893,6 +949,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       totalComm += calc.commission;
       totalGst  += calc.gst;
       totalAdv  += (meta.advance_paid || 0);
+      totalNet  += calc.net; // negative = CrosCrow owes vendor (prepaid); positive = vendor owes CrosCrow (COD)
 
       orderDetails.push({
         shopify_order_id: String(o.id),
@@ -907,7 +964,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       });
     });
 
-    const netPayable = parseFloat((totalComm + totalGst - totalAdv).toFixed(2));
+    // netPayable: positive = vendor pays CrosCrow, negative = CrosCrow pays vendor
+    const netPayable = parseFloat(totalNet.toFixed(2));
     const invoiceNo  = `CC-${vendor_name.toUpperCase().replace(/\s+/g,"").slice(0,6)}-${period_start.slice(0,7).replace("-","")}-${String(Date.now()).slice(-4)}`;
 
     const { lastInsertRowid: settlId } = db.prepare(
@@ -933,6 +991,88 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
   }
 });
 
+// ── GET /admin/delivered-summary ─────────────────────────────────────────
+app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
+  try {
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    const metas = db.prepare("SELECT * FROM order_meta").all();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const vProfiles = db.prepare("SELECT * FROM vendor_profiles").all();
+    const vConfigs  = db.prepare("SELECT * FROM vendor_config").all();
+    const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
+    const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+
+    // Aggregate settled amounts per vendor from paid invoices
+    const paidSettlements = db.prepare("SELECT vendor_name, SUM(net_payable) as total_settled FROM settlements WHERE status='paid' GROUP BY vendor_name").all();
+    const settledMap = Object.fromEntries(paidSettlements.map(s => [s.vendor_name, s.total_settled]));
+
+    const vendorMap = {};
+
+    allOrders.forEach(o => {
+      const meta = metaMap[String(o.id)] || {};
+      if ((meta.stage || "new") !== "delivered") return;
+      const ordVendorSet = new Set();
+      (o.line_items || []).forEach(li => {
+        const vendor = li.vendor;
+        if (!vendor) return;
+        ordVendorSet.add(vendor);
+        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, net: 0 };
+        vendorMap[vendor].orders.add(String(o.id));
+        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+        const calc = calcCommission(itemRev, meta.payment_type || "cod", commPct, 0);
+        vendorMap[vendor].gross += itemRev;
+        if (meta.payment_type === "prepaid") vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
+        vendorMap[vendor].commission += calc.commission;
+        vendorMap[vendor].gst += calc.gst;
+        vendorMap[vendor].net += calc.net;
+      });
+      // advance split equally among vendors in this order
+      if (ordVendorSet.size > 0 && (meta.advance_paid || 0) > 0) {
+        ordVendorSet.forEach(vendor => {
+          if (vendorMap[vendor]) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
+        });
+      }
+    });
+
+    const vendors = Object.entries(vendorMap).map(([name, d]) => {
+      const commPct = vProfileMap[name]?.commission_pct ?? vConfigMap[name]?.commission_pct ?? 20;
+      const gross = parseFloat(d.gross.toFixed(2));
+      const prepaidDiscount = parseFloat(d.prepaidDiscount.toFixed(2));
+      const commissionableSale = parseFloat((gross - prepaidDiscount).toFixed(2));
+      const commission = parseFloat(d.commission.toFixed(2));
+      const gst = parseFloat(d.gst.toFixed(2));
+      const advance = parseFloat(d.advance.toFixed(2));
+      const netPayable = parseFloat(d.net.toFixed(2));
+      const totalSettled = parseFloat((settledMap[name] || 0).toFixed(2));
+      const pendingSettlement = parseFloat((netPayable - totalSettled).toFixed(2));
+      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, netPayable, totalSettled, pendingSettlement };
+    }).sort((a, b) => b.gross - a.gross);
+
+    // Overall totals
+    const totals = vendors.reduce((acc, v) => {
+      acc.totalOrders += v.totalOrders;
+      acc.gross += v.gross;
+      acc.prepaidDiscount += v.prepaidDiscount;
+      acc.commissionableSale += v.commissionableSale;
+      acc.commission += v.commission;
+      acc.gst += v.gst;
+      acc.advance += v.advance;
+      acc.netPayable += v.netPayable;
+      acc.totalSettled += v.totalSettled;
+      acc.pendingSettlement += v.pendingSettlement;
+      return acc;
+    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0 });
+
+    Object.keys(totals).forEach(k => { if (typeof totals[k] === 'number') totals[k] = parseFloat(totals[k].toFixed(2)); });
+
+    res.json({ vendors, totals });
+  } catch (err) {
+    console.error("❌ /admin/delivered-summary:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /admin/settlements ────────────────────────────────────────────────
 app.get("/admin/settlements", adminAuth, (req, res) => {
   const { vendor_name, status } = req.query;
@@ -947,8 +1087,77 @@ app.get("/admin/settlements", adminAuth, (req, res) => {
 app.get("/admin/settlements/:id", adminAuth, (req, res) => {
   const settlement = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
   if (!settlement) return res.status(404).json({ error: "Not found." });
+  const orders      = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
+  const croscrow    = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
+  const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(settlement.vendor_name) || {};
+  res.json({ settlement, orders, croscrow, vendorProfile });
+});
+
+// ── DELETE /admin/settlements/:id ────────────────────────────────────────
+app.delete("/admin/settlements/:id", adminAuth, (req, res) => {
+  const s = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
+  if (!s) return res.status(404).json({ error: "Not found." });
+  db.prepare("DELETE FROM settlement_orders WHERE settlement_id=?").run(req.params.id);
+  db.prepare("DELETE FROM wallet_tx WHERE ref_id=?").run(String(s.id));
+  db.prepare("DELETE FROM settlements WHERE id=?").run(req.params.id);
+  auditLog("admin", "settlement_deleted", req.params.id, { vendor: s.vendor_name, invoice: s.invoice_no });
+  res.json({ success: true });
+});
+
+// ── PUT /admin/settlements/:id/edit ───────────────────────────────────────
+app.put("/admin/settlements/:id/edit", adminAuth, (req, res) => {
+  const s = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
+  if (!s) return res.status(404).json({ error: "Not found." });
+
+  const {
+    custom_commission_pct,
+    extra_discount     = 0,
+    shipping_adjustment = 0,
+    extra_advance      = 0,
+    invoice_notes      = "",
+  } = req.body || {};
+
   const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
-  res.json({ settlement, orders });
+
+  // Recalculate per-order commission if % changed
+  let newCommission = s.commission, newGst = s.gst_amount;
+  if (custom_commission_pct != null && parseFloat(custom_commission_pct) !== (s.custom_commission_pct || 0)) {
+    newCommission = 0; newGst = 0;
+    const updOrd = db.prepare("UPDATE settlement_orders SET commission_pct=?,commission=?,gst=?,net=? WHERE id=?");
+    orders.forEach(o => {
+      const calc = calcCommission(o.my_revenue, o.payment_type, parseFloat(custom_commission_pct), o.advance_paid);
+      newCommission += calc.commission;
+      newGst        += calc.gst;
+      updOrd.run(parseFloat(custom_commission_pct), calc.commission, calc.gst, calc.net, o.id);
+    });
+    newCommission = parseFloat(newCommission.toFixed(2));
+    newGst        = parseFloat(newGst.toFixed(2));
+  }
+
+  // Sum base net from (possibly updated) orders
+  const updatedOrders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
+  const baseNet = updatedOrders.reduce((sum, o) => sum + (o.net || 0), 0);
+
+  // Apply adjustments: discount & extra advance reduce what vendor owes; shipping_adjustment adds to it
+  const adjustedNet = parseFloat((
+    baseNet
+    - parseFloat(extra_discount || 0)
+    - parseFloat(extra_advance  || 0)
+    + parseFloat(shipping_adjustment || 0)
+  ).toFixed(2));
+
+  db.prepare(`UPDATE settlements SET
+    commission=?, gst_amount=?,
+    extra_discount=?, shipping_adjustment=?, extra_advance=?,
+    invoice_notes=?, custom_commission_pct=?, net_payable=?
+    WHERE id=?`)
+    .run(newCommission, newGst,
+      parseFloat(extra_discount||0), parseFloat(shipping_adjustment||0), parseFloat(extra_advance||0),
+      invoice_notes || "", custom_commission_pct != null ? parseFloat(custom_commission_pct) : null,
+      adjustedNet, req.params.id);
+
+  auditLog("admin", "settlement_edited", req.params.id, req.body);
+  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst });
 });
 
 // ── PUT /admin/settlements/:id/mark-paid ──────────────────────────────────
@@ -963,16 +1172,126 @@ app.put("/admin/settlements/:id/mark-paid", adminAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// ── GET/PUT /admin/croscrow-profile ──────────────────────────────────────
+app.get("/admin/croscrow-profile", adminAuth, (req, res) => {
+  res.json(db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {});
+});
+app.put("/admin/croscrow-profile", adminAuth, (req, res) => {
+  const f = req.body || {};
+  db.prepare(`UPDATE croscrow_profile SET company_name=?,email=?,phone=?,address=?,city=?,state=?,pincode=?,gst_no=?,pan_no=?,bank_name=?,account_no=?,ifsc=?,website=? WHERE id=1`)
+    .run(f.company_name||'CrosCrow Marketplace',f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',f.website||'');
+  auditLog("admin","profile_update","croscrow",{});
+  res.json({ success:true });
+});
+
+// ── GET/PUT /admin/vendors/:name/profile ──────────────────────────────────
+app.get("/admin/vendors/:name/profile", adminAuth, (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  const p = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(name) || { vendor_name: name };
+  const cfg = db.prepare("SELECT commission_pct FROM vendor_config WHERE vendor_name=?").get(name);
+  if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
+  res.json(p);
+});
+app.put("/admin/vendors/:name/profile", adminAuth, (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  const f = req.body || {};
+  db.prepare(`INSERT INTO vendor_profiles (vendor_name,email,phone,address,city,state,pincode,gst_no,pan_no,bank_name,account_no,ifsc,commission_pct,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email,phone=excluded.phone,address=excluded.address,city=excluded.city,state=excluded.state,pincode=excluded.pincode,gst_no=excluded.gst_no,pan_no=excluded.pan_no,bank_name=excluded.bank_name,account_no=excluded.account_no,ifsc=excluded.ifsc,commission_pct=excluded.commission_pct,updated_at=excluded.updated_at`)
+    .run(name,f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',f.commission_pct!=null?parseFloat(f.commission_pct):null,new Date().toISOString());
+  // sync to vendor_config too
+  if (f.commission_pct != null) {
+    db.prepare(`INSERT INTO vendor_config (vendor_name,commission_pct) VALUES (?,?) ON CONFLICT(vendor_name) DO UPDATE SET commission_pct=excluded.commission_pct`)
+      .run(name, parseFloat(f.commission_pct));
+  }
+  auditLog("admin","vendor_profile_update",name,{ commission_pct: f.commission_pct });
+  res.json({ success:true });
+});
+
+// ── GET/PUT /admin/audit ──────────────────────────────────────────────────
+app.get("/admin/audit", adminAuth, (req, res) => {
+  res.json({ logs: db.prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 500").all() });
+});
+
 // ── GET /admin/audit ──────────────────────────────────────────────────────
 app.get("/admin/audit", adminAuth, (req, res) => {
   res.json({ logs: db.prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 500").all() });
 });
 
 // ── Vendor wallet + settlements ───────────────────────────────────────────
+// ── GET/PUT /vendor/profile ───────────────────────────────────────────────
+app.get("/vendor/profile", vendorAuth, (req, res) => {
+  const p = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || { vendor_name: req.vendor };
+  const cfg = db.prepare("SELECT commission_pct FROM vendor_config WHERE vendor_name=?").get(req.vendor);
+  if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
+  res.json(p);
+});
+app.put("/vendor/profile", vendorAuth, (req, res) => {
+  const f = req.body || {};
+  // Vendor cannot change commission_pct — strip it
+  db.prepare(`INSERT INTO vendor_profiles (vendor_name,email,phone,address,city,state,pincode,gst_no,pan_no,bank_name,account_no,ifsc,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email,phone=excluded.phone,address=excluded.address,city=excluded.city,state=excluded.state,pincode=excluded.pincode,gst_no=excluded.gst_no,pan_no=excluded.pan_no,bank_name=excluded.bank_name,account_no=excluded.account_no,ifsc=excluded.ifsc,updated_at=excluded.updated_at`)
+    .run(req.vendor,f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',new Date().toISOString());
+  res.json({ success:true });
+});
+
 app.get("/vendor/wallet", vendorAuth, (req, res) => {
   const txs     = db.prepare("SELECT * FROM wallet_tx WHERE vendor_name=? ORDER BY created_at DESC").all(req.vendor);
   const balance = txs.reduce((s, t) => t.type === "credit" ? s + t.amount : s - t.amount, 0);
   res.json({ balance: parseFloat(balance.toFixed(2)), transactions: txs });
+});
+
+// ── GET /vendor/delivered-summary ────────────────────────────────────────
+app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
+  try {
+    const vName = req.vendor.toLowerCase();
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    const metas = db.prepare("SELECT * FROM order_meta").all();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const vProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor);
+    const vConfig  = db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(req.vendor);
+    const commPct  = vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20;
+
+    const paidSettlements = db.prepare("SELECT SUM(net_payable) as total_settled FROM settlements WHERE vendor_name=? AND status='paid'").get(req.vendor);
+    const totalSettled = paidSettlements?.total_settled || 0;
+
+    let totalOrders = 0, gross = 0, prepaidDiscount = 0, commission = 0, gst = 0, advance = 0, net = 0;
+
+    allOrders.forEach(o => {
+      const meta = metaMap[String(o.id)] || {};
+      if ((meta.stage || "new") !== "delivered") return;
+      const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
+      if (!myItems.length) return;
+      totalOrders++;
+      const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+      myItems.forEach(li => {
+        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const calc = calcCommission(itemRev, meta.payment_type || "cod", commPct, 0);
+        gross += itemRev;
+        if (meta.payment_type === "prepaid") prepaidDiscount += (itemRev - calc.base);
+        commission += calc.commission;
+        gst += calc.gst;
+        net += calc.net;
+      });
+      if ((meta.advance_paid || 0) > 0) advance += (meta.advance_paid || 0) / ordVendors.size;
+    });
+
+    const netPayable = parseFloat(net.toFixed(2));
+    const pendingSettlement = parseFloat((netPayable - totalSettled).toFixed(2));
+    res.json({
+      totalOrders, gross: parseFloat(gross.toFixed(2)),
+      prepaidDiscount: parseFloat(prepaidDiscount.toFixed(2)),
+      commissionableSale: parseFloat((gross - prepaidDiscount).toFixed(2)),
+      commissionPct: commPct,
+      commission: parseFloat(commission.toFixed(2)), gst: parseFloat(gst.toFixed(2)),
+      advance: parseFloat(advance.toFixed(2)), netPayable,
+      totalSettled: parseFloat(totalSettled.toFixed(2)), pendingSettlement,
+    });
+  } catch (err) {
+    console.error("❌ /vendor/delivered-summary:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/vendor/settlements", vendorAuth, (req, res) => {
@@ -982,7 +1301,9 @@ app.get("/vendor/settlements", vendorAuth, (req, res) => {
 app.get("/vendor/settlements/:id", vendorAuth, (req, res) => {
   const s = db.prepare("SELECT * FROM settlements WHERE id=? AND vendor_name=?").get(req.params.id, req.vendor);
   if (!s) return res.status(404).json({ error: "Not found." });
-  res.json({ settlement: s, orders: db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id) });
+  const croscrow      = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
+  const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || {};
+  res.json({ settlement: s, orders: db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id), croscrow, vendorProfile });
 });
 
 // ── Utility ────────────────────────────────────────────────────────────────
