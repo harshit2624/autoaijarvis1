@@ -1172,6 +1172,27 @@ app.post("/vendor/orders/:shopifyId/tag", vendorAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── POST /admin/orders/:id/tag ────────────────────────────────────────────
+app.post("/admin/orders/:id/tag", adminAuth, async (req, res) => {
+  const { id } = req.params;
+  const { tags } = req.body || {};
+  if (tags === undefined) return res.status(400).json({ error: "tags field required." });
+  try {
+    const token = await getAccessToken();
+    const r = await fetch(
+      `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+        body: JSON.stringify({ order: { id, tags } }) }
+    );
+    if (!r.ok) throw new Error(`Shopify error ${r.status}`);
+    const d = await r.json();
+    // Re-apply tag mappings with new tags
+    applyTagMappings(id, d.order.tags, d.order.financial_status);
+    auditLog("admin", "update_tags", id, { tags });
+    res.json({ success: true, tags: d.order.tags });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // ADMIN PORTAL
 // ══════════════════════════════════════════════════════════════════════════
