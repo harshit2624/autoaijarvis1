@@ -1815,7 +1815,7 @@
 
   function JarvisChat({ token }) {
     const [messages, setMessages] = useState([
-      { role:'bot', text:"⚡ JARVIS online. I run entirely on your store data — no external AI needed.\n\nClick a quick report below or type a question." }
+      { role:'bot', text:"⚡ JARVIS online — powered by Claude AI with live store data.\n\nAsk me anything: 'Why are my RTOs up?', 'Which vendor has the worst fulfillment?', 'Am I on track for this month?'\n\nOr click a quick report below." }
     ]);
     const [input,   setInput]   = useState('');
     const [loading, setLoading] = useState(false);
@@ -1826,13 +1826,14 @@
       const q = (query || input).trim();
       if (!q || loading) return;
       setInput('');
-      setMessages(m => [...m, { role:'user', text: q }]);
+      const nextMessages = [...messages, { role:'user', text: q }];
+      setMessages(nextMessages);
       setLoading(true);
       try {
         const r = await fetch(`${API}/jarvis`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ query: q }),
+          body: JSON.stringify({ query: q, history: nextMessages.slice(1) }), // skip opening bot message
         });
         const d = await r.json();
         setMessages(m => [...m, { role:'bot', text: d.reply || d.error || 'No data.' }]);
@@ -1850,7 +1851,7 @@
           <div className="chat-header">
             <div className="chat-logo">J</div>
             <div><div className="chat-title">JARVIS</div></div>
-            <span className="chat-sub">Live store analytics · No external API</span>
+            <span className="chat-sub">Powered by Claude AI · Live store data</span>
           </div>
 
           {/* Quick report buttons */}

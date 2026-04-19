@@ -521,11 +521,123 @@ app.post("/webhooks/orders", (req, res) => {
   res.status(200).json({ received: true });
 });
 
-// ── POST /jarvis — self-contained analytics engine (no external API needed)
+// ── JARVIS store snapshot builder ─────────────────────────────────────────
+async function buildStoreSnapshot() {
+  const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+  const metas     = Object.fromEntries(db.prepare("SELECT * FROM order_meta").all().map(m=>[m.shopify_id,m]));
+
+  const now    = new Date();
+  const today  = new Date(now); today.setHours(0,0,0,0);
+  const weekAgo  = new Date(today); weekAgo.setDate(today.getDate()-7);
+  const monthAgo = new Date(today); monthAgo.setDate(today.getDate()-30);
+
+  const todayOrders  = allOrders.filter(o=>new Date(o.created_at)>=today);
+  const weekOrders   = allOrders.filter(o=>new Date(o.created_at)>=weekAgo);
+  const monthOrders  = allOrders.filter(o=>new Date(o.created_at)>=monthAgo);
+
+  const rev = orders => orders.reduce((s,o)=>s+parseFloat(o.total_price||0),0);
+  const ff  = orders => orders.filter(o=>o.fulfillment_status==="fulfilled");
+  const pnd = orders => orders.filter(o=>!o.fulfillment_status||o.fulfillment_status==="unfulfilled");
+  const cod = orders => orders.filter(o=>o.financial_status!=="paid");
+  const pre = orders => orders.filter(o=>o.financial_status==="paid");
+  const rto = orders => orders.filter(o=>metas[String(o.id)]?.stage==="rto"||o.financial_status==="cancelled");
+
+  // Top products
+  const prodTally = {};
+  allOrders.forEach(o=>(o.line_items||[]).forEach(li=>{
+    prodTally[li.title]=(prodTally[li.title]||0)+(li.quantity||1);
+  }));
+  const topProducts = Object.entries(prodTally).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,q])=>({name:n,units:q}));
+
+  // Top vendors
+  const vendRev = {};
+  allOrders.forEach(o=>(o.line_items||[]).forEach(li=>{
+    if(li.vendor) vendRev[li.vendor]=(vendRev[li.vendor]||0)+parseFloat(li.price||0)*(li.quantity||1);
+  }));
+  const topVendors = Object.entries(vendRev).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n,r])=>({vendor:n,revenue:Math.round(r)}));
+
+  // RTO rate by vendor
+  const vendRTO = {}; const vendTotal = {};
+  allOrders.forEach(o=>{
+    const isRTO = metas[String(o.id)]?.stage==="rto";
+    (o.line_items||[]).forEach(li=>{
+      if(!li.vendor)return;
+      vendTotal[li.vendor]=(vendTotal[li.vendor]||0)+1;
+      if(isRTO) vendRTO[li.vendor]=(vendRTO[li.vendor]||0)+1;
+    });
+  });
+
+  // Settlements
+  const settl = db.prepare("SELECT status, COUNT(*) as c, SUM(net_payable) as s FROM settlements GROUP BY status").all();
+
+  // Pincode / city analysis of pending COD
+  const pendingCOD = pnd(cod(allOrders));
+  const cityTally = {};
+  pendingCOD.forEach(o=>{
+    const city = o.shipping_address?.city||"Unknown";
+    cityTally[city]=(cityTally[city]||0)+1;
+  });
+  const topPendingCities = Object.entries(cityTally).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([c,n])=>({city:c,count:n}));
+
+  // Daily trend (last 14 days)
+  const dailyTrend = [];
+  for(let i=13;i>=0;i--){
+    const d=new Date(today); d.setDate(today.getDate()-i);
+    const next=new Date(d); next.setDate(d.getDate()+1);
+    const dayOrders=allOrders.filter(o=>{const t=new Date(o.created_at);return t>=d&&t<next;});
+    dailyTrend.push({ date:d.toLocaleDateString('en-IN',{day:'numeric',month:'short'}), orders:dayOrders.length, revenue:Math.round(rev(dayOrders)) });
+  }
+
+  return {
+    generatedAt: now.toISOString(),
+    totals: {
+      orders: allOrders.length,
+      revenue: Math.round(rev(allOrders)),
+      avgOrderValue: Math.round(allOrders.length?rev(allOrders)/allOrders.length:0),
+      fulfilled: ff(allOrders).length,
+      pending: pnd(allOrders).length,
+      cod: cod(allOrders).length,
+      prepaid: pre(allOrders).length,
+      rto: rto(allOrders).length,
+    },
+    today: {
+      orders: todayOrders.length, revenue: Math.round(rev(todayOrders)),
+      fulfilled: ff(todayOrders).length, pending: pnd(todayOrders).length,
+      cod: cod(todayOrders).length, prepaid: pre(todayOrders).length,
+    },
+    thisWeek: {
+      orders: weekOrders.length, revenue: Math.round(rev(weekOrders)),
+      fulfilled: ff(weekOrders).length, pending: pnd(weekOrders).length,
+      rto: rto(weekOrders).length,
+    },
+    thisMonth: {
+      orders: monthOrders.length, revenue: Math.round(rev(monthOrders)),
+      fulfilled: ff(monthOrders).length, pending: pnd(monthOrders).length,
+      rto: rto(monthOrders).length,
+    },
+    topProducts,
+    topVendors,
+    pendingCODTopCities: topPendingCities,
+    settlements: settl,
+    dailyTrend,
+    vendorRTORate: Object.entries(vendTotal).map(([v,t])=>({
+      vendor:v, total:t, rto:vendRTO[v]||0, rtoRate:`${Math.round(((vendRTO[v]||0)/t)*100)}%`
+    })).sort((a,b)=>b.rto-a.rto).slice(0,5),
+  };
+}
+
+// ── POST /jarvis — hybrid: keyword fast-path + Claude for complex queries ──
 app.post("/jarvis", async (req, res) => {
+  const { query = "", history = [] } = req.body;  // declared outside try so catch can access
   try {
-    const { query = "" } = req.body;
     const q = query.toLowerCase().trim();
+
+    // Complex / analytical questions go straight to Claude
+    const isComplex = /why|how|what should|analyze|analyse|compare|forecast|predict|suggest|recommend|pattern|trend|risk|anomal|improve|better|spike|drop|which vendor|which product|explain|insight/i.test(query);
+    if (isComplex) {
+      // jump straight to Claude block below
+      throw Object.assign(new Error("__claude__"), { toClaude: true });
+    }
 
     const today     = new Date(); today.setHours(0,0,0,0);
     const todayISO  = today.toISOString();
@@ -724,21 +836,61 @@ app.post("/jarvis", async (req, res) => {
       });
     }
 
-    // Fallback
-    return res.json({ reply:
-      `I can answer questions about:\n` +
-      `• Today's orders & revenue\n` +
-      `• Pending / fulfilled / cancelled orders\n` +
-      `• Revenue (today / week / month / all time)\n` +
-      `• COD vs Prepaid split\n` +
-      `• Top products\n` +
-      `• Vendor revenue\n` +
-      `• Settlements\n\nTry: "today's summary", "pending orders this week", "top products", "revenue this month"`
-    });
+    // ── Claude fallback — anything not matched by keywords ──────────────
+    throw Object.assign(new Error("__claude__"), { toClaude: true });
 
   } catch (err) {
-    console.error("❌ /jarvis:", err.message);
-    res.status(500).json({ error: err.message });
+    if (!err.toClaude) {
+      console.error("❌ /jarvis:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    // ── Route to Claude ──────────────────────────────────────────────────
+    try {
+      const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+      if (!ANTHROPIC_KEY) {
+        return res.json({ reply: "ANTHROPIC_API_KEY not set in .env — add it to enable AI-powered answers." });
+      }
+      const snapshot = await buildStoreSnapshot();
+      const msgs = [
+        ...history.filter(m=>m.role&&m.text).map(m=>({
+          role: m.role==="bot"?"assistant":"user",
+          content: m.text,
+        })),
+        { role:"user", content: query },
+      ];
+      const claude = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-api-key":ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 700,
+          system: `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify store.
+You have live access to the full store data snapshot below. Use it to give precise, actionable answers.
+
+Rules:
+- Always use real numbers from the snapshot. Never make up figures.
+- Be concise — bullet points preferred. Max 8 lines unless a detailed breakdown is asked.
+- Currency is INR (₹). Format large numbers with commas.
+- Spot patterns, anomalies, and risks proactively when relevant.
+- If asked to compare, calculate ratios and percentages.
+- For vague questions, give the most useful interpretation.
+- If data for something is zero or missing, say so clearly.
+
+Live Store Snapshot (as of ${new Date().toLocaleString('en-IN')}):
+${JSON.stringify(snapshot, null, 2)}`,
+          messages: msgs,
+        }),
+      });
+      if (!claude.ok) {
+        const e = await claude.json().catch(()=>({}));
+        throw new Error(e.error?.message || `Anthropic ${claude.status}`);
+      }
+      const data = await claude.json();
+      return res.json({ reply: data.content?.[0]?.text || "No response." });
+    } catch (claudeErr) {
+      console.error("❌ /jarvis Claude:", claudeErr.message);
+      return res.status(500).json({ error: claudeErr.message });
+    }
   }
 });
 
