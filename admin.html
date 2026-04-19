@@ -1436,6 +1436,174 @@
   }
 
   /* ══════════════════════════════════
+     TAG MAPPINGS VIEW
+  ══════════════════════════════════ */
+  const ALL_STAGES = [
+    { value:'new',              label:'New' },
+    { value:'confirmed',        label:'Confirmed' },
+    { value:'processing',       label:'Processing' },
+    { value:'ready_to_ship',    label:'Ready to Ship' },
+    { value:'shipped',          label:'Shipped' },
+    { value:'out_for_delivery', label:'Out for Delivery' },
+    { value:'delivered',        label:'Delivered' },
+    { value:'cancelled',        label:'Cancelled' },
+    { value:'returned',         label:'Returned' },
+    { value:'rto',              label:'RTO' },
+  ];
+
+  function TagMappings({ token }) {
+    const [mappings,  setMappings]  = useState([]);
+    const [loading,   setLoading]   = useState(true);
+    const [newTag,    setNewTag]    = useState('');
+    const [newStage,  setNewStage]  = useState('confirmed');
+    const [adding,    setAdding]    = useState(false);
+    const [syncing,   setSyncing]   = useState(false);
+    const [msg,       setMsg]       = useState(null);
+    const [syncResult, setSyncResult] = useState(null);
+
+    const load = () => {
+      setLoading(true);
+      fetch(`${API}/admin/tag-mappings`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setMappings(d.mappings||[])).catch(()=>{}).finally(()=>setLoading(false));
+    };
+    useEffect(()=>{ load(); },[token]);
+
+    const addMapping = async () => {
+      if (!newTag.trim()) { setMsg({type:'error',text:'Tag name required.'}); return; }
+      setAdding(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/tag-mappings`,{
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ shopify_tag: newTag.trim(), stage: newStage }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({type:'success',text:`Mapping added: "${newTag}" → ${newStage}`});
+        setNewTag(''); load();
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setAdding(false);
+    };
+
+    const deleteMapping = async id => {
+      await fetch(`${API}/admin/tag-mappings/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+      load();
+    };
+
+    const syncNow = async () => {
+      setSyncing(true); setSyncResult(null); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/tag-mappings/sync`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setSyncResult(d);
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setSyncing(false);
+    };
+
+    const stageLabel = v => ALL_STAGES.find(s=>s.value===v)?.label || v;
+
+    return (
+      <div className="page">
+        {/* How it works banner */}
+        <div style={{background:'var(--indigo-dim)',border:'1px solid var(--indigo)',borderRadius:10,padding:'12px 16px',marginBottom:20,fontSize:12,color:'var(--text)'}}>
+          <div style={{fontWeight:700,color:'var(--indigo)',marginBottom:6}}>🏷 How Tag Mappings Work</div>
+          <div style={{lineHeight:1.8,color:'var(--text-muted)'}}>
+            Add your Shopify order tags here and map them to a stage. When you click <strong>Sync Now</strong>, all orders are scanned — any order whose tag matches will be automatically moved to that stage.<br/>
+            Example: tag <code style={{background:'var(--bg-card)',padding:'1px 5px',borderRadius:4}}>Confirmed</code> → stage <strong>Confirmed</strong> · tag <code style={{background:'var(--bg-card)',padding:'1px 5px',borderRadius:4}}>delivered</code> → stage <strong>Delivered</strong>
+          </div>
+        </div>
+
+        {/* Add mapping */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><span className="card-title">Add Tag Mapping</span></div>
+          <div style={{padding:16}}>
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end'}}>
+              <div>
+                <label className="form-label">Shopify Tag (exact match, case-insensitive)</label>
+                <input className="form-input" placeholder="e.g. Confirmed, delivered, 99 partial collected…"
+                  value={newTag} onChange={e=>setNewTag(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&addMapping()}/>
+              </div>
+              <div>
+                <label className="form-label">Maps to Stage</label>
+                <select className="form-select" value={newStage} onChange={e=>setNewStage(e.target.value)}>
+                  {ALL_STAGES.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+              <button className="btn btn-indigo" onClick={addMapping} disabled={adding||!newTag.trim()}>
+                {adding?<><span className="spin">↻</span> Adding…</>:'+ Add Mapping'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Current mappings */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header">
+            <span className="card-title">Current Mappings</span>
+            <span className="card-sub">{mappings.length} configured</span>
+          </div>
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Shopify Tag</th><th>→</th><th>Stage</th><th>Added</th><th>Action</th></tr></thead>
+              <tbody>
+                {loading ? Array.from({length:3}).map((_,i)=><SkelRow key={i} cols={6}/>) :
+                 mappings.length===0 ? (
+                   <tr><td colSpan={6}><div className="empty"><div className="empty-icon">🏷</div><div className="empty-title">No mappings yet</div><div className="empty-sub">Add your first tag mapping above.</div></div></td></tr>
+                 ) :
+                 mappings.map((m,i)=>(
+                   <tr key={m.id}>
+                     <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                     <td>
+                       <span style={{background:'var(--bg-hover)',border:'1px solid var(--border-hi)',borderRadius:5,padding:'3px 9px',fontFamily:'monospace',fontSize:12,color:'var(--text)'}}>
+                         {m.shopify_tag}
+                       </span>
+                     </td>
+                     <td style={{color:'var(--text-muted)',fontSize:18}}>→</td>
+                     <td>
+                       <span style={{background:'var(--indigo-dim)',color:'var(--indigo)',borderRadius:5,padding:'3px 9px',fontSize:11,fontWeight:600}}>
+                         {stageLabel(m.stage)}
+                       </span>
+                     </td>
+                     <td className="td-mut">{m.created_at?fmtDate(m.created_at):'—'}</td>
+                     <td>
+                       <button className="btn btn-danger btn-sm" onClick={()=>deleteMapping(m.id)}>✕ Remove</button>
+                     </td>
+                   </tr>
+                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Sync */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Sync Orders from Tags</span>
+            <span className="card-sub">Scans all Shopify orders and applies mappings to set their stage</span>
+          </div>
+          <div style={{padding:16}}>
+            {syncResult && (
+              <div className="alert alert-success" style={{marginBottom:12}}>
+                ✓ Sync complete — scanned <strong>{syncResult.total}</strong> orders, updated <strong>{syncResult.updated}</strong> order stages.
+              </div>
+            )}
+            <div style={{display:'flex',gap:12,alignItems:'center'}}>
+              <button className="btn btn-indigo" onClick={syncNow} disabled={syncing||mappings.length===0}>
+                {syncing?<><span className="spin">↻</span> Syncing all orders…</>:'⟳ Sync Now'}
+              </button>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>
+                {mappings.length===0?'Add at least one mapping first.':'First match wins — order with multiple mapped tags uses the first matching mapping.'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      AUDIT LOG VIEW
   ══════════════════════════════════ */
   function AuditLog({ token }) {
@@ -1525,6 +1693,7 @@
       { id:'vendors',     icon:'🏪', label:'Vendors',      section:'main' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'settings',    icon:'⚙', label:'Settings',     section:'finance' },
+      { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -1572,7 +1741,8 @@
           {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
           {view==='vendors'     && <Vendors     token={token}/>}
           {view==='settlements' && <Settlements token={token}/>}
-          {view==='settings'   && <Settings    token={token}/>}
+          {view==='settings'    && <Settings    token={token}/>}
+          {view==='tagmappings' && <TagMappings token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>
       </div>

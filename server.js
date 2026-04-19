@@ -185,6 +185,32 @@ db.exec(`
   try { db.exec(`ALTER TABLE settlements ADD COLUMN ${col}`); } catch {}
 });
 
+// ── Tag mappings table ────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tag_mappings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shopify_tag TEXT NOT NULL,
+    stage       TEXT NOT NULL,
+    created_at  TEXT DEFAULT ''
+  );
+`);
+
+// Helper: apply tag mappings to a single order (updates order_meta if tag matched)
+function applyTagMappings(orderId, tags) {
+  if (!tags) return;
+  const mappings = db.prepare("SELECT * FROM tag_mappings").all();
+  if (!mappings.length) return;
+  const orderTags = tags.toLowerCase().split(",").map(t => t.trim());
+  for (const m of mappings) {
+    if (orderTags.includes(m.shopify_tag.toLowerCase().trim())) {
+      db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?, ?)
+        ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
+        .run(String(orderId), m.stage, new Date().toISOString());
+      break; // first match wins
+    }
+  }
+}
+
 // ── Admin auth ────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CrosCrowAdmin@00";
 const adminSessions  = new Map();
@@ -1170,6 +1196,57 @@ app.put("/admin/settlements/:id/mark-paid", adminAuth, (req, res) => {
       Math.abs(s.net_payable), `Settlement ${s.invoice_no}`, String(s.id), new Date().toISOString());
   auditLog("admin", "settlement_paid", req.params.id, { vendor: s.vendor_name, amount: s.net_payable });
   res.json({ success: true });
+});
+
+// ── Tag Mapping endpoints ─────────────────────────────────────────────────
+app.get("/admin/tag-mappings", adminAuth, (req, res) => {
+  res.json({ mappings: db.prepare("SELECT * FROM tag_mappings ORDER BY id").all() });
+});
+
+app.post("/admin/tag-mappings", adminAuth, (req, res) => {
+  const { shopify_tag, stage } = req.body || {};
+  if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
+  const existing = db.prepare("SELECT id FROM tag_mappings WHERE lower(shopify_tag)=lower(?)").get(shopify_tag);
+  if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
+  const { lastInsertRowid } = db.prepare("INSERT INTO tag_mappings (shopify_tag, stage, created_at) VALUES (?,?,?)")
+    .run(shopify_tag.trim(), stage, new Date().toISOString());
+  res.json({ success: true, id: lastInsertRowid });
+});
+
+app.delete("/admin/tag-mappings/:id", adminAuth, (req, res) => {
+  db.prepare("DELETE FROM tag_mappings WHERE id=?").run(req.params.id);
+  res.json({ success: true });
+});
+
+// Sync: scan ALL orders and apply tag mappings to order_meta
+app.post("/admin/tag-mappings/sync", adminAuth, async (req, res) => {
+  try {
+    const mappings = db.prepare("SELECT * FROM tag_mappings").all();
+    if (!mappings.length) return res.json({ updated: 0, message: "No mappings configured." });
+
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    let updated = 0;
+    for (const o of allOrders) {
+      if (!o.tags) continue;
+      const orderTags = o.tags.toLowerCase().split(",").map(t => t.trim());
+      for (const m of mappings) {
+        if (orderTags.includes(m.shopify_tag.toLowerCase().trim())) {
+          const existing = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(String(o.id));
+          if (existing?.stage !== m.stage) {
+            db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?, ?)
+              ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
+              .run(String(o.id), m.stage, new Date().toISOString());
+            updated++;
+          }
+          break;
+        }
+      }
+    }
+    res.json({ success: true, updated, total: allOrders.length });
+  } catch (err) {
+    console.error("❌ tag-mappings/sync:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET/PUT /admin/croscrow-profile ──────────────────────────────────────
