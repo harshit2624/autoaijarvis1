@@ -457,9 +457,16 @@
                     {awb && <button onClick={refreshDelivery} disabled={refreshing} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,padding:0}}>{refreshing?'…':'↻ Refresh'}</button>}
                   </label>
                   {delivStatus
-                    ? <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:12,color: delivStatus==='Delivered'?'#10b981':delivStatus.toLowerCase().includes('transit')?'#06b6d4':delivStatus.toLowerCase().includes('rto')?'#f87171':'#fbbf24',fontWeight:600}}>{delivStatus}</div>
-                    : <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:11,color:'var(--text-muted)'}}>{awb ? 'Click ↻ Refresh to fetch live status' : 'No AWB yet'}</div>
+                    ? <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:12,color: delivStatus==='Delivered'||delivStatus==='delivered'?'#10b981':delivStatus.toLowerCase().includes('transit')?'#06b6d4':delivStatus.toLowerCase().includes('rto')?'#f87171':'#fbbf24',fontWeight:600}}>
+                        {delivStatus}
+                        {order.shopifyFulfilled && <span style={{marginLeft:8,fontSize:9,color:'var(--text-muted)',fontWeight:400,border:'1px solid var(--border)',borderRadius:3,padding:'1px 5px'}}>via Shopify</span>}
+                      </div>
+                    : <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:11,color:'var(--text-muted)'}}>
+                        {awb ? 'Click ↻ Refresh to fetch live status' : 'No AWB yet'}
+                        {order.shopifyFulfilled && <span style={{marginLeft:8,fontSize:9,border:'1px solid var(--border)',borderRadius:3,padding:'1px 5px'}}>fulfilled via Shopify</span>}
+                      </div>
                   }
+                  {trackUrl && <a href={trackUrl} target="_blank" rel="noreferrer" style={{display:'block',marginTop:6,fontSize:11,color:'var(--indigo)'}}>🔗 Track Shipment →</a>}
                 </div>
                 <div className="form-full">
                   <label className="form-label">Internal Notes</label>
