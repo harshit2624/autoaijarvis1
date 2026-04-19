@@ -1434,13 +1434,14 @@
       emoji: '📦',
       desc: 'Reliable logistics network with pan-India coverage and real-time tracking.',
       fields: [
-        { key: 'api_token',       label: 'API Token',         type: 'password', placeholder: 'Your Delhivery API token' },
-        { key: 'return_address',  label: 'Return Address',    type: 'text',     placeholder: '123 Warehouse St' },
-        { key: 'return_city',     label: 'Return City',       type: 'text',     placeholder: 'Mumbai' },
-        { key: 'return_state',    label: 'Return State',      type: 'text',     placeholder: 'Maharashtra' },
-        { key: 'return_pincode',  label: 'Return Pincode',    type: 'text',     placeholder: '400001' },
-        { key: 'return_phone',    label: 'Return Phone',      type: 'text',     placeholder: '9999999999' },
-        { key: 'company_name',    label: 'Company / Brand Name', type: 'text',  placeholder: 'Your Brand' },
+        { key: 'api_token',       label: 'API Token',              type: 'password', placeholder: 'Your Delhivery API token' },
+        { key: 'pickup_location', label: 'Pickup Location Name',   type: 'text',     placeholder: 'Primary (from Delhivery dashboard)' },
+        { key: 'company_name',    label: 'Company / Brand Name',   type: 'text',     placeholder: 'Your Brand' },
+        { key: 'return_address',  label: 'Return Address',         type: 'text',     placeholder: '123 Warehouse St' },
+        { key: 'return_city',     label: 'Return City',            type: 'text',     placeholder: 'Mumbai' },
+        { key: 'return_state',    label: 'Return State',           type: 'text',     placeholder: 'Maharashtra' },
+        { key: 'return_pincode',  label: 'Return Pincode',         type: 'text',     placeholder: '400001' },
+        { key: 'return_phone',    label: 'Return Phone',           type: 'text',     placeholder: '9999999999' },
       ],
     },
   ];
@@ -1503,7 +1504,8 @@
           <div className="sp-intro-title">⚡ How to Connect a Shipping Partner</div>
           <ol className="sp-intro-steps">
             <li>Create an account on Shiprocket (shiprocket.in) or Delhivery (delhivery.com) if you don't have one.</li>
-            <li>Enter your login credentials or API token below — your credentials are stored securely and only used to create shipments.</li>
+            <li>For Delhivery: go to your Delhivery dashboard → Settings → Pickup Locations and note the exact Pickup Location name. For Shiprocket: use your login email and password.</li>
+            <li>Enter your credentials below — stored securely and only used to create shipments.</li>
             <li>Click <strong>Connect</strong>. Once connected, a <em>Create Shipment</em> button appears directly on every order.</li>
             <li>When you click Create Shipment on an order, it auto-fills customer address, items, and COD amount — you just confirm.</li>
           </ol>

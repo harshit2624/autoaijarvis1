@@ -1561,59 +1561,67 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       }
 
     } else if (partner === "delhivery") {
+      const totalQty = items.reduce((s, li) => s + (li.quantity || 1), 0);
+      const custName = `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || "Customer";
+      // Delhivery order date must be YYYY-MM-DD HH:MM:SS (no T, no Z)
+      const orderDateStr = (shopifyOrder.created_at || new Date().toISOString())
+        .replace("T", " ").replace(/\.\d+Z$/, "").replace("Z", "");
+
       const shipData = {
+        pickup_location: { name: creds.pickup_location || "Primary" },
         shipments: [{
-          waybill:     "",
-          name:        `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || "Customer",
-          add:         addr.address1 || "",
-          add2:        addr.address2 || "",
-          city:        addr.city     || "",
-          pin:         addr.zip      || "",
-          state:       addr.province || "",
-          country:     addr.country  || "India",
-          phone:       addr.phone    || "",
-          order:       shopifyOrder.name,
-          payment_mode:cod ? "COD" : "Pre-paid",
-          return_pin:  creds.return_pincode || addr.zip || "",
-          return_city: creds.return_city    || addr.city || "",
-          return_phone:creds.return_phone   || addr.phone || "",
-          return_name: creds.company_name   || "Croscrow",
-          return_add:  creds.return_address || "",
-          return_state:creds.return_state   || addr.province || "",
-          return_country: "India",
-          products_desc: items.map(li => li.title).join(", "),
-          hs_code:     "",
-          cod_amount:  cod ? codAmt : 0,
-          cod_info:    cod ? "COD" : "",
-          order_date:  shopifyOrder.created_at,
-          total_amount:parseFloat(shopifyOrder.total_price || 0),
-          shipment_width: breadth,
-          shipment_height: height,
-          weight,
-          seller_name: req.vendor,
-          seller_add:  creds.return_address || "",
-          seller_city: creds.return_city    || "",
-          seller_state:creds.return_state   || "",
-          seller_pin:  creds.return_pincode || "",
-          seller_inv_no: shopifyOrder.name,
+          name:          custName,
+          add:           addr.address1 || "",
+          add2:          addr.address2 || "",
+          pin:           addr.zip      || "",
+          city:          addr.city     || "",
+          state:         addr.province || "",
+          country:       "India",
+          phone:         (addr.phone || "").replace(/\D/g, "").slice(-10),
+          order:         shopifyOrder.name,
+          payment_mode:  cod ? "COD" : "Pre-paid",
+          return_pin:    creds.return_pincode || "",
+          return_city:   creds.return_city    || "",
+          return_phone:  creds.return_phone   || "",
+          return_name:   creds.company_name   || req.vendor,
+          return_add:    creds.return_address || "",
+          return_state:  creds.return_state   || "",
+          return_country:"India",
+          products_desc: items.map(li => li.title).join(", ").slice(0, 250),
+          hsn_code:      "",
+          cod_amount:    cod ? codAmt : "",
+          order_date:    orderDateStr,
+          total_amount:  parseFloat(shopifyOrder.total_price || 0),
+          seller_inv:    shopifyOrder.name,
+          quantity:      String(totalQty),
+          shipment_width:  String(breadth),
+          shipment_height: String(height),
+          weight:          String(weight),
+          seller_name:   creds.company_name || req.vendor,
+          seller_add:    creds.return_address || "",
+          seller_city:   creds.return_city   || "",
+          seller_state:  creds.return_state  || "",
+          seller_pin:    creds.return_pincode || "",
+          seller_country:"India",
         }],
       };
       const dlBody = new URLSearchParams();
       dlBody.append("format", "json");
       dlBody.append("data", JSON.stringify(shipData));
-      const dlRes = await fetch("https://track.delhivery.com/api/cmu/create.json", {
-        method: "POST",
-        headers: {
-          "Authorization": `Token ${creds.api_token}`,
-          "Content-Type":  "application/x-www-form-urlencoded",
-        },
-        body: dlBody.toString(),
-      }).then(r => r.json());
+      const dlRaw  = await fetch("https://track.delhivery.com/api/cmu/create.json", {
+        method:  "POST",
+        headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/x-www-form-urlencoded" },
+        body:    dlBody.toString(),
+      });
+      const dlRes = await dlRaw.json();
 
       if (dlRes.packages?.[0]?.waybill) {
         result = { success: true, awb: dlRes.packages[0].waybill };
       } else {
-        return res.status(400).json({ error: dlRes.rmk || JSON.stringify(dlRes) });
+        const errMsg = dlRes.packages?.[0]?.remarks
+          || dlRes.rmk
+          || (typeof dlRes === "string" ? dlRes : JSON.stringify(dlRes));
+        return res.status(400).json({ error: errMsg });
       }
     }
 
