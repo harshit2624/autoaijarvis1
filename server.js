@@ -195,6 +195,46 @@ try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status_updated_at TEXT
 // ── Migrate: email enabled toggle
 try { db.exec("ALTER TABLE email_settings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); } catch {}
 
+// ── Migrate: penalty tracking columns on order_vendor_stage
+try { db.exec("ALTER TABLE order_vendor_stage ADD COLUMN stage_started_at INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE order_vendor_stage ADD COLUMN warning_sent INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE order_vendor_stage ADD COLUMN penalty_triggered INTEGER DEFAULT 0"); } catch {}
+// Backfill stage_started_at for existing confirmed/partial rows with no timestamp
+try { db.exec(`UPDATE order_vendor_stage SET stage_started_at=${Date.now()} WHERE stage IN ('confirmed','partial') AND (stage_started_at IS NULL OR stage_started_at=0)`); } catch {}
+
+// ── Penalty & delay tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_penalties (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    shopify_id     TEXT NOT NULL,
+    vendor_name    TEXT NOT NULL,
+    order_name     TEXT DEFAULT '',
+    triggered_at   INTEGER NOT NULL,
+    trigger_reason TEXT DEFAULT '48hr_breach',
+    status         TEXT DEFAULT 'pending',
+    penalty_amount REAL DEFAULT 0,
+    admin_note     TEXT DEFAULT '',
+    resolved_at    INTEGER,
+    resolved_by    TEXT
+  );
+  CREATE TABLE IF NOT EXISTS delay_remarks (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    shopify_id           TEXT NOT NULL,
+    vendor_name          TEXT NOT NULL,
+    reason               TEXT NOT NULL,
+    eta_date             TEXT NOT NULL,
+    submitted_at         INTEGER NOT NULL,
+    eta_penalty_triggered INTEGER DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS settlement_penalties (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    settlement_id INTEGER REFERENCES settlements(id),
+    penalty_id    INTEGER REFERENCES order_penalties(id),
+    amount        REAL NOT NULL
+  );
+`);
+try { db.exec("ALTER TABLE settlements ADD COLUMN penalty_deduction REAL DEFAULT 0"); } catch {}
+
 // ── Migrate: per-vendor stage tracking
 db.exec(`
   CREATE TABLE IF NOT EXISTS order_vendor_stage (
@@ -554,11 +594,32 @@ app.post("/webhooks/orders", (req, res) => {
     }
   }
 
-  try {
-    const payload = JSON.parse(rawBody.toString());
-    logWebhook(topic, payload);
-  } catch {
-    logWebhook(topic, {});
+  let payload = {};
+  try { payload = JSON.parse(rawBody.toString()); } catch {}
+  logWebhook(topic, payload);
+
+  // Fire new-order email to customer as soon as order is created
+  if (topic === 'orders/create' && payload.id && payload.email) {
+    (async () => {
+      try {
+        const cfg = getSmtpConfig();
+        if (!cfg?.host) return;
+        const settingsRow = db.prepare("SELECT enabled FROM email_settings WHERE id=1").get();
+        if (settingsRow && settingsRow.enabled === 0) return;
+        const enrichedOrder = await enrichOrderImages(payload);
+        const transporter = createTransporter(cfg);
+        await transporter.sendMail({
+          from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`,
+          to: payload.email,
+          subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
+          html: templateNewOrderCustomer({ order: enrichedOrder }),
+        });
+        logEmail(payload.id, 'new_order_customer', payload.email, `Order ${payload.name} — Please Confirm on WhatsApp`, 'sent');
+        console.log(`📧 New order email sent → ${payload.email}`);
+      } catch(err) {
+        logEmail(payload.id, 'new_order_customer', payload.email || '', '', 'failed', err.message);
+      }
+    })();
   }
 
   res.status(200).json({ received: true });
@@ -628,9 +689,6 @@ function emailBase(title, accentColor, bodyHtml) {
 
 function templateOrderConfirmedCustomer({ order }) {
   const isPrepaid = order.financial_status === 'paid';
-  const items = (order.line_items || [])
-    .map(li => `<tr><td>${li.title}${li.variant_title ? ` (${li.variant_title})` : ''}</td><td style="text-align:center">${li.quantity}</td><td style="text-align:right">₹${parseFloat(li.price).toFixed(2)}</td></tr>`)
-    .join('');
   const body = `
     <div class="subtitle">Your order has been confirmed and is being prepared.</div>
     ${isPrepaid ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">✅ PREPAID ORDER — No payment due on delivery</div>` : ''}
@@ -641,13 +699,76 @@ function templateOrderConfirmedCustomer({ order }) {
       <div class="info-row"><span class="info-label">Order Total</span><span class="info-val" style="color:#10b981;font-size:16px;font-weight:800">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
       ${order.shipping_address ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address.name}, ${order.shipping_address.city}, ${order.shipping_address.province} ${order.shipping_address.zip}</span></div>` : ''}
     </div>
-    <table class="items-table">
-      <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th></tr></thead>
-      <tbody>${items}</tbody>
-    </table>
+    ${itemsTableHtml(order.line_items || [])}
     <p style="font-size:13px;color:#6b7280;line-height:1.7">We'll notify you once your order is shipped. Thank you for shopping with CrosCrow!</p>
   `;
   return emailBase(`Order Confirmed: ${order.name}`, '#10b981', body);
+}
+
+function itemsTableHtml(lineItems, showVendor = false) {
+  const rows = lineItems.map(li => {
+    const img = li.image_url
+      ? `<img src="${li.image_url}" width="48" height="48" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid #e5e7eb;display:block;" alt="${li.title}">`
+      : `<div style="width:48px;height:48px;background:#f1f5f9;border-radius:6px;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:20px;">📦</div>`;
+    return `<tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle;width:60px">${img}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#374151;vertical-align:middle">
+        <strong>${li.title}</strong>${li.variant_title ? `<br><span style="font-size:11px;color:#9ca3af">${li.variant_title}</span>` : ''}
+        ${li.sku ? `<br><span style="font-size:10px;color:#d1d5db">SKU: ${li.sku}</span>` : ''}
+        ${showVendor && li.vendor ? `<br><span style="font-size:10px;color:#6366f1">${li.vendor}</span>` : ''}
+      </td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:center;vertical-align:middle;color:#6b7280">${li.quantity}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:right;vertical-align:middle;font-weight:600;color:#1a2a3a">₹${parseFloat(li.price).toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+    <thead><tr style="background:#f8fafc">
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;width:60px"></th>
+      <th style="padding:10px 12px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px">Item</th>
+      <th style="padding:10px 12px;text-align:center;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px">Qty</th>
+      <th style="padding:10px 12px;text-align:right;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px">Price</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+const WA_ICON = `<svg width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="20" fill="#25d366"/><path d="M28.5 11.5C26.3 9.3 23.3 8 20 8C13.4 8 8 13.4 8 20C8 22.1 8.6 24.1 9.6 25.9L8 32L14.3 30.4C16 31.3 17.9 31.8 20 31.8C26.6 31.8 32 26.4 32 19.8C32 16.6 30.7 13.7 28.5 11.5ZM20 29.8C18.1 29.8 16.3 29.3 14.7 28.4L14.3 28.2L10.7 29.1L11.6 25.6L11.4 25.2C10.4 23.5 9.9 21.8 9.9 19.9C9.9 14.4 14.4 9.9 20 9.9C22.7 9.9 25.2 10.9 27.1 12.8C29 14.7 30 17.2 30 19.9C30 25.5 25.5 29.8 20 29.8ZM25.4 22.5C25.1 22.4 23.6 21.6 23.3 21.5C23 21.4 22.8 21.4 22.6 21.7C22.4 22 21.8 22.7 21.6 22.9C21.4 23.1 21.3 23.1 21 23C19.1 22 17.9 21.3 16.6 19.1C16.3 18.6 16.9 18.6 17.4 17.6C17.5 17.4 17.4 17.2 17.4 17C17.3 16.8 16.7 15.3 16.4 14.7C16.2 14.1 15.9 14.2 15.7 14.2C15.5 14.2 15.3 14.2 15.1 14.2C14.9 14.2 14.5 14.3 14.2 14.6C13.9 14.9 13.1 15.7 13.1 17.2C13.1 18.7 14.2 20.1 14.4 20.3C14.6 20.5 16.7 23.7 19.9 25C22 25.9 22.8 25.9 23.8 25.8C24.4 25.7 25.7 25 26 24.2C26.3 23.4 26.3 22.8 26.2 22.6C26.1 22.6 25.7 22.6 25.4 22.5Z" fill="white"/></svg>`;
+
+function templateNewOrderCustomer({ order }) {
+  const isPrepaid = order.financial_status === 'paid';
+  const waNum = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
+  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
+  const body = `
+    <div class="subtitle">Thank you for your order! We've received it and it's pending confirmation.</div>
+
+    <!-- WhatsApp Confirm Section -->
+    <div style="background:#f0fdf4;border:2px solid #25d366;border-radius:10px;padding:20px 24px;margin-bottom:24px;">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="48" valign="middle" style="padding-right:16px">${WA_ICON}</td>
+        <td valign="middle">
+          <div style="font-weight:700;color:#065f46;font-size:15px;margin-bottom:4px;">Check Your WhatsApp to Confirm Order</div>
+          <div style="font-size:12px;color:#374151;line-height:1.6;margin-bottom:12px;">
+            We've sent you a WhatsApp message to verify your order. Please open WhatsApp and tap the button below to confirm — your order will only be processed after confirmation.
+          </div>
+          <a href="${waLink}" style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;padding:11px 24px;border-radius:7px;font-weight:700;font-size:13px;letter-spacing:0.5px;">
+            ✅ Confirm Order
+          </a>
+        </td>
+      </tr></table>
+    </div>
+
+    ${isPrepaid ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">✅ PREPAID ORDER — No payment due on delivery</div>` : ''}
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+      <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${isPrepaid ? '✅ Prepaid' : '💵 Cash on Delivery'}</span></div>
+      <div class="info-row"><span class="info-label">Order Total</span><span class="info-val" style="color:#10b981;font-size:16px;font-weight:800">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
+      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address.name}, ${order.shipping_address.city}, ${order.shipping_address.province} ${order.shipping_address.zip}</span></div>` : ''}
+    </div>
+    ${itemsTableHtml(order.line_items || [])}
+    <p style="font-size:12px;color:#9ca3af;line-height:1.7;margin-top:8px;">If you did not place this order, please ignore this email or contact us immediately.</p>
+  `;
+  return emailBase(`New Order Received: ${order.name} — Action Required`, '#25d366', body);
 }
 
 function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
@@ -657,10 +778,6 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const shipping    = parseFloat(order.total_shipping_price_set?.shop_money?.amount || 0);
   const advance     = parseFloat(meta.advance_paid || 0);
   const codAmount   = isPrepaid ? 0 : Math.max(0, subTotal + shipping - advance);
-
-  const itemRows = myItems.map(li =>
-    `<tr><td>${li.title}${li.variant_title ? ` (${li.variant_title})` : ''}<br><span style="color:#9ca3af;font-size:11px">SKU: ${li.sku || '—'}</span></td><td style="text-align:center">${li.quantity}</td><td style="text-align:right">₹${parseFloat(li.price).toFixed(2)}</td><td style="text-align:right;color:#10b981">₹${(parseFloat(li.price) * li.quantity).toFixed(2)}</td></tr>`
-  ).join('');
 
   const addr = order.shipping_address;
 
@@ -680,16 +797,12 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
       ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
     </div>
 
-    <table class="items-table">
-      <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Total</th></tr></thead>
-      <tbody>${itemRows}</tbody>
-    </table>
+    ${itemsTableHtml(myItems)}
 
     <!-- Amount Breakdown -->
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px;">
       <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
       <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">${advance > 0 ? `₹${advance.toFixed(2)}` : '—'}</td></tr>
       <tr style="background:#f8fafc"><td style="padding:10px;font-weight:800;font-size:14px;color:#1a2a3a;border-radius:4px 0 0 4px">
         ${isPrepaid ? '✅ COD to Collect' : '💵 COD to Collect'}
       </td><td style="text-align:right;padding:10px;font-weight:800;font-size:16px;border-radius:0 4px 4px 0;color:${isPrepaid ? '#10b981' : '#dc2626'}">
@@ -697,14 +810,23 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
       </td></tr>
     </table>
 
-    <!-- 24hr Warning -->
-    <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:8px;">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px;">⚠️ Action Required — Fulfil Within 24 Hours</div>
+    <!-- Fulfilment Window -->
+    <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:12px;">
+      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px;">⚠️ Action Required — Fulfil Within 24–48 Hours</div>
       <div style="font-size:12px;color:#7f1d1d;line-height:1.7">
-        Please pack and hand over this order to the courier within <strong>24 hours</strong> of receiving this email.
-        Late fulfilment may result in penalties and could affect your seller rating on CrosCrow.
-        If you are unable to fulfil, contact us immediately at <a href="mailto:${order.email||''}" style="color:#991b1b">support@croscrow.com</a>.
+        Please pack and hand over this order to the courier within <strong>24–48 hours</strong> of receiving this email.
+        Late fulfilment beyond 48 hours may result in penalties and could affect your seller rating on CrosCrow.<br><br>
+        🌟 <strong>Fulfil before 24 hours?</strong> You earn a <strong>seller reward</strong> on this order — fast dispatch is always appreciated!
       </div>
+    </div>
+
+    <!-- WhatsApp Contact -->
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name}`)}"
+         style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
+        Unable to fulfil? Contact Us on WhatsApp
+      </a>
     </div>
   `;
   return emailBase(`New Order: ${order.name} — Action Required`, '#6366f1', body);
@@ -719,6 +841,7 @@ function templateInTransit({ order, awb, courier }) {
       ${awb ? `<div class="info-row"><span class="info-label">Tracking AWB</span><span class="info-val" style="font-family:monospace;color:#6366f1">${awb}</span></div>` : ''}
       <div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address?.city || ''}, ${order.shipping_address?.province || ''}</span></div>
     </div>
+    ${itemsTableHtml(order.line_items || [])}
     ${awb && courier ? `<div style="text-align:center"><a class="cta" href="https://www.${(courier||'').toLowerCase().includes('delhivery') ? `delhivery.com/track/package/${awb}` : `shiprocket.co/tracking/${awb}`}">Track Your Order →</a></div>` : ''}
     <p style="font-size:13px;color:#6b7280;line-height:1.7">Estimated delivery in 3–7 business days. You'll receive another update once it's delivered.</p>
   `;
@@ -741,9 +864,50 @@ function templateDelivered({ order, forRole = 'customer' }) {
       <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${order.financial_status === 'paid' ? '✅ Prepaid' : '💵 COD'}</span></div>
       ${order.shipping_address ? `<div class="info-row"><span class="info-label">Delivered To</span><span class="info-val">${order.shipping_address.city}, ${order.shipping_address.province}</span></div>` : ''}
     </div>
+    ${itemsTableHtml(order.line_items || [])}
     ${forRole === 'customer' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">We hope you love your purchase! If you have any issues, please contact us.</p>` : ''}
   `;
   return emailBase(titles[forRole], '#10b981', body);
+}
+
+function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
+  const myItems     = (order.line_items || []).filter(li => li.vendor === vendorName);
+  const subTotal    = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+  const vendorCount = new Set((order.line_items || []).map(li => li.vendor).filter(Boolean)).size || 1;
+  const totalShipping = parseFloat(order.total_shipping_price_set?.shop_money?.amount || (order.shipping_lines||[]).reduce((s,l)=>s+parseFloat(l.price||0),0));
+  const shipping    = parseFloat((totalShipping / vendorCount).toFixed(2));
+  const advance     = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
+  const newCOD      = Math.max(0, subTotal + shipping - advance);
+  const addr      = order.shipping_address;
+
+  const body = `
+    <div class="subtitle">Advance payment has been collected for order <strong>${order.name}</strong>. Please note the updated COD amount below.</div>
+
+    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center">
+      <div style="font-size:12px;color:#92400e;font-weight:600;margin-bottom:4px;">💵 UPDATED COD TO COLLECT ON DELIVERY</div>
+      <div style="font-size:28px;font-weight:800;color:#b45309;">₹${newCOD.toFixed(2)}</div>
+      <div style="font-size:11px;color:#92400e;margin-top:4px;">After deducting ₹${advance.toFixed(2)} advance (your share of ${vendorCount > 1 ? `total advance split across ${vendorCount} vendors` : 'advance collected'})</div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
+      ${addr ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
+      ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
+    </div>
+
+    ${itemsTableHtml(myItems)}
+
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;">
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">— ₹${advance.toFixed(2)}</td></tr>
+      <tr style="background:#fffbeb"><td style="padding:10px;font-weight:800;font-size:14px;color:#92400e">💵 Collect on Delivery</td><td style="text-align:right;padding:10px;font-weight:800;font-size:18px;color:#b45309">₹${newCOD.toFixed(2)}</td></tr>
+    </table>
+
+    <p style="font-size:12px;color:#6b7280;line-height:1.7">Please ensure you collect exactly <strong>₹${newCOD.toFixed(2)}</strong> at the time of delivery. Do not collect the full amount — customer has already paid the advance.</p>
+  `;
+  return emailBase(`Advance Collected: ${order.name} — Updated COD`, '#f59e0b', body);
 }
 
 // ── Send email helper ─────────────────────────────────────────────────────
@@ -769,6 +933,28 @@ async function sendEmail({ to, subject, html, shopifyId, trigger }) {
   }
 }
 
+// ── Enrich order line items with product images ───────────────────────────
+async function enrichOrderImages(order) {
+  try {
+    const token = await getAccessToken();
+    const productIds = [...new Set((order.line_items || []).map(li => li.product_id).filter(Boolean))];
+    const imageMap = {}; // { product_id: imageUrl }
+    await Promise.all(productIds.map(async pid => {
+      try {
+        const d = await shopifyREST(`/products/${pid}.json?fields=id,image,variants,images`);
+        if (d.product?.image?.src) imageMap[pid] = d.product.image.src;
+        else if (d.product?.images?.[0]?.src) imageMap[pid] = d.product.images[0].src;
+      } catch {}
+    }));
+    // Attach image to each line item
+    order.line_items = (order.line_items || []).map(li => ({
+      ...li,
+      image_url: imageMap[li.product_id] || null,
+    }));
+  } catch {}
+  return order;
+}
+
 // ── Fire emails on stage change ───────────────────────────────────────────
 async function fireStageEmails(shopifyId, newStage) {
   try {
@@ -780,7 +966,8 @@ async function fireStageEmails(shopifyId, newStage) {
       headers: { "X-Shopify-Access-Token": token }
     });
     if (!r.ok) return;
-    const { order } = await r.json();
+    let { order } = await r.json();
+    order = await enrichOrderImages(order);
     const meta = db.prepare("SELECT awb, courier FROM order_meta WHERE shopify_id=?").get(String(shopifyId)) || {};
 
     const adminEmail = cfg.adminEmail;
@@ -788,13 +975,24 @@ async function fireStageEmails(shopifyId, newStage) {
     const vendors = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
 
     if (newStage === 'confirmed') {
-      // Customer
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmedCustomer({ order }), shopifyId, trigger: 'confirmed' });
       // Each vendor
       for (const vendor of vendors) {
         const vendorRow = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
         const vendorMeta = db.prepare("SELECT advance_paid FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name} — Action Required`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
+      }
+    }
+
+    if (newStage === 'partial') {
+      for (const vendor of vendors) {
+        const vendorRow  = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        const vendorMeta = db.prepare("SELECT advance_paid, payment_type FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
+        if (vendorRow?.email) await sendEmail({
+          to: vendorRow.email,
+          subject: `Advance Collected — Updated COD for ${order.name}`,
+          html: templatePartialAdvanceVendor({ order, vendorName: vendor, meta: vendorMeta }),
+          shopifyId, trigger: 'partial_vendor'
+        });
       }
     }
 
@@ -1610,9 +1808,22 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, (req, res) => {
   if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
-  db.prepare(`INSERT INTO order_vendor_stage (shopify_id, vendor_name, stage, updated_at) VALUES (?,?,?,?)
-    ON CONFLICT(shopify_id, vendor_name) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
-    .run(id, vendor_name, stage, new Date().toISOString());
+  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
+  const existing = db.prepare("SELECT * FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(id, vendor_name);
+
+  if (existing) {
+    const newStartedAt = ['confirmed','partial'].includes(stage) ? nowMs : (existing.stage_started_at || 0);
+    const newWarning   = fulfilledStages.includes(stage) ? 0 : (['confirmed','partial'].includes(stage) ? 0 : existing.warning_sent);
+    const newPenalty   = fulfilledStages.includes(stage) ? 0 : existing.penalty_triggered;
+    db.prepare("UPDATE order_vendor_stage SET stage=?, updated_at=?, stage_started_at=?, warning_sent=?, penalty_triggered=? WHERE shopify_id=? AND vendor_name=?")
+      .run(stage, now, newStartedAt, newWarning, newPenalty, id, vendor_name);
+  } else {
+    const startedAt = ['confirmed','partial'].includes(stage) ? nowMs : 0;
+    db.prepare("INSERT INTO order_vendor_stage (shopify_id, vendor_name, stage, updated_at, stage_started_at, warning_sent, penalty_triggered) VALUES (?,?,?,?,?,0,0)")
+      .run(id, vendor_name, stage, now, startedAt);
+  }
   auditLog("admin", "vendor_stage_change", id, { vendor_name, stage });
   res.json({ success: true, vendor_name, stage });
 });
@@ -1624,9 +1835,11 @@ app.get("/admin/orders/:id/vendor-stages", adminAuth, (req, res) => {
 });
 
 // ── PUT /admin/orders/:id/meta ────────────────────────────────────────────
-app.put("/admin/orders/:id/meta", adminAuth, (req, res) => {
+app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
   const { id } = req.params;
   const { payment_type, advance_paid, shipping_charge, notes, awb, courier, tracking_url } = req.body || {};
+  const now = new Date().toISOString();
+  const advPaid = parseFloat(advance_paid) || 0;
 
   db.prepare(`INSERT INTO order_meta (shopify_id, payment_type, advance_paid, shipping_charge, notes, awb, courier, tracking_url, updated_at)
     VALUES (?,?,?,?,?,?,?,?,?)
@@ -1639,8 +1852,22 @@ app.put("/admin/orders/:id/meta", adminAuth, (req, res) => {
       courier         = COALESCE(excluded.courier, courier),
       tracking_url    = COALESCE(excluded.tracking_url, tracking_url),
       updated_at      = excluded.updated_at`)
-    .run(id, payment_type || "cod", advance_paid || 0, shipping_charge || 0,
-      notes || "", awb || "", courier || "", tracking_url || "", new Date().toISOString());
+    .run(id, payment_type || "cod", advPaid, shipping_charge || 0,
+      notes || "", awb || "", courier || "", tracking_url || "", now);
+
+  // Auto-move to partial stage when advance is filled in
+  if (advPaid > 0) {
+    const prev = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(id);
+    const prevStage = prev?.stage || "new";
+    // Only auto-move if not already in a later stage
+    const EARLY_STAGES = ["new", "confirmed", "partial"];
+    if (EARLY_STAGES.includes(prevStage)) {
+      db.prepare(`INSERT INTO order_meta (shopify_id, stage, updated_at) VALUES (?,?,?)
+        ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
+        .run(id, "partial", now);
+      fireStageEmails(id, "partial").catch(() => {});
+    }
+  }
 
   auditLog("admin", "meta_update", id, req.body);
   res.json({ success: true });
@@ -1761,8 +1988,23 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     orderDetails.forEach(od => ins.run(settlId, od.shopify_order_id, od.order_name, od.my_revenue,
       od.payment_type, od.commission_pct, od.commission, od.gst, od.advance_paid, od.shipping_charge, od.net));
 
+    // Include confirmed penalties for this vendor in the settlement period
+    const periodStartTs = new Date(period_start + 'T00:00:00Z').getTime();
+    const periodEndTs   = new Date(period_end   + 'T23:59:59Z').getTime();
+    const confirmedPenalties = db.prepare(
+      "SELECT * FROM order_penalties WHERE vendor_name=? AND status='confirmed' AND triggered_at>=? AND triggered_at<=?"
+    ).all(vendor_name, periodStartTs, periodEndTs);
+    const penaltyTotal = confirmedPenalties.reduce((s, p) => s + (p.penalty_amount || 0), 0);
+    if (penaltyTotal > 0) {
+      const insP = db.prepare("INSERT INTO settlement_penalties (settlement_id, penalty_id, amount) VALUES (?,?,?)");
+      confirmedPenalties.forEach(p => insP.run(settlId, p.id, p.penalty_amount));
+      const updatedNet = parseFloat((netPayable + penaltyTotal).toFixed(2));
+      db.prepare("UPDATE settlements SET penalty_deduction=?, net_payable=? WHERE id=?").run(penaltyTotal, updatedNet, settlId);
+      netPayable = updatedNet;
+    }
+
     auditLog("admin", "settlement_generated", String(settlId), { vendor_name, period_start, period_end, netPayable });
-    res.json({ success: true, settlementId: settlId, invoiceNo, totalOrders: vendorDelivered.length, netPayable });
+    res.json({ success: true, settlementId: settlId, invoiceNo, totalOrders: vendorDelivered.length, netPayable, penaltyDeduction: penaltyTotal });
   } catch (err) {
     console.error("❌ /admin/settlements/generate:", err.message);
     res.status(500).json({ error: err.message });
@@ -2120,6 +2362,46 @@ app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
       html: emailBase('SMTP is working!', '#10b981', '<p style="color:#6b7280;font-size:14px">Your email configuration is correct. CrosCrow will now send order notifications automatically.</p>'),
     });
     res.json({ ok: true, message: `Test email sent to ${to}` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
+  const { to, template } = req.body || {};
+  if (!to || !template) return res.status(400).json({ error: "to and template required" });
+  const cfg = getSmtpConfig();
+  if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
+
+  const demoOrder = {
+    id: 99999, name: '#TEST-001',
+    created_at: new Date().toISOString(),
+    financial_status: 'pending',
+    total_price: '1299.00',
+    total_shipping_price_set: { shop_money: { amount: '49.00' } },
+    email: to,
+    line_items: [{ title: 'Demo Product (Size: M)', variant_title: 'Size: M', quantity: 1, price: '1250.00', vendor: 'Demo Vendor', sku: 'DEMO-001' }],
+    shipping_address: { name: 'Test Customer', address1: '123 Test Street', address2: '', city: 'Mumbai', province: 'Maharashtra', zip: '400001', phone: '+91 9876543210' },
+    shipping_lines: [{ price: '49.00' }],
+  };
+  const demoMeta = { advance_paid: 200, payment_type: 'cod' };
+
+  const TEMPLATES = {
+    new_order:  { subject: `[TEST] New Order: ${demoOrder.name} — Please Confirm`, html: templateNewOrderCustomer({ order: demoOrder }) },
+    confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder }) },
+    confirmed_vendor:   { subject: `[TEST] New Order: ${demoOrder.name} — Action Required`, html: templateOrderConfirmedVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
+    partial_vendor:     { subject: `[TEST] Advance Collected — Updated COD for ${demoOrder.name}`, html: templatePartialAdvanceVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
+    transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery' }) },
+    delivered_customer: { subject: `[TEST] Order Delivered: ${demoOrder.name} 🎉`, html: templateDelivered({ order: demoOrder, forRole: 'customer' }) },
+    delivered_vendor:   { subject: `[TEST] Order Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'vendor' }) },
+    delivered_admin:    { subject: `[TEST] Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'admin' }) },
+  };
+
+  const tpl = TEMPLATES[template];
+  if (!tpl) return res.status(400).json({ error: `Unknown template. Valid: ${Object.keys(TEMPLATES).join(', ')}` });
+
+  try {
+    const transporter = createTransporter(cfg);
+    await transporter.sendMail({ from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`, to, subject: tpl.subject, html: tpl.html });
+    res.json({ ok: true, message: `Test "${template}" sent to ${to}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2666,6 +2948,443 @@ function mapStatus(s) {
   if (s === "cancelled" || s === "canceled") return "cancelled";
   return "pending";
 }
+
+// ── Order notes table ─────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_notes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    shopify_id TEXT NOT NULL,
+    role       TEXT NOT NULL DEFAULT 'admin',
+    author     TEXT NOT NULL DEFAULT 'Admin',
+    note       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+
+// Admin: get + post notes
+app.get("/admin/orders/:id/notes", adminAuth, (req, res) => {
+  const notes = db.prepare("SELECT * FROM order_notes WHERE shopify_id=? ORDER BY created_at ASC").all(req.params.id);
+  const remarks = db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? ORDER BY submitted_at ASC").all(req.params.id);
+  res.json({ notes, remarks });
+});
+
+app.post("/admin/orders/:id/notes", adminAuth, (req, res) => {
+  const { note } = req.body || {};
+  if (!note?.trim()) return res.status(400).json({ error: "note required." });
+  db.prepare("INSERT INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)")
+    .run(req.params.id, 'admin', 'Admin', note.trim(), Date.now());
+  res.json({ success: true });
+});
+
+// Vendor: get + post notes
+app.get("/vendor/orders/:id/notes", vendorAuth, (req, res) => {
+  const notes = db.prepare("SELECT * FROM order_notes WHERE shopify_id=? ORDER BY created_at ASC").all(req.params.id);
+  const remarks = db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at ASC").all(req.params.id, req.vendor);
+  res.json({ notes, remarks });
+});
+
+app.post("/vendor/orders/:id/notes", vendorAuth, (req, res) => {
+  const { note } = req.body || {};
+  if (!note?.trim()) return res.status(400).json({ error: "note required." });
+  db.prepare("INSERT INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)")
+    .run(req.params.id, 'vendor', req.vendor, note.trim(), Date.now());
+  res.json({ success: true });
+});
+
+// Vendor: submit delay remark (from order modal, no token needed — vendorAuth)
+app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
+  const { reason, eta_date } = req.body || {};
+  if (!reason || !eta_date) return res.status(400).json({ error: "reason and eta_date required." });
+  const sid = req.params.id;
+  const vendor = req.vendor;
+  const now = Date.now();
+  db.prepare("INSERT INTO delay_remarks (shopify_id, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered) VALUES (?,?,?,?,?,0)")
+    .run(sid, vendor, reason, eta_date, now);
+
+  try {
+    const shopifyOrder = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,shipping_address`);
+    const ord = shopifyOrder?.order;
+    const customerEmail = ord?.email;
+    const adminEmail = getSmtpConfig()?.user;
+    const etaFormatted = new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' });
+    const delayHtmlCustomer = emailBase(`We're Sorry — Your Order Is Delayed`, '#f59e0b', `
+      <div class="subtitle">We sincerely apologise for the delay in fulfilling your order.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${ord?.name || sid}</span></div>
+        <div class="info-row"><span class="info-label">Expected Dispatch By</span><span class="info-val" style="color:#10b981;font-weight:700">${etaFormatted}</span></div>
+      </div>
+      <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#713f12;line-height:1.7">
+        Your order is being prepared and will be dispatched by <strong>${etaFormatted}</strong>. You'll receive a shipping confirmation with tracking details once dispatched.
+      </div>`);
+    const delayHtmlAdmin = emailBase(`Vendor Delay Remark: ${ord?.name || sid}`, '#f59e0b', `
+      <div class="subtitle">Vendor <strong>${vendor}</strong> has submitted a delay remark.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order</span><span class="info-val">${ord?.name || sid}</span></div>
+        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendor}</span></div>
+        <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
+        <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
+      </div>`);
+    if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || sid} is Delayed`, html: delayHtmlCustomer, shopifyId: sid, trigger: 'delay_remark_customer' });
+    if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || sid} — ${vendor}`, html: delayHtmlAdmin, shopifyId: sid, trigger: 'delay_remark_admin' });
+  } catch (e) { console.error("Delay remark email:", e.message); }
+
+  res.json({ success: true });
+});
+
+// ── Penalty helpers ───────────────────────────────────────────────────────
+const PENALTY_SECRET = process.env.PENALTY_SECRET || "jarvis-penalty-secret-2024";
+
+function penaltyToken(shopifyId, vendorName) {
+  return crypto.createHmac('sha256', PENALTY_SECRET)
+    .update(`${shopifyId}:${vendorName}`)
+    .digest('hex').slice(0, 24);
+}
+
+function verifyPenaltyToken(shopifyId, vendorName, token) {
+  return penaltyToken(shopifyId, vendorName) === token;
+}
+
+async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
+  const existing = db.prepare("SELECT id FROM order_penalties WHERE shopify_id=? AND vendor_name=? AND status='pending'").get(shopifyId, vendorName);
+  if (existing) return;
+  db.prepare("INSERT INTO order_penalties (shopify_id, vendor_name, order_name, triggered_at, trigger_reason, status) VALUES (?,?,?,?,?,'pending')")
+    .run(shopifyId, vendorName, orderName || '', Date.now(), reason);
+  db.prepare("UPDATE order_vendor_stage SET penalty_triggered=1 WHERE shopify_id=? AND vendor_name=?").run(shopifyId, vendorName);
+  console.log(`⚠️  Penalty triggered: ${orderName} / ${vendorName} — ${reason}`);
+
+  // Email vendor
+  const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendorName);
+  if (vcfg?.email) {
+    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours' : reason === 'eta_breach' ? 'Order not dispatched by committed ETA date' : 'Manual penalty by admin';
+    const html = emailBase(`⚠️ Penalty Applied: ${orderName || shopifyId}`, '#ef4444', `
+      <div class="subtitle">A fulfilment penalty has been applied to your account for order <strong>${orderName || shopifyId}</strong>.</div>
+      <div style="background:#2d0a0a;border:2px solid #ef4444;border-radius:8px;padding:16px 20px;margin-bottom:20px;text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#fca5a5;margin-bottom:4px;">🚨 PENALTY TRIGGERED</div>
+        <div style="font-size:12px;color:#fca5a5;">Reason: ${reasonLabel}</div>
+      </div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#6366f1">${orderName || shopifyId}</span></div>
+        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendorName}</span></div>
+        <div class="info-row"><span class="info-label">Status</span><span class="info-val" style="color:#ef4444;font-weight:700">Pending admin review</span></div>
+      </div>
+      <p style="font-size:13px;color:#6b7280;line-height:1.7">
+        This penalty is currently under admin review. If confirmed, it will be deducted from your next settlement invoice.
+        If you believe this is an error, please contact us immediately on WhatsApp.
+      </p>
+      <div style="text-align:center">
+        <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I want to dispute the penalty for order ${orderName || shopifyId}`)}"
+           style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
+          Dispute on WhatsApp
+        </a>
+      </div>
+    `);
+    await sendEmail({ to: vcfg.email, subject: `⚠️ Penalty Applied: ${orderName || shopifyId}`, html, shopifyId, trigger: 'penalty_triggered' });
+  }
+}
+
+// ── Warning email template ────────────────────────────────────────────────
+function templateFulfilmentWarning({ order, vendorName, hoursElapsed, delayLink }) {
+  const body = `
+    <div class="subtitle">Action required for order <strong>${order.name}</strong> assigned to <strong>${vendorName}</strong>.</div>
+
+    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:16px 20px;margin-bottom:20px;text-align:center">
+      <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:4px;">⏰ ${hoursElapsed} Hours Since Order Confirmed</div>
+      <div style="font-size:13px;color:#7c3aed;font-weight:600">You have ${48 - hoursElapsed} hours left before a penalty is applied.</div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Deadline</span><span class="info-val" style="color:#dc2626;font-weight:700">48 hours from confirmation</span></div>
+    </div>
+
+    <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:20px;">
+      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px;">⚠️ Penalty Warning</div>
+      <div style="font-size:12px;color:#7f1d1d;line-height:1.7">
+        If this order is not handed over to courier within <strong>48 hours</strong> of confirmation, a penalty will be automatically applied to your settlement account.
+        <br><br>
+        🌟 <strong>Fulfil before 24 hours</strong> from confirmation to earn a seller reward!
+      </div>
+    </div>
+
+    <div style="background:#f0f9ff;border:2px solid #bae6fd;border-radius:8px;padding:14px 18px;margin-bottom:20px;">
+      <div style="font-weight:700;color:#0369a1;font-size:13px;margin-bottom:8px;">🕐 Unable to Fulfil on Time?</div>
+      <div style="font-size:12px;color:#0c4a6e;line-height:1.7;margin-bottom:12px;">
+        If you cannot fulfil this order within 48 hours, please submit a delay remark with the reason and your expected dispatch date.
+        This will automatically notify the customer and may prevent or reduce the penalty.
+      </div>
+      <div style="text-align:center">
+        <a href="${delayLink}" style="display:inline-block;background:#0369a1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 24px;border-radius:8px;">
+          Submit Delay Remark →
+        </a>
+      </div>
+    </div>
+
+    <div style="text-align:center">
+      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name} (${vendorName})`)}"
+         style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
+        Contact Support on WhatsApp
+      </a>
+    </div>
+  `;
+  return emailBase(`⚠️ 24hr Fulfilment Warning: ${order.name}`, '#f59e0b', body);
+}
+
+// ── Vendor delay remark page (public — token auth) ────────────────────────
+app.get("/vendor/delay-remark", (req, res) => {
+  const { order, vendor, token } = req.query;
+  if (!order || !vendor || !token || !verifyPenaltyToken(order, vendor, token)) {
+    return res.status(403).send("<h2>Invalid or expired link.</h2>");
+  }
+  const existing = db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at DESC LIMIT 1").get(order, vendor);
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delay Remark — CrosCrow</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:20px;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{background:#1e293b;border-radius:16px;padding:32px;max-width:480px;width:100%;box-shadow:0 4px 32px rgba(0,0,0,.5)}
+  h1{font-size:20px;margin:0 0 4px;color:#f8fafc}
+  .sub{font-size:13px;color:#94a3b8;margin-bottom:24px}
+  label{display:block;font-size:12px;font-weight:600;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+  textarea,input{width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:14px;padding:10px 12px;margin-bottom:16px;outline:none}
+  textarea{height:100px;resize:vertical}
+  input[type=date]{cursor:pointer}
+  button{width:100%;background:#6366f1;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;padding:12px;cursor:pointer}
+  button:hover{background:#4f46e5}
+  .success{background:#064e3b;border:1px solid #10b981;border-radius:8px;padding:16px;text-align:center;color:#6ee7b7;font-weight:600;display:none}
+  .warn{background:#451a03;border:1px solid #f59e0b;border-radius:8px;padding:12px;font-size:13px;color:#fde68a;margin-bottom:16px}
+</style></head><body>
+<div class="card">
+  <h1>⏰ Delay Remark</h1>
+  <div class="sub">Order <strong>${order}</strong> · ${vendor}</div>
+  ${existing ? `<div class="warn">⚠️ You already submitted a delay remark with ETA <strong>${existing.eta_date}</strong>. Submitting again will update it.</div>` : ''}
+  <div class="success" id="ok">✅ Delay remark submitted. Customer and admin have been notified.</div>
+  <form id="f">
+    <label>Reason for delay</label>
+    <textarea name="reason" required placeholder="Explain why fulfilment is delayed...">${existing?.reason || ''}</textarea>
+    <label>Expected dispatch date</label>
+    <input type="date" name="eta_date" required value="${existing?.eta_date || ''}" min="${new Date().toISOString().split('T')[0]}">
+    <button type="submit">Submit Delay Remark</button>
+  </form>
+</div>
+<script>
+document.getElementById('f').onsubmit = async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await fetch('/vendor/delay-remark', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ order:'${order}', vendor:'${vendor}', token:'${token}', reason:fd.get('reason'), eta_date:fd.get('eta_date') })
+  });
+  const d = await r.json();
+  if (d.success) { document.getElementById('ok').style.display='block'; e.target.style.display='none'; }
+  else alert(d.error || 'Error submitting remark');
+};
+</script></body></html>`);
+});
+
+app.post("/vendor/delay-remark", async (req, res) => {
+  const { order, vendor, token, reason, eta_date } = req.body || {};
+  if (!order || !vendor || !token || !verifyPenaltyToken(order, vendor, token)) {
+    return res.status(403).json({ error: "Invalid or expired link." });
+  }
+  if (!reason || !eta_date) return res.status(400).json({ error: "reason and eta_date required." });
+
+  const now = Date.now();
+  db.prepare(`INSERT INTO delay_remarks (shopify_id, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered) VALUES (?,?,?,?,?,0)`)
+    .run(order, vendor, reason, eta_date, now);
+
+  // Fetch order details to send emails
+  try {
+    const shopifyOrder = await shopifyREST(`/orders/${order}.json?fields=id,name,email,shipping_address,line_items`);
+    const ord = shopifyOrder?.order;
+    const customerEmail = ord?.email;
+    const adminEmail = getSmtpConfig()?.user;
+    const etaFormatted = new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' });
+
+    const delayHtmlCustomer = emailBase(`We're Sorry — Your Order Is Delayed`, '#f59e0b', `
+      <div class="subtitle">We sincerely apologise for the delay in fulfilling your order.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${ord?.name || order}</span></div>
+        <div class="info-row"><span class="info-label">Expected Dispatch By</span><span class="info-val" style="color:#10b981;font-weight:700">${etaFormatted}</span></div>
+      </div>
+      <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#713f12;line-height:1.7">
+        We understand this is inconvenient and apologise for the delay. Your order is being prepared and will be dispatched by <strong>${etaFormatted}</strong>.
+        You will receive a shipping confirmation with tracking details as soon as it's dispatched.
+      </div>
+      <p style="font-size:13px;color:#6b7280">If you have any questions, please reply to this email or contact us on WhatsApp.</p>
+    `);
+
+    const delayHtmlAdmin = emailBase(`Vendor Delay Remark: ${ord?.name || order}`, '#f59e0b', `
+      <div class="subtitle">Vendor <strong>${vendor}</strong> has submitted a delay remark.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order</span><span class="info-val">${ord?.name || order}</span></div>
+        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendor}</span></div>
+        <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
+        <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
+      </div>
+      <p style="font-size:12px;color:#6b7280">If the order is not dispatched by ${etaFormatted}, it will be automatically moved to the penalty queue.</p>
+    `);
+
+    if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || order} is Delayed`, html: delayHtmlCustomer, shopifyId: order, trigger: 'delay_remark_customer' });
+    if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || order} — ${vendor}`, html: delayHtmlAdmin, shopifyId: order, trigger: 'delay_remark_admin' });
+  } catch (e) {
+    console.error("Delay remark email error:", e.message);
+  }
+
+  res.json({ success: true });
+});
+
+// ── Admin penalty endpoints ────────────────────────────────────────────────
+// ── Force-run penalty cron now (for testing) ──────────────────────────────
+app.post("/admin/penalties/run-cron", adminAuth, async (req, res) => {
+  await penaltyCronJob();
+  res.json({ success: true, message: "Penalty cron ran." });
+});
+
+// ── Send test warning email to vendor ────────────────────────────────────
+app.post("/admin/penalties/test-warning", adminAuth, async (req, res) => {
+  const { shopify_id, vendor_name, order_name } = req.body || {};
+  if (!shopify_id || !vendor_name) return res.status(400).json({ error: "shopify_id and vendor_name required." });
+  const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+  if (!vcfg?.email) return res.status(400).json({ error: `No email found for vendor "${vendor_name}". Set it in Vendors → vendor config.` });
+  const token = penaltyToken(shopify_id, vendor_name);
+  const delayLink = `${SERVER_BASE}/vendor.html?openOrder=${shopify_id}&action=delay`;
+  const html = templateFulfilmentWarning({ order: { name: order_name || shopify_id }, vendorName: vendor_name, hoursElapsed: 24, delayLink });
+  await sendEmail({ to: vcfg.email, subject: `[TEST] ⚠️ 24hr Warning: Fulfil ${order_name || shopify_id} Now`, html, shopifyId: shopify_id, trigger: 'test_warning' });
+  res.json({ success: true, message: `Warning email sent to ${vcfg.email}` });
+});
+
+// ── Manually trigger a test penalty ──────────────────────────────────────
+app.post("/admin/penalties/test-trigger", adminAuth, async (req, res) => {
+  const { shopify_id, vendor_name, order_name } = req.body || {};
+  if (!shopify_id || !vendor_name) return res.status(400).json({ error: "shopify_id and vendor_name required." });
+  triggerPenalty(shopify_id, vendor_name, order_name || shopify_id, 'manual_test');
+  res.json({ success: true, message: `Penalty triggered for ${vendor_name} on ${order_name || shopify_id}` });
+});
+
+app.get("/admin/penalties", adminAuth, (req, res) => {
+  const { status } = req.query;
+  const where = status ? "WHERE status=?" : "";
+  const params = status ? [status] : [];
+  const rows = db.prepare(`SELECT * FROM order_penalties ${where} ORDER BY triggered_at DESC`).all(...params);
+  res.json({ penalties: rows });
+});
+
+app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
+  const { action, penalty_amount, admin_note } = req.body || {};
+  const p = db.prepare("SELECT * FROM order_penalties WHERE id=?").get(req.params.id);
+  if (!p) return res.status(404).json({ error: "Penalty not found." });
+  if (!['confirm','cancel'].includes(action)) return res.status(400).json({ error: "action must be confirm or cancel." });
+
+  const status = action === 'confirm' ? 'confirmed' : 'cancelled';
+  const amount = action === 'confirm' ? (parseFloat(penalty_amount) || 0) : 0;
+  db.prepare("UPDATE order_penalties SET status=?, penalty_amount=?, admin_note=?, resolved_at=?, resolved_by='admin' WHERE id=?")
+    .run(status, amount, admin_note || '', Date.now(), req.params.id);
+  auditLog("admin", `penalty_${status}`, req.params.id, { vendor: p.vendor_name, amount });
+
+  // Email vendor on confirm or cancel
+  const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(p.vendor_name);
+  if (vcfg?.email) {
+    const isConfirm = status === 'confirmed';
+    const html = emailBase(
+      isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`,
+      isConfirm ? '#ef4444' : '#10b981',
+      `<div class="subtitle">${isConfirm
+        ? `A penalty of <strong>₹${amount.toFixed(2)}</strong> has been confirmed for order <strong>${p.order_name}</strong> and will be deducted from your next settlement.`
+        : `The penalty for order <strong>${p.order_name}</strong> has been cancelled by admin. No deduction will be made.`
+      }</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#6366f1">${p.order_name}</span></div>
+        <div class="info-row"><span class="info-label">Decision</span><span class="info-val" style="color:${isConfirm?'#ef4444':'#10b981'};font-weight:700">${isConfirm?'CONFIRMED':'CANCELLED'}</span></div>
+        ${isConfirm ? `<div class="info-row"><span class="info-label">Deduction</span><span class="info-val" style="color:#ef4444;font-weight:700">₹${amount.toFixed(2)}</span></div>` : ''}
+        ${admin_note ? `<div class="info-row"><span class="info-label">Admin Note</span><span class="info-val">${admin_note}</span></div>` : ''}
+      </div>
+      ${isConfirm ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">This amount will appear in your next settlement invoice. To dispute, contact us on WhatsApp.</p>
+      <div style="text-align:center"><a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I want to dispute the penalty for order ${p.order_name}`)}"
+         style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp"> Dispute on WhatsApp</a></div>`
+      : `<p style="font-size:13px;color:#6b7280;line-height:1.7">No action is required from your side. Thank you for your continued partnership with CrosCrow.</p>`}
+    `);
+    await sendEmail({ to: vcfg.email, subject: isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: `penalty_${status}` });
+  }
+
+  res.json({ success: true, status, amount });
+});
+
+// ── Background cron: penalty & warning checker (runs every 15 min) ────────
+const PENALTY_CHECK_MS = 15 * 60 * 1000;
+const HR24 = 24 * 60 * 60 * 1000;
+const HR48 = 48 * 60 * 60 * 1000;
+const SERVER_BASE = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3001}`;
+
+async function penaltyCronJob() {
+  try {
+    const now = Date.now();
+    const watchStages = ['confirmed','partial'];
+    const rows = db.prepare(`
+      SELECT ovs.*, om.shopify_id as mid
+      FROM order_vendor_stage ovs
+      LEFT JOIN order_meta om ON om.shopify_id = ovs.shopify_id
+      WHERE ovs.stage IN ('confirmed','partial')
+        AND ovs.stage_started_at > 0
+    `).all();
+
+    for (const row of rows) {
+      const elapsed = now - row.stage_started_at;
+      const sid = row.shopify_id;
+      const vendor = row.vendor_name;
+
+      // Fetch order name (cheaply from Shopify if needed)
+      let orderName = '';
+      try {
+        const od = await shopifyREST(`/orders/${sid}.json?fields=id,name`);
+        orderName = od?.order?.name || '';
+      } catch {}
+
+      // 24hr warning
+      if (elapsed >= HR24 && !row.warning_sent) {
+        const token = penaltyToken(sid, vendor);
+        const delayLink = `${SERVER_BASE}/vendor.html?openOrder=${sid}&action=delay`;
+        const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        if (vcfg?.email) {
+          const ord = { name: orderName || sid };
+          const html = templateFulfilmentWarning({ order: ord, vendorName: vendor, hoursElapsed: Math.floor(elapsed / 3600000), delayLink });
+          await sendEmail({ to: vcfg.email, subject: `⚠️ 24hr Warning: Fulfil ${orderName || sid} Now`, html, shopifyId: sid, trigger: 'penalty_warning' });
+        }
+        db.prepare("UPDATE order_vendor_stage SET warning_sent=1 WHERE shopify_id=? AND vendor_name=?").run(sid, vendor);
+        console.log(`📧  24hr warning sent: ${orderName} / ${vendor}`);
+      }
+
+      // 48hr penalty trigger
+      if (elapsed >= HR48 && !row.penalty_triggered) {
+        triggerPenalty(sid, vendor, orderName, '48hr_breach');
+      }
+    }
+
+    // ETA-date penalty check for delay remarks
+    const today = new Date().toISOString().split('T')[0];
+    const etaPast = db.prepare("SELECT * FROM delay_remarks WHERE eta_date < ? AND eta_penalty_triggered=0").all(today);
+    for (const dr of etaPast) {
+      const ovs = db.prepare("SELECT stage FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(dr.shopify_id, dr.vendor_name);
+      const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
+      if (!ovs || !fulfilledStages.includes(ovs.stage)) {
+        let orderName = '';
+        try { const od = await shopifyREST(`/orders/${dr.shopify_id}.json?fields=name`); orderName = od?.order?.name || ''; } catch {}
+        triggerPenalty(dr.shopify_id, dr.vendor_name, orderName, 'eta_breach');
+      }
+      db.prepare("UPDATE delay_remarks SET eta_penalty_triggered=1 WHERE id=?").run(dr.id);
+    }
+  } catch (e) {
+    console.error("⚠️  Penalty cron error:", e.message);
+  }
+}
+
+setInterval(penaltyCronJob, PENALTY_CHECK_MS);
+
+// ── Include confirmed penalties in settlement generation ──────────────────
+// Patch: wrap the settlement generate route to add penalty deductions
+// (The logic is injected into the existing route via post-insert query)
 
 // ── Start ──────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

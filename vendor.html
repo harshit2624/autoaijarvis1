@@ -554,6 +554,37 @@
     const [shipPartner,  setShipPartner] = useState('');
     const [shipWeight,   setShipWeight]  = useState('0.5');
     const [creatingShip, setCreatingShip]= useState(false);
+    const [noteThread,   setNoteThread]  = useState([]);
+    const [remarks,      setRemarks]     = useState([]);
+    const [newNote,      setNewNote]     = useState('');
+    const [postingNote,  setPostingNote] = useState(false);
+    const [showDelay,    setShowDelay]   = useState(false);
+    const [delayReason,  setDelayReason] = useState('');
+    const [delayEta,     setDelayEta]    = useState('');
+    const [submittingDelay, setSubmittingDelay] = useState(false);
+    const delayRef = React.useRef(null);
+
+    const loadNotes = () => {
+      fetch(`${API}/vendor/orders/${order.shopifyId}/notes`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setNoteThread(d.notes||[]); setRemarks(d.remarks||[]); }).catch(()=>{});
+    };
+
+    const postNote = async () => {
+      if (!newNote.trim()) return;
+      setPostingNote(true);
+      await fetch(`${API}/vendor/orders/${order.shopifyId}/notes`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({note:newNote.trim()})});
+      setNewNote(''); setPostingNote(false); loadNotes();
+    };
+
+    const submitDelay = async () => {
+      if (!delayReason.trim() || !delayEta) return;
+      setSubmittingDelay(true);
+      const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/delay-remark`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({reason:delayReason,eta_date:delayEta})});
+      const d = await r.json();
+      setSubmittingDelay(false);
+      if (d.success) { setMsg({type:'success',text:'Delay remark submitted. Customer and admin notified.'}); setShowDelay(false); setDelayReason(''); setDelayEta(''); loadNotes(); }
+      else setMsg({type:'error',text:d.error||'Error submitting remark'});
+    };
 
     useEffect(() => {
       fetch(`${API}/vendor/shipping/partners`, { headers: { Authorization: `Bearer ${token}` } })
@@ -562,6 +593,7 @@
           setConnPartners(active);
           if (active.length) setShipPartner(active[0].partner);
         }).catch(()=>{});
+      loadNotes();
     }, [token]);
 
     const createShipment = async () => {
@@ -810,6 +842,81 @@
             {alreadyFulfilled && (
               <div className="alert alert-success" style={{margin:0}}>✓ This order has been fully fulfilled.</div>
             )}
+
+            {/* ── Notes & Delay Remark section ── */}
+            <div style={{marginTop:22,borderTop:'1px solid var(--border)',paddingTop:18}} ref={delayRef}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:'var(--text)',letterSpacing:.5}}>💬 Notes & Delay Remarks</div>
+                <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'1px solid #f59e0b',background:'transparent',color:'#f59e0b',cursor:'pointer',fontWeight:600}}
+                  onClick={()=>setShowDelay(v=>!v)}>
+                  {showDelay ? '✕ Cancel' : '⏰ Report Delay'}
+                </button>
+              </div>
+
+              {/* Delay remarks */}
+              {remarks.map(r=>(
+                <div key={r.id} style={{background:'#1a1200',border:'1px solid #f59e0b44',borderRadius:8,padding:10,marginBottom:8}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>⏰ Delay Remark (you)</span>
+                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{new Date(r.submitted_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                  </div>
+                  <div style={{fontSize:12,color:'var(--text)',marginBottom:4}}>{r.reason}</div>
+                  <div style={{fontSize:11,color:'#10b981'}}>ETA: <strong>{r.eta_date}</strong></div>
+                </div>
+              ))}
+
+              {/* Report delay form */}
+              {showDelay && (
+                <div style={{background:'#0f172a',border:'1px solid #f59e0b66',borderRadius:8,padding:14,marginBottom:12}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#f59e0b',marginBottom:10}}>Report Delay for this Order</div>
+                  <div style={{marginBottom:10}}>
+                    <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Reason for delay</label>
+                    <textarea className="form-input" rows={3} style={{resize:'vertical',width:'100%',boxSizing:'border-box'}}
+                      placeholder="Explain why the order cannot be dispatched on time…"
+                      value={delayReason} onChange={e=>setDelayReason(e.target.value)}/>
+                  </div>
+                  <div style={{marginBottom:12}}>
+                    <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Expected dispatch date</label>
+                    <input type="date" className="form-input" min={new Date().toISOString().split('T')[0]}
+                      value={delayEta} onChange={e=>setDelayEta(e.target.value)}/>
+                  </div>
+                  <button className="btn btn-green btn-sm" onClick={submitDelay} disabled={submittingDelay||!delayReason.trim()||!delayEta}>
+                    {submittingDelay?'Submitting…':'Submit Delay Remark'}
+                  </button>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:6}}>Customer and admin will be notified by email.</div>
+                </div>
+              )}
+
+              {/* Notes thread */}
+              {noteThread.map(n=>(
+                <div key={n.id} style={{display:'flex',gap:8,marginBottom:8,flexDirection:n.role==='vendor'?'row-reverse':'row'}}>
+                  <div style={{width:26,height:26,borderRadius:'50%',background:n.role==='vendor'?'var(--green-dim)':'var(--indigo-dim)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,flexShrink:0,color:n.role==='vendor'?'var(--green)':'var(--indigo)',fontWeight:700}}>
+                    {n.role==='vendor'?'V':'A'}
+                  </div>
+                  <div style={{maxWidth:'75%'}}>
+                    <div style={{background:n.role==='vendor'?'var(--green-dim)':'var(--bg-card)',border:'1px solid var(--border)',borderRadius:n.role==='vendor'?'12px 4px 12px 12px':'4px 12px 12px 12px',padding:'7px 11px'}}>
+                      <div style={{fontSize:12,color:'var(--text)',lineHeight:1.5}}>{n.note}</div>
+                    </div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,textAlign:n.role==='vendor'?'right':'left'}}>
+                      {n.author} · {new Date(n.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {noteThread.length===0 && remarks.length===0 && !showDelay && (
+                <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:8}}>No notes yet.</div>
+              )}
+
+              {/* Add note input */}
+              <div style={{display:'flex',gap:8,marginTop:6}}>
+                <input className="form-input" style={{flex:1,fontSize:12}} placeholder="Add a note… (visible to admin too)"
+                  value={newNote} onChange={e=>setNewNote(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&postNote()}/>
+                <button className="btn btn-green btn-sm" onClick={postNote} disabled={postingNote||!newNote.trim()}>
+                  {postingNote?'…':'Send'}
+                </button>
+              </div>
+            </div>
           </div>
 
           {!alreadyFulfilled && (
@@ -1610,6 +1717,7 @@
     const [loading, setLoading] = useState(false);
     const [lastRef, setLastRef] = useState(null);
     const [modal,   setModal]   = useState(null); // selected order
+    const [autoDelay, setAutoDelay] = useState(false); // scroll to delay section on open
     const [loginErr,setLoginErr]= useState('');
     const [loginLoad,setLoginLoad]=useState(false);
 
@@ -1653,7 +1761,23 @@
       setLoading(false);
     },[auth]);
 
-    useEffect(()=>{ if(auth) fetchData(); },[auth]);
+    useEffect(()=>{
+      if(auth) {
+        fetchData().then(()=>{
+          // Auto-open order from URL param (e.g. from penalty warning email link)
+          const params = new URLSearchParams(window.location.search);
+          const openId = params.get('openOrder');
+          const action = params.get('action');
+          if (openId) {
+            setOrders(prev => {
+              const found = prev.find(o => String(o.shopifyId) === String(openId));
+              if (found) { setModal(found); if(action==='delay') setAutoDelay(true); }
+              return prev;
+            });
+          }
+        });
+      }
+    },[auth]);
 
     /* ── Login screen ── */
     if(!auth) return (

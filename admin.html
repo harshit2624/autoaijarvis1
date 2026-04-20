@@ -153,6 +153,7 @@
     .b-delivered { background: var(--green-dim);  color: var(--green);  } .b-delivered .bdot { background: var(--green); }
     .b-rto       { background: var(--red-bg);     color: var(--red);    } .b-rto       .bdot { background: var(--red); }
     .b-partial   { background: #1a1200;           color: #fbbf24;       } .b-partial   .bdot { background: #fbbf24; }
+    .b-penalty   { background: #2d0a0a;           color: #f87171;       } .b-penalty   .bdot { background: #f87171; }
     .b-hold      { background: var(--purple-bg);  color: var(--purple); } .b-hold      .bdot { background: var(--purple); }
     .b-cancelled { background: var(--red-bg);     color: var(--red);    } .b-cancelled .bdot { background: var(--red); }
     .b-pending   { background: var(--yellow-bg);  color: var(--yellow); } .b-pending   .bdot { background: var(--yellow); }
@@ -309,6 +310,7 @@
     { id:'transit',   label:'In Transit',     color:'orange', icon:'↑' },
     { id:'delivered', label:'Delivered',      color:'green',  icon:'✅' },
     { id:'rto',       label:'RTO',            color:'red',    icon:'↩' },
+    { id:'penalty',   label:'Penalty',        color:'red',    icon:'⚠' },
     { id:'hold',      label:'Hold',           color:'purple', icon:'⏸' },
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
   ];
@@ -351,6 +353,10 @@
     const [payType,    setPayType]    = useState(order.paymentType || 'cod');
     const [advance,    setAdvance]    = useState(String(order.advancePaid || ''));
     const [notes,      setNotes]      = useState(order.notes || '');
+    const [noteThread, setNoteThread] = useState([]);
+    const [remarks,    setRemarks]    = useState([]);
+    const [newNote,    setNewNote]    = useState('');
+    const [postingNote,setPostingNote]= useState(false);
     const [awb,        setAwb]        = useState(order.awb || '');
     const [courier,    setCourier]    = useState(order.courier || '');
     const [trackUrl,   setTrackUrl]   = useState(order.trackingUrl || '');
@@ -362,6 +368,11 @@
     const [tagInput,   setTagInput]   = useState('');
     const [msg,        setMsg]        = useState(null);
 
+    const loadNotes = () => {
+      fetch(`${API}/admin/orders/${order.shopifyId}/notes`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setNoteThread(d.notes||[]); setRemarks(d.remarks||[]); }).catch(()=>{});
+    };
+
     useEffect(()=>{
       if ((order.vendors||[]).length > 1) {
         fetch(`${API}/admin/orders/${order.shopifyId}/vendor-stages`,{headers:{Authorization:`Bearer ${token}`}})
@@ -371,7 +382,17 @@
             setVendorStages(vs);
           }).catch(()=>{});
       }
+      loadNotes();
     },[order.shopifyId]);
+
+    const postNote = async () => {
+      if (!newNote.trim()) return;
+      setPostingNote(true);
+      await fetch(`${API}/admin/orders/${order.shopifyId}/notes`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({note:newNote.trim()})});
+      setNewNote('');
+      setPostingNote(false);
+      loadNotes();
+    };
 
     const saveVendorStage = async (vendor) => {
       setSavingVS(p=>({...p,[vendor]:true}));
@@ -571,8 +592,52 @@
                   {trackUrl && <a href={trackUrl} target="_blank" rel="noreferrer" style={{display:'block',marginTop:6,fontSize:11,color:'var(--indigo)'}}>🔗 Track Shipment →</a>}
                 </div>
                 <div className="form-full">
-                  <label className="form-label">Internal Notes</label>
+                  <label className="form-label">Internal Notes (saved with order)</label>
                   <input className="form-input" placeholder="Any internal notes…" value={notes} onChange={e=>setNotes(e.target.value)}/>
+
+                  {/* Shared notes thread */}
+                  <div style={{marginTop:18}}>
+                    <div className="form-label" style={{marginBottom:8}}>💬 Notes Thread (visible to admin + vendor)</div>
+
+                    {/* Delay remarks */}
+                    {remarks.length > 0 && remarks.map(r=>(
+                      <div key={r.id} style={{background:'#1a1200',border:'1px solid #f59e0b44',borderRadius:8,padding:10,marginBottom:8}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                          <span style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>⏰ Delay Remark — {r.vendor_name}</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}>{new Date(r.submitted_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                        </div>
+                        <div style={{fontSize:12,color:'var(--text)',marginBottom:4}}>{r.reason}</div>
+                        <div style={{fontSize:11,color:'#10b981'}}>ETA Dispatch: <strong>{r.eta_date}</strong></div>
+                      </div>
+                    ))}
+
+                    {/* Notes */}
+                    {noteThread.length > 0 && noteThread.map(n=>(
+                      <div key={n.id} style={{display:'flex',gap:8,marginBottom:8,flexDirection: n.role==='admin'?'row-reverse':'row'}}>
+                        <div style={{width:28,height:28,borderRadius:'50%',background:n.role==='admin'?'var(--indigo-dim)':'var(--green-dim)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,flexShrink:0,color:n.role==='admin'?'var(--indigo)':'var(--green)',fontWeight:700}}>
+                          {n.role==='admin'?'A':'V'}
+                        </div>
+                        <div style={{maxWidth:'75%'}}>
+                          <div style={{background:n.role==='admin'?'var(--indigo-dim)':'var(--bg-hover)',borderRadius:n.role==='admin'?'12px 4px 12px 12px':'4px 12px 12px 12px',padding:'8px 12px'}}>
+                            <div style={{fontSize:12,color:'var(--text)',lineHeight:1.5}}>{n.note}</div>
+                          </div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,textAlign:n.role==='admin'?'right':'left'}}>
+                            {n.author} · {new Date(n.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {noteThread.length===0 && remarks.length===0 && <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:8}}>No notes yet.</div>}
+
+                    {/* Add note */}
+                    <div style={{display:'flex',gap:8,marginTop:4}}>
+                      <input className="form-input" style={{flex:1}} placeholder="Add admin note…" value={newNote} onChange={e=>setNewNote(e.target.value)}
+                        onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&postNote()}/>
+                      <button className="btn btn-indigo btn-sm" onClick={postNote} disabled={postingNote||!newNote.trim()}>
+                        {postingNote?'…':'Send'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1510,11 +1575,12 @@
                           <td style={{color:'var(--yellow)'}}>₹{(s.commission||0).toFixed(2)}</td>
                           <td style={{color:'var(--orange)'}}>₹{(s.gst_amount||0).toFixed(2)}</td>
                           <td style={{fontSize:10,color:'var(--text-muted)'}}>
-                            {hasAdj ? (
+                            {(hasAdj||(s.penalty_deduction||0)>0) ? (
                               <div style={{display:'flex',flexDirection:'column',gap:2}}>
                                 {(s.extra_discount||0)>0     && <span style={{color:'var(--green)'}}>− Disc ₹{s.extra_discount.toFixed(2)}</span>}
                                 {(s.extra_advance||0)>0      && <span style={{color:'var(--green)'}}>− Adv ₹{s.extra_advance.toFixed(2)}</span>}
                                 {(s.shipping_adjustment||0)!==0 && <span style={{color:'var(--orange)'}}>± Ship ₹{s.shipping_adjustment.toFixed(2)}</span>}
+                                {(s.penalty_deduction||0)>0  && <span style={{color:'#ef4444',fontWeight:700}}>⚠ Penalty ₹{s.penalty_deduction.toFixed(2)}</span>}
                               </div>
                             ) : <span style={{color:'var(--border-hi)'}}>—</span>}
                           </td>
@@ -1820,6 +1886,30 @@
       setTesting(false);
     };
 
+    const [testingTpl, setTestingTpl] = useState('');
+    const testTemplate = async (template) => {
+      if(!testTo){ setMsg({type:'error',text:'Enter a test email address above first.'}); return; }
+      setTestingTpl(template); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/email-settings/test-template`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({to:testTo,template})});
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error);
+        setMsg({type:'success',text:d.message}); loadLogs();
+      } catch(e){setMsg({type:'error',text:e.message});}
+      setTestingTpl('');
+    };
+
+    const TEMPLATE_LIST = [
+      { key:'new_order',          label:'🟢 New Order (Customer)',        desc:'Fires on order creation via webhook — WhatsApp confirm button' },
+      { key:'confirmed_customer', label:'✅ Order Confirmed (Customer)',   desc:'Fires when stage → Confirmed' },
+      { key:'confirmed_vendor',   label:'📦 Order Confirmed (Vendor)',     desc:'Fires when stage → Confirmed, sent to each vendor' },
+      { key:'partial_vendor',     label:'💛 Partial/Advance (Vendor)',     desc:'Fires when advance amount saved — updated COD breakdown' },
+      { key:'transit',            label:'🚚 In Transit (Customer)',        desc:'Fires when stage → In Transit' },
+      { key:'delivered_customer', label:'🎉 Delivered (Customer)',         desc:'Fires when stage → Delivered' },
+      { key:'delivered_vendor',   label:'✔ Delivered (Vendor)',           desc:'Fires when stage → Delivered, sent to each vendor' },
+      { key:'delivered_admin',    label:'🔔 Delivered (Admin)',            desc:'Fires when stage → Delivered, sent to admin email' },
+    ];
+
     const saveVendorEmail = async (name) => {
       setSavingV(v=>({...v,[name]:true}));
       await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/email`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({email:vendEmails[name]||''})});
@@ -1925,6 +2015,28 @@
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Template Test Buttons */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><span className="card-title">🧪 Test Email Templates</span></div>
+          <div style={{padding:16}}>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:12}}>Enter a test email address in the SMTP section above, then click any template below to send a preview to that address.</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              {TEMPLATE_LIST.map(t=>(
+                <div key={t.key} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text)',marginBottom:2}}>{t.label}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)'}}>{t.desc}</div>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" style={{whiteSpace:'nowrap',flexShrink:0}}
+                    onClick={()=>testTemplate(t.key)} disabled={testingTpl===t.key||!!testingTpl}>
+                    {testingTpl===t.key?'Sending…':'Send Test'}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -2108,6 +2220,165 @@
   }
 
   /* ══════════════════════════════════
+     PENALTY MANAGER
+  ══════════════════════════════════ */
+  function PenaltyManager({ token }) {
+    const [penalties, setPenalties] = useState([]);
+    const [loading, setLoading]     = useState(true);
+    const [filter, setFilter]       = useState('pending');
+    const [modal, setModal]         = useState(null); // {penalty, action}
+    const [amount, setAmount]       = useState('');
+    const [note, setNote]           = useState('');
+    const [saving, setSaving]       = useState(false);
+    const [testForm, setTestForm]   = useState({ shopify_id:'', vendor_name:'', order_name:'' });
+    const [testMsg, setTestMsg]     = useState('');
+
+    const load = () => {
+      setLoading(true);
+      fetch(`/admin/penalties?status=${filter}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>{ setPenalties(d.penalties||[]); setLoading(false); });
+    };
+    useEffect(load, [filter]);
+
+    const openModal = (p, action) => { setModal({p, action}); setAmount(action==='confirm'?'500':''); setNote(''); };
+
+    const submit = async () => {
+      setSaving(true);
+      await fetch(`/admin/penalties/${modal.p.id}`, {
+        method:'PUT', headers:{'Content-Type':'application/json', Authorization:'Bearer '+token},
+        body: JSON.stringify({ action: modal.action, penalty_amount: amount, admin_note: note })
+      });
+      setSaving(false);
+      setModal(null);
+      load();
+    };
+
+    const triggerTest = async () => {
+      if (!testForm.shopify_id || !testForm.vendor_name) { setTestMsg('Fill shopify_id and vendor_name.'); return; }
+      const r = await fetch('/admin/penalties/test-trigger', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify(testForm) });
+      const d = await r.json();
+      setTestMsg(d.message || d.error);
+      if (d.success) { setTestForm({ shopify_id:'', vendor_name:'', order_name:'' }); load(); }
+    };
+    const runCron = async () => {
+      const r = await fetch('/admin/penalties/run-cron', { method:'POST', headers:{Authorization:'Bearer '+token} });
+      const d = await r.json();
+      setTestMsg('Cron ran — check for new penalties.');
+      load();
+    };
+
+    const statusColor = s => s==='pending'?'#f59e0b':s==='confirmed'?'#ef4444':'#6b7280';
+    const ago = ts => { const h=Math.floor((Date.now()-ts)/3600000); return h<24?`${h}h ago`:`${Math.floor(h/24)}d ago`; };
+
+    return (
+      <div style={{padding:'24px',maxWidth:900}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+          <h2 style={{margin:0,fontSize:20,color:'var(--text)'}}>⚠️ Vendor Penalties</h2>
+          <div style={{display:'flex',gap:8}}>
+            {['pending','confirmed','cancelled'].map(s=>(
+              <button key={s} onClick={()=>setFilter(s)} className={`btn btn-sm ${filter===s?'btn-primary':'btn-ghost'}`}
+                style={{textTransform:'capitalize'}}>{s}</button>
+            ))}
+            <button className="btn btn-sm btn-ghost" onClick={runCron} title="Force-run the 24hr/48hr check now">↻ Run Cron</button>
+          </div>
+        </div>
+
+        {/* Test trigger panel */}
+        <div style={{background:'var(--bg-card)',border:'1px dashed #334155',borderRadius:10,padding:16,marginBottom:20}}>
+          <div style={{fontSize:12,fontWeight:700,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:1}}>🧪 Test — Manually Trigger a Penalty</div>
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+            <div>
+              <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Shopify Order ID</label>
+              <input className="input" style={{width:140}} placeholder="e.g. 6781234567890" value={testForm.shopify_id} onChange={e=>setTestForm(f=>({...f,shopify_id:e.target.value}))}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Vendor Name</label>
+              <input className="input" style={{width:160}} placeholder="e.g. My Vendor" value={testForm.vendor_name} onChange={e=>setTestForm(f=>({...f,vendor_name:e.target.value}))}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Order Name (optional)</label>
+              <input className="input" style={{width:120}} placeholder="e.g. #1001" value={testForm.order_name} onChange={e=>setTestForm(f=>({...f,order_name:e.target.value}))}/>
+            </div>
+            <button className="btn" style={{background:'#ef4444',color:'#fff'}} onClick={triggerTest}>Trigger Test Penalty</button>
+            <button className="btn btn-ghost" onClick={async()=>{
+              if (!testForm.shopify_id || !testForm.vendor_name) { setTestMsg('Fill shopify_id and vendor_name.'); return; }
+              const r = await fetch('/admin/penalties/test-warning', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify(testForm) });
+              const d = await r.json();
+              setTestMsg(d.message || d.error);
+            }}>📧 Send Test Warning Email</button>
+          </div>
+          {testMsg && <div style={{marginTop:10,fontSize:12,color:'#f59e0b'}}>{testMsg}</div>}
+        </div>
+
+        {loading ? <div style={{color:'var(--text-muted)'}}>Loading...</div> : penalties.length===0 ? (
+          <div style={{background:'var(--bg-card)',borderRadius:10,padding:40,textAlign:'center',color:'var(--text-muted)'}}>
+            No {filter} penalties.
+          </div>
+        ) : (
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            {penalties.map(p=>(
+              <div key={p.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:18}}>
+                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+                      <span style={{fontWeight:700,color:'var(--text)',fontSize:15}}>{p.order_name||p.shopify_id}</span>
+                      <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,background:statusColor(p.status)+'22',color:statusColor(p.status),fontWeight:600}}>
+                        {p.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:4}}>
+                      Vendor: <strong style={{color:'var(--text)'}}>{p.vendor_name}</strong>
+                    </div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>
+                      Triggered: {ago(p.triggered_at)} · Reason: <span style={{color:'#f59e0b'}}>{p.trigger_reason==='48hr_breach'?'48hr fulfilment breach':p.trigger_reason==='eta_breach'?'ETA date missed':p.trigger_reason}</span>
+                    </div>
+                    {p.penalty_amount>0 && <div style={{fontSize:13,color:'#ef4444',fontWeight:700,marginTop:4}}>Penalty: ₹{p.penalty_amount.toFixed(2)}</div>}
+                    {p.admin_note && <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>Note: {p.admin_note}</div>}
+                  </div>
+                  {p.status==='pending' && (
+                    <div style={{display:'flex',gap:8,flexShrink:0}}>
+                      <button className="btn btn-sm" style={{background:'#ef4444',color:'#fff'}} onClick={()=>openModal(p,'confirm')}>Confirm Penalty</button>
+                      <button className="btn btn-sm btn-ghost" onClick={()=>openModal(p,'cancel')}>Cancel</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {modal && (
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div style={{background:'var(--bg-card)',borderRadius:12,padding:28,width:400,maxWidth:'90vw'}}>
+              <h3 style={{margin:'0 0 16px',color:'var(--text)',fontSize:16}}>
+                {modal.action==='confirm'?'⚠️ Confirm Penalty':'✕ Cancel Penalty'} — {modal.p.order_name}
+              </h3>
+              {modal.action==='confirm' && (
+                <div style={{marginBottom:14}}>
+                  <label style={{fontSize:12,color:'var(--text-muted)',display:'block',marginBottom:6}}>Penalty Amount (₹)</label>
+                  <input className="input" type="number" min="0" value={amount} onChange={e=>setAmount(e.target.value)}
+                    placeholder="e.g. 500" style={{width:'100%',boxSizing:'border-box'}}/>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>This will be added to the vendor's next settlement invoice.</div>
+                </div>
+              )}
+              <div style={{marginBottom:18}}>
+                <label style={{fontSize:12,color:'var(--text-muted)',display:'block',marginBottom:6}}>Admin Note (optional)</label>
+                <textarea className="input" rows={3} value={note} onChange={e=>setNote(e.target.value)}
+                  placeholder="Reason for decision..." style={{width:'100%',boxSizing:'border-box',resize:'vertical'}}/>
+              </div>
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <button className="btn btn-ghost" onClick={()=>setModal(null)}>Cancel</button>
+                <button className="btn" style={{background:modal.action==='confirm'?'#ef4444':'#6b7280',color:'#fff'}}
+                  onClick={submit} disabled={saving}>{saving?'Saving...':modal.action==='confirm'?'Confirm & Apply':'Cancel Penalty'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      TAG MAPPINGS VIEW
   ══════════════════════════════════ */
   const ALL_STAGES = [
@@ -2119,6 +2390,7 @@
     { value:'transit',   label:'In Transit' },
     { value:'delivered', label:'Delivered' },
     { value:'rto',       label:'RTO' },
+    { value:'penalty',   label:'Penalty' },
     { value:'hold',      label:'On Hold' },
     { value:'cancelled', label:'Cancelled' },
   ];
@@ -2555,6 +2827,7 @@
       { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
       { id:'shippingcreds', icon:'🚚', label:'Shipping Partners', section:'finance' },
       { id:'emailsettings', icon:'📧', label:'Email Settings', section:'finance' },
+      { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -2607,6 +2880,7 @@
           {view==='tagmappings' && <TagMappings token={token}/>}
           {view==='shippingcreds' && <ShippingCreds token={token}/>}
           {view==='emailsettings' && <EmailSettings token={token}/>}
+          {view==='penalties'   && <PenaltyManager token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>
       </div>
