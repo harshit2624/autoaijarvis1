@@ -3251,11 +3251,13 @@ app.post("/vendor/shopify/connect", vendorAuth, async (req, res) => {
     // Exchange client credentials for access token
     const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ grant_type: 'client_credentials', client_id, client_secret }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'client_credentials', client_id, client_secret }),
     });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) throw new Error(tokenData.error_description || JSON.stringify(tokenData));
+    const rawText = await tokenRes.text();
+    let tokenData;
+    try { tokenData = JSON.parse(rawText); } catch { throw new Error(`Shopify returned unexpected response. Check your store URL and credentials.`); }
+    if (!tokenData.access_token) throw new Error(tokenData.error_description || tokenData.error || JSON.stringify(tokenData));
 
     // Verify it works
     const test = await vendorShopifyREST(cleanShop, tokenData.access_token, '/shop.json');
