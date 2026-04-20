@@ -192,6 +192,19 @@ try { db.exec("ALTER TABLE settlements ADD COLUMN total_shipping REAL DEFAULT 0"
 // ── Migrate: delivery_status tracking
 try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status_updated_at TEXT DEFAULT ''"); } catch {}
+// ── Migrate: email enabled toggle
+try { db.exec("ALTER TABLE email_settings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); } catch {}
+
+// ── Migrate: per-vendor stage tracking
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_vendor_stage (
+    shopify_id   TEXT NOT NULL,
+    vendor_name  TEXT NOT NULL,
+    stage        TEXT NOT NULL DEFAULT 'new',
+    updated_at   TEXT DEFAULT '',
+    PRIMARY KEY (shopify_id, vendor_name)
+  );
+`);
 
 // ── Tag mappings table ────────────────────────────────────────────────────
 db.exec(`
@@ -218,8 +231,9 @@ db.exec(`
     connected_at TEXT DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS email_settings (
-    id    INTEGER PRIMARY KEY CHECK (id = 1),
-    smtp  TEXT NOT NULL DEFAULT '{}'
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    smtp    TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1
   );
   CREATE TABLE IF NOT EXISTS email_log (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -612,28 +626,88 @@ function emailBase(title, accentColor, bodyHtml) {
 </div></body></html>`;
 }
 
-function templateOrderConfirmed({ order, forVendor = false }) {
+function templateOrderConfirmedCustomer({ order }) {
+  const isPrepaid = order.financial_status === 'paid';
   const items = (order.line_items || [])
-    .filter(li => !forVendor || li.vendor === forVendor)
     .map(li => `<tr><td>${li.title}${li.variant_title ? ` (${li.variant_title})` : ''}</td><td style="text-align:center">${li.quantity}</td><td style="text-align:right">₹${parseFloat(li.price).toFixed(2)}</td></tr>`)
     .join('');
-
   const body = `
-    <div class="subtitle">${forVendor ? `New order assigned to your brand` : `Your order has been confirmed`}</div>
+    <div class="subtitle">Your order has been confirmed and is being prepared.</div>
+    ${isPrepaid ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">✅ PREPAID ORDER — No payment due on delivery</div>` : ''}
     <div class="info-box">
       <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
       <div class="info-row"><span class="info-label">Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
-      <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${order.financial_status === 'paid' ? '✅ Prepaid' : '💵 Cash on Delivery'}</span></div>
-      <div class="info-row"><span class="info-label">Total Amount</span><span class="info-val" style="color:#10b981;font-size:16px">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
-      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val" style="max-width:220px">${order.shipping_address.name}, ${order.shipping_address.city}, ${order.shipping_address.province} ${order.shipping_address.zip}</span></div>` : ''}
+      <div class="info-row"><span class="info-label">Payment Mode</span><span class="info-val">${isPrepaid ? '✅ Prepaid (Paid Online)' : '💵 Cash on Delivery'}</span></div>
+      <div class="info-row"><span class="info-label">Order Total</span><span class="info-val" style="color:#10b981;font-size:16px;font-weight:800">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
+      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address.name}, ${order.shipping_address.city}, ${order.shipping_address.province} ${order.shipping_address.zip}</span></div>` : ''}
     </div>
     <table class="items-table">
       <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th></tr></thead>
       <tbody>${items}</tbody>
     </table>
-    ${!forVendor ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">We'll notify you once your order is shipped. Thank you for shopping with CrosCrow!</p>` : `<p style="font-size:13px;color:#6b7280;line-height:1.7">Please prepare this order for dispatch at the earliest. The customer is waiting!</p>`}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">We'll notify you once your order is shipped. Thank you for shopping with CrosCrow!</p>
   `;
-  return emailBase(forVendor ? `New Order: ${order.name}` : `Order Confirmed: ${order.name}`, '#10b981', body);
+  return emailBase(`Order Confirmed: ${order.name}`, '#10b981', body);
+}
+
+function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
+  const isPrepaid   = order.financial_status === 'paid';
+  const myItems     = (order.line_items || []).filter(li => li.vendor === vendorName);
+  const subTotal    = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+  const shipping    = parseFloat(order.total_shipping_price_set?.shop_money?.amount || 0);
+  const advance     = parseFloat(meta.advance_paid || 0);
+  const codAmount   = isPrepaid ? 0 : Math.max(0, subTotal + shipping - advance);
+
+  const itemRows = myItems.map(li =>
+    `<tr><td>${li.title}${li.variant_title ? ` (${li.variant_title})` : ''}<br><span style="color:#9ca3af;font-size:11px">SKU: ${li.sku || '—'}</span></td><td style="text-align:center">${li.quantity}</td><td style="text-align:right">₹${parseFloat(li.price).toFixed(2)}</td><td style="text-align:right;color:#10b981">₹${(parseFloat(li.price) * li.quantity).toFixed(2)}</td></tr>`
+  ).join('');
+
+  const addr = order.shipping_address;
+
+  const body = `
+    <div class="subtitle">A new order has been assigned to <strong>${vendorName}</strong>. Please fulfil within 24 hours.</div>
+
+    ${isPrepaid
+      ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">✅ PREPAID ORDER — Payment already collected. DO NOT collect cash on delivery.</div>`
+      : `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#92400e;font-size:14px;letter-spacing:1px;">💵 COD ORDER — Collect ₹${codAmount.toFixed(2)} on delivery.</div>`
+    }
+
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Order Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
+      ${addr ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
+      ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
+    </div>
+
+    <table class="items-table">
+      <thead><tr><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Total</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+
+    <!-- Amount Breakdown -->
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px;">
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">${advance > 0 ? `₹${advance.toFixed(2)}` : '—'}</td></tr>
+      <tr style="background:#f8fafc"><td style="padding:10px;font-weight:800;font-size:14px;color:#1a2a3a;border-radius:4px 0 0 4px">
+        ${isPrepaid ? '✅ COD to Collect' : '💵 COD to Collect'}
+      </td><td style="text-align:right;padding:10px;font-weight:800;font-size:16px;border-radius:0 4px 4px 0;color:${isPrepaid ? '#10b981' : '#dc2626'}">
+        ${isPrepaid ? '₹0.00 (Prepaid)' : `₹${codAmount.toFixed(2)}`}
+      </td></tr>
+    </table>
+
+    <!-- 24hr Warning -->
+    <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:8px;">
+      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px;">⚠️ Action Required — Fulfil Within 24 Hours</div>
+      <div style="font-size:12px;color:#7f1d1d;line-height:1.7">
+        Please pack and hand over this order to the courier within <strong>24 hours</strong> of receiving this email.
+        Late fulfilment may result in penalties and could affect your seller rating on CrosCrow.
+        If you are unable to fulfil, contact us immediately at <a href="mailto:${order.email||''}" style="color:#991b1b">support@croscrow.com</a>.
+      </div>
+    </div>
+  `;
+  return emailBase(`New Order: ${order.name} — Action Required`, '#6366f1', body);
 }
 
 function templateInTransit({ order, awb, courier }) {
@@ -674,6 +748,11 @@ function templateDelivered({ order, forRole = 'customer' }) {
 
 // ── Send email helper ─────────────────────────────────────────────────────
 async function sendEmail({ to, subject, html, shopifyId, trigger }) {
+  const settingsRow = db.prepare("SELECT enabled FROM email_settings WHERE id=1").get();
+  if (settingsRow && settingsRow.enabled === 0) {
+    logEmail(shopifyId, trigger, to, subject, 'skipped', 'Emails disabled globally');
+    return;
+  }
   const cfg = getSmtpConfig();
   if (!cfg?.host || !cfg?.user || !cfg?.pass) {
     logEmail(shopifyId, trigger, to, subject, 'skipped', 'SMTP not configured');
@@ -710,11 +789,12 @@ async function fireStageEmails(shopifyId, newStage) {
 
     if (newStage === 'confirmed') {
       // Customer
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmed({ order }), shopifyId, trigger: 'confirmed' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmedCustomer({ order }), shopifyId, trigger: 'confirmed' });
       // Each vendor
       for (const vendor of vendors) {
         const vendorRow = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
-        if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name}`, html: templateOrderConfirmed({ order, forVendor: vendor }), shopifyId, trigger: 'confirmed_vendor' });
+        const vendorMeta = db.prepare("SELECT advance_paid FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
+        if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name} — Action Required`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
       }
     }
 
@@ -1422,7 +1502,7 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
     const metas  = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
 
-    const STAGES = ["new","confirmed","ready","pickup","transit","delivered","rto","hold","cancelled"];
+    const STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
     const stageCounts = Object.fromEntries(STAGES.map(s => [s, 0]));
     let totalRevenue = 0;
 
@@ -1453,6 +1533,9 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
     const raw    = await fetchAllOrders("any", created_at_min || "2000-01-01T00:00:00Z", created_at_max || null);
     const metas  = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const allVS  = db.prepare("SELECT shopify_id, vendor_name, stage FROM order_vendor_stage").all();
+    const vsMap  = {}; // { shopify_id: { vendor_name: stage } }
+    allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r.stage; });
 
     let orders = raw.map(o => {
       const meta    = metaMap[String(o.id)] || {};
@@ -1474,6 +1557,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         financial:      o.financial_status || "",
         vendors,
         stage:          meta.stage || "new",
+        vendorStages:   vsMap[String(o.id)] || {},
         paymentType:    meta.payment_type || "cod",
         advancePaid:    meta.advance_paid || 0,
         notes:          meta.notes || "",
@@ -1491,7 +1575,9 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
       };
     });
 
-    if (stage && stage !== "all") orders = orders.filter(o => o.stage === stage);
+    if (stage && stage !== "all") orders = orders.filter(o =>
+      o.stage === stage || Object.values(o.vendorStages).includes(stage)
+    );
     if (vendor) orders = orders.filter(o => o.vendors.some(v => v.toLowerCase() === vendor.toLowerCase()));
 
     res.json({ orders, total: orders.length });
@@ -1505,16 +1591,36 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
 app.put("/admin/orders/:id/stage", adminAuth, (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
-  const VALID = ["new","confirmed","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   db.prepare(`INSERT INTO order_meta (shopify_id, stage, updated_at) VALUES (?,?,?)
     ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
     .run(id, stage, new Date().toISOString());
   auditLog("admin", "stage_change", id, { stage });
-  // Fire emails async — don't block response
   fireStageEmails(id, stage).catch(()=>{});
   res.json({ success: true, stage });
+});
+
+// ── PUT /admin/orders/:id/vendor-stage — set stage for one vendor in an order ──
+app.put("/admin/orders/:id/vendor-stage", adminAuth, (req, res) => {
+  const { id } = req.params;
+  const { vendor_name, stage } = req.body || {};
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
+  if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
+
+  db.prepare(`INSERT INTO order_vendor_stage (shopify_id, vendor_name, stage, updated_at) VALUES (?,?,?,?)
+    ON CONFLICT(shopify_id, vendor_name) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
+    .run(id, vendor_name, stage, new Date().toISOString());
+  auditLog("admin", "vendor_stage_change", id, { vendor_name, stage });
+  res.json({ success: true, vendor_name, stage });
+});
+
+// ── GET /admin/orders/:id/vendor-stages ──────────────────────────────────
+app.get("/admin/orders/:id/vendor-stages", adminAuth, (req, res) => {
+  const rows = db.prepare("SELECT vendor_name, stage, updated_at FROM order_vendor_stage WHERE shopify_id=?").all(req.params.id);
+  res.json({ vendorStages: Object.fromEntries(rows.map(r => [r.vendor_name, r.stage])) });
 });
 
 // ── PUT /admin/orders/:id/meta ────────────────────────────────────────────
@@ -1550,6 +1656,7 @@ app.get("/admin/vendors", adminAuth, async (req, res) => {
       name:           v,
       commission_pct: cfgMap[v]?.commission_pct ?? 20,
       active:         cfgMap[v]?.active ?? 1,
+      email:          cfgMap[v]?.email || '',
     }))});
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1586,11 +1693,15 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
     const metas  = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    // Per-vendor stage overrides
+    const vendorStages = db.prepare("SELECT shopify_id, stage FROM order_vendor_stage WHERE vendor_name=?").all(vendor_name);
+    const vendorStageMap = Object.fromEntries(vendorStages.map(r => [r.shopify_id, r.stage]));
 
-    // Only settle delivered orders
+    // Only settle delivered orders — use vendor-specific stage if set, else order stage
     const vendorDelivered = allOrders.filter(o => {
-      const meta = metaMap[String(o.id)];
-      return (meta?.stage || "new") === "delivered" &&
+      const sid = String(o.id);
+      const effectiveStage = vendorStageMap[sid] || metaMap[sid]?.stage || "new";
+      return effectiveStage === "delivered" &&
         (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName);
     });
 
@@ -1674,10 +1785,17 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     const settledMap = Object.fromEntries(paidSettlements.map(s => [s.vendor_name, s.total_settled]));
 
     const vendorMap = {};
+    // Load all per-vendor stage overrides
+    const allVendorStages = db.prepare("SELECT shopify_id, vendor_name, stage FROM order_vendor_stage").all();
+    const allVendorStageMap = {}; // { shopify_id: { vendor_name: stage } }
+    allVendorStages.forEach(r => {
+      if (!allVendorStageMap[r.shopify_id]) allVendorStageMap[r.shopify_id] = {};
+      allVendorStageMap[r.shopify_id][r.vendor_name] = r.stage;
+    });
 
     allOrders.forEach(o => {
       const meta = metaMap[String(o.id)] || {};
-      if ((meta.stage || "new") !== "delivered") return;
+      const orderStage = meta.stage || "new";
       const payType = meta.payment_type || "cod";
       const isCod = payType !== "prepaid";
       // Shipping from Shopify order, split equally by unique vendor count
@@ -1688,6 +1806,9 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       (o.line_items || []).forEach(li => {
         const vendor = li.vendor;
         if (!vendor) return;
+        // Use vendor-specific stage if set, else fall back to order stage
+        const effectiveStage = allVendorStageMap[String(o.id)]?.[vendor] || orderStage;
+        if (effectiveStage !== "delivered") return;
         if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0 };
         vendorMap[vendor].orders.add(String(o.id));
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
@@ -1876,7 +1997,7 @@ app.put("/admin/tag-mappings/:id/priority", adminAuth, (req, res) => {
 app.post("/admin/tag-mappings", adminAuth, (req, res) => {
   const { shopify_tag, stage, priority = 99 } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
-  const VALID_STAGES = ["new","confirmed","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID_STAGES.includes(stage)) return res.status(400).json({ error: `Invalid stage '${stage}'. Valid: ${VALID_STAGES.join(", ")}` });
   const existing = db.prepare("SELECT id FROM tag_mappings WHERE lower(shopify_tag)=lower(?)").get(shopify_tag);
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
@@ -1956,10 +2077,18 @@ app.get("/admin/audit", adminAuth, (req, res) => {
 
 // ── Email Settings ────────────────────────────────────────────────────────
 app.get("/admin/email-settings", adminAuth, (req, res) => {
-  const row = db.prepare("SELECT smtp FROM email_settings WHERE id=1").get();
+  const row = db.prepare("SELECT smtp, enabled FROM email_settings WHERE id=1").get();
   const smtp = row ? JSON.parse(row.smtp) : {};
-  // Mask password
-  res.json({ smtp: { ...smtp, pass: smtp.pass ? '••••••••' : '' } });
+  const enabled = row ? (row.enabled !== 0) : true;
+  res.json({ smtp: { ...smtp, pass: smtp.pass ? '••••••••' : '' }, enabled });
+});
+
+app.post("/admin/email-settings/toggle", adminAuth, (req, res) => {
+  const { enabled } = req.body || {};
+  const val = enabled ? 1 : 0;
+  db.prepare("INSERT INTO email_settings (id, smtp, enabled) VALUES (1, '{}', ?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled")
+    .run(val);
+  res.json({ ok: true, enabled: val === 1 });
 });
 
 app.post("/admin/email-settings", adminAuth, (req, res) => {
@@ -2000,7 +2129,7 @@ app.get("/admin/email-log", adminAuth, (req, res) => {
 
 // Vendor email update
 app.put("/admin/vendors/:name/email", adminAuth, (req, res) => {
-  const { name } = req.params;
+  const name = decodeURIComponent(req.params.name);
   const { email } = req.body || {};
   db.prepare("INSERT INTO vendor_config (vendor_name, email) VALUES (?,?) ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email")
     .run(name, email || '');

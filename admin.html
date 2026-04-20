@@ -152,6 +152,7 @@
     .b-transit   { background: var(--orange-bg);  color: var(--orange); } .b-transit   .bdot { background: var(--orange); }
     .b-delivered { background: var(--green-dim);  color: var(--green);  } .b-delivered .bdot { background: var(--green); }
     .b-rto       { background: var(--red-bg);     color: var(--red);    } .b-rto       .bdot { background: var(--red); }
+    .b-partial   { background: #1a1200;           color: #fbbf24;       } .b-partial   .bdot { background: #fbbf24; }
     .b-hold      { background: var(--purple-bg);  color: var(--purple); } .b-hold      .bdot { background: var(--purple); }
     .b-cancelled { background: var(--red-bg);     color: var(--red);    } .b-cancelled .bdot { background: var(--red); }
     .b-pending   { background: var(--yellow-bg);  color: var(--yellow); } .b-pending   .bdot { background: var(--yellow); }
@@ -302,6 +303,7 @@
     { id:'all',       label:'All Orders',     color:'indigo', icon:'◈' },
     { id:'new',       label:'New',            color:'indigo', icon:'◉' },
     { id:'confirmed', label:'Confirmed',      color:'cyan',   icon:'✓' },
+    { id:'partial',   label:'Partial/Advance', color:'yellow', icon:'₹' },
     { id:'ready',     label:'Ready to Ship',  color:'teal',   icon:'⬡' },
     { id:'pickup',    label:'Pickup Pending', color:'yellow', icon:'⌛' },
     { id:'transit',   label:'In Transit',     color:'orange', icon:'↑' },
@@ -311,7 +313,16 @@
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
   ];
 
-  function StageBadge({ stage='new' }) {
+  function StageBadge({ stage='new', vendorStages={} }) {
+    const vs = Object.values(vendorStages);
+    const isMixed = vs.length > 1 && new Set(vs).size > 1;
+    if (isMixed) return (
+      <span style={{display:'inline-flex',flexDirection:'column',gap:2}}>
+        <span className="badge" style={{background:'#1a1030',color:'#a78bfa',border:'1px solid #6d28d9',fontSize:9}}>
+          <span className="bdot" style={{background:'#a78bfa'}}/>MIXED
+        </span>
+      </span>
+    );
     return <span className={`badge b-${stage}`}><span className="bdot"/>{stage.toUpperCase()}</span>;
   }
 
@@ -334,7 +345,9 @@
      ORDER DETAIL / EDIT MODAL
   ══════════════════════════════════ */
   function OrderModal({ order, token, onClose, onUpdated }) {
-    const [stage,      setStage]      = useState(order.stage || 'new');
+    const [stage,       setStage]      = useState(order.stage || 'new');
+    const [vendorStages,setVendorStages]= useState({});
+    const [savingVS,    setSavingVS]   = useState({});
     const [payType,    setPayType]    = useState(order.paymentType || 'cod');
     const [advance,    setAdvance]    = useState(String(order.advancePaid || ''));
     const [notes,      setNotes]      = useState(order.notes || '');
@@ -348,6 +361,29 @@
     const [tags,       setTags]       = useState((order.tags||'').split(',').map(t=>t.trim()).filter(Boolean));
     const [tagInput,   setTagInput]   = useState('');
     const [msg,        setMsg]        = useState(null);
+
+    useEffect(()=>{
+      if ((order.vendors||[]).length > 1) {
+        fetch(`${API}/admin/orders/${order.shopifyId}/vendor-stages`,{headers:{Authorization:`Bearer ${token}`}})
+          .then(r=>r.json()).then(d=>{
+            const vs = {};
+            (order.vendors||[]).forEach(v=>{ vs[v] = d.vendorStages?.[v] || order.stage || 'new'; });
+            setVendorStages(vs);
+          }).catch(()=>{});
+      }
+    },[order.shopifyId]);
+
+    const saveVendorStage = async (vendor) => {
+      setSavingVS(p=>({...p,[vendor]:true}));
+      try {
+        await fetch(`${API}/admin/orders/${order.shopifyId}/vendor-stage`,{
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ vendor_name: vendor, stage: vendorStages[vendor] }),
+        });
+        setMsg({type:'success', text:`Stage saved for ${vendor}.`});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSavingVS(p=>({...p,[vendor]:false}));
+    };
 
     const refreshDelivery = async () => {
       setRefreshing(true);
@@ -461,11 +497,37 @@
             <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
               <div className="detail-box-title" style={{marginBottom:14}}>CrosCrow Metadata</div>
               <div className="form-grid">
-                <div>
-                  <label className="form-label">Stage / Status</label>
+                <div style={{gridColumn: (order.vendors||[]).length > 1 ? '1/-1' : undefined}}>
+                  <label className="form-label">
+                    {(order.vendors||[]).length > 1 ? '📦 Order Stage (overall)' : 'Stage / Status'}
+                  </label>
                   <select className="form-select" value={stage} onChange={e=>setStage(e.target.value)}>
                     {STAGES.filter(s=>s.id!=='all').map(s=><option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
                   </select>
+                  {(order.vendors||[]).length > 1 && (
+                    <div style={{marginTop:12,background:'#0a1520',border:'1px solid #1a3a5a',borderRadius:8,padding:12}}>
+                      <div style={{fontSize:11,color:'#6fa8d0',fontWeight:700,marginBottom:10,letterSpacing:1}}>
+                        🏪 PER-VENDOR STAGE — set individually for settlement
+                      </div>
+                      {(order.vendors||[]).map(v=>(
+                        <div key={v} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                          <span style={{fontSize:11,color:'var(--text-muted)',minWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v}</span>
+                          <select className="form-select" style={{flex:1,fontSize:11,padding:'4px 8px'}}
+                            value={vendorStages[v]||'new'}
+                            onChange={e=>setVendorStages(p=>({...p,[v]:e.target.value}))}>
+                            {STAGES.filter(s=>s.id!=='all').map(s=><option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
+                          </select>
+                          <button className="btn btn-indigo" style={{fontSize:10,padding:'4px 10px',whiteSpace:'nowrap'}}
+                            onClick={()=>saveVendorStage(v)} disabled={savingVS[v]}>
+                            {savingVS[v]?'…':'Save'}
+                          </button>
+                        </div>
+                      ))}
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>
+                        Settlement uses per-vendor stage. Only vendors marked Delivered are settled.
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="form-label">Payment Type</label>
@@ -875,9 +937,12 @@
 
     useEffect(()=>{ load(); },[load]);
 
+    const orderMatchesStage = (o, s) =>
+      s === 'all' || o.stage === s || Object.values(o.vendorStages||{}).includes(s);
+
     const filtered = useMemo(()=>{
       let l=[...orders];
-      if(stage && stage!=='all') l=l.filter(o=>o.stage===stage);
+      if(stage && stage!=='all') l=l.filter(o=>orderMatchesStage(o,stage));
       if(search.trim()){const q=search.toLowerCase(); l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.vendors||[]).some(v=>v.toLowerCase().includes(q)));}
       return l;
     },[orders,stage,search]);
@@ -891,7 +956,7 @@
         <div className="stage-tabs">
           {STAGES.map(s=>(
             <button key={s.id} className={`stab ${stage===s.id?'active':''}`} onClick={()=>{setStage(s.id);setPage(1);}}>
-              {s.icon} {s.label} {s.id!=='all'&&orders.length>0?`(${orders.filter(o=>o.stage===s.id).length})`:stage==='all'?`(${orders.length})`:''}
+              {s.icon} {s.label} {s.id!=='all'&&orders.length>0?`(${orders.filter(o=>orderMatchesStage(o,s.id)).length})`:stage==='all'?`(${orders.length})`:''}
             </button>
           ))}
         </div>
@@ -947,7 +1012,19 @@
                      <td className="td-amt">{fmtCur(o.orderValue)}</td>
                      <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
                      <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
-                     <td><StageBadge stage={o.stage}/></td>
+                     <td>
+                       <StageBadge stage={o.stage} vendorStages={o.vendorStages||{}}/>
+                       {Object.keys(o.vendorStages||{}).length > 1 && (
+                         <div style={{marginTop:3,display:'flex',flexDirection:'column',gap:2}}>
+                           {Object.entries(o.vendorStages).map(([v,s])=>(
+                             <div key={v} style={{fontSize:9,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:3}}>
+                               <span style={{maxWidth:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.split(' ')[0]}</span>
+                               <span className={`badge b-${s}`} style={{fontSize:8,padding:'1px 5px'}}>{s.toUpperCase()}</span>
+                             </div>
+                           ))}
+                         </div>
+                       )}
+                     </td>
                      <td>
                        {o.awb ? (
                          <div>
@@ -1699,10 +1776,12 @@
     const [vendEmails,setVendEmails]= useState({});
     const [savingV,   setSavingV]   = useState({});
     const [msg,       setMsg]       = useState(null);
+    const [emailEnabled, setEmailEnabled] = useState(true);
+    const [togglingEmail, setTogglingEmail] = useState(false);
 
     useEffect(()=>{
       fetch(`${API}/admin/email-settings`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>{ if(d.smtp) setSmtp(s=>({...s,...d.smtp})); }).catch(()=>{});
+        .then(r=>r.json()).then(d=>{ if(d.smtp) setSmtp(s=>({...s,...d.smtp})); if(d.enabled!==undefined) setEmailEnabled(d.enabled); }).catch(()=>{});
       fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{
           setVendors(d.vendors||[]);
@@ -1757,8 +1836,35 @@
 
     const statusColor = s => s==='sent'?'#10b981':s==='failed'?'#f87171':'#fbbf24';
 
+    const toggleEmail = async () => {
+      setTogglingEmail(true);
+      const newVal = !emailEnabled;
+      try {
+        await fetch(`${API}/admin/email-settings/toggle`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({enabled:newVal})});
+        setEmailEnabled(newVal);
+        setMsg({type: newVal ? 'success' : 'error', text: newVal ? 'Emails enabled — notifications will fire on stage changes.' : 'Emails disabled — no notifications will be sent until re-enabled.'});
+      } catch(e){ setMsg({type:'error',text:'Toggle failed: '+e.message}); }
+      setTogglingEmail(false);
+    };
+
     return (
       <div className="page">
+        {/* Global Email Toggle Banner */}
+        <div style={{background: emailEnabled ? '#0a2010' : '#200a0a', border:`1px solid ${emailEnabled?'#166534':'#7f1d1d'}`, borderRadius:10, padding:'12px 16px', marginBottom:16, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontWeight:700, color: emailEnabled ? '#4ade80' : '#f87171', fontSize:14}}>
+              {emailEnabled ? '✅ Emails are ON' : '🔕 Emails are OFF'}
+            </div>
+            <div style={{fontSize:12, color:'var(--text-muted)', marginTop:2}}>
+              {emailEnabled ? 'Notifications fire automatically on order stage changes.' : 'No emails will be sent. Safe to bulk-sync tags without spamming customers.'}
+            </div>
+          </div>
+          <button onClick={toggleEmail} disabled={togglingEmail}
+            style={{background: emailEnabled ? '#7f1d1d' : '#14532d', color:'#fff', border:'none', borderRadius:8, padding:'8px 18px', fontWeight:700, cursor:'pointer', fontSize:13, whiteSpace:'nowrap'}}>
+            {togglingEmail ? '...' : emailEnabled ? '🔕 Turn Off' : '✅ Turn On'}
+          </button>
+        </div>
+
         <div style={{background:'#0d1820',border:'1px solid #1a3a5a',borderRadius:10,padding:'12px 16px',marginBottom:20,fontSize:12,color:'var(--text)'}}>
           <div style={{fontWeight:700,color:'#6366f1',marginBottom:6}}>📧 Email Notifications</div>
           <div style={{lineHeight:1.8,color:'var(--text-muted)'}}>
@@ -2005,16 +2111,16 @@
      TAG MAPPINGS VIEW
   ══════════════════════════════════ */
   const ALL_STAGES = [
-    { value:'new',              label:'New' },
-    { value:'confirmed',        label:'Confirmed' },
-    { value:'processing',       label:'Processing' },
-    { value:'ready_to_ship',    label:'Ready to Ship' },
-    { value:'shipped',          label:'Shipped' },
-    { value:'out_for_delivery', label:'Out for Delivery' },
-    { value:'delivered',        label:'Delivered' },
-    { value:'cancelled',        label:'Cancelled' },
-    { value:'returned',         label:'Returned' },
-    { value:'rto',              label:'RTO' },
+    { value:'new',       label:'New' },
+    { value:'confirmed', label:'Confirmed' },
+    { value:'partial',   label:'Partial/Advance' },
+    { value:'ready',     label:'Ready to Ship' },
+    { value:'pickup',    label:'Pickup Pending' },
+    { value:'transit',   label:'In Transit' },
+    { value:'delivered', label:'Delivered' },
+    { value:'rto',       label:'RTO' },
+    { value:'hold',      label:'On Hold' },
+    { value:'cancelled', label:'Cancelled' },
   ];
 
   function TagMappings({ token }) {
