@@ -18,7 +18,105 @@ const crypto     = require("crypto");
 const fetch      = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 const Database   = require("better-sqlite3");
 const nodemailer = require("nodemailer");
+const { MongoClient } = require("mongodb");
 require("dotenv").config();
+
+// ── MongoDB connection ─────────────────────────────────────────────────────
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sicos2725:Harshit4321@cluster27.i8cmlu4.mongodb.net/jarvis?appName=Cluster27";
+let mdb = null; // MongoDB database handle — null until connected
+
+MongoClient.connect(MONGO_URI, { tls: true, tlsAllowInvalidCertificates: false }).then(async client => {
+  mdb = client.db("jarvis");
+  console.log("✅  MongoDB connected");
+
+  // Ensure indexes
+  const idxOps = [
+    mdb.collection("vendor_config").createIndex({ vendor_name: 1 }, { unique: true }),
+    mdb.collection("order_meta").createIndex({ shopify_id: 1 }, { unique: true }),
+    mdb.collection("email_settings").createIndex({ id: 1 }, { unique: true }),
+    mdb.collection("vendor_shopify_connections").createIndex({ vendor_name: 1 }, { unique: true }),
+    mdb.collection("vendor_product_mappings").createIndex({ vendor_name: 1, vendor_variant_id: 1 }, { unique: true }),
+    mdb.collection("order_vendor_stage").createIndex({ shopify_id: 1, vendor_name: 1 }, { unique: true }),
+    mdb.collection("order_penalties").createIndex({ shopify_id: 1, vendor_name: 1 }),
+    mdb.collection("order_notes").createIndex({ shopify_id: 1 }),
+    mdb.collection("delay_remarks").createIndex({ shopify_id: 1, vendor_name: 1 }),
+    mdb.collection("croscrow_profile").createIndex({ id: 1 }, { unique: true }),
+    mdb.collection("vendor_profiles").createIndex({ vendor_name: 1 }, { unique: true }),
+    mdb.collection("tag_mappings").createIndex({ tag: 1 }, { unique: true }),
+    mdb.collection("global_shipping_creds").createIndex({ partner: 1 }, { unique: true }),
+    mdb.collection("vendor_shipping_partners").createIndex({ vendor_name: 1, partner: 1 }, { unique: true }),
+  ];
+  await Promise.all(idxOps.map(p => p.catch(()=>{})));
+
+  // ── Restore from MongoDB into SQLite on startup ──────────────────────────
+  await mongoRestoreToSQLite();
+
+  // ── Periodic sync: SQLite → MongoDB every 3 minutes ─────────────────────
+  setInterval(syncSQLiteToMongo, 3 * 60 * 1000);
+
+}).catch(err => {
+  console.warn("⚠️  MongoDB connection failed — falling back to SQLite only:", err.message);
+});
+
+// ── Tables to sync and their primary keys ─────────────────────────────────
+const SYNC_TABLES = [
+  { name: 'vendor_config',             pk: 'vendor_name' },
+  { name: 'email_settings',            pk: 'id' },
+  { name: 'order_meta',                pk: 'shopify_id' },
+  { name: 'order_vendor_stage',        pk: null, compound: ['shopify_id','vendor_name'] },
+  { name: 'vendor_shopify_connections',pk: 'vendor_name' },
+  { name: 'vendor_product_mappings',   pk: null, compound: ['vendor_name','vendor_variant_id'] },
+  { name: 'order_penalties',           pk: 'id' },
+  { name: 'order_notes',               pk: 'id' },
+  { name: 'delay_remarks',             pk: 'id' },
+  { name: 'croscrow_profile',          pk: 'id' },
+  { name: 'vendor_profiles',           pk: 'vendor_name' },
+  { name: 'tag_mappings',              pk: 'tag' },
+  { name: 'global_shipping_creds',     pk: 'partner' },
+  { name: 'vendor_shipping_partners',  pk: null, compound: ['vendor_name','partner'] },
+];
+
+async function mongoRestoreToSQLite() {
+  if (!mdb) return;
+  console.log("🔄  Restoring data from MongoDB → SQLite...");
+  for (const t of SYNC_TABLES) {
+    try {
+      const docs = await mdb.collection(t.name).find({}, { projection: { _id: 0, _created: 0, _updated: 0 } }).toArray();
+      if (!docs.length) continue;
+      // Build INSERT OR REPLACE for each doc
+      for (const doc of docs) {
+        const keys = Object.keys(doc);
+        const placeholders = keys.map(() => '?').join(',');
+        const values = keys.map(k => doc[k]);
+        try {
+          db.prepare(`INSERT OR REPLACE INTO ${t.name} (${keys.join(',')}) VALUES (${placeholders})`).run(...values);
+        } catch {}
+      }
+      console.log(`   ✓ ${t.name}: restored ${docs.length} records`);
+    } catch (e) {
+      console.warn(`   ⚠ ${t.name}: restore failed —`, e.message);
+    }
+  }
+  console.log("✅  MongoDB restore complete");
+}
+
+async function syncSQLiteToMongo() {
+  if (!mdb) return;
+  for (const t of SYNC_TABLES) {
+    try {
+      const rows = db.prepare(`SELECT * FROM ${t.name}`).all();
+      for (const row of rows) {
+        let filter;
+        if (t.pk) {
+          filter = { [t.pk]: row[t.pk] };
+        } else {
+          filter = Object.fromEntries(t.compound.map(k => [k, row[k]]));
+        }
+        await mdb.collection(t.name).updateOne(filter, { $set: { ...row, _updated: new Date() } }, { upsert: true });
+      }
+    } catch {}
+  }
+}
 
 const app = express();
 
@@ -27,6 +125,19 @@ app.use(express.static('.'));
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
 app.use(express.json());
+
+// ── Sync to MongoDB after every mutating request ──────────────────────────
+const WRITE_METHODS = new Set(['POST','PUT','DELETE','PATCH']);
+app.use((req, res, next) => {
+  if (!WRITE_METHODS.has(req.method)) return next();
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    originalJson(body);
+    // Fire-and-forget sync after response sent
+    setImmediate(() => syncSQLiteToMongo().catch(()=>{}));
+  };
+  next();
+});
 
 // ── CORS — allow your deployed frontend URL ────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*").split(",").map(s => s.trim());
@@ -122,6 +233,45 @@ db.exec(`
     created_at TEXT
   );
 `);
+
+// ── MongoDB helpers — used when mdb is available ──────────────────────────
+// These wrap common patterns so routes can call mdb or fall back to SQLite
+
+async function mGet(collection, filter) {
+  if (!mdb) return null;
+  return mdb.collection(collection).findOne(filter);
+}
+
+async function mGetAll(collection, filter = {}, sort = {}) {
+  if (!mdb) return null;
+  return mdb.collection(collection).find(filter).sort(sort).toArray();
+}
+
+async function mUpsert(collection, filter, doc) {
+  if (!mdb) return;
+  await mdb.collection(collection).updateOne(filter, { $set: { ...doc, _updated: new Date() } }, { upsert: true });
+}
+
+async function mInsert(collection, doc) {
+  if (!mdb) return null;
+  const r = await mdb.collection(collection).insertOne({ ...doc, _created: new Date() });
+  return r.insertedId;
+}
+
+async function mUpdate(collection, filter, update) {
+  if (!mdb) return;
+  await mdb.collection(collection).updateOne(filter, { $set: update });
+}
+
+async function mDelete(collection, filter) {
+  if (!mdb) return;
+  await mdb.collection(collection).deleteOne(filter);
+}
+
+async function mDeleteMany(collection, filter) {
+  if (!mdb) return;
+  await mdb.collection(collection).deleteMany(filter);
+}
 
 // ── Commission + GST calculation ──────────────────────────────────────────
 const GST_RATE = 0.18;
