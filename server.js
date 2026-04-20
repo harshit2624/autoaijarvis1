@@ -3241,25 +3241,34 @@ function validateShopifyHmac(query) {
 }
 
 // ── Step 1: Vendor initiates OAuth (from vendor panel) ───────────────────
-// ── Vendor: connect via manual access token (replaces OAuth) ─────────────
+// ── Vendor: connect via client_id + secret (client credentials grant) ────
 app.post("/vendor/shopify/connect", vendorAuth, async (req, res) => {
-  const { shop, access_token } = req.body || {};
-  if (!shop || !access_token) return res.status(400).json({ error: "shop and access_token required." });
+  const { shop, client_id, client_secret } = req.body || {};
+  if (!shop || !client_id || !client_secret) return res.status(400).json({ error: "shop, client_id and client_secret required." });
   const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '').trim();
 
-  // Verify the token works by fetching shop info
   try {
-    const test = await vendorShopifyREST(cleanShop, access_token, '/shop.json');
-    if (!test.shop) throw new Error("Could not verify token — shop not found.");
+    // Exchange client credentials for access token
+    const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', client_id, client_secret }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error(tokenData.error_description || JSON.stringify(tokenData));
+
+    // Verify it works
+    const test = await vendorShopifyREST(cleanShop, tokenData.access_token, '/shop.json');
+    if (!test.shop) throw new Error("Token obtained but shop verification failed.");
+
+    db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (vendor_name, shop_domain, access_token, scope, installed_at) VALUES (?,?,?,?,?)`)
+      .run(req.vendor, cleanShop, tokenData.access_token, tokenData.scope || '', Date.now());
+
+    console.log(`✅ Vendor Shopify connected: ${req.vendor} → ${cleanShop}`);
+    res.json({ success: true, shop: cleanShop });
   } catch (e) {
-    return res.status(400).json({ error: `Token verification failed: ${e.message}` });
+    res.status(400).json({ error: `Connection failed: ${e.message}` });
   }
-
-  db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (vendor_name, shop_domain, access_token, scope, installed_at) VALUES (?,?,?,?,?)`)
-    .run(req.vendor, cleanShop, access_token, 'read_products,read_inventory,read_locations', Date.now());
-
-  console.log(`✅ Vendor Shopify connected (manual token): ${req.vendor} → ${cleanShop}`);
-  res.json({ success: true, shop: cleanShop });
 });
 
 // ── Vendor: check own connection status ───────────────────────────────────

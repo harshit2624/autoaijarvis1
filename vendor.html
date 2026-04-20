@@ -1715,7 +1715,8 @@
   function ShopifySync({ token: authToken, vendorName }) {
     const [status,    setStatus]    = useState(null);
     const [shop,      setShop]      = useState('');
-    const [token,     setToken]     = useState('');
+    const [clientId,  setClientId]  = useState('');
+    const [secret,    setSecret]    = useState('');
     const [connecting,setConnecting]= useState(false);
     const [products,  setProducts]  = useState([]);
     const [prodLoad,  setProdLoad]  = useState(false);
@@ -1738,16 +1739,16 @@
     }, []);
 
     const connect = async () => {
-      if (!shop.trim() || !token.trim()) { setMsg('Enter both your store URL and access token.'); return; }
+      if (!shop.trim() || !clientId.trim() || !secret.trim()) { setMsg('Fill in all three fields.'); return; }
       setConnecting(true); setMsg('');
       const r = await fetch(`${API}/vendor/shopify/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization:`Bearer ${authToken}` },
-        body: JSON.stringify({ shop: shop.trim(), access_token: token.trim() })
+        body: JSON.stringify({ shop: shop.trim(), client_id: clientId.trim(), client_secret: secret.trim() })
       });
       const d = await r.json();
       setConnecting(false);
-      if (d.success) { setMsg('✅ Store connected!'); setShop(''); setToken(''); loadStatus(); }
+      if (d.success) { setMsg('✅ Store connected!'); setShop(''); setClientId(''); setSecret(''); loadStatus(); }
       else setMsg(d.error || 'Connection failed.');
     };
 
@@ -1812,20 +1813,24 @@
 
             {/* Step guide */}
             <div style={{background:'var(--bg-hover)',borderRadius:8,padding:14,marginBottom:20,fontSize:12,color:'var(--text-muted)',lineHeight:2}}>
-              <div style={{fontWeight:700,color:'var(--text)',marginBottom:6}}>How to get your access token:</div>
+              <div style={{fontWeight:700,color:'var(--text)',marginBottom:6}}>How to get your credentials:</div>
               <div>1. Go to your Shopify Admin → <strong>Settings → Apps and sales channels</strong></div>
               <div>2. Click <strong>Develop apps</strong> → <strong>Create an app</strong> → name it "CrosCrow Sync"</div>
               <div>3. Click <strong>Configure Admin API scopes</strong> → enable: <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_products</code>, <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_inventory</code>, <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_locations</code></div>
-              <div>4. Click <strong>Save</strong> → <strong>Install app</strong> → <strong>Reveal token once</strong></div>
-              <div>5. Copy the token and paste it below</div>
+              <div>4. Click <strong>Save</strong> → <strong>Install app</strong></div>
+              <div>5. Go to <strong>API credentials</strong> tab → copy <strong>Client ID</strong> and <strong>Client secret</strong></div>
             </div>
 
             <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Your Shopify Store URL</label>
             <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
               style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
 
-            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Admin API Access Token</label>
-            <input className="form-input" placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx" value={token} onChange={e=>setToken(e.target.value)}
+            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client ID</label>
+            <input className="form-input" placeholder="bfdb172e5968adbccc1119462ce3cb57" value={clientId} onChange={e=>setClientId(e.target.value)}
+              style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+
+            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client Secret</label>
+            <input className="form-input" type="password" placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxx" value={secret} onChange={e=>setSecret(e.target.value)}
               style={{width:'100%',boxSizing:'border-box',marginBottom:16}}/>
 
             <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%'}}>
