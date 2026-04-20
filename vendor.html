@@ -1712,16 +1712,17 @@
   /* ══════════════════════════════════
      SHOPIFY SYNC (vendor side)
   ══════════════════════════════════ */
-  function ShopifySync({ token, vendorName }) {
-    const [status,    setStatus]    = useState(null); // null=loading, {connected,connection}
+  function ShopifySync({ token: authToken, vendorName }) {
+    const [status,    setStatus]    = useState(null);
     const [shop,      setShop]      = useState('');
+    const [token,     setToken]     = useState('');
     const [connecting,setConnecting]= useState(false);
     const [products,  setProducts]  = useState([]);
     const [prodLoad,  setProdLoad]  = useState(false);
     const [msg,       setMsg]       = useState('');
 
     const loadStatus = () => {
-      fetch(`${API}/vendor/shopify/status`, { headers:{ Authorization:`Bearer ${token}` } })
+      fetch(`${API}/vendor/shopify/status`, { headers:{ Authorization:`Bearer ${authToken}` } })
         .then(r=>r.json()).then(setStatus);
     };
     useEffect(loadStatus, []);
@@ -1737,23 +1738,28 @@
     }, []);
 
     const connect = async () => {
-      if (!shop.trim()) { setMsg('Enter your Shopify store URL first.'); return; }
+      if (!shop.trim() || !token.trim()) { setMsg('Enter both your store URL and access token.'); return; }
       setConnecting(true); setMsg('');
-      const r = await fetch(`${API}/vendor/shopify/connect?shop=${encodeURIComponent(shop.trim())}`, { headers:{ Authorization:`Bearer ${token}` } });
+      const r = await fetch(`${API}/vendor/shopify/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization:`Bearer ${authToken}` },
+        body: JSON.stringify({ shop: shop.trim(), access_token: token.trim() })
+      });
       const d = await r.json();
-      if (d.redirect) { window.location.href = d.redirect; }
-      else { setMsg(d.error || 'Error starting connection.'); setConnecting(false); }
+      setConnecting(false);
+      if (d.success) { setMsg('✅ Store connected!'); setShop(''); setToken(''); loadStatus(); }
+      else setMsg(d.error || 'Connection failed.');
     };
 
     const disconnect = async () => {
       if (!confirm('Disconnect your Shopify store? All product mappings will remain but inventory sync will stop.')) return;
-      await fetch(`${API}/vendor/shopify/disconnect`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } });
+      await fetch(`${API}/vendor/shopify/disconnect`, { method:'DELETE', headers:{ Authorization:`Bearer ${authToken}` } });
       setStatus({ connected: false, connection: null }); setProducts([]);
     };
 
     const loadProducts = () => {
       setProdLoad(true);
-      fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${token}` } })
+      fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${authToken}` } })
         .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setProdLoad(false); });
     };
 
@@ -1803,17 +1809,30 @@
         ) : (
           <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:24}}>
             <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:8}}>Connect Your Shopify Store</div>
-            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16,lineHeight:1.7}}>
-              Enter your Shopify store URL below. You'll be redirected to Shopify to authorize CrosCrow to read your products and inventory. No order data is accessed.
+
+            {/* Step guide */}
+            <div style={{background:'var(--bg-hover)',borderRadius:8,padding:14,marginBottom:20,fontSize:12,color:'var(--text-muted)',lineHeight:2}}>
+              <div style={{fontWeight:700,color:'var(--text)',marginBottom:6}}>How to get your access token:</div>
+              <div>1. Go to your Shopify Admin → <strong>Settings → Apps and sales channels</strong></div>
+              <div>2. Click <strong>Develop apps</strong> → <strong>Create an app</strong> → name it "CrosCrow Sync"</div>
+              <div>3. Click <strong>Configure Admin API scopes</strong> → enable: <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_products</code>, <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_inventory</code>, <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_locations</code></div>
+              <div>4. Click <strong>Save</strong> → <strong>Install app</strong> → <strong>Reveal token once</strong></div>
+              <div>5. Copy the token and paste it below</div>
             </div>
+
             <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Your Shopify Store URL</label>
             <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
-              style={{width:'100%',boxSizing:'border-box',marginBottom:14}}/>
+              style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+
+            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Admin API Access Token</label>
+            <input className="form-input" placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx" value={token} onChange={e=>setToken(e.target.value)}
+              style={{width:'100%',boxSizing:'border-box',marginBottom:16}}/>
+
             <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%'}}>
-              {connecting ? 'Redirecting to Shopify…' : '🔗 Connect Shopify Store'}
+              {connecting ? 'Verifying & Connecting…' : '🔗 Connect Shopify Store'}
             </button>
-            <div style={{marginTop:12,fontSize:11,color:'var(--text-muted)',lineHeight:1.6}}>
-              You'll be asked to install a CrosCrow app on your store. This only requests read access to products and inventory — no write access to your store.
+            <div style={{marginTop:10,fontSize:11,color:'var(--text-muted)'}}>
+              Read-only access only — CrosCrow cannot modify your store.
             </div>
           </div>
         )}

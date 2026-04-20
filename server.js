@@ -3241,63 +3241,25 @@ function validateShopifyHmac(query) {
 }
 
 // ── Step 1: Vendor initiates OAuth (from vendor panel) ───────────────────
-app.get("/vendor/shopify/connect", vendorAuth, (req, res) => {
-  const { shop } = req.query;
-  if (!shop) return res.status(400).json({ error: "shop query param required (e.g. mystore.myshopify.com)" });
-  if (!VENDOR_APP_CLIENT_ID) return res.status(500).json({ error: "VENDOR_APP_CLIENT_ID not configured. Ask admin to set up the Shopify Partner app." });
-
+// ── Vendor: connect via manual access token (replaces OAuth) ─────────────
+app.post("/vendor/shopify/connect", vendorAuth, async (req, res) => {
+  const { shop, access_token } = req.body || {};
+  if (!shop || !access_token) return res.status(400).json({ error: "shop and access_token required." });
   const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '').trim();
-  const baseUrl = process.env.SERVER_URL || `https://${req.headers.host}`;
-  const redirectUri = `${baseUrl}/vendor-shopify/callback`;
-  const scopes = 'read_products,read_inventory,read_locations';
-  const state = `${req.vendor}::${crypto.randomBytes(8).toString('hex')}`;
 
-  // Store state temporarily (15 min TTL)
-  db.prepare("INSERT OR REPLACE INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)")
-    .run(`oauth_state_${state}`, 'system', 'oauth', cleanShop, Date.now());
-
-  const authUrl = `https://${cleanShop}/admin/oauth/authorize?client_id=${VENDOR_APP_CLIENT_ID}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
-  res.json({ redirect: authUrl });
-});
-
-// ── Step 2: Shopify OAuth callback (public) ───────────────────────────────
-app.get("/vendor-shopify/callback", async (req, res) => {
-  const { shop, code, state, hmac } = req.query;
-
-  if (!validateShopifyHmac(req.query)) {
-    return res.status(403).send("<h2>Invalid HMAC — request may be tampered.</h2>");
-  }
-
-  // Recover vendor name from state
-  const stateRow = db.prepare("SELECT note as shopDomain FROM order_notes WHERE shopify_id=?").get(`oauth_state_${state}`);
-  if (!stateRow) return res.status(400).send("<h2>Invalid or expired OAuth state. Please try connecting again.</h2>");
-  db.prepare("DELETE FROM order_notes WHERE shopify_id=?").run(`oauth_state_${state}`);
-
-  const vendorName = (state || '').split('::')[0];
-  if (!vendorName) return res.status(400).send("<h2>Could not determine vendor from state.</h2>");
-
+  // Verify the token works by fetching shop info
   try {
-    // Exchange code for access token
-    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: VENDOR_APP_CLIENT_ID, client_secret: VENDOR_APP_SECRET, code }),
-    });
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) throw new Error(tokenData.error_description || 'Token exchange failed');
-
-    db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (vendor_name, shop_domain, access_token, scope, installed_at) VALUES (?,?,?,?,?)`)
-      .run(vendorName, shop, tokenData.access_token, tokenData.scope || '', Date.now());
-
-    console.log(`✅ Vendor Shopify connected: ${vendorName} → ${shop}`);
-
-    // Redirect vendor back to vendor panel
-    const baseUrl = process.env.SERVER_URL || `https://${req.headers.host}`;
-    res.redirect(`${baseUrl}/vendor.html?shopifyConnected=1`);
+    const test = await vendorShopifyREST(cleanShop, access_token, '/shop.json');
+    if (!test.shop) throw new Error("Could not verify token — shop not found.");
   } catch (e) {
-    console.error("OAuth callback error:", e.message);
-    res.status(500).send(`<h2>Connection failed: ${e.message}</h2><p>Please try again from your vendor panel.</p>`);
+    return res.status(400).json({ error: `Token verification failed: ${e.message}` });
   }
+
+  db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (vendor_name, shop_domain, access_token, scope, installed_at) VALUES (?,?,?,?,?)`)
+    .run(req.vendor, cleanShop, access_token, 'read_products,read_inventory,read_locations', Date.now());
+
+  console.log(`✅ Vendor Shopify connected (manual token): ${req.vendor} → ${cleanShop}`);
+  res.json({ success: true, shop: cleanShop });
 });
 
 // ── Vendor: check own connection status ───────────────────────────────────
