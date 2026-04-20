@@ -2220,6 +2220,246 @@
   }
 
   /* ══════════════════════════════════
+     VENDOR SYNC
+  ══════════════════════════════════ */
+  function VendorSync({ token }) {
+    const [connections, setConnections] = useState([]);
+    const [selected,    setSelected]    = useState(null); // vendor_name
+    const [products,    setProducts]    = useState([]);
+    const [mappings,    setMappings]    = useState([]);
+    const [loading,     setLoading]     = useState(false);
+    const [prodLoading, setProdLoading] = useState(false);
+    const [tab,         setTab]         = useState('products'); // products | mappings
+    const [importing,   setImporting]   = useState({}); // productId -> bool
+    const [syncing,     setSyncing]     = useState(false);
+    const [msg,         setMsg]         = useState('');
+    // Map modal
+    const [mapModal,    setMapModal]    = useState(null); // {vendorProduct, vendorVariant}
+    const [ccSearch,    setCcSearch]    = useState('');
+    const [ccProducts,  setCcProducts]  = useState([]);
+    const [ccSearching, setCcSearching] = useState(false);
+    const [mapSaving,   setMapSaving]   = useState(false);
+
+    const loadConnections = () => {
+      setLoading(true);
+      fetch('/admin/vendor-sync/connections', { headers: { Authorization: 'Bearer '+token } })
+        .then(r=>r.json()).then(d=>{ setConnections(d.connections||[]); setLoading(false); });
+    };
+
+    useEffect(loadConnections, []);
+
+    const loadVendorProducts = (vendor) => {
+      setSelected(vendor); setProdLoading(true); setProducts([]); setMappings([]); setMsg('');
+      fetch(`/admin/vendor-sync/${encodeURIComponent(vendor)}/products`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setMappings(d.mappings||[]); setProdLoading(false); });
+    };
+
+    const loadMappings = () => {
+      if (!selected) return;
+      fetch(`/admin/vendor-sync/mappings?vendor_name=${encodeURIComponent(selected)}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setMappings(d.mappings||[]));
+    };
+
+    const importProduct = async (product) => {
+      setImporting(p=>({...p,[product.id]:true})); setMsg('');
+      const r = await fetch('/admin/vendor-sync/import', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ vendor_name: selected, vendor_product_id: String(product.id), sync_inventory: true }) });
+      const d = await r.json();
+      setImporting(p=>({...p,[product.id]:false}));
+      if (d.success) { setMsg(`✅ "${product.title}" imported as draft product #${d.croscrow_product_id}`); loadVendorProducts(selected); }
+      else setMsg(`❌ ${d.error}`);
+    };
+
+    const syncInventory = async () => {
+      setSyncing(true); setMsg('');
+      const r = await fetch('/admin/vendor-sync/sync-inventory', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ vendor_name: selected }) });
+      const d = await r.json();
+      setSyncing(false);
+      setMsg(d.success ? `✅ Synced ${d.synced} variants${d.errors?.length?' | Errors: '+d.errors.join(', '):''}` : `❌ ${d.error}`);
+      loadMappings();
+    };
+
+    const unmapVariant = async (id) => {
+      await fetch(`/admin/vendor-sync/map/${id}`, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
+      loadMappings(); loadVendorProducts(selected);
+    };
+
+    // Map modal helpers
+    const searchCcProducts = async (q) => {
+      setCcSearching(true);
+      const r = await fetch(`/admin/vendor-sync/croscrow-products?q=${encodeURIComponent(q)}`, { headers:{ Authorization:'Bearer '+token } });
+      const d = await r.json();
+      setCcProducts(d.products||[]); setCcSearching(false);
+    };
+
+    useEffect(()=>{ if (ccSearch.length > 1) { const t = setTimeout(()=>searchCcProducts(ccSearch), 400); return ()=>clearTimeout(t); } }, [ccSearch]);
+
+    const saveMapping = async (ccProduct, ccVariant) => {
+      if (!mapModal) return;
+      setMapSaving(true);
+      await fetch('/admin/vendor-sync/map', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ vendor_name: selected, vendor_product_id: String(mapModal.vendorProduct.id), vendor_variant_id: String(mapModal.vendorVariant.id), croscrow_product_id: String(ccProduct.id), croscrow_variant_id: String(ccVariant.id), sync_inventory: true }) });
+      setMapSaving(false); setMapModal(null); setCcSearch(''); setCcProducts([]);
+      loadVendorProducts(selected);
+    };
+
+    const fmtDate = ts => new Date(ts).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+
+    return (
+      <div style={{padding:'24px',maxWidth:1100,display:'flex',gap:24}}>
+        {/* Left: connections list */}
+        <div style={{width:240,flexShrink:0}}>
+          <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:12}}>🔄 Connected Stores</div>
+          {loading ? <div style={{color:'var(--text-muted)',fontSize:12}}>Loading…</div> : connections.length===0 ? (
+            <div style={{background:'var(--bg-card)',borderRadius:8,padding:16,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>
+              No vendor stores connected yet.<br/><br/>Vendors connect from their panel → Settings → Connect Shopify.
+            </div>
+          ) : connections.map(c=>(
+            <button key={c.vendor_name} onClick={()=>loadVendorProducts(c.vendor_name)}
+              style={{width:'100%',textAlign:'left',background:selected===c.vendor_name?'var(--indigo-dim)':'var(--bg-card)',border:`1px solid ${selected===c.vendor_name?'var(--indigo)':'var(--border)'}`,borderRadius:8,padding:'10px 12px',marginBottom:8,cursor:'pointer',color:'var(--text)'}}>
+              <div style={{fontWeight:600,fontSize:13}}>{c.vendor_name}</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{c.shop_domain}</div>
+              <div style={{fontSize:9,color:'var(--green)',marginTop:3}}>● Connected {fmtDate(c.installed_at)}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Right: products / mappings */}
+        <div style={{flex:1,minWidth:0}}>
+          {!selected ? (
+            <div style={{background:'var(--bg-card)',borderRadius:10,padding:60,textAlign:'center',color:'var(--text-muted)'}}>
+              <div style={{fontSize:32,marginBottom:12}}>🔄</div>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>Vendor Product Sync</div>
+              <div style={{fontSize:12}}>Select a connected vendor on the left to browse their products and manage mappings.</div>
+            </div>
+          ) : (
+            <>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+                <div style={{fontSize:16,fontWeight:700,color:'var(--text)'}}>{selected}</div>
+                <div style={{display:'flex',gap:8}}>
+                  <button className={`btn btn-sm ${tab==='products'?'btn-primary':'btn-ghost'}`} onClick={()=>setTab('products')}>Products</button>
+                  <button className={`btn btn-sm ${tab==='mappings'?'btn-primary':'btn-ghost'}`} onClick={()=>{ setTab('mappings'); loadMappings(); }}>Mappings ({mappings.length})</button>
+                  <button className="btn btn-sm btn-ghost" onClick={syncInventory} disabled={syncing} title="Push vendor inventory quantities to CrosCrow">
+                    {syncing?'Syncing…':'↻ Sync Inventory'}
+                  </button>
+                </div>
+              </div>
+
+              {msg && <div style={{marginBottom:12,fontSize:12,padding:'8px 12px',borderRadius:6,background:msg.startsWith('✅')?'var(--green-dim)':'var(--red-bg)',color:msg.startsWith('✅')?'var(--green)':'var(--red)'}}>{msg}</div>}
+
+              {/* PRODUCTS TAB */}
+              {tab==='products' && (
+                prodLoading ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>Loading products…</div> :
+                products.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No products found in vendor store.</div> :
+                <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                  {products.map(p=>{
+                    const allMapped = p.variants.every(v=>v.mapped);
+                    const someMapped = p.variants.some(v=>v.mapped);
+                    const img = p.images?.[0]?.src;
+                    return (
+                      <div key={p.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:14}}>
+                        <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+                          {img && <img src={img} style={{width:56,height:56,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>}
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                              <span style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>{p.title}</span>
+                              {allMapped && <span style={{fontSize:10,padding:'2px 7px',borderRadius:10,background:'var(--green-dim)',color:'var(--green)'}}>All Mapped</span>}
+                              {someMapped && !allMapped && <span style={{fontSize:10,padding:'2px 7px',borderRadius:10,background:'var(--yellow-bg)',color:'var(--yellow)'}}>Partial</span>}
+                            </div>
+                            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>{p.product_type} · {p.variants.length} variant{p.variants.length!==1?'s':''} · {p.status}</div>
+                            {/* Variants */}
+                            <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:10}}>
+                              {p.variants.map(v=>(
+                                <div key={v.id} style={{fontSize:11,padding:'3px 8px',borderRadius:6,background:v.mapped?'var(--green-dim)':'var(--bg-hover)',border:`1px solid ${v.mapped?'#1a4731':'var(--border)'}`,color:v.mapped?'var(--green)':'var(--text-muted)',display:'flex',alignItems:'center',gap:5}}>
+                                  {v.title!=='Default Title'&&<span>{v.title}</span>}
+                                  <span style={{color:'var(--text)'}}>₹{parseFloat(v.price).toFixed(0)}</span>
+                                  {v.mapped ? <span>✓</span> : (
+                                    <button onClick={()=>{ setMapModal({vendorProduct:p,vendorVariant:v}); setCcSearch(''); setCcProducts([]); }}
+                                      style={{fontSize:9,padding:'1px 5px',borderRadius:4,border:'1px solid var(--indigo)',background:'transparent',color:'var(--indigo)',cursor:'pointer'}}>Map</button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <button className="btn btn-sm btn-indigo" onClick={()=>importProduct(p)} disabled={importing[p.id]||allMapped}
+                            style={{flexShrink:0}}>
+                            {importing[p.id]?'Importing…':allMapped?'Imported':'↓ Import All'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* MAPPINGS TAB */}
+              {tab==='mappings' && (
+                mappings.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No variant mappings yet. Import or map products from the Products tab.</div> :
+                <div style={{background:'var(--bg-card)',borderRadius:10,overflow:'hidden'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Vendor Variant ID</th>
+                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>CrosCrow Product ID</th>
+                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>CrosCrow Variant ID</th>
+                      <th style={{padding:'10px 14px',textAlign:'center',color:'var(--text-muted)',fontWeight:600}}>Inv Sync</th>
+                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Last Synced</th>
+                      <th style={{padding:'10px 14px'}}></th>
+                    </tr></thead>
+                    <tbody>
+                      {mappings.map(m=>(
+                        <tr key={m.id} style={{borderBottom:'1px solid var(--border)'}}>
+                          <td style={{padding:'8px 14px',fontFamily:'monospace',color:'var(--indigo)'}}>{m.vendor_variant_id}</td>
+                          <td style={{padding:'8px 14px',fontFamily:'monospace',color:'var(--text-muted)'}}>{m.croscrow_product_id}</td>
+                          <td style={{padding:'8px 14px',fontFamily:'monospace',color:'var(--text-muted)'}}>{m.croscrow_variant_id}</td>
+                          <td style={{padding:'8px 14px',textAlign:'center'}}>{m.sync_inventory?<span style={{color:'var(--green)'}}>✓</span>:<span style={{color:'var(--red)'}}>✕</span>}</td>
+                          <td style={{padding:'8px 14px',color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never'}</td>
+                          <td style={{padding:'8px 14px'}}><button className="btn btn-danger btn-sm" onClick={()=>unmapVariant(m.id)}>Unmap</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Map Modal */}
+        {mapModal && (
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div style={{background:'var(--bg-card)',borderRadius:14,padding:28,width:500,maxWidth:'90vw',maxHeight:'80vh',overflowY:'auto'}}>
+              <h3 style={{margin:'0 0 4px',color:'var(--text)',fontSize:15}}>Map Variant to CrosCrow Product</h3>
+              <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>
+                Vendor: <strong>{mapModal.vendorProduct.title}</strong> — {mapModal.vendorVariant.title} (₹{mapModal.vendorVariant.price})
+              </div>
+              <input className="form-input" placeholder="Search CrosCrow products…" value={ccSearch} onChange={e=>setCcSearch(e.target.value)} style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+              {ccSearching && <div style={{color:'var(--text-muted)',fontSize:12,marginBottom:8}}>Searching…</div>}
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {ccProducts.map(cp=>(
+                  <div key={cp.id} style={{background:'var(--bg-hover)',borderRadius:8,padding:12}}>
+                    <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{cp.title}</div>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                      {(cp.variants||[]).map(cv=>(
+                        <button key={cv.id} onClick={()=>saveMapping(cp,cv)} disabled={mapSaving}
+                          style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontWeight:600}}>
+                          {cv.title!=='Default Title'?cv.title:'Default'} — ₹{parseFloat(cv.price).toFixed(0)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {ccSearch.length>1 && ccProducts.length===0 && !ccSearching && <div style={{fontSize:12,color:'var(--text-muted)'}}>No products found. Try a different search.</div>}
+              </div>
+              <div style={{marginTop:16,textAlign:'right'}}><button className="btn btn-ghost" onClick={()=>setMapModal(null)}>Cancel</button></div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      PENALTY MANAGER
   ══════════════════════════════════ */
   function PenaltyManager({ token }) {
@@ -2827,6 +3067,7 @@
       { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
       { id:'shippingcreds', icon:'🚚', label:'Shipping Partners', section:'finance' },
       { id:'emailsettings', icon:'📧', label:'Email Settings', section:'finance' },
+      { id:'vendorsync',  icon:'🔄', label:'Vendor Sync',   section:'finance' },
       { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
@@ -2880,6 +3121,7 @@
           {view==='tagmappings' && <TagMappings token={token}/>}
           {view==='shippingcreds' && <ShippingCreds token={token}/>}
           {view==='emailsettings' && <EmailSettings token={token}/>}
+          {view==='vendorsync'  && <VendorSync token={token}/>}
           {view==='penalties'   && <PenaltyManager token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>

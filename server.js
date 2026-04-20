@@ -43,10 +43,12 @@ app.use(cors({
 }));
 
 // ── Config ─────────────────────────────────────────────────────────────────
-const SHOP          = process.env.SHOP_NAME;           // e.g. mystore
-const CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
-const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-const PORT          = process.env.PORT || 3001;        // Render sets PORT automatically
+const SHOP              = process.env.SHOP_NAME;
+const CLIENT_ID         = process.env.SHOPIFY_CLIENT_ID;
+const CLIENT_SECRET     = process.env.SHOPIFY_CLIENT_SECRET;
+const PORT              = process.env.PORT || 3001;
+const VENDOR_APP_CLIENT_ID  = process.env.VENDOR_APP_CLIENT_ID  || '';
+const VENDOR_APP_SECRET     = process.env.VENDOR_APP_SECRET     || '';
 
 if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
   console.error("❌  Missing env vars: SHOP_NAME, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET");
@@ -2949,6 +2951,29 @@ function mapStatus(s) {
   return "pending";
 }
 
+// ── Vendor Shopify sync tables ────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS vendor_shopify_connections (
+    vendor_name   TEXT PRIMARY KEY,
+    shop_domain   TEXT NOT NULL,
+    access_token  TEXT NOT NULL,
+    scope         TEXT DEFAULT '',
+    installed_at  INTEGER NOT NULL,
+    sync_enabled  INTEGER DEFAULT 1
+  );
+  CREATE TABLE IF NOT EXISTS vendor_product_mappings (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_name           TEXT NOT NULL,
+    vendor_product_id     TEXT NOT NULL,
+    vendor_variant_id     TEXT NOT NULL,
+    croscrow_product_id   TEXT NOT NULL,
+    croscrow_variant_id   TEXT NOT NULL,
+    sync_inventory        INTEGER DEFAULT 1,
+    last_synced_at        INTEGER DEFAULT 0,
+    UNIQUE(vendor_name, vendor_variant_id)
+  );
+`);
+
 // ── Order notes table ─────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS order_notes (
@@ -3029,6 +3054,299 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
   } catch (e) { console.error("Delay remark email:", e.message); }
 
   res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  VENDOR SHOPIFY SYNC — OAuth + Product Import/Map
+// ══════════════════════════════════════════════════════════════════════════
+
+// Helper: call vendor's own Shopify store REST API
+async function vendorShopifyREST(shopDomain, accessToken, path) {
+  const url = `https://${shopDomain}/admin/api/2024-01${path}`;
+  const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' } });
+  if (!res.ok) throw new Error(`Vendor Shopify API error ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+// Helper: call CrosCrow main store REST with write access
+async function croscrowShopifyWrite(path, method, body) {
+  const token = await getAccessToken();
+  const url = `https://${SHOP}.myshopify.com/admin/api/2024-01${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`CrosCrow Shopify write error ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+// Validate Shopify HMAC on OAuth callback
+function validateShopifyHmac(query) {
+  const { hmac, ...rest } = query;
+  if (!hmac) return false;
+  const msg = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
+  const computed = crypto.createHmac('sha256', VENDOR_APP_SECRET).update(msg).digest('hex');
+  return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(hmac));
+}
+
+// ── Step 1: Vendor initiates OAuth (from vendor panel) ───────────────────
+app.get("/vendor/shopify/connect", vendorAuth, (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).json({ error: "shop query param required (e.g. mystore.myshopify.com)" });
+  if (!VENDOR_APP_CLIENT_ID) return res.status(500).json({ error: "VENDOR_APP_CLIENT_ID not configured. Ask admin to set up the Shopify Partner app." });
+
+  const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '').trim();
+  const baseUrl = process.env.SERVER_URL || `https://${req.headers.host}`;
+  const redirectUri = `${baseUrl}/vendor-shopify/callback`;
+  const scopes = 'read_products,read_inventory,read_locations';
+  const state = `${req.vendor}::${crypto.randomBytes(8).toString('hex')}`;
+
+  // Store state temporarily (15 min TTL)
+  db.prepare("INSERT OR REPLACE INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)")
+    .run(`oauth_state_${state}`, 'system', 'oauth', cleanShop, Date.now());
+
+  const authUrl = `https://${cleanShop}/admin/oauth/authorize?client_id=${VENDOR_APP_CLIENT_ID}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+  res.json({ redirect: authUrl });
+});
+
+// ── Step 2: Shopify OAuth callback (public) ───────────────────────────────
+app.get("/vendor-shopify/callback", async (req, res) => {
+  const { shop, code, state, hmac } = req.query;
+
+  if (!validateShopifyHmac(req.query)) {
+    return res.status(403).send("<h2>Invalid HMAC — request may be tampered.</h2>");
+  }
+
+  // Recover vendor name from state
+  const stateRow = db.prepare("SELECT note as shopDomain FROM order_notes WHERE shopify_id=?").get(`oauth_state_${state}`);
+  if (!stateRow) return res.status(400).send("<h2>Invalid or expired OAuth state. Please try connecting again.</h2>");
+  db.prepare("DELETE FROM order_notes WHERE shopify_id=?").run(`oauth_state_${state}`);
+
+  const vendorName = (state || '').split('::')[0];
+  if (!vendorName) return res.status(400).send("<h2>Could not determine vendor from state.</h2>");
+
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: VENDOR_APP_CLIENT_ID, client_secret: VENDOR_APP_SECRET, code }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error(tokenData.error_description || 'Token exchange failed');
+
+    db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (vendor_name, shop_domain, access_token, scope, installed_at) VALUES (?,?,?,?,?)`)
+      .run(vendorName, shop, tokenData.access_token, tokenData.scope || '', Date.now());
+
+    console.log(`✅ Vendor Shopify connected: ${vendorName} → ${shop}`);
+
+    // Redirect vendor back to vendor panel
+    const baseUrl = process.env.SERVER_URL || `https://${req.headers.host}`;
+    res.redirect(`${baseUrl}/vendor.html?shopifyConnected=1`);
+  } catch (e) {
+    console.error("OAuth callback error:", e.message);
+    res.status(500).send(`<h2>Connection failed: ${e.message}</h2><p>Please try again from your vendor panel.</p>`);
+  }
+});
+
+// ── Vendor: check own connection status ───────────────────────────────────
+app.get("/vendor/shopify/status", vendorAuth, (req, res) => {
+  const conn = db.prepare("SELECT shop_domain, scope, installed_at, sync_enabled FROM vendor_shopify_connections WHERE vendor_name=?").get(req.vendor);
+  res.json({ connected: !!conn, connection: conn || null });
+});
+
+// ── Vendor: disconnect ────────────────────────────────────────────────────
+app.delete("/vendor/shopify/disconnect", vendorAuth, (req, res) => {
+  db.prepare("DELETE FROM vendor_shopify_connections WHERE vendor_name=?").run(req.vendor);
+  res.json({ success: true });
+});
+
+// ── Vendor: browse own products (so vendor can see what will be synced) ───
+app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
+  const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(req.vendor);
+  if (!conn) return res.status(404).json({ error: "Shopify store not connected." });
+  try {
+    const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
+    res.json({ products: data.products || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: list all connected vendor stores ───────────────────────────────
+app.get("/admin/vendor-sync/connections", adminAuth, (req, res) => {
+  const rows = db.prepare("SELECT vendor_name, shop_domain, scope, installed_at, sync_enabled FROM vendor_shopify_connections ORDER BY installed_at DESC").all();
+  res.json({ connections: rows });
+});
+
+// ── Admin: browse a vendor's products ─────────────────────────────────────
+app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
+  const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(req.params.vendor);
+  if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
+  try {
+    const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=100&fields=id,title,variants,images,status,product_type,vendor,body_html,tags');
+    const mappings = db.prepare("SELECT vendor_variant_id, croscrow_product_id, croscrow_variant_id FROM vendor_product_mappings WHERE vendor_name=?").all(req.params.vendor);
+    const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
+    const products = (data.products || []).map(p => ({
+      ...p,
+      variants: p.variants.map(v => ({ ...v, mapped: mappedVariants.has(String(v.id)) }))
+    }));
+    res.json({ products, mappings });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: import vendor product as NEW product on CrosCrow store ──────────
+app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
+  const { vendor_name, vendor_product_id, sync_inventory = true } = req.body || {};
+  if (!vendor_name || !vendor_product_id) return res.status(400).json({ error: "vendor_name and vendor_product_id required." });
+
+  const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(vendor_name);
+  if (!conn) return res.status(404).json({ error: "Vendor not connected." });
+
+  try {
+    // Fetch full product from vendor store
+    const vData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/products/${vendor_product_id}.json`);
+    const vProduct = vData.product;
+    if (!vProduct) throw new Error("Product not found in vendor store.");
+
+    // Build product payload for CrosCrow store
+    const productPayload = {
+      product: {
+        title: vProduct.title,
+        body_html: vProduct.body_html || '',
+        vendor: vendor_name,
+        product_type: vProduct.product_type || '',
+        tags: vProduct.tags || '',
+        status: 'draft', // start as draft so admin can review before publishing
+        variants: vProduct.variants.map(v => ({
+          title: v.title,
+          price: v.price,
+          sku: v.sku ? `${vendor_name.slice(0,4).toUpperCase()}-${v.sku}` : '',
+          inventory_management: sync_inventory ? 'shopify' : null,
+          inventory_quantity: parseInt(v.inventory_quantity || 0),
+          weight: v.weight,
+          weight_unit: v.weight_unit || 'kg',
+          option1: v.option1, option2: v.option2, option3: v.option3,
+        })),
+        options: vProduct.options?.map(o => ({ name: o.name, values: o.values })) || [],
+        images: (vProduct.images || []).map(img => ({ src: img.src, alt: img.alt || '' })),
+      }
+    };
+
+    const created = await croscrowShopifyWrite('/products.json', 'POST', productPayload);
+    const newProduct = created.product;
+    if (!newProduct) throw new Error("Failed to create product on CrosCrow store.");
+
+    // Save mappings for each variant
+    const insMap = db.prepare("INSERT OR REPLACE INTO vendor_product_mappings (vendor_name, vendor_product_id, vendor_variant_id, croscrow_product_id, croscrow_variant_id, sync_inventory, last_synced_at) VALUES (?,?,?,?,?,?,?)");
+    vProduct.variants.forEach((vVariant, i) => {
+      const ccVariant = newProduct.variants[i];
+      if (ccVariant) {
+        insMap.run(vendor_name, String(vProduct.id), String(vVariant.id), String(newProduct.id), String(ccVariant.id), sync_inventory ? 1 : 0, Date.now());
+      }
+    });
+
+    auditLog("admin", "vendor_product_imported", String(newProduct.id), { vendor_name, vendor_product_id, croscrow_product_id: newProduct.id });
+    res.json({ success: true, croscrow_product_id: newProduct.id, croscrow_product_title: newProduct.title, status: 'draft', variants_mapped: vProduct.variants.length });
+  } catch (e) {
+    console.error("Import error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: map vendor variant to existing CrosCrow variant ────────────────
+app.post("/admin/vendor-sync/map", adminAuth, async (req, res) => {
+  const { vendor_name, vendor_product_id, vendor_variant_id, croscrow_product_id, croscrow_variant_id, sync_inventory = true } = req.body || {};
+  if (!vendor_name || !vendor_variant_id || !croscrow_product_id || !croscrow_variant_id)
+    return res.status(400).json({ error: "vendor_name, vendor_variant_id, croscrow_product_id, croscrow_variant_id required." });
+
+  db.prepare("INSERT OR REPLACE INTO vendor_product_mappings (vendor_name, vendor_product_id, vendor_variant_id, croscrow_product_id, croscrow_variant_id, sync_inventory, last_synced_at) VALUES (?,?,?,?,?,?,?)")
+    .run(vendor_name, String(vendor_product_id || ''), String(vendor_variant_id), String(croscrow_product_id), String(croscrow_variant_id), sync_inventory ? 1 : 0, Date.now());
+  auditLog("admin", "vendor_variant_mapped", vendor_variant_id, { vendor_name, croscrow_product_id, croscrow_variant_id });
+  res.json({ success: true });
+});
+
+// ── Admin: unmap a variant ────────────────────────────────────────────────
+app.delete("/admin/vendor-sync/map/:id", adminAuth, (req, res) => {
+  db.prepare("DELETE FROM vendor_product_mappings WHERE id=?").run(req.params.id);
+  res.json({ success: true });
+});
+
+// ── Admin: list all mappings ──────────────────────────────────────────────
+app.get("/admin/vendor-sync/mappings", adminAuth, (req, res) => {
+  const { vendor_name } = req.query;
+  const where = vendor_name ? "WHERE vendor_name=?" : "";
+  const params = vendor_name ? [vendor_name] : [];
+  res.json({ mappings: db.prepare(`SELECT * FROM vendor_product_mappings ${where} ORDER BY id DESC`).all(...params) });
+});
+
+// ── Admin: sync inventory for all mapped variants ─────────────────────────
+app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
+  const { vendor_name } = req.body || {};
+  const where = vendor_name ? "WHERE m.vendor_name=? AND m.sync_inventory=1" : "WHERE m.sync_inventory=1";
+  const params = vendor_name ? [vendor_name] : [];
+  const mappings = db.prepare(`SELECT m.*, c.shop_domain, c.access_token FROM vendor_product_mappings m JOIN vendor_shopify_connections c ON c.vendor_name=m.vendor_name ${where}`).all(...params);
+
+  let synced = 0, errors = [];
+  // Group by vendor to fetch locations once per vendor
+  const byVendor = {};
+  mappings.forEach(m => { (byVendor[m.vendor_name] = byVendor[m.vendor_name] || []).push(m); });
+
+  const ccToken = await getAccessToken();
+  for (const [vName, vMappings] of Object.entries(byVendor)) {
+    const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(vName);
+    if (!conn) continue;
+    try {
+      // Get vendor's primary location
+      const locData = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/locations.json');
+      const locationId = locData.locations?.[0]?.id;
+      if (!locationId) continue;
+
+      // Get CrosCrow primary location
+      const ccLocData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/locations.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
+      const ccLocationId = ccLocData.locations?.[0]?.id;
+      if (!ccLocationId) continue;
+
+      for (const m of vMappings) {
+        try {
+          // Get vendor inventory level
+          const invData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/inventory_levels.json?inventory_item_ids=${m.vendor_variant_id}&location_ids=${locationId}`);
+          // Actually need inventory_item_id from variant
+          const varData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/variants/${m.vendor_variant_id}.json`);
+          const invItemId = varData.variant?.inventory_item_id;
+          if (!invItemId) continue;
+
+          const invLvl = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/inventory_levels.json?inventory_item_ids=${invItemId}&location_ids=${locationId}`);
+          const qty = invLvl.inventory_levels?.[0]?.available ?? 0;
+
+          // Get CrosCrow variant's inventory_item_id
+          const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
+          const ccInvItemId = ccVarData.variant?.inventory_item_id;
+          if (!ccInvItemId) continue;
+
+          // Set inventory on CrosCrow
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/inventory_levels/set.json`, {
+            method: 'POST',
+            headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+          });
+          db.prepare("UPDATE vendor_product_mappings SET last_synced_at=? WHERE id=?").run(Date.now(), m.id);
+          synced++;
+        } catch (e) { errors.push(`${vName}/${m.vendor_variant_id}: ${e.message}`); }
+      }
+    } catch (e) { errors.push(`${vName}: ${e.message}`); }
+  }
+
+  res.json({ success: true, synced, errors });
+});
+
+// ── Admin: search CrosCrow products (for mapping UI) ─────────────────────
+app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
+  const { q } = req.query;
+  try {
+    const path = q ? `/products.json?title=${encodeURIComponent(q)}&limit=20&fields=id,title,variants` : '/products.json?limit=20&fields=id,title,variants';
+    const data = await shopifyREST(path);
+    res.json({ products: data.products || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Penalty helpers ───────────────────────────────────────────────────────

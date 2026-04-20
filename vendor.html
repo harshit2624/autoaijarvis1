@@ -1709,6 +1709,118 @@
   /* ══════════════════════════════════
      MAIN APP
   ══════════════════════════════════ */
+  /* ══════════════════════════════════
+     SHOPIFY SYNC (vendor side)
+  ══════════════════════════════════ */
+  function ShopifySync({ token, vendorName }) {
+    const [status,    setStatus]    = useState(null); // null=loading, {connected,connection}
+    const [shop,      setShop]      = useState('');
+    const [connecting,setConnecting]= useState(false);
+    const [products,  setProducts]  = useState([]);
+    const [prodLoad,  setProdLoad]  = useState(false);
+    const [msg,       setMsg]       = useState('');
+
+    const loadStatus = () => {
+      fetch(`${API}/vendor/shopify/status`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(setStatus);
+    };
+    useEffect(loadStatus, []);
+
+    // Handle ?shopifyConnected=1 redirect from OAuth callback
+    useEffect(()=>{
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('shopifyConnected')==='1') {
+        setMsg('✅ Shopify store connected successfully!');
+        window.history.replaceState({}, '', window.location.pathname);
+        loadStatus();
+      }
+    }, []);
+
+    const connect = async () => {
+      if (!shop.trim()) { setMsg('Enter your Shopify store URL first.'); return; }
+      setConnecting(true); setMsg('');
+      const r = await fetch(`${API}/vendor/shopify/connect?shop=${encodeURIComponent(shop.trim())}`, { headers:{ Authorization:`Bearer ${token}` } });
+      const d = await r.json();
+      if (d.redirect) { window.location.href = d.redirect; }
+      else { setMsg(d.error || 'Error starting connection.'); setConnecting(false); }
+    };
+
+    const disconnect = async () => {
+      if (!confirm('Disconnect your Shopify store? All product mappings will remain but inventory sync will stop.')) return;
+      await fetch(`${API}/vendor/shopify/disconnect`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } });
+      setStatus({ connected: false, connection: null }); setProducts([]);
+    };
+
+    const loadProducts = () => {
+      setProdLoad(true);
+      fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setProdLoad(false); });
+    };
+
+    if (!status) return <div style={{padding:40,color:'var(--text-muted)',fontSize:13}}>Loading…</div>;
+
+    return (
+      <div style={{padding:'24px',maxWidth:700}}>
+        <h2 style={{margin:'0 0 4px',fontSize:20,color:'var(--text)'}}>🔄 Shopify Store Sync</h2>
+        <p style={{fontSize:13,color:'var(--text-muted)',marginTop:4,marginBottom:24}}>Connect your own Shopify store so CrosCrow admin can sync your products and inventory to the main store.</p>
+
+        {msg && <div style={{marginBottom:16,padding:'10px 14px',borderRadius:8,background:msg.startsWith('✅')?'var(--green-dim)':'var(--red-bg)',color:msg.startsWith('✅')?'var(--green)':'var(--red)',fontSize:13}}>{msg}</div>}
+
+        {status.connected ? (
+          <>
+            <div style={{background:'var(--green-dim)',border:'1px solid #1a4731',borderRadius:10,padding:18,marginBottom:20,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div>
+                <div style={{fontWeight:700,color:'var(--green)',fontSize:14}}>✅ Connected</div>
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>{status.connection.shop_domain}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Scopes: {status.connection.scope}</div>
+              </div>
+              <button className="btn btn-danger btn-sm" onClick={disconnect}>Disconnect</button>
+            </div>
+
+            <div style={{marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>Your Products</div>
+              <button className="btn btn-ghost btn-sm" onClick={loadProducts}>{prodLoad?'Loading…':'↻ Load Products'}</button>
+            </div>
+            {products.length > 0 && (
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {products.map(p=>{
+                  const img = p.images?.[0]?.src;
+                  return (
+                    <div key={p.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:12,display:'flex',gap:12,alignItems:'center'}}>
+                      {img && <img src={img} style={{width:44,height:44,objectFit:'cover',borderRadius:5,flexShrink:0}} alt=""/>}
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{p.title}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{p.variants?.length} variant{p.variants?.length!==1?'s':''} · {p.status}</div>
+                      </div>
+                      <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--green-dim)',color:'var(--green)'}}>Visible to admin</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {!prodLoad && products.length===0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>Click "Load Products" to preview what admin can sync.</div>}
+          </>
+        ) : (
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:24}}>
+            <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:8}}>Connect Your Shopify Store</div>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16,lineHeight:1.7}}>
+              Enter your Shopify store URL below. You'll be redirected to Shopify to authorize CrosCrow to read your products and inventory. No order data is accessed.
+            </div>
+            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Your Shopify Store URL</label>
+            <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
+              style={{width:'100%',boxSizing:'border-box',marginBottom:14}}/>
+            <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%'}}>
+              {connecting ? 'Redirecting to Shopify…' : '🔗 Connect Shopify Store'}
+            </button>
+            <div style={{marginTop:12,fontSize:11,color:'var(--text-muted)',lineHeight:1.6}}>
+              You'll be asked to install a CrosCrow app on your store. This only requests read access to products and inventory — no write access to your store.
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function App() {
     const [auth,    setAuth]    = useState(()=>ls.get('vendor_auth',null));
     const [view,    setView]    = useState('dashboard');
@@ -1804,6 +1916,7 @@
       { id:'shipping',    icon:'🚚', label:'Shipping',     section:'main' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'wallet',      icon:'◉', label:'Wallet',       section:'finance' },
+      { id:'shopifysync', icon:'🔄', label:'Shopify Sync',  section:'finance' },
       { id:'profile',     icon:'⚙', label:'My Profile',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -1862,6 +1975,7 @@
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
           {view==='settlements' && <Settlements       token={auth.token} stats={stats}/>}
           {view==='wallet'      && <Wallet            token={auth.token}/>}
+          {view==='shopifysync' && <ShopifySync token={auth.token} vendorName={auth.vendorName}/>}
           {view==='profile'     && <Profile           token={auth.token}/>}
         </div>
 
