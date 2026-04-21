@@ -1316,6 +1316,59 @@ function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
   return emailBase(`Advance Collected: ${order.name} — Updated COD`, '#f59e0b', body);
 }
 
+function templatePartialAdvanceCustomer({ order, meta = {} }) {
+  const allItems  = order.line_items || [];
+  const subTotal  = allItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+  const shipping  = parseFloat(order.total_shipping_price_set?.shop_money?.amount || (order.shipping_lines||[]).reduce((s,l)=>s+parseFloat(l.price||0),0));
+  const advance   = parseFloat(meta.advance_paid || 0);
+  const remaining = Math.max(0, subTotal + shipping - advance);
+  const addr      = order.shipping_address;
+
+  const body = `
+    <!-- Hero drip -->
+    <div style="text-align:center;padding:8px 0 24px">
+      <div style="font-size:40px;margin-bottom:8px">🎉</div>
+      <div style="font-size:22px;font-weight:800;color:#f8fafc;letter-spacing:-0.5px">You're almost there!</div>
+      <div style="font-size:14px;color:#94a3b8;margin-top:6px;">Your advance payment has been received. Your order <strong style="color:#a5b4fc">${order.name}</strong> is confirmed and being prepared.</div>
+    </div>
+
+    <!-- Advance badge -->
+    <div style="background:linear-gradient(135deg,#10b981 0%,#059669 100%);border-radius:12px;padding:18px 24px;margin-bottom:20px;text-align:center;">
+      <div style="font-size:11px;font-weight:700;color:#d1fae5;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">✅ Advance Received</div>
+      <div style="font-size:32px;font-weight:800;color:#fff;">₹${advance.toFixed(2)}</div>
+      <div style="font-size:12px;color:#a7f3d0;margin-top:4px;">Thank you for paying in advance — your order is secured!</div>
+    </div>
+
+    <!-- Delivery info -->
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#a5b4fc;font-weight:700">${order.name}</span></div>
+      ${addr ? `<div class="info-row"><span class="info-label">Delivering To</span><span class="info-val">${addr.name ? addr.name+', ':''} ${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city} ${addr.zip}</span></div>` : ''}
+      ${addr?.phone ? `<div class="info-row"><span class="info-label">Contact</span><span class="info-val">${addr.phone}</span></div>` : ''}
+    </div>
+
+    ${itemsTableHtml(allItems)}
+
+    <!-- Amount breakdown -->
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;">
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#e2e8f0">₹${subTotal.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">Shipping</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#e2e8f0">₹${shipping.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #1e293b">✅ Advance Paid</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #1e293b;font-weight:700;color:#10b981">− ₹${advance.toFixed(2)}</td></tr>
+      ${remaining > 0
+        ? `<tr style="background:#fffbeb"><td style="padding:12px 10px;font-weight:800;font-size:14px;color:#92400e;border-radius:6px 0 0 6px">💵 Pay on Delivery</td><td style="text-align:right;padding:12px 10px;font-weight:800;font-size:20px;color:#b45309;border-radius:0 6px 6px 0">₹${remaining.toFixed(2)}</td></tr>`
+        : `<tr style="background:#f0fdf4"><td style="padding:12px 10px;font-weight:800;font-size:14px;color:#065f46;border-radius:6px 0 0 6px">✅ Fully Paid</td><td style="text-align:right;padding:12px 10px;font-weight:800;font-size:20px;color:#059669;border-radius:0 6px 6px 0">₹0.00</td></tr>`
+      }
+    </table>
+
+    ${remaining > 0 ? `
+    <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#94a3b8;line-height:1.7;text-align:center;">
+      Please keep <strong style="color:#fbbf24">₹${remaining.toFixed(2)}</strong> ready to pay the delivery person when your order arrives. 🚚
+    </div>` : ''}
+
+    <p style="font-size:13px;color:#64748b;text-align:center;line-height:1.7">Questions? Reply to this email or reach us on WhatsApp anytime.</p>
+  `;
+  return emailBase(`Order Confirmed: ${order.name} — ₹${advance.toFixed(2)} Advance Received 🎉`, '#10b981', body);
+}
+
 // ── Send email helper ─────────────────────────────────────────────────────
 async function sendEmail({ to, subject, html, shopifyId, trigger }) {
   const settingsRow = db.prepare("SELECT enabled FROM email_settings WHERE id=1").get();
@@ -1389,9 +1442,17 @@ async function fireStageEmails(shopifyId, newStage) {
     }
 
     if (newStage === 'partial') {
+      const vendorMeta = db.prepare("SELECT advance_paid, payment_type FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
+      // Customer email
+      if (customerEmail) await sendEmail({
+        to: customerEmail,
+        subject: `Your Advance is Confirmed — ${order.name} 🎉`,
+        html: templatePartialAdvanceCustomer({ order, meta: vendorMeta }),
+        shopifyId, trigger: 'partial_customer'
+      });
+      // Vendor emails
       for (const vendor of vendors) {
-        const vendorRow  = await VC.get(vendor);
-        const vendorMeta = db.prepare("SELECT advance_paid, payment_type FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
+        const vendorRow = await VC.get(vendor);
         if (vendorRow?.email) await sendEmail({
           to: vendorRow.email,
           subject: `Advance Collected — Updated COD for ${order.name}`,
@@ -2778,6 +2839,7 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
     new_order:  { subject: `[TEST] New Order: ${demoOrder.name} — Please Confirm`, html: templateNewOrderCustomer({ order: demoOrder }) },
     confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder }) },
     confirmed_vendor:   { subject: `[TEST] New Order: ${demoOrder.name} — Action Required`, html: templateOrderConfirmedVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
+    partial_customer:   { subject: `[TEST] Your Advance is Confirmed — ${demoOrder.name} 🎉`, html: templatePartialAdvanceCustomer({ order: demoOrder, meta: demoMeta }) },
     partial_vendor:     { subject: `[TEST] Advance Collected — Updated COD for ${demoOrder.name}`, html: templatePartialAdvanceVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
     transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery' }) },
     delivered_customer: { subject: `[TEST] Order Delivered: ${demoOrder.name} 🎉`, html: templateDelivered({ order: demoOrder, forRole: 'customer' }) },
