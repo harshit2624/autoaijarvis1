@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrosCrow JARVIS — Full System Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #f8fafc;
+    --card:     #ffffff;
+    --border:   #e2e8f0;
+    --indigo:   #4f46e5;
+    --indigo-l: #eef2ff;
+    --green:    #059669;
+    --green-l:  #ecfdf5;
+    --red:      #dc2626;
+    --red-l:    #fef2f2;
+    --yellow:   #d97706;
+    --yellow-l: #fffbeb;
+    --blue:     #0284c7;
+    --blue-l:   #e0f2fe;
+    --purple:   #7c3aed;
+    --purple-l: #f5f3ff;
+    --text:     #0f172a;
+    --muted:    #64748b;
+    --light:    #94a3b8;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.6; }
+
+  /* Page layout */
+  .page-wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+
+  /* Cover */
+  .cover { background: linear-gradient(135deg, #1e1b4b 0%, #312e81 40%, #4f46e5 100%); color: #fff; border-radius: 16px; padding: 60px 48px; margin-bottom: 40px; position: relative; overflow: hidden; }
+  .cover::before { content:''; position:absolute; top:-80px; right:-80px; width:300px; height:300px; border-radius:50%; background:rgba(255,255,255,0.05); }
+  .cover::after  { content:''; position:absolute; bottom:-60px; left:-40px; width:200px; height:200px; border-radius:50%; background:rgba(255,255,255,0.04); }
+  .cover-label  { font-size:11px; letter-spacing:3px; text-transform:uppercase; color:#a5b4fc; font-weight:600; margin-bottom:12px; }
+  .cover-title  { font-size:38px; font-weight:800; letter-spacing:-1px; margin-bottom:12px; line-height:1.15; }
+  .cover-sub    { font-size:16px; color:#c7d2fe; max-width:600px; line-height:1.7; }
+  .cover-meta   { margin-top:32px; display:flex; gap:32px; flex-wrap:wrap; }
+  .cover-meta-item { }
+  .cover-meta-label { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#818cf8; font-weight:600; }
+  .cover-meta-val   { font-size:14px; color:#e0e7ff; font-weight:600; margin-top:2px; }
+
+  /* TOC */
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius:12px; padding:28px 32px; margin-bottom:32px; }
+  .toc-title { font-size:13px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); font-weight:600; margin-bottom:16px; }
+  .toc-grid  { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:8px; }
+  .toc-item  { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; border:1px solid var(--border); font-size:12px; font-weight:500; cursor:pointer; text-decoration:none; color:var(--text); transition:background 0.15s; }
+  .toc-item:hover { background:var(--indigo-l); border-color:#c7d2fe; color:var(--indigo); }
+  .toc-num  { font-size:10px; font-weight:700; color:var(--light); min-width:18px; }
+
+  /* Sections */
+  .section { margin-bottom:40px; }
+  .section-header { display:flex; align-items:center; gap:12px; margin-bottom:20px; padding-bottom:12px; border-bottom:2px solid var(--border); }
+  .section-icon { width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+  .section-title { font-size:20px; font-weight:800; letter-spacing:-0.3px; }
+  .section-sub   { font-size:12px; color:var(--muted); margin-top:2px; }
+
+  /* Cards */
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; margin-bottom:16px; overflow:hidden; }
+  .card-head { padding:14px 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+  .card-head-icon { font-size:14px; }
+  .card-head-title { font-size:13px; font-weight:700; }
+  .card-body { padding:18px; }
+
+  /* Flow steps */
+  .flow { display:flex; flex-direction:column; gap:0; }
+  .step { display:flex; gap:14px; }
+  .step-left { display:flex; flex-direction:column; align-items:center; }
+  .step-dot  { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; }
+  .step-line { width:2px; flex:1; min-height:16px; background:var(--border); margin:4px 0; }
+  .step-content { padding-bottom:18px; flex:1; }
+  .step-title { font-size:13px; font-weight:700; margin-bottom:4px; }
+  .step-desc  { font-size:12px; color:var(--muted); line-height:1.6; }
+  .step-tags  { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+
+  /* Tags / badges */
+  .badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+  .badge-indigo { background:var(--indigo-l); color:var(--indigo); }
+  .badge-green  { background:var(--green-l);  color:var(--green); }
+  .badge-red    { background:var(--red-l);    color:var(--red); }
+  .badge-yellow { background:var(--yellow-l); color:var(--yellow); }
+  .badge-blue   { background:var(--blue-l);   color:var(--blue); }
+  .badge-purple { background:var(--purple-l); color:var(--purple); }
+  .badge-gray   { background:#f1f5f9; color:#475569; }
+
+  /* Email grid */
+  .email-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:12px; }
+  .email-card { border:1px solid var(--border); border-radius:8px; padding:14px; }
+  .email-trigger { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; font-weight:700; margin-bottom:6px; }
+  .email-to      { font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .email-title   { font-size:13px; font-weight:600; }
+  .email-note    { font-size:11px; color:var(--muted); margin-top:6px; border-top:1px solid var(--border); padding-top:6px; }
+
+  /* Table */
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; padding:8px 10px; background:#f8fafc; border-bottom:2px solid var(--border); font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; }
+  td { padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:#fafafa; }
+
+  /* Code */
+  code { background:#f1f5f9; padding:2px 6px; border-radius:4px; font-family:'JetBrains Mono', monospace; font-size:11px; color:#334155; }
+  pre  { background:#1e293b; color:#e2e8f0; padding:14px 16px; border-radius:8px; font-family:'JetBrains Mono', monospace; font-size:11px; line-height:1.7; overflow-x:auto; margin:8px 0; }
+
+  /* Warning / insight boxes */
+  .insight { border-radius:8px; padding:14px 16px; margin-bottom:12px; display:flex; gap:10px; }
+  .insight-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+  .insight-body { flex:1; }
+  .insight-title { font-size:13px; font-weight:700; margin-bottom:3px; }
+  .insight-text  { font-size:12px; line-height:1.6; }
+  .insight-warn   { background:var(--yellow-l); border:1px solid #fde68a; }
+  .insight-ok     { background:var(--green-l);  border:1px solid #a7f3d0; }
+  .insight-risk   { background:var(--red-l);    border:1px solid #fca5a5; }
+  .insight-idea   { background:var(--indigo-l); border:1px solid #c7d2fe; }
+  .insight-info   { background:var(--blue-l);   border:1px solid #bae6fd; }
+
+  /* 2-col grid */
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media(max-width:700px){ .two-col { grid-template-columns:1fr; } }
+
+  /* Stage pill row */
+  .stage-row { display:flex; flex-wrap:wrap; gap:0; align-items:center; margin:12px 0; }
+  .stage-pill { padding:5px 12px; font-size:11px; font-weight:700; letter-spacing:0.5px; border:1px solid var(--border); background:var(--card); }
+  .stage-pill:first-child { border-radius:6px 0 0 6px; }
+  .stage-pill:last-child  { border-radius:0 6px 6px 0; }
+  .stage-arrow { font-size:14px; color:var(--light); padding:0 2px; }
+
+  /* KPI strip */
+  .kpi-strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin-bottom:16px; }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .kpi-label { font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  .kpi-val   { font-size:22px; font-weight:800; margin:4px 0; }
+  .kpi-sub   { font-size:10px; color:var(--muted); }
+
+  /* Print */
+  @media print {
+    body { background:#fff; }
+    .page-wrap { padding:20px; }
+    .cover { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .section { page-break-inside:avoid; }
+    .card { box-shadow:none; }
+  }
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="cover-label">Internal Documentation · Confidential</div>
+    <div class="cover-title">CrosCrow JARVIS<br>Complete System Report</div>
+    <div class="cover-sub">Full breakdown of the admin panel — order flows, email triggers, penalty logic, settlement engine, vendor sync, MongoDB architecture, and strategic recommendations for scaling.</div>
+    <div class="cover-meta">
+      <div class="cover-meta-item"><div class="cover-meta-label">Prepared For</div><div class="cover-meta-val">CrosCrow Founders, Staff & Tech Team</div></div>
+      <div class="cover-meta-item"><div class="cover-meta-label">System</div><div class="cover-meta-val">JARVIS Shopify Admin Panel</div></div>
+      <div class="cover-meta-item"><div class="cover-meta-label">Store</div><div class="cover-meta-val">croscrowofficial.myshopify.com</div></div>
+      <div class="cover-meta-item"><div class="cover-meta-label">Date</div><div class="cover-meta-val">April 2026</div></div>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <div class="toc-title">Contents</div>
+    <div class="toc-grid">
+      <a class="toc-item" href="#architecture"><span class="toc-num">01</span> System Architecture</a>
+      <a class="toc-item" href="#order-lifecycle"><span class="toc-num">02</span> Order Lifecycle & Stages</a>
+      <a class="toc-item" href="#tag-mapping"><span class="toc-num">03</span> Tag Mapping System</a>
+      <a class="toc-item" href="#emails"><span class="toc-num">04</span> Email Trigger Map</a>
+      <a class="toc-item" href="#penalty"><span class="toc-num">05</span> Penalty System</a>
+      <a class="toc-item" href="#settlement"><span class="toc-num">06</span> Settlement Engine</a>
+      <a class="toc-item" href="#vendor-sync"><span class="toc-num">07</span> Vendor Shopify Sync</a>
+      <a class="toc-item" href="#admin-panel"><span class="toc-num">08</span> Admin Panel Views</a>
+      <a class="toc-item" href="#database"><span class="toc-num">09</span> Database & Sync</a>
+      <a class="toc-item" href="#overlaps"><span class="toc-num">10</span> Overlaps & Risk Areas</a>
+      <a class="toc-item" href="#future"><span class="toc-num">11</span> Scaling & Future Roadmap</a>
+    </div>
+  </div>
+
+
+  <!-- 01 ARCHITECTURE -->
+  <div class="section" id="architecture">
+    <div class="section-header">
+      <div class="section-icon" style="background:#eef2ff;">🏗️</div>
+      <div>
+        <div class="section-title">01 — System Architecture</div>
+        <div class="section-sub">How all the pieces connect</div>
+      </div>
+    </div>
+
+    <div class="kpi-strip">
+      <div class="kpi"><div class="kpi-label">Backend</div><div class="kpi-val" style="color:#4f46e5;font-size:15px;">Express.js</div><div class="kpi-sub">Node.js server on Render</div></div>
+      <div class="kpi"><div class="kpi-label">Primary DB</div><div class="kpi-val" style="color:#059669;font-size:15px;">MongoDB Atlas</div><div class="kpi-sub">Cloud-persisted, always on</div></div>
+      <div class="kpi"><div class="kpi-label">Cache DB</div><div class="kpi-val" style="color:#d97706;font-size:15px;">SQLite</div><div class="kpi-sub">Local fast reads on Render</div></div>
+      <div class="kpi"><div class="kpi-label">Storefront</div><div class="kpi-val" style="color:#0284c7;font-size:15px;">Shopify</div><div class="kpi-sub">REST API 2024-01</div></div>
+      <div class="kpi"><div class="kpi-label">Frontend</div><div class="kpi-val" style="color:#7c3aed;font-size:15px;">React CDN</div><div class="kpi-sub">Babel standalone</div></div>
+      <div class="kpi"><div class="kpi-label">Emails</div><div class="kpi-val" style="color:#dc2626;font-size:15px;">Nodemailer</div><div class="kpi-sub">SMTP, dark themed</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">🔄</span><span class="card-head-title">Data Flow — Server Startup</span></div>
+      <div class="card-body">
+        <div class="flow">
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#eef2ff;color:#4f46e5;">1</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Render boots the Node server</div><div class="step-desc">Server enters <code>startServer()</code> async function. Nothing is available to users yet.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">2</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">MongoDB Atlas connects</div><div class="step-desc">If connection succeeds, <code>mongoRestoreToSQLite()</code> runs — all 14 tables are pulled from MongoDB and inserted into the local SQLite DB (INSERT OR REPLACE). If MongoDB fails, server starts with empty SQLite (graceful degradation).</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">3</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Express starts listening on port 3001</div><div class="step-desc">Only after MongoDB restore completes. This eliminates the race condition where requests hit empty SQLite before data is loaded.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#f5f3ff;color:#7c3aed;">4</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Background syncs start</div><div class="step-desc">Two intervals: <strong>MongoDB → SQLite restore</strong> (every 3 min). <strong>Penalty cron</strong> (every 15 min): checks for 24hr warnings and 48hr/ETA penalty triggers. <strong>Report cron</strong> (every 1 hr): fires weekly report on Sundays at 8am IST if auto-send is enabled. Shopify access token also fetched and cached.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#e0f2fe;color:#0284c7;">5</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Real-time: after every write request</div><div class="step-desc">After any SQLite write (stage change, meta update, settlement, etc.), <code>syncSQLiteToMongo()</code> is called via <code>setImmediate()</code> to immediately propagate changes to MongoDB.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">📡</span><span class="card-head-title">Shopify Integration</span></div>
+      <div class="card-body">
+        <table>
+          <tr><th>Component</th><th>Method</th><th>Details</th></tr>
+          <tr><td><strong>Orders</strong></td><td>REST API</td><td><code>fetchAllOrders()</code> — cursor-based pagination, 250/page, fetches all statuses. Shopify is the source of truth for order data. CrosCrow adds meta (stage, AWB, advance) on top.</td></tr>
+          <tr><td><strong>Webhooks</strong></td><td>POST /webhooks/orders</td><td>HMAC-verified. Receives <code>orders/create</code> → immediately sends new-order email + applies tag mappings. Keeps panel in sync without polling.</td></tr>
+          <tr><td><strong>Access Token</strong></td><td>OAuth Client Credentials</td><td>Token fetched fresh via client_id + secret on startup. Cached with 55-min expiry auto-refresh. Scopes include all read/write permissions.</td></tr>
+          <tr><td><strong>Fulfillment</strong></td><td>Fulfillment Orders API 2025-01</td><td>When vendor marks fulfilled: fetches open fulfillment_orders, creates fulfillment with AWB/courier, notifies customer via Shopify.</td></tr>
+          <tr><td><strong>Tags</strong></td><td>REST PATCH</td><td>Admin can add/remove order tags from panel. Tag changes trigger <code>applyTagMappings()</code> which can auto-advance stage.</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 02 ORDER LIFECYCLE -->
+  <div class="section" id="order-lifecycle">
+    <div class="section-header">
+      <div class="section-icon" style="background:#ecfdf5;">📦</div>
+      <div>
+        <div class="section-title">02 — Order Lifecycle & Stages</div>
+        <div class="section-sub">Every state an order can be in and how it moves</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">➡️</span><span class="card-head-title">Normal Order Flow</span></div>
+      <div class="card-body">
+        <div class="stage-row">
+          <div class="stage-pill" style="background:#eef2ff;color:#4f46e5;border-color:#c7d2fe;">🆕 NEW</div>
+          <div class="stage-arrow">→</div>
+          <div class="stage-pill" style="background:#e0f2fe;color:#0284c7;border-color:#bae6fd;">✓ CONFIRMED</div>
+          <div class="stage-arrow">→</div>
+          <div class="stage-pill" style="background:#fffbeb;color:#d97706;border-color:#fde68a;">₹ PARTIAL</div>
+          <div class="stage-arrow">→</div>
+          <div class="stage-pill" style="background:#f0fdf4;color:#059669;border-color:#a7f3d0;">⬡ READY</div>
+          <div class="stage-arrow">→</div>
+          <div class="stage-pill" style="background:#fff7ed;color:#ea580c;border-color:#fed7aa;">⌛ PICKUP</div>
+          <div class="stage-arrow">→</div>
+          <div class="stage-pill" style="background:#fff7ed;color:#d97706;border-color:#fde68a;">↑ TRANSIT</div>
+          <div class="stage-arrow">→</div>
+          <div class="stage-pill" style="background:#ecfdf5;color:#059669;border-color:#6ee7b7;">✅ DELIVERED</div>
+        </div>
+        <div class="stage-row" style="margin-top:4px;">
+          <div class="stage-pill" style="background:#f5f3ff;color:#7c3aed;border-color:#ddd6fe;">⏸ HOLD</div>
+          <div style="width:10px;"></div>
+          <div class="stage-pill" style="background:#fef2f2;color:#dc2626;border-color:#fca5a5;">↩ RTO</div>
+          <div style="width:10px;"></div>
+          <div class="stage-pill" style="background:#fef2f2;color:#dc2626;border-color:#fca5a5;">⚠ PENALTY</div>
+          <div style="width:10px;"></div>
+          <div class="stage-pill" style="background:#f1f5f9;color:#475569;border-color:#cbd5e1;">✕ CANCELLED</div>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-top:10px;">Stages are CrosCrow-internal — stored in <code>order_meta.stage</code>. Shopify's own <code>fulfillment_status</code> (fulfilled/partial/unfulfilled) is tracked separately and used in reports. Multi-vendor orders also store per-vendor stage in <code>order_vendor_stage</code>.</p>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <div class="card-head"><span class="card-head-icon">🤖</span><span class="card-head-title">Automatic Stage Triggers</span></div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#eef2ff;color:#4f46e5;">A</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Shopify Tag Added</div><div class="step-desc">Customer service or Shopify automation adds a tag to the order. <code>applyTagMappings()</code> scans the order's tags against the <code>tag_mappings</code> table. First matching tag (by priority) wins → stage updated.</div></div>
+            </div>
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">B</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Advance Amount Tag</div><div class="step-desc">Tag pattern <code>"500 partial"</code> auto-sets <code>advance_paid = 500</code>, moves order to PARTIAL stage, fires advance-collection email to customer.</div></div>
+            </div>
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">C</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Advance Filled in UI</div><div class="step-desc">Admin fills advance_paid > 0 on a NEW or CONFIRMED order → auto-promotes to PARTIAL, fires stage emails.</div></div>
+            </div>
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#e0f2fe;color:#0284c7;">D</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Shopify Fulfillment Created</div><div class="step-desc">Vendor submits AWB via vendor portal → fulfillment created on Shopify → order moves to TRANSIT.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="card-head-icon">🧑‍💼</span><span class="card-head-title">Manual Stage Triggers</span></div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#f5f3ff;color:#7c3aed;">1</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Admin changes stage in Order Modal</div><div class="step-desc">Dropdown → Save → <code>PUT /admin/orders/:id/stage</code> → stage updated in SQLite + MongoDB → <code>fireStageEmails()</code> called → synced back.</div></div>
+            </div>
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">2</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Per-Vendor Stage Override</div><div class="step-desc">Multi-vendor orders: each vendor has their own independent stage. Only vendors marked DELIVERED are included in settlement. Stage tracked in <code>order_vendor_stage</code>.</div></div>
+            </div>
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#fef2f2;color:#dc2626;">3</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Penalty Stage</div><div class="step-desc">When 48hr or ETA breach triggers, vendor stage automatically flagged with <code>penalty_triggered=1</code>. Admin resolves in Penalties view.</div></div>
+            </div>
+            <div class="step">
+              <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">4</div><div class="step-line"></div></div>
+              <div class="step-content"><div class="step-title">Bulk Tag Sync</div><div class="step-desc">Admin can run bulk sync: re-applies all tag mappings across all 797 orders. Useful after adding new tag rules.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">💰</span><span class="card-head-title">Payment Types & How They Flow</span></div>
+      <div class="card-body">
+        <table>
+          <tr><th>Shopify financial_status</th><th>Our payment_type</th><th>What it means</th><th>Settlement impact</th></tr>
+          <tr><td><code>paid</code></td><td><span class="badge badge-green">prepaid</span></td><td>Customer paid full amount online at checkout</td><td>CrosCrow receives full MRP → pays vendor (MRP × 90%) − commission − GST</td></tr>
+          <tr><td><code>pending</code></td><td><span class="badge badge-yellow">cod</span></td><td>Cash on Delivery — vendor collects from customer</td><td>Vendor collects full MRP → pays CrosCrow commission + GST</td></tr>
+          <tr><td><code>partially_paid</code></td><td><span class="badge badge-blue">partial</span></td><td>Advance collected (e.g., ₹500 upfront, rest on delivery)</td><td>Like COD but advance deducted from what vendor owes</td></tr>
+          <tr><td>Tag: <code>"500 partial"</code></td><td><span class="badge badge-blue">partial</span></td><td>Advance recorded via Shopify tag on COD order</td><td>Same as partially_paid flow</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 03 TAG MAPPING -->
+  <div class="section" id="tag-mapping">
+    <div class="section-header">
+      <div class="section-icon" style="background:#f0fdf4;">🏷️</div>
+      <div>
+        <div class="section-title">03 — Tag Mapping System</div>
+        <div class="section-sub">How Shopify tags drive automatic stage transitions</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">⚙️</span><span class="card-head-title">How applyTagMappings() Works</span></div>
+      <div class="card-body">
+        <div class="flow">
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#eef2ff;color:#4f46e5;">1</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Payment type is set first</div><div class="step-desc">Always derived from Shopify <code>financial_status</code> → stored in <code>order_meta.payment_type</code>. Independent of tags.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">2</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Scan for advance pattern</div><div class="step-desc">Regex <code>/(\d+(?:\.\d+)?)\s+partial/i</code> — if any tag matches (e.g., "1000 partial"), sets <code>advance_paid = 1000</code>.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">3</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Match tag rules by priority</div><div class="step-desc">All <code>tag_mappings</code> loaded, sorted by <code>priority ASC</code>. First tag in order that has a matching rule wins. Stage is updated if different from current. Lower priority number = higher precedence.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fef2f2;color:#dc2626;">4</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Stage email fired on change</div><div class="step-desc">If stage actually changed, <code>fireStageEmails()</code> is called → appropriate customer + vendor emails sent immediately.</div></div>
+          </div>
+        </div>
+        <div class="insight insight-warn" style="margin-top:12px;">
+          <div class="insight-icon">⚠️</div>
+          <div class="insight-body">
+            <div class="insight-title">Important: Tag Priority Must Be Managed Carefully</div>
+            <div class="insight-text">If two tags match the same order (e.g., "confirmed" and "transit"), the one with lower priority number wins. Incorrectly set priorities can silently demote orders (e.g., transit → confirmed). Always audit priority numbers when adding new mappings.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">📋</span><span class="card-head-title">Recommended Tag Mapping Setup</span></div>
+      <div class="card-body">
+        <table>
+          <tr><th>Shopify Tag</th><th>Maps To Stage</th><th>Priority</th><th>Notes</th></tr>
+          <tr><td><code>croscrow-confirmed</code></td><td><span class="badge badge-blue">confirmed</span></td><td>10</td><td>Set when customer confirms COD order</td></tr>
+          <tr><td><code>[number] partial</code></td><td><span class="badge badge-yellow">partial</span></td><td>20</td><td>Auto-detected by regex, sets advance_paid</td></tr>
+          <tr><td><code>croscrow-ready</code></td><td><span class="badge badge-green">ready</span></td><td>30</td><td>Vendor has packed, awaiting pickup</td></tr>
+          <tr><td><code>croscrow-rto</code></td><td><span class="badge badge-red">rto</span></td><td>40</td><td>Return to origin initiated</td></tr>
+          <tr><td><code>croscrow-cancelled</code></td><td><span class="badge badge-gray">cancelled</span></td><td>50</td><td>Order cancelled</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 04 EMAILS -->
+  <div class="section" id="emails">
+    <div class="section-header">
+      <div class="section-icon" style="background:#ffe4e6;">📧</div>
+      <div>
+        <div class="section-title">04 — Email Trigger Map</div>
+        <div class="section-sub">Every email, who receives it, and when it fires</div>
+      </div>
+    </div>
+
+    <div class="email-grid">
+      <div class="email-card" style="border-color:#c7d2fe;">
+        <div class="email-trigger" style="color:#4f46e5;">TRIGGER: NEW ORDER (WEBHOOK)</div>
+        <div class="email-to">→ Customer</div>
+        <div class="email-title">New Order Confirmation</div>
+        <div class="email-note">Sent instantly when Shopify webhook fires. Contains order summary, items, COD/prepaid status, WhatsApp confirmation link. Template: <code>templateNewOrderCustomer</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#bae6fd;">
+        <div class="email-trigger" style="color:#0284c7;">TRIGGER: STAGE → CONFIRMED</div>
+        <div class="email-to">→ Customer + All Vendors</div>
+        <div class="email-title">Order Confirmed</div>
+        <div class="email-note">Customer: order is confirmed + prepaid/COD indicator. Each Vendor: their items, subtotal, advance collected (if any), COD breakdown, shipping split. Template: <code>templateOrderConfirmedCustomer</code> + <code>templateOrderConfirmedVendor</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#fde68a;">
+        <div class="email-trigger" style="color:#d97706;">TRIGGER: STAGE → PARTIAL (ADVANCE)</div>
+        <div class="email-to">→ Customer + All Vendors</div>
+        <div class="email-title">Advance Collected — Order Summary</div>
+        <div class="email-note">Customer: hero "🎉" email showing advance paid + remaining COD amount. If remaining = 0, shows "Fully Paid". Vendor: updated COD remaining after advance. Template: <code>templatePartialAdvanceCustomer</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#6ee7b7;">
+        <div class="email-trigger" style="color:#059669;">TRIGGER: STAGE → TRANSIT</div>
+        <div class="email-to">→ Customer</div>
+        <div class="email-title">Your Order is On Its Way</div>
+        <div class="email-note">Contains AWB number, courier name, tracking URL. Template: <code>templateInTransit</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#a7f3d0;">
+        <div class="email-trigger" style="color:#059669;">TRIGGER: STAGE → DELIVERED</div>
+        <div class="email-to">→ Customer + Admin + Each Vendor</div>
+        <div class="email-title">Delivered Confirmation</div>
+        <div class="email-note">Customer: delivery confirmed. Admin: delivery summary. Vendor: their items delivered, net COD to collect. Uses <code>forRole</code> param to customize per recipient. Template: <code>templateDelivered</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#fca5a5;">
+        <div class="email-trigger" style="color:#dc2626;">TRIGGER: 24HR IN CONFIRMED/PARTIAL</div>
+        <div class="email-to">→ Vendor</div>
+        <div class="email-title">⚠️ Fulfilment Warning</div>
+        <div class="email-note">Sent by penalty cron at exactly 24hr mark. Contains link for vendor to submit delay remarks + ETA. Sets <code>warning_sent=1</code> to avoid duplicate. Template: <code>templateFulfilmentWarning</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#fca5a5;">
+        <div class="email-trigger" style="color:#dc2626;">TRIGGER: 48HR OR ETA BREACH</div>
+        <div class="email-to">→ Vendor</div>
+        <div class="email-title">🚨 Penalty Triggered</div>
+        <div class="email-note">Penalty notification with reason (48hr or ETA breach). Admin resolves via Penalties view. Vendor cannot dispute at this stage — admin decision is final. Template: <code>templatePenaltyTriggered</code></div>
+      </div>
+
+      <div class="email-card" style="border-color:#ddd6fe;">
+        <div class="email-trigger" style="color:#7c3aed;">TRIGGER: VENDOR SUBMITS DELAY REMARKS</div>
+        <div class="email-to">→ Customer + Admin</div>
+        <div class="email-title">Delay Notice + New ETA</div>
+        <div class="email-note">When vendor submits reason + ETA via vendor portal. Customer receives apologetic notice with new ETA. Admin receives ops alert. New ETA is tracked for ETA-breach penalties.</div>
+      </div>
+
+      <div class="email-card" style="border-color:#a5b4fc;">
+        <div class="email-trigger" style="color:#4f46e5;">TRIGGER: SUNDAY 8AM IST (AUTO) or MANUAL</div>
+        <div class="email-to">→ Admin/Staff + Vendors</div>
+        <div class="email-title">📊 Weekly Performance Report</div>
+        <div class="email-note">KPI summary: total orders, fulfilled %, RTO rate, AOV, revenue. Fulfillment breakdown by payment type. Vendor performance table. Urgent task list (prepaid-first). Can be toggled auto/manual with custom date ranges.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn" style="margin-top:16px;">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">No Email for: READY, PICKUP, HOLD, RTO, CANCELLED stages</div>
+        <div class="insight-text">These stage transitions are silent — no email fires. If you want customer communication on RTO (e.g., "we couldn't deliver, will reattempt") or HOLD, templates need to be added. This is a gap in the current customer communication flow.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 05 PENALTY -->
+  <div class="section" id="penalty">
+    <div class="section-header">
+      <div class="section-icon" style="background:#fef2f2;">⚠️</div>
+      <div>
+        <div class="section-title">05 — Penalty System</div>
+        <div class="section-sub">How vendors are held accountable for fulfilment delays</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">⏱️</span><span class="card-head-title">Penalty Timeline (per order-vendor pair)</span></div>
+      <div class="card-body">
+        <div class="flow">
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#e0f2fe;color:#0284c7;">0h</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Order moves to CONFIRMED or PARTIAL</div><div class="step-desc"><code>stage_started_at</code> timestamp is recorded. The penalty clock starts ticking. Penalty cron checks every 15 minutes.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">24h</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Warning Email Sent</div><div class="step-desc">Vendor receives fulfilment warning. Delay remark link sent — vendor can log a reason + commit to a new ETA date. <code>warning_sent = 1</code> prevents duplicate warnings. This is the vendor's chance to communicate before penalty hits.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fee2e2;color:#dc2626;">48h</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Penalty Triggered: 48hr Breach</div><div class="step-desc">If vendor hasn't dispatched (stage still CONFIRMED/PARTIAL), penalty is created in <code>order_penalties</code> with <code>trigger_reason = '48hr_breach'</code>. Vendor gets penalty email. Status = PENDING (admin must confirm with amount).</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fee2e2;color:#dc2626;">ETA+1</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Penalty Triggered: ETA Breach</div><div class="step-desc">If vendor committed to ETA in delay remarks but still hasn't shipped by that date, <code>trigger_reason = 'eta_breach'</code> penalty fires. Separate from 48hr penalty — a vendor can have both.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#f5f3ff;color:#7c3aed;">ADMIN</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Admin Resolves in Penalties View</div><div class="step-desc">Admin reviews pending penalties. Can CONFIRM (set penalty_amount, added to next settlement) or CANCEL (waive the penalty). Vendor email sent either way.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">SETTLE</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Penalty Deducted in Settlement</div><div class="step-desc">Confirmed penalties in the settlement period are summed and added to vendor's net payable. Appears as "penalty_deduction" line in the invoice.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="insight insight-risk">
+      <div class="insight-icon">🔴</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk: Penalty fires even if vendor dispatched manually (outside system)</div>
+        <div class="insight-text">If a vendor dispatches via WhatsApp/call and doesn't update the stage in the portal, the cron will still fire penalties at 48hr. The system only knows about stage changes in the panel. <strong>Fix:</strong> Enforce that AWB entry in the vendor portal is the only valid dispatch confirmation. Communicate this clearly to all vendors.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">No penalty for orders in NEW stage</div>
+        <div class="insight-text">The penalty clock only starts when order reaches CONFIRMED or PARTIAL. Orders sitting in NEW for days have no accountability mechanism. Consider adding a separate "unconfirmed order" warning — e.g., flag orders in NEW for more than 12 hours.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 06 SETTLEMENT -->
+  <div class="section" id="settlement">
+    <div class="section-header">
+      <div class="section-icon" style="background:#f0fdf4;">💰</div>
+      <div>
+        <div class="section-title">06 — Settlement Engine</div>
+        <div class="section-sub">How vendor commissions are calculated and invoices generated</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">🧮</span><span class="card-head-title">Commission Formula</span></div>
+      <div class="card-body">
+        <div class="two-col">
+          <div>
+            <div style="font-weight:700;font-size:12px;margin-bottom:8px;color:var(--green);">COD / Partial Order</div>
+            <pre>base      = vendor_items_revenue
+commission = base × (comm_pct / 100)
+gst        = commission × 0.18
+invoice    = commission + gst
+advance    = advance_paid (from order_meta)
+net_due    = invoice − advance
+type       = 'receivable' (vendor pays CrosCrow)</pre>
+          </div>
+          <div>
+            <div style="font-weight:700;font-size:12px;margin-bottom:8px;color:var(--indigo);">Prepaid Order</div>
+            <pre>base       = vendor_items_revenue × 0.90
+             (10% prepaid discount to customer)
+commission = base × (comm_pct / 100)
+gst        = commission × 0.18
+net        = −(base − commission − gst)
+type       = 'payout' (CrosCrow pays vendor)</pre>
+          </div>
+        </div>
+        <div class="insight insight-info" style="margin-top:12px;">
+          <div class="insight-icon">ℹ️</div>
+          <div class="insight-body">
+            <div class="insight-title">Commission Rate Priority</div>
+            <div class="insight-text">1. <code>vendor_profiles.commission_pct</code> (per-vendor override) → 2. <code>vendor_config.commission_pct</code> → 3. Default 20%. Multi-vendor orders split shipping equally: each vendor's shipping charge = <code>total_shipping / vendor_count</code> (COD only).</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">📄</span><span class="card-head-title">Settlement Generation Flow</span></div>
+      <div class="card-body">
+        <div class="flow">
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#eef2ff;color:#4f46e5;">1</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Admin selects vendor + date range</div><div class="step-desc">Only DELIVERED orders in that period are included. For multi-vendor orders: only the per-vendor stage is checked — a vendor is settled only when their items specifically are marked DELIVERED.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">2</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Per-order commission calculated</div><div class="step-desc">Each delivered order's line items belonging to this vendor are summed. Commission formula applied. Shipping split applied for COD orders.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fef2f2;color:#dc2626;">3</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Confirmed penalties added</div><div class="step-desc">All confirmed (not cancelled) penalties for this vendor in the same period are fetched and summed. Added to net_payable. Linked via <code>settlement_penalties</code> table.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#f5f3ff;color:#7c3aed;">4</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Invoice generated</div><div class="step-desc">Invoice number: <code>CC-{VENDOR}-{YYYYMM}-{timestamp}</code>. Saved to <code>settlements</code> + <code>settlement_orders</code> tables. Status = PENDING.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">5</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Admin reviews + marks paid</div><div class="step-desc">Invoice modal shows full line-by-line breakdown with company profiles, tax calculation, penalty deduction. Admin can edit (extra discount, shipping adjustment, custom notes). Print for records.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="insight insight-risk">
+      <div class="insight-icon">🔴</div>
+      <div class="insight-body">
+        <div class="insight-title">Settlement is manual — no payment gateway integration</div>
+        <div class="insight-text">Net payable is calculated but actual payment (NEFT/IMPS to vendor) happens outside the system. There's no payment reconciliation or auto-payout. This means a vendor could be settled in the system but physically not paid if someone forgets. <strong>Recommendation:</strong> Add a "payment reference" field and payment date when marking invoices as paid. Future: Razorpay Payout API integration.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 07 VENDOR SYNC -->
+  <div class="section" id="vendor-sync">
+    <div class="section-header">
+      <div class="section-icon" style="background:#f0f9ff;">🏪</div>
+      <div>
+        <div class="section-title">07 — Vendor Shopify Sync</div>
+        <div class="section-sub">How vendor stores connect to CrosCrow</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">🔗</span><span class="card-head-title">Connection Flow</span></div>
+      <div class="card-body">
+        <div class="flow">
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#e0f2fe;color:#0284c7;">1</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Vendor provides credentials in Vendor Sync panel</div><div class="step-desc">Shop domain (e.g., <code>mystore.myshopify.com</code>), API Client ID, API Client Secret from their Shopify Partners app.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">2</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Client Credentials OAuth</div><div class="step-desc">Server calls <code>POST {vendor_shop}/admin/oauth/access_token</code> with grant_type=client_credentials. Returns scoped access token. Verified by fetching <code>/shop.json</code>.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#f5f3ff;color:#7c3aed;">3</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Products browsed & imported</div><div class="step-desc">Admin searches vendor's Shopify catalog (title search via <code>?q=</code>). Selects product → imports to CrosCrow store via Shopify Product API. Product created as DRAFT with vendor attribution.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">4</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Variant mapping saved</div><div class="step-desc">Each vendor variant ID ↔ CrosCrow variant ID mapping stored in <code>vendor_product_mappings</code>. This allows inventory sync: when CrosCrow variant sells, vendor's stock can be decremented.</div></div>
+          </div>
+          <div class="step">
+            <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">5</div><div class="step-line"></div></div>
+            <div class="step-content"><div class="step-title">Price & Stock sync</div><div class="step-desc">Admin can trigger sync anytime from the map modal — fetches latest price + inventory from vendor store, updates CrosCrow listings.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 08 ADMIN PANEL VIEWS -->
+  <div class="section" id="admin-panel">
+    <div class="section-header">
+      <div class="section-icon" style="background:#eef2ff;">🖥️</div>
+      <div>
+        <div class="section-title">08 — Admin Panel: All Views</div>
+        <div class="section-sub">What each section does and who should use it</div>
+      </div>
+    </div>
+
+    <table>
+      <tr><th>View</th><th>Who Uses It</th><th>What It Does</th><th>Key Actions</th></tr>
+      <tr>
+        <td><strong>📊 Dashboard</strong></td><td>Founder / Manager</td>
+        <td>Period-filtered KPIs, order pipeline stage counts, revenue trend, fulfillment rate, RTO rate, repeat buyers, AOV, top products/brands/cities</td>
+        <td>Period picker controls everything. Click pipeline stage → jumps to filtered orders.</td>
+      </tr>
+      <tr>
+        <td><strong>◎ Orders</strong></td><td>All Staff</td>
+        <td>Full order list with stage tabs, search, period filter. Click any order → modal with full edit capability.</td>
+        <td>Change stage, set AWB, fill advance, edit tags, add notes, view per-vendor stages, view commission preview.</td>
+      </tr>
+      <tr>
+        <td><strong>🏪 Vendors</strong></td><td>Manager / Ops</td>
+        <td>List all vendors, edit commission %, set vendor email for notifications.</td>
+        <td>Search vendor, edit commission_pct, save email.</td>
+      </tr>
+      <tr>
+        <td><strong>🤖 JARVIS AI</strong></td><td>All Staff</td>
+        <td>Natural language order query assistant. Ask "how many prepaid orders this week", "show me unfulfilled orders older than 2 days", "RTO count this month".</td>
+        <td>Multi-turn chat, tool calls for stats/list/breakdown/delivery-status.</td>
+      </tr>
+      <tr>
+        <td><strong>💰 Settlements</strong></td><td>Finance / Founder</td>
+        <td>Tab 1: Real-time delivered summary per vendor with commission preview. Tab 2: Generate invoices, view all past invoices, print PDF.</td>
+        <td>Select vendor + date range → Generate → Review invoice → Edit if needed → Mark paid.</td>
+      </tr>
+      <tr>
+        <td><strong>⚠️ Penalties</strong></td><td>Ops Manager</td>
+        <td>All pending penalties with trigger reason (48hr / ETA breach). Confirm with amount or cancel.</td>
+        <td>Confirm: set penalty_amount → included in next settlement. Cancel: waived.</td>
+      </tr>
+      <tr>
+        <td><strong>🏷️ Tag Mappings</strong></td><td>Tech / Manager</td>
+        <td>Create/edit rules mapping Shopify tags → internal stages. Set priority.</td>
+        <td>Add rule, set priority number, bulk sync all existing orders.</td>
+      </tr>
+      <tr>
+        <td><strong>🔄 Vendor Sync</strong></td><td>Tech / Catalog</td>
+        <td>Connect vendor Shopify stores, browse their products, import to CrosCrow, map variants, sync price/inventory.</td>
+        <td>Connect store → Browse catalog → Import product → Map variants → Sync stock.</td>
+      </tr>
+      <tr>
+        <td><strong>🚚 Shipping Partners</strong></td><td>Ops</td>
+        <td>Configure shipping credentials per vendor (Delhivery, Shiprocket, etc.). API keys stored per vendor.</td>
+        <td>Add credentials, select courier provider per vendor.</td>
+      </tr>
+      <tr>
+        <td><strong>📧 Email Settings</strong></td><td>Tech / Manager</td>
+        <td>Configure SMTP, toggle global email on/off, test send.</td>
+        <td>Global disable useful during testing to avoid spamming customers.</td>
+      </tr>
+      <tr>
+        <td><strong>📊 Reports</strong></td><td>Founder / Manager</td>
+        <td>Weekly performance report: KPIs, fulfillment breakdown, vendor performance, urgent task list.</td>
+        <td>Preview report, send manually, configure auto-send Sundays + recipient list.</td>
+      </tr>
+      <tr>
+        <td><strong>⚙️ Settings</strong></td><td>Admin</td>
+        <td>CrosCrow company profile (for invoices) + per-vendor profiles (company name, GSTIN, PAN, bank details).</td>
+        <td>Edit company info, save vendor bank details for settlement invoices.</td>
+      </tr>
+      <tr>
+        <td><strong>📋 Audit Log</strong></td><td>Manager</td>
+        <td>All admin actions logged: stage changes, tag edits, settlement generation, etc. Non-deletable trail.</td>
+        <td>Filter by action type, view timestamp + actor.</td>
+      </tr>
+    </table>
+  </div>
+
+
+  <!-- 09 DATABASE -->
+  <div class="section" id="database">
+    <div class="section-header">
+      <div class="section-icon" style="background:#f0fdf4;">🗄️</div>
+      <div>
+        <div class="section-title">09 — Database Architecture & Sync</div>
+        <div class="section-sub">Dual-write pattern: MongoDB primary, SQLite cache</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-head-icon">📊</span><span class="card-head-title">All Tables (14 synced)</span></div>
+      <div class="card-body">
+        <table>
+          <tr><th>Table</th><th>Primary Key</th><th>Purpose</th></tr>
+          <tr><td><code>vendor_config</code></td><td>vendor_name</td><td>Commission %, email, status per vendor</td></tr>
+          <tr><td><code>email_settings</code></td><td>id</td><td>SMTP config, global email toggle</td></tr>
+          <tr><td><code>order_meta</code></td><td>shopify_id</td><td>Stage, payment_type, advance_paid, AWB, courier, tracking, notes, delivery_status</td></tr>
+          <tr><td><code>order_vendor_stage</code></td><td>shopify_id + vendor_name</td><td>Per-vendor stage, stage_started_at, warning_sent, penalty_triggered</td></tr>
+          <tr><td><code>vendor_shopify_connections</code></td><td>vendor_name</td><td>Vendor's shop_domain, access_token, scopes</td></tr>
+          <tr><td><code>vendor_product_mappings</code></td><td>id (auto)</td><td>vendor_variant_id ↔ croscrow_variant_id, sync_enabled</td></tr>
+          <tr><td><code>order_penalties</code></td><td>id (auto)</td><td>Penalty record per order-vendor, trigger_reason, amount, status</td></tr>
+          <tr><td><code>order_notes</code></td><td>id (auto)</td><td>Thread of notes per order (role: admin/vendor)</td></tr>
+          <tr><td><code>delay_remarks</code></td><td>id (auto)</td><td>Vendor delay reasons + ETA commitments</td></tr>
+          <tr><td><code>croscrow_profile</code></td><td>id</td><td>Company name, address, GSTIN, PAN for invoices</td></tr>
+          <tr><td><code>vendor_profiles</code></td><td>vendor_name</td><td>Vendor company details for invoices (bank, IFSC, GST)</td></tr>
+          <tr><td><code>tag_mappings</code></td><td>id (auto)</td><td>Shopify tag → stage rules with priority</td></tr>
+          <tr><td><code>global_shipping_creds</code></td><td>id</td><td>Default shipping partner credentials</td></tr>
+          <tr><td><code>vendor_shipping_partners</code></td><td>id (auto)</td><td>Per-vendor shipping credentials</td></tr>
+          <tr><td><code>email_log</code></td><td>id (auto)</td><td>Every email sent: trigger, recipient, status, timestamp</td></tr>
+        </table>
+        <p style="font-size:11px;color:var(--muted);margin-top:10px;">Note: <code>settlements</code>, <code>settlement_orders</code>, <code>settlement_penalties</code>, <code>audit_log</code> exist in SQLite only — not yet in SYNC_TABLES. If Render restarts, these are lost.</p>
+      </div>
+    </div>
+
+    <div class="insight insight-risk">
+      <div class="insight-icon">🔴</div>
+      <div class="insight-body">
+        <div class="insight-title">CRITICAL: Settlements are NOT backed up to MongoDB</div>
+        <div class="insight-text">The <code>settlements</code>, <code>settlement_orders</code>, <code>settlement_penalties</code> tables are only in SQLite. Every time Render restarts (free tier), these are wiped. Generated invoices are permanently lost. <strong>This must be fixed before generating real settlement invoices.</strong> Action: Add these three tables to SYNC_TABLES immediately.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">Audit log also not synced to MongoDB</div>
+        <div class="insight-text">The <code>audit_log</code> table is SQLite-only. All admin actions (who changed what, when) disappear on restart. For compliance and debugging, add <code>audit_log</code> to SYNC_TABLES or write directly to MongoDB via an AL helper.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 10 OVERLAPS & RISKS -->
+  <div class="section" id="overlaps">
+    <div class="section-header">
+      <div class="section-icon" style="background:#fef2f2;">🔍</div>
+      <div>
+        <div class="section-title">10 — Overlapping Cases & Risk Areas</div>
+        <div class="section-sub">My analysis of where things can go wrong or conflict</div>
+      </div>
+    </div>
+
+    <div class="insight insight-risk">
+      <div class="insight-icon">🔴</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk 1: Duplicate Emails on Stage Collision</div>
+        <div class="insight-text">If a Shopify webhook arrives AND an admin manually changes the stage at the same moment, <code>fireStageEmails()</code> could fire twice for the same stage transition. The customer could receive two "Order Confirmed" emails. <strong>Fix:</strong> Add a per-order, per-stage deduplication check in <code>fireStageEmails()</code> — track which stages have already had emails sent in <code>order_meta</code>.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-risk">
+      <div class="insight-icon">🔴</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk 2: Tag Sync Can Trigger Emails on Old Orders</div>
+        <div class="insight-text">When admin runs "Bulk Tag Sync" it re-applies all tag mappings to all 797 orders. If any order's stage changes as a result, <code>fireStageEmails()</code> fires. This can send confirmation/transit emails to customers of orders that were fulfilled months ago. <strong>Fix:</strong> Bulk sync should have a dry-run mode first, or skip orders in terminal stages (delivered/rto/cancelled).</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk 3: Penalty Clock Doesn't Reset on Hold</div>
+        <div class="insight-text">If an order is put on HOLD (e.g., customer requests delay), the <code>stage_started_at</code> is not cleared and the penalty clock keeps running. A vendor could receive a penalty for a hold that was admin-initiated, not vendor negligence. <strong>Fix:</strong> When stage changes TO hold, clear <code>stage_started_at</code>. When it comes back OUT of hold, reset the clock.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk 4: Multi-Vendor Order — Global Stage vs Vendor Stage Confusion</div>
+        <div class="insight-text">Orders have both a global <code>order_meta.stage</code> AND per-vendor stages in <code>order_vendor_stage</code>. Emails fire based on global stage change. But settlement uses per-vendor stage. If admin changes global stage to "delivered" without updating individual vendor stages, customers get delivered email but vendors don't appear in settlement. <strong>Fix:</strong> When global stage changes to "delivered", auto-set all vendor stages to "delivered" unless overridden.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk 5: advance_paid Tag Pattern Conflicts with Product Names</div>
+        <div class="insight-text">The regex <code>/(\d+(?:\.\d+)?)\s+partial/i</code> matches any number followed by "partial". A product tag like "10 partial pieces" or "50 partial payment" would accidentally set advance_paid = 10 or 50. <strong>Fix:</strong> Make the pattern more specific, e.g., require it to be an exact tag: tag equals <code>"advance:500"</code> or <code>"partial-500"</code> rather than free-text regex.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-warn">
+      <div class="insight-icon">⚠️</div>
+      <div class="insight-body">
+        <div class="insight-title">Risk 6: No Idempotency on Settlement Generation</div>
+        <div class="insight-text">Admin can generate the same vendor + period settlement multiple times. The system doesn't prevent duplicates. You could end up with two invoices for the same period if someone clicks "Generate" twice. <strong>Fix:</strong> Add a unique constraint on <code>vendor_name + period_start + period_end</code> in settlements table. Or check for existing settlement before generating.</div>
+      </div>
+    </div>
+
+    <div class="insight insight-idea">
+      <div class="insight-icon">💡</div>
+      <div class="insight-body">
+        <div class="insight-title">Observation: JARVIS AI uses real Shopify data but no meta enrichment</div>
+        <div class="insight-text">JARVIS AI (Claude) fetches Shopify orders for its context but doesn't pull CrosCrow meta (stage, advance, AWB). So if you ask "how many orders are confirmed?" it uses Shopify's fulfillment_status, not our internal stage. This leads to incorrect answers. <strong>Fix:</strong> Merge CrosCrow meta into orders before passing to AI context window.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 11 FUTURE -->
+  <div class="section" id="future">
+    <div class="section-header">
+      <div class="section-icon" style="background:#f5f3ff;">🚀</div>
+      <div>
+        <div class="section-title">11 — Scaling & Future Roadmap</div>
+        <div class="section-sub">How to grow the panel to handle 10x volume</div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">🔥 Fix Immediately (Before Scale)</div>
+      <div class="insight insight-risk">
+        <div class="insight-icon">1</div>
+        <div class="insight-body"><div class="insight-title">Add settlements + audit_log to MongoDB SYNC_TABLES</div><div class="insight-text">Settlement data loss on Render restart is a business-critical bug. Without this, every invoice generated can disappear.</div></div>
+      </div>
+      <div class="insight insight-risk">
+        <div class="insight-icon">2</div>
+        <div class="insight-body"><div class="insight-title">Add email deduplication guard in fireStageEmails()</div><div class="insight-text">Track sent stage-emails in order_meta (e.g., <code>emails_sent: "confirmed,transit"</code>). Never send the same stage email twice to the same order.</div></div>
+      </div>
+      <div class="insight insight-risk">
+        <div class="insight-icon">3</div>
+        <div class="insight-body"><div class="insight-title">Upgrade Render to paid plan ($7/mo)</div><div class="insight-text">Free tier sleeps after 15 min. Penalty cron, sync jobs, and webhooks all fail during sleep. At current order volume (~800 orders), missed penalty windows mean real money lost.</div></div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">📅 Short Term (Next 30 Days)</div>
+      <div class="two-col">
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">📱</div>
+          <div class="insight-body"><div class="insight-title">WhatsApp / SMS Notifications</div><div class="insight-text">Email open rates for order updates are ~20%. WhatsApp has 80%+ read rates. Add Gupshup/Twilio as parallel channel for confirmed, transit, delivered stage messages. Template messages for customer + vendors.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">🔔</div>
+          <div class="insight-body"><div class="insight-title">Browser Push Notifications for Staff</div><div class="insight-text">When a new order comes in or a penalty triggers, notify staff instantly in browser. Use Push API + service worker. Eliminates need to keep the panel open all day to know what's happening.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">📊</div>
+          <div class="insight-body"><div class="insight-title">RTO Prediction Score</div><div class="insight-text">Using order history data: city, vendor, payment type, order value — train a simple model (or use rule-based scoring) to flag orders likely to RTO. Show score in order list. Staff can proactively call customer on high-risk orders.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">⚡</div>
+          <div class="insight-body"><div class="insight-title">Auto-Stage from Courier Webhooks</div><div class="insight-text">Delhivery, Shiprocket, XpressBees all offer delivery webhooks. When they push "delivered" status, auto-update order to DELIVERED stage + fire email. Currently this must be done manually.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">🏗️ Medium Term (1–3 Months)</div>
+      <div class="two-col">
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">💳</div>
+          <div class="insight-body"><div class="insight-title">Auto Payout via Razorpay</div><div class="insight-text">When settlement is generated and approved, trigger Razorpay Payout API to vendor's bank account automatically. Eliminate manual NEFT. Full payment reconciliation in the panel.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">🏪</div>
+          <div class="insight-body"><div class="insight-title">Vendor Self-Service Portal (Enhanced)</div><div class="insight-text">Currently vendors can view orders + submit AWB. Add: vendor can see their own analytics (revenue trend, RTO rate, pending settlements, penalty history). Gives vendors ownership and reduces admin queries.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">🤖</div>
+          <div class="insight-body"><div class="insight-title">JARVIS AI — Enriched with Meta</div><div class="insight-text">Merge CrosCrow order meta (stage, advance, AWB) into JARVIS context. Enable commands like "confirm all new COD orders from Vendor X", "generate settlement for Vendor Y for last month". True natural-language ops.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">📦</div>
+          <div class="insight-body"><div class="insight-title">Inventory Management</div><div class="insight-text">Currently product mappings exist but inventory sync is manual. Build auto-decrement: when CrosCrow order placed → vendor inventory decremented. Low stock alerts → flag in vendor portal + email vendor to restock.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">🌟 Long Term (3–12 Months)</div>
+      <div class="two-col">
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">🌐</div>
+          <div class="insight-body"><div class="insight-title">Multi-store Architecture</div><div class="insight-text">As CrosCrow grows to multiple Shopify stores (regions, brands), the panel needs to support store switching. The MongoDB + Express layer already abstracts Shopify cleanly — just parameterise the SHOP constant.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">📱</div>
+          <div class="insight-body"><div class="insight-title">Mobile App for Vendors</div><div class="insight-text">Vendors currently use vendor.html on mobile (not ideal). A React Native app with push notifications, one-tap AWB entry, and real-time order feed would dramatically improve vendor adoption and fulfilment speed.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">📈</div>
+          <div class="insight-body"><div class="insight-title">Customer Lifetime Value Tracking</div><div class="insight-text">Track repeat purchase rate, time between orders, average cart value per customer. Identify top 10% customers for loyalty programs. Currently analytics shows repeat rate % but not individual customer journeys.</div></div>
+        </div>
+        <div class="insight insight-idea" style="margin-bottom:0;">
+          <div class="insight-icon">🏷️</div>
+          <div class="insight-body"><div class="insight-title">Dynamic Pricing Engine</div><div class="insight-text">Vendor A's product selling fast → auto-suggest price increase. Slow mover → suggest discount. Based on velocity data already available in analytics. JARVIS AI could surface these recommendations proactively.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:20px;border-color:#c7d2fe;background:var(--indigo-l);">
+      <div class="card-body">
+        <div style="font-size:13px;font-weight:700;color:var(--indigo);margin-bottom:8px;">📝 Closing Thoughts from the System</div>
+        <p style="font-size:13px;color:#3730a3;line-height:1.7;">
+          The JARVIS panel is genuinely well-designed for a 0→1 D2C operation. The dual-write MongoDB/SQLite pattern is smart — you get Render's fast cold SQLite reads with MongoDB's persistence. The tag-mapping system is a powerful abstraction that lets non-technical staff control order flow through Shopify's native UI. The penalty system creates real vendor accountability without being punitive (24hr warning before 48hr penalty).
+        </p>
+        <p style="font-size:13px;color:#3730a3;line-height:1.7;margin-top:10px;">
+          The biggest architectural gaps are: (1) settlements not synced to MongoDB — this is a real money risk, (2) no email deduplication — one race condition and a customer gets spammed, (3) the JARVIS AI operates on Shopify data not enriched with our meta — limiting its accuracy. All three are fixable in under a day of work.
+        </p>
+        <p style="font-size:13px;color:#3730a3;line-height:1.7;margin-top:10px;">
+          At 800 orders the system is running fine. At 5,000+ orders, the <code>fetchAllOrders()</code> call that loads all orders on every dashboard/analytics request will become a bottleneck (currently 4 API pages × 250 = fast, but at 5k orders = 20 pages). Plan for order pagination + caching in MongoDB before reaching that scale.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:32px 0;border-top:1px solid var(--border);margin-top:24px;color:var(--light);font-size:11px;">
+    CrosCrow JARVIS System Report · Generated April 2026 · Confidential — Internal Use Only
+  </div>
+
+</div>
+</body>
+</html>
