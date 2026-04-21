@@ -2266,7 +2266,7 @@
         body: JSON.stringify({ vendor_name: selected, vendor_product_id: String(product.id), sync_inventory: true }) });
       const d = await r.json();
       setImporting(p=>({...p,[product.id]:false}));
-      if (d.success) { setMsg(`✅ "${product.title}" imported as draft product #${d.croscrow_product_id}`); loadVendorProducts(selected); }
+      if (d.success) { setMsg(`✅ "${product.title}" imported as active product #${d.croscrow_product_id} (${d.variants_mapped} variants mapped)`); loadVendorProducts(selected); }
       else setMsg(`❌ ${d.error}`);
     };
 
@@ -2288,12 +2288,14 @@
     // Map modal helpers
     const searchCcProducts = async (q) => {
       setCcSearching(true);
-      const r = await fetch(`/admin/vendor-sync/croscrow-products?q=${encodeURIComponent(q)}`, { headers:{ Authorization:'Bearer '+token } });
+      const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+      const r = await fetch(`/admin/vendor-sync/croscrow-products${qs}`, { headers:{ Authorization:'Bearer '+token } });
       const d = await r.json();
       setCcProducts(d.products||[]); setCcSearching(false);
     };
 
     useEffect(()=>{ if (ccSearch.length > 1) { const t = setTimeout(()=>searchCcProducts(ccSearch), 400); return ()=>clearTimeout(t); } }, [ccSearch]);
+    useEffect(()=>{ if (mapModal) { setCcSearch(''); setCcProducts([]); searchCcProducts(''); } }, [mapModal]);
 
     const saveMapping = async (ccProduct, ccVariant) => {
       if (!mapModal) return;
@@ -2340,8 +2342,8 @@
                 <div style={{display:'flex',gap:8}}>
                   <button className={`btn btn-sm ${tab==='products'?'btn-primary':'btn-ghost'}`} onClick={()=>setTab('products')}>Products</button>
                   <button className={`btn btn-sm ${tab==='mappings'?'btn-primary':'btn-ghost'}`} onClick={()=>{ setTab('mappings'); loadMappings(); }}>Mappings ({mappings.length})</button>
-                  <button className="btn btn-sm btn-ghost" onClick={syncInventory} disabled={syncing} title="Push vendor inventory quantities to CrosCrow">
-                    {syncing?'Syncing…':'↻ Sync Inventory'}
+                  <button className="btn btn-sm btn-ghost" onClick={syncInventory} disabled={syncing} title="Sync price & inventory from vendor store to CrosCrow for all mapped variants">
+                    {syncing?'Syncing…':'↻ Sync Price & Stock'}
                   </button>
                 </div>
               </div>
@@ -2433,7 +2435,15 @@
               <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>
                 Vendor: <strong>{mapModal.vendorProduct.title}</strong> — {mapModal.vendorVariant.title} (₹{mapModal.vendorVariant.price})
               </div>
-              <input className="form-input" placeholder="Search CrosCrow products…" value={ccSearch} onChange={e=>setCcSearch(e.target.value)} style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+              <div style={{display:'flex',gap:8,marginBottom:12}}>
+                <input className="form-input" placeholder="Search CrosCrow products…" value={ccSearch}
+                  onChange={e=>setCcSearch(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==='Enter' && ccSearch.trim().length>1) searchCcProducts(ccSearch.trim()); }}
+                  style={{flex:1,boxSizing:'border-box'}}/>
+                <button className="btn btn-sm btn-primary" onClick={()=>{ if(ccSearch.trim().length>1) searchCcProducts(ccSearch.trim()); }} disabled={ccSearching}>
+                  {ccSearching?'…':'Search'}
+                </button>
+              </div>
               {ccSearching && <div style={{color:'var(--text-muted)',fontSize:12,marginBottom:8}}>Searching…</div>}
               <div style={{display:'flex',flexDirection:'column',gap:8}}>
                 {ccProducts.map(cp=>(
@@ -2449,7 +2459,9 @@
                     </div>
                   </div>
                 ))}
-                {ccSearch.length>1 && ccProducts.length===0 && !ccSearching && <div style={{fontSize:12,color:'var(--text-muted)'}}>No products found. Try a different search.</div>}
+                {ccProducts.length===0 && !ccSearching && <div style={{fontSize:12,color:'var(--text-muted)'}}>
+                  {ccSearch.length>1 ? 'No products found. Try a different keyword.' : 'Showing top 20 products. Type to search.'}
+                </div>}
               </div>
               <div style={{marginTop:16,textAlign:'right'}}><button className="btn btn-ghost" onClick={()=>setMapModal(null)}>Cancel</button></div>
             </div>

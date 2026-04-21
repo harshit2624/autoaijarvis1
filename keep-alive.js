@@ -15,7 +15,7 @@
  * Option C — Upgrade to Render Starter plan ($7/mo) and skip this entirely
  */
 
-const RENDER_URL = process.env.RENDER_URL || "https://YOUR-APP.onrender.com";
+const RENDER_URL = process.env.RENDER_URL || "https://autoaijarvis1.onrender.com/";
 const INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 async function ping() {

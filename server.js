@@ -25,38 +25,48 @@ require("dotenv").config();
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sicos2725:Harshit4321@cluster27.i8cmlu4.mongodb.net/jarvis?appName=Cluster27";
 let mdb = null; // MongoDB database handle — null until connected
 
-MongoClient.connect(MONGO_URI, { tls: true, tlsAllowInvalidCertificates: false }).then(async client => {
-  mdb = client.db("jarvis");
-  console.log("✅  MongoDB connected");
+async function startServer() {
+  try {
+    const client = await MongoClient.connect(MONGO_URI, { tls: true, tlsAllowInvalidCertificates: false });
+    mdb = client.db("jarvis");
+    console.log("✅  MongoDB connected");
 
-  // Ensure indexes
-  const idxOps = [
-    mdb.collection("vendor_config").createIndex({ vendor_name: 1 }, { unique: true }),
-    mdb.collection("order_meta").createIndex({ shopify_id: 1 }, { unique: true }),
-    mdb.collection("email_settings").createIndex({ id: 1 }, { unique: true }),
-    mdb.collection("vendor_shopify_connections").createIndex({ vendor_name: 1 }, { unique: true }),
-    mdb.collection("vendor_product_mappings").createIndex({ vendor_name: 1, vendor_variant_id: 1 }, { unique: true }),
-    mdb.collection("order_vendor_stage").createIndex({ shopify_id: 1, vendor_name: 1 }, { unique: true }),
-    mdb.collection("order_penalties").createIndex({ shopify_id: 1, vendor_name: 1 }),
-    mdb.collection("order_notes").createIndex({ shopify_id: 1 }),
-    mdb.collection("delay_remarks").createIndex({ shopify_id: 1, vendor_name: 1 }),
-    mdb.collection("croscrow_profile").createIndex({ id: 1 }, { unique: true }),
-    mdb.collection("vendor_profiles").createIndex({ vendor_name: 1 }, { unique: true }),
-    mdb.collection("tag_mappings").createIndex({ tag: 1 }, { unique: true }),
-    mdb.collection("global_shipping_creds").createIndex({ partner: 1 }, { unique: true }),
-    mdb.collection("vendor_shipping_partners").createIndex({ vendor_name: 1, partner: 1 }, { unique: true }),
-  ];
-  await Promise.all(idxOps.map(p => p.catch(()=>{})));
+    const idxOps = [
+      mdb.collection("vendor_config").createIndex({ vendor_name: 1 }, { unique: true }),
+      mdb.collection("order_meta").createIndex({ shopify_id: 1 }, { unique: true }),
+      mdb.collection("email_settings").createIndex({ id: 1 }, { unique: true }),
+      mdb.collection("vendor_shopify_connections").createIndex({ vendor_name: 1 }, { unique: true }),
+      mdb.collection("vendor_product_mappings").createIndex({ vendor_name: 1, vendor_variant_id: 1 }, { unique: true }),
+      mdb.collection("order_vendor_stage").createIndex({ shopify_id: 1, vendor_name: 1 }, { unique: true }),
+      mdb.collection("order_penalties").createIndex({ shopify_id: 1, vendor_name: 1 }),
+      mdb.collection("order_notes").createIndex({ shopify_id: 1 }),
+      mdb.collection("delay_remarks").createIndex({ shopify_id: 1, vendor_name: 1 }),
+      mdb.collection("croscrow_profile").createIndex({ id: 1 }, { unique: true }),
+      mdb.collection("vendor_profiles").createIndex({ vendor_name: 1 }, { unique: true }),
+      mdb.collection("tag_mappings").createIndex({ tag: 1 }, { unique: true }),
+      mdb.collection("global_shipping_creds").createIndex({ partner: 1 }, { unique: true }),
+      mdb.collection("vendor_shipping_partners").createIndex({ vendor_name: 1, partner: 1 }, { unique: true }),
+    ];
+    await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
-  // ── Restore from MongoDB into SQLite on startup ──────────────────────────
-  await mongoRestoreToSQLite();
+    await mongoRestoreToSQLite();
+    setInterval(syncSQLiteToMongo, 3 * 60 * 1000);
+  } catch (err) {
+    console.warn("⚠️  MongoDB connection failed — starting with empty SQLite:", err.message);
+  }
 
-  // ── Periodic sync: SQLite → MongoDB every 3 minutes ─────────────────────
-  setInterval(syncSQLiteToMongo, 3 * 60 * 1000);
+  app.listen(PORT, () => {
+    console.log(`\n🚀  JARVIS Shopify Server running on port ${PORT}`);
+    console.log(`    Shop    : ${SHOP}.myshopify.com`);
+    console.log(`    Health  : /health`);
+    console.log(`    Orders  : /orders`);
+    console.log(`    Stats   : /orders/stats`);
+    console.log(`    Export  : /orders/export`);
+    console.log(`    Webhook : POST /webhooks/orders\n`);
+  });
+}
 
-}).catch(err => {
-  console.warn("⚠️  MongoDB connection failed — falling back to SQLite only:", err.message);
-});
+startServer();
 
 // ── Tables to sync and their primary keys ─────────────────────────────────
 const SYNC_TABLES = [
@@ -117,6 +127,252 @@ async function syncSQLiteToMongo() {
     } catch {}
   }
 }
+
+// ── MongoDB primary helpers (Section 1 migration) ─────────────────────────
+// mCol(name) returns a MongoDB collection. All migrated tables use these.
+const mCol = (name) => mdb.collection(name);
+
+// vendor_config: MongoDB primary, SQLite as fallback cache
+const VC = {
+  async all() {
+    if (mdb) return mdb.collection('vendor_config').find({}, { projection: { _id: 0 } }).toArray();
+    return db.prepare("SELECT * FROM vendor_config").all();
+  },
+  async get(vendor_name) {
+    if (mdb) return mdb.collection('vendor_config').findOne({ vendor_name }, { projection: { _id: 0 } });
+    return db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+  },
+  async upsert(vendor_name, fields) {
+    if (mdb) {
+      await mdb.collection('vendor_config').updateOne({ vendor_name }, { $set: { vendor_name, ...fields, _updated: new Date() } }, { upsert: true });
+    }
+    // Keep SQLite in sync
+    const existing = db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+    if (existing) {
+      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
+      db.prepare(`UPDATE vendor_config SET ${setClauses} WHERE vendor_name=?`).run(...Object.values(fields), vendor_name);
+    } else {
+      const allFields = { vendor_name, ...fields };
+      const keys = Object.keys(allFields);
+      db.prepare(`INSERT OR IGNORE INTO vendor_config (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allFields));
+    }
+  },
+};
+
+// email_settings: MongoDB primary
+const ES = {
+  async get() {
+    if (mdb) return mdb.collection('email_settings').findOne({}, { projection: { _id: 0 } });
+    return db.prepare("SELECT * FROM email_settings LIMIT 1").get();
+  },
+  async save(fields) {
+    if (mdb) {
+      await mdb.collection('email_settings').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
+    }
+    // Sync SQLite
+    const existing = db.prepare("SELECT id FROM email_settings LIMIT 1").get();
+    if (existing) {
+      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
+      db.prepare(`UPDATE email_settings SET ${setClauses} WHERE id=?`).run(...Object.values(fields), existing.id);
+    } else {
+      const keys = Object.keys(fields);
+      db.prepare(`INSERT INTO email_settings (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(fields));
+    }
+  },
+};
+
+// ── order_meta: MongoDB primary for writes, SQLite for bulk reads ──────────
+const OM = {
+  async upsert(shopify_id, fields) {
+    const sid = String(shopify_id);
+    if (mdb) {
+      await mdb.collection('order_meta').updateOne(
+        { shopify_id: sid },
+        { $set: { shopify_id: sid, ...fields, _updated: new Date() } },
+        { upsert: true }
+      );
+    }
+    // Keep SQLite in sync
+    const existing = db.prepare("SELECT shopify_id FROM order_meta WHERE shopify_id=?").get(sid);
+    if (existing) {
+      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
+      db.prepare(`UPDATE order_meta SET ${setClauses} WHERE shopify_id=?`).run(...Object.values(fields), sid);
+    } else {
+      const allF = { shopify_id: sid, ...fields };
+      const keys = Object.keys(allF);
+      db.prepare(`INSERT OR IGNORE INTO order_meta (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allF));
+    }
+  },
+};
+
+// ── order_vendor_stage: MongoDB primary for writes ─────────────────────────
+const OVS = {
+  async upsert(shopify_id, vendor_name, fields) {
+    const sid = String(shopify_id);
+    if (mdb) {
+      await mdb.collection('order_vendor_stage').updateOne(
+        { shopify_id: sid, vendor_name },
+        { $set: { shopify_id: sid, vendor_name, ...fields, _updated: new Date() } },
+        { upsert: true }
+      );
+    }
+    // Keep SQLite in sync
+    const existing = db.prepare("SELECT shopify_id FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(sid, vendor_name);
+    if (existing) {
+      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
+      db.prepare(`UPDATE order_vendor_stage SET ${setClauses} WHERE shopify_id=? AND vendor_name=?`).run(...Object.values(fields), sid, vendor_name);
+    } else {
+      const allF = { shopify_id: sid, vendor_name, ...fields };
+      const keys = Object.keys(allF);
+      db.prepare(`INSERT OR IGNORE INTO order_vendor_stage (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allF));
+    }
+  },
+};
+
+// ── vendor_shopify_connections: MongoDB primary ────────────────────────────
+const VSC = {
+  async get(vendor_name) {
+    if (mdb) return mdb.collection('vendor_shopify_connections').findOne({ vendor_name }, { projection: { _id: 0 } });
+    return db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(vendor_name);
+  },
+  async all() {
+    if (mdb) return mdb.collection('vendor_shopify_connections').find({}, { projection: { _id: 0 } }).toArray();
+    return db.prepare("SELECT * FROM vendor_shopify_connections").all();
+  },
+  async upsert(vendor_name, fields) {
+    if (mdb) {
+      await mdb.collection('vendor_shopify_connections').updateOne(
+        { vendor_name }, { $set: { vendor_name, ...fields, _updated: new Date() } }, { upsert: true }
+      );
+    }
+    const keys = ['vendor_name', ...Object.keys(fields)];
+    const vals = [vendor_name, ...Object.values(fields)];
+    db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...vals);
+  },
+  async delete(vendor_name) {
+    if (mdb) await mdb.collection('vendor_shopify_connections').deleteOne({ vendor_name });
+    db.prepare("DELETE FROM vendor_shopify_connections WHERE vendor_name=?").run(vendor_name);
+  },
+};
+
+// ── vendor_product_mappings: MongoDB primary ───────────────────────────────
+const VPM = {
+  async allForVendor(vendor_name) {
+    if (mdb) return mdb.collection('vendor_product_mappings').find({ vendor_name }, { projection: { _id: 0 } }).toArray();
+    return db.prepare("SELECT * FROM vendor_product_mappings WHERE vendor_name=?").all(vendor_name);
+  },
+  async all(vendor_name) {
+    if (mdb) {
+      const q = vendor_name ? { vendor_name } : {};
+      return mdb.collection('vendor_product_mappings').find(q, { projection: { _id: 0 } }).sort({ _id: -1 }).toArray();
+    }
+    const where = vendor_name ? "WHERE vendor_name=?" : "";
+    const params = vendor_name ? [vendor_name] : [];
+    return db.prepare(`SELECT * FROM vendor_product_mappings ${where} ORDER BY id DESC`).all(...params);
+  },
+  async upsert(vendor_name, vendor_variant_id, fields) {
+    const vvid = String(vendor_variant_id);
+    if (mdb) {
+      await mdb.collection('vendor_product_mappings').updateOne(
+        { vendor_name, vendor_variant_id: vvid },
+        { $set: { vendor_name, vendor_variant_id: vvid, ...fields, _updated: new Date() } },
+        { upsert: true }
+      );
+    }
+    const allF = { vendor_name, vendor_variant_id: vvid, ...fields };
+    const keys = Object.keys(allF);
+    db.prepare(`INSERT OR REPLACE INTO vendor_product_mappings (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allF));
+  },
+  async updateSynced(vendor_name, vendor_variant_id) {
+    const vvid = String(vendor_variant_id);
+    if (mdb) {
+      await mdb.collection('vendor_product_mappings').updateOne(
+        { vendor_name, vendor_variant_id: vvid }, { $set: { last_synced_at: Date.now(), _updated: new Date() } }
+      );
+    }
+    db.prepare("UPDATE vendor_product_mappings SET last_synced_at=? WHERE vendor_name=? AND vendor_variant_id=?").run(Date.now(), vendor_name, vvid);
+  },
+  async delete(id) {
+    if (mdb) await mdb.collection('vendor_product_mappings').deleteOne({ id: parseInt(id) });
+    db.prepare("DELETE FROM vendor_product_mappings WHERE id=?").run(id);
+  },
+};
+
+// ── order_notes: MongoDB primary ──────────────────────────────────────────
+const ON = {
+  async allFor(shopify_id) {
+    if (mdb) return mdb.collection('order_notes').find({ shopify_id: String(shopify_id) }, { projection: { _id: 0 } }).sort({ created_at: 1 }).toArray();
+    return db.prepare("SELECT * FROM order_notes WHERE shopify_id=? ORDER BY created_at ASC").all(String(shopify_id));
+  },
+  async insert(shopify_id, role, author, note) {
+    const sid = String(shopify_id);
+    const created_at = new Date().toISOString();
+    if (mdb) await mdb.collection('order_notes').insertOne({ shopify_id: sid, role, author, note, created_at });
+    db.prepare("INSERT INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)").run(sid, role, author, note, created_at);
+  },
+};
+
+// ── delay_remarks: MongoDB primary ────────────────────────────────────────
+const DR = {
+  async allFor(shopify_id, vendor_name) {
+    if (mdb) {
+      const q = vendor_name ? { shopify_id: String(shopify_id), vendor_name } : { shopify_id: String(shopify_id) };
+      return mdb.collection('delay_remarks').find(q, { projection: { _id: 0 } }).sort({ submitted_at: 1 }).toArray();
+    }
+    if (vendor_name) return db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at ASC").all(String(shopify_id), vendor_name);
+    return db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? ORDER BY submitted_at ASC").all(String(shopify_id));
+  },
+  async latest(shopify_id, vendor_name) {
+    if (mdb) return mdb.collection('delay_remarks').findOne({ shopify_id: String(shopify_id), vendor_name }, { projection: { _id: 0 }, sort: { submitted_at: -1 } });
+    return db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at DESC LIMIT 1").get(String(shopify_id), vendor_name);
+  },
+  async insert(shopify_id, vendor_name, reason, eta_date) {
+    const sid = String(shopify_id);
+    const submitted_at = Date.now();
+    if (mdb) await mdb.collection('delay_remarks').insertOne({ shopify_id: sid, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered: 0 });
+    db.prepare("INSERT INTO delay_remarks (shopify_id, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered) VALUES (?,?,?,?,?,0)").run(sid, vendor_name, reason, eta_date, submitted_at);
+  },
+  async markEtaPenalty(id) {
+    if (mdb) await mdb.collection('delay_remarks').updateOne({ id }, { $set: { eta_penalty_triggered: 1 } });
+    db.prepare("UPDATE delay_remarks SET eta_penalty_triggered=1 WHERE id=?").run(id);
+  },
+  async expiredEta(today) {
+    if (mdb) return mdb.collection('delay_remarks').find({ eta_date: { $lt: today }, eta_penalty_triggered: 0 }, { projection: { _id: 0 } }).toArray();
+    return db.prepare("SELECT * FROM delay_remarks WHERE eta_date < ? AND eta_penalty_triggered=0").all(today);
+  },
+};
+
+// ── order_penalties: MongoDB primary ──────────────────────────────────────
+const OP = {
+  async all(status) {
+    if (mdb) {
+      const q = status && status !== 'all' ? { status } : {};
+      return mdb.collection('order_penalties').find(q, { projection: { _id: 0 } }).sort({ triggered_at: -1 }).toArray();
+    }
+    const where = status && status !== 'all' ? "WHERE status=?" : "";
+    const params = status && status !== 'all' ? [status] : [];
+    return db.prepare(`SELECT * FROM order_penalties ${where} ORDER BY triggered_at DESC`).all(...params);
+  },
+  async get(id) {
+    if (mdb) return mdb.collection('order_penalties').findOne({ id: parseInt(id) }, { projection: { _id: 0 } });
+    return db.prepare("SELECT * FROM order_penalties WHERE id=?").get(id);
+  },
+  async hasPending(shopify_id, vendor_name) {
+    if (mdb) return !!(await mdb.collection('order_penalties').findOne({ shopify_id: String(shopify_id), vendor_name, status: 'pending' }));
+    return !!db.prepare("SELECT id FROM order_penalties WHERE shopify_id=? AND vendor_name=? AND status='pending'").get(String(shopify_id), vendor_name);
+  },
+  async insert(shopify_id, vendor_name, order_name, trigger_reason) {
+    const sid = String(shopify_id);
+    const triggered_at = Date.now();
+    if (mdb) await mdb.collection('order_penalties').insertOne({ shopify_id: sid, vendor_name, order_name: order_name || '', triggered_at, trigger_reason, status: 'pending' });
+    db.prepare("INSERT INTO order_penalties (shopify_id, vendor_name, order_name, triggered_at, trigger_reason, status) VALUES (?,?,?,?,?,'pending')").run(sid, vendor_name, order_name || '', triggered_at, trigger_reason);
+  },
+  async resolve(id, status, penalty_amount, admin_note) {
+    const resolved_at = Date.now();
+    if (mdb) await mdb.collection('order_penalties').updateOne({ id: parseInt(id) }, { $set: { status, penalty_amount, admin_note: admin_note || '', resolved_at, resolved_by: 'admin' } });
+    db.prepare("UPDATE order_penalties SET status=?, penalty_amount=?, admin_note=?, resolved_at=?, resolved_by='admin' WHERE id=?").run(status, penalty_amount, admin_note || '', resolved_at, id);
+  },
+};
 
 const app = express();
 
@@ -447,34 +703,27 @@ function paymentTypeFromFinancial(financialStatus) {
 }
 
 // Apply tag mappings + auto-detect payment_type for one order
-function applyTagMappings(orderId, tags, financialStatus) {
+async function applyTagMappings(orderId, tags, financialStatus) {
   const now = new Date().toISOString();
   const payType = paymentTypeFromFinancial(financialStatus || "pending");
   const sid = String(orderId);
 
   // Step 1: set payment_type from Shopify financial_status
-  db.prepare(`INSERT INTO order_meta (shopify_id, payment_type) VALUES (?, ?)
-    ON CONFLICT(shopify_id) DO UPDATE SET payment_type=excluded.payment_type, updated_at=?`)
-    .run(sid, payType, now);
+  await OM.upsert(sid, { payment_type: payType, updated_at: now });
 
   if (!tags) return;
   const orderTags = tags.split(",").map(t => t.trim());
 
-  // Step 2: scan ALL tags for partial advance pattern — independent of mappings
-  // e.g. "99 partial", "150 partial collected", "500 Partial" → advance_paid
+  // Step 2: scan ALL tags for partial advance pattern
   for (const tag of orderTags) {
     const advMatch = tag.match(/^(\d+(?:\.\d+)?)\s+partial/i);
     if (advMatch) {
-      const advancePaid = parseFloat(advMatch[1]);
-      db.prepare(`INSERT INTO order_meta (shopify_id, advance_paid, payment_type) VALUES (?,?,?)
-        ON CONFLICT(shopify_id) DO UPDATE SET advance_paid=excluded.advance_paid, payment_type='cod', updated_at=?`)
-        .run(sid, advancePaid, "cod", now);
+      await OM.upsert(sid, { advance_paid: parseFloat(advMatch[1]), payment_type: 'cod', updated_at: now });
       break;
     }
   }
 
   // Step 3: apply stage from tag_mappings — lowest priority number wins
-  // Sorted by priority ASC so first match = highest priority tag
   const mappings = db.prepare("SELECT * FROM tag_mappings ORDER BY priority ASC, id ASC").all();
   let winner = null;
   for (const m of mappings) {
@@ -483,10 +732,7 @@ function applyTagMappings(orderId, tags, financialStatus) {
   }
   if (winner) {
     const prev = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(sid);
-    db.prepare(`INSERT INTO order_meta (shopify_id, stage) VALUES (?,?)
-      ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=?`)
-      .run(sid, winner.stage, now);
-    // Fire emails only if stage actually changed
+    await OM.upsert(sid, { stage: winner.stage, updated_at: now });
     if (!prev || prev.stage !== winner.stage) {
       fireStageEmails(sid, winner.stage).catch(()=>{});
     }
@@ -1127,9 +1373,8 @@ async function fireStageEmails(shopifyId, newStage) {
     const vendors = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
 
     if (newStage === 'confirmed') {
-      // Each vendor
       for (const vendor of vendors) {
-        const vendorRow = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        const vendorRow = await VC.get(vendor);
         const vendorMeta = db.prepare("SELECT advance_paid FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name} — Action Required`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
       }
@@ -1137,7 +1382,7 @@ async function fireStageEmails(shopifyId, newStage) {
 
     if (newStage === 'partial') {
       for (const vendor of vendors) {
-        const vendorRow  = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        const vendorRow  = await VC.get(vendor);
         const vendorMeta = db.prepare("SELECT advance_paid, payment_type FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
         if (vendorRow?.email) await sendEmail({
           to: vendorRow.email,
@@ -1156,7 +1401,7 @@ async function fireStageEmails(shopifyId, newStage) {
       if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, forRole: 'customer' }), shopifyId, trigger: 'delivered_customer' });
       if (adminEmail)    await sendEmail({ to: adminEmail,    subject: `Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'admin' }), shopifyId, trigger: 'delivered_admin' });
       for (const vendor of vendors) {
-        const vendorRow = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        const vendorRow = await VC.get(vendor);
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'vendor' }), shopifyId, trigger: 'delivered_vendor' });
       }
     }
@@ -1938,22 +2183,20 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
 });
 
 // ── PUT /admin/orders/:id/stage ───────────────────────────────────────────
-app.put("/admin/orders/:id/stage", adminAuth, (req, res) => {
+app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
   const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
-  db.prepare(`INSERT INTO order_meta (shopify_id, stage, updated_at) VALUES (?,?,?)
-    ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
-    .run(id, stage, new Date().toISOString());
+  await OM.upsert(id, { stage, updated_at: new Date().toISOString() });
   auditLog("admin", "stage_change", id, { stage });
   fireStageEmails(id, stage).catch(()=>{});
   res.json({ success: true, stage });
 });
 
 // ── PUT /admin/orders/:id/vendor-stage — set stage for one vendor in an order ──
-app.put("/admin/orders/:id/vendor-stage", adminAuth, (req, res) => {
+app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
   const { id } = req.params;
   const { vendor_name, stage } = req.body || {};
   const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
@@ -1965,17 +2208,11 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, (req, res) => {
   const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
   const existing = db.prepare("SELECT * FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(id, vendor_name);
 
-  if (existing) {
-    const newStartedAt = ['confirmed','partial'].includes(stage) ? nowMs : (existing.stage_started_at || 0);
-    const newWarning   = fulfilledStages.includes(stage) ? 0 : (['confirmed','partial'].includes(stage) ? 0 : existing.warning_sent);
-    const newPenalty   = fulfilledStages.includes(stage) ? 0 : existing.penalty_triggered;
-    db.prepare("UPDATE order_vendor_stage SET stage=?, updated_at=?, stage_started_at=?, warning_sent=?, penalty_triggered=? WHERE shopify_id=? AND vendor_name=?")
-      .run(stage, now, newStartedAt, newWarning, newPenalty, id, vendor_name);
-  } else {
-    const startedAt = ['confirmed','partial'].includes(stage) ? nowMs : 0;
-    db.prepare("INSERT INTO order_vendor_stage (shopify_id, vendor_name, stage, updated_at, stage_started_at, warning_sent, penalty_triggered) VALUES (?,?,?,?,?,0,0)")
-      .run(id, vendor_name, stage, now, startedAt);
-  }
+  const newStartedAt = ['confirmed','partial'].includes(stage) ? nowMs : (existing?.stage_started_at || 0);
+  const newWarning   = fulfilledStages.includes(stage) ? 0 : (['confirmed','partial'].includes(stage) ? 0 : (existing?.warning_sent || 0));
+  const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
+
+  await OVS.upsert(id, vendor_name, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty });
   auditLog("admin", "vendor_stage_change", id, { vendor_name, stage });
   res.json({ success: true, vendor_name, stage });
 });
@@ -1993,30 +2230,26 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
   const now = new Date().toISOString();
   const advPaid = parseFloat(advance_paid) || 0;
 
-  db.prepare(`INSERT INTO order_meta (shopify_id, payment_type, advance_paid, shipping_charge, notes, awb, courier, tracking_url, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(shopify_id) DO UPDATE SET
-      payment_type    = COALESCE(excluded.payment_type, payment_type),
-      advance_paid    = COALESCE(excluded.advance_paid, advance_paid),
-      shipping_charge = COALESCE(excluded.shipping_charge, shipping_charge),
-      notes           = COALESCE(excluded.notes, notes),
-      awb             = COALESCE(excluded.awb, awb),
-      courier         = COALESCE(excluded.courier, courier),
-      tracking_url    = COALESCE(excluded.tracking_url, tracking_url),
-      updated_at      = excluded.updated_at`)
-    .run(id, payment_type || "cod", advPaid, shipping_charge || 0,
-      notes || "", awb || "", courier || "", tracking_url || "", now);
+  // Build update fields (only set non-null values, preserve existing)
+  const existing = db.prepare("SELECT * FROM order_meta WHERE shopify_id=?").get(id) || {};
+  const fields = {
+    payment_type:    payment_type    ?? existing.payment_type    ?? 'cod',
+    advance_paid:    advPaid         || existing.advance_paid    || 0,
+    shipping_charge: shipping_charge ?? existing.shipping_charge ?? 0,
+    notes:           notes           ?? existing.notes           ?? '',
+    awb:             awb             ?? existing.awb             ?? '',
+    courier:         courier         ?? existing.courier         ?? '',
+    tracking_url:    tracking_url    ?? existing.tracking_url    ?? '',
+    updated_at:      now,
+  };
+  await OM.upsert(id, fields);
 
   // Auto-move to partial stage when advance is filled in
   if (advPaid > 0) {
-    const prev = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(id);
-    const prevStage = prev?.stage || "new";
-    // Only auto-move if not already in a later stage
+    const prevStage = existing.stage || 'new';
     const EARLY_STAGES = ["new", "confirmed", "partial"];
     if (EARLY_STAGES.includes(prevStage)) {
-      db.prepare(`INSERT INTO order_meta (shopify_id, stage, updated_at) VALUES (?,?,?)
-        ON CONFLICT(shopify_id) DO UPDATE SET stage=excluded.stage, updated_at=excluded.updated_at`)
-        .run(id, "partial", now);
+      await OM.upsert(id, { stage: 'partial', updated_at: now });
       fireStageEmails(id, "partial").catch(() => {});
     }
   }
@@ -2029,7 +2262,7 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
 app.get("/admin/vendors", adminAuth, async (req, res) => {
   try {
     const vendors = await getVendorList();
-    const configs = db.prepare("SELECT * FROM vendor_config").all();
+    const configs = await VC.all();
     const cfgMap  = Object.fromEntries(configs.map(c => [c.vendor_name, c]));
     res.json({ vendors: vendors.map(v => ({
       name:           v,
@@ -2041,14 +2274,12 @@ app.get("/admin/vendors", adminAuth, async (req, res) => {
 });
 
 // ── PUT /admin/vendors/:name/config ──────────────────────────────────────
-app.put("/admin/vendors/:name/config", adminAuth, (req, res) => {
+app.put("/admin/vendors/:name/config", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const { commission_pct } = req.body || {};
   if (commission_pct === undefined) return res.status(400).json({ error: "commission_pct required." });
 
-  db.prepare(`INSERT INTO vendor_config (vendor_name, commission_pct) VALUES (?,?)
-    ON CONFLICT(vendor_name) DO UPDATE SET commission_pct=excluded.commission_pct`)
-    .run(name, parseFloat(commission_pct));
+  await VC.upsert(name, { commission_pct: parseFloat(commission_pct) });
   auditLog("admin", "vendor_config", name, { commission_pct });
   res.json({ success: true });
 });
@@ -2068,7 +2299,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     const vName  = vendor_name.toLowerCase();
     // Commission priority: vendor_profiles → vendor_config → default 20%
     const vProfile = db.prepare("SELECT commission_pct FROM vendor_profiles WHERE vendor_name=?").get(vendor_name);
-    const vConfig  = db.prepare("SELECT commission_pct FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+    const vConfig  = await VC.get(vendor_name);
     const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
     const metas  = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
@@ -2170,7 +2401,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     const metas = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     const vProfiles = db.prepare("SELECT * FROM vendor_profiles").all();
-    const vConfigs  = db.prepare("SELECT * FROM vendor_config").all();
+    const vConfigs  = await VC.all();
     const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
     const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
 
@@ -2441,10 +2672,10 @@ app.put("/admin/croscrow-profile", adminAuth, (req, res) => {
 });
 
 // ── GET/PUT /admin/vendors/:name/profile ──────────────────────────────────
-app.get("/admin/vendors/:name/profile", adminAuth, (req, res) => {
+app.get("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const p = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(name) || { vendor_name: name };
-  const cfg = db.prepare("SELECT commission_pct FROM vendor_config WHERE vendor_name=?").get(name);
+  const cfg = await VC.get(name);
   if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
   res.json(p);
 });
@@ -2455,10 +2686,9 @@ app.put("/admin/vendors/:name/profile", adminAuth, (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email,phone=excluded.phone,address=excluded.address,city=excluded.city,state=excluded.state,pincode=excluded.pincode,gst_no=excluded.gst_no,pan_no=excluded.pan_no,bank_name=excluded.bank_name,account_no=excluded.account_no,ifsc=excluded.ifsc,commission_pct=excluded.commission_pct,updated_at=excluded.updated_at`)
     .run(name,f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',f.commission_pct!=null?parseFloat(f.commission_pct):null,new Date().toISOString());
-  // sync to vendor_config too
+  // sync commission to vendor_config too
   if (f.commission_pct != null) {
-    db.prepare(`INSERT INTO vendor_config (vendor_name,commission_pct) VALUES (?,?) ON CONFLICT(vendor_name) DO UPDATE SET commission_pct=excluded.commission_pct`)
-      .run(name, parseFloat(f.commission_pct));
+    VC.upsert(name, { commission_pct: parseFloat(f.commission_pct) }).catch(()=>{});
   }
   auditLog("admin","vendor_profile_update",name,{ commission_pct: f.commission_pct });
   res.json({ success:true });
@@ -2562,19 +2792,18 @@ app.get("/admin/email-log", adminAuth, (req, res) => {
 });
 
 // Vendor email update
-app.put("/admin/vendors/:name/email", adminAuth, (req, res) => {
+app.put("/admin/vendors/:name/email", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const { email } = req.body || {};
-  db.prepare("INSERT INTO vendor_config (vendor_name, email) VALUES (?,?) ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email")
-    .run(name, email || '');
+  await VC.upsert(name, { email: email || '' });
   res.json({ ok: true });
 });
 
 // ── Vendor wallet + settlements ───────────────────────────────────────────
 // ── GET/PUT /vendor/profile ───────────────────────────────────────────────
-app.get("/vendor/profile", vendorAuth, (req, res) => {
+app.get("/vendor/profile", vendorAuth, async (req, res) => {
   const p = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || { vendor_name: req.vendor };
-  const cfg = db.prepare("SELECT commission_pct FROM vendor_config WHERE vendor_name=?").get(req.vendor);
+  const cfg = await VC.get(req.vendor);
   if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
   res.json(p);
 });
@@ -2602,7 +2831,7 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
     const metas = db.prepare("SELECT * FROM order_meta").all();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     const vProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor);
-    const vConfig  = db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(req.vendor);
+    const vConfig  = await VC.get(req.vendor);
     const commPct  = vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20;
 
     const paidSettlements = db.prepare("SELECT SUM(net_payable) as total_settled FROM settlements WHERE vendor_name=? AND status='paid'").get(req.vendor);
@@ -2834,9 +3063,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
     // Auto-save AWB to order_meta
     if (result?.awb) {
-      db.prepare(`INSERT INTO order_meta (shopify_id, awb, courier, updated_at) VALUES (?,?,?,?)
-        ON CONFLICT(shopify_id) DO UPDATE SET awb=excluded.awb, courier=excluded.courier, updated_at=excluded.updated_at`)
-        .run(String(shopifyOrder.id), result.awb, partner, new Date().toISOString());
+      await OM.upsert(String(shopifyOrder.id), { awb: result.awb, courier: partner, updated_at: new Date().toISOString() });
     }
 
     res.json(result);
@@ -2959,11 +3186,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
 
     const creds = JSON.parse(credRow.credentials);
     const status = await fetchDeliveryStatus(partner, creds, awb);
-    if (status) db.prepare(`INSERT INTO order_meta (shopify_id, awb, courier, delivery_status, delivery_status_updated_at)
-      VALUES (?,?,?,?,?) ON CONFLICT(shopify_id) DO UPDATE SET delivery_status=excluded.delivery_status,
-      delivery_status_updated_at=excluded.delivery_status_updated_at`)
-      .run(shopifyId, awb, courier, status, new Date().toISOString());
-
+    if (status) await OM.upsert(shopifyId, { awb, courier, delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
     res.json({ status, awb });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2987,8 +3210,7 @@ app.post("/admin/shipping/sync-status", adminAuth, async (req, res) => {
         const creds = JSON.parse(credRow.credentials);
         const status = await fetchDeliveryStatus(partner, creds, o.awb);
         if (status) {
-          db.prepare("UPDATE order_meta SET delivery_status=?, delivery_status_updated_at=? WHERE shopify_id=?")
-            .run(status, new Date().toISOString(), o.shopify_id);
+          await OM.upsert(o.shopify_id, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
           updated++;
         }
       } catch {}
@@ -3054,8 +3276,7 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
       try {
         const creds = JSON.parse(partnerRow.credentials);
         status = await fetchDeliveryStatus(partner, creds, meta.awb);
-        db.prepare("UPDATE order_meta SET delivery_status=?, delivery_status_updated_at=? WHERE shopify_id=?")
-          .run(status, new Date().toISOString(), req.params.shopifyId);
+        await OM.upsert(req.params.shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
       } catch {}
     }
     res.json({ status, awb: meta.awb });
@@ -3080,8 +3301,7 @@ app.post("/vendor/shipping/sync-status", vendorAuth, async (req, res) => {
         const creds = JSON.parse(partnerRow.credentials);
         const status = await fetchDeliveryStatus(partner, creds, o.awb);
         if (status) {
-          db.prepare("UPDATE order_meta SET delivery_status=?, delivery_status_updated_at=? WHERE shopify_id=?")
-            .run(status, new Date().toISOString(), o.shopify_id);
+          await OM.upsert(o.shopify_id, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
           updated++;
         }
       } catch {}
@@ -3137,32 +3357,30 @@ db.exec(`
 `);
 
 // Admin: get + post notes
-app.get("/admin/orders/:id/notes", adminAuth, (req, res) => {
-  const notes = db.prepare("SELECT * FROM order_notes WHERE shopify_id=? ORDER BY created_at ASC").all(req.params.id);
-  const remarks = db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? ORDER BY submitted_at ASC").all(req.params.id);
+app.get("/admin/orders/:id/notes", adminAuth, async (req, res) => {
+  const notes = await ON.allFor(req.params.id);
+  const remarks = await DR.allFor(req.params.id);
   res.json({ notes, remarks });
 });
 
-app.post("/admin/orders/:id/notes", adminAuth, (req, res) => {
+app.post("/admin/orders/:id/notes", adminAuth, async (req, res) => {
   const { note } = req.body || {};
   if (!note?.trim()) return res.status(400).json({ error: "note required." });
-  db.prepare("INSERT INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)")
-    .run(req.params.id, 'admin', 'Admin', note.trim(), Date.now());
+  await ON.insert(req.params.id, 'admin', 'Admin', note.trim());
   res.json({ success: true });
 });
 
 // Vendor: get + post notes
-app.get("/vendor/orders/:id/notes", vendorAuth, (req, res) => {
-  const notes = db.prepare("SELECT * FROM order_notes WHERE shopify_id=? ORDER BY created_at ASC").all(req.params.id);
-  const remarks = db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at ASC").all(req.params.id, req.vendor);
+app.get("/vendor/orders/:id/notes", vendorAuth, async (req, res) => {
+  const notes = await ON.allFor(req.params.id);
+  const remarks = await DR.allFor(req.params.id, req.vendor);
   res.json({ notes, remarks });
 });
 
-app.post("/vendor/orders/:id/notes", vendorAuth, (req, res) => {
+app.post("/vendor/orders/:id/notes", vendorAuth, async (req, res) => {
   const { note } = req.body || {};
   if (!note?.trim()) return res.status(400).json({ error: "note required." });
-  db.prepare("INSERT INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)")
-    .run(req.params.id, 'vendor', req.vendor, note.trim(), Date.now());
+  await ON.insert(req.params.id, 'vendor', req.vendor, note.trim());
   res.json({ success: true });
 });
 
@@ -3172,9 +3390,7 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
   if (!reason || !eta_date) return res.status(400).json({ error: "reason and eta_date required." });
   const sid = req.params.id;
   const vendor = req.vendor;
-  const now = Date.now();
-  db.prepare("INSERT INTO delay_remarks (shopify_id, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered) VALUES (?,?,?,?,?,0)")
-    .run(sid, vendor, reason, eta_date, now);
+  await DR.insert(sid, vendor, reason, eta_date);
 
   try {
     const shopifyOrder = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,shipping_address`);
@@ -3263,8 +3479,7 @@ app.post("/vendor/shopify/connect", vendorAuth, async (req, res) => {
     const test = await vendorShopifyREST(cleanShop, tokenData.access_token, '/shop.json');
     if (!test.shop) throw new Error("Token obtained but shop verification failed.");
 
-    db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (vendor_name, shop_domain, access_token, scope, installed_at) VALUES (?,?,?,?,?)`)
-      .run(req.vendor, cleanShop, tokenData.access_token, tokenData.scope || '', Date.now());
+    await VSC.upsert(req.vendor, { shop_domain: cleanShop, access_token: tokenData.access_token, scope: tokenData.scope || '', installed_at: Date.now() });
 
     console.log(`✅ Vendor Shopify connected: ${req.vendor} → ${cleanShop}`);
     res.json({ success: true, shop: cleanShop });
@@ -3274,20 +3489,20 @@ app.post("/vendor/shopify/connect", vendorAuth, async (req, res) => {
 });
 
 // ── Vendor: check own connection status ───────────────────────────────────
-app.get("/vendor/shopify/status", vendorAuth, (req, res) => {
-  const conn = db.prepare("SELECT shop_domain, scope, installed_at, sync_enabled FROM vendor_shopify_connections WHERE vendor_name=?").get(req.vendor);
-  res.json({ connected: !!conn, connection: conn || null });
+app.get("/vendor/shopify/status", vendorAuth, async (req, res) => {
+  const conn = await VSC.get(req.vendor);
+  res.json({ connected: !!conn, connection: conn ? { shop_domain: conn.shop_domain, scope: conn.scope, installed_at: conn.installed_at, sync_enabled: conn.sync_enabled } : null });
 });
 
 // ── Vendor: disconnect ────────────────────────────────────────────────────
-app.delete("/vendor/shopify/disconnect", vendorAuth, (req, res) => {
-  db.prepare("DELETE FROM vendor_shopify_connections WHERE vendor_name=?").run(req.vendor);
+app.delete("/vendor/shopify/disconnect", vendorAuth, async (req, res) => {
+  await VSC.delete(req.vendor);
   res.json({ success: true });
 });
 
 // ── Vendor: browse own products (so vendor can see what will be synced) ───
 app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
-  const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(req.vendor);
+  const conn = await VSC.get(req.vendor);
   if (!conn) return res.status(404).json({ error: "Shopify store not connected." });
   try {
     const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
@@ -3296,18 +3511,18 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
 });
 
 // ── Admin: list all connected vendor stores ───────────────────────────────
-app.get("/admin/vendor-sync/connections", adminAuth, (req, res) => {
-  const rows = db.prepare("SELECT vendor_name, shop_domain, scope, installed_at, sync_enabled FROM vendor_shopify_connections ORDER BY installed_at DESC").all();
-  res.json({ connections: rows });
+app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
+  const rows = await VSC.all();
+  res.json({ connections: rows.map(r => ({ vendor_name: r.vendor_name, shop_domain: r.shop_domain, scope: r.scope, installed_at: r.installed_at, sync_enabled: r.sync_enabled })) });
 });
 
 // ── Admin: browse a vendor's products ─────────────────────────────────────
 app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
-  const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(req.params.vendor);
+  const conn = await VSC.get(req.params.vendor);
   if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
   try {
     const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=100&fields=id,title,variants,images,status,product_type,vendor,body_html,tags');
-    const mappings = db.prepare("SELECT vendor_variant_id, croscrow_product_id, croscrow_variant_id FROM vendor_product_mappings WHERE vendor_name=?").all(req.params.vendor);
+    const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
     const products = (data.products || []).map(p => ({
       ...p,
@@ -3322,7 +3537,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id, sync_inventory = true } = req.body || {};
   if (!vendor_name || !vendor_product_id) return res.status(400).json({ error: "vendor_name and vendor_product_id required." });
 
-  const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(vendor_name);
+  const conn = await VSC.get(vendor_name);
   if (!conn) return res.status(404).json({ error: "Vendor not connected." });
 
   try {
@@ -3339,15 +3554,19 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
         vendor: vendor_name,
         product_type: vProduct.product_type || '',
         tags: vProduct.tags || '',
-        status: 'draft', // start as draft so admin can review before publishing
+        status: 'active',
         variants: vProduct.variants.map(v => ({
           title: v.title,
           price: v.price,
+          compare_at_price: v.compare_at_price || null,
           sku: v.sku ? `${vendor_name.slice(0,4).toUpperCase()}-${v.sku}` : '',
+          barcode: v.barcode || null,
           inventory_management: sync_inventory ? 'shopify' : null,
           inventory_quantity: parseInt(v.inventory_quantity || 0),
           weight: v.weight,
           weight_unit: v.weight_unit || 'kg',
+          requires_shipping: v.requires_shipping !== false,
+          taxable: v.taxable !== false,
           option1: v.option1, option2: v.option2, option3: v.option3,
         })),
         options: vProduct.options?.map(o => ({ name: o.name, values: o.values })) || [],
@@ -3360,16 +3579,22 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
     if (!newProduct) throw new Error("Failed to create product on CrosCrow store.");
 
     // Save mappings for each variant
-    const insMap = db.prepare("INSERT OR REPLACE INTO vendor_product_mappings (vendor_name, vendor_product_id, vendor_variant_id, croscrow_product_id, croscrow_variant_id, sync_inventory, last_synced_at) VALUES (?,?,?,?,?,?,?)");
-    vProduct.variants.forEach((vVariant, i) => {
+    for (let i = 0; i < vProduct.variants.length; i++) {
+      const vVariant = vProduct.variants[i];
       const ccVariant = newProduct.variants[i];
       if (ccVariant) {
-        insMap.run(vendor_name, String(vProduct.id), String(vVariant.id), String(newProduct.id), String(ccVariant.id), sync_inventory ? 1 : 0, Date.now());
+        await VPM.upsert(vendor_name, String(vVariant.id), {
+          vendor_product_id: String(vProduct.id),
+          croscrow_product_id: String(newProduct.id),
+          croscrow_variant_id: String(ccVariant.id),
+          sync_inventory: sync_inventory ? 1 : 0,
+          last_synced_at: Date.now(),
+        });
       }
-    });
+    }
 
     auditLog("admin", "vendor_product_imported", String(newProduct.id), { vendor_name, vendor_product_id, croscrow_product_id: newProduct.id });
-    res.json({ success: true, croscrow_product_id: newProduct.id, croscrow_product_title: newProduct.title, status: 'draft', variants_mapped: vProduct.variants.length });
+    res.json({ success: true, croscrow_product_id: newProduct.id, croscrow_product_title: newProduct.title, status: 'active', variants_mapped: vProduct.variants.length });
   } catch (e) {
     console.error("Import error:", e.message);
     res.status(500).json({ error: e.message });
@@ -3382,41 +3607,43 @@ app.post("/admin/vendor-sync/map", adminAuth, async (req, res) => {
   if (!vendor_name || !vendor_variant_id || !croscrow_product_id || !croscrow_variant_id)
     return res.status(400).json({ error: "vendor_name, vendor_variant_id, croscrow_product_id, croscrow_variant_id required." });
 
-  db.prepare("INSERT OR REPLACE INTO vendor_product_mappings (vendor_name, vendor_product_id, vendor_variant_id, croscrow_product_id, croscrow_variant_id, sync_inventory, last_synced_at) VALUES (?,?,?,?,?,?,?)")
-    .run(vendor_name, String(vendor_product_id || ''), String(vendor_variant_id), String(croscrow_product_id), String(croscrow_variant_id), sync_inventory ? 1 : 0, Date.now());
+  await VPM.upsert(vendor_name, String(vendor_variant_id), {
+    vendor_product_id: String(vendor_product_id || ''),
+    croscrow_product_id: String(croscrow_product_id),
+    croscrow_variant_id: String(croscrow_variant_id),
+    sync_inventory: sync_inventory ? 1 : 0,
+    last_synced_at: Date.now(),
+  });
   auditLog("admin", "vendor_variant_mapped", vendor_variant_id, { vendor_name, croscrow_product_id, croscrow_variant_id });
   res.json({ success: true });
 });
 
 // ── Admin: unmap a variant ────────────────────────────────────────────────
-app.delete("/admin/vendor-sync/map/:id", adminAuth, (req, res) => {
-  db.prepare("DELETE FROM vendor_product_mappings WHERE id=?").run(req.params.id);
+app.delete("/admin/vendor-sync/map/:id", adminAuth, async (req, res) => {
+  await VPM.delete(req.params.id);
   res.json({ success: true });
 });
 
 // ── Admin: list all mappings ──────────────────────────────────────────────
-app.get("/admin/vendor-sync/mappings", adminAuth, (req, res) => {
+app.get("/admin/vendor-sync/mappings", adminAuth, async (req, res) => {
   const { vendor_name } = req.query;
-  const where = vendor_name ? "WHERE vendor_name=?" : "";
-  const params = vendor_name ? [vendor_name] : [];
-  res.json({ mappings: db.prepare(`SELECT * FROM vendor_product_mappings ${where} ORDER BY id DESC`).all(...params) });
+  res.json({ mappings: await VPM.all(vendor_name) });
 });
 
 // ── Admin: sync inventory for all mapped variants ─────────────────────────
 app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
   const { vendor_name } = req.body || {};
-  const where = vendor_name ? "WHERE m.vendor_name=? AND m.sync_inventory=1" : "WHERE m.sync_inventory=1";
-  const params = vendor_name ? [vendor_name] : [];
-  const mappings = db.prepare(`SELECT m.*, c.shop_domain, c.access_token FROM vendor_product_mappings m JOIN vendor_shopify_connections c ON c.vendor_name=m.vendor_name ${where}`).all(...params);
+  // Fetch mappings + connections from MongoDB
+  const allMappings = await VPM.all(vendor_name);
+  const mappings = allMappings.filter(m => m.sync_inventory);
 
   let synced = 0, errors = [];
-  // Group by vendor to fetch locations once per vendor
   const byVendor = {};
   mappings.forEach(m => { (byVendor[m.vendor_name] = byVendor[m.vendor_name] || []).push(m); });
 
   const ccToken = await getAccessToken();
   for (const [vName, vMappings] of Object.entries(byVendor)) {
-    const conn = db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(vName);
+    const conn = await VSC.get(vName);
     if (!conn) continue;
     try {
       // Get vendor's primary location
@@ -3431,28 +3658,36 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
 
       for (const m of vMappings) {
         try {
-          // Get vendor inventory level
-          const invData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/inventory_levels.json?inventory_item_ids=${m.vendor_variant_id}&location_ids=${locationId}`);
-          // Actually need inventory_item_id from variant
+          // Get vendor variant (price + inventory_item_id)
           const varData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/variants/${m.vendor_variant_id}.json`);
-          const invItemId = varData.variant?.inventory_item_id;
-          if (!invItemId) continue;
+          const vVariant = varData.variant;
+          if (!vVariant) continue;
 
-          const invLvl = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/inventory_levels.json?inventory_item_ids=${invItemId}&location_ids=${locationId}`);
-          const qty = invLvl.inventory_levels?.[0]?.available ?? 0;
-
-          // Get CrosCrow variant's inventory_item_id
-          const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
-          const ccInvItemId = ccVarData.variant?.inventory_item_id;
-          if (!ccInvItemId) continue;
-
-          // Set inventory on CrosCrow
-          await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/inventory_levels/set.json`, {
-            method: 'POST',
+          // Sync price on CrosCrow variant
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, {
+            method: 'PUT',
             headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+            body: JSON.stringify({ variant: { id: m.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
           });
-          db.prepare("UPDATE vendor_product_mappings SET last_synced_at=? WHERE id=?").run(Date.now(), m.id);
+
+          // Sync inventory
+          const invItemId = vVariant.inventory_item_id;
+          if (invItemId && vVariant.inventory_management) {
+            const invLvl = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/inventory_levels.json?inventory_item_ids=${invItemId}&location_ids=${locationId}`);
+            const qty = invLvl.inventory_levels?.[0]?.available ?? 0;
+
+            const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
+            const ccInvItemId = ccVarData.variant?.inventory_item_id;
+            if (ccInvItemId) {
+              await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/inventory_levels/set.json`, {
+                method: 'POST',
+                headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+              });
+            }
+          }
+
+          await VPM.updateSynced(m.vendor_name, m.vendor_variant_id);
           synced++;
         } catch (e) { errors.push(`${vName}/${m.vendor_variant_id}: ${e.message}`); }
       }
@@ -3466,7 +3701,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
 app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
   const { q } = req.query;
   try {
-    const path = q ? `/products.json?title=${encodeURIComponent(q)}&limit=20&fields=id,title,variants` : '/products.json?limit=20&fields=id,title,variants';
+    const path = q ? `/products.json?q=${encodeURIComponent(q)}&limit=20&fields=id,title,variants` : '/products.json?limit=20&fields=id,title,variants';
     const data = await shopifyREST(path);
     res.json({ products: data.products || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3486,15 +3721,13 @@ function verifyPenaltyToken(shopifyId, vendorName, token) {
 }
 
 async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
-  const existing = db.prepare("SELECT id FROM order_penalties WHERE shopify_id=? AND vendor_name=? AND status='pending'").get(shopifyId, vendorName);
-  if (existing) return;
-  db.prepare("INSERT INTO order_penalties (shopify_id, vendor_name, order_name, triggered_at, trigger_reason, status) VALUES (?,?,?,?,?,'pending')")
-    .run(shopifyId, vendorName, orderName || '', Date.now(), reason);
-  db.prepare("UPDATE order_vendor_stage SET penalty_triggered=1 WHERE shopify_id=? AND vendor_name=?").run(shopifyId, vendorName);
+  if (await OP.hasPending(shopifyId, vendorName)) return;
+  await OP.insert(shopifyId, vendorName, orderName, reason);
+  await OVS.upsert(shopifyId, vendorName, { penalty_triggered: 1 });
   console.log(`⚠️  Penalty triggered: ${orderName} / ${vendorName} — ${reason}`);
 
   // Email vendor
-  const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendorName);
+  const vcfg = await VC.get(vendorName);
   if (vcfg?.email) {
     const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours' : reason === 'eta_breach' ? 'Order not dispatched by committed ETA date' : 'Manual penalty by admin';
     const html = emailBase(`⚠️ Penalty Applied: ${orderName || shopifyId}`, '#ef4444', `
@@ -3573,12 +3806,12 @@ function templateFulfilmentWarning({ order, vendorName, hoursElapsed, delayLink 
 }
 
 // ── Vendor delay remark page (public — token auth) ────────────────────────
-app.get("/vendor/delay-remark", (req, res) => {
+app.get("/vendor/delay-remark", async (req, res) => {
   const { order, vendor, token } = req.query;
   if (!order || !vendor || !token || !verifyPenaltyToken(order, vendor, token)) {
     return res.status(403).send("<h2>Invalid or expired link.</h2>");
   }
-  const existing = db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at DESC LIMIT 1").get(order, vendor);
+  const existing = await DR.latest(order, vendor);
   res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Delay Remark — CrosCrow</title>
 <style>
@@ -3631,9 +3864,7 @@ app.post("/vendor/delay-remark", async (req, res) => {
   }
   if (!reason || !eta_date) return res.status(400).json({ error: "reason and eta_date required." });
 
-  const now = Date.now();
-  db.prepare(`INSERT INTO delay_remarks (shopify_id, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered) VALUES (?,?,?,?,?,0)`)
-    .run(order, vendor, reason, eta_date, now);
+  await DR.insert(order, vendor, reason, eta_date);
 
   // Fetch order details to send emails
   try {
@@ -3687,7 +3918,7 @@ app.post("/admin/penalties/run-cron", adminAuth, async (req, res) => {
 app.post("/admin/penalties/test-warning", adminAuth, async (req, res) => {
   const { shopify_id, vendor_name, order_name } = req.body || {};
   if (!shopify_id || !vendor_name) return res.status(400).json({ error: "shopify_id and vendor_name required." });
-  const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+  const vcfg = await VC.get(vendor_name);
   if (!vcfg?.email) return res.status(400).json({ error: `No email found for vendor "${vendor_name}". Set it in Vendors → vendor config.` });
   const token = penaltyToken(shopify_id, vendor_name);
   const delayLink = `${SERVER_BASE}/vendor.html?openOrder=${shopify_id}&action=delay`;
@@ -3704,28 +3935,24 @@ app.post("/admin/penalties/test-trigger", adminAuth, async (req, res) => {
   res.json({ success: true, message: `Penalty triggered for ${vendor_name} on ${order_name || shopify_id}` });
 });
 
-app.get("/admin/penalties", adminAuth, (req, res) => {
+app.get("/admin/penalties", adminAuth, async (req, res) => {
   const { status } = req.query;
-  const where = status ? "WHERE status=?" : "";
-  const params = status ? [status] : [];
-  const rows = db.prepare(`SELECT * FROM order_penalties ${where} ORDER BY triggered_at DESC`).all(...params);
-  res.json({ penalties: rows });
+  res.json({ penalties: await OP.all(status) });
 });
 
 app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
   const { action, penalty_amount, admin_note } = req.body || {};
-  const p = db.prepare("SELECT * FROM order_penalties WHERE id=?").get(req.params.id);
+  const p = await OP.get(req.params.id);
   if (!p) return res.status(404).json({ error: "Penalty not found." });
   if (!['confirm','cancel'].includes(action)) return res.status(400).json({ error: "action must be confirm or cancel." });
 
   const status = action === 'confirm' ? 'confirmed' : 'cancelled';
   const amount = action === 'confirm' ? (parseFloat(penalty_amount) || 0) : 0;
-  db.prepare("UPDATE order_penalties SET status=?, penalty_amount=?, admin_note=?, resolved_at=?, resolved_by='admin' WHERE id=?")
-    .run(status, amount, admin_note || '', Date.now(), req.params.id);
+  await OP.resolve(req.params.id, status, amount, admin_note);
   auditLog("admin", `penalty_${status}`, req.params.id, { vendor: p.vendor_name, amount });
 
   // Email vendor on confirm or cancel
-  const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(p.vendor_name);
+  const vcfg = await VC.get(p.vendor_name);
   if (vcfg?.email) {
     const isConfirm = status === 'confirmed';
     const html = emailBase(
@@ -3787,13 +4014,13 @@ async function penaltyCronJob() {
       if (elapsed >= HR24 && !row.warning_sent) {
         const token = penaltyToken(sid, vendor);
         const delayLink = `${SERVER_BASE}/vendor.html?openOrder=${sid}&action=delay`;
-        const vcfg = db.prepare("SELECT email FROM vendor_config WHERE vendor_name=?").get(vendor);
+        const vcfg = await VC.get(vendor);
         if (vcfg?.email) {
           const ord = { name: orderName || sid };
           const html = templateFulfilmentWarning({ order: ord, vendorName: vendor, hoursElapsed: Math.floor(elapsed / 3600000), delayLink });
           await sendEmail({ to: vcfg.email, subject: `⚠️ 24hr Warning: Fulfil ${orderName || sid} Now`, html, shopifyId: sid, trigger: 'penalty_warning' });
         }
-        db.prepare("UPDATE order_vendor_stage SET warning_sent=1 WHERE shopify_id=? AND vendor_name=?").run(sid, vendor);
+        await OVS.upsert(sid, vendor, { warning_sent: 1 });
         console.log(`📧  24hr warning sent: ${orderName} / ${vendor}`);
       }
 
@@ -3805,7 +4032,7 @@ async function penaltyCronJob() {
 
     // ETA-date penalty check for delay remarks
     const today = new Date().toISOString().split('T')[0];
-    const etaPast = db.prepare("SELECT * FROM delay_remarks WHERE eta_date < ? AND eta_penalty_triggered=0").all(today);
+    const etaPast = await DR.expiredEta(today);
     for (const dr of etaPast) {
       const ovs = db.prepare("SELECT stage FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(dr.shopify_id, dr.vendor_name);
       const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
@@ -3814,7 +4041,7 @@ async function penaltyCronJob() {
         try { const od = await shopifyREST(`/orders/${dr.shopify_id}.json?fields=name`); orderName = od?.order?.name || ''; } catch {}
         triggerPenalty(dr.shopify_id, dr.vendor_name, orderName, 'eta_breach');
       }
-      db.prepare("UPDATE delay_remarks SET eta_penalty_triggered=1 WHERE id=?").run(dr.id);
+      await DR.markEtaPenalty(dr.id);
     }
   } catch (e) {
     console.error("⚠️  Penalty cron error:", e.message);
@@ -3827,13 +4054,3 @@ setInterval(penaltyCronJob, PENALTY_CHECK_MS);
 // Patch: wrap the settlement generate route to add penalty deductions
 // (The logic is injected into the existing route via post-insert query)
 
-// ── Start ──────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀  JARVIS Shopify Server running on port ${PORT}`);
-  console.log(`    Shop    : ${SHOP}.myshopify.com`);
-  console.log(`    Health  : /health`);
-  console.log(`    Orders  : /orders`);
-  console.log(`    Stats   : /orders/stats`);
-  console.log(`    Export  : /orders/export`);
-  console.log(`    Webhook : POST /webhooks/orders\n`);
-});
