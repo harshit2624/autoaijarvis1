@@ -1201,6 +1201,7 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px;">
       <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
       <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>
+      ${advance > 0 ? `<tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">− ₹${advance.toFixed(2)}</td></tr>` : ''}
       <tr style="background:#f8fafc"><td style="padding:10px;font-weight:800;font-size:14px;color:#1a2a3a;border-radius:4px 0 0 4px">
         ${isPrepaid ? '✅ COD to Collect' : '💵 COD to Collect'}
       </td><td style="text-align:right;padding:10px;font-weight:800;font-size:16px;border-radius:0 4px 4px 0;color:${isPrepaid ? '#10b981' : '#dc2626'}">
