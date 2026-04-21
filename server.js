@@ -2190,6 +2190,190 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
   }
 });
 
+// ── GET /admin/analytics ─────────────────────────────────────────────────
+app.get("/admin/analytics", adminAuth, async (req, res) => {
+  try {
+    const raw     = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
+    const metas   = db.prepare("SELECT * FROM order_meta").all();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+
+    const now      = Date.now();
+    const DAY      = 86400000;
+    const today    = new Date(); today.setHours(0,0,0,0);
+
+    // ── Selected period (from query params, default last 30d)
+    const fromParam = req.query.from;
+    const toParam   = req.query.to;
+    const periodFrom = fromParam ? new Date(fromParam+'T00:00:00') : new Date(now - 29*DAY);
+    const periodTo   = toParam   ? new Date(toParam+'T23:59:59')   : new Date();
+    // Prior period of same length for growth comparison
+    const periodLen  = periodTo - periodFrom;
+    const priorFrom  = new Date(periodFrom - periodLen);
+    const priorTo    = new Date(periodFrom - 1);
+
+    // ── Helpers
+    const isCOD    = o => o.financial_status !== 'paid';
+    const isPrepaid = o => o.financial_status === 'paid';
+    const isPartial = o => o.financial_status === 'partially_paid';
+    const inWindow  = (o, from, to) => { const d=new Date(o.created_at); return d>=from && d<=to; };
+
+    // ── Revenue & order counts by window
+    const ordersToday  = raw.filter(o => new Date(o.created_at) >= today);
+    const orders7d     = raw.filter(o => new Date(o.created_at) >= new Date(now - 6*DAY));
+    const ordersMain   = raw.filter(o => inWindow(o, periodFrom, periodTo));
+    const ordersPrior  = raw.filter(o => inWindow(o, priorFrom,  priorTo));
+    // keep orders30d alias for fulfillment/payment stats
+    const orders30d    = ordersMain;
+
+    const rev = arr => parseFloat(arr.reduce((s,o)=>s+parseFloat(o.total_price||0),0).toFixed(2));
+
+    // Growth: compare selected period vs prior period of same length
+    const revMain  = rev(ordersMain);
+    const revPrior = rev(ordersPrior);
+    const revenueGrowth = revPrior > 0 ? parseFloat(((revMain - revPrior)/revPrior*100).toFixed(1)) : null;
+    const orderGrowth   = ordersPrior.length > 0 ? parseFloat(((ordersMain.length - ordersPrior.length)/ordersPrior.length*100).toFixed(1)) : null;
+
+    // ── Fulfillment stats (30d)
+    const fulfillStats = (() => {
+      let fulfilled=0, unfulfilled=0, partial_ship=0, cancelled=0, rto=0;
+      orders30d.forEach(o => {
+        const meta  = metaMap[String(o.id)] || {};
+        const stage = meta.stage || 'new';
+        if (stage === 'delivered' || stage === 'transit' || o.fulfillment_status === 'fulfilled') fulfilled++;
+        else if (o.cancelled_at || stage === 'cancelled') cancelled++;
+        else if (stage === 'rto') rto++;
+        else if (o.fulfillment_status === 'partial') partial_ship++;
+        else unfulfilled++;
+      });
+      const total = orders30d.length || 1;
+      return { fulfilled, unfulfilled, partial_ship, cancelled, rto,
+               fulfill_rate: Math.round(fulfilled/total*100) };
+    })();
+
+    // ── Payment split (30d)
+    const paymentSplit = {
+      prepaid: orders30d.filter(isPrepaid).length,
+      cod:     orders30d.filter(o => !isPrepaid(o) && !isPartial(o)).length,
+      partial: orders30d.filter(isPartial).length,
+    };
+
+    // ── Top products by quantity sold (all time)
+    const productMap = {};
+    raw.forEach(o => {
+      (o.line_items || []).forEach(li => {
+        const key = li.product_id || li.title;
+        if (!productMap[key]) productMap[key] = { title: li.title, vendor: li.vendor || '—', qty: 0, revenue: 0, orders: new Set() };
+        productMap[key].qty     += li.quantity || 1;
+        productMap[key].revenue += parseFloat(li.price || 0) * (li.quantity || 1);
+        productMap[key].orders.add(String(o.id));
+      });
+    });
+    const topProducts = Object.values(productMap)
+      .map(p => ({ ...p, orders: p.orders.size, revenue: parseFloat(p.revenue.toFixed(2)) }))
+      .sort((a,b) => b.qty - a.qty)
+      .slice(0, 10);
+
+    // ── Top brands/vendors by revenue (all time)
+    const brandMap = {};
+    raw.forEach(o => {
+      (o.line_items || []).forEach(li => {
+        const vn = li.vendor || 'Unknown';
+        if (!brandMap[vn]) brandMap[vn] = { name: vn, qty: 0, revenue: 0, orders: new Set() };
+        brandMap[vn].qty     += li.quantity || 1;
+        brandMap[vn].revenue += parseFloat(li.price || 0) * (li.quantity || 1);
+        brandMap[vn].orders.add(String(o.id));
+      });
+    });
+    const topBrands = Object.values(brandMap)
+      .map(b => ({ ...b, orders: b.orders.size, revenue: parseFloat(b.revenue.toFixed(2)) }))
+      .sort((a,b) => b.revenue - a.revenue)
+      .slice(0, 8);
+
+    // ── Daily revenue trend — span of selected period (cap at 90 days)
+    const trendFrom = new Date(Math.max(periodFrom.getTime(), now - 89*DAY));
+    const trendDays = Math.round((periodTo - trendFrom) / DAY) + 1;
+    const trendMap = {};
+    for (let i = 0; i < trendDays; i++) {
+      const d = new Date(trendFrom.getTime() + i * DAY);
+      const key = d.toISOString().slice(0,10);
+      trendMap[key] = { date: key, orders: 0, revenue: 0 };
+    }
+    ordersMain.forEach(o => {
+      const key = o.created_at.slice(0,10);
+      if (trendMap[key]) {
+        trendMap[key].orders++;
+        trendMap[key].revenue = parseFloat((trendMap[key].revenue + parseFloat(o.total_price||0)).toFixed(2));
+      }
+    });
+    const trend14d = Object.values(trendMap);
+
+    // ── AOV
+    const aovMain = ordersMain.length ? parseFloat((revMain/ordersMain.length).toFixed(2)) : 0;
+    const aov7    = orders7d.length   ? parseFloat((rev(orders7d)/orders7d.length).toFixed(2)) : 0;
+
+    // ── RTO rate (selected period)
+    const rtoCountMain = ordersMain.filter(o => (metaMap[String(o.id)] || {}).stage === 'rto').length;
+    const rtoRate30    = ordersMain.length ? parseFloat((rtoCountMain/ordersMain.length*100).toFixed(1)) : 0;
+
+    // ── Repeat customers (all time orders with same email > 1)
+    const custMap = {};
+    raw.forEach(o => { const e = o.email||o.customer?.email; if(e){if(!custMap[e])custMap[e]=0;custMap[e]++;} });
+    const totalCustomers  = Object.keys(custMap).length;
+    const repeatCustomers = Object.values(custMap).filter(c=>c>1).length;
+    const repeatRate      = totalCustomers ? parseFloat((repeatCustomers/totalCustomers*100).toFixed(1)) : 0;
+
+    // ── Top cities (30d)
+    const cityMap = {};
+    orders30d.forEach(o => {
+      const city = o.shipping_address?.city;
+      if (city) { cityMap[city] = (cityMap[city]||0) + 1; }
+    });
+    const topCities = Object.entries(cityMap).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([city,count])=>({city,count}));
+
+    // ── Stage counts for selected period
+    const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","penalty"];
+    const stageCounts = Object.fromEntries(STAGE_LIST.map(s=>[s,0]));
+    ordersMain.forEach(o => {
+      const s = (metaMap[String(o.id)] || {}).stage || 'new';
+      if (stageCounts[s] !== undefined) stageCounts[s]++;
+    });
+
+    // ── All-time totals (always show regardless of period)
+    const pendRow = db.prepare("SELECT SUM(commission+gst_amount) as t FROM settlements WHERE status='pending'").get();
+    const allTimeTotals = {
+      orders:  raw.length,
+      revenue: rev(raw),
+      pendingCommission: parseFloat((pendRow?.t || 0).toFixed(2)),
+    };
+
+    const periodDays = Math.round((periodTo - periodFrom) / DAY) + 1;
+
+    res.json({
+      summary: {
+        today:        { orders: ordersToday.length, revenue: rev(ordersToday) },
+        last7d:       { orders: orders7d.length,    revenue: rev(orders7d),   aov: aov7 },
+        period:       { orders: ordersMain.length,  revenue: revMain,         aov: aovMain,
+                        from: fromParam || periodFrom.toISOString().slice(0,10),
+                        to:   toParam   || periodTo.toISOString().slice(0,10),
+                        days: periodDays },
+        revenueGrowth, orderGrowth, rtoRate30,
+        repeatRate, totalCustomers, repeatCustomers,
+      },
+      stageCounts,
+      allTimeTotals,
+      fulfillStats,
+      paymentSplit,
+      topProducts,
+      topBrands,
+      topCities,
+      trend14d,
+    });
+  } catch (err) {
+    console.error("❌ /admin/analytics:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /admin/orders ─────────────────────────────────────────────────────
 app.get("/admin/orders", adminAuth, async (req, res) => {
   try {
@@ -4123,6 +4307,397 @@ async function penaltyCronJob() {
 }
 
 setInterval(penaltyCronJob, PENALTY_CHECK_MS);
+
+// ══════════════════════════════════════════════════════════════════════════
+//  WEEKLY REPORT SYSTEM
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Report settings (MongoDB) ─────────────────────────────────────────────
+const RS = {
+  async get() {
+    if (mdb) return mdb.collection('report_settings').findOne({}, { projection: { _id: 0 } }) || {};
+    return {};
+  },
+  async save(fields) {
+    if (mdb) await mdb.collection('report_settings').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
+  },
+};
+
+// ── Core report data generator ────────────────────────────────────────────
+async function generateReport(fromDate, toDate) {
+  const allOrders = await fetchAllOrders("any", fromDate + "T00:00:00Z", toDate + "T23:59:59Z");
+  const metas = Object.fromEntries(db.prepare("SELECT * FROM order_meta").all().map(m => [m.shopify_id, m]));
+  const vendorStages = db.prepare("SELECT * FROM order_vendor_stage").all();
+  const vsMap = {}; // { shopify_id: { vendor_name: stage } }
+  vendorStages.forEach(r => {
+    if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
+    vsMap[r.shopify_id][r.vendor_name] = r.stage;
+  });
+
+  const summary = { total: 0, fulfilled: 0, delivered: 0, in_transit: 0, partial_shopify: 0, unfulfilled: 0, cancelled: 0, rto: 0 };
+  const breakdown = { prepaid_pending: 0, partial_pending: 0, confirmed_pending: 0, new_pending: 0, ready_pending: 0, hold_pending: 0 };
+  const vendorMap = {};
+  const urgentOrders = [];
+
+  allOrders.forEach(o => {
+    const sid = String(o.id);
+    const meta = metas[sid] || {};
+    const stage = meta.stage || 'new';
+    const payType = meta.payment_type || (o.financial_status === 'paid' ? 'prepaid' : 'cod');
+    const shopifyFulfill = o.fulfillment_status; // 'fulfilled' | 'partial' | null
+    const isCancelled = !!o.cancelled_at || o.financial_status === 'voided';
+    const vendors = [...new Set((o.line_items || []).map(li => li.vendor).filter(Boolean))];
+    const ageHours = Math.floor((Date.now() - new Date(o.created_at).getTime()) / 3600000);
+
+    summary.total++;
+
+    // Determine order fulfillment: prefer our stage if set meaningfully, else fall back to Shopify
+    const isOurDelivered  = stage === 'delivered';
+    const isOurTransit    = stage === 'transit';
+    const isOurRTO        = stage === 'rto';
+    const isOurCancelled  = stage === 'cancelled' || isCancelled;
+    const isShopifyFulfilled = shopifyFulfill === 'fulfilled';
+    const isShopifyPartial   = shopifyFulfill === 'partial';
+
+    if (isOurCancelled) {
+      summary.cancelled++;
+    } else if (isOurRTO) {
+      summary.rto++;
+    } else if (isOurDelivered || (isShopifyFulfilled && stage === 'new')) {
+      // delivered: our stage says delivered, OR Shopify says fulfilled but we haven't updated stage
+      summary.fulfilled++;
+      summary.delivered++;
+    } else if (isOurTransit || isShopifyFulfilled) {
+      summary.fulfilled++;
+      summary.in_transit++;
+    } else if (isShopifyPartial) {
+      // Some line items shipped, some not — partially fulfilled
+      summary.partial_shopify++;
+      summary.unfulfilled++;
+      if (payType === 'prepaid')       breakdown.prepaid_pending++;
+      else if (meta.advance_paid > 0)  breakdown.partial_pending++;
+      else if (stage === 'confirmed')  breakdown.confirmed_pending++;
+      else if (stage === 'ready' || stage === 'pickup') breakdown.ready_pending++;
+      else if (stage === 'hold')       breakdown.hold_pending++;
+      else                             breakdown.new_pending++;
+      urgentOrders.push({ order_name: o.name, shopify_id: sid, stage: 'partial-shipped', payment_type: payType, advance_paid: meta.advance_paid || 0, age_hours: ageHours, age_label: ageHours < 24 ? `${ageHours}h` : `${Math.floor(ageHours/24)}d ${ageHours%24}h`, vendors: vendors.join(', ') || '—', customer: o.shipping_address?.name || o.email || '—' });
+    } else {
+      summary.unfulfilled++;
+      if (payType === 'prepaid')       breakdown.prepaid_pending++;
+      else if (meta.advance_paid > 0)  breakdown.partial_pending++;
+      else if (stage === 'confirmed')  breakdown.confirmed_pending++;
+      else if (stage === 'ready' || stage === 'pickup') breakdown.ready_pending++;
+      else if (stage === 'hold')       breakdown.hold_pending++;
+      else                             breakdown.new_pending++;
+      urgentOrders.push({ order_name: o.name, shopify_id: sid, stage, payment_type: payType, advance_paid: meta.advance_paid || 0, age_hours: ageHours, age_label: ageHours < 24 ? `${ageHours}h` : `${Math.floor(ageHours/24)}d ${ageHours%24}h`, vendors: vendors.join(', ') || '—', customer: o.shipping_address?.name || o.email || '—' });
+    }
+
+    // Per-vendor breakdown — use per-line-item fulfillment_status from Shopify
+    vendors.forEach(vn => {
+      if (!vendorMap[vn]) vendorMap[vn] = { name: vn, total: 0, fulfilled: 0, unfulfilled: 0, partial: 0, prepaid_pending: 0, partial_pending: 0, confirmed_pending: 0, new_pending: 0 };
+      const myItems = (o.line_items || []).filter(li => li.vendor === vn);
+      const totalItems = myItems.length;
+      const fulfilledItems = myItems.filter(li => li.fulfillment_status === 'fulfilled').length;
+      const vStage = vsMap[sid]?.[vn] || stage;
+      const vCancelled = isOurCancelled || vStage === 'cancelled';
+      const vRTO = isOurRTO || vStage === 'rto';
+
+      if (vCancelled || vRTO) return; // skip cancelled/rto in vendor counts
+
+      vendorMap[vn].total++;
+
+      if (fulfilledItems === totalItems && totalItems > 0) {
+        // All this vendor's items are Shopify-fulfilled
+        vendorMap[vn].fulfilled++;
+      } else if (fulfilledItems > 0) {
+        // Some items fulfilled — partially done
+        vendorMap[vn].partial++;
+        vendorMap[vn].unfulfilled++;
+        if (payType === 'prepaid')      vendorMap[vn].prepaid_pending++;
+        else if (meta.advance_paid > 0) vendorMap[vn].partial_pending++;
+        else if (vStage === 'confirmed' || vStage === 'partial') vendorMap[vn].confirmed_pending++;
+        else                            vendorMap[vn].new_pending++;
+      } else {
+        vendorMap[vn].unfulfilled++;
+        if (payType === 'prepaid')      vendorMap[vn].prepaid_pending++;
+        else if (meta.advance_paid > 0) vendorMap[vn].partial_pending++;
+        else if (vStage === 'confirmed' || vStage === 'partial') vendorMap[vn].confirmed_pending++;
+        else                            vendorMap[vn].new_pending++;
+      }
+    });
+  });
+
+  // Sort urgent: prepaid first, then partial advance, then by age desc — cap at 30
+  urgentOrders.sort((a, b) => {
+    const pri = o => o.payment_type === 'prepaid' ? 0 : o.advance_paid > 0 ? 1 : 2;
+    const pd = pri(a) - pri(b);
+    if (pd !== 0) return pd;
+    return b.age_hours - a.age_hours;
+  });
+  urgentOrders.splice(30);
+
+  const vendors = Object.values(vendorMap).sort((a, b) => b.unfulfilled - a.unfulfilled);
+  return { period: { from: fromDate, to: toDate }, summary, breakdown, vendors, urgentOrders };
+}
+
+// ── Admin report email template ───────────────────────────────────────────
+function templateAdminReport({ data, period }) {
+  const { summary, breakdown, vendors, urgentOrders } = data;
+  const fulfillRate = summary.total > 0 ? Math.round((summary.fulfilled / summary.total) * 100) : 0;
+  const rateColor = fulfillRate >= 80 ? '#10b981' : fulfillRate >= 50 ? '#f59e0b' : '#ef4444';
+
+  const breakdownRows = [
+    summary.in_transit      > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">🚚 In Transit</td><td style="text-align:right;font-weight:700;color:#6366f1;padding:7px 0;border-bottom:1px solid #1e293b">${summary.in_transit}</td></tr>` : '',
+    summary.delivered       > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">✅ Delivered</td><td style="text-align:right;font-weight:700;color:#10b981;padding:7px 0;border-bottom:1px solid #1e293b">${summary.delivered}</td></tr>` : '',
+    summary.partial_shopify > 0 ? `<tr><td style="padding:7px 0;color:#f59e0b;border-bottom:1px solid #1e293b">⚡ Partially Shipped (some items pending)</td><td style="text-align:right;font-weight:700;color:#f59e0b;padding:7px 0;border-bottom:1px solid #1e293b">${summary.partial_shopify}</td></tr>` : '',
+    breakdown.prepaid_pending  > 0 ? `<tr><td style="padding:7px 0;color:#ef4444;border-bottom:1px solid #1e293b">🔴 Prepaid — Not Shipped</td><td style="text-align:right;font-weight:700;color:#ef4444;padding:7px 0;border-bottom:1px solid #1e293b">${breakdown.prepaid_pending}</td></tr>` : '',
+    breakdown.partial_pending  > 0 ? `<tr><td style="padding:7px 0;color:#f59e0b;border-bottom:1px solid #1e293b">🟡 Advance Collected — Not Shipped</td><td style="text-align:right;font-weight:700;color:#f59e0b;padding:7px 0;border-bottom:1px solid #1e293b">${breakdown.partial_pending}</td></tr>` : '',
+    breakdown.confirmed_pending > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">📦 Confirmed — Awaiting Dispatch</td><td style="text-align:right;font-weight:700;color:#e2e8f0;padding:7px 0;border-bottom:1px solid #1e293b">${breakdown.confirmed_pending}</td></tr>` : '',
+    breakdown.ready_pending    > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">🏷️ Ready / Pickup Pending</td><td style="text-align:right;font-weight:700;color:#e2e8f0;padding:7px 0;border-bottom:1px solid #1e293b">${breakdown.ready_pending}</td></tr>` : '',
+    breakdown.new_pending      > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">🆕 New — Not Actioned</td><td style="text-align:right;font-weight:700;color:#e2e8f0;padding:7px 0;border-bottom:1px solid #1e293b">${breakdown.new_pending}</td></tr>` : '',
+    breakdown.hold_pending     > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">⏸️ On Hold</td><td style="text-align:right;font-weight:700;color:#e2e8f0;padding:7px 0;border-bottom:1px solid #1e293b">${breakdown.hold_pending}</td></tr>` : '',
+    summary.cancelled    > 0 ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">❌ Cancelled</td><td style="text-align:right;font-weight:700;color:#6b7280;padding:7px 0;border-bottom:1px solid #1e293b">${summary.cancelled}</td></tr>` : '',
+    summary.rto          > 0 ? `<tr><td style="padding:7px 0;color:#6b7280">↩️ RTO</td><td style="text-align:right;font-weight:700;color:#6b7280;padding:7px 0">${summary.rto}</td></tr>` : '',
+  ].filter(Boolean).join('');
+
+  const vendorRows = vendors.slice(0, 10).map(v => `
+    <tr>
+      <td style="padding:8px 10px;font-size:12px;color:#e2e8f0;border-bottom:1px solid #1e293b">${v.name}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px;font-weight:700;color:#a5b4fc;border-bottom:1px solid #1e293b">${v.total}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px;font-weight:700;color:#10b981;border-bottom:1px solid #1e293b">${v.fulfilled}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px;font-weight:700;color:${v.unfulfilled>0?'#ef4444':'#6b7280'};border-bottom:1px solid #1e293b">${v.unfulfilled||'—'}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px;color:${v.confirmed_pending>0?'#6366f1':'#6b7280'};font-weight:${v.confirmed_pending>0?'700':'400'};border-bottom:1px solid #1e293b">${v.confirmed_pending||'—'}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px;color:${v.partial_pending>0?'#f59e0b':'#6b7280'};font-weight:${v.partial_pending>0?'700':'400'};border-bottom:1px solid #1e293b">${v.partial_pending||'—'}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:12px;color:${v.prepaid_pending>0?'#ef4444':'#6b7280'};font-weight:${v.prepaid_pending>0?'700':'400'};border-bottom:1px solid #1e293b">${v.prepaid_pending||'—'}</td>
+    </tr>`).join('');
+
+  const urgentRows = urgentOrders.slice(0, 15).map(o => `
+    <tr>
+      <td style="padding:7px 10px;font-size:12px;color:#a5b4fc;font-weight:700;border-bottom:1px solid #1e293b">${o.order_name}</td>
+      <td style="padding:7px 10px;font-size:11px;color:${o.payment_type==='prepaid'?'#ef4444':o.advance_paid>0?'#f59e0b':'#6b7280'};font-weight:700;border-bottom:1px solid #1e293b">${o.payment_type==='prepaid'?'🔴 Prepaid':o.advance_paid>0?`🟡 +₹${o.advance_paid}`:'COD'}</td>
+      <td style="padding:7px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid #1e293b;text-transform:capitalize">${o.stage}</td>
+      <td style="padding:7px 10px;font-size:11px;color:${o.age_hours>48?'#ef4444':o.age_hours>24?'#f59e0b':'#94a3b8'};font-weight:${o.age_hours>24?'700':'400'};border-bottom:1px solid #1e293b">${o.age_label}</td>
+      <td style="padding:7px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid #1e293b">${o.vendors}</td>
+    </tr>`).join('');
+
+  const body = `
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">CrosCrow Order Report</div>
+      <div style="font-size:20px;font-weight:800;color:#f8fafc;margin-top:4px">${period.from} → ${period.to}</div>
+    </div>
+
+    <!-- KPI cards -->
+    <table style="width:100%;border-collapse:separate;border-spacing:6px;margin-bottom:20px">
+      <tr>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center;width:25%">
+          <div style="font-size:28px;font-weight:800;color:#a5b4fc">${summary.total}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">TOTAL ORDERS</div>
+        </td>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center;width:25%">
+          <div style="font-size:28px;font-weight:800;color:#10b981">${summary.fulfilled}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">FULFILLED</div>
+        </td>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center;width:25%">
+          <div style="font-size:28px;font-weight:800;color:#ef4444">${summary.unfulfilled}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">PENDING</div>
+        </td>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center;width:25%">
+          <div style="font-size:28px;font-weight:800;color:${rateColor}">${fulfillRate}%</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">FULFIL RATE</div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Status breakdown -->
+    <div style="font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">📊 Order Breakdown</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:13px">${breakdownRows}</table>
+
+    ${urgentOrders.length > 0 ? `
+    <!-- Urgent task list -->
+    <div style="font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">🚨 Action Required — Unfulfilled Orders</div>
+    <div style="background:#1e293b;border-radius:10px;overflow:hidden;margin-bottom:24px">
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#0f172a">
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">ORDER</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">PAYMENT</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">STAGE</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">AGE</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">VENDOR</th>
+        </tr>
+        ${urgentRows}
+      </table>
+    </div>` : ''}
+
+    ${vendors.length > 0 ? `
+    <!-- Vendor summary -->
+    <div style="font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">🏪 Vendor Performance</div>
+    <div style="background:#1e293b;border-radius:10px;overflow:hidden;margin-bottom:20px">
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#0f172a">
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">VENDOR</th>
+          <th style="padding:9px 10px;text-align:center;font-size:11px;color:#64748b;font-weight:600">TOTAL</th>
+          <th style="padding:9px 10px;text-align:center;font-size:11px;color:#64748b;font-weight:600">DONE</th>
+          <th style="padding:9px 10px;text-align:center;font-size:11px;color:#64748b;font-weight:600">PENDING</th>
+          <th style="padding:9px 10px;text-align:center;font-size:11px;color:#6366f1;font-weight:600">CONFIRMED</th>
+          <th style="padding:9px 10px;text-align:center;font-size:11px;color:#f59e0b;font-weight:600">ADVANCE</th>
+          <th style="padding:9px 10px;text-align:center;font-size:11px;color:#ef4444;font-weight:600">PREPAID</th>
+        </tr>
+        ${vendorRows}
+      </table>
+    </div>` : ''}
+
+    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Generated by CrosCrow JARVIS • ${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}</p>
+  `;
+  return emailBase(`📊 Order Report: ${period.from} → ${period.to}`, '#6366f1', body);
+}
+
+// ── Vendor report template ────────────────────────────────────────────────
+function templateVendorReport({ vendorName, data, period }) {
+  const v = data.vendors.find(vv => vv.name === vendorName) || { total: 0, fulfilled: 0, unfulfilled: 0, prepaid_pending: 0, partial_pending: 0, confirmed_pending: 0, new_pending: 0 };
+  const myUrgent = data.urgentOrders.filter(o => o.vendors.includes(vendorName));
+  const fulfillRate = v.total > 0 ? Math.round((v.fulfilled / v.total) * 100) : 0;
+  const rateColor = fulfillRate >= 80 ? '#10b981' : fulfillRate >= 50 ? '#f59e0b' : '#ef4444';
+
+  const urgentRows = myUrgent.slice(0, 10).map(o => `
+    <tr>
+      <td style="padding:7px 10px;font-size:12px;color:#a5b4fc;font-weight:700;border-bottom:1px solid #1e293b">${o.order_name}</td>
+      <td style="padding:7px 10px;font-size:11px;color:${o.payment_type==='prepaid'?'#ef4444':o.advance_paid>0?'#f59e0b':'#6b7280'};font-weight:700;border-bottom:1px solid #1e293b">${o.payment_type==='prepaid'?'🔴 Prepaid':o.advance_paid>0?`🟡 +₹${o.advance_paid}`:'COD'}</td>
+      <td style="padding:7px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid #1e293b;text-transform:capitalize">${o.stage}</td>
+      <td style="padding:7px 10px;font-size:11px;color:${o.age_hours>48?'#ef4444':o.age_hours>24?'#f59e0b':'#94a3b8'};font-weight:${o.age_hours>24?'700':'400'};border-bottom:1px solid #1e293b">${o.age_label}</td>
+    </tr>`).join('');
+
+  const body = `
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your CrosCrow Performance Report</div>
+      <div style="font-size:20px;font-weight:800;color:#f8fafc;margin-top:4px">${period.from} → ${period.to}</div>
+    </div>
+
+    <table style="width:100%;border-collapse:separate;border-spacing:6px;margin-bottom:20px">
+      <tr>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:800;color:#a5b4fc">${v.total}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">YOUR ORDERS</div>
+        </td>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:800;color:#10b981">${v.fulfilled}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">FULFILLED</div>
+        </td>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:800;color:#ef4444">${v.unfulfilled}</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">PENDING</div>
+        </td>
+        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
+          <div style="font-size:28px;font-weight:800;color:${rateColor}">${fulfillRate}%</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">YOUR RATE</div>
+        </td>
+      </tr>
+    </table>
+
+    ${v.prepaid_pending > 0 ? `<div style="background:#2d0a0a;border:2px solid #ef4444;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#fca5a5;font-weight:700;text-align:center;">🔴 You have ${v.prepaid_pending} prepaid order${v.prepaid_pending>1?'s':''} waiting — please ship immediately!</div>` : ''}
+    ${v.partial_pending > 0 ? `<div style="background:#2d1a00;border:2px solid #f59e0b;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#fde68a;font-weight:700;text-align:center;">🟡 ${v.partial_pending} order${v.partial_pending>1?'s':''} with advance collected — dispatch soon to avoid penalties.</div>` : ''}
+
+    ${myUrgent.length > 0 ? `
+    <div style="font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">📋 Your Pending Orders</div>
+    <div style="background:#1e293b;border-radius:10px;overflow:hidden;margin-bottom:20px">
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#0f172a">
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">ORDER</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">PAYMENT</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">STAGE</th>
+          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">AGE</th>
+        </tr>
+        ${urgentRows}
+      </table>
+    </div>` : `<div style="text-align:center;padding:20px;color:#10b981;font-weight:700;font-size:14px">🎉 All your orders are fulfilled — great work, ${vendorName}!</div>`}
+
+    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Keep up the great work! Fast fulfilment earns seller rewards on CrosCrow.</p>
+  `;
+  return emailBase(`📊 Your Report: ${period.from} → ${period.to}`, '#6366f1', body);
+}
+
+// ── Send report helper ────────────────────────────────────────────────────
+async function sendReport(fromDate, toDate) {
+  const cfg = getSmtpConfig();
+  if (!cfg?.host) { console.log('⚠️  Report: SMTP not configured'); return { sent: 0, errors: [] }; }
+  const settings = await RS.get();
+  const data = await generateReport(fromDate, toDate);
+  let sent = 0; const errors = [];
+
+  // Admin + staff emails
+  const adminEmails = [cfg.adminEmail, ...(settings.staff_emails || '').split(',').map(e => e.trim())].filter(Boolean);
+  const adminHtml = templateAdminReport({ data, period: { from: fromDate, to: toDate } });
+  for (const email of adminEmails) {
+    try {
+      await sendEmail({ to: email, subject: `📊 CrosCrow Order Report: ${fromDate} → ${toDate}`, html: adminHtml, shopifyId: 'report', trigger: 'weekly_report_admin' });
+      sent++;
+    } catch (e) { errors.push(`${email}: ${e.message}`); }
+  }
+
+  // Vendor emails (if enabled)
+  if (settings.send_to_vendors) {
+    const vcfgs = await VC.all();
+    for (const vc of vcfgs) {
+      if (!vc.email) continue;
+      const vHtml = templateVendorReport({ vendorName: vc.vendor_name, data, period: { from: fromDate, to: toDate } });
+      try {
+        await sendEmail({ to: vc.email, subject: `📊 Your CrosCrow Report: ${fromDate} → ${toDate}`, html: vHtml, shopifyId: 'report', trigger: 'weekly_report_vendor' });
+        sent++;
+      } catch (e) { errors.push(`${vc.vendor_name}: ${e.message}`); }
+    }
+  }
+
+  await RS.save({ last_sent_at: new Date().toISOString() });
+  console.log(`📊 Report sent to ${sent} recipients`);
+  return { sent, errors, summary: data.summary };
+}
+
+// ── Report cron: every Sunday 8am IST ────────────────────────────────────
+async function reportCronJob() {
+  try {
+    const settings = await RS.get();
+    if (!settings.auto_send) return;
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    if (now.getDay() !== 0) return; // 0 = Sunday
+    const hour = now.getHours();
+    if (hour !== 8) return; // 8am IST
+    const lastSent = settings.last_sent_at ? new Date(settings.last_sent_at) : null;
+    if (lastSent && (Date.now() - lastSent.getTime()) < 6 * 3600 * 1000) return; // debounce 6h
+    const to   = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    console.log(`📊 Running weekly report cron (${from} → ${to})`);
+    await sendReport(from, to);
+  } catch (e) { console.error('Report cron error:', e.message); }
+}
+setInterval(reportCronJob, 60 * 60 * 1000); // check every hour
+
+// ── Report API endpoints ──────────────────────────────────────────────────
+app.get("/admin/reports/settings", adminAuth, async (req, res) => {
+  res.json(await RS.get());
+});
+
+app.put("/admin/reports/settings", adminAuth, async (req, res) => {
+  const { auto_send, staff_emails, send_to_vendors } = req.body || {};
+  await RS.save({ auto_send: !!auto_send, staff_emails: staff_emails || '', send_to_vendors: !!send_to_vendors });
+  res.json({ success: true });
+});
+
+app.get("/admin/reports/preview", adminAuth, async (req, res) => {
+  const to   = req.query.to   || new Date().toISOString().split('T')[0];
+  const from = req.query.from || new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+  try {
+    const data = await generateReport(from, to);
+    res.json({ from, to, ...data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/admin/reports/send", adminAuth, async (req, res) => {
+  const to   = req.body.to   || new Date().toISOString().split('T')[0];
+  const from = req.body.from || new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+  try {
+    const result = await sendReport(from, to);
+    res.json({ success: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── Include confirmed penalties in settlement generation ──────────────────
 // Patch: wrap the settlement generate route to add penalty deductions

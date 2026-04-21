@@ -297,6 +297,194 @@
 
   const fmtCur  = (v, c='INR') => { try { return new Intl.NumberFormat('en-IN',{style:'currency',currency:c,maximumFractionDigits:0}).format(v||0); } catch { return `₹${(v||0).toFixed(0)}`; } };
   const fmtDate = s => { const d=new Date(s); return isNaN(d)?s:d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+
+  // ── Date helpers ──────────────────────────────────────────────────────────
+  const isoToday = () => new Date().toISOString().slice(0,10);
+  const isoDaysAgo = n => new Date(Date.now() - n*86400000).toISOString().slice(0,10);
+  const isoMonthStart = () => { const d=new Date(); d.setDate(1); return d.toISOString().slice(0,10); };
+  const PERIOD_PRESETS = [
+    { label:'Today',       from: isoToday(),      to: isoToday() },
+    { label:'Yesterday',   from: isoDaysAgo(1),   to: isoDaysAgo(1) },
+    { label:'Last 7 Days', from: isoDaysAgo(6),   to: isoToday() },
+    { label:'Last 30 Days',from: isoDaysAgo(29),  to: isoToday() },
+    { label:'Last 90 Days',from: isoDaysAgo(89),  to: isoToday() },
+    { label:'This Month',  from: isoMonthStart(), to: isoToday() },
+    { label:'All Time',    from: '2020-01-01',    to: isoToday() },
+  ];
+
+  // ── Mini calendar for range picking ───────────────────────────────────────
+  function CalendarMonth({ year, month, rangeStart, rangeEnd, hoverDate, onDayClick, onDayHover }) {
+    const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const cells = [];
+    for(let i=0;i<firstDay;i++) cells.push(null);
+    for(let d=1;d<=daysInMonth;d++) cells.push(d);
+
+    const isoDay = d => { if(!d) return null; return `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; };
+    const inRange = iso => {
+      if(!rangeStart||!iso) return false;
+      const end = rangeEnd || hoverDate;
+      if(!end) return false;
+      const [lo,hi] = rangeStart<=end ? [rangeStart,end] : [end,rangeStart];
+      return iso>lo && iso<hi;
+    };
+    const isStart = iso => iso && iso===rangeStart;
+    const isEnd   = iso => iso && rangeEnd && iso===rangeEnd;
+
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    return (
+      <div style={{minWidth:210}}>
+        <div style={{textAlign:'center',fontWeight:700,fontSize:12,color:'var(--text)',marginBottom:8,letterSpacing:1}}>
+          {MONTH_NAMES[month]} {year}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1,marginBottom:4}}>
+          {DAYS.map(d=><div key={d} style={{textAlign:'center',fontSize:9,color:'var(--text-muted)',fontWeight:600,padding:'2px 0'}}>{d}</div>)}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1}}>
+          {cells.map((d,i)=>{
+            const iso = isoDay(d);
+            const start = isStart(iso), end = isEnd(iso), range = inRange(iso);
+            const isToday = iso === isoToday();
+            return (
+              <div key={i}
+                onClick={()=>d && onDayClick(iso)}
+                onMouseEnter={()=>d && onDayHover(iso)}
+                style={{
+                  textAlign:'center',fontSize:11,padding:'5px 2px',borderRadius:5,cursor:d?'pointer':'default',userSelect:'none',
+                  background: (start||end) ? 'var(--indigo)' : range ? '#1e1b4b' : 'transparent',
+                  color: (start||end) ? '#fff' : d ? 'var(--text)' : 'transparent',
+                  fontWeight: (start||end||isToday) ? 700 : 400,
+                  outline: isToday && !(start||end) ? '1px solid #6366f160' : 'none',
+                  transition:'background 0.08s',
+                }}
+              >{d||''}</div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function PeriodPicker({ period, onChange, align='left' }) {
+    const [open, setOpen]       = useState(false);
+    const [view, setView]       = useState('presets'); // 'presets' | 'calendar'
+    const [calYear,  setCalYear]  = useState(new Date().getFullYear());
+    const [calMonth, setCalMonth] = useState(new Date().getMonth());
+    const [rangeStart, setRangeStart] = useState(null);
+    const [rangeEnd,   setRangeEnd]   = useState(null);
+    const [hoverDate,  setHoverDate]  = useState(null);
+    const ref = useRef(null);
+
+    useEffect(()=>{
+      const close = e => { if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
+      document.addEventListener('mousedown', close);
+      return () => document.removeEventListener('mousedown', close);
+    },[]);
+
+    const selectPreset = p => { onChange({label:p.label, from:p.from, to:p.to}); setOpen(false); };
+
+    const handleDayClick = iso => {
+      if(!rangeStart || (rangeStart && rangeEnd)) {
+        setRangeStart(iso); setRangeEnd(null); setHoverDate(null);
+      } else {
+        const [lo,hi] = iso>=rangeStart ? [rangeStart,iso] : [iso,rangeStart];
+        setRangeEnd(hi); setRangeStart(lo);
+        onChange({ label:'Custom', from: lo, to: hi });
+        setTimeout(()=>setOpen(false), 300);
+      }
+    };
+
+    const prevMonth = () => { if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1);}else setCalMonth(m=>m-1); };
+    const nextMonth = () => { if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1);}else setCalMonth(m=>m+1); };
+    const nextYear  = calMonth===11 ? calYear+1 : calYear;
+    const nextMon   = calMonth===11 ? 0 : calMonth+1;
+
+    const label = period ? period.label : 'All Time';
+    const sub   = period ? `${period.from}  →  ${period.to}` : '';
+
+    return (
+      <div ref={ref} style={{position:'relative',display:'inline-block'}}>
+        <button onClick={()=>setOpen(o=>!o)} style={{
+          display:'flex',alignItems:'center',gap:8,padding:'7px 12px',
+          background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,
+          color:'var(--text)',fontSize:11,fontFamily:'inherit',cursor:'pointer',
+          transition:'border-color 0.15s', minWidth:180,
+        }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border-hi)'}
+          onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}
+        >
+          <span style={{fontSize:13}}>📅</span>
+          <span style={{flex:1,textAlign:'left'}}>
+            <span style={{fontWeight:700,color:'var(--text)'}}>{label}</span>
+            {sub && <span style={{display:'block',fontSize:9,color:'var(--text-muted)',marginTop:1}}>{sub}</span>}
+          </span>
+          <span style={{color:'var(--text-muted)',fontSize:9}}>{open?'▲':'▼'}</span>
+        </button>
+
+        {open && (
+          <div style={{
+            position:'absolute', [align==='right'?'right':'left']:0, top:'calc(100% + 6px)', zIndex:999,
+            background:'var(--bg-card)',border:'1px solid var(--border-hi)',borderRadius:10,
+            boxShadow:'0 8px 40px #000a',minWidth:260,overflow:'hidden',
+          }}>
+            {/* Tab header */}
+            <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+              {['presets','calendar'].map(t=>(
+                <button key={t} onClick={()=>setView(t)} style={{
+                  flex:1,padding:'9px',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:1,
+                  background:view===t?'var(--bg-card2)':'transparent',
+                  color:view===t?'var(--indigo)':'var(--text-muted)',
+                  border:'none',cursor:'pointer',fontFamily:'inherit',
+                }}>{t==='presets'?'Quick Select':'Calendar'}</button>
+              ))}
+            </div>
+
+            {view==='presets' ? (
+              <div style={{padding:8}}>
+                {PERIOD_PRESETS.map(p=>(
+                  <button key={p.label} onClick={()=>selectPreset(p)} style={{
+                    display:'block',width:'100%',textAlign:'left',padding:'8px 12px',fontSize:12,
+                    background: period && period.label===p.label ? 'var(--indigo-dim)' : 'transparent',
+                    color: period && period.label===p.label ? 'var(--indigo)' : 'var(--text)',
+                    border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit',
+                    fontWeight: period && period.label===p.label ? 700 : 400,
+                  }}
+                    onMouseEnter={e=>{ if(!(period&&period.label===p.label)) e.currentTarget.style.background='var(--bg-hover)'; }}
+                    onMouseLeave={e=>{ e.currentTarget.style.background=period&&period.label===p.label?'var(--indigo-dim)':'transparent'; }}
+                  >{p.label}</button>
+                ))}
+              </div>
+            ) : (
+              <div style={{padding:12}}>
+                <div style={{display:'flex',gap:16}}>
+                  {/* Month 1 */}
+                  <div>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                      <button onClick={prevMonth} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 4px'}}>‹</button>
+                      <div/>
+                      <div/>
+                    </div>
+                    <CalendarMonth year={calYear} month={calMonth} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
+                  </div>
+                  {/* Month 2 */}
+                  <div>
+                    <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',marginBottom:8}}>
+                      <button onClick={nextMonth} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 4px'}}>›</button>
+                    </div>
+                    <CalendarMonth year={nextYear} month={nextMon} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
+                  </div>
+                </div>
+                {rangeStart && !rangeEnd && (
+                  <div style={{textAlign:'center',fontSize:10,color:'var(--text-muted)',marginTop:8}}>Click end date to complete range</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
   const r2     = n => Math.round((n||0)*100)/100;
   const ls = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }, del:(k)=>localStorage.removeItem(k) };
 
@@ -929,36 +1117,86 @@
   /* ══════════════════════════════════
      DASHBOARD VIEW
   ══════════════════════════════════ */
+  function Sparkline({ data, color }) {
+    if(!data||!data.length) return null;
+    const max = Math.max(...data.map(d=>d.revenue), 1);
+    return (
+      <div style={{display:'flex',alignItems:'flex-end',gap:2,height:36,marginTop:8}}>
+        {data.map((d,i)=>(
+          <div key={i} title={d.date+': '+d.revenue}
+            style={{flex:1,background:color||'#6366f1',borderRadius:'2px 2px 0 0',
+              height:Math.max(4,Math.round((d.revenue/max)*36))+'px',cursor:'default'}}/>
+        ))}
+      </div>
+    );
+  }
+
+  function GrowthBadge({ val }) {
+    if(val===null||val===undefined) return null;
+    const pos = val >= 0;
+    return (
+      <span style={{fontSize:10,fontWeight:700,padding:'2px 6px',borderRadius:4,
+        background:pos?'rgba(16,185,129,0.12)':'rgba(239,68,68,0.12)',
+        color:pos?'#10b981':'#ef4444',marginLeft:6}}>
+        {pos?'↑':'↓'}{Math.abs(val)}%
+      </span>
+    );
+  }
+
   function Dashboard({ token, onStageClick }) {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [data,      setData]      = useState(null);
+    const [analytics, setAnalytics] = useState(null);
+    const [aLoading,  setALoading]  = useState(true);
+    const [aTab,      setATab]      = useState('overview');
+    const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
 
     useEffect(()=>{
-      fetch(`${API}/admin/dashboard`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(setData).catch(()=>{}).finally(()=>setLoading(false));
-    },[token]);
+      setALoading(true);
+      const from = aPeriod ? aPeriod.from : '2020-01-01';
+      const to   = aPeriod ? aPeriod.to   : isoToday();
+      fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(setAnalytics).catch(()=>{}).finally(()=>setALoading(false));
+    },[token, aPeriod]);
 
     const stages = STAGES.filter(s=>s.id!=='all');
+    const a = analytics;
+    const sc = (a && a.stageCounts) ? a.stageCounts : {};
+    const at = (a && a.allTimeTotals) ? a.allTimeTotals : {};
+    const ps = (a && a.summary && a.summary.period) ? a.summary.period : {};
+    const periodDays = ps.days || 30;
+    const fulfillPct = (a && a.fulfillStats) ? (a.fulfillStats.fulfill_rate || 0) : 0;
+    const fulfillColor = fulfillPct>=80?'#10b981':fulfillPct>=50?'#f59e0b':'#ef4444';
+    const periodLabel = aPeriod ? aPeriod.label : 'All Time';
+    const stageColor = id => { const s=STAGES.find(x=>x.id===id); return s?`var(--${s.color})`:'var(--indigo)'; };
 
     return (
       <div className="page">
-        {/* Summary row */}
-        <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
-          <StatCard color="indigo" icon="◈" label="Total Orders"      value={loading?'…':data?.totalOrders?.toLocaleString()||'0'} sub="all time"/>
-          <StatCard color="cyan"   icon="₹" label="Total Revenue"     value={loading?'…':fmtCur(data?.totalRevenue)} sub="across all orders"/>
-          <StatCard color="yellow" icon="⬡" label="Pending Commission" value={loading?'…':fmtCur(data?.pendingCommission)} sub="unsettled"/>
-          <StatCard color="green"  icon="✅" label="Delivered"         value={loading?'…':(data?.stageCounts?.delivered||0)} sub="orders"/>
-          <StatCard color="red"    icon="↩" label="RTO"               value={loading?'…':(data?.stageCounts?.rto||0)} sub="returned"/>
+        {/* ── Global period picker ── */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:8}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:1}}>
+            Showing data for: <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
+            {ps.from && <span style={{color:'var(--text-muted)',marginLeft:6,fontSize:10}}>({ps.from} → {ps.to})</span>}
+          </div>
+          <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
         </div>
 
-        {/* Stage breakdown */}
+        {/* Summary row — all from analytics, respects period */}
+        <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
+          <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(a&&a.summary?a.summary.period.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
+          <StatCard color="cyan"   icon="₹" label="Total Revenue (All Time)"    value={aLoading?'…':fmtCur(at.revenue||0)} sub={'all '+((at.orders||0).toLocaleString())+' orders'}/>
+          <StatCard color="yellow" icon="⬡" label="Pending Commission"          value={aLoading?'…':fmtCur(at.pendingCommission||0)} sub="unsettled"/>
+          <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
+          <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
+        </div>
+
+        {/* Stage breakdown — respects period */}
         <div className="card">
           <div className="card-header">
             <span className="card-title">Order Pipeline</span>
-            <span className="card-sub">Click any stage to filter orders</span>
+            <span className="card-sub">{periodLabel} · click to filter orders</span>
           </div>
           <div style={{padding:'16px',display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
-            {loading ? Array.from({length:9}).map((_,i)=>(
+            {aLoading ? Array.from({length:9}).map((_,i)=>(
               <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14}}>
                 <div className="skel" style={{height:10,width:80,marginBottom:8}}/>
                 <div className="skel" style={{height:22,width:40}}/>
@@ -971,12 +1209,206 @@
                 onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}
               >
                 <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>{s.icon} {s.label}</div>
-                <div style={{fontSize:24,fontWeight:700,color:`var(--${s.color==='indigo'?'indigo':s.color==='cyan'?'cyan':s.color==='teal'?'teal':s.color==='yellow'?'yellow':s.color==='orange'?'orange':s.color==='green'?'green':s.color==='red'?'red':s.color==='purple'?'purple':'indigo'})`}}>
-                  {data?.stageCounts?.[s.id]||0}
+                <div style={{fontSize:24,fontWeight:700,color:stageColor(s.id)}}>
+                  {sc[s.id]||0}
                 </div>
               </div>
             ))}
           </div>
+        </div>
+
+        {/* ── FOUNDER ANALYTICS ── */}
+        <div className="card" style={{marginTop:0}}>
+          <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:12,flexWrap:'wrap',gap:8}}>
+            <span className="card-title">📊 Founder Analytics</span>
+            <div style={{display:'flex',gap:6}}>
+              {['overview','products','brands','cities'].map(t=>(
+                <button key={t} onClick={()=>setATab(t)}
+                  style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',
+                    background:aTab===t?'var(--indigo)':'transparent',color:aTab===t?'#fff':'var(--text-muted)',cursor:'pointer',textTransform:'capitalize'}}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {aLoading ? (
+            <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>Loading analytics…</div>
+          ) : (!a || !a.summary) ? (
+            <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>Analytics unavailable</div>
+          ) : aTab==='overview' ? (
+            <div style={{padding:16}}>
+              {/* KPI row — all respect selected period */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:16}}>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Today Orders</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#6366f1'}}>{a.summary.today.orders}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{'₹'+(a.summary.today.revenue||0).toLocaleString()}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Last 7 Days</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#06b6d4'}}>{'₹'+(a.summary.last7d.revenue||0).toLocaleString()}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{a.summary.last7d.orders} orders · AOV {'₹'+a.summary.last7d.aov}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>{'Revenue ('+periodLabel+')'}</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#10b981'}}>{'₹'+(a.summary.period.revenue||0).toLocaleString()}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',flexWrap:'wrap',gap:2}}>{'vs prior '+periodDays+'d'}<GrowthBadge val={a.summary.revenueGrowth}/></div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>{'Orders ('+periodLabel+')'}</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#f59e0b'}}>{a.summary.period.orders}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',flexWrap:'wrap',gap:2}}>{'vs prior '+periodDays+'d'}<GrowthBadge val={a.summary.orderGrowth}/></div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Fulfillment Rate</div>
+                  <div style={{fontSize:20,fontWeight:800,color:fulfillColor}}>{fulfillPct}%</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{'shipped · '+periodLabel}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>RTO Rate</div>
+                  <div style={{fontSize:20,fontWeight:800,color:(a.summary.rtoRate30||0)>10?'#ef4444':'#10b981'}}>{a.summary.rtoRate30||0}%</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{'returns · '+periodLabel}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Repeat Buyers</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#a78bfa'}}>{a.summary.repeatRate||0}%</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{a.summary.repeatCustomers} of {a.summary.totalCustomers} customers</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Avg Order Value</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#06b6d4'}}>{'₹'+(a.summary.period.aov||0)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{periodLabel}</div>
+                </div>
+              </div>
+
+              {/* Revenue trend sparkline */}
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px'}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>{'Revenue Trend · '+periodLabel}</div>
+                <Sparkline data={a.trend14d} color='#6366f1'/>
+                <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
+                  <span style={{fontSize:9,color:'var(--text-muted)'}}>{a.trend14d.length > 0 ? a.trend14d[0].date : ''}</span>
+                  <span style={{fontSize:9,color:'var(--text-muted)'}}>{a.trend14d.length > 0 ? a.trend14d[a.trend14d.length-1].date : ''}</span>
+                </div>
+              </div>
+
+              {/* Fulfillment + Payment split */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:10}}>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px'}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:1}}>{'Fulfillment · '+periodLabel}</div>
+                  {[
+                    {label:'Fulfilled',      val:a.fulfillStats.fulfilled,    color:'#10b981'},
+                    {label:'Unfulfilled',    val:a.fulfillStats.unfulfilled,  color:'#ef4444'},
+                    {label:'Partial Ship',   val:a.fulfillStats.partial_ship, color:'#f59e0b'},
+                    {label:'Cancelled',      val:a.fulfillStats.cancelled,    color:'#6b7280'},
+                    {label:'RTO',            val:a.fulfillStats.rto,          color:'#a78bfa'},
+                  ].map(r=>(
+                    <div key={r.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                      <span style={{fontSize:12,color:'var(--text-muted)'}}>{r.label}</span>
+                      <span style={{fontSize:13,fontWeight:700,color:r.color}}>{r.val}</span>
+                    </div>
+                  ))}
+                  <div style={{marginTop:8,height:4,borderRadius:2,background:'var(--border)',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${fulfillPct}%`,background:fulfillColor,borderRadius:2,transition:'width 0.4s'}}/>
+                  </div>
+                  <div style={{fontSize:10,color:fulfillColor,marginTop:4,fontWeight:700}}>{fulfillPct}% fulfillment rate</div>
+                </div>
+
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px'}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:1}}>{'Payment Split · '+periodLabel}</div>
+                  {[
+                    {label:'Prepaid',  val:a.paymentSplit.prepaid, color:'#10b981'},
+                    {label:'COD',      val:a.paymentSplit.cod,     color:'#f59e0b'},
+                    {label:'Advance',  val:a.paymentSplit.partial, color:'#6366f1'},
+                  ].map(r=>{
+                    const total = a.paymentSplit.prepaid + a.paymentSplit.cod + a.paymentSplit.partial || 1;
+                    const pct   = Math.round(r.val/total*100);
+                    return (
+                      <div key={r.label} style={{marginBottom:10}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                          <span style={{fontSize:12,color:'var(--text-muted)'}}>{r.label}</span>
+                          <span style={{fontSize:12,fontWeight:700,color:r.color}}>{r.val} <span style={{fontSize:10,fontWeight:400}}>({pct}%)</span></span>
+                        </div>
+                        <div style={{height:4,borderRadius:2,background:'var(--border)'}}>
+                          <div style={{height:'100%',width:`${pct}%`,background:r.color,borderRadius:2}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+          ) : aTab==='products' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>{'Top products by units sold · '+periodLabel}</div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    <th style={{textAlign:'left',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>#</th>
+                    <th style={{textAlign:'left',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Product</th>
+                    <th style={{textAlign:'left',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Brand</th>
+                    <th style={{textAlign:'right',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Units</th>
+                    <th style={{textAlign:'right',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Orders</th>
+                    <th style={{textAlign:'right',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Revenue</th>
+                  </tr></thead>
+                  <tbody>
+                    {(a.topProducts||[]).map((p,i)=>(
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'8px',color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                        <td style={{padding:'8px',color:'var(--text)',fontWeight:500,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.title}</td>
+                        <td style={{padding:'8px',color:'var(--text-muted)',fontSize:11}}>{p.vendor}</td>
+                        <td style={{padding:'8px',textAlign:'right',fontWeight:700,color:'#6366f1'}}>{p.qty}</td>
+                        <td style={{padding:'8px',textAlign:'right',color:'var(--text-muted)'}}>{p.orders}</td>
+                        <td style={{padding:'8px',textAlign:'right',fontWeight:600,color:'#10b981'}}>₹{p.revenue.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          ) : aTab==='brands' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>{'Top brands by revenue · '+periodLabel}</div>
+              {(a.topBrands||[]).map((b,i)=>{
+                const maxRev = a.topBrands[0]?.revenue || 1;
+                const pct = Math.round(b.revenue/maxRev*100);
+                const colors = ['#6366f1','#06b6d4','#10b981','#f59e0b','#a78bfa','#ec4899','#ef4444','#14b8a6'];
+                return (
+                  <div key={i} style={{marginBottom:12}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                      <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{b.name}</span>
+                      <span style={{fontSize:12,color:'var(--text-muted)'}}>{b.qty} units · {b.orders} orders · <span style={{color:'#10b981',fontWeight:700}}>₹{b.revenue.toLocaleString()}</span></span>
+                    </div>
+                    <div style={{height:6,borderRadius:3,background:'var(--border)'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:colors[i%colors.length],borderRadius:3,transition:'width 0.4s'}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+          ) : aTab==='cities' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>{'Top delivery cities · '+periodLabel}</div>
+              {(a.topCities||[]).map((c,i)=>{
+                const maxC = a.topCities[0]?.count || 1;
+                const pct = Math.round(c.count/maxC*100);
+                return (
+                  <div key={i} style={{marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                      <span style={{fontSize:13,fontWeight:500,color:'var(--text)'}}>{c.city}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:'#6366f1'}}>{c.count} orders</span>
+                    </div>
+                    <div style={{height:5,borderRadius:2,background:'var(--border)'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:'#6366f1',borderRadius:2,opacity:0.5+0.5*(pct/100)}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -993,6 +1425,7 @@
     const [page,     setPage]     = useState(1);
     const [modal,    setModal]    = useState(null);
     const [showTags, setShowTags] = useState(false);
+    const [period,   setPeriod]   = useState(null); // null = all time
 
     const load = useCallback(()=>{
       setLoading(true);
@@ -1005,12 +1438,20 @@
     const orderMatchesStage = (o, s) =>
       s === 'all' || o.stage === s || Object.values(o.vendorStages||{}).includes(s);
 
+    // Period-filtered base (used for tab counts too)
+    const periodOrders = useMemo(()=>{
+      if(!period || !period.from) return orders;
+      const from = new Date(period.from+'T00:00:00');
+      const to   = new Date(period.to+'T23:59:59');
+      return orders.filter(o => { const d=new Date(o.date); return d>=from && d<=to; });
+    },[orders,period]);
+
     const filtered = useMemo(()=>{
-      let l=[...orders];
+      let l=[...periodOrders];
       if(stage && stage!=='all') l=l.filter(o=>orderMatchesStage(o,stage));
       if(search.trim()){const q=search.toLowerCase(); l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.vendors||[]).some(v=>v.toLowerCase().includes(q)));}
       return l;
-    },[orders,stage,search]);
+    },[periodOrders,stage,search]);
 
     const pages = Math.max(1,Math.ceil(filtered.length/PER));
     const cur   = Math.min(page,pages);
@@ -1021,7 +1462,7 @@
         <div className="stage-tabs">
           {STAGES.map(s=>(
             <button key={s.id} className={`stab ${stage===s.id?'active':''}`} onClick={()=>{setStage(s.id);setPage(1);}}>
-              {s.icon} {s.label} {s.id!=='all'&&orders.length>0?`(${orders.filter(o=>orderMatchesStage(o,s.id)).length})`:stage==='all'?`(${orders.length})`:''}
+              {s.icon} {s.label} {s.id==='all'?`(${periodOrders.length})`:periodOrders.filter(o=>orderMatchesStage(o,s.id)).length>0?`(${periodOrders.filter(o=>orderMatchesStage(o,s.id)).length})`:''}
             </button>
           ))}
         </div>
@@ -1030,6 +1471,8 @@
             <span className="search-ico">⌕</span>
             <input className="search-input" placeholder="Search order, customer, vendor…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
           </div>
+          <PeriodPicker period={period} onChange={p=>{setPeriod(p);setPage(1);}}/>
+          {period && <button className="btn btn-ghost btn-sm" onClick={()=>{setPeriod(null);setPage(1);}} style={{fontSize:10,padding:'4px 8px'}}>✕ Clear</button>}
           <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>{loading?<span className="spin">↻</span>:'↻'} Refresh</button>
           <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:11,color:'var(--text-muted)',userSelect:'none'}}>
             <input type="checkbox" checked={showTags} onChange={e=>setShowTags(e.target.checked)} style={{accentColor:'var(--indigo)',width:13,height:13}}/>
@@ -2883,6 +3326,209 @@
   }
 
   /* ══════════════════════════════════
+     REPORTS
+  ══════════════════════════════════ */
+  function Reports({ token }) {
+    const today = new Date().toISOString().split('T')[0];
+    const weekAgo = new Date(Date.now() - 7*24*3600*1000).toISOString().split('T')[0];
+    const [from, setFrom] = useState(weekAgo);
+    const [to, setTo]     = useState(today);
+    const [preview, setPreview]   = useState(null);
+    const [loading, setLoading]   = useState(false);
+    const [sending, setSending]   = useState(false);
+    const [msg, setMsg]           = useState('');
+    const [settings, setSettings] = useState({ auto_send: false, staff_emails: '', send_to_vendors: false });
+    const [savingSettings, setSavingSettings] = useState(false);
+
+    useEffect(() => {
+      fetch(`${API}/admin/reports/settings`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).then(d => setSettings(s => ({ ...s, ...d }))).catch(()=>{});
+    }, []);
+
+    const loadPreview = async () => {
+      setLoading(true); setMsg(''); setPreview(null);
+      const r = await fetch(`${API}/admin/reports/preview?from=${from}&to=${to}`, { headers: { Authorization: 'Bearer '+token } });
+      const d = await r.json();
+      setLoading(false);
+      if (d.error) setMsg('❌ ' + d.error);
+      else setPreview(d);
+    };
+
+    const sendReport = async () => {
+      setSending(true); setMsg('');
+      const r = await fetch(`${API}/admin/reports/send`, { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: 'Bearer '+token }, body: JSON.stringify({ from, to }) });
+      const d = await r.json();
+      setSending(false);
+      setMsg(d.success ? `✅ Report sent to ${d.sent} recipient${d.sent!==1?'s':''}${d.errors?.length?' | Errors: '+d.errors.join(', '):''}` : '❌ ' + d.error);
+    };
+
+    const saveSettings = async () => {
+      setSavingSettings(true);
+      await fetch(`${API}/admin/reports/settings`, { method: 'PUT', headers: { 'Content-Type':'application/json', Authorization: 'Bearer '+token }, body: JSON.stringify(settings) });
+      setSavingSettings(false); setMsg('✅ Settings saved');
+    };
+
+    const pct = (a, b) => b > 0 ? Math.round((a/b)*100) : 0;
+    const rateColor = r => r >= 80 ? '#10b981' : r >= 50 ? '#f59e0b' : '#ef4444';
+
+    return (
+      <div>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
+          <span style={{fontSize:24}}>📊</span>
+          <div>
+            <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>Order Reports</h2>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Generate & send order performance reports to admin, staff and vendors</div>
+          </div>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
+          {/* Manual report */}
+          <div style={{background:'var(--bg-card)',borderRadius:12,padding:20,border:'1px solid var(--border)'}}>
+            <div style={{fontWeight:700,color:'var(--text)',marginBottom:14,fontSize:14}}>📅 Generate Report</div>
+            <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+              <div style={{flex:1,minWidth:120}}>
+                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>FROM</label>
+                <input type="date" className="form-input" value={from} onChange={e=>setFrom(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
+              </div>
+              <div style={{flex:1,minWidth:120}}>
+                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>TO</label>
+                <input type="date" className="form-input" value={to} onChange={e=>setTo(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              {['7d','14d','30d'].map(p => {
+                const days = parseInt(p); const label = p;
+                return <button key={p} className="btn btn-sm btn-ghost" onClick={()=>{ setFrom(new Date(Date.now()-days*24*3600*1000).toISOString().split('T')[0]); setTo(today); }}>{label}</button>;
+              })}
+            </div>
+            <div style={{display:'flex',gap:8,marginTop:14}}>
+              <button className="btn btn-primary" onClick={loadPreview} disabled={loading} style={{flex:1}}>{loading?'Loading…':'👁 Preview'}</button>
+              <button className="btn btn-indigo" onClick={sendReport} disabled={sending} style={{flex:1}}>{sending?'Sending…':'📤 Send Report'}</button>
+            </div>
+          </div>
+
+          {/* Auto-send settings */}
+          <div style={{background:'var(--bg-card)',borderRadius:12,padding:20,border:'1px solid var(--border)'}}>
+            <div style={{fontWeight:700,color:'var(--text)',marginBottom:14,fontSize:14}}>⚙️ Auto-Send Settings</div>
+            <label style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,cursor:'pointer'}}>
+              <input type="checkbox" checked={settings.auto_send} onChange={e=>setSettings(s=>({...s,auto_send:e.target.checked}))} style={{width:16,height:16,accentColor:'#6366f1'}}/>
+              <div>
+                <div style={{fontSize:13,color:'var(--text)',fontWeight:600}}>Auto-send every Sunday at 8am IST</div>
+                <div style={{fontSize:11,color:'var(--text-muted)'}}>Sends last 7 days report automatically</div>
+              </div>
+            </label>
+            <label style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,cursor:'pointer'}}>
+              <input type="checkbox" checked={settings.send_to_vendors} onChange={e=>setSettings(s=>({...s,send_to_vendors:e.target.checked}))} style={{width:16,height:16,accentColor:'#6366f1'}}/>
+              <div>
+                <div style={{fontSize:13,color:'var(--text)',fontWeight:600}}>Send to vendors</div>
+                <div style={{fontSize:11,color:'var(--text-muted)'}}>Each vendor gets their own report</div>
+              </div>
+            </label>
+            <div style={{marginBottom:10}}>
+              <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>EXTRA STAFF EMAILS (comma separated)</label>
+              <input className="form-input" placeholder="staff@example.com, ops@example.com" value={settings.staff_emails||''} onChange={e=>setSettings(s=>({...s,staff_emails:e.target.value}))} style={{width:'100%',boxSizing:'border-box'}}/>
+            </div>
+            <button className="btn btn-primary" onClick={saveSettings} disabled={savingSettings} style={{width:'100%'}}>{savingSettings?'Saving…':'💾 Save Settings'}</button>
+            {settings.last_sent_at && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:8,textAlign:'center'}}>Last sent: {new Date(settings.last_sent_at).toLocaleString('en-IN')}</div>}
+          </div>
+        </div>
+
+        {msg && <div style={{padding:'10px 14px',borderRadius:8,background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text)',fontSize:13,marginBottom:16}}>{msg}</div>}
+
+        {/* Preview */}
+        {preview && (
+          <div style={{background:'var(--bg-card)',borderRadius:12,padding:20,border:'1px solid var(--border)'}}>
+            <div style={{fontWeight:700,color:'var(--text)',marginBottom:16,fontSize:14}}>📋 Report Preview — {preview.from} → {preview.to}</div>
+
+            {/* KPI cards */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:20}}>
+              {[
+                { label:'Total Orders', value: preview.summary.total, color:'#a5b4fc' },
+                { label:'Fulfilled', value: preview.summary.fulfilled, color:'#10b981' },
+                { label:'Pending', value: preview.summary.unfulfilled, color:'#ef4444' },
+                { label:'Fulfil Rate', value: pct(preview.summary.fulfilled, preview.summary.total)+'%', color: rateColor(pct(preview.summary.fulfilled,preview.summary.total)) },
+              ].map(k => (
+                <div key={k.label} style={{background:'var(--bg-hover)',borderRadius:10,padding:14,textAlign:'center'}}>
+                  <div style={{fontSize:26,fontWeight:800,color:k.color}}>{k.value}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,marginTop:2}}>{k.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Breakdown */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.5px'}}>Order Breakdown</div>
+                {[
+                  { label:'🚚 In Transit', value: preview.summary.in_transit, color:'#6366f1' },
+                  { label:'✅ Delivered', value: preview.summary.delivered, color:'#10b981' },
+                  { label:'🔴 Prepaid — Not Shipped', value: preview.breakdown.prepaid_pending, color:'#ef4444' },
+                  { label:'🟡 Advance — Not Shipped', value: preview.breakdown.partial_pending, color:'#f59e0b' },
+                  { label:'📦 Confirmed Pending', value: preview.breakdown.confirmed_pending, color:'var(--text)' },
+                  { label:'🏷️ Ready/Pickup', value: preview.breakdown.ready_pending, color:'var(--text)' },
+                  { label:'🆕 New — Not Actioned', value: preview.breakdown.new_pending, color:'var(--text)' },
+                  { label:'⏸️ On Hold', value: preview.breakdown.hold_pending, color:'var(--text)' },
+                  { label:'❌ Cancelled', value: preview.summary.cancelled, color:'var(--text-muted)' },
+                  { label:'↩️ RTO', value: preview.summary.rto, color:'var(--text-muted)' },
+                ].filter(r => r.value > 0).map(r => (
+                  <div key={r.label} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:12}}>
+                    <span style={{color:'var(--text-muted)'}}>{r.label}</span>
+                    <span style={{fontWeight:700,color:r.color}}>{r.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Vendor table */}
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.5px'}}>Vendor Performance</div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    {['Vendor','Total','Done','Pend.','Prepaid↑'].map(h => <th key={h} style={{padding:'5px 6px',textAlign:h==='Vendor'?'left':'center',color:'var(--text-muted)',fontWeight:600}}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {(preview.vendors||[]).slice(0,8).map(v => (
+                      <tr key={v.name} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'6px',color:'var(--text)',fontSize:11,maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.name}</td>
+                        <td style={{padding:'6px',textAlign:'center',color:'#a5b4fc',fontWeight:700}}>{v.total}</td>
+                        <td style={{padding:'6px',textAlign:'center',color:'#10b981',fontWeight:700}}>{v.fulfilled}</td>
+                        <td style={{padding:'6px',textAlign:'center',color:v.unfulfilled>0?'#ef4444':'var(--text-muted)',fontWeight:700}}>{v.unfulfilled}</td>
+                        <td style={{padding:'6px',textAlign:'center',color:v.prepaid_pending>0?'#ef4444':'var(--text-muted)',fontWeight:v.prepaid_pending>0?700:400}}>{v.prepaid_pending||'—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Urgent list */}
+            {preview.urgentOrders?.length > 0 && (
+              <div style={{marginTop:20}}>
+                <div style={{fontSize:12,fontWeight:700,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.5px'}}>🚨 Action Required</div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    {['Order','Payment','Stage','Age','Vendor'].map(h => <th key={h} style={{padding:'5px 6px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {preview.urgentOrders.slice(0,10).map(o => (
+                      <tr key={o.order_name} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'6px',color:'#a5b4fc',fontWeight:700}}>{o.order_name}</td>
+                        <td style={{padding:'6px',color:o.payment_type==='prepaid'?'#ef4444':o.advance_paid>0?'#f59e0b':'var(--text-muted)',fontWeight:700,fontSize:10}}>{o.payment_type==='prepaid'?'🔴 Prepaid':o.advance_paid>0?`🟡 +₹${o.advance_paid}`:'COD'}</td>
+                        <td style={{padding:'6px',color:'var(--text-muted)',textTransform:'capitalize'}}>{o.stage}</td>
+                        <td style={{padding:'6px',color:o.age_hours>48?'#ef4444':o.age_hours>24?'#f59e0b':'var(--text-muted)',fontWeight:o.age_hours>24?700:400}}>{o.age_label}</td>
+                        <td style={{padding:'6px',color:'var(--text-muted)',maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.vendors}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      AUDIT LOG VIEW
   ══════════════════════════════════ */
   function AuditLog({ token }) {
@@ -3081,6 +3727,7 @@
       { id:'emailsettings', icon:'📧', label:'Email Settings', section:'finance' },
       { id:'vendorsync',  icon:'🔄', label:'Vendor Sync',   section:'finance' },
       { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
+      { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
@@ -3135,6 +3782,7 @@
           {view==='emailsettings' && <EmailSettings token={token}/>}
           {view==='vendorsync'  && <VendorSync token={token}/>}
           {view==='penalties'   && <PenaltyManager token={token}/>}
+          {view==='reports'     && <Reports token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
         </div>
       </div>
