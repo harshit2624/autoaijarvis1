@@ -46,6 +46,7 @@ async function startServer() {
       mdb.collection("tag_mappings").createIndex({ tag: 1 }, { unique: true }),
       mdb.collection("global_shipping_creds").createIndex({ partner: 1 }, { unique: true }),
       mdb.collection("vendor_shipping_partners").createIndex({ vendor_name: 1, partner: 1 }, { unique: true }),
+    mdb.collection("email_log").createIndex({ sent_at: -1 }),
     ];
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
@@ -84,6 +85,7 @@ const SYNC_TABLES = [
   { name: 'tag_mappings',              pk: 'tag' },
   { name: 'global_shipping_creds',     pk: 'partner' },
   { name: 'vendor_shipping_partners',  pk: null, compound: ['vendor_name','partner'] },
+  { name: 'email_log',                 pk: 'id' },
 ];
 
 async function mongoRestoreToSQLite() {
@@ -1044,8 +1046,13 @@ function createTransporter(cfg) {
 }
 
 function logEmail(shopifyId, trigger, recipient, subject, status, error='') {
+  const sent_at = new Date().toISOString();
+  const doc = { shopify_id: String(shopifyId||''), trigger, recipient, subject, status, error, sent_at };
+  // Write to SQLite
   db.prepare("INSERT INTO email_log (shopify_id,trigger,recipient,subject,status,error,sent_at) VALUES (?,?,?,?,?,?,?)")
-    .run(String(shopifyId||''), trigger, recipient, subject, status, error, new Date().toISOString());
+    .run(doc.shopify_id, trigger, recipient, subject, status, error, sent_at);
+  // Write to MongoDB (fire-and-forget)
+  if (mdb) mdb.collection('email_log').insertOne({ ...doc }).catch(()=>{});
 }
 
 // ── HTML Email Templates ──────────────────────────────────────────────────
@@ -2788,7 +2795,11 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get("/admin/email-log", adminAuth, (req, res) => {
+app.get("/admin/email-log", adminAuth, async (req, res) => {
+  if (mdb) {
+    const logs = await mdb.collection('email_log').find({}, { projection: { _id: 0 } }).sort({ sent_at: -1 }).limit(200).toArray();
+    return res.json({ logs });
+  }
   res.json({ logs: db.prepare("SELECT * FROM email_log ORDER BY sent_at DESC LIMIT 200").all() });
 });
 
