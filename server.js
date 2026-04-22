@@ -30,6 +30,9 @@ async function startServer() {
     mdb = client.db("jarvis");
     console.log("✅  MongoDB connected");
 
+    // Drop stale indexes from pre-migration schema
+    await mdb.collection('tag_mappings').dropIndex('tag_1').catch(() => {});
+
     const idxOps = [
       mdb.collection("vendor_config").createIndex({ vendor_name: 1 }, { unique: true }),
       mdb.collection("order_meta").createIndex({ shopify_id: 1 }, { unique: true }),
