@@ -3194,10 +3194,23 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
     if (!shopifyOrder) return res.status(404).json({ error: "Order not found on Shopify" });
 
-    const addr   = shopifyOrder.shipping_address || {};
-    const items  = (shopifyOrder.line_items || []).filter(li => (li.vendor || "").toLowerCase() === req.vendor.toLowerCase());
-    const cod    = shopifyOrder.financial_status !== "paid";
-    const codAmt = cod ? parseFloat(shopifyOrder.total_price || 0) : 0;
+    const addr      = shopifyOrder.shipping_address || {};
+    const items     = (shopifyOrder.line_items || []).filter(li => (li.vendor || "").toLowerCase() === req.vendor.toLowerCase());
+    const cod       = shopifyOrder.financial_status !== "paid";
+
+    // Calculate this vendor's correct COD amount
+    const vendorSubtotal  = items.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+    const allVendors      = [...new Set((shopifyOrder.line_items || []).map(li => li.vendor).filter(Boolean))];
+    const vendorCount     = allVendors.length || 1;
+    const totalShipping   = (shopifyOrder.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+    const vendorShipping  = cod ? parseFloat((totalShipping / vendorCount).toFixed(2)) : 0;
+
+    // Fetch advance paid from order_meta and split across vendors
+    const meta            = await mdb.collection('order_meta').findOne({ shopify_id: String(shopifyOrder.id) }, { projection: { advance_paid: 1, payment_type: 1 } });
+    const advancePaid     = parseFloat(((meta?.advance_paid || 0) / vendorCount).toFixed(2));
+
+    const vendorTotal     = parseFloat((vendorSubtotal + vendorShipping).toFixed(2));
+    const codAmt          = cod ? parseFloat(Math.max(0, vendorTotal - advancePaid).toFixed(2)) : 0;
 
     let result;
 
@@ -3233,7 +3246,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           selling_price: parseFloat(li.price || 0),
         })),
         payment_method: cod ? "COD" : "Prepaid",
-        sub_total:      parseFloat(shopifyOrder.subtotal_price || 0),
+        sub_total:      vendorSubtotal,
         length, breadth, height, weight,
       };
       if (cod) payload.collect_amount = codAmt;
@@ -3281,7 +3294,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           hsn_code:      "",
           cod_amount:    cod ? codAmt : "",
           order_date:    orderDateStr,
-          total_amount:  parseFloat(shopifyOrder.total_price || 0),
+          total_amount:  vendorTotal,
           seller_inv:    shopifyOrder.name,
           quantity:      String(totalQty),
           shipment_width:  String(breadth),
