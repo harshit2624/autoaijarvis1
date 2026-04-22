@@ -798,16 +798,26 @@ app.post("/webhooks/fulfillments", (req, res) => {
       const vendors = [...new Set(fulfilledLineItems.map(li => li.vendor).filter(Boolean))];
 
       if (topic === 'fulfillments/create') {
-        // Auto-set each vendor's stage to pickup and save AWB
         for (const vendorName of vendors) {
           const vendorItems = fulfilledLineItems.filter(li => li.vendor === vendorName);
+
+          // Skip if vendor already has their own AWB saved (fulfilled via our system)
+          const existing = await mdb.collection('order_vendor_stage').findOne(
+            { shopify_id: shopifyId, vendor_name: vendorName },
+            { projection: { awb: 1, _id: 0 } }
+          );
+          if (existing?.awb) {
+            console.log(`⏭ fulfillments/create: ${vendorName} already has AWB ${existing.awb}, skipping`);
+            continue;
+          }
+
           await OVS.upsert(shopifyId, vendorName, {
-            stage: 'pickup', awb, courier: courier, tracking_url: trackUrl,
+            stage: 'pickup', awb, courier, tracking_url: trackUrl,
             updated_at: new Date().toISOString(),
           });
           auditLog("webhook", "fulfillment_auto_pickup", shopifyId, { vendorName, awb });
 
-          // Email customer for each vendor's shipment
+          // Email customer about this vendor's shipment
           const cfg = await getSmtpConfig();
           if (cfg && order.email && vendorItems.length) {
             await sendEmail({
@@ -1900,16 +1910,28 @@ app.get("/vendor/products", vendorAuth, async (req, res) => {
 });
 
 // ── POST /vendor/orders/:shopifyId/fulfill ────────────────────────────────
-// Uses Shopify's Fulfillment Orders API (2022-07+)
+// Partially fulfills ONLY this vendor's line items — not the whole order
 app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
   const { shopifyId } = req.params;
-  const { courier, awb, trackingUrl, notifyCustomer = true } = req.body || {};
+  const vendorName = req.vendor; // set by vendorAuth middleware
+  const { courier, awb, trackingUrl } = req.body || {};
   if (!awb) return res.status(400).json({ error: "AWB / tracking number is required." });
 
   try {
     const token = await getAccessToken();
 
-    // Step 1: get fulfillment orders for this order
+    // Step 1: fetch full order to know which line items belong to this vendor
+    const orderRes = await shopifyREST(`/orders/${shopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
+    const order = orderRes?.order;
+    if (!order) return res.status(404).json({ error: "Order not found." });
+
+    const vendorLineItems = (order.line_items || []).filter(li =>
+      (li.vendor || '').toLowerCase() === vendorName.toLowerCase()
+    );
+    if (!vendorLineItems.length) return res.status(400).json({ error: `No line items found for vendor ${vendorName}.` });
+    const vendorLineItemIds = new Set(vendorLineItems.map(li => li.id));
+
+    // Step 2: fetch fulfillment orders and match only this vendor's FO line items
     const foRes = await fetch(
       `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}/fulfillment_orders.json`,
       { headers: { "X-Shopify-Access-Token": token } }
@@ -1917,30 +1939,60 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
     if (!foRes.ok) throw new Error(`Could not get fulfillment orders: ${foRes.status}`);
     const foData = await foRes.json();
     const openFOs = (foData.fulfillment_orders || []).filter(fo => fo.status === "open");
-    if (!openFOs.length) return res.status(400).json({ error: "No open fulfillment orders found. Order may already be fulfilled." });
+    if (!openFOs.length) return res.status(400).json({ error: "No open fulfillment orders found. Items may already be fulfilled." });
 
-    // Step 2: create fulfillment
+    // Build line_items_by_fulfillment_order with only this vendor's items
+    const line_items_by_fulfillment_order = [];
+    for (const fo of openFOs) {
+      const matchingItems = (fo.line_items || []).filter(foli => vendorLineItemIds.has(foli.line_item_id));
+      if (matchingItems.length) {
+        line_items_by_fulfillment_order.push({
+          fulfillment_order_id: fo.id,
+          fulfillment_order_line_items: matchingItems.map(foli => ({ id: foli.id, quantity: foli.quantity })),
+        });
+      }
+    }
+    if (!line_items_by_fulfillment_order.length) {
+      return res.status(400).json({ error: "Your items are already fulfilled or not found in open fulfillment orders." });
+    }
+
+    // Step 3: create partial fulfillment on Shopify
     const fulfillBody = {
       fulfillment: {
-        line_items_by_fulfillment_order: openFOs.map(fo => ({ fulfillment_order_id: fo.id })),
+        line_items_by_fulfillment_order,
         tracking_info: { number: awb, url: trackingUrl || "", company: courier || "" },
-        notify_customer: notifyCustomer,
+        notify_customer: false, // we send our own email
       },
     };
     const fRes = await fetch(
       `https://${SHOP}.myshopify.com/admin/api/2025-01/fulfillments.json`,
-      {
-        method:  "POST",
-        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-        body:    JSON.stringify(fulfillBody),
-      }
+      { method: "POST", headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(fulfillBody) }
     );
     if (!fRes.ok) {
       const err = await fRes.json().catch(() => ({}));
       throw new Error(JSON.stringify(err.errors || err));
     }
     const fData = await fRes.json();
-    console.log(`📦  Fulfillment created for order ${shopifyId} by vendor ${req.vendor}`);
+
+    // Step 4: save AWB to this vendor's stage record only
+    await OVS.upsert(shopifyId, vendorName, {
+      stage: 'pickup', awb, courier: courier || '', tracking_url: trackingUrl || '',
+      updated_at: new Date().toISOString(),
+    });
+    auditLog("vendor", "vendor_fulfill", shopifyId, { vendorName, awb, courier });
+
+    // Step 5: email customer about this vendor's shipment
+    const cfg = await getSmtpConfig();
+    if (cfg && order.email) {
+      await sendEmail({
+        to: order.email,
+        subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
+        html: templateVendorShipped({ order, vendorName, items: vendorLineItems, awb, courier, trackingUrl }),
+        shopifyId, trigger: 'vendor_shipped',
+      });
+    }
+
+    console.log(`📦 Vendor fulfill: order ${order.name}, vendor: ${vendorName}, AWB: ${awb}`);
     res.json({ success: true, fulfillment: fData.fulfillment });
   } catch (err) {
     console.error("❌ /vendor/fulfill:", err.message);
