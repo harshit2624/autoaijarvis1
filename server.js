@@ -691,7 +691,7 @@ app.post("/webhooks/orders", (req, res) => {
           await sendEmail({
             to: payload.email,
             subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
-            html: templateNewOrderCustomer({ order: enriched }),
+            html: templateNewOrderCustomerSky({ order: enriched }),
             shopifyId: sid, trigger: 'new_order_customer',
           });
         }
@@ -957,6 +957,142 @@ function itemsTableHtml(lineItems, showVendor = false) {
 
 const WA_ICON = `<svg width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="20" fill="#25d366"/><path d="M28.5 11.5C26.3 9.3 23.3 8 20 8C13.4 8 8 13.4 8 20C8 22.1 8.6 24.1 9.6 25.9L8 32L14.3 30.4C16 31.3 17.9 31.8 20 31.8C26.6 31.8 32 26.4 32 19.8C32 16.6 30.7 13.7 28.5 11.5ZM20 29.8C18.1 29.8 16.3 29.3 14.7 28.4L14.3 28.2L10.7 29.1L11.6 25.6L11.4 25.2C10.4 23.5 9.9 21.8 9.9 19.9C9.9 14.4 14.4 9.9 20 9.9C22.7 9.9 25.2 10.9 27.1 12.8C29 14.7 30 17.2 30 19.9C30 25.5 25.5 29.8 20 29.8ZM25.4 22.5C25.1 22.4 23.6 21.6 23.3 21.5C23 21.4 22.8 21.4 22.6 21.7C22.4 22 21.8 22.7 21.6 22.9C21.4 23.1 21.3 23.1 21 23C19.1 22 17.9 21.3 16.6 19.1C16.3 18.6 16.9 18.6 17.4 17.6C17.5 17.4 17.4 17.2 17.4 17C17.3 16.8 16.7 15.3 16.4 14.7C16.2 14.1 15.9 14.2 15.7 14.2C15.5 14.2 15.3 14.2 15.1 14.2C14.9 14.2 14.5 14.3 14.2 14.6C13.9 14.9 13.1 15.7 13.1 17.2C13.1 18.7 14.2 20.1 14.4 20.3C14.6 20.5 16.7 23.7 19.9 25C22 25.9 22.8 25.9 23.8 25.8C24.4 25.7 25.7 25 26 24.2C26.3 23.4 26.3 22.8 26.2 22.6C26.1 22.6 25.7 22.6 25.4 22.5Z" fill="white"/></svg>`;
 
+// ── Sky-theme new order template (preview/test version) ───────────────────
+function templateNewOrderCustomerSky({ order }) {
+  const isPrepaid = order.financial_status === 'paid';
+  const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
+  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
+  const items  = order.line_items || [];
+  const total  = parseFloat(order.total_price || 0);
+  const addr   = order.shipping_address;
+  const IMG    = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO   = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <!-- HERO IMAGE -->
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <!-- Dark overlay text on image -->
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">60+ BRANDS &nbsp;|&nbsp; ONE STOP</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">ORDER<br>RECEIVED.</div>
+    </div>
+  </div>
+
+  <!-- ORDER ID BAR -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- BODY -->
+  <div style="background:#161616;padding:32px;">
+
+    <!-- Greeting -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is confirmed and under review. We'll notify you once it's dispatched. Sit tight.</div>
+    </div>
+
+    ${!isPrepaid ? `
+    <!-- WhatsApp confirm -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1f0d;border:1px solid #1a4a1a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:20px 24px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#3d9e3d;text-transform:uppercase;margin-bottom:8px;">Action Required</div>
+        <div style="font-size:13px;color:#aaa;line-height:1.7;margin-bottom:16px;">Confirm your order on WhatsApp to get it processed. Quick and easy.</div>
+        <a href="${waLink}" style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:800;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:12px 24px;border-radius:4px;">Confirm on WhatsApp</a>
+      </td></tr>
+    </table>` : `
+    <!-- Prepaid -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1520;border:1px solid #1a3a6a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:18px 24px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#7eb8f7;text-transform:uppercase;margin-bottom:6px;">Prepaid — All Set</div>
+        <div style="font-size:13px;color:#aaa;">Payment received. No action needed from your side.</div>
+      </td></tr>
+    </table>`}
+
+    <!-- Divider label -->
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;margin-top:8px;">Your Items</div>
+
+    <!-- Items -->
+    ${items.map(li => {
+      const img = li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;margin-bottom:0;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+          <img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;">
+        </td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+          <div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;display:flex;align-items:center;justify-content:center;">
+            <span style="font-size:20px;">&#128247;</span>
+          </div>
+        </td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    <!-- Total -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
+      <tr>
+        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
+        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+
+    <!-- Ship to -->
+    ${addr ? `
+    <div style="margin-bottom:24px;margin-top:4px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Shipping To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}<br>
+        ${addr.phone ? `<span style="color:#555;font-size:12px;">${addr.phone}</span>` : ''}
+      </div>
+    </div>` : ''}
+
+    <!-- Payment -->
+    <div style="margin-top:4px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:8px;">Payment Method</div>
+      <div style="font-size:13px;font-weight:700;color:${isPrepaid ? '#3d9e3d' : '#c9922a'};">
+        ${isPrepaid ? '&#10003; Prepaid — Paid Online' : '&#9711; Cash on Delivery (COD)'}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
 function templateNewOrderCustomer({ order }) {
   const isPrepaid = order.financial_status === 'paid';
   const waNum = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
@@ -1011,11 +1147,14 @@ function templateNewOrderVendor({ order, vendorName }) {
       <div class="info-row"><span class="info-label">Items</span><span class="info-val">${myItems.length} product${myItems.length !== 1 ? 's' : ''}</span></div>
     </div>
     ${itemsTableHtml(myItems)}
-    <div style="background:#f8fafc;border-radius:8px;padding:14px 18px;margin-bottom:8px;font-size:12px;color:#6b7280;line-height:1.8;">
+    <div style="background:#f8fafc;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:12px;color:#6b7280;line-height:1.8;">
       <strong style="color:#374151;">What happens next?</strong><br>
       1. CrosCrow reviews and confirms the order with the customer.<br>
       2. You receive a <strong>Confirmation Email</strong> with full dispatch instructions.<br>
       3. Pack and ship within 24–48 hours of the confirmation email.
+    </div>
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
     </div>
   `;
   return emailBase(`New Order Received: ${order.name}`, '#1e40af', body);
@@ -1067,12 +1206,15 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
       <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
     </div>
 
-    <div style="text-align:center;margin-bottom:8px;">
+    <div style="text-align:center;margin-bottom:12px;">
       <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name}`)}"
          style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
         Need help? Reach us on WhatsApp
       </a>
+    </div>
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
     </div>
   `;
   return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
@@ -1136,6 +1278,7 @@ function templateDelivered({ order, forRole = 'customer' }) {
     </div>
     ${itemsTableHtml(order.line_items || [])}
     ${forRole === 'customer' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">We hope you love your purchase! If you have any issues, please contact us.</p>` : ''}
+    ${forRole === 'vendor' ? `<div style="text-align:center;margin-top:16px;"><a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a></div>` : ''}
   `;
   return emailBase(titles[forRole], '#10b981', body);
 }
@@ -1176,6 +1319,15 @@ function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
     </table>
 
     <p style="font-size:12px;color:#6b7280;line-height:1.7">Please ensure you collect exactly <strong>₹${newCOD.toFixed(2)}</strong> at the time of delivery. Do not collect the full amount — customer has already paid the advance.</p>
+
+    <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
+      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:4px;">Dispatch Window — 24 to 48 Hours</div>
+      <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
+    </div>
+
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
+    </div>
   `;
   return emailBase(`Advance Collected: ${order.name} — Updated COD`, '#f59e0b', body);
 }
@@ -3037,9 +3189,10 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
   const demoMeta = { advance_paid: 200, payment_type: 'cod' };
 
   const TEMPLATES = {
-    new_order:  { subject: `[TEST] New Order: ${demoOrder.name} — Please Confirm`, html: templateNewOrderCustomer({ order: demoOrder }) },
+    new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder }) },
     confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder }) },
-    confirmed_vendor:   { subject: `[TEST] New Order: ${demoOrder.name} — Action Required`, html: templateOrderConfirmedVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
+    new_order_vendor:   { subject: `New Order Received: ${demoOrder.name}`, html: templateNewOrderVendor({ order: demoOrder, vendorName: 'Demo Vendor' }) },
+    confirmed_vendor:   { subject: `Order Confirmed: ${demoOrder.name} — Dispatch Now`, html: templateOrderConfirmedVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
     partial_customer:   { subject: `[TEST] Your Advance is Confirmed — ${demoOrder.name} 🎉`, html: templatePartialAdvanceCustomer({ order: demoOrder, meta: demoMeta }) },
     partial_vendor:     { subject: `[TEST] Advance Collected — Updated COD for ${demoOrder.name}`, html: templatePartialAdvanceVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
     transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery' }) },
@@ -4049,12 +4202,15 @@ function templateFulfilmentWarning({ order, vendorName, hoursElapsed, delayLink 
       </div>
     </div>
 
-    <div style="text-align:center">
+    <div style="text-align:center;margin-bottom:12px;">
       <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name} (${vendorName})`)}"
          style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
         Contact Support on WhatsApp
       </a>
+    </div>
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
     </div>
   `;
   return emailBase(`⚠️ 24hr Fulfilment Warning: ${order.name}`, '#f59e0b', body);
@@ -4606,6 +4762,10 @@ function templateVendorReport({ vendorName, data, period }) {
     </div>` : `<div style="text-align:center;padding:20px;color:#10b981;font-weight:700;font-size:14px">🎉 All your orders are fulfilled — great work, ${vendorName}!</div>`}
 
     <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Keep up the great work! Fast fulfilment earns seller rewards on CrosCrow.</p>
+
+    <div style="text-align:center;margin-top:4px;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
+    </div>
   `;
   return emailBase(`📊 Your Report: ${period.from} → ${period.to}`, '#6366f1', body);
 }
