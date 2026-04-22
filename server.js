@@ -704,8 +704,8 @@ app.post("/webhooks/orders", (req, res) => {
           if (vc?.email) {
             await sendEmail({
               to: vc.email,
-              subject: `New Order: ${payload.name} — Action Required`,
-              html: templateOrderConfirmedVendor({ order: payload, vendorName, meta: {} }),
+              subject: `New Order Received: ${payload.name}`,
+              html: templateNewOrderVendor({ order: payload, vendorName }),
               shopifyId: sid, trigger: 'new_order_vendor',
             });
           }
@@ -994,6 +994,34 @@ function templateNewOrderCustomer({ order }) {
   return emailBase(`New Order Received: ${order.name} — Action Required`, '#25d366', body);
 }
 
+// Sent on orders/create webhook — heads up only, not yet confirmed
+function templateNewOrderVendor({ order, vendorName }) {
+  const myItems = (order.line_items || []).filter(li => li.vendor === vendorName);
+  const subTotal = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+  const body = `
+    <div class="subtitle">A new order has been placed on CrosCrow that includes your products.</div>
+    <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#0c4a6e;line-height:1.7;">
+      <strong>Please note —</strong> this is an early notification. Your order will be formally confirmed by the CrosCrow team shortly.
+      You will receive a separate confirmation email once the order is verified and approved. <strong>Do not dispatch yet.</strong>
+    </div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+      <div class="info-row"><span class="info-label">Your Items Value</span><span class="info-val">₹${subTotal.toFixed(2)}</span></div>
+      <div class="info-row"><span class="info-label">Items</span><span class="info-val">${myItems.length} product${myItems.length !== 1 ? 's' : ''}</span></div>
+    </div>
+    ${itemsTableHtml(myItems)}
+    <div style="background:#f8fafc;border-radius:8px;padding:14px 18px;margin-bottom:8px;font-size:12px;color:#6b7280;line-height:1.8;">
+      <strong style="color:#374151;">What happens next?</strong><br>
+      1. CrosCrow reviews and confirms the order with the customer.<br>
+      2. You receive a <strong>Confirmation Email</strong> with full dispatch instructions.<br>
+      3. Pack and ship within 24–48 hours of the confirmation email.
+    </div>
+  `;
+  return emailBase(`New Order Received: ${order.name}`, '#1e40af', body);
+}
+
+// Sent when admin sets stage → confirmed — action required
 function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const isPrepaid   = order.financial_status === 'paid';
   const myItems     = (order.line_items || []).filter(li => li.vendor === vendorName);
@@ -1001,59 +1029,53 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const shipping    = parseFloat(order.total_shipping_price_set?.shop_money?.amount || 0);
   const advance     = parseFloat(meta.advance_paid || 0);
   const codAmount   = isPrepaid ? 0 : Math.max(0, subTotal + shipping - advance);
-
-  const addr = order.shipping_address;
+  const addr        = order.shipping_address;
 
   const body = `
-    <div class="subtitle">A new order has been assigned to <strong>${vendorName}</strong>. Please fulfil within 24 hours.</div>
+    <div class="subtitle">Order <strong>${order.name}</strong> has been confirmed by CrosCrow. Please prepare and dispatch immediately.</div>
 
     ${isPrepaid
-      ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">✅ PREPAID ORDER — Payment already collected. DO NOT collect cash on delivery.</div>`
-      : `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#92400e;font-size:14px;letter-spacing:1px;">💵 COD ORDER — Collect ₹${codAmount.toFixed(2)} on delivery.</div>`
+      ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">PREPAID — Payment collected. Do not collect cash on delivery.</div>`
+      : advance > 0
+        ? `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#92400e;font-size:14px;letter-spacing:1px;">COD — Advance of ₹${advance.toFixed(2)} collected. Collect ₹${codAmount.toFixed(2)} on delivery.</div>`
+        : `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#92400e;font-size:14px;letter-spacing:1px;">COD — Collect ₹${codAmount.toFixed(2)} on delivery.</div>`
     }
 
     <div class="info-box">
       <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Order Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+      <div class="info-row"><span class="info-label">Confirmed On</span><span class="info-val">${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
       <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
-      ${addr ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
-      ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
+      ${addr ? `<div class="info-row"><span class="info-label">Ship To</span><span class="info-val">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
+      ${addr?.phone ? `<div class="info-row"><span class="info-label">Customer Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
     </div>
 
     ${itemsTableHtml(myItems)}
 
-    <!-- Amount Breakdown -->
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px;">
       <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>
+      ${!isPrepaid ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>` : ''}
       ${advance > 0 ? `<tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">− ₹${advance.toFixed(2)}</td></tr>` : ''}
-      <tr style="background:#f8fafc"><td style="padding:10px;font-weight:800;font-size:14px;color:#1a2a3a;border-radius:4px 0 0 4px">
-        ${isPrepaid ? '✅ COD to Collect' : '💵 COD to Collect'}
-      </td><td style="text-align:right;padding:10px;font-weight:800;font-size:16px;border-radius:0 4px 4px 0;color:${isPrepaid ? '#10b981' : '#dc2626'}">
-        ${isPrepaid ? '₹0.00 (Prepaid)' : `₹${codAmount.toFixed(2)}`}
-      </td></tr>
+      <tr style="background:#f8fafc"><td style="padding:10px;font-weight:800;font-size:14px;color:#1a2a3a;">Amount to Collect on Delivery</td>
+        <td style="text-align:right;padding:10px;font-weight:800;font-size:16px;color:${isPrepaid ? '#10b981' : '#dc2626'}">
+          ${isPrepaid ? '₹0.00 &nbsp;(Prepaid)' : `₹${codAmount.toFixed(2)}`}
+        </td>
+      </tr>
     </table>
 
-    <!-- Fulfilment Window -->
-    <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:12px;">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px;">⚠️ Action Required — Fulfil Within 24–48 Hours</div>
-      <div style="font-size:12px;color:#7f1d1d;line-height:1.7">
-        Please pack and hand over this order to the courier within <strong>24–48 hours</strong> of receiving this email.
-        Late fulfilment beyond 48 hours may result in penalties and could affect your seller rating on CrosCrow.<br><br>
-        🌟 <strong>Fulfil before 24 hours?</strong> You earn a <strong>seller reward</strong> on this order — fast dispatch is always appreciated!
-      </div>
+    <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
+      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:4px;">Dispatch Window — 24 to 48 Hours</div>
+      <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
     </div>
 
-    <!-- WhatsApp Contact -->
     <div style="text-align:center;margin-bottom:8px;">
       <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name}`)}"
          style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
-        Unable to fulfil? Contact Us on WhatsApp
+        Need help? Reach us on WhatsApp
       </a>
     </div>
   `;
-  return emailBase(`New Order: ${order.name} — Action Required`, '#6366f1', body);
+  return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
 }
 
 function templateInTransit({ order, awb, courier }) {
@@ -1279,7 +1301,7 @@ async function fireStageEmails(shopifyId, newStage) {
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
         const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
-        if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name} — Action Required`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
+        if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Confirmed: ${order.name} — Dispatch Now`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
       }
     }
 
