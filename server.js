@@ -712,23 +712,10 @@ app.post("/webhooks/orders", (req, res) => {
 
       // ── orders/updated: tag → stage auto-mapping ───────────────────────
       if (topic === 'orders/updated' && sid) {
-        const tags = (payload.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-        if (tags.length) {
-          const mappings = await mdb.collection('tag_mappings').find({
-            shopify_tag: { $in: tags }
-          }, { projection: { shopify_tag: 1, stage: 1, _id: 0 } }).toArray();
-
-          if (mappings.length) {
-            // Use the first matching mapping (highest-priority tag wins)
-            const matched = mappings[0];
-            const current = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
-            if (current?.stage !== matched.stage) {
-              await OM.upsert(sid, { stage: matched.stage, updated_at: new Date().toISOString() });
-              auditLog("webhook", "tag_stage_auto", sid, { tag: matched.shopify_tag, stage: matched.stage });
-              console.log(`🏷️  Auto-stage: order ${payload.name} → ${matched.stage} (tag: ${matched.shopify_tag})`);
-            }
-          }
-        }
+        // Use the same applyTagMappings function as the sync button — handles case-insensitive matching + priority
+        await applyTagMappings(sid, payload.tags || '', payload.financial_status || '');
+        const newMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
+        console.log(`🏷️  orders/updated processed: ${payload.name} → stage: ${newMeta?.stage || 'unchanged'}`);
 
         // Sync financial status change (e.g. COD → paid after collection)
         if (payload.financial_status === 'paid') {
