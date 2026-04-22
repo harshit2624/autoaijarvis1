@@ -16,7 +16,6 @@ const express    = require("express");
 const cors       = require("cors");
 const crypto     = require("crypto");
 const fetch      = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
-const Database   = require("better-sqlite3");
 const nodemailer = require("nodemailer");
 const { MongoClient } = require("mongodb");
 require("dotenv").config();
@@ -43,17 +42,24 @@ async function startServer() {
       mdb.collection("delay_remarks").createIndex({ shopify_id: 1, vendor_name: 1 }),
       mdb.collection("croscrow_profile").createIndex({ id: 1 }, { unique: true }),
       mdb.collection("vendor_profiles").createIndex({ vendor_name: 1 }, { unique: true }),
-      mdb.collection("tag_mappings").createIndex({ tag: 1 }, { unique: true }),
+      mdb.collection("tag_mappings").createIndex({ shopify_tag: 1 }, { unique: true }),
       mdb.collection("global_shipping_creds").createIndex({ partner: 1 }, { unique: true }),
       mdb.collection("vendor_shipping_partners").createIndex({ vendor_name: 1, partner: 1 }, { unique: true }),
-    mdb.collection("email_log").createIndex({ sent_at: -1 }),
+      mdb.collection("email_log").createIndex({ sent_at: -1 }),
+      mdb.collection("settlements").createIndex({ vendor_name: 1, period_start: 1, period_end: 1 }, { unique: true }),
+      mdb.collection("settlements").createIndex({ status: 1 }),
+      mdb.collection("settlement_orders").createIndex({ settlement_id: 1 }),
+      mdb.collection("settlement_penalties").createIndex({ settlement_id: 1 }),
+      mdb.collection("wallet_tx").createIndex({ vendor_name: 1, created_at: -1 }),
+      mdb.collection("audit_log").createIndex({ created_at: -1 }),
     ];
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
-    await mongoRestoreToSQLite();
-    setInterval(syncSQLiteToMongo, 3 * 60 * 1000);
+    // Ensure croscrow_profile doc exists
+    await mdb.collection('croscrow_profile').updateOne({ id: 1 }, { $setOnInsert: { id: 1, company_name: 'CrosCrow Marketplace', email:'',phone:'',address:'',city:'',state:'',pincode:'',gst_no:'',pan_no:'',bank_name:'',account_no:'',ifsc:'',website:'' } }, { upsert: true });
   } catch (err) {
-    console.warn("⚠️  MongoDB connection failed — starting with empty SQLite:", err.message);
+    console.error("❌  MongoDB connection failed — cannot start:", err.message);
+    process.exit(1);
   }
 
   app.listen(PORT, () => {
@@ -69,310 +75,157 @@ async function startServer() {
 
 startServer();
 
-// ── Tables to sync and their primary keys ─────────────────────────────────
-const SYNC_TABLES = [
-  { name: 'vendor_config',             pk: 'vendor_name' },
-  { name: 'email_settings',            pk: 'id' },
-  { name: 'order_meta',                pk: 'shopify_id' },
-  { name: 'order_vendor_stage',        pk: null, compound: ['shopify_id','vendor_name'] },
-  { name: 'vendor_shopify_connections',pk: 'vendor_name' },
-  { name: 'vendor_product_mappings',   pk: null, compound: ['vendor_name','vendor_variant_id'] },
-  { name: 'order_penalties',           pk: 'id' },
-  { name: 'order_notes',               pk: 'id' },
-  { name: 'delay_remarks',             pk: 'id' },
-  { name: 'croscrow_profile',          pk: 'id' },
-  { name: 'vendor_profiles',           pk: 'vendor_name' },
-  { name: 'tag_mappings',              pk: 'tag' },
-  { name: 'global_shipping_creds',     pk: 'partner' },
-  { name: 'vendor_shipping_partners',  pk: null, compound: ['vendor_name','partner'] },
-  { name: 'email_log',                 pk: 'id' },
-];
-
-async function mongoRestoreToSQLite() {
-  if (!mdb) return;
-  console.log("🔄  Restoring data from MongoDB → SQLite...");
-  for (const t of SYNC_TABLES) {
-    try {
-      const docs = await mdb.collection(t.name).find({}, { projection: { _id: 0, _created: 0, _updated: 0 } }).toArray();
-      if (!docs.length) continue;
-      // Build INSERT OR REPLACE for each doc
-      for (const doc of docs) {
-        const keys = Object.keys(doc);
-        const placeholders = keys.map(() => '?').join(',');
-        const values = keys.map(k => doc[k]);
-        try {
-          db.prepare(`INSERT OR REPLACE INTO ${t.name} (${keys.join(',')}) VALUES (${placeholders})`).run(...values);
-        } catch {}
-      }
-      console.log(`   ✓ ${t.name}: restored ${docs.length} records`);
-    } catch (e) {
-      console.warn(`   ⚠ ${t.name}: restore failed —`, e.message);
-    }
-  }
-  console.log("✅  MongoDB restore complete");
-}
-
-async function syncSQLiteToMongo() {
-  if (!mdb) return;
-  for (const t of SYNC_TABLES) {
-    try {
-      const rows = db.prepare(`SELECT * FROM ${t.name}`).all();
-      for (const row of rows) {
-        let filter;
-        if (t.pk) {
-          filter = { [t.pk]: row[t.pk] };
-        } else {
-          filter = Object.fromEntries(t.compound.map(k => [k, row[k]]));
-        }
-        await mdb.collection(t.name).updateOne(filter, { $set: { ...row, _updated: new Date() } }, { upsert: true });
-      }
-    } catch {}
-  }
-}
-
-// ── MongoDB primary helpers (Section 1 migration) ─────────────────────────
-// mCol(name) returns a MongoDB collection. All migrated tables use these.
+// ── MongoDB helpers ───────────────────────────────────────────────────────
 const mCol = (name) => mdb.collection(name);
 
-// vendor_config: MongoDB primary, SQLite as fallback cache
+// Auto-increment counter for integer IDs (replaces SQLite AUTOINCREMENT)
+async function nextId(name) {
+  const r = await mdb.collection('_counters').findOneAndUpdate(
+    { _id: name }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' }
+  );
+  return r.seq;
+}
+
 const VC = {
   async all() {
-    if (mdb) return mdb.collection('vendor_config').find({}, { projection: { _id: 0 } }).toArray();
-    return db.prepare("SELECT * FROM vendor_config").all();
+    return mdb.collection('vendor_config').find({}, { projection: { _id: 0 } }).toArray();
   },
   async get(vendor_name) {
-    if (mdb) return mdb.collection('vendor_config').findOne({ vendor_name }, { projection: { _id: 0 } });
-    return db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(vendor_name);
+    return mdb.collection('vendor_config').findOne({ vendor_name }, { projection: { _id: 0 } });
   },
   async upsert(vendor_name, fields) {
-    if (mdb) {
-      await mdb.collection('vendor_config').updateOne({ vendor_name }, { $set: { vendor_name, ...fields, _updated: new Date() } }, { upsert: true });
-    }
-    // Keep SQLite in sync
-    const existing = db.prepare("SELECT * FROM vendor_config WHERE vendor_name=?").get(vendor_name);
-    if (existing) {
-      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
-      db.prepare(`UPDATE vendor_config SET ${setClauses} WHERE vendor_name=?`).run(...Object.values(fields), vendor_name);
-    } else {
-      const allFields = { vendor_name, ...fields };
-      const keys = Object.keys(allFields);
-      db.prepare(`INSERT OR IGNORE INTO vendor_config (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allFields));
-    }
+    await mdb.collection('vendor_config').updateOne({ vendor_name }, { $set: { vendor_name, ...fields, _updated: new Date() } }, { upsert: true });
   },
 };
 
-// email_settings: MongoDB primary
 const ES = {
   async get() {
-    if (mdb) return mdb.collection('email_settings').findOne({}, { projection: { _id: 0 } });
-    return db.prepare("SELECT * FROM email_settings LIMIT 1").get();
+    return mdb.collection('email_settings').findOne({}, { projection: { _id: 0 } });
   },
   async save(fields) {
-    if (mdb) {
-      await mdb.collection('email_settings').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
-    }
-    // Sync SQLite
-    const existing = db.prepare("SELECT id FROM email_settings LIMIT 1").get();
-    if (existing) {
-      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
-      db.prepare(`UPDATE email_settings SET ${setClauses} WHERE id=?`).run(...Object.values(fields), existing.id);
-    } else {
-      const keys = Object.keys(fields);
-      db.prepare(`INSERT INTO email_settings (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(fields));
-    }
+    await mdb.collection('email_settings').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
   },
 };
 
-// ── order_meta: MongoDB primary for writes, SQLite for bulk reads ──────────
 const OM = {
   async upsert(shopify_id, fields) {
     const sid = String(shopify_id);
-    if (mdb) {
-      await mdb.collection('order_meta').updateOne(
-        { shopify_id: sid },
-        { $set: { shopify_id: sid, ...fields, _updated: new Date() } },
-        { upsert: true }
-      );
-    }
-    // Keep SQLite in sync
-    const existing = db.prepare("SELECT shopify_id FROM order_meta WHERE shopify_id=?").get(sid);
-    if (existing) {
-      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
-      db.prepare(`UPDATE order_meta SET ${setClauses} WHERE shopify_id=?`).run(...Object.values(fields), sid);
-    } else {
-      const allF = { shopify_id: sid, ...fields };
-      const keys = Object.keys(allF);
-      db.prepare(`INSERT OR IGNORE INTO order_meta (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allF));
-    }
+    await mdb.collection('order_meta').updateOne(
+      { shopify_id: sid },
+      { $set: { shopify_id: sid, ...fields, _updated: new Date() } },
+      { upsert: true }
+    );
   },
 };
 
-// ── order_vendor_stage: MongoDB primary for writes ─────────────────────────
 const OVS = {
   async upsert(shopify_id, vendor_name, fields) {
     const sid = String(shopify_id);
-    if (mdb) {
-      await mdb.collection('order_vendor_stage').updateOne(
-        { shopify_id: sid, vendor_name },
-        { $set: { shopify_id: sid, vendor_name, ...fields, _updated: new Date() } },
-        { upsert: true }
-      );
-    }
-    // Keep SQLite in sync
-    const existing = db.prepare("SELECT shopify_id FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(sid, vendor_name);
-    if (existing) {
-      const setClauses = Object.keys(fields).map(k => `${k}=?`).join(',');
-      db.prepare(`UPDATE order_vendor_stage SET ${setClauses} WHERE shopify_id=? AND vendor_name=?`).run(...Object.values(fields), sid, vendor_name);
-    } else {
-      const allF = { shopify_id: sid, vendor_name, ...fields };
-      const keys = Object.keys(allF);
-      db.prepare(`INSERT OR IGNORE INTO order_vendor_stage (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allF));
-    }
+    await mdb.collection('order_vendor_stage').updateOne(
+      { shopify_id: sid, vendor_name },
+      { $set: { shopify_id: sid, vendor_name, ...fields, _updated: new Date() } },
+      { upsert: true }
+    );
   },
 };
 
-// ── vendor_shopify_connections: MongoDB primary ────────────────────────────
 const VSC = {
   async get(vendor_name) {
-    if (mdb) return mdb.collection('vendor_shopify_connections').findOne({ vendor_name }, { projection: { _id: 0 } });
-    return db.prepare("SELECT * FROM vendor_shopify_connections WHERE vendor_name=?").get(vendor_name);
+    return mdb.collection('vendor_shopify_connections').findOne({ vendor_name }, { projection: { _id: 0 } });
   },
   async all() {
-    if (mdb) return mdb.collection('vendor_shopify_connections').find({}, { projection: { _id: 0 } }).toArray();
-    return db.prepare("SELECT * FROM vendor_shopify_connections").all();
+    return mdb.collection('vendor_shopify_connections').find({}, { projection: { _id: 0 } }).toArray();
   },
   async upsert(vendor_name, fields) {
-    if (mdb) {
-      await mdb.collection('vendor_shopify_connections').updateOne(
-        { vendor_name }, { $set: { vendor_name, ...fields, _updated: new Date() } }, { upsert: true }
-      );
-    }
-    const keys = ['vendor_name', ...Object.keys(fields)];
-    const vals = [vendor_name, ...Object.values(fields)];
-    db.prepare(`INSERT OR REPLACE INTO vendor_shopify_connections (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...vals);
+    await mdb.collection('vendor_shopify_connections').updateOne(
+      { vendor_name }, { $set: { vendor_name, ...fields, _updated: new Date() } }, { upsert: true }
+    );
   },
   async delete(vendor_name) {
-    if (mdb) await mdb.collection('vendor_shopify_connections').deleteOne({ vendor_name });
-    db.prepare("DELETE FROM vendor_shopify_connections WHERE vendor_name=?").run(vendor_name);
+    await mdb.collection('vendor_shopify_connections').deleteOne({ vendor_name });
   },
 };
 
-// ── vendor_product_mappings: MongoDB primary ───────────────────────────────
 const VPM = {
   async allForVendor(vendor_name) {
-    if (mdb) return mdb.collection('vendor_product_mappings').find({ vendor_name }, { projection: { _id: 0 } }).toArray();
-    return db.prepare("SELECT * FROM vendor_product_mappings WHERE vendor_name=?").all(vendor_name);
+    return mdb.collection('vendor_product_mappings').find({ vendor_name }, { projection: { _id: 0 } }).toArray();
   },
   async all(vendor_name) {
-    if (mdb) {
-      const q = vendor_name ? { vendor_name } : {};
-      return mdb.collection('vendor_product_mappings').find(q, { projection: { _id: 0 } }).sort({ _id: -1 }).toArray();
-    }
-    const where = vendor_name ? "WHERE vendor_name=?" : "";
-    const params = vendor_name ? [vendor_name] : [];
-    return db.prepare(`SELECT * FROM vendor_product_mappings ${where} ORDER BY id DESC`).all(...params);
+    const q = vendor_name ? { vendor_name } : {};
+    return mdb.collection('vendor_product_mappings').find(q, { projection: { _id: 0 } }).sort({ _id: -1 }).toArray();
   },
   async upsert(vendor_name, vendor_variant_id, fields) {
     const vvid = String(vendor_variant_id);
-    if (mdb) {
-      await mdb.collection('vendor_product_mappings').updateOne(
-        { vendor_name, vendor_variant_id: vvid },
-        { $set: { vendor_name, vendor_variant_id: vvid, ...fields, _updated: new Date() } },
-        { upsert: true }
-      );
-    }
-    const allF = { vendor_name, vendor_variant_id: vvid, ...fields };
-    const keys = Object.keys(allF);
-    db.prepare(`INSERT OR REPLACE INTO vendor_product_mappings (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(allF));
+    await mdb.collection('vendor_product_mappings').updateOne(
+      { vendor_name, vendor_variant_id: vvid },
+      { $set: { vendor_name, vendor_variant_id: vvid, ...fields, _updated: new Date() } },
+      { upsert: true }
+    );
   },
   async updateSynced(vendor_name, vendor_variant_id) {
     const vvid = String(vendor_variant_id);
-    if (mdb) {
-      await mdb.collection('vendor_product_mappings').updateOne(
-        { vendor_name, vendor_variant_id: vvid }, { $set: { last_synced_at: Date.now(), _updated: new Date() } }
-      );
-    }
-    db.prepare("UPDATE vendor_product_mappings SET last_synced_at=? WHERE vendor_name=? AND vendor_variant_id=?").run(Date.now(), vendor_name, vvid);
+    await mdb.collection('vendor_product_mappings').updateOne(
+      { vendor_name, vendor_variant_id: vvid }, { $set: { last_synced_at: Date.now(), _updated: new Date() } }
+    );
   },
   async delete(id) {
-    if (mdb) await mdb.collection('vendor_product_mappings').deleteOne({ id: parseInt(id) });
-    db.prepare("DELETE FROM vendor_product_mappings WHERE id=?").run(id);
+    await mdb.collection('vendor_product_mappings').deleteOne({ id: parseInt(id) });
   },
 };
 
-// ── order_notes: MongoDB primary ──────────────────────────────────────────
 const ON = {
   async allFor(shopify_id) {
-    if (mdb) return mdb.collection('order_notes').find({ shopify_id: String(shopify_id) }, { projection: { _id: 0 } }).sort({ created_at: 1 }).toArray();
-    return db.prepare("SELECT * FROM order_notes WHERE shopify_id=? ORDER BY created_at ASC").all(String(shopify_id));
+    return mdb.collection('order_notes').find({ shopify_id: String(shopify_id) }, { projection: { _id: 0 } }).sort({ created_at: 1 }).toArray();
   },
   async insert(shopify_id, role, author, note) {
     const sid = String(shopify_id);
     const created_at = new Date().toISOString();
-    if (mdb) await mdb.collection('order_notes').insertOne({ shopify_id: sid, role, author, note, created_at });
-    db.prepare("INSERT INTO order_notes (shopify_id, role, author, note, created_at) VALUES (?,?,?,?,?)").run(sid, role, author, note, created_at);
+    await mdb.collection('order_notes').insertOne({ shopify_id: sid, role, author, note, created_at });
   },
 };
 
-// ── delay_remarks: MongoDB primary ────────────────────────────────────────
 const DR = {
   async allFor(shopify_id, vendor_name) {
-    if (mdb) {
-      const q = vendor_name ? { shopify_id: String(shopify_id), vendor_name } : { shopify_id: String(shopify_id) };
-      return mdb.collection('delay_remarks').find(q, { projection: { _id: 0 } }).sort({ submitted_at: 1 }).toArray();
-    }
-    if (vendor_name) return db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at ASC").all(String(shopify_id), vendor_name);
-    return db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? ORDER BY submitted_at ASC").all(String(shopify_id));
+    const q = vendor_name ? { shopify_id: String(shopify_id), vendor_name } : { shopify_id: String(shopify_id) };
+    return mdb.collection('delay_remarks').find(q, { projection: { _id: 0 } }).sort({ submitted_at: 1 }).toArray();
   },
   async latest(shopify_id, vendor_name) {
-    if (mdb) return mdb.collection('delay_remarks').findOne({ shopify_id: String(shopify_id), vendor_name }, { projection: { _id: 0 }, sort: { submitted_at: -1 } });
-    return db.prepare("SELECT * FROM delay_remarks WHERE shopify_id=? AND vendor_name=? ORDER BY submitted_at DESC LIMIT 1").get(String(shopify_id), vendor_name);
+    return mdb.collection('delay_remarks').findOne({ shopify_id: String(shopify_id), vendor_name }, { projection: { _id: 0 }, sort: { submitted_at: -1 } });
   },
   async insert(shopify_id, vendor_name, reason, eta_date) {
     const sid = String(shopify_id);
     const submitted_at = Date.now();
-    if (mdb) await mdb.collection('delay_remarks').insertOne({ shopify_id: sid, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered: 0 });
-    db.prepare("INSERT INTO delay_remarks (shopify_id, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered) VALUES (?,?,?,?,?,0)").run(sid, vendor_name, reason, eta_date, submitted_at);
+    await mdb.collection('delay_remarks').insertOne({ shopify_id: sid, vendor_name, reason, eta_date, submitted_at, eta_penalty_triggered: 0 });
   },
-  async markEtaPenalty(id) {
-    if (mdb) await mdb.collection('delay_remarks').updateOne({ id }, { $set: { eta_penalty_triggered: 1 } });
-    db.prepare("UPDATE delay_remarks SET eta_penalty_triggered=1 WHERE id=?").run(id);
+  async markEtaPenalty(_id) {
+    await mdb.collection('delay_remarks').updateOne({ _id }, { $set: { eta_penalty_triggered: 1 } });
   },
   async expiredEta(today) {
-    if (mdb) return mdb.collection('delay_remarks').find({ eta_date: { $lt: today }, eta_penalty_triggered: 0 }, { projection: { _id: 0 } }).toArray();
-    return db.prepare("SELECT * FROM delay_remarks WHERE eta_date < ? AND eta_penalty_triggered=0").all(today);
+    return mdb.collection('delay_remarks').find({ eta_date: { $lt: today }, eta_penalty_triggered: 0 }, { projection: { _id: 0 } }).toArray();
   },
 };
 
 // ── order_penalties: MongoDB primary ──────────────────────────────────────
 const OP = {
   async all(status) {
-    if (mdb) {
-      const q = status && status !== 'all' ? { status } : {};
-      return mdb.collection('order_penalties').find(q, { projection: { _id: 0 } }).sort({ triggered_at: -1 }).toArray();
-    }
-    const where = status && status !== 'all' ? "WHERE status=?" : "";
-    const params = status && status !== 'all' ? [status] : [];
-    return db.prepare(`SELECT * FROM order_penalties ${where} ORDER BY triggered_at DESC`).all(...params);
+    const q = status && status !== 'all' ? { status } : {};
+    return mdb.collection('order_penalties').find(q, { projection: { _id: 0 } }).sort({ triggered_at: -1 }).toArray();
   },
   async get(id) {
-    if (mdb) return mdb.collection('order_penalties').findOne({ id: parseInt(id) }, { projection: { _id: 0 } });
-    return db.prepare("SELECT * FROM order_penalties WHERE id=?").get(id);
+    return mdb.collection('order_penalties').findOne({ id: parseInt(id) }, { projection: { _id: 0 } });
   },
   async hasPending(shopify_id, vendor_name) {
-    if (mdb) return !!(await mdb.collection('order_penalties').findOne({ shopify_id: String(shopify_id), vendor_name, status: 'pending' }));
-    return !!db.prepare("SELECT id FROM order_penalties WHERE shopify_id=? AND vendor_name=? AND status='pending'").get(String(shopify_id), vendor_name);
+    return !!(await mdb.collection('order_penalties').findOne({ shopify_id: String(shopify_id), vendor_name, status: 'pending' }));
   },
   async insert(shopify_id, vendor_name, order_name, trigger_reason) {
     const sid = String(shopify_id);
+    const id = await nextId('order_penalties');
     const triggered_at = Date.now();
-    if (mdb) await mdb.collection('order_penalties').insertOne({ shopify_id: sid, vendor_name, order_name: order_name || '', triggered_at, trigger_reason, status: 'pending' });
-    db.prepare("INSERT INTO order_penalties (shopify_id, vendor_name, order_name, triggered_at, trigger_reason, status) VALUES (?,?,?,?,?,'pending')").run(sid, vendor_name, order_name || '', triggered_at, trigger_reason);
+    await mdb.collection('order_penalties').insertOne({ id, shopify_id: sid, vendor_name, order_name: order_name || '', triggered_at, trigger_reason, status: 'pending' });
   },
   async resolve(id, status, penalty_amount, admin_note) {
     const resolved_at = Date.now();
-    if (mdb) await mdb.collection('order_penalties').updateOne({ id: parseInt(id) }, { $set: { status, penalty_amount, admin_note: admin_note || '', resolved_at, resolved_by: 'admin' } });
-    db.prepare("UPDATE order_penalties SET status=?, penalty_amount=?, admin_note=?, resolved_at=?, resolved_by='admin' WHERE id=?").run(status, penalty_amount, admin_note || '', resolved_at, id);
+    await mdb.collection('order_penalties').updateOne({ id: parseInt(id) }, { $set: { status, penalty_amount, admin_note: admin_note || '', resolved_at, resolved_by: 'admin' } });
   },
 };
 
@@ -383,19 +236,6 @@ app.use(express.static('.'));
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
 app.use(express.json());
-
-// ── Sync to MongoDB after every mutating request ──────────────────────────
-const WRITE_METHODS = new Set(['POST','PUT','DELETE','PATCH']);
-app.use((req, res, next) => {
-  if (!WRITE_METHODS.has(req.method)) return next();
-  const originalJson = res.json.bind(res);
-  res.json = (body) => {
-    originalJson(body);
-    // Fire-and-forget sync after response sent
-    setImmediate(() => syncSQLiteToMongo().catch(()=>{}));
-  };
-  next();
-});
 
 // ── CORS — allow your deployed frontend URL ────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*").split(",").map(s => s.trim());
@@ -424,112 +264,6 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
   process.exit(1);
 }
 
-// ── SQLite — persistent store for CrosCrow metadata ───────────────────────
-const db = new Database("./croscrow.db");
-db.exec(`
-  CREATE TABLE IF NOT EXISTS order_meta (
-    shopify_id    TEXT PRIMARY KEY,
-    stage         TEXT DEFAULT 'new',
-    payment_type  TEXT DEFAULT 'cod',
-    advance_paid  REAL DEFAULT 0,
-    shipping_charge REAL DEFAULT 0,
-    notes         TEXT DEFAULT '',
-    awb           TEXT DEFAULT '',
-    courier       TEXT DEFAULT '',
-    tracking_url  TEXT DEFAULT '',
-    updated_at    TEXT DEFAULT ''
-  );
-  CREATE TABLE IF NOT EXISTS vendor_config (
-    vendor_name    TEXT PRIMARY KEY,
-    commission_pct REAL DEFAULT 20,
-    active         INTEGER DEFAULT 1
-  );
-  CREATE TABLE IF NOT EXISTS settlements (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    vendor_name    TEXT NOT NULL,
-    period_start   TEXT,
-    period_end     TEXT,
-    total_orders   INTEGER DEFAULT 0,
-    gross_revenue  REAL DEFAULT 0,
-    commission     REAL DEFAULT 0,
-    gst_amount     REAL DEFAULT 0,
-    advance_total  REAL DEFAULT 0,
-    net_payable    REAL DEFAULT 0,
-    status         TEXT DEFAULT 'pending',
-    invoice_no     TEXT,
-    created_at     TEXT,
-    paid_at        TEXT
-  );
-  CREATE TABLE IF NOT EXISTS settlement_orders (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    settlement_id     INTEGER REFERENCES settlements(id),
-    shopify_order_id  TEXT,
-    order_name        TEXT,
-    my_revenue        REAL,
-    payment_type      TEXT,
-    commission_pct    REAL,
-    commission        REAL,
-    gst               REAL,
-    advance_paid      REAL,
-    net               REAL
-  );
-  CREATE TABLE IF NOT EXISTS wallet_tx (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    vendor_name  TEXT NOT NULL,
-    type         TEXT,
-    amount       REAL,
-    description  TEXT,
-    ref_id       TEXT,
-    created_at   TEXT
-  );
-  CREATE TABLE IF NOT EXISTS audit_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    actor      TEXT,
-    action     TEXT,
-    target_id  TEXT,
-    details    TEXT,
-    created_at TEXT
-  );
-`);
-
-// ── MongoDB helpers — used when mdb is available ──────────────────────────
-// These wrap common patterns so routes can call mdb or fall back to SQLite
-
-async function mGet(collection, filter) {
-  if (!mdb) return null;
-  return mdb.collection(collection).findOne(filter);
-}
-
-async function mGetAll(collection, filter = {}, sort = {}) {
-  if (!mdb) return null;
-  return mdb.collection(collection).find(filter).sort(sort).toArray();
-}
-
-async function mUpsert(collection, filter, doc) {
-  if (!mdb) return;
-  await mdb.collection(collection).updateOne(filter, { $set: { ...doc, _updated: new Date() } }, { upsert: true });
-}
-
-async function mInsert(collection, doc) {
-  if (!mdb) return null;
-  const r = await mdb.collection(collection).insertOne({ ...doc, _created: new Date() });
-  return r.insertedId;
-}
-
-async function mUpdate(collection, filter, update) {
-  if (!mdb) return;
-  await mdb.collection(collection).updateOne(filter, { $set: update });
-}
-
-async function mDelete(collection, filter) {
-  if (!mdb) return;
-  await mdb.collection(collection).deleteOne(filter);
-}
-
-async function mDeleteMany(collection, filter) {
-  if (!mdb) return;
-  await mdb.collection(collection).deleteMany(filter);
-}
 
 // ── Commission + GST calculation ──────────────────────────────────────────
 const GST_RATE = 0.18;
@@ -553,149 +287,6 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
   return { base, commission, gst, invoice, advancePaid: advancePaid || 0, net, type: "receivable" };
 }
 
-// ── Profile tables ────────────────────────────────────────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS croscrow_profile (
-    id           INTEGER PRIMARY KEY DEFAULT 1,
-    company_name TEXT DEFAULT 'CrosCrow Marketplace',
-    email        TEXT DEFAULT '',
-    phone        TEXT DEFAULT '',
-    address      TEXT DEFAULT '',
-    city         TEXT DEFAULT '',
-    state        TEXT DEFAULT '',
-    pincode      TEXT DEFAULT '',
-    gst_no       TEXT DEFAULT '',
-    pan_no       TEXT DEFAULT '',
-    bank_name    TEXT DEFAULT '',
-    account_no   TEXT DEFAULT '',
-    ifsc         TEXT DEFAULT '',
-    website      TEXT DEFAULT ''
-  );
-  INSERT OR IGNORE INTO croscrow_profile (id) VALUES (1);
-
-  CREATE TABLE IF NOT EXISTS vendor_profiles (
-    vendor_name  TEXT PRIMARY KEY,
-    email        TEXT DEFAULT '',
-    phone        TEXT DEFAULT '',
-    address      TEXT DEFAULT '',
-    city         TEXT DEFAULT '',
-    state        TEXT DEFAULT '',
-    pincode      TEXT DEFAULT '',
-    gst_no       TEXT DEFAULT '',
-    pan_no       TEXT DEFAULT '',
-    bank_name    TEXT DEFAULT '',
-    account_no   TEXT DEFAULT '',
-    ifsc         TEXT DEFAULT '',
-    commission_pct REAL,
-    updated_at   TEXT DEFAULT ''
-  );
-`);
-
-// ── Migrate: add editable columns to settlements (safe to run on existing DB)
-["extra_discount REAL DEFAULT 0","shipping_adjustment REAL DEFAULT 0","extra_advance REAL DEFAULT 0","invoice_notes TEXT DEFAULT ''","custom_commission_pct REAL"].forEach(col => {
-  try { db.exec(`ALTER TABLE settlements ADD COLUMN ${col}`); } catch {}
-});
-// ── Migrate: add shipping_charge to settlement_orders
-try { db.exec("ALTER TABLE settlement_orders ADD COLUMN shipping_charge REAL DEFAULT 0"); } catch {}
-// ── Migrate: add total_shipping to settlements
-try { db.exec("ALTER TABLE settlements ADD COLUMN total_shipping REAL DEFAULT 0"); } catch {}
-// ── Migrate: delivery_status tracking
-try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status TEXT DEFAULT ''"); } catch {}
-try { db.exec("ALTER TABLE order_meta ADD COLUMN delivery_status_updated_at TEXT DEFAULT ''"); } catch {}
-// ── Migrate: email enabled toggle
-try { db.exec("ALTER TABLE email_settings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); } catch {}
-
-// ── Migrate: penalty tracking columns on order_vendor_stage
-try { db.exec("ALTER TABLE order_vendor_stage ADD COLUMN stage_started_at INTEGER DEFAULT 0"); } catch {}
-try { db.exec("ALTER TABLE order_vendor_stage ADD COLUMN warning_sent INTEGER DEFAULT 0"); } catch {}
-try { db.exec("ALTER TABLE order_vendor_stage ADD COLUMN penalty_triggered INTEGER DEFAULT 0"); } catch {}
-// Backfill stage_started_at for existing confirmed/partial rows with no timestamp
-try { db.exec(`UPDATE order_vendor_stage SET stage_started_at=${Date.now()} WHERE stage IN ('confirmed','partial') AND (stage_started_at IS NULL OR stage_started_at=0)`); } catch {}
-
-// ── Penalty & delay tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS order_penalties (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    shopify_id     TEXT NOT NULL,
-    vendor_name    TEXT NOT NULL,
-    order_name     TEXT DEFAULT '',
-    triggered_at   INTEGER NOT NULL,
-    trigger_reason TEXT DEFAULT '48hr_breach',
-    status         TEXT DEFAULT 'pending',
-    penalty_amount REAL DEFAULT 0,
-    admin_note     TEXT DEFAULT '',
-    resolved_at    INTEGER,
-    resolved_by    TEXT
-  );
-  CREATE TABLE IF NOT EXISTS delay_remarks (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    shopify_id           TEXT NOT NULL,
-    vendor_name          TEXT NOT NULL,
-    reason               TEXT NOT NULL,
-    eta_date             TEXT NOT NULL,
-    submitted_at         INTEGER NOT NULL,
-    eta_penalty_triggered INTEGER DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS settlement_penalties (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    settlement_id INTEGER REFERENCES settlements(id),
-    penalty_id    INTEGER REFERENCES order_penalties(id),
-    amount        REAL NOT NULL
-  );
-`);
-try { db.exec("ALTER TABLE settlements ADD COLUMN penalty_deduction REAL DEFAULT 0"); } catch {}
-
-// ── Migrate: per-vendor stage tracking
-db.exec(`
-  CREATE TABLE IF NOT EXISTS order_vendor_stage (
-    shopify_id   TEXT NOT NULL,
-    vendor_name  TEXT NOT NULL,
-    stage        TEXT NOT NULL DEFAULT 'new',
-    updated_at   TEXT DEFAULT '',
-    PRIMARY KEY (shopify_id, vendor_name)
-  );
-`);
-
-// ── Tag mappings table ────────────────────────────────────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tag_mappings (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    shopify_tag TEXT NOT NULL,
-    stage       TEXT NOT NULL,
-    priority    INTEGER DEFAULT 99,
-    created_at  TEXT DEFAULT ''
-  );
-  CREATE TABLE IF NOT EXISTS vendor_shipping_partners (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    vendor_name  TEXT NOT NULL,
-    partner      TEXT NOT NULL,
-    credentials  TEXT NOT NULL,
-    active       INTEGER DEFAULT 1,
-    connected_at TEXT DEFAULT '',
-    UNIQUE(vendor_name, partner)
-  );
-  CREATE TABLE IF NOT EXISTS global_shipping_creds (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    partner      TEXT NOT NULL UNIQUE,
-    credentials  TEXT NOT NULL,
-    connected_at TEXT DEFAULT ''
-  );
-  CREATE TABLE IF NOT EXISTS email_settings (
-    id      INTEGER PRIMARY KEY CHECK (id = 1),
-    smtp    TEXT NOT NULL DEFAULT '{}',
-    enabled INTEGER NOT NULL DEFAULT 1
-  );
-  CREATE TABLE IF NOT EXISTS email_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    shopify_id TEXT,
-    trigger    TEXT,
-    recipient  TEXT,
-    subject    TEXT,
-    status     TEXT,
-    error      TEXT,
-    sent_at    TEXT
-  );
-`);
 
 // Derive payment_type from Shopify financial_status
 function paymentTypeFromFinancial(financialStatus) {
@@ -726,14 +317,14 @@ async function applyTagMappings(orderId, tags, financialStatus) {
   }
 
   // Step 3: apply stage from tag_mappings — lowest priority number wins
-  const mappings = db.prepare("SELECT * FROM tag_mappings ORDER BY priority ASC, id ASC").all();
+  const mappings = await mdb.collection('tag_mappings').find({}, { projection: { _id: 0 } }).sort({ priority: 1, id: 1 }).toArray();
   let winner = null;
   for (const m of mappings) {
     const hit = orderTags.find(t => t.toLowerCase() === m.shopify_tag.toLowerCase().trim());
     if (hit) { winner = m; break; }
   }
   if (winner) {
-    const prev = db.prepare("SELECT stage FROM order_meta WHERE shopify_id=?").get(sid);
+    const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
     await OM.upsert(sid, { stage: winner.stage, updated_at: now });
     if (!prev || prev.stage !== winner.stage) {
       fireStageEmails(sid, winner.stage).catch(()=>{});
@@ -754,10 +345,12 @@ function adminAuth(req, res, next) {
 }
 
 function auditLog(actor, action, targetId, details) {
-  try {
-    db.prepare("INSERT INTO audit_log (actor,action,target_id,details,created_at) VALUES (?,?,?,?,?)")
-      .run(actor, action, String(targetId), typeof details === "object" ? JSON.stringify(details) : String(details || ""), new Date().toISOString());
-  } catch {}
+  mdb.collection('audit_log').insertOne({
+    actor, action,
+    target_id: String(targetId),
+    details: typeof details === "object" ? JSON.stringify(details) : String(details || ""),
+    created_at: new Date().toISOString(),
+  }).catch(() => {});
 }
 
 // ── Token Cache (Shopify tokens expire every 24 hrs) ──────────────────────
@@ -1002,10 +595,10 @@ app.post("/webhooks/orders", (req, res) => {
   if (topic === 'orders/create' && payload.id && payload.email) {
     (async () => {
       try {
-        const cfg = getSmtpConfig();
-        if (!cfg?.host) return;
-        const settingsRow = db.prepare("SELECT enabled FROM email_settings WHERE id=1").get();
+        const settingsRow = await ES.get();
         if (settingsRow && settingsRow.enabled === 0) return;
+        const cfg = await getSmtpConfig();
+        if (!cfg?.host) return;
         const enrichedOrder = await enrichOrderImages(payload);
         const transporter = createTransporter(cfg);
         await transporter.sendMail({
@@ -1030,10 +623,10 @@ app.post("/webhooks/orders", (req, res) => {
 // EMAIL ENGINE
 // ══════════════════════════════════════════════════════════════════════════
 
-function getSmtpConfig() {
-  const row = db.prepare("SELECT smtp FROM email_settings WHERE id=1").get();
+async function getSmtpConfig() {
+  const row = await ES.get();
   if (!row) return null;
-  try { return JSON.parse(row.smtp); } catch { return null; }
+  try { return typeof row.smtp === 'string' ? JSON.parse(row.smtp) : row.smtp; } catch { return null; }
 }
 
 function createTransporter(cfg) {
@@ -1047,12 +640,7 @@ function createTransporter(cfg) {
 
 function logEmail(shopifyId, trigger, recipient, subject, status, error='') {
   const sent_at = new Date().toISOString();
-  const doc = { shopify_id: String(shopifyId||''), trigger, recipient, subject, status, error, sent_at };
-  // Write to SQLite
-  db.prepare("INSERT INTO email_log (shopify_id,trigger,recipient,subject,status,error,sent_at) VALUES (?,?,?,?,?,?,?)")
-    .run(doc.shopify_id, trigger, recipient, subject, status, error, sent_at);
-  // Write to MongoDB (fire-and-forget)
-  if (mdb) mdb.collection('email_log').insertOne({ ...doc }).catch(()=>{});
+  mdb.collection('email_log').insertOne({ shopify_id: String(shopifyId||''), trigger, recipient, subject, status, error, sent_at }).catch(() => {});
 }
 
 // ── HTML Email Templates ──────────────────────────────────────────────────
@@ -1371,12 +959,12 @@ function templatePartialAdvanceCustomer({ order, meta = {} }) {
 
 // ── Send email helper ─────────────────────────────────────────────────────
 async function sendEmail({ to, subject, html, shopifyId, trigger }) {
-  const settingsRow = db.prepare("SELECT enabled FROM email_settings WHERE id=1").get();
+  const settingsRow = await ES.get();
   if (settingsRow && settingsRow.enabled === 0) {
     logEmail(shopifyId, trigger, to, subject, 'skipped', 'Emails disabled globally');
     return;
   }
-  const cfg = getSmtpConfig();
+  const cfg = await getSmtpConfig();
   if (!cfg?.host || !cfg?.user || !cfg?.pass) {
     logEmail(shopifyId, trigger, to, subject, 'skipped', 'SMTP not configured');
     return;
@@ -1417,7 +1005,7 @@ async function enrichOrderImages(order) {
 // ── Fire emails on stage change ───────────────────────────────────────────
 async function fireStageEmails(shopifyId, newStage) {
   try {
-    const cfg = getSmtpConfig();
+    const cfg = await getSmtpConfig();
     if (!cfg?.host) return; // no SMTP configured, skip silently
 
     const token = await getAccessToken();
@@ -1427,7 +1015,7 @@ async function fireStageEmails(shopifyId, newStage) {
     if (!r.ok) return;
     let { order } = await r.json();
     order = await enrichOrderImages(order);
-    const meta = db.prepare("SELECT awb, courier FROM order_meta WHERE shopify_id=?").get(String(shopifyId)) || {};
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(shopifyId) }, { projection: { _id: 0 } }) || {};
 
     const adminEmail = cfg.adminEmail;
     const customerEmail = order.email;
@@ -1436,13 +1024,13 @@ async function fireStageEmails(shopifyId, newStage) {
     if (newStage === 'confirmed') {
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
-        const vendorMeta = db.prepare("SELECT advance_paid FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
+        const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `New Order: ${order.name} — Action Required`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
       }
     }
 
     if (newStage === 'partial') {
-      const vendorMeta = db.prepare("SELECT advance_paid, payment_type FROM order_meta WHERE shopify_id=?").get(String(order.id)) || {};
+      const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
       // Customer email
       if (customerEmail) await sendEmail({
         to: customerEmail,
@@ -1604,7 +1192,7 @@ const JARVIS_TOOLS = [
 // ── JARVIS tool executor — runs whichever tool the AI asked for ───────────────
 async function runJarvisTool(name, args) {
   const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-  const metas     = Object.fromEntries(db.prepare("SELECT * FROM order_meta").all().map(m=>[m.shopify_id,m]));
+  const metas     = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
 
   const now      = new Date();
   const today    = new Date(now); today.setHours(0,0,0,0);
@@ -1706,7 +1294,14 @@ async function runJarvisTool(name, args) {
   }
 
   if (name === "get_settlements") {
-    return db.prepare("SELECT status, COUNT(*) as count, ROUND(SUM(net_payable),2) as total FROM settlements GROUP BY status").all();
+    const allSettl = await mdb.collection('settlements').find({}, { projection: { status: 1, net_payable: 1, _id: 0 } }).toArray();
+    const grouped = {};
+    allSettl.forEach(s => {
+      if (!grouped[s.status]) grouped[s.status] = { status: s.status, count: 0, total: 0 };
+      grouped[s.status].count++;
+      grouped[s.status].total = parseFloat((grouped[s.status].total + (s.net_payable || 0)).toFixed(2));
+    });
+    return Object.values(grouped);
   }
 
   if (name === "get_delivery_stats") {
@@ -1928,7 +1523,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     );
     const vName = req.vendor.toLowerCase();
 
-    const metas   = db.prepare("SELECT * FROM order_meta").all();
+    const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
 
     const orders = allOrders
@@ -2163,7 +1758,7 @@ app.post("/admin/logout", adminAuth, (req, res) => {
 app.get("/admin/dashboard", adminAuth, async (req, res) => {
   try {
     const raw    = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
-    const metas  = db.prepare("SELECT * FROM order_meta").all();
+    const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
 
     const STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
@@ -2177,7 +1772,8 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
       totalRevenue += parseFloat(o.total_price || 0);
     });
 
-    const pendRow = db.prepare("SELECT SUM(commission+gst_amount) as t FROM settlements WHERE status='pending'").get();
+    const pendDocs = await mdb.collection('settlements').find({ status: 'pending' }, { projection: { commission: 1, gst_amount: 1, _id: 0 } }).toArray();
+    const pendRow = { t: pendDocs.reduce((s, d) => s + (d.commission || 0) + (d.gst_amount || 0), 0) };
     res.json({
       totalOrders: raw.length,
       stageCounts,
@@ -2194,7 +1790,7 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
 app.get("/admin/analytics", adminAuth, async (req, res) => {
   try {
     const raw     = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
-    const metas   = db.prepare("SELECT * FROM order_meta").all();
+    const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
 
     const now      = Date.now();
@@ -2339,7 +1935,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     });
 
     // ── All-time totals (always show regardless of period)
-    const pendRow = db.prepare("SELECT SUM(commission+gst_amount) as t FROM settlements WHERE status='pending'").get();
+    const pendDocs = await mdb.collection('settlements').find({ status: 'pending' }, { projection: { commission: 1, gst_amount: 1, _id: 0 } }).toArray();
+    const pendRow = { t: pendDocs.reduce((s, d) => s + (d.commission || 0) + (d.gst_amount || 0), 0) };
     const allTimeTotals = {
       orders:  raw.length,
       revenue: rev(raw),
@@ -2379,9 +1976,9 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
   try {
     const { stage, vendor, created_at_min, created_at_max } = req.query;
     const raw    = await fetchAllOrders("any", created_at_min || "2000-01-01T00:00:00Z", created_at_max || null);
-    const metas  = db.prepare("SELECT * FROM order_meta").all();
+    const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const allVS  = db.prepare("SELECT shopify_id, vendor_name, stage FROM order_vendor_stage").all();
+    const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray();
     const vsMap  = {}; // { shopify_id: { vendor_name: stage } }
     allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r.stage; });
 
@@ -2459,7 +2056,7 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
   const now = new Date().toISOString();
   const nowMs = Date.now();
   const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
-  const existing = db.prepare("SELECT * FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(id, vendor_name);
+  const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name }, { projection: { _id: 0 } });
 
   const newStartedAt = ['confirmed','partial'].includes(stage) ? nowMs : (existing?.stage_started_at || 0);
   const newWarning   = fulfilledStages.includes(stage) ? 0 : (['confirmed','partial'].includes(stage) ? 0 : (existing?.warning_sent || 0));
@@ -2471,8 +2068,8 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/orders/:id/vendor-stages ──────────────────────────────────
-app.get("/admin/orders/:id/vendor-stages", adminAuth, (req, res) => {
-  const rows = db.prepare("SELECT vendor_name, stage, updated_at FROM order_vendor_stage WHERE shopify_id=?").all(req.params.id);
+app.get("/admin/orders/:id/vendor-stages", adminAuth, async (req, res) => {
+  const rows = await mdb.collection('order_vendor_stage').find({ shopify_id: req.params.id }, { projection: { vendor_name: 1, stage: 1, updated_at: 1, _id: 0 } }).toArray();
   res.json({ vendorStages: Object.fromEntries(rows.map(r => [r.vendor_name, r.stage])) });
 });
 
@@ -2484,7 +2081,7 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
   const advPaid = parseFloat(advance_paid) || 0;
 
   // Build update fields (only set non-null values, preserve existing)
-  const existing = db.prepare("SELECT * FROM order_meta WHERE shopify_id=?").get(id) || {};
+  const existing = await mdb.collection('order_meta').findOne({ shopify_id: id }, { projection: { _id: 0 } }) || {};
   const fields = {
     payment_type:    payment_type    ?? existing.payment_type    ?? 'cod',
     advance_paid:    advPaid         || existing.advance_paid    || 0,
@@ -2544,20 +2141,19 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     return res.status(400).json({ error: "vendor_name, period_start, period_end required." });
 
   try {
-    const existing = db.prepare("SELECT id FROM settlements WHERE vendor_name=? AND period_start=? AND period_end=?")
-      .get(vendor_name, period_start, period_end);
+    const existing = await mdb.collection('settlements').findOne({ vendor_name, period_start, period_end });
     if (existing) return res.status(400).json({ error: "Settlement already exists for this period." });
 
     const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
     const vName  = vendor_name.toLowerCase();
     // Commission priority: vendor_profiles → vendor_config → default 20%
-    const vProfile = db.prepare("SELECT commission_pct FROM vendor_profiles WHERE vendor_name=?").get(vendor_name);
+    const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, _id: 0 } });
     const vConfig  = await VC.get(vendor_name);
     const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
-    const metas  = db.prepare("SELECT * FROM order_meta").all();
+    const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     // Per-vendor stage overrides
-    const vendorStages = db.prepare("SELECT shopify_id, stage FROM order_vendor_stage WHERE vendor_name=?").all(vendor_name);
+    const vendorStages = await mdb.collection('order_vendor_stage').find({ vendor_name }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
     const vendorStageMap = Object.fromEntries(vendorStages.map(r => [r.shopify_id, r.stage]));
 
     // Only settle delivered orders — use vendor-specific stage if set, else order stage
@@ -2606,36 +2202,45 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     });
 
     // netPayable: positive = vendor pays CrosCrow, negative = CrosCrow pays vendor
-    const netPayable = parseFloat(totalNet.toFixed(2));
+    let netPayable = parseFloat(totalNet.toFixed(2));
     const invoiceNo  = `CC-${vendor_name.toUpperCase().replace(/\s+/g,"").slice(0,6)}-${period_start.slice(0,7).replace("-","")}-${String(Date.now()).slice(-4)}`;
 
-    const { lastInsertRowid: settlId } = db.prepare(
-      `INSERT INTO settlements (vendor_name,period_start,period_end,total_orders,gross_revenue,commission,gst_amount,advance_total,net_payable,total_shipping,status,invoice_no,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(vendor_name, period_start, period_end, vendorDelivered.length,
-      parseFloat(totalRev.toFixed(2)), parseFloat(totalComm.toFixed(2)),
-      parseFloat(totalGst.toFixed(2)), parseFloat(totalAdv.toFixed(2)),
-      netPayable, parseFloat(totalShipping.toFixed(2)), "pending", invoiceNo, new Date().toISOString());
+    const settlId = await nextId('settlements');
+    await mdb.collection('settlements').insertOne({
+      id: settlId, vendor_name, period_start, period_end,
+      total_orders: vendorDelivered.length,
+      gross_revenue: parseFloat(totalRev.toFixed(2)),
+      commission: parseFloat(totalComm.toFixed(2)),
+      gst_amount: parseFloat(totalGst.toFixed(2)),
+      advance_total: parseFloat(totalAdv.toFixed(2)),
+      net_payable: netPayable,
+      total_shipping: parseFloat(totalShipping.toFixed(2)),
+      status: 'pending', invoice_no: invoiceNo,
+      created_at: new Date().toISOString(),
+      penalty_deduction: 0, extra_discount: 0, shipping_adjustment: 0, extra_advance: 0, invoice_notes: '',
+    });
 
-    const ins = db.prepare(
-      `INSERT INTO settlement_orders (settlement_id,shopify_order_id,order_name,my_revenue,payment_type,commission_pct,commission,gst,advance_paid,shipping_charge,net)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-    );
-    orderDetails.forEach(od => ins.run(settlId, od.shopify_order_id, od.order_name, od.my_revenue,
-      od.payment_type, od.commission_pct, od.commission, od.gst, od.advance_paid, od.shipping_charge, od.net));
+    if (orderDetails.length > 0) {
+      const settlOrderDocs = await Promise.all(orderDetails.map(async od => ({
+        id: await nextId('settlement_orders'),
+        settlement_id: settlId, ...od,
+      })));
+      await mdb.collection('settlement_orders').insertMany(settlOrderDocs);
+    }
 
     // Include confirmed penalties for this vendor in the settlement period
     const periodStartTs = new Date(period_start + 'T00:00:00Z').getTime();
     const periodEndTs   = new Date(period_end   + 'T23:59:59Z').getTime();
-    const confirmedPenalties = db.prepare(
-      "SELECT * FROM order_penalties WHERE vendor_name=? AND status='confirmed' AND triggered_at>=? AND triggered_at<=?"
-    ).all(vendor_name, periodStartTs, periodEndTs);
+    const confirmedPenalties = await mdb.collection('order_penalties').find(
+      { vendor_name, status: 'confirmed', triggered_at: { $gte: periodStartTs, $lte: periodEndTs } },
+      { projection: { _id: 0 } }
+    ).toArray();
     const penaltyTotal = confirmedPenalties.reduce((s, p) => s + (p.penalty_amount || 0), 0);
     if (penaltyTotal > 0) {
-      const insP = db.prepare("INSERT INTO settlement_penalties (settlement_id, penalty_id, amount) VALUES (?,?,?)");
-      confirmedPenalties.forEach(p => insP.run(settlId, p.id, p.penalty_amount));
+      const penDocs = await Promise.all(confirmedPenalties.map(async p => ({ id: await nextId('settlement_penalties'), settlement_id: settlId, penalty_id: p.id, amount: p.penalty_amount })));
+      await mdb.collection('settlement_penalties').insertMany(penDocs);
       const updatedNet = parseFloat((netPayable + penaltyTotal).toFixed(2));
-      db.prepare("UPDATE settlements SET penalty_deduction=?, net_payable=? WHERE id=?").run(penaltyTotal, updatedNet, settlId);
+      await mdb.collection('settlements').updateOne({ id: settlId }, { $set: { penalty_deduction: penaltyTotal, net_payable: updatedNet } });
       netPayable = updatedNet;
     }
 
@@ -2651,20 +2256,22 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
   try {
     const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-    const metas = db.prepare("SELECT * FROM order_meta").all();
+    const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vProfiles = db.prepare("SELECT * FROM vendor_profiles").all();
+    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray();
     const vConfigs  = await VC.all();
     const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
     const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
 
     // Aggregate settled amounts per vendor from paid invoices
-    const paidSettlements = db.prepare("SELECT vendor_name, SUM(net_payable) as total_settled FROM settlements WHERE status='paid' GROUP BY vendor_name").all();
-    const settledMap = Object.fromEntries(paidSettlements.map(s => [s.vendor_name, s.total_settled]));
+    const paidSettlDocs = await mdb.collection('settlements').find({ status: 'paid' }, { projection: { vendor_name: 1, net_payable: 1, _id: 0 } }).toArray();
+    const settledMapRaw = {};
+    paidSettlDocs.forEach(s => { settledMapRaw[s.vendor_name] = (settledMapRaw[s.vendor_name] || 0) + (s.net_payable || 0); });
+    const settledMap = Object.fromEntries(Object.entries(settledMapRaw).map(([k,v]) => [k, parseFloat(v.toFixed(2))]));
 
     const vendorMap = {};
     // Load all per-vendor stage overrides
-    const allVendorStages = db.prepare("SELECT shopify_id, vendor_name, stage FROM order_vendor_stage").all();
+    const allVendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
     const allVendorStageMap = {}; // { shopify_id: { vendor_name: stage } }
     allVendorStages.forEach(r => {
       if (!allVendorStageMap[r.shopify_id]) allVendorStageMap[r.shopify_id] = {};
@@ -2751,39 +2358,42 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/settlements ────────────────────────────────────────────────
-app.get("/admin/settlements", adminAuth, (req, res) => {
+app.get("/admin/settlements", adminAuth, async (req, res) => {
   const { vendor_name, status } = req.query;
-  const conditions = [], params = [];
-  if (vendor_name) { conditions.push("vendor_name=?"); params.push(vendor_name); }
-  if (status)      { conditions.push("status=?");      params.push(status); }
-  const where = conditions.length ? " WHERE " + conditions.join(" AND ") : "";
-  res.json({ settlements: db.prepare(`SELECT * FROM settlements${where} ORDER BY created_at DESC`).all(...params) });
+  const q = {};
+  if (vendor_name) q.vendor_name = vendor_name;
+  if (status) q.status = status;
+  const settlements = await mdb.collection('settlements').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+  res.json({ settlements });
 });
 
 // ── GET /admin/settlements/:id ────────────────────────────────────────────
-app.get("/admin/settlements/:id", adminAuth, (req, res) => {
-  const settlement = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
+app.get("/admin/settlements/:id", adminAuth, async (req, res) => {
+  const sid = parseInt(req.params.id);
+  const settlement = await mdb.collection('settlements').findOne({ id: sid }, { projection: { _id: 0 } });
   if (!settlement) return res.status(404).json({ error: "Not found." });
-  const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
-  const croscrow    = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
-  const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(settlement.vendor_name) || {};
+  const orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
+  const croscrow = await mdb.collection('croscrow_profile').findOne({ id: 1 }, { projection: { _id: 0 } }) || {};
+  const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: settlement.vendor_name }, { projection: { _id: 0 } }) || {};
   res.json({ settlement, orders, croscrow, vendorProfile });
 });
 
 // ── DELETE /admin/settlements/:id ────────────────────────────────────────
-app.delete("/admin/settlements/:id", adminAuth, (req, res) => {
-  const s = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
+app.delete("/admin/settlements/:id", adminAuth, async (req, res) => {
+  const sid = parseInt(req.params.id);
+  const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { _id: 0 } });
   if (!s) return res.status(404).json({ error: "Not found." });
-  db.prepare("DELETE FROM settlement_orders WHERE settlement_id=?").run(req.params.id);
-  db.prepare("DELETE FROM wallet_tx WHERE ref_id=?").run(String(s.id));
-  db.prepare("DELETE FROM settlements WHERE id=?").run(req.params.id);
+  await mdb.collection('settlement_orders').deleteMany({ settlement_id: sid });
+  await mdb.collection('wallet_tx').deleteMany({ ref_id: String(sid) });
+  await mdb.collection('settlements').deleteOne({ id: sid });
   auditLog("admin", "settlement_deleted", req.params.id, { vendor: s.vendor_name, invoice: s.invoice_no });
   res.json({ success: true });
 });
 
 // ── PUT /admin/settlements/:id/edit ───────────────────────────────────────
-app.put("/admin/settlements/:id/edit", adminAuth, (req, res) => {
-  const s = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
+app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
+  const sid = parseInt(req.params.id);
+  const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { _id: 0 } });
   if (!s) return res.status(404).json({ error: "Not found." });
 
   const {
@@ -2794,28 +2404,24 @@ app.put("/admin/settlements/:id/edit", adminAuth, (req, res) => {
     invoice_notes      = "",
   } = req.body || {};
 
-  const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
+  let orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
 
   // Recalculate per-order commission if % changed
   let newCommission = s.commission, newGst = s.gst_amount;
   if (custom_commission_pct != null && parseFloat(custom_commission_pct) !== (s.custom_commission_pct || 0)) {
     newCommission = 0; newGst = 0;
-    const updOrd = db.prepare("UPDATE settlement_orders SET commission_pct=?,commission=?,gst=?,net=? WHERE id=?");
-    orders.forEach(o => {
+    for (const o of orders) {
       const calc = calcCommission(o.my_revenue, o.payment_type, parseFloat(custom_commission_pct), o.advance_paid);
       newCommission += calc.commission;
       newGst        += calc.gst;
-      updOrd.run(parseFloat(custom_commission_pct), calc.commission, calc.gst, calc.net, o.id);
-    });
+      await mdb.collection('settlement_orders').updateOne({ id: o.id }, { $set: { commission_pct: parseFloat(custom_commission_pct), commission: calc.commission, gst: calc.gst, net: calc.net } });
+    }
+    orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
     newCommission = parseFloat(newCommission.toFixed(2));
     newGst        = parseFloat(newGst.toFixed(2));
   }
 
-  // Sum base net from (possibly updated) orders
-  const updatedOrders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
-  const baseNet = updatedOrders.reduce((sum, o) => sum + (o.net || 0), 0);
-
-  // Apply adjustments: discount & extra advance reduce what vendor owes; shipping_adjustment adds to it
+  const baseNet = orders.reduce((sum, o) => sum + (o.net || 0), 0);
   const adjustedNet = parseFloat((
     baseNet
     - parseFloat(extra_discount || 0)
@@ -2823,28 +2429,36 @@ app.put("/admin/settlements/:id/edit", adminAuth, (req, res) => {
     + parseFloat(shipping_adjustment || 0)
   ).toFixed(2));
 
-  db.prepare(`UPDATE settlements SET
-    commission=?, gst_amount=?,
-    extra_discount=?, shipping_adjustment=?, extra_advance=?,
-    invoice_notes=?, custom_commission_pct=?, net_payable=?
-    WHERE id=?`)
-    .run(newCommission, newGst,
-      parseFloat(extra_discount||0), parseFloat(shipping_adjustment||0), parseFloat(extra_advance||0),
-      invoice_notes || "", custom_commission_pct != null ? parseFloat(custom_commission_pct) : null,
-      adjustedNet, req.params.id);
+  await mdb.collection('settlements').updateOne({ id: sid }, { $set: {
+    commission: newCommission, gst_amount: newGst,
+    extra_discount: parseFloat(extra_discount||0),
+    shipping_adjustment: parseFloat(shipping_adjustment||0),
+    extra_advance: parseFloat(extra_advance||0),
+    invoice_notes: invoice_notes || "",
+    custom_commission_pct: custom_commission_pct != null ? parseFloat(custom_commission_pct) : null,
+    net_payable: adjustedNet,
+  }});
 
   auditLog("admin", "settlement_edited", req.params.id, req.body);
   res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst });
 });
 
 // ── PUT /admin/settlements/:id/mark-paid ──────────────────────────────────
-app.put("/admin/settlements/:id/mark-paid", adminAuth, (req, res) => {
-  const s = db.prepare("SELECT * FROM settlements WHERE id=?").get(req.params.id);
+app.put("/admin/settlements/:id/mark-paid", adminAuth, async (req, res) => {
+  const sid = parseInt(req.params.id);
+  const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { _id: 0 } });
   if (!s) return res.status(404).json({ error: "Not found." });
-  db.prepare("UPDATE settlements SET status='paid', paid_at=? WHERE id=?").run(new Date().toISOString(), req.params.id);
-  db.prepare("INSERT INTO wallet_tx (vendor_name,type,amount,description,ref_id,created_at) VALUES (?,?,?,?,?,?)")
-    .run(s.vendor_name, s.net_payable > 0 ? "debit" : "credit",
-      Math.abs(s.net_payable), `Settlement ${s.invoice_no}`, String(s.id), new Date().toISOString());
+  const now = new Date().toISOString();
+  await mdb.collection('settlements').updateOne({ id: sid }, { $set: { status: 'paid', paid_at: now } });
+  await mdb.collection('wallet_tx').insertOne({
+    id: await nextId('wallet_tx'),
+    vendor_name: s.vendor_name,
+    type: s.net_payable > 0 ? "debit" : "credit",
+    amount: Math.abs(s.net_payable),
+    description: `Settlement ${s.invoice_no}`,
+    ref_id: String(sid),
+    created_at: now,
+  });
   auditLog("admin", "settlement_paid", req.params.id, { vendor: s.vendor_name, amount: s.net_payable });
   res.json({ success: true });
 });
@@ -2861,31 +2475,32 @@ app.get("/admin/order-tags", adminAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get("/admin/tag-mappings", adminAuth, (req, res) => {
-  res.json({ mappings: db.prepare("SELECT * FROM tag_mappings ORDER BY priority ASC, id ASC").all() });
+app.get("/admin/tag-mappings", adminAuth, async (req, res) => {
+  const mappings = await mdb.collection('tag_mappings').find({}, { projection: { _id: 0 } }).sort({ priority: 1, id: 1 }).toArray();
+  res.json({ mappings });
 });
 
-app.put("/admin/tag-mappings/:id/priority", adminAuth, (req, res) => {
+app.put("/admin/tag-mappings/:id/priority", adminAuth, async (req, res) => {
   const { priority } = req.body || {};
   if (priority === undefined) return res.status(400).json({ error: "priority required" });
-  db.prepare("UPDATE tag_mappings SET priority=? WHERE id=?").run(Number(priority), req.params.id);
+  await mdb.collection('tag_mappings').updateOne({ id: parseInt(req.params.id) }, { $set: { priority: Number(priority) } });
   res.json({ ok: true });
 });
 
-app.post("/admin/tag-mappings", adminAuth, (req, res) => {
+app.post("/admin/tag-mappings", adminAuth, async (req, res) => {
   const { shopify_tag, stage, priority = 99 } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
   const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID_STAGES.includes(stage)) return res.status(400).json({ error: `Invalid stage '${stage}'. Valid: ${VALID_STAGES.join(", ")}` });
-  const existing = db.prepare("SELECT id FROM tag_mappings WHERE lower(shopify_tag)=lower(?)").get(shopify_tag);
+  const existing = await mdb.collection('tag_mappings').findOne({ shopify_tag: { $regex: new RegExp(`^${shopify_tag.trim()}$`, 'i') } });
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
-  const { lastInsertRowid } = db.prepare("INSERT INTO tag_mappings (shopify_tag, stage, priority, created_at) VALUES (?,?,?,?)")
-    .run(shopify_tag.trim(), stage, Number(priority), new Date().toISOString());
-  res.json({ success: true, id: lastInsertRowid });
+  const id = await nextId('tag_mappings');
+  await mdb.collection('tag_mappings').insertOne({ id, shopify_tag: shopify_tag.trim(), stage, priority: Number(priority), created_at: new Date().toISOString() });
+  res.json({ success: true, id });
 });
 
-app.delete("/admin/tag-mappings/:id", adminAuth, (req, res) => {
-  db.prepare("DELETE FROM tag_mappings WHERE id=?").run(req.params.id);
+app.delete("/admin/tag-mappings/:id", adminAuth, async (req, res) => {
+  await mdb.collection('tag_mappings').deleteOne({ id: parseInt(req.params.id) });
   res.json({ success: true });
 });
 
@@ -2894,13 +2509,13 @@ app.post("/admin/tag-mappings/sync", adminAuth, async (req, res) => {
   try {
     const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
     let updated = 0;
-    const before = db.prepare("SELECT shopify_id, stage, payment_type, advance_paid FROM order_meta").all();
-    const beforeMap = Object.fromEntries(before.map(r => [r.shopify_id, r]));
+    const beforeArr = await mdb.collection('order_meta').find({}, { projection: { shopify_id: 1, stage: 1, payment_type: 1, advance_paid: 1, _id: 0 } }).toArray();
+    const beforeMap = Object.fromEntries(beforeArr.map(r => [r.shopify_id, r]));
 
     for (const o of allOrders) {
       const prev = beforeMap[String(o.id)];
-      applyTagMappings(o.id, o.tags, o.financial_status);
-      const after = db.prepare("SELECT stage, payment_type, advance_paid FROM order_meta WHERE shopify_id=?").get(String(o.id));
+      await applyTagMappings(o.id, o.tags, o.financial_status);
+      const after = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { stage: 1, payment_type: 1, advance_paid: 1, _id: 0 } });
       if (!prev || prev.stage !== after?.stage || prev.payment_type !== after?.payment_type || prev.advance_paid !== after?.advance_paid) {
         updated++;
       }
@@ -2913,13 +2528,12 @@ app.post("/admin/tag-mappings/sync", adminAuth, async (req, res) => {
 });
 
 // ── GET/PUT /admin/croscrow-profile ──────────────────────────────────────
-app.get("/admin/croscrow-profile", adminAuth, (req, res) => {
-  res.json(db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {});
+app.get("/admin/croscrow-profile", adminAuth, async (req, res) => {
+  res.json(await mdb.collection('croscrow_profile').findOne({ id: 1 }, { projection: { _id: 0 } }) || {});
 });
-app.put("/admin/croscrow-profile", adminAuth, (req, res) => {
+app.put("/admin/croscrow-profile", adminAuth, async (req, res) => {
   const f = req.body || {};
-  db.prepare(`UPDATE croscrow_profile SET company_name=?,email=?,phone=?,address=?,city=?,state=?,pincode=?,gst_no=?,pan_no=?,bank_name=?,account_no=?,ifsc=?,website=? WHERE id=1`)
-    .run(f.company_name||'CrosCrow Marketplace',f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',f.website||'');
+  await mdb.collection('croscrow_profile').updateOne({ id: 1 }, { $set: { id: 1, company_name: f.company_name||'CrosCrow Marketplace', email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', website: f.website||'' } }, { upsert: true });
   auditLog("admin","profile_update","croscrow",{});
   res.json({ success:true });
 });
@@ -2927,67 +2541,58 @@ app.put("/admin/croscrow-profile", adminAuth, (req, res) => {
 // ── GET/PUT /admin/vendors/:name/profile ──────────────────────────────────
 app.get("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
-  const p = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(name) || { vendor_name: name };
+  const p = await mdb.collection('vendor_profiles').findOne({ vendor_name: name }, { projection: { _id: 0 } }) || { vendor_name: name };
   const cfg = await VC.get(name);
   if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
   res.json(p);
 });
-app.put("/admin/vendors/:name/profile", adminAuth, (req, res) => {
+app.put("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const f = req.body || {};
-  db.prepare(`INSERT INTO vendor_profiles (vendor_name,email,phone,address,city,state,pincode,gst_no,pan_no,bank_name,account_no,ifsc,commission_pct,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email,phone=excluded.phone,address=excluded.address,city=excluded.city,state=excluded.state,pincode=excluded.pincode,gst_no=excluded.gst_no,pan_no=excluded.pan_no,bank_name=excluded.bank_name,account_no=excluded.account_no,ifsc=excluded.ifsc,commission_pct=excluded.commission_pct,updated_at=excluded.updated_at`)
-    .run(name,f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',f.commission_pct!=null?parseFloat(f.commission_pct):null,new Date().toISOString());
-  // sync commission to vendor_config too
-  if (f.commission_pct != null) {
-    VC.upsert(name, { commission_pct: parseFloat(f.commission_pct) }).catch(()=>{});
-  }
+  await mdb.collection('vendor_profiles').updateOne({ vendor_name: name }, { $set: { vendor_name: name, email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', commission_pct: f.commission_pct!=null?parseFloat(f.commission_pct):null, updated_at: new Date().toISOString() } }, { upsert: true });
+  if (f.commission_pct != null) VC.upsert(name, { commission_pct: parseFloat(f.commission_pct) }).catch(()=>{});
   auditLog("admin","vendor_profile_update",name,{ commission_pct: f.commission_pct });
   res.json({ success:true });
 });
 
 // ── GET /admin/audit ──────────────────────────────────────────────────────
-app.get("/admin/audit", adminAuth, (req, res) => {
-  res.json({ logs: db.prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 500").all() });
+app.get("/admin/audit", adminAuth, async (req, res) => {
+  const logs = await mdb.collection('audit_log').find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(500).toArray();
+  res.json({ logs });
 });
 
 // ── Email Settings ────────────────────────────────────────────────────────
-app.get("/admin/email-settings", adminAuth, (req, res) => {
-  const row = db.prepare("SELECT smtp, enabled FROM email_settings WHERE id=1").get();
-  const smtp = row ? JSON.parse(row.smtp) : {};
+app.get("/admin/email-settings", adminAuth, async (req, res) => {
+  const row = await ES.get();
+  const smtp = row ? (typeof row.smtp === 'string' ? JSON.parse(row.smtp) : (row.smtp || {})) : {};
   const enabled = row ? (row.enabled !== 0) : true;
   res.json({ smtp: { ...smtp, pass: smtp.pass ? '••••••••' : '' }, enabled });
 });
 
-app.post("/admin/email-settings/toggle", adminAuth, (req, res) => {
+app.post("/admin/email-settings/toggle", adminAuth, async (req, res) => {
   const { enabled } = req.body || {};
-  const val = enabled ? 1 : 0;
-  db.prepare("INSERT INTO email_settings (id, smtp, enabled) VALUES (1, '{}', ?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled")
-    .run(val);
-  res.json({ ok: true, enabled: val === 1 });
+  await ES.save({ enabled: enabled ? 1 : 0 });
+  res.json({ ok: true, enabled: !!enabled });
 });
 
-app.post("/admin/email-settings", adminAuth, (req, res) => {
+app.post("/admin/email-settings", adminAuth, async (req, res) => {
   const { smtp } = req.body || {};
   if (!smtp) return res.status(400).json({ error: "smtp config required" });
-  // Don't overwrite password if masked value sent
-  const existing = db.prepare("SELECT smtp FROM email_settings WHERE id=1").get();
+  const existing = await ES.get();
   let merged = smtp;
   if (existing) {
-    const prev = JSON.parse(existing.smtp);
+    const prev = typeof existing.smtp === 'string' ? JSON.parse(existing.smtp) : (existing.smtp || {});
     if (smtp.pass === '••••••••') smtp.pass = prev.pass;
     merged = { ...prev, ...smtp };
   }
-  db.prepare("INSERT INTO email_settings (id, smtp) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET smtp=excluded.smtp")
-    .run(JSON.stringify(merged));
+  await ES.save({ smtp: JSON.stringify(merged) });
   res.json({ ok: true });
 });
 
 app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
   const { to } = req.body || {};
   if (!to) return res.status(400).json({ error: "to email required" });
-  const cfg = getSmtpConfig();
+  const cfg = await getSmtpConfig();
   if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
   try {
     const transporter = createTransporter(cfg);
@@ -3003,7 +2608,7 @@ app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
 app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
   const { to, template } = req.body || {};
   if (!to || !template) return res.status(400).json({ error: "to and template required" });
-  const cfg = getSmtpConfig();
+  const cfg = await getSmtpConfig();
   if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
 
   const demoOrder = {
@@ -3042,11 +2647,8 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
 });
 
 app.get("/admin/email-log", adminAuth, async (req, res) => {
-  if (mdb) {
-    const logs = await mdb.collection('email_log').find({}, { projection: { _id: 0 } }).sort({ sent_at: -1 }).limit(200).toArray();
-    return res.json({ logs });
-  }
-  res.json({ logs: db.prepare("SELECT * FROM email_log ORDER BY sent_at DESC LIMIT 200").all() });
+  const logs = await mdb.collection('email_log').find({}, { projection: { _id: 0 } }).sort({ sent_at: -1 }).limit(200).toArray();
+  res.json({ logs });
 });
 
 // Vendor email update
@@ -3060,23 +2662,19 @@ app.put("/admin/vendors/:name/email", adminAuth, async (req, res) => {
 // ── Vendor wallet + settlements ───────────────────────────────────────────
 // ── GET/PUT /vendor/profile ───────────────────────────────────────────────
 app.get("/vendor/profile", vendorAuth, async (req, res) => {
-  const p = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || { vendor_name: req.vendor };
+  const p = await mdb.collection('vendor_profiles').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } }) || { vendor_name: req.vendor };
   const cfg = await VC.get(req.vendor);
   if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
   res.json(p);
 });
-app.put("/vendor/profile", vendorAuth, (req, res) => {
+app.put("/vendor/profile", vendorAuth, async (req, res) => {
   const f = req.body || {};
-  // Vendor cannot change commission_pct — strip it
-  db.prepare(`INSERT INTO vendor_profiles (vendor_name,email,phone,address,city,state,pincode,gst_no,pan_no,bank_name,account_no,ifsc,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(vendor_name) DO UPDATE SET email=excluded.email,phone=excluded.phone,address=excluded.address,city=excluded.city,state=excluded.state,pincode=excluded.pincode,gst_no=excluded.gst_no,pan_no=excluded.pan_no,bank_name=excluded.bank_name,account_no=excluded.account_no,ifsc=excluded.ifsc,updated_at=excluded.updated_at`)
-    .run(req.vendor,f.email||'',f.phone||'',f.address||'',f.city||'',f.state||'',f.pincode||'',f.gst_no||'',f.pan_no||'',f.bank_name||'',f.account_no||'',f.ifsc||'',new Date().toISOString());
+  await mdb.collection('vendor_profiles').updateOne({ vendor_name: req.vendor }, { $set: { vendor_name: req.vendor, email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', updated_at: new Date().toISOString() } }, { upsert: true });
   res.json({ success:true });
 });
 
-app.get("/vendor/wallet", vendorAuth, (req, res) => {
-  const txs     = db.prepare("SELECT * FROM wallet_tx WHERE vendor_name=? ORDER BY created_at DESC").all(req.vendor);
+app.get("/vendor/wallet", vendorAuth, async (req, res) => {
+  const txs = await mdb.collection('wallet_tx').find({ vendor_name: req.vendor }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
   const balance = txs.reduce((s, t) => t.type === "credit" ? s + t.amount : s - t.amount, 0);
   res.json({ balance: parseFloat(balance.toFixed(2)), transactions: txs });
 });
@@ -3086,14 +2684,14 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
   try {
     const vName = req.vendor.toLowerCase();
     const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-    const metas = db.prepare("SELECT * FROM order_meta").all();
-    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor);
+    const metasArr = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const metaMap = Object.fromEntries(metasArr.map(m => [m.shopify_id, m]));
+    const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } });
     const vConfig  = await VC.get(req.vendor);
     const commPct  = vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20;
 
-    const paidSettlements = db.prepare("SELECT SUM(net_payable) as total_settled FROM settlements WHERE vendor_name=? AND status='paid'").get(req.vendor);
-    const totalSettled = paidSettlements?.total_settled || 0;
+    const paidSettlDocs = await mdb.collection('settlements').find({ vendor_name: req.vendor, status: 'paid' }, { projection: { net_payable: 1, _id: 0 } }).toArray();
+    const totalSettled = paidSettlDocs.reduce((s, d) => s + (d.net_payable || 0), 0);
 
     let totalOrders = 0, gross = 0, prepaidDiscount = 0, commission = 0, gst = 0, advance = 0, shipping = 0, net = 0;
 
@@ -3141,43 +2739,48 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
   }
 });
 
-app.get("/vendor/settlements", vendorAuth, (req, res) => {
-  res.json({ settlements: db.prepare("SELECT * FROM settlements WHERE vendor_name=? ORDER BY created_at DESC").all(req.vendor) });
+app.get("/vendor/settlements", vendorAuth, async (req, res) => {
+  const settlements = await mdb.collection('settlements').find({ vendor_name: req.vendor }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+  res.json({ settlements });
 });
 
-app.get("/vendor/settlements/:id", vendorAuth, (req, res) => {
-  const s = db.prepare("SELECT * FROM settlements WHERE id=? AND vendor_name=?").get(req.params.id, req.vendor);
+app.get("/vendor/settlements/:id", vendorAuth, async (req, res) => {
+  const sid = parseInt(req.params.id);
+  const s = await mdb.collection('settlements').findOne({ id: sid, vendor_name: req.vendor }, { projection: { _id: 0 } });
   if (!s) return res.status(404).json({ error: "Not found." });
-  const croscrow      = db.prepare("SELECT * FROM croscrow_profile WHERE id=1").get() || {};
-  const vendorProfile = db.prepare("SELECT * FROM vendor_profiles WHERE vendor_name=?").get(req.vendor) || {};
-  const orders = db.prepare("SELECT * FROM settlement_orders WHERE settlement_id=?").all(req.params.id);
+  const [croscrow, vendorProfile, orders] = await Promise.all([
+    mdb.collection('croscrow_profile').findOne({ id: 1 }, { projection: { _id: 0 } }).then(r => r || {}),
+    mdb.collection('vendor_profiles').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } }).then(r => r || {}),
+    mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray(),
+  ]);
   res.json({ settlement: s, orders, croscrow, vendorProfile });
 });
 
 // ── Shipping Partners ──────────────────────────────────────────────────────
 
 // GET /vendor/shipping/partners
-app.get("/vendor/shipping/partners", vendorAuth, (req, res) => {
-  const rows = db.prepare("SELECT partner, active, connected_at FROM vendor_shipping_partners WHERE vendor_name=?").all(req.vendor);
+app.get("/vendor/shipping/partners", vendorAuth, async (req, res) => {
+  const rows = await mdb.collection('vendor_shipping_partners').find({ vendor_name: req.vendor }, { projection: { partner: 1, active: 1, connected_at: 1, _id: 0 } }).toArray();
   res.json({ partners: rows });
 });
 
 // POST /vendor/shipping/partners — save/update credentials
-app.post("/vendor/shipping/partners", vendorAuth, (req, res) => {
+app.post("/vendor/shipping/partners", vendorAuth, async (req, res) => {
   const { partner, credentials } = req.body || {};
   if (!partner || !credentials) return res.status(400).json({ error: "partner and credentials required" });
   const allowed = ["shiprocket", "delhivery"];
   if (!allowed.includes(partner)) return res.status(400).json({ error: "Unknown partner" });
-  db.prepare(`INSERT INTO vendor_shipping_partners (vendor_name, partner, credentials, active, connected_at)
-    VALUES (?,?,?,1,?)
-    ON CONFLICT(vendor_name, partner) DO UPDATE SET credentials=excluded.credentials, active=1, connected_at=excluded.connected_at`)
-    .run(req.vendor, partner, JSON.stringify(credentials), new Date().toISOString());
+  await mdb.collection('vendor_shipping_partners').updateOne(
+    { vendor_name: req.vendor, partner },
+    { $set: { vendor_name: req.vendor, partner, credentials: JSON.stringify(credentials), active: 1, connected_at: new Date().toISOString() } },
+    { upsert: true }
+  );
   res.json({ success: true });
 });
 
 // DELETE /vendor/shipping/partners/:partner — disconnect
-app.delete("/vendor/shipping/partners/:partner", vendorAuth, (req, res) => {
-  db.prepare("DELETE FROM vendor_shipping_partners WHERE vendor_name=? AND partner=?").run(req.vendor, req.params.partner);
+app.delete("/vendor/shipping/partners/:partner", vendorAuth, async (req, res) => {
+  await mdb.collection('vendor_shipping_partners').deleteOne({ vendor_name: req.vendor, partner: req.params.partner });
   res.json({ success: true });
 });
 
@@ -3187,8 +2790,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
     if (!partner) return res.status(400).json({ error: "partner required" });
 
-    const row = db.prepare("SELECT credentials FROM vendor_shipping_partners WHERE vendor_name=? AND partner=? AND active=1")
-      .get(req.vendor, partner);
+    const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });
     if (!row) return res.status(404).json({ error: "Partner not connected. Go to Shipping Settings to connect." });
 
     const creds = JSON.parse(row.credentials);
@@ -3332,22 +2934,24 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 });
 
 // ── Admin Global Shipping Credentials ────────────────────────────────────────
-app.get("/admin/shipping-creds", adminAuth, (req, res) => {
-  const rows = db.prepare("SELECT id, partner, connected_at FROM global_shipping_creds").all();
+app.get("/admin/shipping-creds", adminAuth, async (req, res) => {
+  const rows = await mdb.collection('global_shipping_creds').find({}, { projection: { id: 1, partner: 1, connected_at: 1, _id: 0 } }).toArray();
   res.json({ partners: rows });
 });
 
-app.post("/admin/shipping-creds", adminAuth, (req, res) => {
+app.post("/admin/shipping-creds", adminAuth, async (req, res) => {
   const { partner, credentials } = req.body || {};
   if (!partner || !credentials) return res.status(400).json({ error: "partner and credentials required" });
-  db.prepare(`INSERT INTO global_shipping_creds (partner, credentials, connected_at) VALUES (?,?,?)
-    ON CONFLICT(partner) DO UPDATE SET credentials=excluded.credentials, connected_at=excluded.connected_at`)
-    .run(partner, JSON.stringify(credentials), new Date().toISOString());
+  await mdb.collection('global_shipping_creds').updateOne(
+    { partner },
+    { $set: { partner, credentials: JSON.stringify(credentials), connected_at: new Date().toISOString() } },
+    { upsert: true }
+  );
   res.json({ ok: true });
 });
 
-app.delete("/admin/shipping-creds/:partner", adminAuth, (req, res) => {
-  db.prepare("DELETE FROM global_shipping_creds WHERE partner=?").run(req.params.partner);
+app.delete("/admin/shipping-creds/:partner", adminAuth, async (req, res) => {
+  await mdb.collection('global_shipping_creds').deleteOne({ partner: req.params.partner });
   res.json({ ok: true });
 });
 
@@ -3358,7 +2962,7 @@ app.get("/admin/debug-tracking", adminAuth, async (req, res) => {
 
   const log = [];
   try {
-    const credRow = db.prepare("SELECT credentials FROM global_shipping_creds WHERE partner=?").get(partner);
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner }, { projection: { credentials: 1, _id: 0 } });
     if (!credRow) return res.json({ error: `No credentials saved for ${partner}`, log });
     const creds = JSON.parse(credRow.credentials);
     log.push({ step: "creds_loaded", partner, keys: Object.keys(creds) });
@@ -3414,7 +3018,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
   try {
     const { shopifyId } = req.params;
     // Get AWB from our DB or Shopify fulfillments
-    let meta = db.prepare("SELECT awb, courier, delivery_status FROM order_meta WHERE shopify_id=?").get(shopifyId) || {};
+    let meta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } }) || {};
     let awb = meta.awb;
     let courier = (meta.courier || "").toLowerCase();
 
@@ -3439,7 +3043,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
       return c;
     };
     const partner = detectPartner(courier);
-    const credRow = db.prepare("SELECT credentials FROM global_shipping_creds WHERE partner=?").get(partner);
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner }, { projection: { credentials: 1, _id: 0 } });
     if (!credRow) return res.json({ status: meta.delivery_status || "", awb, message: `No global credentials saved for ${partner}` });
 
     const creds = JSON.parse(credRow.credentials);
@@ -3454,10 +3058,10 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
 // Admin bulk sync delivery status for all orders with AWB
 app.post("/admin/shipping/sync-status", adminAuth, async (req, res) => {
   try {
-    const allCreds = db.prepare("SELECT partner, credentials FROM global_shipping_creds").all();
+    const allCreds = await mdb.collection('global_shipping_creds').find({}, { projection: { partner: 1, credentials: 1, _id: 0 } }).toArray();
     if (!allCreds.length) return res.json({ updated: 0, message: "No global shipping credentials configured" });
 
-    const orders = db.prepare("SELECT shopify_id, awb, courier FROM order_meta WHERE awb != '' AND awb IS NOT NULL").all();
+    const orders = await mdb.collection('order_meta').find({ awb: { $exists: true, $ne: '' } }, { projection: { shopify_id: 1, awb: 1, courier: 1, _id: 0 } }).toArray();
     let updated = 0;
     for (const o of orders) {
       const partner = (o.courier || "").toLowerCase().includes("delhivery") ? "delhivery"
@@ -3522,12 +3126,11 @@ async function fetchDeliveryStatus(partner, creds, awb) {
 // GET /vendor/orders/:shopifyId/delivery-status — fetch live status from partner
 app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res) => {
   try {
-    const meta = db.prepare("SELECT awb, courier, delivery_status FROM order_meta WHERE shopify_id=?").get(req.params.shopifyId);
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: req.params.shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } });
     if (!meta?.awb) return res.json({ status: "", awb: "" });
 
     const partner = (meta.courier || "").toLowerCase();
-    const partnerRow = db.prepare("SELECT credentials FROM vendor_shipping_partners WHERE vendor_name=? AND partner=? AND active=1")
-      .get(req.vendor, partner);
+    const partnerRow = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });
 
     let status = meta.delivery_status || "";
     if (partnerRow) {
@@ -3546,10 +3149,10 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
 // POST /vendor/shipping/sync-status — bulk refresh delivery statuses for all orders with AWB
 app.post("/vendor/shipping/sync-status", vendorAuth, async (req, res) => {
   try {
-    const partners = db.prepare("SELECT partner, credentials FROM vendor_shipping_partners WHERE vendor_name=? AND active=1").all(req.vendor);
+    const partners = await mdb.collection('vendor_shipping_partners').find({ vendor_name: req.vendor, active: 1 }, { projection: { partner: 1, credentials: 1, _id: 0 } }).toArray();
     if (!partners.length) return res.json({ updated: 0 });
 
-    const orders = db.prepare("SELECT shopify_id, awb, courier FROM order_meta WHERE awb != '' AND awb IS NOT NULL").all();
+    const orders = await mdb.collection('order_meta').find({ awb: { $exists: true, $ne: '' } }, { projection: { shopify_id: 1, awb: 1, courier: 1, _id: 0 } }).toArray();
     let updated = 0;
     for (const o of orders) {
       const partner = (o.courier || "").toLowerCase();
@@ -3579,40 +3182,6 @@ function mapStatus(s) {
   return "pending";
 }
 
-// ── Vendor Shopify sync tables ────────────────────────────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS vendor_shopify_connections (
-    vendor_name   TEXT PRIMARY KEY,
-    shop_domain   TEXT NOT NULL,
-    access_token  TEXT NOT NULL,
-    scope         TEXT DEFAULT '',
-    installed_at  INTEGER NOT NULL,
-    sync_enabled  INTEGER DEFAULT 1
-  );
-  CREATE TABLE IF NOT EXISTS vendor_product_mappings (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    vendor_name           TEXT NOT NULL,
-    vendor_product_id     TEXT NOT NULL,
-    vendor_variant_id     TEXT NOT NULL,
-    croscrow_product_id   TEXT NOT NULL,
-    croscrow_variant_id   TEXT NOT NULL,
-    sync_inventory        INTEGER DEFAULT 1,
-    last_synced_at        INTEGER DEFAULT 0,
-    UNIQUE(vendor_name, vendor_variant_id)
-  );
-`);
-
-// ── Order notes table ─────────────────────────────────────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS order_notes (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    shopify_id TEXT NOT NULL,
-    role       TEXT NOT NULL DEFAULT 'admin',
-    author     TEXT NOT NULL DEFAULT 'Admin',
-    note       TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-`);
 
 // Admin: get + post notes
 app.get("/admin/orders/:id/notes", adminAuth, async (req, res) => {
@@ -3654,7 +3223,7 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
     const shopifyOrder = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,shipping_address`);
     const ord = shopifyOrder?.order;
     const customerEmail = ord?.email;
-    const adminEmail = getSmtpConfig()?.user;
+    const adminEmail = (await getSmtpConfig())?.user;
     const etaFormatted = new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' });
     const delayHtmlCustomer = emailBase(`We're Sorry — Your Order Is Delayed`, '#f59e0b', `
       <div class="subtitle">We sincerely apologise for the delay in fulfilling your order.</div>
@@ -4129,7 +3698,7 @@ app.post("/vendor/delay-remark", async (req, res) => {
     const shopifyOrder = await shopifyREST(`/orders/${order}.json?fields=id,name,email,shipping_address,line_items`);
     const ord = shopifyOrder?.order;
     const customerEmail = ord?.email;
-    const adminEmail = getSmtpConfig()?.user;
+    const adminEmail = (await getSmtpConfig())?.user;
     const etaFormatted = new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' });
 
     const delayHtmlCustomer = emailBase(`We're Sorry — Your Order Is Delayed`, '#f59e0b', `
@@ -4248,13 +3817,10 @@ async function penaltyCronJob() {
   try {
     const now = Date.now();
     const watchStages = ['confirmed','partial'];
-    const rows = db.prepare(`
-      SELECT ovs.*, om.shopify_id as mid
-      FROM order_vendor_stage ovs
-      LEFT JOIN order_meta om ON om.shopify_id = ovs.shopify_id
-      WHERE ovs.stage IN ('confirmed','partial')
-        AND ovs.stage_started_at > 0
-    `).all();
+    const rows = await mdb.collection('order_vendor_stage').find(
+      { stage: { $in: ['confirmed','partial'] }, stage_started_at: { $gt: 0 } },
+      { projection: { _id: 0 } }
+    ).toArray();
 
     for (const row of rows) {
       const elapsed = now - row.stage_started_at;
@@ -4292,7 +3858,7 @@ async function penaltyCronJob() {
     const today = new Date().toISOString().split('T')[0];
     const etaPast = await DR.expiredEta(today);
     for (const dr of etaPast) {
-      const ovs = db.prepare("SELECT stage FROM order_vendor_stage WHERE shopify_id=? AND vendor_name=?").get(dr.shopify_id, dr.vendor_name);
+      const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: dr.shopify_id, vendor_name: dr.vendor_name }, { projection: { stage: 1, _id: 0 } });
       const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
       if (!ovs || !fulfilledStages.includes(ovs.stage)) {
         let orderName = '';
@@ -4326,8 +3892,9 @@ const RS = {
 // ── Core report data generator ────────────────────────────────────────────
 async function generateReport(fromDate, toDate) {
   const allOrders = await fetchAllOrders("any", fromDate + "T00:00:00Z", toDate + "T23:59:59Z");
-  const metas = Object.fromEntries(db.prepare("SELECT * FROM order_meta").all().map(m => [m.shopify_id, m]));
-  const vendorStages = db.prepare("SELECT * FROM order_vendor_stage").all();
+  const metasArr = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+  const metas = Object.fromEntries(metasArr.map(m => [m.shopify_id, m]));
+  const vendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
   const vsMap = {}; // { shopify_id: { vendor_name: stage } }
   vendorStages.forEach(r => {
     if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
@@ -4617,7 +4184,7 @@ function templateVendorReport({ vendorName, data, period }) {
 
 // ── Send report helper ────────────────────────────────────────────────────
 async function sendReport(fromDate, toDate) {
-  const cfg = getSmtpConfig();
+  const cfg = await getSmtpConfig();
   if (!cfg?.host) { console.log('⚠️  Report: SMTP not configured'); return { sent: 0, errors: [] }; }
   const settings = await RS.get();
   const data = await generateReport(fromDate, toDate);
