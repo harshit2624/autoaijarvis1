@@ -2505,14 +2505,16 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
 // ── GET /admin/vendors ────────────────────────────────────────────────────
 app.get("/admin/vendors", adminAuth, async (req, res) => {
   try {
-    const vendors = await getVendorList();
-    const configs = await VC.all();
-    const cfgMap  = Object.fromEntries(configs.map(c => [c.vendor_name, c]));
+    const vendors  = await getVendorList();
+    const configs  = await VC.all();
+    const cfgMap   = Object.fromEntries(configs.map(c => [c.vendor_name, c]));
+    const profiles = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name: 1, email: 1, _id: 0 } }).toArray();
+    const profMap  = Object.fromEntries(profiles.map(p => [p.vendor_name, p]));
     res.json({ vendors: vendors.map(v => ({
       name:           v,
       commission_pct: cfgMap[v]?.commission_pct ?? 20,
       active:         cfgMap[v]?.active ?? 1,
-      email:          cfgMap[v]?.email || '',
+      email:          cfgMap[v]?.email || profMap[v]?.email || '',
     }))});
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2944,8 +2946,12 @@ app.put("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const f = req.body || {};
   await mdb.collection('vendor_profiles').updateOne({ vendor_name: name }, { $set: { vendor_name: name, email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', commission_pct: f.commission_pct!=null?parseFloat(f.commission_pct):null, updated_at: new Date().toISOString() } }, { upsert: true });
-  if (f.commission_pct != null) VC.upsert(name, { commission_pct: parseFloat(f.commission_pct) }).catch(()=>{});
-  auditLog("admin","vendor_profile_update",name,{ commission_pct: f.commission_pct });
+  // Sync email + commission to vendor_config so notifications fire correctly
+  const vcUpdate = {};
+  if (f.email) vcUpdate.email = f.email;
+  if (f.commission_pct != null) vcUpdate.commission_pct = parseFloat(f.commission_pct);
+  if (Object.keys(vcUpdate).length) await VC.upsert(name, vcUpdate);
+  auditLog("admin","vendor_profile_update",name,{ commission_pct: f.commission_pct, email: f.email });
   res.json({ success:true });
 });
 
@@ -3045,11 +3051,12 @@ app.get("/admin/email-log", adminAuth, async (req, res) => {
   res.json({ logs });
 });
 
-// Vendor email update
+// Vendor email update — syncs to both vendor_config and vendor_profiles
 app.put("/admin/vendors/:name/email", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const { email } = req.body || {};
   await VC.upsert(name, { email: email || '' });
+  await mdb.collection('vendor_profiles').updateOne({ vendor_name: name }, { $set: { email: email || '', updated_at: new Date().toISOString() } }, { upsert: true });
   res.json({ ok: true });
 });
 
@@ -3064,6 +3071,8 @@ app.get("/vendor/profile", vendorAuth, async (req, res) => {
 app.put("/vendor/profile", vendorAuth, async (req, res) => {
   const f = req.body || {};
   await mdb.collection('vendor_profiles').updateOne({ vendor_name: req.vendor }, { $set: { vendor_name: req.vendor, email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', updated_at: new Date().toISOString() } }, { upsert: true });
+  // Sync email to vendor_config so order notification emails fire to the right address
+  if (f.email) await VC.upsert(req.vendor, { email: f.email });
   res.json({ success:true });
 });
 
