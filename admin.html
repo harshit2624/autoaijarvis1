@@ -538,6 +538,9 @@
     const [stage,       setStage]      = useState(order.stage || 'new');
     const [vendorStages,setVendorStages]= useState({});
     const [savingVS,    setSavingVS]   = useState({});
+    const [vendorTracking, setVendorTracking] = useState(order.vendorTracking || {});
+    const [fulfillVS,   setFulfillVS]  = useState({}); // { vendor: { awb, courier, tracking_url } }
+    const [fulfillingV, setFulfillingV]= useState({});
     const [payType,    setPayType]    = useState(order.paymentType || 'cod');
     const [advance,    setAdvance]    = useState(String(order.advancePaid || ''));
     const [notes,      setNotes]      = useState(order.notes || '');
@@ -592,6 +595,24 @@
         setMsg({type:'success', text:`Stage saved for ${vendor}.`});
       } catch(e){ setMsg({type:'error',text:e.message}); }
       setSavingVS(p=>({...p,[vendor]:false}));
+    };
+
+    const fulfillVendor = async (vendor) => {
+      const info = fulfillVS[vendor] || {};
+      if (!info.awb) return setMsg({ type:'error', text:`Enter AWB for ${vendor} before fulfilling.` });
+      setFulfillingV(p=>({...p,[vendor]:true}));
+      try {
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/fulfill-vendor`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ vendor_name: vendor, awb: info.awb, courier: info.courier||'', tracking_url: info.tracking_url||'' }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed');
+        setVendorTracking(p=>({...p,[vendor]:{ awb: info.awb, courier: info.courier||'', trackingUrl: info.tracking_url||'' }}));
+        setMsg({type:'success', text:`Fulfilled & customer notified for ${vendor}.`});
+        if (onUpdated) onUpdated();
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setFulfillingV(p=>({...p,[vendor]:false}));
     };
 
     const refreshDelivery = async () => {
@@ -719,18 +740,46 @@
                         🏪 PER-VENDOR STAGE — set individually for settlement
                       </div>
                       {(order.vendors||[]).map(v=>(
-                        <div key={v} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                          <span style={{fontSize:11,color:'var(--text-muted)',minWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v}</span>
-                          <select className="form-select" style={{flex:1,fontSize:11,padding:'4px 8px'}}
-                            value={vendorStages[v]||'new'}
-                            onChange={e=>setVendorStages(p=>({...p,[v]:e.target.value}))}>
-                            {STAGES.filter(s=>s.id!=='all').map(s=><option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
-                          </select>
-                          <button className="btn btn-indigo" style={{fontSize:10,padding:'4px 10px',whiteSpace:'nowrap'}}
-                            onClick={()=>saveVendorStage(v)} disabled={savingVS[v]}>
-                            {savingVS[v]?'…':'Save'}
-                          </button>
-                        </div>
+                        <React.Fragment key={v}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                            <span style={{fontSize:11,color:'var(--text-muted)',minWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v}</span>
+                            <select className="form-select" style={{flex:1,fontSize:11,padding:'4px 8px'}}
+                              value={vendorStages[v]||'new'}
+                              onChange={e=>setVendorStages(p=>({...p,[v]:e.target.value}))}>
+                              {STAGES.filter(s=>s.id!=='all').map(s=><option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
+                            </select>
+                            <button className="btn btn-indigo" style={{fontSize:10,padding:'4px 10px',whiteSpace:'nowrap'}}
+                              onClick={()=>saveVendorStage(v)} disabled={savingVS[v]}>
+                              {savingVS[v]?'…':'Save'}
+                            </button>
+                          </div>
+                          {/* Per-vendor tracking + fulfill */}
+                          {vendorTracking[v] ? (
+                            <div style={{marginLeft:108,marginBottom:10,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',fontSize:11}}>
+                              <span style={{color:'#10b981',fontWeight:600}}>✓ Fulfilled</span>
+                              {vendorTracking[v].courier && <span style={{marginLeft:8,color:'var(--text-muted)'}}>{vendorTracking[v].courier}</span>}
+                              {vendorTracking[v].awb && <span style={{marginLeft:8,fontFamily:'monospace',color:'#6366f1'}}>{vendorTracking[v].awb}</span>}
+                              {vendorTracking[v].trackingUrl && <a href={vendorTracking[v].trackingUrl} target="_blank" rel="noreferrer" style={{marginLeft:8,color:'var(--indigo)'}}>Track →</a>}
+                            </div>
+                          ) : (
+                            <div style={{marginLeft:108,marginBottom:10,display:'flex',flexDirection:'column',gap:4}}>
+                              <div style={{display:'flex',gap:4}}>
+                                <input className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px'}} placeholder="Courier (Delhivery…)"
+                                  value={(fulfillVS[v]||{}).courier||''} onChange={e=>setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),courier:e.target.value}}))}/>
+                                <input className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px'}} placeholder="AWB / Tracking No"
+                                  value={(fulfillVS[v]||{}).awb||''} onChange={e=>setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),awb:e.target.value}}))}/>
+                              </div>
+                              <div style={{display:'flex',gap:4}}>
+                                <input className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px'}} placeholder="Tracking URL (optional)"
+                                  value={(fulfillVS[v]||{}).tracking_url||''} onChange={e=>setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),tracking_url:e.target.value}}))}/>
+                                <button className="btn btn-indigo" style={{fontSize:10,padding:'3px 10px',whiteSpace:'nowrap'}}
+                                  onClick={()=>fulfillVendor(v)} disabled={fulfillingV[v]}>
+                                  {fulfillingV[v]?'…':'Fulfill & Notify'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </React.Fragment>
                       ))}
                       <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>
                         Settlement uses per-vendor stage. Only vendors marked Delivered are settled.
@@ -3729,6 +3778,7 @@
       { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
+      { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
@@ -3784,6 +3834,122 @@
           {view==='penalties'   && <PenaltyManager token={token}/>}
           {view==='reports'     && <Reports token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
+          {view==='webhooks'    && <Webhooks    token={token}/>}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════════════════════════════
+     WEBHOOKS PANEL
+  ══════════════════════════════════ */
+  function Webhooks({ token }) {
+    const [webhooks, setWebhooks] = useState([]);
+    const [loading,  setLoading]  = useState(false);
+    const [setting,  setSetting]  = useState(false);
+    const [msg,      setMsg]      = useState(null);
+
+    const DESIRED = [
+      { topic:'orders/create',       path:'/webhooks/orders',       desc:'New order → email customer + vendors' },
+      { topic:'orders/updated',      path:'/webhooks/orders',       desc:'Tag change → auto-map stage' },
+      { topic:'orders/paid',         path:'/webhooks/orders',       desc:'Payment confirmed → mark prepaid' },
+      { topic:'orders/cancelled',    path:'/webhooks/orders',       desc:'Cancellation → set stage cancelled' },
+      { topic:'fulfillments/create', path:'/webhooks/fulfillments', desc:'Shipment created → set pickup stage + email customer' },
+      { topic:'fulfillments/update', path:'/webhooks/fulfillments', desc:'Shipment status update → sync transit/delivered/RTO' },
+    ];
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`${API}/admin/webhooks`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setWebhooks(d.webhooks || []);
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+      setLoading(false);
+    };
+
+    useEffect(() => { load(); }, []);
+
+    const setup = async () => {
+      setSetting(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/setup-webhooks`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        const errors = (d.results||[]).filter(r=>r.status==='error');
+        if (errors.length) setMsg({ type:'error', text:`${errors.length} webhook(s) failed: ${errors.map(e=>e.topic).join(', ')}` });
+        else setMsg({ type:'success', text:'All webhooks registered successfully!' });
+        await load();
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+      setSetting(false);
+    };
+
+    const remove = async (id) => {
+      if (!confirm('Delete this webhook from Shopify?')) return;
+      try {
+        await fetch(`${API}/admin/webhooks/${id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } });
+        await load();
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+    };
+
+    return (
+      <div style={{maxWidth:800,margin:'0 auto'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:18,marginBottom:4}}>🔗 Shopify Webhooks</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Webhooks make the system event-driven — orders auto-process without any manual sync.</div>
+          </div>
+          <button className="btn btn-indigo" onClick={setup} disabled={setting}>
+            {setting ? '…' : '⚡ Setup All Webhooks'}
+          </button>
+        </div>
+
+        {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:16}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        {/* What each webhook does */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header"><span className="card-title">Automations</span></div>
+          <div style={{padding:16}}>
+            {DESIRED.map(w => {
+              const registered = webhooks.find(r => r.topic === w.topic);
+              return (
+                <div key={w.topic} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 0',borderBottom:'1px solid var(--border)'}}>
+                  <span style={{width:10,height:10,borderRadius:'50%',background:registered?'#10b981':'#6b7280',flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text)',fontFamily:'monospace'}}>{w.topic}</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{w.desc}</div>
+                  </div>
+                  <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:registered?'#064e3b':'#1f2937',color:registered?'#10b981':'#6b7280',fontWeight:600}}>
+                    {registered ? '✓ Active' : 'Not registered'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* All registered webhooks on Shopify */}
+        <div className="card">
+          <div className="card-header" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span className="card-title">Registered on Shopify ({webhooks.length})</span>
+            <button onClick={load} disabled={loading} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:12}}>{loading?'…':'↻ Refresh'}</button>
+          </div>
+          <div style={{padding:16}}>
+            {webhooks.length === 0 && !loading && (
+              <div style={{textAlign:'center',padding:'30px 0',color:'var(--text-muted)',fontSize:13}}>
+                No webhooks registered yet. Click <strong>Setup All Webhooks</strong> above.
+              </div>
+            )}
+            {webhooks.map(w => (
+              <div key={w.id} style={{display:'flex',alignItems:'center',gap:12,padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:600,fontFamily:'monospace',color:'var(--text)'}}>{w.topic}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,wordBreak:'break-all'}}>{w.address}</div>
+                </div>
+                <span style={{fontSize:10,color:'var(--text-muted)',flexShrink:0}}>ID: {w.id}</span>
+                <button onClick={()=>remove(w.id)} style={{background:'none',border:'1px solid #ef4444',color:'#ef4444',borderRadius:4,fontSize:10,padding:'2px 8px',cursor:'pointer'}}>Delete</button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );

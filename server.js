@@ -566,56 +566,286 @@ app.get("/orders/export", async (req, res) => {
 // ── GET /webhooks/events — see recent webhook events ──────────────────────
 app.get("/webhooks/events", (_, res) => res.json({ events: webhookEvents }));
 
-// ── POST /webhooks/orders — Shopify sends events here ─────────────────────
-// Register this URL in Shopify: Settings → Notifications → Webhooks
-// URL: https://YOUR-RENDER-APP.onrender.com/webhooks/orders
-app.post("/webhooks/orders", (req, res) => {
-  // Verify the webhook is genuinely from Shopify
-  const hmac      = req.headers["x-shopify-hmac-sha256"];
-  const topic     = req.headers["x-shopify-topic"] ?? "unknown";
-  const rawBody   = req.body;
+// ══════════════════════════════════════════════════════════════════════════
+// WEBHOOK REGISTRATION
+// ══════════════════════════════════════════════════════════════════════════
 
-  if (CLIENT_SECRET && hmac) {
-    const computed = crypto
-      .createHmac("sha256", CLIENT_SECRET)
-      .update(rawBody)
-      .digest("base64");
+// All webhooks we want registered on Shopify
+const DESIRED_WEBHOOKS = [
+  { topic: 'orders/create',       format: 'json', path: '/webhooks/orders' },
+  { topic: 'orders/updated',      format: 'json', path: '/webhooks/orders' },
+  { topic: 'orders/paid',         format: 'json', path: '/webhooks/orders' },
+  { topic: 'orders/cancelled',    format: 'json', path: '/webhooks/orders' },
+  { topic: 'fulfillments/create', format: 'json', path: '/webhooks/fulfillments' },
+  { topic: 'fulfillments/update', format: 'json', path: '/webhooks/fulfillments' },
+];
 
-    if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(computed))) {
-      console.warn("⚠️  Webhook HMAC mismatch — rejected");
-      return res.status(401).json({ error: "Unauthorized" });
+// ── GET /admin/webhooks — list all webhooks registered on Shopify ──────────
+app.get("/admin/webhooks", adminAuth, async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/webhooks.json`,
+      { headers: { "X-Shopify-Access-Token": token } });
+    const d = await r.json();
+    res.json({ webhooks: d.webhooks || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/setup-webhooks — idempotently register all desired webhooks ─
+app.post("/admin/setup-webhooks", adminAuth, async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const base  = SERVER_BASE; // e.g. https://your-app.onrender.com
+
+    // Fetch existing
+    const listRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/webhooks.json`,
+      { headers: { "X-Shopify-Access-Token": token } });
+    const listData = await listRes.json();
+    const existing = listData.webhooks || [];
+
+    const results = [];
+    for (const wh of DESIRED_WEBHOOKS) {
+      const callbackUrl = `${base}${wh.path}`;
+      const alreadyExists = existing.find(e => e.topic === wh.topic && e.address === callbackUrl);
+      if (alreadyExists) {
+        results.push({ topic: wh.topic, status: 'already_registered', id: alreadyExists.id });
+        continue;
+      }
+      // Remove any stale webhook for same topic (different URL)
+      const stale = existing.filter(e => e.topic === wh.topic && e.address !== callbackUrl);
+      for (const s of stale) {
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/webhooks/${s.id}.json`,
+          { method: 'DELETE', headers: { "X-Shopify-Access-Token": token } });
+      }
+      // Register fresh
+      const createRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/webhooks.json`, {
+        method: 'POST',
+        headers: { "X-Shopify-Access-Token": token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook: { topic: wh.topic, address: callbackUrl, format: wh.format } }),
+      });
+      const createData = await createRes.json();
+      if (createData.webhook) {
+        results.push({ topic: wh.topic, status: 'registered', id: createData.webhook.id, address: callbackUrl });
+        console.log(`✅ Webhook registered: ${wh.topic} → ${callbackUrl}`);
+      } else {
+        results.push({ topic: wh.topic, status: 'error', detail: JSON.stringify(createData.errors || createData) });
+      }
     }
+    res.json({ results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── DELETE /admin/webhooks/:id ─────────────────────────────────────────────
+app.delete("/admin/webhooks/:id", adminAuth, async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/webhooks/${req.params.id}.json`,
+      { method: 'DELETE', headers: { "X-Shopify-Access-Token": token } });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// WEBHOOK HMAC VERIFIER
+// ══════════════════════════════════════════════════════════════════════════
+function verifyShopifyHmac(req) {
+  const hmac = req.headers["x-shopify-hmac-sha256"];
+  if (!CLIENT_SECRET || !hmac) return true; // skip check if not configured
+  const computed = crypto.createHmac("sha256", CLIENT_SECRET).update(req.body).digest("base64");
+  return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(computed));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// WEBHOOK HANDLERS — core automation engine
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── POST /webhooks/orders ─────────────────────────────────────────────────
+app.post("/webhooks/orders", (req, res) => {
+  if (!verifyShopifyHmac(req)) {
+    console.warn("⚠️  Webhook HMAC mismatch — rejected");
+    return res.status(401).json({ error: "Unauthorized" });
   }
-
+  const topic = req.headers["x-shopify-topic"] ?? "unknown";
   let payload = {};
-  try { payload = JSON.parse(rawBody.toString()); } catch {}
+  try { payload = JSON.parse(req.body.toString()); } catch {}
   logWebhook(topic, payload);
+  res.status(200).json({ received: true }); // respond immediately
 
-  // Fire new-order email to customer as soon as order is created
-  if (topic === 'orders/create' && payload.id && payload.email) {
-    (async () => {
-      try {
+  // Process async — never let errors reach Shopify
+  (async () => {
+    try {
+      const sid = String(payload.id || '');
+
+      // ── orders/create: email customer + notify vendors ─────────────────
+      if (topic === 'orders/create') {
         const settingsRow = await ES.get();
-        if (settingsRow && settingsRow.enabled === 0) return;
+        if (settingsRow?.enabled === 0) return;
         const cfg = await getSmtpConfig();
         if (!cfg?.host) return;
-        const enrichedOrder = await enrichOrderImages(payload);
-        const transporter = createTransporter(cfg);
-        await transporter.sendMail({
-          from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`,
-          to: payload.email,
-          subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
-          html: templateNewOrderCustomer({ order: enrichedOrder }),
-        });
-        logEmail(payload.id, 'new_order_customer', payload.email, `Order ${payload.name} — Please Confirm on WhatsApp`, 'sent');
-        console.log(`📧 New order email sent → ${payload.email}`);
-      } catch(err) {
-        logEmail(payload.id, 'new_order_customer', payload.email || '', '', 'failed', err.message);
-      }
-    })();
-  }
 
+        if (payload.email) {
+          const enriched = await enrichOrderImages(payload);
+          await sendEmail({
+            to: payload.email,
+            subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
+            html: templateNewOrderCustomer({ order: enriched }),
+            shopifyId: sid, trigger: 'new_order_customer',
+          });
+        }
+
+        // Notify each vendor with their line items
+        const vendors = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
+        const vcfgs = await VC.all();
+        for (const vendorName of vendors) {
+          const vc = vcfgs.find(v => v.vendor_name === vendorName);
+          if (vc?.email) {
+            await sendEmail({
+              to: vc.email,
+              subject: `New Order: ${payload.name} — Action Required`,
+              html: templateOrderConfirmedVendor({ order: payload, vendorName, meta: {} }),
+              shopifyId: sid, trigger: 'new_order_vendor',
+            });
+          }
+        }
+        console.log(`📦 orders/create processed: ${payload.name}`);
+      }
+
+      // ── orders/updated: tag → stage auto-mapping ───────────────────────
+      if (topic === 'orders/updated' && sid) {
+        const tags = (payload.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+        if (tags.length) {
+          const mappings = await mdb.collection('tag_mappings').find({
+            shopify_tag: { $in: tags }
+          }, { projection: { shopify_tag: 1, stage: 1, _id: 0 } }).toArray();
+
+          if (mappings.length) {
+            // Use the first matching mapping (highest-priority tag wins)
+            const matched = mappings[0];
+            const current = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
+            if (current?.stage !== matched.stage) {
+              await OM.upsert(sid, { stage: matched.stage, updated_at: new Date().toISOString() });
+              auditLog("webhook", "tag_stage_auto", sid, { tag: matched.shopify_tag, stage: matched.stage });
+              console.log(`🏷️  Auto-stage: order ${payload.name} → ${matched.stage} (tag: ${matched.shopify_tag})`);
+            }
+          }
+        }
+
+        // Sync financial status change (e.g. COD → paid after collection)
+        if (payload.financial_status === 'paid') {
+          const meta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { payment_type: 1 } });
+          if (!meta?.payment_type || meta.payment_type === 'cod') {
+            await OM.upsert(sid, { payment_type: 'prepaid', updated_at: new Date().toISOString() });
+            auditLog("webhook", "payment_auto_prepaid", sid, {});
+          }
+        }
+      }
+
+      // ── orders/paid: mark prepaid ──────────────────────────────────────
+      if (topic === 'orders/paid' && sid) {
+        await OM.upsert(sid, { payment_type: 'prepaid', updated_at: new Date().toISOString() });
+        auditLog("webhook", "payment_auto_prepaid", sid, { trigger: 'orders/paid' });
+        console.log(`💳 orders/paid: ${payload.name} marked prepaid`);
+      }
+
+      // ── orders/cancelled: set stage cancelled ──────────────────────────
+      if (topic === 'orders/cancelled' && sid) {
+        await OM.upsert(sid, { stage: 'cancelled', updated_at: new Date().toISOString() });
+        // Also cancel all vendor stages
+        const vendors = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
+        for (const v of vendors) {
+          await OVS.upsert(sid, v, { stage: 'cancelled', updated_at: new Date().toISOString() });
+        }
+        auditLog("webhook", "order_cancelled", sid, {});
+        console.log(`❌ orders/cancelled: ${payload.name}`);
+      }
+
+    } catch (err) {
+      console.error(`❌ webhook orders handler (${topic}):`, err.message);
+    }
+  })();
+});
+
+// ── POST /webhooks/fulfillments ───────────────────────────────────────────
+app.post("/webhooks/fulfillments", (req, res) => {
+  if (!verifyShopifyHmac(req)) {
+    console.warn("⚠️  Webhook HMAC mismatch — rejected");
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const topic = req.headers["x-shopify-topic"] ?? "unknown";
+  let payload = {};
+  try { payload = JSON.parse(req.body.toString()); } catch {}
+  logWebhook(topic, payload);
   res.status(200).json({ received: true });
+
+  (async () => {
+    try {
+      // payload is a fulfillment object — has order_id, line_items, tracking_number, tracking_company, tracking_url, shipment_status
+      const shopifyId = String(payload.order_id || '');
+      const awb       = payload.tracking_number || '';
+      const courier   = payload.tracking_company || '';
+      const trackUrl  = payload.tracking_url || '';
+      const status    = payload.shipment_status || ''; // in_transit, out_for_delivery, delivered, etc.
+
+      if (!shopifyId) return;
+
+      // Fetch full order to find vendor of these line items
+      const orderRes = await shopifyREST(`/orders/${shopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
+      const order = orderRes?.order;
+      if (!order) return;
+
+      const fulfilledLineItemIds = new Set((payload.line_items || []).map(li => li.id));
+      const fulfilledLineItems   = (order.line_items || []).filter(li => fulfilledLineItemIds.has(li.id));
+      const vendors = [...new Set(fulfilledLineItems.map(li => li.vendor).filter(Boolean))];
+
+      if (topic === 'fulfillments/create') {
+        // Auto-set each vendor's stage to pickup and save AWB
+        for (const vendorName of vendors) {
+          const vendorItems = fulfilledLineItems.filter(li => li.vendor === vendorName);
+          await OVS.upsert(shopifyId, vendorName, {
+            stage: 'pickup', awb, courier: courier, tracking_url: trackUrl,
+            updated_at: new Date().toISOString(),
+          });
+          auditLog("webhook", "fulfillment_auto_pickup", shopifyId, { vendorName, awb });
+
+          // Email customer for each vendor's shipment
+          const cfg = await getSmtpConfig();
+          if (cfg && order.email && vendorItems.length) {
+            await sendEmail({
+              to: order.email,
+              subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
+              html: templateVendorShipped({ order, vendorName, items: vendorItems, awb, courier, trackingUrl: trackUrl }),
+              shopifyId, trigger: 'vendor_shipped',
+            });
+          }
+        }
+        console.log(`📦 fulfillments/create: order ${order.name}, vendors: ${vendors.join(', ')}, AWB: ${awb}`);
+      }
+
+      if (topic === 'fulfillments/update' && status) {
+        // Map Shopify shipment_status → our stage
+        const statusMap = {
+          in_transit:        'transit',
+          out_for_delivery:  'transit',
+          delivered:         'delivered',
+          failure:           'rto',
+          attempted_delivery:'transit',
+        };
+        const mappedStage = statusMap[status];
+        if (mappedStage) {
+          for (const vendorName of vendors) {
+            await OVS.upsert(shopifyId, vendorName, { stage: mappedStage, updated_at: new Date().toISOString() });
+          }
+          // Also update order-level delivery status
+          await OM.upsert(shopifyId, { delivery_status: status, updated_at: new Date().toISOString() });
+          auditLog("webhook", "fulfillment_status_sync", shopifyId, { status, mappedStage, vendors });
+          console.log(`🚚 fulfillments/update: order ${order.name} → ${mappedStage} (${status})`);
+        }
+      }
+
+    } catch (err) {
+      console.error(`❌ webhook fulfillments handler (${topic}):`, err.message);
+    }
+  })();
 });
 
 // ── JARVIS store snapshot builder ─────────────────────────────────────────
@@ -840,6 +1070,30 @@ function templateInTransit({ order, awb, courier }) {
     <p style="font-size:13px;color:#6b7280;line-height:1.7">Estimated delivery in 3–7 business days. You'll receive another update once it's delivered.</p>
   `;
   return emailBase(`Your Order is Shipped! 🚚`, '#6366f1', body);
+}
+
+function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl }) {
+  const itemRows = (items || []).map(li =>
+    `<div class="info-row"><span class="info-label">${li.title || li.name}</span><span class="info-val">Qty: ${li.quantity || li.qty || 1} — ₹${parseFloat(li.price||0).toFixed(2)}</span></div>`
+  ).join('');
+  const trackLink = trackingUrl || (courier && awb
+    ? `https://www.${(courier||'').toLowerCase().includes('delhivery') ? `delhivery.com/track/package/${awb}` : `shiprocket.co/tracking/${awb}`}`
+    : '');
+  const body = `
+    <div class="subtitle">Part of your order has left the facility and is on its way!</div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Shipped By</span><span class="info-val">${vendorName}</span></div>
+      <div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier || 'Our delivery partner'}</span></div>
+      ${awb ? `<div class="info-row"><span class="info-label">Tracking AWB</span><span class="info-val" style="font-family:monospace;color:#6366f1">${awb}</span></div>` : ''}
+      <div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address?.city || ''}, ${order.shipping_address?.province || ''}</span></div>
+    </div>
+    <div style="margin:18px 0 8px;font-weight:600;font-size:13px;color:#374151">Items Shipped</div>
+    <div class="info-box">${itemRows}</div>
+    ${trackLink ? `<div style="text-align:center;margin:20px 0"><a class="cta" href="${trackLink}">Track Your Shipment →</a></div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Your remaining items (if any) will be shipped separately. You'll get another update once everything is on its way.</p>
+  `;
+  return emailBase(`Your Items Have Shipped! 🚚`, '#6366f1', body);
 }
 
 function templateDelivered({ order, forRole = 'customer' }) {
@@ -1978,9 +2232,17 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
     const raw    = await fetchAllOrders("any", created_at_min || "2000-01-01T00:00:00Z", created_at_max || null);
     const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray();
+    const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, _id: 0 } }).toArray();
     const vsMap  = {}; // { shopify_id: { vendor_name: stage } }
-    allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r.stage; });
+    const vtMap  = {}; // { shopify_id: { vendor_name: { awb, courier, tracking_url } } }
+    allVS.forEach(r => {
+      if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
+      vsMap[r.shopify_id][r.vendor_name] = r.stage;
+      if (r.awb || r.courier || r.tracking_url) {
+        if (!vtMap[r.shopify_id]) vtMap[r.shopify_id] = {};
+        vtMap[r.shopify_id][r.vendor_name] = { awb: r.awb || '', courier: r.courier || '', trackingUrl: r.tracking_url || '' };
+      }
+    });
 
     let orders = raw.map(o => {
       const meta    = metaMap[String(o.id)] || {};
@@ -2003,6 +2265,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         vendors,
         stage:          meta.stage || "new",
         vendorStages:   vsMap[String(o.id)] || {},
+        vendorTracking: vtMap[String(o.id)] || {},
         paymentType:    meta.payment_type || "cod",
         advancePaid:    meta.advance_paid || 0,
         notes:          meta.notes || "",
@@ -2071,6 +2334,85 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
 app.get("/admin/orders/:id/vendor-stages", adminAuth, async (req, res) => {
   const rows = await mdb.collection('order_vendor_stage').find({ shopify_id: req.params.id }, { projection: { vendor_name: 1, stage: 1, updated_at: 1, _id: 0 } }).toArray();
   res.json({ vendorStages: Object.fromEntries(rows.map(r => [r.vendor_name, r.stage])) });
+});
+
+// ── POST /admin/orders/:id/fulfill-vendor ────────────────────────────────
+// Partially fulfill only a specific vendor's line items on Shopify, save AWB, send customer email
+app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
+  const shopifyId = req.params.id;
+  const { vendor_name, awb, courier, tracking_url } = req.body || {};
+  if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
+  if (!awb) return res.status(400).json({ error: "AWB / tracking number required." });
+
+  try {
+    const token = await getAccessToken();
+
+    // Fetch the full order to identify vendor's line items
+    const orderRes = await shopifyREST(`/orders/${shopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
+    const order = orderRes?.order;
+    if (!order) return res.status(404).json({ error: "Order not found on Shopify." });
+
+    const vendorLineItems = (order.line_items || []).filter(li => li.vendor === vendor_name);
+    if (!vendorLineItems.length) return res.status(400).json({ error: `No line items found for vendor ${vendor_name}.` });
+    const vendorLineItemIds = new Set(vendorLineItems.map(li => li.id));
+
+    // Fetch fulfillment orders
+    const foRes = await fetch(
+      `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}/fulfillment_orders.json`,
+      { headers: { "X-Shopify-Access-Token": token } }
+    );
+    if (!foRes.ok) throw new Error(`Could not fetch fulfillment orders: ${foRes.status}`);
+    const foData = await foRes.json();
+    const openFOs = (foData.fulfillment_orders || []).filter(fo => fo.status === "open");
+    if (!openFOs.length) return res.status(400).json({ error: "No open fulfillment orders. Order may already be fully fulfilled." });
+
+    // Filter FO line items that belong to this vendor
+    const line_items_by_fulfillment_order = [];
+    for (const fo of openFOs) {
+      const matchingItems = (fo.line_items || []).filter(foli => vendorLineItemIds.has(foli.line_item_id));
+      if (matchingItems.length) {
+        line_items_by_fulfillment_order.push({
+          fulfillment_order_id: fo.id,
+          fulfillment_order_line_items: matchingItems.map(foli => ({ id: foli.id, quantity: foli.quantity })),
+        });
+      }
+    }
+    if (!line_items_by_fulfillment_order.length) return res.status(400).json({ error: "Vendor items already fulfilled or not found in open fulfillment orders." });
+
+    // Create Shopify partial fulfillment
+    const fulfillBody = {
+      fulfillment: {
+        line_items_by_fulfillment_order,
+        tracking_info: { number: awb, url: tracking_url || "", company: courier || "" },
+        notify_customer: false,
+      },
+    };
+    const fRes = await fetch(
+      `https://${SHOP}.myshopify.com/admin/api/2025-01/fulfillments.json`,
+      { method: "POST", headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" }, body: JSON.stringify(fulfillBody) }
+    );
+    if (!fRes.ok) {
+      const errBody = await fRes.json().catch(() => ({}));
+      throw new Error(JSON.stringify(errBody.errors || errBody));
+    }
+    const fData = await fRes.json();
+
+    // Save AWB/courier/tracking to order_vendor_stage
+    await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'pickup', updated_at: new Date().toISOString() });
+    auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
+
+    // Send customer shipped email
+    const cfg = await getSmtpConfig();
+    if (cfg && order.email) {
+      const html = templateVendorShipped({ order, vendorName: vendor_name, items: vendorLineItems, awb, courier, trackingUrl: tracking_url });
+      await sendEmail({ to: order.email, subject: `Your Items from ${vendor_name} Have Shipped! 🚚`, html, shopifyId, trigger: 'vendor_shipped' });
+    }
+
+    res.json({ success: true, fulfillment: fData.fulfillment });
+  } catch (err) {
+    console.error("❌ /admin/fulfill-vendor:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── PUT /admin/orders/:id/meta ────────────────────────────────────────────
