@@ -331,14 +331,18 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     await OM.upsert(sid, { stage: winner.stage, updated_at: now });
     if (!prev || prev.stage !== winner.stage) {
       fireStageEmails(sid, winner.stage).catch(()=>{});
-      // Sync into order_vendor_stage so penalty cron can track 48hr timer
+      // Sync into order_vendor_stage so penalty cron can track 48hr timer.
+      // Never downgrade a vendor who already has AWB/tracking submitted (pickup or beyond).
       if (['confirmed','partial'].includes(winner.stage)) {
+        const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
         try {
           const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items`);
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
           const nowMs = Date.now();
           for (const vendor of vendors) {
-            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage_started_at: 1, _id: 0 } });
+            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
+            // Skip: vendor already dispatched or further ahead — don't pull them back
+            if (existing && ADVANCED.includes(existing.stage)) continue;
             await OVS.upsert(sid, vendor, { stage: winner.stage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
           }
         } catch(e) { console.error('applyTagMappings vendor sync error:', e.message); }
@@ -2544,14 +2548,17 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   const nowMs = Date.now();
   await OM.upsert(id, { stage, updated_at: now });
 
-  // Sync order-level stage change into per-vendor stage records so the
-  // 48hr penalty cron sees the stage_started_at timestamp
+  // Sync order-level stage into per-vendor records for penalty cron.
+  // Never downgrade a vendor who already submitted tracking (ready/pickup/transit/delivered).
+  const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
   const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
   try {
     const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
     const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
     for (const vendor of vendors) {
-      const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
+      const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
+      // If this vendor is already ahead (tracking submitted), only allow explicit forward movement
+      if (existing && ADVANCED.includes(existing.stage) && !ADVANCED.includes(stage)) continue;
       const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
       const newWarning   = fulfilledStages.includes(stage) ? 0 : (existing?.warning_sent || 0);
       const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
@@ -2700,6 +2707,23 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
       await OM.upsert(id, { stage: 'partial', updated_at: now });
       fireStageEmails(id, "partial").catch(() => {});
     }
+  }
+
+  // Auto-advance all vendors who are still in pre-dispatch stages to 'ready'
+  // when an AWB is saved at the order level
+  if (awb && awb.trim()) {
+    const PRE_DISPATCH = ['new','confirmed','partial','hold'];
+    try {
+      const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+      const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+      for (const vendor of vendors) {
+        const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, _id: 0 } });
+        const curStage = ovs?.stage || existing.stage || 'new';
+        if (PRE_DISPATCH.includes(curStage)) {
+          await OVS.upsert(id, vendor, { stage: 'ready', awb: awb.trim(), courier: courier || '', tracking_url: tracking_url || '', updated_at: now });
+        }
+      }
+    } catch(e) { console.error('meta awb vendor sync error:', e.message); }
   }
 
   auditLog("admin", "meta_update", id, req.body);
