@@ -2492,7 +2492,9 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         financial:      o.financial_status || "",
         vendors,
         stage:          meta.stage || "new",
-        vendorStages:   vsMap[String(o.id)] || {},
+        vendorStages:   vendors.length > 1
+        ? Object.fromEntries(vendors.map(v => [v, vsMap[String(o.id)]?.[v] || meta.stage || 'new']))
+        : (vsMap[String(o.id)] || {}),
         vendorTracking: vtMap[String(o.id)] || {},
         paymentType:    meta.payment_type || "cod",
         advancePaid:    meta.advance_paid || 0,
