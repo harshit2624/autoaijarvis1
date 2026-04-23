@@ -514,6 +514,36 @@
     return <span className={`badge b-${s}`}><span className="bdot"/>{SLABEL[s]||status.toUpperCase()}</span>;
   }
 
+  const STAGE_COLOR = { new:'#6366f1', confirmed:'#10b981', partial:'#f59e0b', ready:'#06b6d4', pickup:'#8b5cf6', transit:'#3b82f6', delivered:'#10b981', rto:'#ef4444', hold:'#f97316', cancelled:'#6b7280' };
+  const STAGE_BG    = { new:'#1a1a3a', confirmed:'#052e16', partial:'#1c1208', ready:'#0a2030', pickup:'#1a0a3a', transit:'#0a1a3a', delivered:'#052e16', rto:'#2d0a0a', hold:'#1c0f00', cancelled:'#111' };
+
+  function StagePill({ stage='new', awb='', courier='', trackingUrl='' }) {
+    const color = STAGE_COLOR[stage] || '#6366f1';
+    const bg    = STAGE_BG[stage]    || '#1a1a3a';
+    const hasTracking = awb || trackingUrl;
+    return (
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <span style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:10,fontWeight:700,letterSpacing:1,
+          padding:'3px 9px',borderRadius:10,background:bg,color,border:`1px solid ${color}33`,whiteSpace:'nowrap'}}>
+          <span style={{width:5,height:5,borderRadius:'50%',background:color,flexShrink:0,display:'inline-block'}}/>
+          {stage.toUpperCase()}
+        </span>
+        {hasTracking && (
+          <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
+            {courier && <span style={{fontSize:9,color:'var(--text-muted)',letterSpacing:0.5}}>{courier}</span>}
+            {awb && (trackingUrl
+              ? <a href={trackingUrl} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+                  style={{fontSize:9,color:'#60a5fa',fontFamily:'monospace',textDecoration:'none'}}>
+                  {awb.length>12?awb.slice(0,12)+'…':awb} ↗
+                </a>
+              : <span style={{fontSize:9,color:'#60a5fa',fontFamily:'monospace'}}>{awb.length>12?awb.slice(0,12)+'…':awb}</span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   /* ── PayBadge ── */
   function PayBadge({ type }) {
     const map = {
@@ -993,7 +1023,7 @@
                     <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                     <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                     <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
-                    <td><Badge status={o.status}/></td>
+                    <td><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/></td>
                     <td className="td-muted">{fmtDate(o.date)}</td>
                     <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                   </tr>
@@ -1093,15 +1123,14 @@
                 <th>Shipping</th>
                 <th>Advance</th>
                 <th>Remaining COD</th>
-                <th>Status</th>
-                <th>Delivery</th>
+                <th>Stage / Tracking</th>
                 <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
                 <th style={{width:28}}/>
               </tr></thead>
               <tbody>
-                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={12}/>) :
+                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={11}/>) :
                  rows.length===0 ? (
-                  <tr><td colSpan={13}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
+                  <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
                  ) :
                  rows.map((o,i)=>{
                    const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
@@ -1132,10 +1161,7 @@
                       <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                       <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                       <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
-                      <td><Badge status={o.status}/></td>
-                      <td style={{fontSize:10,color:dColor,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                        {dStatus || (o.awb ? <span style={{color:'var(--text-muted)'}}>AWB: {o.awb.slice(0,8)}…</span> : '—')}
-                      </td>
+                      <td><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/></td>
                       <td className="td-muted">{fmtDate(o.date)}</td>
                       <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                     </tr>

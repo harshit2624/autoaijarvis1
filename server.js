@@ -1965,6 +1965,8 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
 
     const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, _id: 0 } }).toArray();
+    const vStageMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
 
     const orders = allOrders
       .filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName))
@@ -1988,7 +1990,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           phone:        o.shipping_address?.phone ?? o.customer?.phone ?? "",
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
-          stage:        meta.stage || "new",
+          stage:        vStageMap[String(o.id)]?.stage || meta.stage || "new",
           financial:    o.financial_status ?? "—",
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
@@ -1997,9 +1999,9 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           advancePaid,
           totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
           remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
-          awb:          meta.awb     || (o.fulfillments||[]).find(f=>f.tracking_number)?.tracking_number || "",
-          courier:      meta.courier || (o.fulfillments||[]).find(f=>f.tracking_company)?.tracking_company || "",
-          trackingUrl:  meta.tracking_url || (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "",
+          awb:          vStageMap[String(o.id)]?.awb || meta.awb || (o.fulfillments||[]).find(f=>f.tracking_number)?.tracking_number || "",
+          courier:      vStageMap[String(o.id)]?.courier || meta.courier || (o.fulfillments||[]).find(f=>f.tracking_company)?.tracking_company || "",
+          trackingUrl:  vStageMap[String(o.id)]?.tracking_url || meta.tracking_url || (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "",
           deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
           shopifyFulfilled: !meta.awb && (o.fulfillments||[]).length > 0,
           myItems: myItems.map(li => ({
