@@ -560,6 +560,36 @@
     );
   }
 
+  function PenaltyTimer({ stageStartedAt=0, penaltyTriggered=0, stage='' }) {
+    const WATCH = ['confirmed','partial'];
+    if (!WATCH.includes(stage) || stageStartedAt <= 0) return null;
+    const HR48 = 48 * 60 * 60 * 1000;
+    const elapsed = Date.now() - stageStartedAt;
+    const remaining = Math.max(0, HR48 - elapsed);
+    const pct = Math.min(1, elapsed / HR48);
+    const R = 10, C = 2 * Math.PI * R;
+    const dash = C * (1 - pct);
+    const color = penaltyTriggered ? '#ef4444' : pct >= 0.75 ? '#f97316' : pct >= 0.5 ? '#fbbf24' : '#10b981';
+    const hrsLeft = Math.floor(remaining / 3600000);
+    const minsLeft = Math.floor((remaining % 3600000) / 60000);
+    const label = penaltyTriggered ? '!' : hrsLeft > 0 ? `${hrsLeft}h` : `${minsLeft}m`;
+    const tip = penaltyTriggered ? 'Penalty triggered — contact CrosCrow' : `${hrsLeft}h ${minsLeft}m left to dispatch before penalty`;
+    return (
+      <span title={tip} style={{display:'inline-flex',alignItems:'center',verticalAlign:'middle',marginLeft:4,cursor:'default'}}>
+        <svg width="26" height="26" viewBox="0 0 26 26">
+          <circle cx="13" cy="13" r={R} fill="none" stroke="#1e293b" strokeWidth="3"/>
+          <circle cx="13" cy="13" r={R} fill="none" stroke={color} strokeWidth="3"
+            strokeDasharray={`${C} ${C}`} strokeDashoffset={dash}
+            strokeLinecap="round" transform="rotate(-90 13 13)"/>
+          <text x="13" y="14" textAnchor="middle" dominantBaseline="middle"
+            style={{fontSize:'5px',fill:color,fontWeight:700,fontFamily:'monospace'}}>
+            {label}
+          </text>
+        </svg>
+      </span>
+    );
+  }
+
   /* ── StatCard ── */
   function StatCard({ color, icon, label, value, sub }) {
     return (
@@ -1023,7 +1053,12 @@
                     <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                     <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                     <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
-                    <td><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/></td>
+                    <td>
+                      <div style={{display:'flex',alignItems:'center',gap:2}}>
+                        <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>
+                        <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
+                      </div>
+                    </td>
                     <td className="td-muted">{fmtDate(o.date)}</td>
                     <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                   </tr>
@@ -1161,7 +1196,12 @@
                       <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                       <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                       <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
-                      <td><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/></td>
+                      <td>
+                        <div style={{display:'flex',alignItems:'center',gap:2}}>
+                          <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>
+                          <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
+                        </div>
+                      </td>
                       <td className="td-muted">{fmtDate(o.date)}</td>
                       <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                     </tr>

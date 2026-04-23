@@ -1969,7 +1969,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
 
     const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, _id: 0 } }).toArray();
+    const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, penalty_triggered: 1, warning_sent: 1, _id: 0 } }).toArray();
     const vStageMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
 
     const orders = allOrders
@@ -2007,6 +2007,9 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           courier:      vStageMap[String(o.id)]?.courier || meta.courier || (o.fulfillments||[]).find(f=>f.tracking_company)?.tracking_company || "",
           trackingUrl:  vStageMap[String(o.id)]?.tracking_url || meta.tracking_url || (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "",
           deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
+          stageStartedAt:   vStageMap[String(o.id)]?.stage_started_at || 0,
+          penaltyTriggered: vStageMap[String(o.id)]?.penalty_triggered || 0,
+          warningSent:      vStageMap[String(o.id)]?.warning_sent || 0,
           shopifyFulfilled: !meta.awb && (o.fulfillments||[]).length > 0,
           myItems: myItems.map(li => ({
             id:        li.id,
