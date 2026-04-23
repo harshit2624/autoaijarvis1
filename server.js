@@ -2460,15 +2460,20 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
     const raw    = await fetchAllOrders("any", created_at_min || "2000-01-01T00:00:00Z", created_at_max || null);
     const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, _id: 0 } }).toArray();
+    const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, penalty_triggered: 1, warning_sent: 1, _id: 0 } }).toArray();
     const vsMap  = {}; // { shopify_id: { vendor_name: stage } }
     const vtMap  = {}; // { shopify_id: { vendor_name: { awb, courier, tracking_url } } }
+    const vpMap  = {}; // { shopify_id: { vendor_name: { stageStartedAt, penaltyTriggered, warningSent } } }
     allVS.forEach(r => {
       if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
       vsMap[r.shopify_id][r.vendor_name] = r.stage;
       if (r.awb || r.courier || r.tracking_url) {
         if (!vtMap[r.shopify_id]) vtMap[r.shopify_id] = {};
         vtMap[r.shopify_id][r.vendor_name] = { awb: r.awb || '', courier: r.courier || '', trackingUrl: r.tracking_url || '' };
+      }
+      if (r.stage_started_at > 0) {
+        if (!vpMap[r.shopify_id]) vpMap[r.shopify_id] = {};
+        vpMap[r.shopify_id][r.vendor_name] = { stageStartedAt: r.stage_started_at, penaltyTriggered: r.penalty_triggered || 0, warningSent: r.warning_sent || 0 };
       }
     });
 
@@ -2496,6 +2501,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         ? Object.fromEntries(vendors.map(v => [v, vsMap[String(o.id)]?.[v] || meta.stage || 'new']))
         : (vsMap[String(o.id)] || {}),
         vendorTracking: vtMap[String(o.id)] || {},
+        vendorPenalty:  vpMap[String(o.id)] || {},
         paymentType:    meta.payment_type || "cod",
         advancePaid:    meta.advance_paid || 0,
         notes:          meta.notes || "",

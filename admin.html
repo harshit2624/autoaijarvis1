@@ -503,6 +503,51 @@
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
   ];
 
+  // Shows a circular countdown for the 48hr penalty window
+  function PenaltyTimer({ vendorPenalty={}, vendorStages={} }) {
+    const WATCH = ['confirmed','partial'];
+    const HR48 = 48 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    // Collect active timers: vendors in confirmed/partial with stage_started_at
+    const timers = Object.entries(vendorPenalty)
+      .filter(([v, p]) => p.stageStartedAt > 0 && WATCH.includes(vendorStages[v] || ''))
+      .map(([v, p]) => {
+        const elapsed = now - p.stageStartedAt;
+        const remaining = Math.max(0, HR48 - elapsed);
+        const pct = Math.min(1, elapsed / HR48);
+        return { vendor: v, elapsed, remaining, pct, penaltyTriggered: p.penaltyTriggered, warningSent: p.warningSent };
+      });
+
+    if (timers.length === 0) return null;
+
+    // Show the most urgent (highest pct)
+    const t = timers.sort((a,b) => b.pct - a.pct)[0];
+
+    const R = 10, C = 2 * Math.PI * R;
+    const dash = C * (1 - t.pct);
+    const color = t.penaltyTriggered ? '#ef4444' : t.pct >= 0.75 ? '#f97316' : t.pct >= 0.5 ? '#fbbf24' : '#10b981';
+    const hrsLeft = Math.floor(t.remaining / 3600000);
+    const minsLeft = Math.floor((t.remaining % 3600000) / 60000);
+    const label = t.penaltyTriggered ? '⚠ Penalty' : hrsLeft > 0 ? `${hrsLeft}h left` : `${minsLeft}m left`;
+
+    return (
+      <span title={t.penaltyTriggered ? 'Penalty triggered' : `${label} before 48hr penalty — ${t.vendor}`}
+        style={{display:'inline-flex',alignItems:'center',gap:4,marginLeft:4,verticalAlign:'middle',cursor:'default'}}>
+        <svg width="26" height="26" viewBox="0 0 26 26">
+          <circle cx="13" cy="13" r={R} fill="none" stroke="var(--border)" strokeWidth="3"/>
+          <circle cx="13" cy="13" r={R} fill="none" stroke={color} strokeWidth="3"
+            strokeDasharray={`${C} ${C}`} strokeDashoffset={dash}
+            strokeLinecap="round" transform="rotate(-90 13 13)"/>
+          <text x="13" y="14" textAnchor="middle" dominantBaseline="middle"
+            style={{fontSize:'5px',fill:color,fontWeight:700,fontFamily:'monospace'}}>
+            {t.penaltyTriggered ? '!' : hrsLeft > 0 ? `${hrsLeft}h` : `${minsLeft}m`}
+          </text>
+        </svg>
+      </span>
+    );
+  }
+
   function StageBadge({ stage='new', vendorStages={} }) {
     const vs = Object.values(vendorStages);
     const isMixed = vs.length > 1 && new Set(vs).size > 1;
@@ -1581,13 +1626,19 @@
                      <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
                      <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
                      <td>
-                       <StageBadge stage={o.stage} vendorStages={o.vendorStages||{}}/>
+                       <div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}>
+                         <StageBadge stage={o.stage} vendorStages={o.vendorStages||{}}/>
+                         <PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/>
+                       </div>
                        {Object.keys(o.vendorStages||{}).length > 1 && (
                          <div style={{marginTop:3,display:'flex',flexDirection:'column',gap:2}}>
                            {Object.entries(o.vendorStages).map(([v,s])=>(
                              <div key={v} style={{fontSize:9,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:3}}>
                                <span style={{maxWidth:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.split(' ')[0]}</span>
                                <span className={`badge b-${s}`} style={{fontSize:8,padding:'1px 5px'}}>{s.toUpperCase()}</span>
+                               {(o.vendorPenalty||{})[v] && ['confirmed','partial'].includes(s) && (
+                                 <PenaltyTimer vendorPenalty={{[v]:(o.vendorPenalty||{})[v]}} vendorStages={{[v]:s}}/>
+                               )}
                              </div>
                            ))}
                          </div>
