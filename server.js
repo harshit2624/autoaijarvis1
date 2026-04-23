@@ -331,6 +331,18 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     await OM.upsert(sid, { stage: winner.stage, updated_at: now });
     if (!prev || prev.stage !== winner.stage) {
       fireStageEmails(sid, winner.stage).catch(()=>{});
+      // Sync into order_vendor_stage so penalty cron can track 48hr timer
+      if (['confirmed','partial'].includes(winner.stage)) {
+        try {
+          const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items`);
+          const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+          const nowMs = Date.now();
+          for (const vendor of vendors) {
+            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage_started_at: 1, _id: 0 } });
+            await OVS.upsert(sid, vendor, { stage: winner.stage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
+          }
+        } catch(e) { console.error('applyTagMappings vendor sync error:', e.message); }
+      }
     }
   }
 }
@@ -2518,7 +2530,25 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
-  await OM.upsert(id, { stage, updated_at: new Date().toISOString() });
+  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  await OM.upsert(id, { stage, updated_at: now });
+
+  // Sync order-level stage change into per-vendor stage records so the
+  // 48hr penalty cron sees the stage_started_at timestamp
+  const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
+  try {
+    const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+    const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+    for (const vendor of vendors) {
+      const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
+      const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
+      const newWarning   = fulfilledStages.includes(stage) ? 0 : (existing?.warning_sent || 0);
+      const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
+      await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty });
+    }
+  } catch(e) { console.error('vendor stage sync error:', e.message); }
+
   auditLog("admin", "stage_change", id, { stage });
   fireStageEmails(id, stage).catch(()=>{});
   res.json({ success: true, stage });
@@ -2934,8 +2964,9 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
   if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
 
   try {
-    // Fetch all Shopify orders in the date window
-    const allOrders = await fetchAllOrders("any", from + "T00:00:00Z", to + "T23:59:59Z");
+    // Fetch ALL delivered orders (same as delivered-summary — no date filter on creation,
+    // since orders created before the period may be delivered within it)
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
 
     // Load supporting data
     const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();

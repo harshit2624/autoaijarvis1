@@ -557,6 +557,7 @@
     const [savingTags, setSavingTags] = useState(false);
     const [tags,       setTags]       = useState((order.tags||'').split(',').map(t=>t.trim()).filter(Boolean));
     const [tagInput,   setTagInput]   = useState('');
+    const [availTags,  setAvailTags]  = useState([]);
     const [msg,        setMsg]        = useState(null);
 
     const loadNotes = () => {
@@ -574,6 +575,8 @@
           }).catch(()=>{});
       }
       loadNotes();
+      fetch(`${API}/admin/order-tags`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setAvailTags(d.tags||[])).catch(()=>{});
     },[order.shopifyId]);
 
     const postNote = async () => {
@@ -692,23 +695,31 @@
                 <div className="detail-row" style={{alignItems:'flex-start'}}>
                   <span className="dr-label">Tags</span>
                   <span className="dr-val" style={{display:'block',width:'100%'}}>
-                    <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:6}}>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:8}}>
                       {tags.map(t=>(
-                        <span key={t} style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:10,padding:'2px 7px',borderRadius:4,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0'}}>
+                        <span key={t} style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:10,padding:'3px 8px',borderRadius:4,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0'}}>
                           {t}
-                          <button onClick={()=>removeTag(t)} style={{background:'none',border:'none',color:'#6fa8d0',cursor:'pointer',fontSize:10,padding:0,lineHeight:1}}>✕</button>
+                          <button onClick={()=>removeTag(t)} title="Remove tag from Shopify"
+                            style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:11,padding:0,lineHeight:1,fontWeight:700}}>✕</button>
                         </span>
                       ))}
+                    </div>
+                    <div style={{display:'flex',gap:6,marginBottom:8}}>
+                      <select className="form-select" style={{fontSize:11,padding:'4px 8px',flex:1}}
+                        value="" onChange={e=>{ const v=e.target.value; if(v&&!tags.includes(v)) setTags(p=>[...p,v]); }}>
+                        <option value="">Pick existing tag…</option>
+                        {availTags.filter(t=>!tags.includes(t)).map(t=><option key={t} value={t}>{t}</option>)}
+                      </select>
                       <input
-                        style={{background:'transparent',border:'1px dashed #2a4a6a',borderRadius:4,color:'var(--text)',fontSize:10,padding:'2px 7px',outline:'none',width:90}}
-                        placeholder="+ add tag"
+                        className="form-input" style={{fontSize:11,padding:'4px 8px',flex:1}}
+                        placeholder="Or type new tag + Enter"
                         value={tagInput}
                         onChange={e=>setTagInput(e.target.value)}
                         onKeyDown={e=>{ if(e.key==='Enter'||e.key===','){e.preventDefault();addTag();} }}
                       />
                     </div>
-                    <button className="btn btn-ghost btn-sm" onClick={saveTags} disabled={savingTags} style={{fontSize:10}}>
-                      {savingTags?'Saving…':'💾 Save Tags'}
+                    <button className="btn btn-indigo btn-sm" onClick={saveTags} disabled={savingTags} style={{fontSize:11,width:'100%'}}>
+                      {savingTags?'Saving to Shopify…':'💾 Save Tags to Shopify'}
                     </button>
                   </span>
                 </div>
