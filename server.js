@@ -2000,6 +2000,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           currency:     o.currency ?? "INR",
           myRevenue:    parseFloat(myRevenue.toFixed(2)),
           shippingCharge,
+          paymentType:  payType,
           advancePaid,
           totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
           remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
