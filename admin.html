@@ -1860,6 +1860,10 @@
     const [invoice,     setInvoice]     = useState(null);
     const [editing,     setEditing]     = useState(null);
     const [confirmDel,  setConfirmDel]  = useState(null);
+    const [gstFrom,     setGstFrom]     = useState('');
+    const [gstTo,       setGstTo]       = useState('');
+    const [gstLoading,  setGstLoading]  = useState(false);
+    const [gstMsg,      setGstMsg]      = useState(null);
 
     const loadSummary = () => {
       setSumLoading(true);
@@ -1907,6 +1911,24 @@
       const r = await fetch(`${API}/admin/settlements/${id}`,{headers:{Authorization:`Bearer ${token}`}});
       const d = await r.json();
       setInvoice(d);
+    };
+
+    const exportGst = async () => {
+      if (!gstFrom || !gstTo) { setGstMsg({ type:'error', text:'Select both From and To dates.' }); return; }
+      setGstLoading(true); setGstMsg(null);
+      try {
+        const url = `${API}/admin/settlements/gst-export?from=${gstFrom}&to=${gstTo}`;
+        const r = await fetch(url, { headers:{ Authorization:`Bearer ${token}` } });
+        if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `CrosCrow_GST_${gstFrom}_to_${gstTo}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setGstMsg({ type:'success', text:'GST sheet downloaded!' });
+      } catch(e) { setGstMsg({ type:'error', text: e.message }); }
+      setGstLoading(false);
     };
 
     const t = summary?.totals || {};
@@ -2014,6 +2036,34 @@
         {/* ── TAB 2: Settlement Invoices ─────────────────────────────────────── */}
         {activeTab==='invoices' && (
           <div>
+            {/* GST Export panel */}
+            <div className="card" style={{marginBottom:16,borderLeft:'3px solid var(--green)'}}>
+              <div className="card-header">
+                <span className="card-title">📊 Generate GST Excel Sheet</span>
+                <span className="card-sub">All vendors · CA-ready format · Downloads as CSV (open in Excel)</span>
+              </div>
+              <div style={{padding:16}}>
+                {gstMsg && <div className={`alert alert-${gstMsg.type}`}>{gstMsg.type==='success'?'✓':'⚠'} {gstMsg.text}</div>}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end'}}>
+                  <div>
+                    <label className="form-label">Period From</label>
+                    <input className="form-input" type="date" value={gstFrom} onChange={e=>setGstFrom(e.target.value)}/>
+                  </div>
+                  <div>
+                    <label className="form-label">Period To</label>
+                    <input className="form-input" type="date" value={gstTo} onChange={e=>setGstTo(e.target.value)}/>
+                  </div>
+                  <button className="btn btn-green" onClick={exportGst} disabled={gstLoading||!gstFrom||!gstTo}
+                    style={{background:'var(--green)',color:'#fff',border:'none'}}>
+                    {gstLoading ? <><span className="spin">↻</span> Exporting…</> : '⬇ Download GST Sheet'}
+                  </button>
+                </div>
+                <div style={{marginTop:10,fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
+                  Columns: Date · Invoice No · Vendor · GST No · Location · Total Sales · Vendor Discount · Commissionable Sales · Commission · Shipping · CrosCrow Discount · Subtotal · HSN · IGST/SGST/CGST · Total GST · Total with GST
+                </div>
+              </div>
+            </div>
+
             {/* Generate panel */}
             <div className="card" style={{marginBottom:16}}>
               <div className="card-header"><span className="card-title">Generate Invoice</span><span className="card-sub">Locks delivered orders into a formal settlement invoice</span></div>
@@ -2392,7 +2442,8 @@
     };
 
     const TEMPLATE_LIST = [
-      { key:'new_order',          label:'🟢 New Order (Customer)',        desc:'Fires on order creation via webhook — WhatsApp confirm button' },
+      { key:'new_order',          label:'🟢 New Order (Customer)',        desc:'Sky theme — fires on order creation via webhook' },
+      { key:'new_order_vendor',   label:'📬 New Order Heads-Up (Vendor)', desc:'Fires on order creation — heads up, do not dispatch yet' },
       { key:'confirmed_customer', label:'✅ Order Confirmed (Customer)',   desc:'Fires when stage → Confirmed' },
       { key:'confirmed_vendor',   label:'📦 Order Confirmed (Vendor)',     desc:'Fires when stage → Confirmed, sent to each vendor' },
       { key:'partial_vendor',     label:'💛 Partial/Advance (Vendor)',     desc:'Fires when advance amount saved — updated COD breakdown' },

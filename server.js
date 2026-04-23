@@ -2927,6 +2927,140 @@ app.get("/admin/settlements", adminAuth, async (req, res) => {
   res.json({ settlements });
 });
 
+// ── GET /admin/settlements/gst-export ────────────────────────────────────
+// All delivered orders in date range → one row per vendor → CA GST format CSV
+app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
+
+  try {
+    // Fetch all Shopify orders in the date window
+    const allOrders = await fetchAllOrders("any", from + "T00:00:00Z", to + "T23:59:59Z");
+
+    // Load supporting data
+    const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray();
+    const vConfigs  = await VC.all();
+    const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
+    const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+    const allVendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
+    const vendorStageMap = {};
+    allVendorStages.forEach(r => {
+      if (!vendorStageMap[r.shopify_id]) vendorStageMap[r.shopify_id] = {};
+      vendorStageMap[r.shopify_id][r.vendor_name] = r.stage;
+    });
+
+    // Aggregate per-vendor totals — only delivered orders
+    const vendorMap = {};
+    allOrders.forEach(o => {
+      const sid = String(o.id);
+      const meta = metaMap[sid] || {};
+      const orderStage = meta.stage || 'new';
+      const payType = meta.payment_type || 'cod';
+      const isCod = payType !== 'prepaid';
+      const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+      const ordVendorSet = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+      const shippingPerVendor = ordVendorSet.size > 0 ? orderShipping / ordVendorSet.size : 0;
+
+      (o.line_items || []).forEach(li => {
+        const vendor = li.vendor;
+        if (!vendor) return;
+        const effectiveStage = vendorStageMap[sid]?.[vendor] || orderStage;
+        if (effectiveStage !== 'delivered') return;
+        if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, ordersAdded: new Set() };
+        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+        const calc = calcCommission(itemRev, payType, commPct, 0);
+        vendorMap[vendor].gross += itemRev;
+        if (!isCod) vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
+        vendorMap[vendor].commission += calc.commission;
+        vendorMap[vendor].gst += calc.gst;
+        if (!vendorMap[vendor].ordersAdded.has(sid)) {
+          vendorMap[vendor].ordersAdded.add(sid);
+          if ((meta.advance_paid || 0) > 0) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
+          if (isCod) vendorMap[vendor].shipping += shippingPerVendor;
+        }
+      });
+    });
+
+    const escCsv = v => {
+      const s = v == null ? '' : String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const periodLabel = `${from.split('-').reverse().join('/')}-${to.split('-').reverse().join('/')}`;
+
+    const headers = [
+      'DATE','COMMISSION INVOICE NO','VENDOR','VENDOR GST (IF AVAILABLE)',
+      'OFFICE LOCATION (CITY/STATE)','TOTAL SALES','TOTAL VENDOR DISCOUNT',
+      'TOTAL COMMISSIONABLE SALES','COMMISSION ON SALES','SHIPPING CHARGES',
+      'CROSCROW DISCOUNT','SUBTOTAL','HSN CODE','IGST(18%)','SGST(9%)','CGST(9%)',
+      'TOTAL GST','TOTAL COMMISSION WITH GST',
+    ];
+
+    const rows = Object.entries(vendorMap).sort((a,b) => b[1].gross - a[1].gross).map(([vendorName, d]) => {
+      const prof = vProfileMap[vendorName] || {};
+      const gstNo = prof.gst_no || 'NA';
+      const location = [prof.city, prof.state].filter(Boolean).join('/') || 'NA';
+
+      const totalSales     = parseFloat(d.gross.toFixed(2));
+      const vendorDiscount = parseFloat(d.prepaidDiscount.toFixed(2));
+      const commissionable = parseFloat((totalSales - vendorDiscount).toFixed(2));
+      const commission     = parseFloat(d.commission.toFixed(2));
+      const shipping       = parseFloat(d.shipping.toFixed(2));
+      const subtotal       = parseFloat((commission + shipping).toFixed(2));
+      const totalGst       = parseFloat(d.gst.toFixed(2));
+      const hsnCode        = '998599';
+
+      // IGST if inter-state: CrosCrow = Delhi (07). Same state → SGST+CGST
+      const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
+      const isIGST = !vendorStateCode || vendorStateCode !== '07';
+      const igst = isIGST ? totalGst : 0;
+      const sgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
+      const cgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
+      const totalWithGst = parseFloat((subtotal + totalGst).toFixed(2));
+
+      return [
+        periodLabel, '', vendorName, gstNo, location,
+        totalSales.toFixed(2), vendorDiscount.toFixed(2), commissionable.toFixed(2),
+        commission.toFixed(2), shipping.toFixed(2), '0.00',
+        subtotal.toFixed(2), hsnCode,
+        igst.toFixed(2), sgst.toFixed(2), cgst.toFixed(2),
+        totalGst.toFixed(2), totalWithGst.toFixed(2),
+      ].map(escCsv).join(',');
+    });
+
+    // Totals row
+    const allV = Object.values(vendorMap);
+    const tSales    = parseFloat(allV.reduce((s,d) => s + d.gross, 0).toFixed(2));
+    const tDisc     = parseFloat(allV.reduce((s,d) => s + d.prepaidDiscount, 0).toFixed(2));
+    const tComm     = parseFloat(allV.reduce((s,d) => s + d.commission, 0).toFixed(2));
+    const tShip     = parseFloat(allV.reduce((s,d) => s + d.shipping, 0).toFixed(2));
+    const tGst      = parseFloat(allV.reduce((s,d) => s + d.gst, 0).toFixed(2));
+    const tCommable = parseFloat((tSales - tDisc).toFixed(2));
+    const tSubtotal = parseFloat((tComm + tShip).toFixed(2));
+    const tTotal    = parseFloat((tSubtotal + tGst).toFixed(2));
+    const totalsRow = [
+      'TOTAL','','','','',
+      tSales.toFixed(2), tDisc.toFixed(2), tCommable.toFixed(2),
+      tComm.toFixed(2), tShip.toFixed(2), '0.00',
+      tSubtotal.toFixed(2), '',
+      tGst.toFixed(2), '0.00', '0.00',
+      tGst.toFixed(2), tTotal.toFixed(2),
+    ].map(escCsv).join(',');
+
+    const csv = [headers.join(','), ...rows, totalsRow].join('\r\n');
+    const filename = `CrosCrow_GST_${from}_to_${to}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (err) {
+    console.error("❌ /admin/settlements/gst-export:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /admin/settlements/:id ────────────────────────────────────────────
 app.get("/admin/settlements/:id", adminAuth, async (req, res) => {
   const sid = parseInt(req.params.id);
