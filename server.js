@@ -818,10 +818,10 @@ app.post("/webhooks/fulfillments", (req, res) => {
           }
 
           await OVS.upsert(shopifyId, vendorName, {
-            stage: 'pickup', awb, courier, tracking_url: trackUrl,
+            stage: 'ready', awb, courier, tracking_url: trackUrl,
             updated_at: new Date().toISOString(),
           });
-          auditLog("webhook", "fulfillment_auto_pickup", shopifyId, { vendorName, awb });
+          auditLog("webhook", "fulfillment_auto_ready", shopifyId, { vendorName, awb });
 
           // Email customer about this vendor's shipment
           const cfg = await getSmtpConfig();
@@ -2160,9 +2160,9 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
     }
     const fData = await fRes.json();
 
-    // Step 4: save AWB to this vendor's stage record only
+    // Step 4: save AWB to this vendor's stage record — ready = tracking submitted, awaiting pickup
     await OVS.upsert(shopifyId, vendorName, {
-      stage: 'pickup', awb, courier: courier || '', tracking_url: trackingUrl || '',
+      stage: 'ready', awb, courier: courier || '', tracking_url: trackingUrl || '',
       updated_at: new Date().toISOString(),
     });
     auditLog("vendor", "vendor_fulfill", shopifyId, { vendorName, awb, courier });
@@ -2555,7 +2555,7 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   // Sync order-level stage into per-vendor records for penalty cron.
   // Never downgrade a vendor who already submitted tracking (ready/pickup/transit/delivered).
   const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
-  const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
+  const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
   try {
     const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
     const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
@@ -2585,7 +2585,7 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
 
   const now = new Date().toISOString();
   const nowMs = Date.now();
-  const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
+  const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
   const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name }, { projection: { _id: 0 } });
 
   const newStartedAt = ['confirmed','partial'].includes(stage) ? nowMs : (existing?.stage_started_at || 0);
@@ -2664,8 +2664,8 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     }
     const fData = await fRes.json();
 
-    // Save AWB/courier/tracking to order_vendor_stage
-    await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'pickup', updated_at: new Date().toISOString() });
+    // Save AWB/courier/tracking to order_vendor_stage — ready = tracking submitted, awaiting pickup
+    await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'ready', updated_at: new Date().toISOString() });
     auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
 
     // Send customer shipped email
@@ -4646,7 +4646,7 @@ async function penaltyCronJob() {
     const etaPast = await DR.expiredEta(today);
     for (const dr of etaPast) {
       const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: dr.shopify_id, vendor_name: dr.vendor_name }, { projection: { stage: 1, _id: 0 } });
-      const fulfilledStages = ['pickup','transit','delivered','rto','cancelled'];
+      const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
       if (!ovs || !fulfilledStages.includes(ovs.stage)) {
         let orderName = '';
         try { const od = await shopifyREST(`/orders/${dr.shopify_id}.json?fields=name`); orderName = od?.order?.name || ''; } catch {}
