@@ -4697,6 +4697,109 @@ async function penaltyCronJob() {
 setInterval(penaltyCronJob, PENALTY_CHECK_MS);
 
 // ══════════════════════════════════════════════════════════════════════════
+//  AUTO-HOLD: orders stuck in "new" for 7 days → move to hold + tag Shopify
+// ══════════════════════════════════════════════════════════════════════════
+const AUTO_HOLD_DAYS = 7;
+const AUTO_HOLD_TAG  = 'on hold';
+
+async function autoHoldCronJob() {
+  try {
+    const cutoff = Date.now() - AUTO_HOLD_DAYS * 24 * 60 * 60 * 1000;
+    const cutoffISO = new Date(cutoff).toISOString();
+
+    // Fetch all orders created before the cutoff
+    const oldOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z", cutoffISO);
+    const metas = await mdb.collection('order_meta').find({}, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const token = await getAccessToken();
+
+    const moved = [];
+    for (const o of oldOrders) {
+      const sid = String(o.id);
+      const meta = metaMap[sid] || {};
+      const stage = meta.stage || 'new';
+      if (stage !== 'new') continue; // only auto-hold orders still in new
+
+      // Move to hold in our DB
+      await OM.upsert(sid, { stage: 'hold', updated_at: new Date().toISOString() });
+
+      // Add "on hold" tag in Shopify (preserve existing tags)
+      const existingTags = (o.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+      if (!existingTags.some(t => t.toLowerCase() === AUTO_HOLD_TAG)) {
+        const newTags = [...existingTags, AUTO_HOLD_TAG].join(', ');
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
+          method: 'PUT',
+          headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: { id: sid, tags: newTags } }),
+        });
+      }
+
+      moved.push({ name: o.name, id: sid, created_at: o.created_at });
+      auditLog('system', 'auto_hold', sid, { reason: `${AUTO_HOLD_DAYS}d in new stage` });
+      console.log(`🔒 Auto-hold: ${o.name} (${sid}) moved to hold after ${AUTO_HOLD_DAYS} days`);
+    }
+
+    if (moved.length === 0) return;
+
+    // Send notification email to admin + staff
+    const cfg = await getSmtpConfig();
+    const rsSettings = await RS.get();
+    const adminEmail = cfg?.adminEmail || cfg?.user;
+    const staffList  = (rsSettings.staff_emails || '').split(',').map(e => e.trim()).filter(Boolean);
+    const recipients = [adminEmail, ...staffList].filter(Boolean);
+    if (!cfg || !recipients.length) return;
+
+    const orderRows = moved.map(o => `
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #1e293b;font-family:monospace;color:#a5b4fc;font-weight:700">${o.name}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #1e293b;color:#94a3b8;font-size:12px">${new Date(o.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #1e293b"><span style="background:#1c1208;color:#f59e0b;border:1px solid #92400e;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700">ON HOLD</span></td>
+      </tr>`).join('');
+
+    const html = emailBase(`🔒 ${moved.length} Order${moved.length>1?'s':''} Auto-Moved to Hold`, '#f59e0b', `
+      <div class="subtitle">${moved.length} order${moved.length>1?'s':''} have been automatically moved to <strong>On Hold</strong> after sitting in New stage for ${AUTO_HOLD_DAYS}+ days.</div>
+
+      <div style="background:#1c1208;border:2px solid #f59e0b;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center">
+        <div style="font-size:32px;font-weight:900;color:#f59e0b;">${moved.length}</div>
+        <div style="font-size:12px;color:#92400e;font-weight:600;margin-top:4px;">Order${moved.length>1?'s':''} require your attention</div>
+      </div>
+
+      <div style="font-size:13px;font-weight:700;color:#94a3b8;margin-bottom:10px;">Orders moved to hold:</div>
+      <div style="background:#1e293b;border-radius:8px;overflow:hidden;margin-bottom:20px">
+        <table style="width:100%;border-collapse:collapse">
+          <tr style="background:#0f172a">
+            <th style="padding:9px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600">ORDER</th>
+            <th style="padding:9px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600">PLACED ON</th>
+            <th style="padding:9px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600">STATUS</th>
+          </tr>
+          ${orderRows}
+        </table>
+      </div>
+
+      <div style="background:#0d1520;border:1px solid #1a3a6a;border-radius:8px;padding:14px 18px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:6px;">Action Required</div>
+        <div style="font-size:12px;color:#94a3b8;line-height:1.8">
+          Please review these orders on the admin panel and either:<br>
+          • <strong style="color:#10b981">Confirm</strong> the order (move to Confirmed stage)<br>
+          • <strong style="color:#ef4444">Cancel</strong> the order if it cannot be fulfilled
+        </div>
+      </div>
+    `);
+
+    for (const to of recipients) {
+      await sendEmail({ to, subject: `🔒 ${moved.length} Order${moved.length>1?'s':''} Auto-Moved to Hold — Action Required`, html, trigger: 'auto_hold_notify' });
+    }
+    console.log(`🔒 Auto-hold cron: ${moved.length} orders moved, notified ${recipients.length} recipient(s)`);
+  } catch (e) {
+    console.error('⚠️  Auto-hold cron error:', e.message);
+  }
+}
+
+// Run once at startup (in case server restarted mid-day), then every 6 hours
+autoHoldCronJob().catch(() => {});
+setInterval(autoHoldCronJob, 6 * 60 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════════════════
 //  WEEKLY REPORT SYSTEM
 // ══════════════════════════════════════════════════════════════════════════
 

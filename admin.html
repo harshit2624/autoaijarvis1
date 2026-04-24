@@ -3625,8 +3625,9 @@
               </div>
             </label>
             <div style={{marginBottom:10}}>
-              <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>EXTRA STAFF EMAILS (comma separated)</label>
+              <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>STAFF EMAILS (comma separated)</label>
               <input className="form-input" placeholder="staff@example.com, ops@example.com" value={settings.staff_emails||''} onChange={e=>setSettings(s=>({...s,staff_emails:e.target.value}))} style={{width:'100%',boxSizing:'border-box'}}/>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Used for: weekly reports · auto-hold alerts (orders stuck in New for 7+ days)</div>
             </div>
             <button className="btn btn-primary" onClick={saveSettings} disabled={savingSettings} style={{width:'100%'}}>{savingSettings?'Saving…':'💾 Save Settings'}</button>
             {settings.last_sent_at && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:8,textAlign:'center'}}>Last sent: {new Date(settings.last_sent_at).toLocaleString('en-IN')}</div>}
