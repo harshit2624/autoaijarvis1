@@ -1986,6 +1986,13 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
         const shippingCharge = payType !== "prepaid"
           ? parseFloat((orderShipping / vendorCount).toFixed(2)) : 0;
         const advancePaid = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
+
+        // Find this vendor's Shopify fulfillment by matching line item IDs
+        const myLineItemIds = new Set(myItems.map(li => li.id));
+        const myFulfillment = (o.fulfillments || []).find(f =>
+          (f.line_items || []).some(fli => myLineItemIds.has(fli.id))
+        );
+
         return {
           id:           o.name,
           shopifyId:    String(o.id),
@@ -2004,10 +2011,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           advancePaid,
           totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
           remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
-          awb:          vStageMap[String(o.id)]?.awb || "",
-          courier:      vStageMap[String(o.id)]?.courier || "",
-          trackingUrl:  vStageMap[String(o.id)]?.tracking_url || "",
-          deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
+          awb:          vStageMap[String(o.id)]?.awb || myFulfillment?.tracking_number || "",
+          courier:      vStageMap[String(o.id)]?.courier || myFulfillment?.tracking_company || "",
+          trackingUrl:  vStageMap[String(o.id)]?.tracking_url || myFulfillment?.tracking_url || "",
+          deliveryStatus: meta.delivery_status || myFulfillment?.shipment_status || "",
           stageStartedAt:   vStageMap[String(o.id)]?.stage_started_at || 0,
           penaltyTriggered: vStageMap[String(o.id)]?.penalty_triggered || 0,
           warningSent:      vStageMap[String(o.id)]?.warning_sent || 0,
@@ -2492,6 +2499,24 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
       const vendors = [...new Set((o.line_items || []).map(li => li.vendor).filter(Boolean))];
       const myRev   = (o.line_items || []).reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
       const shipping = parseFloat(o.total_shipping_price_set?.shop_money?.amount || 0);
+      const sid = String(o.id);
+
+      // Populate vtMap from Shopify fulfillments for vendors without an OVS tracking entry
+      // Match each fulfillment to vendor(s) via fulfilled line item IDs
+      if ((o.fulfillments || []).length > 0) {
+        const lineItemVendorMap = Object.fromEntries((o.line_items || []).map(li => [li.id, li.vendor]).filter(([,v]) => v));
+        for (const f of o.fulfillments) {
+          if (!f.tracking_number) continue;
+          const fulfilledVendors = [...new Set((f.line_items || []).map(fli => lineItemVendorMap[fli.id]).filter(Boolean))];
+          for (const v of fulfilledVendors) {
+            if (!vtMap[sid]) vtMap[sid] = {};
+            if (!vtMap[sid][v]) { // only fill if OVS didn't already set it
+              vtMap[sid][v] = { awb: f.tracking_number || '', courier: f.tracking_company || '', trackingUrl: f.tracking_url || '' };
+            }
+          }
+        }
+      }
+
       return {
         id:             o.name,
         shopifyId:      String(o.id),
@@ -2515,9 +2540,9 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         paymentType:    meta.payment_type || "cod",
         advancePaid:    meta.advance_paid || 0,
         notes:          meta.notes || "",
-        awb:            meta.awb || "",
-        courier:        meta.courier || "",
-        trackingUrl:    meta.tracking_url || "",
+        awb:            meta.awb || (vendors.length === 1 ? (o.fulfillments||[]).find(f=>f.tracking_number)?.tracking_number || "" : ""),
+        courier:        meta.courier || (vendors.length === 1 ? (o.fulfillments||[]).find(f=>f.tracking_company)?.tracking_company || "" : ""),
+        trackingUrl:    meta.tracking_url || (vendors.length === 1 ? (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "" : ""),
         deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
         tags:           o.tags || "",
