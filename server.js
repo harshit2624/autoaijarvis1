@@ -4081,13 +4081,11 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       }
     }
 
-    // Auto-save AWB to both order_meta and the vendor's order_vendor_stage row
+    // Save AWB to this vendor's order_vendor_stage only — never to order_meta.awb
+    // (order_meta.awb is the admin-set main tracking; vendor AWBs are per-vendor)
     if (result?.awb) {
       const sid = String(shopifyOrder.id);
-      const now = new Date().toISOString();
-      await OM.upsert(sid, { awb: result.awb, courier: partner, updated_at: now });
-      // Also save to vendor stage so vendor panel reads it (vendor panel uses OVS, not order_meta)
-      await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: now });
+      await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
     }
 
     res.json(result);
