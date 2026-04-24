@@ -4082,10 +4082,56 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     }
 
     // Save AWB to this vendor's order_vendor_stage only — never to order_meta.awb
-    // (order_meta.awb is the admin-set main tracking; vendor AWBs are per-vendor)
     if (result?.awb) {
       const sid = String(shopifyOrder.id);
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+
+      // Also create a Shopify partial fulfillment for this vendor's line items
+      try {
+        const shopifyToken = await getAccessToken();
+        const vendorLineItemIds = new Set(items.map(li => li.id));
+
+        // Fetch open fulfillment orders and match this vendor's items
+        const foRes = await fetch(
+          `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/fulfillment_orders.json`,
+          { headers: { 'X-Shopify-Access-Token': shopifyToken } }
+        );
+        const foData = await foRes.json();
+        const openFOs = (foData.fulfillment_orders || []).filter(fo => fo.status === 'open');
+
+        const line_items_by_fulfillment_order = [];
+        for (const fo of openFOs) {
+          const matching = (fo.line_items || []).filter(foli => vendorLineItemIds.has(foli.line_item_id));
+          if (matching.length) {
+            line_items_by_fulfillment_order.push({
+              fulfillment_order_id: fo.id,
+              fulfillment_order_line_items: matching.map(foli => ({ id: foli.id, quantity: foli.quantity })),
+            });
+          }
+        }
+
+        if (line_items_by_fulfillment_order.length) {
+          const courierName = partner === 'shiprocket' ? 'Shiprocket' : 'Delhivery';
+          const trackUrl = partner === 'delhivery'
+            ? `https://www.delhivery.com/track/package/${result.awb}`
+            : `https://shiprocket.co/tracking/${result.awb}`;
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/fulfillments.json`, {
+            method: 'POST',
+            headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fulfillment: {
+                line_items_by_fulfillment_order,
+                tracking_info: { number: result.awb, url: trackUrl, company: courierName },
+                notify_customer: false,
+              },
+            }),
+          });
+          result.shopifyFulfilled = true;
+        }
+      } catch (e) {
+        console.error('⚠️  Shopify fulfillment after create-shipment failed:', e.message);
+        result.shopifyFulfillError = e.message;
+      }
     }
 
     res.json(result);
