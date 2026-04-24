@@ -2802,6 +2802,99 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   res.json({ success: true, stage });
 });
 
+// ── POST /admin/orders/bulk-update ────────────────────────────────────────
+// Bulk set stage + add/remove Shopify tags for multiple orders
+app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
+  const { order_ids, stage, add_tags = [], remove_tags = [] } = req.body || {};
+  if (!Array.isArray(order_ids) || order_ids.length === 0)
+    return res.status(400).json({ error: "order_ids array required." });
+  if (!stage && add_tags.length === 0 && remove_tags.length === 0)
+    return res.status(400).json({ error: "Specify stage or tags to add/remove." });
+
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  if (stage && !VALID_STAGES.includes(stage))
+    return res.status(400).json({ error: "Invalid stage." });
+
+  const now = new Date().toISOString();
+  const results = { updated: [], failed: [] };
+
+  // Find which Shopify tag maps to the new stage (if any)
+  let stageTag = null;
+  if (stage) {
+    const mapping = await mdb.collection('tag_mappings').findOne({ stage }, { projection: { shopify_tag: 1, _id: 0 } });
+    stageTag = mapping?.shopify_tag || null;
+  }
+
+  const shopifyToken = await getAccessToken();
+
+  for (const id of order_ids) {
+    try {
+      // 1. Update our stage
+      if (stage) {
+        await OM.upsert(id, { stage, updated_at: now });
+        fireStageEmails(id, stage).catch(() => {});
+        // Sync to vendor stages (with ADVANCED guard)
+        const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
+        const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
+        const nowMs = Date.now();
+        try {
+          const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+          const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+          for (const vendor of vendors) {
+            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
+            if (existing && ADVANCED.includes(existing.stage) && !ADVANCED.includes(stage)) continue;
+            const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
+            await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: fulfilledStages.includes(stage)?0:(existing?.warning_sent||0), penalty_triggered: fulfilledStages.includes(stage)?0:(existing?.penalty_triggered||0) });
+          }
+        } catch(e) { /* non-fatal */ }
+      }
+
+      // 2. Update Shopify tags
+      let currentTagsArr = [];
+      try {
+        const od = await shopifyREST(`/orders/${id}.json?fields=id,tags`);
+        currentTagsArr = (od?.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+      } catch(e) { /* use empty if fetch fails */ }
+
+      let changed = false;
+      // Add stage tag (from tag mapping)
+      if (stageTag && !currentTagsArr.some(t => t.toLowerCase() === stageTag.toLowerCase())) {
+        currentTagsArr.push(stageTag);
+        changed = true;
+      }
+      // Add extra tags
+      for (const t of add_tags) {
+        if (t && !currentTagsArr.some(x => x.toLowerCase() === t.toLowerCase())) {
+          currentTagsArr.push(t);
+          changed = true;
+        }
+      }
+      // Remove tags
+      if (remove_tags.length > 0) {
+        const removeLower = remove_tags.map(t => t.toLowerCase());
+        const before = currentTagsArr.length;
+        currentTagsArr = currentTagsArr.filter(t => !removeLower.includes(t.toLowerCase()));
+        if (currentTagsArr.length !== before) changed = true;
+      }
+
+      if (changed) {
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${id}.json`, {
+          method: 'PUT',
+          headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: { id, tags: currentTagsArr.join(', ') } }),
+        });
+      }
+
+      results.updated.push(id);
+    } catch (e) {
+      results.failed.push({ id, error: e.message });
+    }
+  }
+
+  auditLog("admin", "bulk_update", "multiple", { count: results.updated.length, stage, add_tags, remove_tags });
+  res.json({ success: true, ...results, stageTag });
+});
+
 // ── PUT /admin/orders/:id/vendor-stage — set stage for one vendor in an order ──
 app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
   const { id } = req.params;

@@ -1561,14 +1561,21 @@
      ORDERS VIEW
   ══════════════════════════════════ */
   function Orders({ token, initialStage }) {
-    const [orders,   setOrders]   = useState([]);
-    const [loading,  setLoading]  = useState(true);
-    const [stage,    setStage]    = useState(initialStage || 'all');
-    const [search,   setSearch]   = useState('');
-    const [page,     setPage]     = useState(1);
-    const [modal,    setModal]    = useState(null);
-    const [showTags, setShowTags] = useState(false);
-    const [period,   setPeriod]   = useState(null); // null = all time
+    const [orders,    setOrders]   = useState([]);
+    const [loading,   setLoading]  = useState(true);
+    const [stage,     setStage]    = useState(initialStage || 'all');
+    const [search,    setSearch]   = useState('');
+    const [page,      setPage]     = useState(1);
+    const [modal,     setModal]    = useState(null);
+    const [showTags,  setShowTags] = useState(false);
+    const [period,    setPeriod]   = useState(null);
+    // Bulk select
+    const [selected,  setSelected]  = useState(new Set());
+    const [bulkStage, setBulkStage] = useState('');
+    const [bulkAddTag,setBulkAddTag]= useState('');
+    const [bulkRmTag, setBulkRmTag] = useState('');
+    const [bulkMsg,   setBulkMsg]   = useState(null);
+    const [bulkBusy,  setBulkBusy]  = useState(false);
 
     const load = useCallback(()=>{
       setLoading(true);
@@ -1577,6 +1584,30 @@
     },[token]);
 
     useEffect(()=>{ load(); },[load]);
+
+    const toggleSelect = id => setSelected(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+    const toggleAll    = () => setSelected(s => s.size===rows.length ? new Set() : new Set(rows.map(o=>o.shopifyId)));
+    const clearSelect  = () => { setSelected(new Set()); setBulkMsg(null); };
+
+    const applyBulk = async () => {
+      if (!bulkStage && !bulkAddTag.trim() && !bulkRmTag.trim()) { setBulkMsg({type:'error',text:'Select a stage or enter tags to add/remove.'}); return; }
+      setBulkBusy(true); setBulkMsg(null);
+      const addTags = bulkAddTag.split(',').map(t=>t.trim()).filter(Boolean);
+      const rmTags  = bulkRmTag.split(',').map(t=>t.trim()).filter(Boolean);
+      try {
+        const r = await fetch(`${API}/admin/orders/bulk-update`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ order_ids:[...selected], stage:bulkStage||undefined, add_tags:addTags, remove_tags:rmTags }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        const tagNote = d.stageTag ? ` · tag "${d.stageTag}" added` : '';
+        setBulkMsg({type:'success',text:`Updated ${d.updated.length} order${d.updated.length!==1?'s':''}${tagNote}${d.failed.length?' · '+d.failed.length+' failed':''}`});
+        clearSelect(); setBulkStage(''); setBulkAddTag(''); setBulkRmTag('');
+        load();
+      } catch(e) { setBulkMsg({type:'error',text:e.message}); }
+      setBulkBusy(false);
+    };
 
     const orderMatchesStage = (o, s) =>
       s === 'all' || o.stage === s || Object.values(o.vendorStages||{}).includes(s);
@@ -1624,23 +1655,52 @@
           <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}</span>
         </div>
 
+        {/* Bulk action bar */}
+        {selected.size > 0 && (
+          <div style={{position:'sticky',top:0,zIndex:20,background:'#1a1a2e',border:'1px solid var(--indigo)',borderRadius:8,padding:'10px 16px',marginBottom:10,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',boxShadow:'0 4px 20px rgba(99,102,241,0.2)'}}>
+            <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)',whiteSpace:'nowrap'}}>{selected.size} selected</span>
+            <select className="form-select" style={{fontSize:11,padding:'5px 8px',flex:'0 0 160px'}} value={bulkStage} onChange={e=>setBulkStage(e.target.value)}>
+              <option value="">Set stage…</option>
+              {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled'].map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+            <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 140px',minWidth:120}} placeholder="Add tags (comma sep)" value={bulkAddTag} onChange={e=>setBulkAddTag(e.target.value)}/>
+            <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 140px',minWidth:120}} placeholder="Remove tags (comma sep)" value={bulkRmTag} onChange={e=>setBulkRmTag(e.target.value)}/>
+            <button className="btn btn-indigo btn-sm" onClick={applyBulk} disabled={bulkBusy}>
+              {bulkBusy?<><span className="spin">↻</span> Applying…</>:'✓ Apply'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={clearSelect}>✕ Clear</button>
+            {bulkMsg && <span style={{fontSize:11,color:bulkMsg.type==='success'?'var(--green)':'var(--red)',fontWeight:600}}>{bulkMsg.type==='success'?'✓':'⚠'} {bulkMsg.text}</span>}
+          </div>
+        )}
+
         <div className="card">
           <div className="tbl-wrap">
             <table>
               <thead><tr>
+                <th style={{width:32,paddingLeft:8}}>
+                  <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}}
+                    checked={rows.length>0&&selected.size===rows.length}
+                    ref={el=>{ if(el) el.indeterminate=selected.size>0&&selected.size<rows.length; }}
+                    onChange={toggleAll}/>
+                </th>
                 <th>#</th><th>Order</th><th>Customer</th><th>Vendors</th>
                 <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Delivery</th><th>Date</th><th/>
               </tr></thead>
               <tbody>
-                {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={11}/>) :
+                {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={12}/>) :
                  rows.length===0 ? (
-                   <tr><td colSpan={11}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr>
+                   <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr>
                  ) :
                  rows.map((o,i)=>{
                    const ds = o.deliveryStatus;
+                   const isSelected = selected.has(o.shopifyId);
                    const dsColor = ds==='Delivered'?'#10b981':ds&&ds.toLowerCase().includes('transit')?'#06b6d4':ds&&(ds.toLowerCase().includes('rto')||ds.toLowerCase().includes('return'))?'#f87171':ds?'#fbbf24':'var(--text-muted)';
                    return (
-                   <tr key={o.id} style={{cursor:'pointer'}} onClick={()=>setModal(o)}>
+                   <tr key={o.id} style={{cursor:'pointer',background:isSelected?'rgba(99,102,241,0.07)':'',outline:isSelected?'1px solid rgba(99,102,241,0.3)':''}}
+                     onClick={e=>{ if(e.target.type==='checkbox') return; setModal(o); }}>
+                     <td style={{paddingLeft:8}} onClick={e=>{ e.stopPropagation(); toggleSelect(o.shopifyId); }}>
+                       <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
+                     </td>
                      <td className="td-mut">{(cur-1)*PER+i+1}</td>
                      <td>
                        <div className="td-id">{o.id}</div>
