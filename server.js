@@ -1897,8 +1897,19 @@ Rules:
 // VENDOR PORTAL
 // ══════════════════════════════════════════════════════════════════════════
 
-const VENDOR_PASSWORD = process.env.VENDOR_PASSWORD || "Croscrow@00";
-const vendorSessions  = new Map(); // token → { vendorName, expiresAt }
+const VENDOR_PASSWORD      = process.env.VENDOR_PASSWORD || "Croscrow@00";
+const DEFAULT_VENDOR_PASS  = "Croscrow@00";
+const vendorSessions       = new Map(); // token → { vendorName, expiresAt }
+
+function hashPassword(plain) {
+  return crypto.createHash('sha256').update(plain + 'jarvis-vendor-salt-2024').digest('hex');
+}
+
+function generateUsername(vendorName) {
+  const base = vendorName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 14);
+  const num  = String(Math.floor(Math.random() * 90) + 10); // 10–99
+  return base + num;
+}
 
 function vendorAuth(req, res, next) {
   const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
@@ -1938,15 +1949,109 @@ async function getVendorList() {
 app.post("/vendor/login", async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: "Username and password required." });
-  if (password !== VENDOR_PASSWORD)  return res.status(401).json({ error: "Invalid password." });
   try {
+    // Check username-based credentials in vendor_profiles
+    const credDoc = await mdb.collection('vendor_profiles').findOne(
+      { username: { $regex: new RegExp(`^${username.trim()}$`, 'i') } },
+      { projection: { vendor_name: 1, password_hash: 1, must_change_password: 1, _id: 0 } }
+    );
+    if (credDoc) {
+      if (credDoc.password_hash !== hashPassword(password))
+        return res.status(401).json({ error: "Invalid password." });
+      const token = crypto.randomBytes(32).toString("hex");
+      vendorSessions.set(token, { vendorName: credDoc.vendor_name, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+      console.log(`🔓  Vendor login (creds): ${credDoc.vendor_name}`);
+      return res.json({ token, vendorName: credDoc.vendor_name, mustChangePassword: !!credDoc.must_change_password });
+    }
+
+    // Legacy fallback: brand name login with global password
+    if (password !== VENDOR_PASSWORD) return res.status(401).json({ error: "Invalid username or password." });
     const vendors = await getVendorList();
     const matched = vendors.find(v => v.toLowerCase() === username.toLowerCase().trim());
-    if (!matched) return res.status(401).json({ error: `Vendor "${username}" not found in store.` });
+    if (!matched) return res.status(401).json({ error: "Invalid username or password." });
     const token = crypto.randomBytes(32).toString("hex");
     vendorSessions.set(token, { vendorName: matched, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-    console.log(`🔓  Vendor login: ${matched}`);
-    res.json({ token, vendorName: matched });
+    console.log(`🔓  Vendor login (legacy): ${matched}`);
+    res.json({ token, vendorName: matched, mustChangePassword: false });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /vendor/change-password ─────────────────────────────────────────
+app.post("/vendor/change-password", vendorAuth, async (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) return res.status(400).json({ error: "current_password and new_password required." });
+  if (new_password.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
+  try {
+    const doc = await mdb.collection('vendor_profiles').findOne({ vendor_name: req.vendor }, { projection: { password_hash: 1, _id: 0 } });
+    const expectedHash = doc?.password_hash || hashPassword(DEFAULT_VENDOR_PASS);
+    if (hashPassword(current_password) !== expectedHash)
+      return res.status(401).json({ error: "Current password is incorrect." });
+    await mdb.collection('vendor_profiles').updateOne(
+      { vendor_name: req.vendor },
+      { $set: { password_hash: hashPassword(new_password), must_change_password: false, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    auditLog("vendor", "password_changed", req.vendor, {});
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/vendors/generate-credentials ──────────────────────────────
+app.post("/admin/vendors/generate-credentials", adminAuth, async (req, res) => {
+  try {
+    const vendors = await getVendorList();
+    const existing = await mdb.collection('vendor_profiles').find(
+      { username: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, username: 1, _id: 0 } }
+    ).toArray();
+    const hasCredentials = new Set(existing.map(e => e.vendor_name));
+
+    const generated = [];
+    for (const vendor of vendors) {
+      if (hasCredentials.has(vendor)) continue; // already has credentials
+      // Generate a unique username
+      let username, tries = 0;
+      do {
+        username = generateUsername(vendor);
+        const clash = await mdb.collection('vendor_profiles').findOne({ username }, { projection: { _id: 1 } });
+        if (!clash) break;
+        tries++;
+      } while (tries < 10);
+
+      await mdb.collection('vendor_profiles').updateOne(
+        { vendor_name: vendor },
+        { $set: { vendor_name: vendor, username, password_hash: hashPassword(DEFAULT_VENDOR_PASS), must_change_password: true, updated_at: new Date().toISOString() } },
+        { upsert: true }
+      );
+      generated.push({ vendor_name: vendor, username, password: DEFAULT_VENDOR_PASS });
+    }
+    auditLog("admin", "generate_vendor_credentials", "all", { count: generated.length });
+    res.json({ success: true, generated, total: generated.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── GET /admin/vendors/credentials ───────────────────────────────────────
+app.get("/admin/vendors/credentials", adminAuth, async (req, res) => {
+  try {
+    const docs = await mdb.collection('vendor_profiles').find(
+      { username: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, username: 1, must_change_password: 1, _id: 0 } }
+    ).toArray();
+    res.json({ credentials: docs });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/vendors/:name/reset-password ──────────────────────────────
+app.post("/admin/vendors/:name/reset-password", adminAuth, async (req, res) => {
+  const { name } = req.params;
+  try {
+    await mdb.collection('vendor_profiles').updateOne(
+      { vendor_name: name },
+      { $set: { password_hash: hashPassword(DEFAULT_VENDOR_PASS), must_change_password: true, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    auditLog("admin", "reset_vendor_password", name, {});
+    res.json({ success: true, message: `Password reset to ${DEFAULT_VENDOR_PASS}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

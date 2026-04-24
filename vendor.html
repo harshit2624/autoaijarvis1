@@ -1557,10 +1557,15 @@
      PROFILE VIEW
   ══════════════════════════════════ */
   function Profile({ token }) {
-    const [profile, setProfile] = useState({});
-    const [saving,  setSaving]  = useState(false);
-    const [msg,     setMsg]     = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [profile,   setProfile]   = useState({});
+    const [saving,    setSaving]    = useState(false);
+    const [msg,       setMsg]       = useState(null);
+    const [loading,   setLoading]   = useState(true);
+    const [curPass,   setCurPass]   = useState('');
+    const [newPass,   setNewPass]   = useState('');
+    const [newPass2,  setNewPass2]  = useState('');
+    const [chgMsg,    setChgMsg]    = useState(null);
+    const [chgSaving, setChgSaving] = useState(false);
 
     useEffect(()=>{
       fetch(`${API}/vendor/profile`,{headers:{Authorization:`Bearer ${token}`}})
@@ -1568,6 +1573,24 @@
     },[token]);
 
     const upd = (k,v) => setProfile(p=>({...p,[k]:v}));
+
+    const changePassword = async () => {
+      if (!curPass || !newPass) { setChgMsg({type:'error',text:'All fields required.'}); return; }
+      if (newPass !== newPass2) { setChgMsg({type:'error',text:'New passwords do not match.'}); return; }
+      if (newPass.length < 6)  { setChgMsg({type:'error',text:'Password must be at least 6 characters.'}); return; }
+      setChgSaving(true); setChgMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/change-password`,{
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ current_password: curPass, new_password: newPass }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setChgMsg({type:'success',text:'Password changed successfully!'});
+        setCurPass(''); setNewPass(''); setNewPass2('');
+      } catch(e) { setChgMsg({type:'error',text:e.message}); }
+      setChgSaving(false);
+    };
 
     const save = async () => {
       setSaving(true); setMsg(null);
@@ -1633,6 +1656,36 @@
                 </div>
               </>
             )}
+          </div>
+        </div>
+
+        {/* Change Password */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🔒 Change Password</span>
+            <span className="card-sub">Update your vendor panel login password</span>
+          </div>
+          <div style={{padding:16,maxWidth:420}}>
+            {chgMsg && <div className={`alert alert-${chgMsg.type}`}>{chgMsg.type==='success'?'✓':'⚠'} {chgMsg.text}</div>}
+            <div style={{marginBottom:12}}>
+              <label className="form-label">Current Password</label>
+              <input className="form-input" type="password" placeholder="Your current password"
+                value={curPass} onChange={e=>setCurPass(e.target.value)}/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label className="form-label">New Password</label>
+              <input className="form-input" type="password" placeholder="Min 6 characters"
+                value={newPass} onChange={e=>setNewPass(e.target.value)}/>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label className="form-label">Confirm New Password</label>
+              <input className="form-input" type="password" placeholder="Repeat new password"
+                value={newPass2} onChange={e=>setNewPass2(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&changePassword()}/>
+            </div>
+            <button className="btn btn-green" onClick={changePassword} disabled={chgSaving} style={{width:'100%'}}>
+              {chgSaving?<><span className="spin">↻</span> Saving…</>:'🔒 Change Password'}
+            </button>
           </div>
         </div>
       </div>
@@ -1954,6 +2007,8 @@
         if(!r.ok) throw new Error(d.error||'Login failed');
         ls.set('vendor_auth',d);
         setAuth(d);
+        // If first login with default password, redirect to profile to change it
+        if(d.mustChangePassword) setTimeout(()=>setView('profile'),300);
       } catch(e){ setLoginErr(e.message); }
       setLoginLoad(false);
     };
@@ -2078,6 +2133,12 @@
             </div>
           </div>
 
+          {auth.mustChangePassword && (
+            <div style={{background:'#1c1208',border:'2px solid #f59e0b',borderRadius:8,padding:'12px 16px',marginBottom:12,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+              <div style={{fontSize:13,color:'#fbbf24',fontWeight:600}}>⚠ You are using the default password. Please <strong>change your password</strong> to secure your account.</div>
+              <button className="btn btn-sm" style={{background:'#f59e0b',color:'#000',fontWeight:700,whiteSpace:'nowrap'}} onClick={()=>setView('profile')}>Change Now →</button>
+            </div>
+          )}
           {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal}/>}
           {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName}/>}
