@@ -2330,27 +2330,29 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
     // ── Fulfillment stats (30d)
     const fulfillStats = (() => {
-      // Confirmed = orders that entered the pipeline (exclude new/hold/cancelled — not yet actioned)
-      const EXCLUDE   = new Set(['new', 'hold', 'cancelled']);
-      // Dispatched = tracking submitted or beyond
+      const EXCLUDE    = new Set(['new', 'hold', 'cancelled']);
       const DISPATCHED = new Set(['ready', 'pickup', 'transit', 'delivered', 'rto']);
 
-      let confirmed=0, dispatched=0, pending_dispatch=0, delivered=0, rto=0, cancelled=0;
+      let total=0, confirmed=0, dispatched=0, delivered=0, rto=0, cancelled=0;
       orders30d.forEach(o => {
         const meta  = metaMap[String(o.id)] || {};
         const stage = meta.stage || 'new';
+        total++;
         if (o.cancelled_at || stage === 'cancelled') { cancelled++; return; }
-        if (EXCLUDE.has(stage)) return; // new/hold — not confirmed yet, skip from rate
-        confirmed++;
-        if (DISPATCHED.has(stage)) dispatched++;
-        else pending_dispatch++;
-        if (stage === 'delivered') delivered++;
-        if (stage === 'rto') rto++;
+        if (!EXCLUDE.has(stage)) confirmed++;          // confirmed = entered pipeline
+        if (DISPATCHED.has(stage))  dispatched++;      // dispatched = tracking submitted+
+        if (stage === 'delivered')  delivered++;
+        if (stage === 'rto')        rto++;
       });
-      const fulfill_rate    = confirmed > 0 ? Math.round(dispatched / confirmed * 100) : 0;
-      const pending_count   = confirmed - dispatched;
-      return { confirmed, dispatched, pending_dispatch, delivered, rto, cancelled,
-               fulfill_rate, pending_count };
+      // Dispatch rate: of confirmed orders, how many dispatched
+      const dispatch_rate  = confirmed > 0 ? Math.round(dispatched / confirmed * 100) : 0;
+      // Overall fulfillment rate: of ALL orders, how many dispatched
+      const overall_rate   = total > 0 ? Math.round(dispatched / total * 100) : 0;
+      // Delivery rate: of dispatched orders, how many delivered
+      const delivery_rate  = dispatched > 0 ? Math.round(delivered / dispatched * 100) : 0;
+      return { total, confirmed, dispatched, delivered, rto, cancelled,
+               pending_count: confirmed - dispatched,
+               dispatch_rate, overall_rate, delivery_rate };
     })();
 
     // ── Payment split (30d)

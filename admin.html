@@ -1269,7 +1269,7 @@
     const at = (a && a.allTimeTotals) ? a.allTimeTotals : {};
     const ps = (a && a.summary && a.summary.period) ? a.summary.period : {};
     const periodDays = ps.days || 30;
-    const fulfillPct = (a && a.fulfillStats) ? (a.fulfillStats.fulfill_rate || 0) : 0;
+    const fulfillPct = (a && a.fulfillStats) ? (a.fulfillStats.dispatch_rate || 0) : 0;
     const fulfillColor = fulfillPct>=80?'#10b981':fulfillPct>=50?'#f59e0b':'#ef4444';
     const periodLabel = aPeriod ? aPeriod.label : 'All Time';
     const stageColor = id => { const s=STAGES.find(x=>x.id===id); return s?`var(--${s.color})`:'var(--indigo)'; };
@@ -1292,28 +1292,42 @@
           <StatCard color="yellow" icon="⬡" label="Pending Commission"          value={aLoading?'…':fmtCur(at.pendingCommission||0)} sub="unsettled"/>
           <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
           <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
-          {!aLoading && a && a.fulfillStats && (() => {
+          {!aLoading && a && a.fulfillStats && (()=>{
             const fs = a.fulfillStats;
-            const pct = fs.fulfill_rate || 0;
-            const color = pct>=80?'#10b981':pct>=60?'#f59e0b':'#ef4444';
-            const bgColor = pct>=80?'rgba(16,185,129,0.08)':pct>=60?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
-            const borderColor = pct>=80?'rgba(16,185,129,0.3)':pct>=60?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+
+            const MiniCard = ({icon, label, pct, num, den, sub, threshHi=80, threshMid=60}) => {
+              const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
+              const bg    = pct>=threshHi?'rgba(16,185,129,0.08)':pct>=threshMid?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
+              const bdr   = pct>=threshHi?'rgba(16,185,129,0.3)':pct>=threshMid?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+              return (
+                <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:4}}>
+                  <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>{icon} {label}</div>
+                  <div style={{display:'flex',alignItems:'flex-end',gap:8}}>
+                    <span style={{fontSize:28,fontWeight:900,color,lineHeight:1}}>{pct}%</span>
+                    <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{num}/{den}</span>
+                  </div>
+                  <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
+                    <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',justifyContent:'space-between'}}>
+                    <span>{sub}</span><span>{periodLabel}</span>
+                  </div>
+                </div>
+              );
+            };
+
             return (
-              <div style={{background:bgColor,border:`1px solid ${borderColor}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:4}}>
-                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>📦 Dispatch Rate</div>
-                <div style={{display:'flex',alignItems:'flex-end',gap:8}}>
-                  <span style={{fontSize:28,fontWeight:900,color,lineHeight:1}}>{pct}%</span>
-                  <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{fs.dispatched}/{fs.confirmed} confirmed</span>
-                </div>
-                {/* Mini progress bar */}
-                <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
-                  <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
-                </div>
-                <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',justifyContent:'space-between'}}>
-                  <span style={{color:'#f97316',fontWeight:600}}>{fs.pending_count} pending dispatch</span>
-                  <span style={{color:'var(--text-muted)'}}>{periodLabel}</span>
-                </div>
-              </div>
+              <React.Fragment>
+                <MiniCard icon="📦" label="Dispatch Rate"
+                  pct={fs.dispatch_rate} num={fs.dispatched} den={fs.confirmed+' confirmed'}
+                  sub={fs.pending_count+' pending dispatch'}/>
+                <MiniCard icon="🚀" label="Overall Fulfillment"
+                  pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
+                  sub={fs.cancelled+' cancelled'}/>
+                <MiniCard icon="✅" label="Delivery Rate"
+                  pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
+                  sub={fs.rto+' RTO · '+fs.delivered+' delivered'} threshHi={70} threshMid={50}/>
+              </React.Fragment>
             );
           })()}
         </div>
