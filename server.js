@@ -2779,16 +2779,15 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   const nowMs = Date.now();
   await OM.upsert(id, { stage, updated_at: now });
 
-  // Sync order-level stage into per-vendor records for penalty cron.
-  // Never downgrade a vendor who already submitted tracking (ready/pickup/transit/delivered).
-  const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
+  // Guard: don't pull back a vendor who already has tracking (dispatched).
+  // cancelled/rto excluded — admin can always move those back to any stage.
+  const ADVANCED = ['ready','pickup','transit','delivered'];
   const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
   try {
     const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
     const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
     for (const vendor of vendors) {
       const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
-      // If this vendor is already ahead (tracking submitted), only allow explicit forward movement
       if (existing && ADVANCED.includes(existing.stage) && !ADVANCED.includes(stage)) continue;
       const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
       const newWarning   = fulfilledStages.includes(stage) ? 0 : (existing?.warning_sent || 0);
@@ -2833,8 +2832,8 @@ app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
       if (stage) {
         await OM.upsert(id, { stage, updated_at: now });
         fireStageEmails(id, stage).catch(() => {});
-        // Sync to vendor stages (with ADVANCED guard)
-        const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
+        // Guard: don't pull back dispatched vendors. cancelled/rto admin can override.
+        const ADVANCED = ['ready','pickup','transit','delivered'];
         const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
         const nowMs = Date.now();
         try {
