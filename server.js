@@ -3795,6 +3795,30 @@ app.put("/vendor/profile", vendorAuth, async (req, res) => {
   res.json({ success:true });
 });
 
+// ── GET/PUT /vendor/box-presets ───────────────────────────────────────────
+app.get("/vendor/box-presets", vendorAuth, async (req, res) => {
+  const p = await mdb.collection('vendor_profiles').findOne({ vendor_name: req.vendor }, { projection: { box_presets: 1, _id: 0 } });
+  res.json({ presets: p?.box_presets || [] });
+});
+
+app.put("/vendor/box-presets", vendorAuth, async (req, res) => {
+  const { presets } = req.body || {};
+  if (!Array.isArray(presets)) return res.status(400).json({ error: "presets array required" });
+  // Validate each preset
+  const clean = presets.filter(p => p.name && p.length > 0 && p.breadth > 0 && p.height > 0).map(p => ({
+    name:    String(p.name).slice(0, 40),
+    length:  parseFloat(p.length)  || 1,
+    breadth: parseFloat(p.breadth) || 1,
+    height:  parseFloat(p.height)  || 1,
+  }));
+  await mdb.collection('vendor_profiles').updateOne(
+    { vendor_name: req.vendor },
+    { $set: { box_presets: clean, updated_at: new Date().toISOString() } },
+    { upsert: true }
+  );
+  res.json({ success: true, presets: clean });
+});
+
 app.get("/vendor/wallet", vendorAuth, async (req, res) => {
   const txs = await mdb.collection('wallet_tx').find({ vendor_name: req.vendor }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
   const balance = txs.reduce((s, t) => t.type === "credit" ? s + t.amount : s - t.amount, 0);

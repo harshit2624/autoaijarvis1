@@ -629,6 +629,10 @@
     const [showShipment, setShowShipment]= useState(false);
     const [shipPartner,  setShipPartner] = useState('');
     const [shipWeight,   setShipWeight]  = useState('0.5');
+    const [shipLength,   setShipLength]  = useState('');
+    const [shipBreadth,  setShipBreadth] = useState('');
+    const [shipHeight,   setShipHeight]  = useState('');
+    const [boxPresets,   setBoxPresets]  = useState([]);
     const [creatingShip, setCreatingShip]= useState(false);
     const [noteThread,   setNoteThread]  = useState([]);
     const [remarks,      setRemarks]     = useState([]);
@@ -669,6 +673,8 @@
           setConnPartners(active);
           if (active.length) setShipPartner(active[0].partner);
         }).catch(()=>{});
+      fetch(`${API}/vendor/box-presets`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => setBoxPresets(d.presets || [])).catch(()=>{});
       loadNotes();
     }, [token]);
 
@@ -679,7 +685,7 @@
         const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/create-shipment`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ partner: shipPartner, weight: parseFloat(shipWeight) || 0.5 }),
+          body: JSON.stringify({ partner: shipPartner, weight: parseFloat(shipWeight) || 0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8 }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
@@ -874,6 +880,39 @@
                         <input className="form-input" type="number" step="0.1" min="0.1" value={shipWeight} onChange={e=>setShipWeight(e.target.value)} placeholder="0.5"/>
                       </div>
                     </div>
+
+                    {/* Box dimensions */}
+                    <div>
+                      <div className="sp-field-label" style={{marginBottom:6}}>Box Dimensions (cm)</div>
+                      {boxPresets.length > 0 && (
+                        <div style={{marginBottom:8}}>
+                          <select className="form-select" style={{fontSize:11}}
+                            value=""
+                            onChange={e=>{
+                              const p = boxPresets[parseInt(e.target.value)];
+                              if (p) { setShipLength(String(p.length)); setShipBreadth(String(p.breadth)); setShipHeight(String(p.height)); }
+                            }}>
+                            <option value="">— Select a box preset —</option>
+                            {boxPresets.map((p,i)=><option key={i} value={i}>{p.name} ({p.length}×{p.breadth}×{p.height} cm)</option>)}
+                          </select>
+                        </div>
+                      )}
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+                        <div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Length</div>
+                          <input className="form-input" type="number" min="1" step="0.5" placeholder="15" value={shipLength} onChange={e=>setShipLength(e.target.value)}/>
+                        </div>
+                        <div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Breadth</div>
+                          <input className="form-input" type="number" min="1" step="0.5" placeholder="12" value={shipBreadth} onChange={e=>setShipBreadth(e.target.value)}/>
+                        </div>
+                        <div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Height</div>
+                          <input className="form-input" type="number" min="1" step="0.5" placeholder="8" value={shipHeight} onChange={e=>setShipHeight(e.target.value)}/>
+                        </div>
+                      </div>
+                    </div>
+
                     <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
                       Customer address, items and COD amount will be auto-filled from this order.
                     </div>
@@ -1730,6 +1769,11 @@
     const [forms,     setForms]     = useState({});
     const [saving,    setSaving]    = useState({});
     const [msg,       setMsg]       = useState(null);
+    // Box presets
+    const [presets,   setPresets]   = useState([]);
+    const [newPreset, setNewPreset] = useState({ name:'', length:'', breadth:'', height:'' });
+    const [savingP,   setSavingP]   = useState(false);
+    const [presetMsg, setPresetMsg] = useState(null);
 
     useEffect(() => {
       fetch(`${API}/vendor/shipping/partners`, { headers: { Authorization: `Bearer ${token}` } })
@@ -1739,7 +1783,33 @@
           (d.partners || []).forEach(p => { if (p.active) m[p.partner] = true; });
           setConnected(m);
         });
+      fetch(`${API}/vendor/box-presets`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => setPresets(d.presets || [])).catch(()=>{});
     }, [token]);
+
+    const savePresets = async (updated) => {
+      setSavingP(true); setPresetMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/box-presets`, {
+          method: 'PUT', headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+          body: JSON.stringify({ presets: updated }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setPresets(d.presets); setPresetMsg({ type:'success', text:'Box presets saved!' });
+      } catch(e) { setPresetMsg({ type:'error', text: e.message }); }
+      setSavingP(false);
+    };
+
+    const addPreset = () => {
+      const { name, length, breadth, height } = newPreset;
+      if (!name.trim() || !length || !breadth || !height) { setPresetMsg({ type:'error', text:'All fields required.' }); return; }
+      const updated = [...presets, { name: name.trim(), length: parseFloat(length), breadth: parseFloat(breadth), height: parseFloat(height) }];
+      setNewPreset({ name:'', length:'', breadth:'', height:'' });
+      savePresets(updated);
+    };
+
+    const removePreset = idx => savePresets(presets.filter((_,i) => i !== idx));
 
     const setField = (partnerId, key, val) =>
       setForms(f => ({ ...f, [partnerId]: { ...(f[partnerId] || {}), [key]: val } }));
@@ -1788,6 +1858,58 @@
             <li>Click <strong>Connect</strong>. Once connected, a <em>Create Shipment</em> button appears directly on every order.</li>
             <li>When you click Create Shipment on an order, it auto-fills customer address, items, and COD amount — you just confirm.</li>
           </ol>
+        </div>
+
+        {/* ── Box Dimension Presets ── */}
+        <div className="card" style={{marginBottom:20}}>
+          <div className="card-header">
+            <span className="card-title">📦 Box Dimension Presets</span>
+            <span className="card-sub">Save your standard box sizes — select when creating shipments</span>
+          </div>
+          <div style={{padding:16}}>
+            {presetMsg && <div className={`alert alert-${presetMsg.type}`} style={{marginBottom:12}}>{presetMsg.type==='success'?'✓':'⚠'} {presetMsg.text}</div>}
+
+            {/* Existing presets */}
+            {presets.length > 0 && (
+              <div style={{marginBottom:14,display:'flex',flexDirection:'column',gap:8}}>
+                {presets.map((p,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:10,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
+                    <span style={{fontSize:13,fontWeight:700,color:'var(--text)',flex:1}}>{p.name}</span>
+                    <span style={{fontSize:11,color:'var(--text-muted)',fontFamily:'monospace',background:'var(--bg-card)',padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)'}}>
+                      {p.length} × {p.breadth} × {p.height} cm
+                    </span>
+                    <button onClick={()=>removePreset(i)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--red)',fontSize:14,padding:'0 4px',lineHeight:1}} title="Remove">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add new preset */}
+            <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14}}>
+              <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:10,letterSpacing:1,textTransform:'uppercase'}}>Add New Box Size</div>
+              <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr auto',gap:8,alignItems:'end'}}>
+                <div>
+                  <label className="form-label">Preset Name</label>
+                  <input className="form-input" placeholder="e.g. Small Box" value={newPreset.name} onChange={e=>setNewPreset(p=>({...p,name:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="form-label">Length (cm)</label>
+                  <input className="form-input" type="number" min="1" step="0.5" placeholder="20" value={newPreset.length} onChange={e=>setNewPreset(p=>({...p,length:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="form-label">Breadth (cm)</label>
+                  <input className="form-input" type="number" min="1" step="0.5" placeholder="15" value={newPreset.breadth} onChange={e=>setNewPreset(p=>({...p,breadth:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="form-label">Height (cm)</label>
+                  <input className="form-input" type="number" min="1" step="0.5" placeholder="7" value={newPreset.height} onChange={e=>setNewPreset(p=>({...p,height:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addPreset()}/>
+                </div>
+                <button className="btn btn-green btn-sm" onClick={addPreset} disabled={savingP} style={{marginBottom:1}}>
+                  {savingP?<span className="spin">↻</span>:'+ Add'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="sp-grid">
