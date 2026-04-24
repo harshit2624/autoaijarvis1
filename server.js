@@ -1176,6 +1176,93 @@ function templateNewOrderVendor({ order, vendorName }) {
   return emailBase(`New Order Received: ${order.name}`, '#1e40af', body);
 }
 
+function templateVendorWelcome({ vendorName, username, password }) {
+  const loginUrl = 'https://autoaijarvis1.onrender.com/vendor.html';
+  return emailBase(`Welcome to the All-New CrosCrow Vendor Panel 🚀`, '#6366f1', `
+    <!-- Hero greeting -->
+    <div style="text-align:center;padding:8px 0 28px">
+      <div style="display:inline-block;background:linear-gradient(135deg,#4338ca,#7c3aed);border-radius:12px;padding:14px 28px;margin-bottom:16px">
+        <div style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#c4b5fd;margin-bottom:4px">CrosCrow Vendor Portal</div>
+        <div style="font-size:22px;font-weight:900;color:#ffffff;letter-spacing:-0.5px">Welcome aboard, ${vendorName}!</div>
+      </div>
+      <div style="font-size:14px;color:#94a3b8;max-width:440px;margin:0 auto;line-height:1.7">
+        We heard your requests and delivered. The all-new vendor panel is live and built around <strong style="color:#a5b4fc">your daily workflow.</strong>
+      </div>
+    </div>
+
+    <!-- Credentials box -->
+    <div style="background:#0d1520;border:2px solid #3730a3;border-radius:10px;padding:20px 24px;margin-bottom:24px">
+      <div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#6366f1;font-weight:700;margin-bottom:14px">Your Login Credentials</div>
+      <div style="display:flex;gap:32px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:9px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Username</div>
+          <div style="font-size:18px;font-weight:800;color:#a5b4fc;font-family:monospace;letter-spacing:1px">${username}</div>
+        </div>
+        <div>
+          <div style="font-size:9px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Password</div>
+          <div style="font-size:18px;font-weight:800;color:#fbbf24;font-family:monospace;letter-spacing:1px">${password}</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:#475569;margin-top:10px">Change your password from <strong>My Profile → Change Password</strong> after first login.</div>
+    </div>
+
+    <!-- Login button -->
+    <div style="text-align:center;margin-bottom:28px">
+      <a href="${loginUrl}" style="display:inline-block;background:linear-gradient(135deg,#4338ca,#7c3aed);color:#fff;text-decoration:none;font-weight:800;font-size:14px;letter-spacing:1px;padding:14px 40px;border-radius:10px;">
+        Login to Vendor Panel →
+      </a>
+    </div>
+
+    <!-- Features grid -->
+    <div style="font-size:10px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#475569;margin-bottom:14px;text-align:center">What's New For You</div>
+    <div style="display:grid;gap:10px;margin-bottom:24px">
+      <div style="background:#0a1520;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start">
+        <div style="font-size:22px;flex-shrink:0">🚚</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:3px">Direct Shipping Integration</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.7">Connect your <strong style="color:#94a3b8">Delhivery</strong> or <strong style="color:#94a3b8">Shiprocket</strong> account directly inside the panel. Ship in one click — no more manual waybill generation, no more copy-pasting order details.</div>
+        </div>
+      </div>
+      <div style="background:#0a1520;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start">
+        <div style="font-size:22px;flex-shrink:0">📦</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:3px">Live Order Tracking</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.7">See all your orders, their current stage, COD amounts, advance collected and tracking — all in one place, updated in real time.</div>
+        </div>
+      </div>
+      <div style="background:#0a1520;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start">
+        <div style="font-size:22px;flex-shrink:0">💰</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:3px">Settlement & Wallet</div>
+          <div style="font-size:12px;color:#64748b;line-height:1.7">View your settlements, commission breakdown, invoices and wallet balance — full financial transparency at your fingertips.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Penalty warning -->
+    <div style="background:#1c0a0a;border:2px solid #dc2626;border-radius:8px;padding:16px 18px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:800;color:#ef4444;margin-bottom:8px;letter-spacing:0.5px">⚠ 48-Hour Fulfillment Policy</div>
+      <div style="font-size:12px;color:#fca5a5;line-height:1.8">
+        All orders in <strong>Confirmed</strong> or <strong>Partial</strong> stage must be dispatched within <strong>48 hours</strong> to avoid a penalty.<br><br>
+        The <strong>circle indicator</strong> on each order shows the time remaining before penalty kicks in. <span style="color:#fbbf24">Green → Yellow → Red.</span><br><br>
+        <strong>Unable to fulfil in time?</strong> Open the order and press <strong>"Report Delay"</strong> — submit your reason and expected dispatch date. This notifies the customer and may help reduce the penalty. If no delay is reported and 48hrs pass, <strong>penalty will be unavoidable.</strong>
+      </div>
+    </div>
+
+    <!-- Closing tagline -->
+    <div style="text-align:center;margin:28px 0 8px;padding:24px;background:linear-gradient(135deg,#0d1520,#1a1a3a);border-radius:12px;border:1px solid #2d2d5e">
+      <div style="font-size:20px;font-weight:900;color:#ffffff;line-height:1.5;letter-spacing:-0.3px">
+        "If You help us grow,<br>we'll help your brand steal the show."
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-top:10px;letter-spacing:2px;text-transform:uppercase">— CrosCrow Team</div>
+    </div>
+
+    <div style="text-align:center;margin-top:20px">
+      <a href="${loginUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 32px;border-radius:8px;">Login to Vendor Panel →</a>
+    </div>
+  `);
+}
+
 // Sent when admin sets stage → confirmed — action required
 function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const isPrepaid   = order.financial_status === 'paid';
@@ -3532,6 +3619,7 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
   const demoMeta = { advance_paid: 200, payment_type: 'cod' };
 
   const TEMPLATES = {
+    vendor_welcome: { subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
     new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder }) },
     confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder }) },
     new_order_vendor:   { subject: `New Order Received: ${demoOrder.name}`, html: templateNewOrderVendor({ order: demoOrder, vendorName: 'Demo Vendor' }) },
@@ -3551,6 +3639,37 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
     const transporter = createTransporter(cfg);
     await transporter.sendMail({ from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`, to, subject: tpl.subject, html: tpl.html });
     res.json({ ok: true, message: `Test "${template}" sent to ${to}` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/vendors/send-credentials ─────────────────────────────────
+// Sends welcome email with credentials to all vendors that have email + username set
+app.post("/admin/vendors/send-credentials", adminAuth, async (req, res) => {
+  const cfg = await getSmtpConfig();
+  if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured." });
+  try {
+    const docs = await mdb.collection('vendor_profiles').find(
+      { username: { $exists: true, $ne: '' }, email: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, username: 1, email: 1, _id: 0 } }
+    ).toArray();
+    if (!docs.length) return res.status(400).json({ error: "No vendors with both email and credentials set." });
+
+    const sent = [], failed = [];
+    for (const doc of docs) {
+      try {
+        await sendEmail({
+          to: doc.email,
+          subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`,
+          html: templateVendorWelcome({ vendorName: doc.vendor_name, username: doc.username, password: 'Croscrow@00' }),
+          trigger: 'vendor_welcome',
+        });
+        sent.push(doc.vendor_name);
+      } catch (e) {
+        failed.push({ vendor: doc.vendor_name, error: e.message });
+      }
+    }
+    auditLog("admin", "send_vendor_credentials", "all", { sent: sent.length, failed: failed.length });
+    res.json({ success: true, sent, failed });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

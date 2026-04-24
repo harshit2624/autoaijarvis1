@@ -1730,6 +1730,7 @@
     const [search,   setSearch]   = useState('');
     const [creds,    setCreds]    = useState([]);
     const [generating, setGenerating] = useState(false);
+    const [sending,    setSending]    = useState(false);
     const [genResult,  setGenResult]  = useState(null);
     const [resetting,  setResetting]  = useState({});
     const [credMsg,    setCredMsg]    = useState(null);
@@ -1755,6 +1756,15 @@
       setGenerating(false);
       if (d.success) { setGenResult(d.generated); loadCreds(); setCredMsg({type:'success',text:`Generated credentials for ${d.total} vendor${d.total!==1?'s':''}.`}); }
       else setCredMsg({type:'error',text:d.error});
+    };
+
+    const sendCredentials = async () => {
+      setSending(true); setCredMsg(null);
+      const r = await fetch(`${API}/admin/vendors/send-credentials`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+      const d = await r.json();
+      setSending(false);
+      if (d.success) setCredMsg({type:'success', text:`Sent to ${d.sent.length} vendor${d.sent.length!==1?'s':''}${d.failed.length?' · '+d.failed.length+' failed':''}`});
+      else setCredMsg({type:'error', text: d.error});
     };
 
     const resetPassword = async name => {
@@ -1847,9 +1857,15 @@
         <div className="card" style={{marginTop:0}}>
           <div className="card-header">
             <div><span className="card-title">🔑 Vendor Login Credentials</span><span className="card-sub" style={{marginLeft:8}}>Username + password per vendor · default: Croscrow@00</span></div>
-            <button className="btn btn-indigo btn-sm" onClick={generateCreds} disabled={generating}>
-              {generating?<><span className="spin">↻</span> Generating…</>:'⚡ Generate for All Vendors'}
-            </button>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-indigo btn-sm" onClick={generateCreds} disabled={generating}>
+                {generating?<><span className="spin">↻</span> Generating…</>:'⚡ Generate for All Vendors'}
+              </button>
+              <button className="btn btn-green btn-sm" onClick={sendCredentials} disabled={sending||creds.length===0}
+                style={{background:'var(--green)',color:'#fff',border:'none'}} title="Send welcome email with credentials to all vendors who have email set">
+                {sending?<><span className="spin">↻</span> Sending…</>:'📧 Send Welcome Email'}
+              </button>
+            </div>
           </div>
           {credMsg && <div style={{margin:'0 16px 12px'}} className={`alert alert-${credMsg.type}`}>{credMsg.type==='success'?'✓':'⚠'} {credMsg.text}</div>}
           {genResult && genResult.length > 0 && (
@@ -2630,6 +2646,7 @@
     };
 
     const TEMPLATE_LIST = [
+      { key:'vendor_welcome',     label:'🚀 Vendor Welcome + Credentials', desc:'Sent once to all vendors with login username/password and panel guide' },
       { key:'new_order',          label:'🟢 New Order (Customer)',        desc:'Sky theme — fires on order creation via webhook' },
       { key:'new_order_vendor',   label:'📬 New Order Heads-Up (Vendor)', desc:'Fires on order creation — heads up, do not dispatch yet' },
       { key:'confirmed_customer', label:'✅ Order Confirmed (Customer)',   desc:'Fires when stage → Confirmed' },
