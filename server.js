@@ -4049,6 +4049,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           total_amount:  vendorTotal,
           seller_inv:    shopifyOrder.name,
           quantity:      String(totalQty),
+          shipment_length: String(length),
           shipment_width:  String(breadth),
           shipment_height: String(height),
           weight:          String(weight),
@@ -4080,9 +4081,13 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       }
     }
 
-    // Auto-save AWB to order_meta
+    // Auto-save AWB to both order_meta and the vendor's order_vendor_stage row
     if (result?.awb) {
-      await OM.upsert(String(shopifyOrder.id), { awb: result.awb, courier: partner, updated_at: new Date().toISOString() });
+      const sid = String(shopifyOrder.id);
+      const now = new Date().toISOString();
+      await OM.upsert(sid, { awb: result.awb, courier: partner, updated_at: now });
+      // Also save to vendor stage so vendor panel reads it (vendor panel uses OVS, not order_meta)
+      await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: now });
     }
 
     res.json(result);
