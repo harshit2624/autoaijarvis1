@@ -2330,19 +2330,27 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
     // ── Fulfillment stats (30d)
     const fulfillStats = (() => {
-      let fulfilled=0, unfulfilled=0, partial_ship=0, cancelled=0, rto=0;
+      // Confirmed = orders that entered the pipeline (exclude new/hold/cancelled — not yet actioned)
+      const EXCLUDE   = new Set(['new', 'hold', 'cancelled']);
+      // Dispatched = tracking submitted or beyond
+      const DISPATCHED = new Set(['ready', 'pickup', 'transit', 'delivered', 'rto']);
+
+      let confirmed=0, dispatched=0, pending_dispatch=0, delivered=0, rto=0, cancelled=0;
       orders30d.forEach(o => {
         const meta  = metaMap[String(o.id)] || {};
         const stage = meta.stage || 'new';
-        if (stage === 'delivered' || stage === 'transit' || o.fulfillment_status === 'fulfilled') fulfilled++;
-        else if (o.cancelled_at || stage === 'cancelled') cancelled++;
-        else if (stage === 'rto') rto++;
-        else if (o.fulfillment_status === 'partial') partial_ship++;
-        else unfulfilled++;
+        if (o.cancelled_at || stage === 'cancelled') { cancelled++; return; }
+        if (EXCLUDE.has(stage)) return; // new/hold — not confirmed yet, skip from rate
+        confirmed++;
+        if (DISPATCHED.has(stage)) dispatched++;
+        else pending_dispatch++;
+        if (stage === 'delivered') delivered++;
+        if (stage === 'rto') rto++;
       });
-      const total = orders30d.length || 1;
-      return { fulfilled, unfulfilled, partial_ship, cancelled, rto,
-               fulfill_rate: Math.round(fulfilled/total*100) };
+      const fulfill_rate    = confirmed > 0 ? Math.round(dispatched / confirmed * 100) : 0;
+      const pending_count   = confirmed - dispatched;
+      return { confirmed, dispatched, pending_dispatch, delivered, rto, cancelled,
+               fulfill_rate, pending_count };
     })();
 
     // ── Payment split (30d)
