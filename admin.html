@@ -2112,6 +2112,7 @@
     const [summary,     setSummary]     = useState(null);
     const [sumLoading,  setSumLoading]  = useState(true);
     const [expandedV,   setExpandedV]   = useState(null);
+    const [sumPeriod,   setSumPeriod]   = useState(null); // null = all time
     // ── Tab 2: Settlement Invoices ─────────────────────────────────────────
     const [settlements, setSettlements] = useState([]);
     const [invLoading,  setInvLoading]  = useState(true);
@@ -2129,9 +2130,11 @@
     const [gstLoading,  setGstLoading]  = useState(false);
     const [gstMsg,      setGstMsg]      = useState(null);
 
-    const loadSummary = () => {
+    const loadSummary = (period) => {
       setSumLoading(true);
-      fetch(`${API}/admin/delivered-summary`,{headers:{Authorization:`Bearer ${token}`}})
+      const p = period !== undefined ? period : sumPeriod;
+      const qs = p ? `?from=${p.from}&to=${p.to}` : '';
+      fetch(`${API}/admin/delivered-summary${qs}`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setSummary(d)).catch(()=>{}).finally(()=>setSumLoading(false));
     };
 
@@ -2216,6 +2219,48 @@
         {/* ── TAB 1: Delivered Orders ────────────────────────────────────────── */}
         {activeTab==='delivered' && (
           <div>
+            {/* Period filter bar */}
+            {(()=>{
+              const isoToday = () => new Date().toISOString().split('T')[0];
+              const daysAgo  = n => new Date(Date.now()-n*86400000).toISOString().split('T')[0];
+              const monthStart = (offset=0) => { const d=new Date(); d.setMonth(d.getMonth()-offset,1); return d.toISOString().split('T')[0]; };
+              const monthEnd   = (offset=0) => { const d=new Date(); d.setMonth(d.getMonth()-offset+1,0); return d.toISOString().split('T')[0]; };
+              const PRESETS = [
+                { label:'All Time',    period: null },
+                { label:'Last 7 Days', period: { from: daysAgo(6),      to: isoToday() } },
+                { label:'Last 30 Days',period: { from: daysAgo(29),     to: isoToday() } },
+                { label:'This Month',  period: { from: monthStart(0),   to: isoToday() } },
+                { label:'Last Month',  period: { from: monthStart(1),   to: monthEnd(1) } },
+              ];
+              const activeLbl = sumPeriod
+                ? (PRESETS.find(p=>p.period&&p.period.from===sumPeriod.from&&p.period.to===sumPeriod.to)?.label || 'Custom')
+                : 'All Time';
+              const applyPeriod = p => { setSumPeriod(p); loadSummary(p); };
+              return (
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+                  <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,letterSpacing:1}}>PERIOD:</span>
+                  {PRESETS.map(ps=>(
+                    <button key={ps.label} onClick={()=>applyPeriod(ps.period)}
+                      className={`btn btn-sm ${activeLbl===ps.label?'btn-indigo':'btn-ghost'}`}
+                      style={{fontSize:11,padding:'4px 10px'}}>
+                      {ps.label}
+                    </button>
+                  ))}
+                  {/* Custom date range */}
+                  <input className="form-input" type="date" style={{fontSize:11,padding:'4px 8px',width:130}}
+                    value={sumPeriod?.from||''} onChange={e=>{ const p={from:e.target.value,to:sumPeriod?.to||isoToday()}; setSumPeriod(p); loadSummary(p); }}
+                    placeholder="From"/>
+                  <input className="form-input" type="date" style={{fontSize:11,padding:'4px 8px',width:130}}
+                    value={sumPeriod?.to||''} onChange={e=>{ const p={from:sumPeriod?.from||daysAgo(29),to:e.target.value}; setSumPeriod(p); loadSummary(p); }}
+                    placeholder="To"/>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod)} style={{fontSize:11}} disabled={sumLoading}>
+                    {sumLoading?<span className="spin">↻</span>:'↻'}
+                  </button>
+                  {sumPeriod && <span style={{fontSize:10,color:'var(--text-muted)'}}>{sumPeriod.from} → {sumPeriod.to}</span>}
+                </div>
+              );
+            })()}
+
             {/* Summary stat cards */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
               {[

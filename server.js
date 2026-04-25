@@ -3202,7 +3202,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 // ── GET /admin/delivered-summary ─────────────────────────────────────────
 app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
   try {
-    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    const { from, to } = req.query;
+    const allOrders = await fetchAllOrders("any", from ? from + "T00:00:00Z" : "2020-01-01T00:00:00Z", to ? to + "T23:59:59Z" : null);
     const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray();
