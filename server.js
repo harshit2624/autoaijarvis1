@@ -2774,19 +2774,28 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         fulfillment:    o.fulfillment_status || "unfulfilled",
         financial:      o.financial_status || "",
         vendors,
-        stage:          meta.stage || "new",
-        vendorStages:   vendors.length > 1
-        ? Object.fromEntries(vendors.map(v => {
-            const stored  = vsMap[String(o.id)]?.[v] || meta.stage || 'new';
-            const shopify = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[v];
-            return [v, shopify ? higherStage(stored, shopify) : stored];
-          }))
-        : (() => {
-            const m = vsMap[String(o.id)] || {};
+        vendorStages:   (() => {
             const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
-            const merged = { ...m };
-            for (const [v, s] of Object.entries(shopifyMap)) merged[v] = higherStage(merged[v], s);
-            return merged;
+            if (vendors.length > 1) {
+              return Object.fromEntries(vendors.map(v => {
+                const stored = vsMap[String(o.id)]?.[v] || meta.stage || 'new';
+                return [v, shopifyMap[v] ? higherStage(stored, shopifyMap[v]) : stored];
+              }));
+            } else {
+              const m = { ...(vsMap[String(o.id)] || {}) };
+              for (const [v, s] of Object.entries(shopifyMap)) m[v] = higherStage(m[v], s);
+              return m;
+            }
+          })(),
+        stage:          (() => {
+            const base = meta.stage || 'new';
+            const allVS = vsMap[String(o.id)] || {};
+            const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+            const allStages = [
+              ...Object.values(allVS),
+              ...Object.values(shopifyMap),
+            ];
+            return allStages.reduce((best, s) => higherStage(best, s), base);
           })(),
         vendorTracking: vtMap[String(o.id)] || {},
         vendorPenalty:  vpMap[String(o.id)] || {},
