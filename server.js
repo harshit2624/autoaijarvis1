@@ -268,6 +268,44 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 }
 
 
+// ── Stage priority (higher index = more advanced) ────────────────────────
+const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','delivered','rto','cancelled'];
+function higherStage(a, b) {
+  const ia = STAGE_ORDER.indexOf(a ?? 'new');
+  const ib = STAGE_ORDER.indexOf(b ?? 'new');
+  return ia >= ib ? a : b;
+}
+
+// Map Shopify fulfillment object → our internal stage for a vendor
+// Returns null if no useful status can be derived
+function stageFromShopifyFulfillment(fulfillment) {
+  if (!fulfillment) return null;
+  const ss = fulfillment.shipment_status;
+  if (ss === 'delivered')                                             return 'delivered';
+  if (ss === 'in_transit' || ss === 'out_for_delivery' || ss === 'attempted_delivery') return 'transit';
+  if (ss === 'failure')                                               return 'rto';
+  if (ss === 'ready_for_pickup' || ss === 'picked_up')               return 'pickup';
+  if (fulfillment.status === 'success')                               return 'ready';
+  return null;
+}
+
+// Build a map { vendor_name: stage } from Shopify fulfillments on one order
+function vendorStagesFromFulfillments(fulfillments = [], lineItems = []) {
+  // Map line_item_id → vendor
+  const liVendor = Object.fromEntries(lineItems.map(li => [li.id, li.vendor]).filter(([,v]) => v));
+  const result = {};
+  for (const f of fulfillments) {
+    const derived = stageFromShopifyFulfillment(f);
+    if (!derived) continue;
+    for (const fli of (f.line_items || [])) {
+      const vendor = liVendor[fli.id];
+      if (!vendor) continue;
+      result[vendor] = higherStage(result[vendor], derived);
+    }
+  }
+  return result;
+}
+
 // ── Commission + GST calculation ──────────────────────────────────────────
 const GST_RATE = 0.18;
 
@@ -807,18 +845,18 @@ app.post("/webhooks/fulfillments", (req, res) => {
         for (const vendorName of vendors) {
           const vendorItems = fulfilledLineItems.filter(li => li.vendor === vendorName);
 
-          // Skip if vendor already has their own AWB saved (fulfilled via our system)
           const existing = await mdb.collection('order_vendor_stage').findOne(
             { shopify_id: shopifyId, vendor_name: vendorName },
-            { projection: { awb: 1, _id: 0 } }
+            { projection: { awb: 1, stage: 1, _id: 0 } }
           );
-          if (existing?.awb) {
-            console.log(`⏭ fulfillments/create: ${vendorName} already has AWB ${existing.awb}, skipping`);
-            continue;
-          }
-
+          // Always advance stage to at least 'ready'; keep existing AWB if already set
+          const existingAWB = existing?.awb || '';
+          const newStage = higherStage(existing?.stage || 'new', 'ready');
           await OVS.upsert(shopifyId, vendorName, {
-            stage: 'ready', awb, courier, tracking_url: trackUrl,
+            stage: newStage,
+            awb: existingAWB || awb,
+            courier: existingAWB ? (existing?.courier || courier) : courier,
+            tracking_url: existingAWB ? (existing?.tracking_url || trackUrl) : trackUrl,
             updated_at: new Date().toISOString(),
           });
           auditLog("webhook", "fulfillment_auto_ready", shopifyId, { vendorName, awb });
@@ -2193,7 +2231,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           phone:        o.shipping_address?.phone ?? o.customer?.phone ?? "",
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
-          stage:        vStageMap[String(o.id)]?.stage || meta.stage || "new",
+          stage:        higherStage(
+            vStageMap[String(o.id)]?.stage || meta.stage || "new",
+            vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null
+          ),
           financial:    o.financial_status ?? "—",
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
@@ -2735,8 +2776,18 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         vendors,
         stage:          meta.stage || "new",
         vendorStages:   vendors.length > 1
-        ? Object.fromEntries(vendors.map(v => [v, vsMap[String(o.id)]?.[v] || meta.stage || 'new']))
-        : (vsMap[String(o.id)] || {}),
+        ? Object.fromEntries(vendors.map(v => {
+            const stored  = vsMap[String(o.id)]?.[v] || meta.stage || 'new';
+            const shopify = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[v];
+            return [v, shopify ? higherStage(stored, shopify) : stored];
+          }))
+        : (() => {
+            const m = vsMap[String(o.id)] || {};
+            const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+            const merged = { ...m };
+            for (const [v, s] of Object.entries(shopifyMap)) merged[v] = higherStage(merged[v], s);
+            return merged;
+          })(),
         vendorTracking: vtMap[String(o.id)] || {},
         vendorPenalty:  vpMap[String(o.id)] || {},
         paymentType:    meta.payment_type || "cod",
