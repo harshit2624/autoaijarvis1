@@ -503,6 +503,21 @@
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
   ];
 
+  function trackingUrlFromCourier(courier='', awb='') {
+    if (!awb) return '';
+    const c = courier.toLowerCase();
+    if (c.includes('delhivery'))  return `https://www.delhivery.com/track/package/${awb}`;
+    if (c.includes('shiprocket')) return `https://shiprocket.co/tracking/${awb}`;
+    if (c.includes('bluedart'))   return `https://www.bluedart.com/tracking?trackNo=${awb}`;
+    if (c.includes('dtdc'))       return `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}`;
+    if (c.includes('ecom'))       return `https://ecomexpress.in/tracking/?awb_field=${awb}`;
+    if (c.includes('xpressbee'))  return `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}`;
+    if (c.includes('shadowfax'))  return `https://track.shadowfax.in/?awb=${awb}`;
+    if (c.includes('ekart'))      return `https://ekartlogistics.com/track?trackingId=${awb}`;
+    if (c.includes('fedex'))      return `https://www.fedex.com/fedextrack/?trknbr=${awb}`;
+    return '';
+  }
+
   // Shows a circular countdown for the 48hr penalty window
   function PenaltyTimer({ vendorPenalty={}, vendorStages={} }) {
     const WATCH = ['confirmed','partial'];
@@ -815,7 +830,10 @@
                               <span style={{color:'#10b981',fontWeight:600}}>✓ Fulfilled</span>
                               {vendorTracking[v].courier && <span style={{marginLeft:8,color:'var(--text-muted)'}}>{vendorTracking[v].courier}</span>}
                               {vendorTracking[v].awb && <span style={{marginLeft:8,fontFamily:'monospace',color:'#6366f1'}}>{vendorTracking[v].awb}</span>}
-                              {vendorTracking[v].trackingUrl && <a href={vendorTracking[v].trackingUrl} target="_blank" rel="noreferrer" style={{marginLeft:8,color:'var(--indigo)'}}>Track →</a>}
+                              {vendorTracking[v].awb && (() => {
+                                const url = vendorTracking[v].trackingUrl || trackingUrlFromCourier(vendorTracking[v].courier, vendorTracking[v].awb);
+                                return url ? <a href={url} target="_blank" rel="noreferrer" style={{marginLeft:8,color:'var(--indigo)',fontWeight:600}}>🔗 Track Shipment →</a> : null;
+                              })()}
                             </div>
                           ) : (
                             <div style={{marginLeft:108,marginBottom:10,display:'flex',flexDirection:'column',gap:4}}>
@@ -882,7 +900,7 @@
                         {order.shopifyFulfilled && <span style={{marginLeft:8,fontSize:9,border:'1px solid var(--border)',borderRadius:3,padding:'1px 5px'}}>fulfilled via Shopify</span>}
                       </div>
                   }
-                  {trackUrl && <a href={trackUrl} target="_blank" rel="noreferrer" style={{display:'block',marginTop:6,fontSize:11,color:'var(--indigo)'}}>🔗 Track Shipment →</a>}
+                  {awb && (() => { const u=trackUrl||trackingUrlFromCourier(courier,awb); return u?<a href={u} target="_blank" rel="noreferrer" style={{display:'block',marginTop:6,fontSize:11,color:'var(--indigo)',fontWeight:600}}>🔗 Track Shipment →</a>:null; })()}
                 </div>
                 <div className="form-full">
                   <label className="form-label">Internal Notes (saved with order)</label>
