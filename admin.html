@@ -1373,6 +1373,38 @@
               </React.Fragment>
             );
           })()}
+
+          {/* Prepaid vs COD stat card */}
+          {!aLoading && a?.paymentSplit && (() => {
+            const { prepaid=0, cod=0, partial=0 } = a.paymentSplit;
+            const total = prepaid + cod + partial || 1;
+            const prepaidPct = Math.round(prepaid / total * 100);
+            const codPct     = Math.round(cod     / total * 100);
+            const partialPct = Math.round(partial / total * 100);
+            return (
+              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px',minWidth:200}}>
+                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:10}}>💳 Payment Split · {periodLabel}</div>
+                {[
+                  {label:'Prepaid', pct:prepaidPct, count:prepaid, color:'#10b981', bg:'rgba(16,185,129,0.12)'},
+                  {label:'COD',     pct:codPct,     count:cod,     color:'#f59e0b', bg:'rgba(245,158,11,0.12)'},
+                  {label:'Advance', pct:partialPct, count:partial, color:'#a78bfa', bg:'rgba(167,139,250,0.12)'},
+                ].map(r=>(
+                  <div key={r.label} style={{marginBottom:8}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,alignItems:'center'}}>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>{r.label}</span>
+                      <span style={{display:'flex',alignItems:'center',gap:6}}>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>{r.count}</span>
+                        <span style={{fontSize:13,fontWeight:800,color:r.color,minWidth:34,textAlign:'right'}}>{r.pct}%</span>
+                      </span>
+                    </div>
+                    <div style={{height:5,borderRadius:3,background:'var(--border)',overflow:'hidden'}}>
+                      <div style={{height:'100%',width:r.pct+'%',background:r.color,borderRadius:3,transition:'width 0.4s'}}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Stage breakdown — respects period */}
