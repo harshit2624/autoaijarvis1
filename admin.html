@@ -1576,6 +1576,8 @@
     const [bulkRmTag, setBulkRmTag] = useState('');
     const [bulkMsg,   setBulkMsg]   = useState(null);
     const [bulkBusy,  setBulkBusy]  = useState(false);
+    const [syncing,   setSyncing]   = useState(false);
+    const [syncMsg,   setSyncMsg]   = useState(null);
 
     const load = useCallback(()=>{
       setLoading(true);
@@ -1607,6 +1609,18 @@
         load();
       } catch(e) { setBulkMsg({type:'error',text:e.message}); }
       setBulkBusy(false);
+    };
+
+    const syncFulfillment = async () => {
+      setSyncing(true); setSyncMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/orders/sync-fulfillment`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setSyncMsg(`✓ Synced — ${d.updated} vendor stage${d.updated!==1?'s':''} updated from Shopify`);
+        load();
+      } catch(e) { setSyncMsg('⚠ ' + e.message); }
+      setSyncing(false);
     };
 
     const orderMatchesStage = (o, s) =>
@@ -1648,6 +1662,10 @@
           <PeriodPicker period={period} onChange={p=>{setPeriod(p);setPage(1);}}/>
           {period && <button className="btn btn-ghost btn-sm" onClick={()=>{setPeriod(null);setPage(1);}} style={{fontSize:10,padding:'4px 8px'}}>✕ Clear</button>}
           <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>{loading?<span className="spin">↻</span>:'↻'} Refresh</button>
+          <button className="btn btn-ghost btn-sm" onClick={syncFulfillment} disabled={syncing} title="Write Shopify fulfillment stages to DB for all orders" style={{color:'var(--cyan)',borderColor:'var(--cyan)'}}>
+            {syncing?<><span className="spin">↻</span> Syncing…</>:'⟳ Sync Fulfillment'}
+          </button>
+          {syncMsg && <span style={{fontSize:10,color:syncMsg.startsWith('✓')?'var(--green)':'var(--red)',fontWeight:600}}>{syncMsg}</span>}
           <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:11,color:'var(--text-muted)',userSelect:'none'}}>
             <input type="checkbox" checked={showTags} onChange={e=>setShowTags(e.target.checked)} style={{accentColor:'var(--indigo)',width:13,height:13}}/>
             Show Tags

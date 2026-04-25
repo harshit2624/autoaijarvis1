@@ -4331,6 +4331,36 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
 });
 
 // Admin bulk sync delivery status for all orders with AWB
+// ── POST /admin/orders/sync-fulfillment ──────────────────────────────────
+// Write Shopify fulfillment stages back to order_vendor_stage for all orders
+app.post("/admin/orders/sync-fulfillment", adminAuth, async (req, res) => {
+  try {
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    let updated = 0;
+    const now = new Date().toISOString();
+    for (const o of allOrders) {
+      if (!(o.fulfillments || []).length) continue;
+      const derived = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+      if (!Object.keys(derived).length) continue;
+      const sid = String(o.id);
+      for (const [vendor, shopifyStage] of Object.entries(derived)) {
+        const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, _id: 0 } });
+        const currentStage = existing?.stage || 'new';
+        const betterStage  = higherStage(currentStage, shopifyStage);
+        if (betterStage !== currentStage) {
+          await OVS.upsert(sid, vendor, { stage: betterStage, updated_at: now });
+          updated++;
+        }
+      }
+    }
+    auditLog("admin", "sync_fulfillment_stages", "all", { updated });
+    res.json({ success: true, updated });
+  } catch (err) {
+    console.error("❌ /admin/orders/sync-fulfillment:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/admin/shipping/sync-status", adminAuth, async (req, res) => {
   try {
     const allCreds = await mdb.collection('global_shipping_creds').find({}, { projection: { partner: 1, credentials: 1, _id: 0 } }).toArray();
