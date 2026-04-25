@@ -1224,14 +1224,39 @@
   ══════════════════════════════════ */
   function Sparkline({ data, color }) {
     if(!data||!data.length) return null;
+    const BAR_H = 80;
     const max = Math.max(...data.map(d=>d.revenue), 1);
+    // Only show date labels every N bars to avoid crowding
+    const step = data.length > 30 ? 7 : data.length > 14 ? 3 : 1;
     return (
-      <div style={{display:'flex',alignItems:'flex-end',gap:2,height:36,marginTop:8}}>
-        {data.map((d,i)=>(
-          <div key={i} title={d.date+': '+d.revenue}
-            style={{flex:1,background:color||'#6366f1',borderRadius:'2px 2px 0 0',
-              height:Math.max(4,Math.round((d.revenue/max)*36))+'px',cursor:'default'}}/>
-        ))}
+      <div style={{overflowX:'auto',overflowY:'visible'}}>
+        <div style={{display:'flex',alignItems:'flex-end',gap:3,minWidth:data.length*22,height:BAR_H+52,paddingBottom:2,paddingTop:24,position:'relative'}}>
+          {data.map((d,i)=>{
+            const barH = Math.max(4, Math.round((d.revenue/max)*BAR_H));
+            const showLabel = i%step===0 || i===data.length-1;
+            const shortDate = d.date.slice(5); // MM-DD
+            return (
+              <div key={i} style={{flex:'0 0 auto',width:20,display:'flex',flexDirection:'column',alignItems:'center',gap:0,cursor:'default'}}
+                title={`${d.date}\nOrders: ${d.orders}\nConfirmed: ${d.confirmed||0}\nRevenue: ₹${(d.revenue||0).toLocaleString()}`}>
+                {/* Numbers above bar */}
+                <div style={{fontSize:8,color:'var(--text-muted)',textAlign:'center',lineHeight:1.3,marginBottom:2,minHeight:20,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-end'}}>
+                  {d.orders > 0 && <span style={{color:'#a5b4fc',fontWeight:700}}>{d.orders}</span>}
+                  {(d.confirmed||0) > 0 && <span style={{color:'#10b981',fontSize:7}}>{d.confirmed}</span>}
+                </div>
+                {/* Bar */}
+                <div style={{width:'100%',height:barH+'px',background:color||'#6366f1',borderRadius:'2px 2px 0 0',opacity: d.orders===0?0.2:1}}/>
+                {/* Date label */}
+                <div style={{fontSize:7,color:'var(--text-muted)',marginTop:3,whiteSpace:'nowrap',transform:'rotate(-45deg)',transformOrigin:'top left',height:14,overflow:'hidden',opacity:showLabel?1:0}}>
+                  {shortDate}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:'flex',gap:10,marginTop:2,fontSize:9,color:'var(--text-muted)'}}>
+          <span style={{display:'flex',alignItems:'center',gap:3}}><span style={{width:8,height:8,borderRadius:1,background:'#a5b4fc',display:'inline-block'}}/> Total orders</span>
+          <span style={{display:'flex',alignItems:'center',gap:3}}><span style={{width:8,height:8,borderRadius:1,background:'#10b981',display:'inline-block'}}/> Confirmed orders</span>
+        </div>
       </div>
     );
   }
@@ -1425,14 +1450,13 @@
                 </div>
               </div>
 
-              {/* Revenue trend sparkline */}
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px'}}>
-                <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>{'Revenue Trend · '+periodLabel}</div>
-                <Sparkline data={a.trend14d} color='#6366f1'/>
-                <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
-                  <span style={{fontSize:9,color:'var(--text-muted)'}}>{a.trend14d.length > 0 ? a.trend14d[0].date : ''}</span>
-                  <span style={{fontSize:9,color:'var(--text-muted)'}}>{a.trend14d.length > 0 ? a.trend14d[a.trend14d.length-1].date : ''}</span>
+              {/* Revenue trend bar chart */}
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px',gridColumn:'1/-1'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1}}>{'Daily Sales · '+periodLabel}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)'}}>Purple = revenue scale · numbers above = total / confirmed orders</div>
                 </div>
+                <Sparkline data={a.trend14d} color='#6366f1'/>
               </div>
 
               {/* Fulfillment + Payment split */}

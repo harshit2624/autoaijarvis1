@@ -2634,13 +2634,15 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     for (let i = 0; i < trendDays; i++) {
       const d = new Date(trendFrom.getTime() + i * DAY);
       const key = d.toISOString().slice(0,10);
-      trendMap[key] = { date: key, orders: 0, revenue: 0 };
+      trendMap[key] = { date: key, orders: 0, revenue: 0, confirmed: 0 };
     }
     ordersMain.forEach(o => {
       const key = o.created_at.slice(0,10);
       if (trendMap[key]) {
         trendMap[key].orders++;
         trendMap[key].revenue = parseFloat((trendMap[key].revenue + parseFloat(o.total_price||0)).toFixed(2));
+        const stage = (metaMap[String(o.id)] || {}).stage || 'new';
+        if (!['new','hold','cancelled'].includes(stage)) trendMap[key].confirmed++;
       }
     });
     const trend14d = Object.values(trendMap);
