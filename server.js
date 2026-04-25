@@ -740,6 +740,24 @@ app.post("/webhooks/orders", (req, res) => {
         const cfg = await getSmtpConfig();
         if (!cfg?.host) return;
 
+        const isPrepaid = payload.financial_status === 'paid';
+        const now = new Date().toISOString();
+        const nowMs = Date.now();
+
+        // Auto-confirm prepaid orders + set payment type
+        if (isPrepaid) {
+          await OM.upsert(sid, { stage: 'confirmed', payment_type: 'prepaid', updated_at: now });
+          // Set vendor stages with penalty timer started
+          const vendors_ = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
+          for (const vendor of vendors_) {
+            await OVS.upsert(sid, vendor, { stage: 'confirmed', updated_at: now, stage_started_at: nowMs, warning_sent: 0, penalty_triggered: 0 });
+          }
+          auditLog('webhook', 'prepaid_auto_confirm', sid, { order: payload.name });
+          console.log(`✅ Prepaid auto-confirmed: ${payload.name}`);
+        } else {
+          await OM.upsert(sid, { payment_type: 'cod', updated_at: now });
+        }
+
         if (payload.email) {
           // Delay 3 minutes so the WhatsApp confirmation message reaches customer first
           setTimeout(async () => {
@@ -755,21 +773,32 @@ app.post("/webhooks/orders", (req, res) => {
           }, 3 * 60 * 1000);
         }
 
-        // Notify each vendor with their line items
+        // Notify each vendor
         const vendors = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
         const vcfgs = await VC.all();
         for (const vendorName of vendors) {
           const vc = vcfgs.find(v => v.vendor_name === vendorName);
           if (vc?.email) {
-            await sendEmail({
-              to: vc.email,
-              subject: `New Order Received: ${payload.name}`,
-              html: templateNewOrderVendor({ order: payload, vendorName }),
-              shopifyId: sid, trigger: 'new_order_vendor',
-            });
+            if (isPrepaid) {
+              // Prepaid: send confirmed dispatch email directly (skip heads-up)
+              await sendEmail({
+                to: vc.email,
+                subject: `Order Confirmed: ${payload.name} — Dispatch Now`,
+                html: templateOrderConfirmedVendor({ order: payload, vendorName }),
+                shopifyId: sid, trigger: 'confirmed_vendor',
+              });
+            } else {
+              // COD: send heads-up, wait for customer confirmation
+              await sendEmail({
+                to: vc.email,
+                subject: `New Order Received: ${payload.name}`,
+                html: templateNewOrderVendor({ order: payload, vendorName }),
+                shopifyId: sid, trigger: 'new_order_vendor',
+              });
+            }
           }
         }
-        console.log(`📦 orders/create processed: ${payload.name}`);
+        console.log(`📦 orders/create processed: ${payload.name} (${isPrepaid ? 'prepaid → confirmed' : 'COD'})`);
       }
 
       // ── orders/updated: tag → stage auto-mapping ───────────────────────
