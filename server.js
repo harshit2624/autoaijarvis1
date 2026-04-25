@@ -741,13 +741,18 @@ app.post("/webhooks/orders", (req, res) => {
         if (!cfg?.host) return;
 
         if (payload.email) {
-          const enriched = await enrichOrderImages(payload);
-          await sendEmail({
-            to: payload.email,
-            subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
-            html: templateNewOrderCustomerSky({ order: enriched }),
-            shopifyId: sid, trigger: 'new_order_customer',
-          });
+          // Delay 3 minutes so the WhatsApp confirmation message reaches customer first
+          setTimeout(async () => {
+            try {
+              const enriched = await enrichOrderImages(payload);
+              await sendEmail({
+                to: payload.email,
+                subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
+                html: templateNewOrderCustomerSky({ order: enriched }),
+                shopifyId: sid, trigger: 'new_order_customer',
+              });
+            } catch (e) { console.error('Delayed new_order_customer email error:', e.message); }
+          }, 3 * 60 * 1000);
         }
 
         // Notify each vendor with their line items
