@@ -2219,14 +2219,16 @@
             {/* Summary stat cards */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
               {[
-                {label:'Gross Sales',       value:fmt(t.gross),              color:'indigo'},
-                {label:'Prepaid Discount',  value:fmt(t.prepaidDiscount),    color:'yellow'},
-                {label:'Commissionable',    value:fmt(t.commissionableSale), color:'text'},
-                {label:'Commission',        value:fmt(t.commission),         color:'orange'},
-                {label:'GST (18%)',         value:fmt(t.gst),                color:'orange'},
-                {label:'Advance Adjusted',  value:fmt(t.advance),            color:'green'},
-                {label:'Total Settled',     value:fmt(t.totalSettled),       color:'green'},
-                {label:'Pending Settlement',value:fmt(t.pendingSettlement),  color: (t.pendingSettlement||0)<0?'green':'red'},
+                {label:'Gross Sales',              value:fmt(t.gross),              color:'indigo'},
+                {label:'Prepaid Discount',         value:fmt(t.prepaidDiscount),    color:'yellow'},
+                {label:'Commissionable',           value:fmt(t.commissionableSale), color:'text'},
+                {label:'Commission',               value:fmt(t.commission),         color:'orange'},
+                {label:'GST (18%)',                value:fmt(t.gst),                color:'orange'},
+                {label:'Advance Adjusted',         value:fmt(t.advance),            color:'green'},
+                {label:'Prepaid Collected by CC',  value:fmt(t.prepaidCollected),   color:'cyan'},
+                {label:'COD Commission Due to CC', value:fmt(t.codCommission),      color:'yellow'},
+                {label:'Total Settled',            value:fmt(t.totalSettled),       color:'green'},
+                {label:'Pending Settlement',       value:fmt(t.pendingSettlement),  color: (t.pendingSettlement||0)<0?'green':'red'},
               ].map(c=>(
                 <div key={c.label} className="card" style={{padding:'12px 14px'}}>
                   <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{c.label}</div>
@@ -2246,12 +2248,13 @@
                   <thead><tr>
                     <th>Vendor</th><th>Orders</th><th>Gross Sales</th><th>Prepaid Disc</th>
                     <th>Commissionable</th><th>Comm%</th><th>Commission</th><th>GST</th>
-                    <th>Advance</th><th>Net Payable</th><th>Settled</th><th>Pending</th>
+                    <th>Advance</th><th>Prepaid (CC)</th><th>COD Comm (CC)</th>
+                    <th>Net Payable</th><th>Settled</th><th>Pending</th>
                   </tr></thead>
                   <tbody>
                     {sumLoading ? Array.from({length:5}).map((_,i)=><SkelRow key={i} cols={12}/>) :
                      !summary?.vendors?.length ? (
-                       <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No delivered orders found</div><div className="empty-sub">Orders marked as Delivered will appear here automatically.</div></div></td></tr>
+                       <tr><td colSpan={14}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No delivered orders found</div><div className="empty-sub">Orders marked as Delivered will appear here automatically.</div></div></td></tr>
                      ) :
                      summary.vendors.map(v=>{
                        const isPayout = v.netPayable < 0;
@@ -2270,6 +2273,8 @@
                            <td style={{color:'var(--orange)'}}>₹{v.commission.toFixed(2)}</td>
                            <td style={{color:'var(--orange)'}}>₹{v.gst.toFixed(2)}</td>
                            <td style={{color:'var(--green)'}}>{v.advance>0?`₹${v.advance.toFixed(2)}`:'—'}</td>
+                           <td style={{color:'var(--cyan)',fontSize:11}}>{v.prepaidCollected>0?`₹${v.prepaidCollected.toFixed(2)}`:'—'}</td>
+                           <td style={{color:'var(--yellow)',fontSize:11}}>{v.codCommission>0?`₹${v.codCommission.toFixed(2)}`:'—'}</td>
                            <td>
                              <span style={{color:isPayout?'var(--green)':'var(--red)',fontWeight:700}}>
                                {isPayout?'↑ ':'↓ '}₹{Math.abs(v.netPayable).toFixed(2)}

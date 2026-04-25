@@ -3230,36 +3230,49 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       const orderStage = meta.stage || "new";
       const payType = meta.payment_type || "cod";
       const isCod = payType !== "prepaid";
-      // Shipping from Shopify order, split equally by unique vendor count
       const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
       const ordVendorSet = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
       const shippingPerVendor = ordVendorSet.size > 0 ? orderShipping / ordVendorSet.size : 0;
 
+      // Track which vendors have DELIVERED items in THIS specific order
+      const deliveredVendorsInOrder = new Set();
+
       (o.line_items || []).forEach(li => {
         const vendor = li.vendor;
         if (!vendor) return;
-        // Use vendor-specific stage if set, else fall back to order stage
         const effectiveStage = allVendorStageMap[String(o.id)]?.[vendor] || orderStage;
         if (effectiveStage !== "delivered") return;
-        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0 };
+        deliveredVendorsInOrder.add(vendor);
+        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0, prepaidCollected: 0, codCommission: 0 };
         vendorMap[vendor].orders.add(String(o.id));
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
         const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
         const calc = calcCommission(itemRev, payType, commPct, 0);
         vendorMap[vendor].gross += itemRev;
-        if (!isCod) vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
+        if (!isCod) {
+          vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
+          vendorMap[vendor].prepaidCollected += itemRev; // CrosCrow received full prepaid amount
+        } else {
+          vendorMap[vendor].codCommission += calc.commission + calc.gst; // CrosCrow earns this from COD
+        }
         vendorMap[vendor].commission += calc.commission;
         vendorMap[vendor].gst += calc.gst;
-        vendorMap[vendor].net += calc.net;
+        vendorMap[vendor].net += calc.net; // net without advance (advance deducted below)
       });
 
-      // advance + shipping split equally among vendors in this order (COD only for shipping)
-      ordVendorSet.forEach(vendor => {
-        if (!vendorMap[vendor]) return;
-        if ((meta.advance_paid || 0) > 0) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
+      // Advance + shipping: only for vendors with delivered items IN THIS ORDER
+      // Split advance equally across delivered vendors in this order (not all vendors)
+      const deliveredCount = deliveredVendorsInOrder.size || 1;
+      const advanceShare = (meta.advance_paid || 0) > 0 ? parseFloat(((meta.advance_paid || 0) / deliveredCount).toFixed(2)) : 0;
+
+      deliveredVendorsInOrder.forEach(vendor => {
+        if (isCod && advanceShare > 0) {
+          vendorMap[vendor].advance += advanceShare;
+          vendorMap[vendor].net -= advanceShare; // advance already collected → reduces what vendor owes
+        }
         if (isCod && shippingPerVendor > 0) {
           vendorMap[vendor].shipping += shippingPerVendor;
-          vendorMap[vendor].net += shippingPerVendor; // shipping vendor collected → owes to CrosCrow
+          vendorMap[vendor].net += shippingPerVendor;
         }
       });
     });
@@ -3276,7 +3289,9 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       const netPayable = parseFloat(d.net.toFixed(2));
       const totalSettled = parseFloat((settledMap[name] || 0).toFixed(2));
       const pendingSettlement = parseFloat((netPayable - totalSettled).toFixed(2));
-      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement };
+      const prepaidCollected = parseFloat(d.prepaidCollected.toFixed(2));
+      const codCommission = parseFloat(d.codCommission.toFixed(2));
+      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement, prepaidCollected, codCommission };
     }).sort((a, b) => b.gross - a.gross);
 
     // Overall totals
@@ -3293,7 +3308,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       acc.totalSettled += v.totalSettled;
       acc.pendingSettlement += v.pendingSettlement;
       return acc;
-    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, shipping: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0 });
+    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, shipping: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0, prepaidCollected: 0, codCommission: 0 });
 
     Object.keys(totals).forEach(k => { if (typeof totals[k] === 'number') totals[k] = parseFloat(totals[k].toFixed(2)); });
 
