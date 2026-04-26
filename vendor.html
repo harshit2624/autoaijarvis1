@@ -167,6 +167,60 @@
     /* ── Stats grid ── */
     .stats-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; margin-bottom: 20px; }
     @media(max-width:1100px){ .stats-grid { grid-template-columns: repeat(3,1fr); } }
+
+    /* ── Mobile responsive ── */
+    @media(max-width:768px){
+      .app-shell { flex-direction: column; }
+      .sidebar {
+        position: fixed; top:0; left:0; width:80%; max-width:280px; height:100vh;
+        z-index:1000; transform:translateX(-100%); transition:transform 0.25s ease;
+        box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+      }
+      .sidebar.mobile-open { transform:translateX(0); }
+      .sidebar-overlay {
+        display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6);
+        z-index:999; backdrop-filter:blur(2px);
+      }
+      .sidebar-overlay.visible { display:block; }
+      .content { width:100%; padding-bottom:70px; }
+      .topbar { padding:0 12px; }
+      .topbar-title { font-size:12px; }
+      .hamburger {
+        display:flex; align-items:center; justify-content:center;
+        width:36px; height:36px; border:1px solid var(--border); border-radius:7px;
+        background:none; cursor:pointer; color:var(--text); font-size:18px;
+        margin-right:6px; flex-shrink:0;
+      }
+      .page { padding:14px 12px 80px; }
+      .stats-grid { grid-template-columns:repeat(2,1fr); gap:8px; }
+      .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+      /* Bottom nav */
+      .mobile-bottom-nav {
+        display:flex; position:fixed; bottom:0; left:0; right:0; z-index:200;
+        background:var(--bg-card); border-top:1px solid var(--border);
+        height:62px; padding:0 4px;
+      }
+      .mobile-nav-btn {
+        flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+        gap:3px; border:none; background:none; cursor:pointer; color:var(--text-muted);
+        font-size:9px; letter-spacing:0.5px; padding:6px 2px; transition:color 0.15s;
+        font-family:'IBM Plex Mono',monospace;
+      }
+      .mobile-nav-btn .mn-icon { font-size:20px; line-height:1; }
+      .mobile-nav-btn.active { color:var(--green); }
+      .modal-box { width:96vw !important; max-width:96vw !important; padding:16px !important; margin:10px auto !important; }
+      .detail-grid { grid-template-columns:1fr !important; }
+      .form-grid { grid-template-columns:1fr !important; }
+      .card-header { flex-wrap:wrap; gap:8px; padding:12px 14px; }
+      .search-wrap { min-width:0; width:100%; }
+      .btn-shipment { width:100%; margin-top:8px; }
+    }
+    @media(min-width:769px){
+      .hamburger { display:none; }
+      .mobile-bottom-nav { display:none; }
+      .sidebar-overlay { display:none !important; }
+      .sidebar { transform:none !important; position:sticky; }
+    }
     .stat-card {
       background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
       padding: 16px; position: relative; overflow: hidden; transition: border-color 0.15s;
@@ -1153,120 +1207,193 @@
     const hSort = c=>{if(sort===c)setDir(d=>d==='desc'?'asc':'desc');else{setSort(c);setDir('desc');}setPage(1);};
     const arrow = c=>sort===c?(dir==='desc'?'▼':'▲'):'';
 
-    return (
-      <div className="page">
-        {/* Stage tabs */}
-        <div className="ftabs" style={{flexWrap:'wrap',gap:4,marginBottom:10}}>
-          {STAGES.map(s=>{
-            const count = s.id==='all' ? orders.length : orders.filter(o=>(o.stage||'new')===s.id).length;
-            return (
-              <button key={s.id} className={`ftab ${stage===s.id?'active':''}`} onClick={()=>{setStage(s.id);setPage(1);}}>
-                {s.icon} {s.label} ({count})
-              </button>
-            );
-          })}
-        </div>
+    const isMobile = window.innerWidth <= 768;
 
-        <div className="filters">
-          <div className="search-wrap">
-            <span className="search-ico">⌕</span>
-            <input className="search-input" placeholder="Search order, customer, product…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
-          </div>
-          <select className="fselect" value={sort} onChange={e=>{setSort(e.target.value);setPage(1);}}>
-            <option value="date">Sort: Date</option>
-            <option value="amount">Sort: Revenue</option>
-            <option value="customer">Sort: Customer</option>
-          </select>
-          <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}{search||stage!=='all'?' (filtered)':''}</span>
-          <button className="btn btn-ghost btn-sm" style={{fontSize:10,marginLeft:'auto'}} onClick={async()=>{
-            const r=await fetch(`${API}/vendor/shipping/sync-status`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
-            const d=await r.json();
-            if(d.updated>0) onRefresh();
-          }}>↻ Sync Delivery Status</button>
-        </div>
+    // Group rows by date label for mobile
+    const groupByDate = (list) => {
+      const groups = [];
+      let lastLabel = null;
+      list.forEach(o => {
+        const d = new Date(o.date);
+        const today = new Date(); today.setHours(0,0,0,0);
+        const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+        const label = d >= today ? 'Today' : d >= yesterday ? 'Yesterday' : d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+        if (label !== lastLabel) { groups.push({ label, orders:[] }); lastLabel = label; }
+        groups[groups.length-1].orders.push(o);
+      });
+      return groups;
+    };
 
-        <div className="card">
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th style={{width:36}}>#</th>
-                <th className={`sort ${sort==='id'?'sorted':''}`} onClick={()=>hSort('id')}>Order {arrow('id')}</th>
-                <th className={`sort ${sort==='customer'?'sorted':''}`} onClick={()=>hSort('customer')}>Customer {arrow('customer')}</th>
-                <th>Items</th>
-                <th>Products</th>
-                <th>Payment</th>
-                <th className={`sort ${sort==='amount'?'sorted':''}`} onClick={()=>hSort('amount')}>Revenue {arrow('amount')}</th>
-                <th>Shipping</th>
-                <th>Advance</th>
-                <th>Remaining COD</th>
-                <th>Stage / Tracking</th>
-                <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
-                <th style={{width:28}}/>
-              </tr></thead>
-              <tbody>
-                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={11}/>) :
-                 rows.length===0 ? (
-                  <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
-                 ) :
-                 rows.map((o,i)=>{
-                   const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
-                   const rowN=(cur-1)*PER+i+1;
-                   const dStatus = o.deliveryStatus;
-                   const dColor = dStatus
-                     ? /delivered|delivered/i.test(dStatus) ? 'var(--green)'
-                     : /transit|shipped|dispatched|out for/i.test(dStatus) ? 'var(--teal)'
-                     : /rto|return|undelivered|failed/i.test(dStatus) ? 'var(--red)'
-                     : 'var(--yellow)'
-                     : 'var(--text-muted)';
-                   return (
-                    <tr key={o.id} onClick={()=>onOpenOrder(o)}>
-                      <td className="td-muted">{rowN}</td>
-                      <td className="td-id">{o.id}</td>
-                      <td>
-                        <div style={{display:'flex',alignItems:'center',gap:7}}>
-                          <div style={{width:24,height:24,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'var(--green)',flexShrink:0}}>
-                            {(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}
-                          </div>
-                          <span style={{fontSize:12}}>{o.customer||'Guest'}</span>
-                        </div>
-                      </td>
-                      <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{qty} item{qty!==1?'s':''}</span></td>
-                      <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-dim)',fontSize:11}}>{o.myItems.map(i=>i.title).join(', ')}</td>
-                      <td><PayBadge type={o.paymentType}/></td>
-                      <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
-                      <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
-                      <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
-                      <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
-                      <td>
-                        <div style={{display:'flex',alignItems:'center',gap:2}}>
-                          <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>
-                          <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
-                        </div>
-                      </td>
-                      <td className="td-muted">{fmtDate(o.date)}</td>
-                      <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
-                    </tr>
-                   );
-                 })}
-              </tbody>
-            </table>
-          </div>
-          {!loading && filtered.length>PER && (
-            <div className="pager">
-              <span className="pager-info">Showing {(cur-1)*PER+1}–{Math.min(cur*PER,filtered.length)} of {filtered.length}</span>
-              <div className="pbtns">
-                <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹</button>
-                {Array.from({length:pages},(_,i)=>i+1).filter(p=>p===1||p===pages||Math.abs(p-cur)<=1).reduce((acc,p,i,arr)=>{
-                  if(i>0&&arr[i-1]!==p-1)acc.push('…');acc.push(p);return acc;
-                },[]).map((p,i)=>
-                  p==='…'?<span key={`d${i}`} style={{color:'var(--text-muted)',padding:'0 4px',fontSize:12}}>…</span>
-                        :<button key={p} className={`pbtn ${cur===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
-                )}
-                <button className="pbtn" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>›</button>
-              </div>
+    // Mobile list row
+    const MobileOrderRow = ({ o }) => {
+      const qty = o.myItems.reduce((s,x)=>s+x.quantity,0);
+      const timeStr = new Date(o.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+      const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa' };
+      const stageColor = stageColors[o.stage||'new'] || '#6366f1';
+      return (
+        <div onClick={()=>onOpenOrder(o)} style={{padding:'14px 16px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'flex-start',cursor:'pointer',active:{background:'var(--bg-hover)'}}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+              <span style={{fontSize:16,fontWeight:800,color:'var(--text)',letterSpacing:0.5}}>{o.id}</span>
             </div>
-          )}
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>
+              {o.customer||'Guest'} &bull; {qty} item{qty!==1?'s':''} &bull; {timeStr}
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+              <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`${stageColor}22`,color:stageColor,border:`1px solid ${stageColor}44`}}>
+                {(o.stage||'new').charAt(0).toUpperCase()+(o.stage||'new').slice(1)}
+              </span>
+              <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:20,
+                background: o.paymentType==='prepaid'?'rgba(16,185,129,0.15)':'rgba(245,158,11,0.15)',
+                color: o.paymentType==='prepaid'?'#10b981':'#f59e0b',
+                border: `1px solid ${o.paymentType==='prepaid'?'rgba(16,185,129,0.3)':'rgba(245,158,11,0.3)'}`}}>
+                {o.paymentType==='prepaid'?'Prepaid':'COD'}
+              </span>
+              <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
+            </div>
+            {o.awb && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>AWB: {o.awb} {o.courier?`· ${o.courier}`:''}</div>}
+          </div>
+          <div style={{textAlign:'right',flexShrink:0,marginLeft:12}}>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>{fmtCur(o.myRevenue,o.currency)}</div>
+            {o.remainingCOD>0 && <div style={{fontSize:10,color:'var(--teal)',marginTop:2}}>COD {fmtCur(o.remainingCOD,o.currency)}</div>}
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>›</div>
+          </div>
         </div>
+      );
+    };
+
+    return (
+      <div className="page" style={{padding: isMobile ? '0' : undefined}}>
+
+        {/* Search — mobile style */}
+        <div style={{padding: isMobile?'12px 12px 8px':'0 0 10px', background: isMobile?'var(--bg-card)':undefined, position: isMobile?'sticky':'static', top: isMobile?54:undefined, zIndex:50, borderBottom: isMobile?'1px solid var(--border)':'none'}}>
+          <div className="search-wrap" style={{marginBottom: isMobile?8:0}}>
+            <span className="search-ico">⌕</span>
+            <input className="search-input" placeholder="Search order, customer…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
+          </div>
+
+          {/* Stage filter tabs — horizontal scroll */}
+          <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:4,WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+            {STAGES.map(s=>{
+              const count = s.id==='all' ? orders.length : orders.filter(o=>(o.stage||'new')===s.id).length;
+              return (
+                <button key={s.id} onClick={()=>{setStage(s.id);setPage(1);}} style={{
+                  flexShrink:0, padding:'5px 12px', borderRadius:20, border:'none', cursor:'pointer',
+                  fontSize:12, fontWeight:600, whiteSpace:'nowrap', fontFamily:'IBM Plex Mono,monospace',
+                  background: stage===s.id ? 'var(--green)' : 'var(--bg-card2)',
+                  color: stage===s.id ? '#000' : 'var(--text-muted)',
+                  transition:'all 0.15s',
+                }}>
+                  {s.label} {count>0?`(${count})`:''}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Mobile list view */}
+        {isMobile ? (
+          <div style={{background:'var(--bg-card)'}}>
+            {loading ? (
+              Array.from({length:6}).map((_,i)=>(
+                <div key={i} style={{padding:'14px 16px',borderBottom:'1px solid var(--border)'}}>
+                  <div className="skel" style={{height:14,width:'40%',marginBottom:8}}/>
+                  <div className="skel" style={{height:11,width:'60%',marginBottom:8}}/>
+                  <div style={{display:'flex',gap:6}}><div className="skel" style={{height:20,width:70,borderRadius:20}}/><div className="skel" style={{height:20,width:50,borderRadius:20}}/></div>
+                </div>
+              ))
+            ) : rows.length===0 ? (
+              <div className="empty" style={{padding:40}}><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div>
+            ) : (
+              groupByDate(rows).map(group=>(
+                <div key={group.label}>
+                  <div style={{padding:'8px 16px',fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,background:'var(--bg)',borderBottom:'1px solid var(--border)',textTransform:'uppercase'}}>
+                    {group.label}
+                  </div>
+                  {group.orders.map(o=><MobileOrderRow key={o.id} o={o}/>)}
+                </div>
+              ))
+            )}
+            {!loading && filtered.length>PER && (
+              <div style={{display:'flex',justifyContent:'space-between',padding:'14px 16px',borderTop:'1px solid var(--border)'}}>
+                <button className="btn btn-ghost btn-sm" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹ Prev</button>
+                <span style={{fontSize:11,color:'var(--text-muted)',alignSelf:'center'}}>{cur}/{pages}</span>
+                <button className="btn btn-ghost btn-sm" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>Next ›</button>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Desktop table view */
+          <>
+            <div className="filters">
+              <select className="fselect" value={sort} onChange={e=>{setSort(e.target.value);setPage(1);}}>
+                <option value="date">Sort: Date</option>
+                <option value="amount">Sort: Revenue</option>
+                <option value="customer">Sort: Customer</option>
+              </select>
+              <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}{search||stage!=='all'?' (filtered)':''}</span>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:10,marginLeft:'auto'}} onClick={async()=>{
+                const r=await fetch(`${API}/vendor/shipping/sync-status`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+                const d=await r.json(); if(d.updated>0) onRefresh();
+              }}>↻ Sync Delivery Status</button>
+            </div>
+            <div className="card">
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr>
+                    <th style={{width:36}}>#</th>
+                    <th className={`sort ${sort==='id'?'sorted':''}`} onClick={()=>hSort('id')}>Order {arrow('id')}</th>
+                    <th className={`sort ${sort==='customer'?'sorted':''}`} onClick={()=>hSort('customer')}>Customer {arrow('customer')}</th>
+                    <th>Items</th><th>Products</th><th>Payment</th>
+                    <th className={`sort ${sort==='amount'?'sorted':''}`} onClick={()=>hSort('amount')}>Revenue {arrow('amount')}</th>
+                    <th>Shipping</th><th>Advance</th><th>Remaining COD</th>
+                    <th>Stage / Tracking</th>
+                    <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
+                    <th style={{width:28}}/>
+                  </tr></thead>
+                  <tbody>
+                    {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={11}/>) :
+                     rows.length===0 ? (
+                      <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
+                     ) :
+                     rows.map((o,i)=>{
+                       const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
+                       return (
+                        <tr key={o.id} onClick={()=>onOpenOrder(o)}>
+                          <td className="td-muted">{(cur-1)*PER+i+1}</td>
+                          <td className="td-id">{o.id}</td>
+                          <td><div style={{display:'flex',alignItems:'center',gap:7}}><div style={{width:24,height:24,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'var(--green)',flexShrink:0}}>{(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}</div><span style={{fontSize:12}}>{o.customer||'Guest'}</span></div></td>
+                          <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{qty} item{qty!==1?'s':''}</span></td>
+                          <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-dim)',fontSize:11}}>{o.myItems.map(i=>i.title).join(', ')}</td>
+                          <td><PayBadge type={o.paymentType}/></td>
+                          <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                          <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
+                          <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
+                          <td className="td-amt" style={{color:o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
+                          <td><div style={{display:'flex',alignItems:'center',gap:2}}><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/><PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/></div></td>
+                          <td className="td-muted">{fmtDate(o.date)}</td>
+                          <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
+                        </tr>
+                       );
+                     })}
+                  </tbody>
+                </table>
+              </div>
+              {!loading && filtered.length>PER && (
+                <div className="pager">
+                  <span className="pager-info">Showing {(cur-1)*PER+1}–{Math.min(cur*PER,filtered.length)} of {filtered.length}</span>
+                  <div className="pbtns">
+                    <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹</button>
+                    {Array.from({length:pages},(_,i)=>i+1).filter(p=>p===1||p===pages||Math.abs(p-cur)<=1).reduce((acc,p,i,arr)=>{if(i>0&&arr[i-1]!==p-1)acc.push('…');acc.push(p);return acc;},[]).map((p,i)=>
+                      p==='…'?<span key={`d${i}`} style={{color:'var(--text-muted)',padding:'0 4px',fontSize:12}}>…</span>:<button key={p} className={`pbtn ${cur===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
+                    )}
+                    <button className="pbtn" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>›</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -2135,6 +2262,7 @@
     const [autoDelay, setAutoDelay] = useState(false); // scroll to delay section on open
     const [loginErr,setLoginErr]= useState('');
     const [loginLoad,setLoginLoad]=useState(false);
+    const [sidebarOpen,setSidebarOpen]= useState(false);
 
     /* login */
     const [uname, setUname] = useState('');
@@ -2228,11 +2356,24 @@
     const sectionLabels = { main:'Store', finance:'Finance' };
 
     const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', shipping:'Shipping Partners', settlements:'Settlements', wallet:'Wallet', profile:'My Profile' };
+    const closeSidebar = () => setSidebarOpen(false);
+
+    // Bottom nav shows most important 5 items
+    const bottomNavItems = [
+      { id:'orders',    icon:'📦', label:'Orders' },
+      { id:'dashboard', icon:'⚡', label:'Dashboard' },
+      { id:'shipping',  icon:'🚚', label:'Ship' },
+      { id:'settlements', icon:'₹', label:'Settle' },
+      { id:'profile',   icon:'👤', label:'Profile' },
+    ];
 
     return (
       <div className="app-shell">
+        {/* Mobile overlay */}
+        <div className={`sidebar-overlay ${sidebarOpen?'visible':''}`} onClick={closeSidebar}/>
+
         {/* Sidebar */}
-        <aside className="sidebar">
+        <aside className={`sidebar ${sidebarOpen?'mobile-open':''}`}>
           <div className="sidebar-brand">
             <div className="sidebar-logo">C</div>
             <div>
@@ -2248,7 +2389,7 @@
               <div key={sec}>
                 <div className="nav-section">{sectionLabels[sec]}</div>
                 {navItems.filter(n=>n.section===sec).map(n=>(
-                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
+                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ setView(n.id); closeSidebar(); }}>
                     <span className="nav-icon">{n.icon}</span>{n.label}
                   </button>
                 ))}
@@ -2265,7 +2406,10 @@
         {/* Main */}
         <div className="content">
           <div className="topbar">
-            <span className="topbar-title">{pageTitle[view]}</span>
+            <div style={{display:'flex',alignItems:'center',gap:4}}>
+              <button className="hamburger" onClick={()=>setSidebarOpen(o=>!o)}>☰</button>
+              <span className="topbar-title">{pageTitle[view]}</span>
+            </div>
             <div className="topbar-right">
               {lastRef && <span className="topbar-badge"><span className="pulse"/>{lastRef.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span>}
               <button className="btn btn-ghost" style={{fontSize:10,padding:'5px 10px'}} onClick={fetchData} disabled={loading}>
@@ -2289,6 +2433,16 @@
           {view==='shopifysync' && <ShopifySync token={auth.token} vendorName={auth.vendorName}/>}
           {view==='profile'     && <Profile           token={auth.token}/>}
         </div>
+
+        {/* Mobile bottom nav */}
+        <nav className="mobile-bottom-nav">
+          {bottomNavItems.map(n=>(
+            <button key={n.id} className={`mobile-nav-btn ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
+              <span className="mn-icon">{n.icon}</span>
+              {n.label}
+            </button>
+          ))}
+        </nav>
 
         {/* Order modal */}
         {modal && (

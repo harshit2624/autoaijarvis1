@@ -84,6 +84,31 @@
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
     .page { padding: 20px 24px 40px; }
 
+    /* ── Mobile ── */
+    @media(max-width:768px){
+      .app-shell { flex-direction: column; }
+      .sidebar {
+        position: fixed; top:0; left:0; width:82%; max-width:290px;
+        height:100vh; z-index:1000; transform:translateX(-100%); transition:transform 0.25s ease;
+        box-shadow: 4px 0 24px rgba(0,0,0,0.6);
+      }
+      .sidebar.mobile-open { transform:translateX(0); }
+      .sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:999; backdrop-filter:blur(2px); }
+      .sidebar-overlay.visible { display:block; }
+      .content { width:100%; }
+      .topbar { padding:0 12px; }
+      .topbar-title { font-size:12px; letter-spacing:1px; }
+      .hamburger { display:flex; align-items:center; justify-content:center; width:36px; height:36px; border:1px solid var(--border); border-radius:7px; background:none; cursor:pointer; color:var(--text); font-size:18px; margin-right:6px; flex-shrink:0; }
+      .page { padding:12px 10px 24px; }
+      .stats-grid { grid-template-columns:repeat(2,1fr) !important; gap:8px; }
+      .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    }
+    @media(min-width:769px){
+      .hamburger { display:none; }
+      .sidebar-overlay { display:none !important; }
+      .sidebar { transform:none !important; position:sticky; }
+    }
+
     /* ── Buttons ── */
     .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -1738,151 +1763,220 @@
     const cur   = Math.min(page,pages);
     const rows  = filtered.slice((cur-1)*PER, cur*PER);
 
-    return (
-      <div className="page">
-        <div className="stage-tabs">
-          {STAGES.map(s=>(
-            <button key={s.id} className={`stab ${stage===s.id?'active':''}`} onClick={()=>{setStage(s.id);setPage(1);}}>
-              {s.icon} {s.label} {s.id==='all'?`(${periodOrders.length})`:periodOrders.filter(o=>orderMatchesStage(o,s.id)).length>0?`(${periodOrders.filter(o=>orderMatchesStage(o,s.id)).length})`:''}
-            </button>
-          ))}
-        </div>
-        <div className="filters">
-          <div className="search-wrap">
-            <span className="search-ico">⌕</span>
-            <input className="search-input" placeholder="Search order, customer, vendor…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
+    const isMobile = window.innerWidth <= 768;
+
+    const groupByDate = (list) => {
+      const groups = []; let lastLabel = null;
+      list.forEach(o => {
+        const d = new Date(o.date);
+        const today = new Date(); today.setHours(0,0,0,0);
+        const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+        const label = d >= today ? 'Today' : d >= yesterday ? 'Yesterday' : d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+        if (label !== lastLabel) { groups.push({ label, orders:[] }); lastLabel = label; }
+        groups[groups.length-1].orders.push(o);
+      });
+      return groups;
+    };
+
+    const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa' };
+
+    const MobileOrderRow = ({ o }) => {
+      const timeStr = new Date(o.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+      const stageColor = stageColors[o.stage||'new'] || '#6366f1';
+      const isSelected = selected.has(o.shopifyId);
+      const ds = o.deliveryStatus;
+      const dsColor = ds==='Delivered'?'#10b981':ds&&/transit|shipped/i.test(ds)?'#06b6d4':ds&&/rto|return/i.test(ds)?'#ef4444':ds?'#f59e0b':'var(--text-muted)';
+      return (
+        <div style={{padding:'13px 14px',borderBottom:'1px solid var(--border)',display:'flex',gap:10,cursor:'pointer',background:isSelected?'rgba(99,102,241,0.08)':undefined}}
+          onClick={e=>{ if(e.target.type==='checkbox') return; setModal(o); }}>
+          <div style={{paddingTop:2}} onClick={e=>{ e.stopPropagation(); toggleSelect(o.shopifyId); }}>
+            <input type="checkbox" style={{accentColor:'var(--indigo)',width:14,height:14,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
           </div>
-          <PeriodPicker period={period} onChange={p=>{setPeriod(p);setPage(1);}}/>
-          {period && <button className="btn btn-ghost btn-sm" onClick={()=>{setPeriod(null);setPage(1);}} style={{fontSize:10,padding:'4px 8px'}}>✕ Clear</button>}
-          <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>{loading?<span className="spin">↻</span>:'↻'} Refresh</button>
-          <button className="btn btn-ghost btn-sm" onClick={syncFulfillment} disabled={syncing} title="Write Shopify fulfillment stages to DB for all orders" style={{color:'var(--cyan)',borderColor:'var(--cyan)'}}>
-            {syncing?<><span className="spin">↻</span> Syncing…</>:'⟳ Sync Fulfillment'}
-          </button>
-          {syncMsg && <span style={{fontSize:10,color:syncMsg.startsWith('✓')?'var(--green)':'var(--red)',fontWeight:600}}>{syncMsg}</span>}
-          <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:11,color:'var(--text-muted)',userSelect:'none'}}>
-            <input type="checkbox" checked={showTags} onChange={e=>setShowTags(e.target.checked)} style={{accentColor:'var(--indigo)',width:13,height:13}}/>
-            Show Tags
-          </label>
-          <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:3}}>
+              <span style={{fontSize:16,fontWeight:800,color:'var(--text)',letterSpacing:0.5}}>{o.id}</span>
+              <span style={{fontSize:15,fontWeight:700,color:'var(--text)',flexShrink:0,marginLeft:8}}>{fmtCur(o.orderValue)}</span>
+            </div>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>
+              {o.customer||'Guest'} &bull; {timeStr}
+              {(o.vendors||[]).length>0 && <span style={{marginLeft:6,color:'var(--indigo)',fontSize:11}}>{(o.vendors||[]).join(', ')}</span>}
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap'}}>
+              <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`${stageColor}22`,color:stageColor,border:`1px solid ${stageColor}44`}}>
+                {(o.stage||'new').charAt(0).toUpperCase()+(o.stage||'new').slice(1)}
+              </span>
+              <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,
+                background:o.paymentType==='prepaid'?'rgba(16,185,129,0.15)':'rgba(245,158,11,0.15)',
+                color:o.paymentType==='prepaid'?'#10b981':'#f59e0b',
+                border:`1px solid ${o.paymentType==='prepaid'?'rgba(16,185,129,0.3)':'rgba(245,158,11,0.3)'}`}}>
+                {o.paymentType==='prepaid'?'Prepaid':'COD'}{o.advancePaid>0?` +₹${o.advancePaid} adv`:''}
+              </span>
+              <PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/>
+            </div>
+            {o.awb && <div style={{fontSize:10,color:dsColor,marginTop:4,fontWeight:600}}>{ds||'Dispatched'} · {o.awb}</div>}
+            {Object.keys(o.vendorStages||{}).length>1 && (
+              <div style={{display:'flex',gap:4,marginTop:5,flexWrap:'wrap'}}>
+                {Object.entries(o.vendorStages).map(([v,s])=>(
+                  <span key={v} style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:`${stageColors[s]||'#888'}22`,color:stageColors[s]||'#888',border:`1px solid ${stageColors[s]||'#888'}44`}}>
+                    {v.split(' ')[0]}: {s}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div className="page" style={{padding: isMobile?'0':undefined}}>
+
+        {/* Sticky header: search + stage tabs */}
+        <div style={{position: isMobile?'sticky':'static', top: isMobile?54:undefined, zIndex:50,
+          background:'var(--bg-card)', borderBottom:'1px solid var(--border)',
+          padding: isMobile?'10px 12px 8px':'0 0 12px'}}>
+          <div style={{display:'flex',gap:8,marginBottom:8,alignItems:'center'}}>
+            <div className="search-wrap" style={{flex:1}}>
+              <span className="search-ico">⌕</span>
+              <input className="search-input" placeholder="Search order, customer, vendor…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
+            </div>
+            {!isMobile && <><PeriodPicker period={period} onChange={p=>{setPeriod(p);setPage(1);}}/>
+              {period && <button className="btn btn-ghost btn-sm" onClick={()=>{setPeriod(null);setPage(1);}} style={{fontSize:10,padding:'4px 8px'}}>✕</button>}
+              <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>{loading?<span className="spin">↻</span>:'↻'} Refresh</button>
+              <button className="btn btn-ghost btn-sm" onClick={syncFulfillment} disabled={syncing} style={{color:'var(--cyan)',borderColor:'var(--cyan)'}}>
+                {syncing?<><span className="spin">↻</span> Syncing…</>:'⟳ Sync'}
+              </button></>}
+            {isMobile && <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading} style={{flexShrink:0}}>{loading?<span className="spin">↻</span>:'↻'}</button>}
+          </div>
+          {/* Stage pills — horizontal scroll */}
+          <div style={{display:'flex',gap:5,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',paddingBottom:2}}>
+            {STAGES.map(s=>{
+              const count = s.id==='all'?periodOrders.length:periodOrders.filter(o=>orderMatchesStage(o,s.id)).length;
+              return (
+                <button key={s.id} onClick={()=>{setStage(s.id);setPage(1);}} style={{
+                  flexShrink:0,padding:'5px 11px',borderRadius:20,border:'none',cursor:'pointer',
+                  fontSize:12,fontWeight:600,whiteSpace:'nowrap',fontFamily:'IBM Plex Mono,monospace',
+                  background:stage===s.id?'var(--indigo)':'var(--bg-card2)',
+                  color:stage===s.id?'#fff':'var(--text-muted)',transition:'all 0.15s',
+                }}>
+                  {s.label}{count>0?` (${count})`:''}
+                </button>
+              );
+            })}
+          </div>
+          {!isMobile && <div style={{display:'flex',alignItems:'center',gap:10,marginTop:8,flexWrap:'wrap'}}>
+            {syncMsg && <span style={{fontSize:10,color:syncMsg.startsWith('✓')?'var(--green)':'var(--red)',fontWeight:600}}>{syncMsg}</span>}
+            <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:11,color:'var(--text-muted)',userSelect:'none'}}>
+              <input type="checkbox" checked={showTags} onChange={e=>setShowTags(e.target.checked)} style={{accentColor:'var(--indigo)',width:13,height:13}}/>Show Tags
+            </label>
+            <span className="fcount">{filtered.length} order{filtered.length!==1?'s':''}</span>
+          </div>}
         </div>
 
         {/* Bulk action bar */}
         {selected.size > 0 && (
-          <div style={{position:'sticky',top:0,zIndex:20,background:'#1a1a2e',border:'1px solid var(--indigo)',borderRadius:8,padding:'10px 16px',marginBottom:10,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',boxShadow:'0 4px 20px rgba(99,102,241,0.2)'}}>
+          <div style={{position:'sticky',top: isMobile?108:54,zIndex:19,background:'#1a1a2e',border:'1px solid var(--indigo)',borderRadius: isMobile?0:8,padding:'10px 14px',marginBottom: isMobile?0:10,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',boxShadow:'0 4px 20px rgba(99,102,241,0.2)'}}>
             <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)',whiteSpace:'nowrap'}}>{selected.size} selected</span>
-            <select className="form-select" style={{fontSize:11,padding:'5px 8px',flex:'0 0 160px'}} value={bulkStage} onChange={e=>setBulkStage(e.target.value)}>
+            <select className="form-select" style={{fontSize:11,padding:'5px 8px',flex:'0 0 140px'}} value={bulkStage} onChange={e=>setBulkStage(e.target.value)}>
               <option value="">Set stage…</option>
               {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled'].map(s=><option key={s} value={s}>{s}</option>)}
             </select>
-            <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 140px',minWidth:120}} placeholder="Add tags (comma sep)" value={bulkAddTag} onChange={e=>setBulkAddTag(e.target.value)}/>
-            <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 140px',minWidth:120}} placeholder="Remove tags (comma sep)" value={bulkRmTag} onChange={e=>setBulkRmTag(e.target.value)}/>
-            <button className="btn btn-indigo btn-sm" onClick={applyBulk} disabled={bulkBusy}>
-              {bulkBusy?<><span className="spin">↻</span> Applying…</>:'✓ Apply'}
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={clearSelect}>✕ Clear</button>
+            {!isMobile && <>
+              <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 130px',minWidth:100}} placeholder="Add tags" value={bulkAddTag} onChange={e=>setBulkAddTag(e.target.value)}/>
+              <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 130px',minWidth:100}} placeholder="Remove tags" value={bulkRmTag} onChange={e=>setBulkRmTag(e.target.value)}/>
+            </>}
+            <button className="btn btn-indigo btn-sm" onClick={applyBulk} disabled={bulkBusy}>{bulkBusy?<><span className="spin">↻</span> …</>:'✓ Apply'}</button>
+            <button className="btn btn-ghost btn-sm" onClick={clearSelect}>✕</button>
             {bulkMsg && <span style={{fontSize:11,color:bulkMsg.type==='success'?'var(--green)':'var(--red)',fontWeight:600}}>{bulkMsg.type==='success'?'✓':'⚠'} {bulkMsg.text}</span>}
           </div>
         )}
 
-        <div className="card">
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr>
-                <th style={{width:32,paddingLeft:8}}>
-                  <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}}
-                    checked={rows.length>0&&selected.size===rows.length}
-                    ref={el=>{ if(el) el.indeterminate=selected.size>0&&selected.size<rows.length; }}
-                    onChange={toggleAll}/>
-                </th>
-                <th>#</th><th>Order</th><th>Customer</th><th>Vendors</th>
-                <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Delivery</th><th>Date</th><th/>
-              </tr></thead>
-              <tbody>
-                {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={12}/>) :
-                 rows.length===0 ? (
-                   <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr>
-                 ) :
-                 rows.map((o,i)=>{
-                   const ds = o.deliveryStatus;
-                   const isSelected = selected.has(o.shopifyId);
-                   const dsColor = ds==='Delivered'?'#10b981':ds&&ds.toLowerCase().includes('transit')?'#06b6d4':ds&&(ds.toLowerCase().includes('rto')||ds.toLowerCase().includes('return'))?'#f87171':ds?'#fbbf24':'var(--text-muted)';
-                   return (
-                   <tr key={o.id} style={{cursor:'pointer',background:isSelected?'rgba(99,102,241,0.07)':'',outline:isSelected?'1px solid rgba(99,102,241,0.3)':''}}
-                     onClick={e=>{ if(e.target.type==='checkbox') return; setModal(o); }}>
-                     <td style={{paddingLeft:8}} onClick={e=>{ e.stopPropagation(); toggleSelect(o.shopifyId); }}>
-                       <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
-                     </td>
-                     <td className="td-mut">{(cur-1)*PER+i+1}</td>
-                     <td>
-                       <div className="td-id">{o.id}</div>
-                       {showTags && o.tags && o.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(
-                         <span key={t} style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:3,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0',marginTop:2,marginRight:2}}>{t}</span>
-                       ))}
-                     </td>
-                     <td>
-                       <div style={{display:'flex',alignItems:'center',gap:7}}>
-                         <div style={{width:22,height:22,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'var(--indigo)',flexShrink:0}}>
-                           {(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}
-                         </div>
-                         <div>
-                           <div style={{fontSize:12}}>{o.customer}</div>
-                           {o.email && <div style={{fontSize:10,color:'var(--text-muted)'}}>{o.email}</div>}
-                         </div>
-                       </div>
-                     </td>
-                     <td style={{color:'var(--text-dim)',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(o.vendors||[]).join(', ')||'—'}</td>
-                     <td className="td-amt">{fmtCur(o.orderValue)}</td>
-                     <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
-                     <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
-                     <td>
-                       <div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}>
-                         <StageBadge stage={o.stage} vendorStages={o.vendorStages||{}}/>
-                         <PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/>
-                       </div>
-                       {Object.keys(o.vendorStages||{}).length > 1 && (
-                         <div style={{marginTop:3,display:'flex',flexDirection:'column',gap:2}}>
-                           {Object.entries(o.vendorStages).map(([v,s])=>(
-                             <div key={v} style={{fontSize:9,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:3}}>
-                               <span style={{maxWidth:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.split(' ')[0]}</span>
-                               <span className={`badge b-${s}`} style={{fontSize:8,padding:'1px 5px'}}>{s.toUpperCase()}</span>
-                               {(o.vendorPenalty||{})[v] && ['confirmed','partial'].includes(s) && (
-                                 <PenaltyTimer vendorPenalty={{[v]:(o.vendorPenalty||{})[v]}} vendorStages={{[v]:s}}/>
-                               )}
-                             </div>
-                           ))}
-                         </div>
-                       )}
-                     </td>
-                     <td>
-                       {o.awb ? (
-                         <div>
-                           <div style={{fontSize:10,color:dsColor,fontWeight:600}}>{ds||'Dispatched'}</div>
-                           <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'monospace'}}>{o.awb}</div>
-                         </div>
-                       ) : <span style={{color:'var(--text-muted)',fontSize:11}}>—</span>}
-                     </td>
-                     <td className="td-mut">{fmtDate(o.date)}</td>
-                     <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>✏</td>
-                   </tr>
-                   );
-                 })}
-              </tbody>
-            </table>
-          </div>
-          {!loading && filtered.length > PER && (
-            <div className="pager">
-              <span className="pager-info">Showing {(cur-1)*PER+1}–{Math.min(cur*PER,filtered.length)} of {filtered.length}</span>
-              <div className="pbtns">
-                <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹</button>
-                {Array.from({length:pages},(_,i)=>i+1).filter(p=>p===1||p===pages||Math.abs(p-cur)<=1).reduce((acc,p,i,arr)=>{ if(i>0&&arr[i-1]!==p-1)acc.push('…');acc.push(p);return acc; },[]).map((p,i)=>
-                  p==='…'?<span key={`d${i}`} style={{color:'var(--text-muted)',padding:'0 4px',fontSize:12}}>…</span>
-                        :<button key={p} className={`pbtn ${cur===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
-                )}
-                <button className="pbtn" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>›</button>
+        {/* Mobile list */}
+        {isMobile ? (
+          <div style={{background:'var(--bg-card)'}}>
+            {loading ? Array.from({length:7}).map((_,i)=>(
+              <div key={i} style={{padding:'14px',borderBottom:'1px solid var(--border)'}}>
+                <div className="skel" style={{height:14,width:'35%',marginBottom:8}}/>
+                <div className="skel" style={{height:11,width:'55%',marginBottom:8}}/>
+                <div style={{display:'flex',gap:6}}><div className="skel" style={{height:20,width:70,borderRadius:20}}/><div className="skel" style={{height:20,width:50,borderRadius:20}}/></div>
               </div>
+            )) : rows.length===0 ? (
+              <div className="empty" style={{padding:40}}><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div>
+            ) : groupByDate(rows).map(group=>(
+              <div key={group.label}>
+                <div style={{padding:'7px 14px',fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,background:'var(--bg)',borderBottom:'1px solid var(--border)',textTransform:'uppercase'}}>{group.label}</div>
+                {group.orders.map(o=><MobileOrderRow key={o.id} o={o}/>)}
+              </div>
+            ))}
+            {!loading && filtered.length>PER && (
+              <div style={{display:'flex',justifyContent:'space-between',padding:'14px',borderTop:'1px solid var(--border)'}}>
+                <button className="btn btn-ghost btn-sm" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹ Prev</button>
+                <span style={{fontSize:11,color:'var(--text-muted)',alignSelf:'center'}}>{cur} / {pages}</span>
+                <button className="btn btn-ghost btn-sm" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>Next ›</button>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Desktop table */
+          <div className="card">
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr>
+                  <th style={{width:32,paddingLeft:8}}>
+                    <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}}
+                      checked={rows.length>0&&selected.size===rows.length}
+                      ref={el=>{ if(el) el.indeterminate=selected.size>0&&selected.size<rows.length; }}
+                      onChange={toggleAll}/>
+                  </th>
+                  <th>#</th><th>Order</th><th>Customer</th><th>Vendors</th>
+                  <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Delivery</th><th>Date</th><th/>
+                </tr></thead>
+                <tbody>
+                  {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={12}/>) :
+                   rows.length===0 ? <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr> :
+                   rows.map((o,i)=>{
+                     const ds=o.deliveryStatus; const isSelected=selected.has(o.shopifyId);
+                     const dsColor=ds==='Delivered'?'#10b981':ds&&ds.toLowerCase().includes('transit')?'#06b6d4':ds&&(ds.toLowerCase().includes('rto')||ds.toLowerCase().includes('return'))?'#f87171':ds?'#fbbf24':'var(--text-muted)';
+                     return (
+                       <tr key={o.id} style={{cursor:'pointer',background:isSelected?'rgba(99,102,241,0.07)':'',outline:isSelected?'1px solid rgba(99,102,241,0.3)':''}}
+                         onClick={e=>{ if(e.target.type==='checkbox') return; setModal(o); }}>
+                         <td style={{paddingLeft:8}} onClick={e=>{ e.stopPropagation(); toggleSelect(o.shopifyId); }}>
+                           <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
+                         </td>
+                         <td className="td-mut">{(cur-1)*PER+i+1}</td>
+                         <td><div className="td-id">{o.id}</div>{showTags && o.tags && o.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(<span key={t} style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:3,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0',marginTop:2,marginRight:2}}>{t}</span>))}</td>
+                         <td><div style={{display:'flex',alignItems:'center',gap:7}}><div style={{width:22,height:22,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'var(--indigo)',flexShrink:0}}>{(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}</div><div><div style={{fontSize:12}}>{o.customer}</div>{o.email&&<div style={{fontSize:10,color:'var(--text-muted)'}}>{o.email}</div>}</div></div></td>
+                         <td style={{color:'var(--text-dim)',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(o.vendors||[]).join(', ')||'—'}</td>
+                         <td className="td-amt">{fmtCur(o.orderValue)}</td>
+                         <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
+                         <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
+                         <td>
+                           <div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}><StageBadge stage={o.stage} vendorStages={o.vendorStages||{}}/><PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/></div>
+                           {Object.keys(o.vendorStages||{}).length>1&&<div style={{marginTop:3,display:'flex',flexDirection:'column',gap:2}}>{Object.entries(o.vendorStages).map(([v,s])=>(<div key={v} style={{fontSize:9,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:3}}><span style={{maxWidth:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.split(' ')[0]}</span><span className={`badge b-${s}`} style={{fontSize:8,padding:'1px 5px'}}>{s.toUpperCase()}</span>{(o.vendorPenalty||{})[v]&&['confirmed','partial'].includes(s)&&<PenaltyTimer vendorPenalty={{[v]:(o.vendorPenalty||{})[v]}} vendorStages={{[v]:s}}/>}</div>))}</div>}
+                         </td>
+                         <td>{o.awb?<div><div style={{fontSize:10,color:dsColor,fontWeight:600}}>{ds||'Dispatched'}</div><div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'monospace'}}>{o.awb}</div></div>:<span style={{color:'var(--text-muted)',fontSize:11}}>—</span>}</td>
+                         <td className="td-mut">{fmtDate(o.date)}</td>
+                         <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>✏</td>
+                       </tr>
+                     );
+                   })}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
+            {!loading && filtered.length>PER && (
+              <div className="pager">
+                <span className="pager-info">Showing {(cur-1)*PER+1}–{Math.min(cur*PER,filtered.length)} of {filtered.length}</span>
+                <div className="pbtns">
+                  <button className="pbtn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={cur===1}>‹</button>
+                  {Array.from({length:pages},(_,i)=>i+1).filter(p=>p===1||p===pages||Math.abs(p-cur)<=1).reduce((acc,p,i,arr)=>{ if(i>0&&arr[i-1]!==p-1)acc.push('…');acc.push(p);return acc; },[]).map((p,i)=>
+                    p==='…'?<span key={`d${i}`} style={{color:'var(--text-muted)',padding:'0 4px',fontSize:12}}>…</span>:<button key={p} className={`pbtn ${cur===p?'cur':''}`} onClick={()=>setPage(p)}>{p}</button>
+                  )}
+                  <button className="pbtn" onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={cur===pages}>›</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {modal && <OrderModal order={modal} token={token} onClose={()=>setModal(null)} onUpdated={()=>{load();setModal(null);}}/>}
       </div>
@@ -4222,6 +4316,7 @@
     const [pass,       setPass]       = useState('');
     const [loginErr,   setLoginErr]   = useState('');
     const [loginLoad,  setLoginLoad]  = useState(false);
+    const [sidebarOpen,setSidebarOpen]= useState(false);
 
     const login = async () => {
       setLoginLoad(true); setLoginErr('');
@@ -4275,12 +4370,16 @@
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
 
     const handleStageClick = stage => { setStageFilter(stage); setView('orders'); };
+    const closeSidebar = () => setSidebarOpen(false);
 
     const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', jarvis:'JARVIS AI', settlements:'Settlements', settings:'Settings', audit:'Audit Log' };
 
     return (
       <div className="app-shell">
-        <aside className="sidebar">
+        {/* Mobile overlay */}
+        <div className={`sidebar-overlay ${sidebarOpen?'visible':''}`} onClick={closeSidebar}/>
+
+        <aside className={`sidebar ${sidebarOpen?'mobile-open':''}`}>
           <div className="sidebar-brand">
             <div className="sidebar-logo">A</div>
             <div><div className="sidebar-name">CROSCROW</div><div className="sidebar-role">Admin Portal</div></div>
@@ -4290,7 +4389,7 @@
               <div key={sec}>
                 <div className="nav-section">{sectionLabels[sec]}</div>
                 {navItems.filter(n=>n.section===sec).map(n=>(
-                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
+                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ setView(n.id); closeSidebar(); }}>
                     <span className="nav-icon">{n.icon}</span>{n.label}
                   </button>
                 ))}
@@ -4304,7 +4403,10 @@
 
         <div className="content">
           <div className="topbar">
-            <span className="topbar-title">{titles[view]||view}</span>
+            <div style={{display:'flex',alignItems:'center',gap:4}}>
+              <button className="hamburger" onClick={()=>setSidebarOpen(o=>!o)}>☰</button>
+              <span className="topbar-title">{titles[view]||view}</span>
+            </div>
             <div className="topbar-right">
               <span style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1,display:'flex',alignItems:'center',gap:6}}>
                 <span className="pulse"/>Admin Mode
