@@ -5353,7 +5353,12 @@ async function upsertGoogleContact({ name, phone, orderName }) {
 }
 
 // GET /admin/google/auth — redirect to Google OAuth consent
-app.get("/admin/google/auth", adminAuth, (req, res) => {
+app.get("/admin/google/auth", (req, res) => {
+  // Allow token via query param (browser popup can't set Authorization header)
+  const token = (req.query.token || (req.headers.authorization || "").replace("Bearer ", "")).trim();
+  if (!token || !adminSessions.has(token)) return res.status(401).send("Unauthorized");
+  const s = adminSessions.get(token);
+  if (Date.now() > s.expiresAt) { adminSessions.delete(token); return res.status(401).send("Session expired"); }
   if (!GOOGLE_CLIENT_ID) return res.status(400).json({ error: "Google credentials not configured in .env" });
   const auth = getGoogleOAuth2Client();
   const url  = auth.generateAuthUrl({
