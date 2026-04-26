@@ -18,6 +18,7 @@ const crypto     = require("crypto");
 const fetch      = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 const nodemailer = require("nodemailer");
 const { MongoClient } = require("mongodb");
+const { google }     = require("googleapis");
 require("dotenv").config();
 
 // ── MongoDB connection ─────────────────────────────────────────────────────
@@ -799,6 +800,17 @@ app.post("/webhooks/orders", (req, res) => {
           }
         }
         console.log(`📦 orders/create processed: ${payload.name} (${isPrepaid ? 'prepaid → confirmed' : 'COD'})`);
+
+        // Auto-sync customer to Google Contacts
+        try {
+          const phone = payload.shipping_address?.phone || payload.billing_address?.phone || payload.phone || "";
+          const name  = payload.shipping_address
+            ? `${payload.shipping_address.first_name || ""} ${payload.shipping_address.last_name || ""}`.trim()
+            : (payload.customer?.first_name || "Customer");
+          if (phone) await upsertGoogleContact({ name, phone, orderName: payload.name });
+        } catch (gErr) {
+          console.error("⚠️  Google Contacts sync failed:", gErr.message);
+        }
       }
 
       // ── orders/updated: tag → stage auto-mapping ───────────────────────
@@ -1117,16 +1129,14 @@ function templateNewOrderCustomerSky({ order }) {
 
     <!-- Items -->
     ${items.map(li => {
-      const img = li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
       return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;margin-bottom:0;">
       <tr>
         ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
           <img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;">
         </td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
-          <div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;display:flex;align-items:center;justify-content:center;">
-            <span style="font-size:20px;">&#128247;</span>
-          </div>
+          <div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div>
         </td>`}
         <td style="padding:14px 0;vertical-align:top;">
           <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
@@ -2601,14 +2611,16 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const DISPATCHED = new Set(['ready', 'pickup', 'transit', 'delivered', 'rto']);
 
       let total=0, confirmed=0, dispatched=0, delivered=0, rto=0, cancelled=0;
+      let revConfirmed=0, revDispatched=0, revDelivered=0;
       orders30d.forEach(o => {
         const meta  = metaMap[String(o.id)] || {};
         const stage = meta.stage || 'new';
+        const price = parseFloat(o.total_price || 0);
         total++;
         if (o.cancelled_at || stage === 'cancelled') { cancelled++; return; }
-        if (!EXCLUDE.has(stage)) confirmed++;          // confirmed = entered pipeline
-        if (DISPATCHED.has(stage))  dispatched++;      // dispatched = tracking submitted+
-        if (stage === 'delivered')  delivered++;
+        if (!EXCLUDE.has(stage)) { confirmed++; revConfirmed += price; }
+        if (DISPATCHED.has(stage))  { dispatched++; revDispatched += price; }
+        if (stage === 'delivered')  { delivered++; revDelivered += price; }
         if (stage === 'rto')        rto++;
       });
       // Dispatch rate: of confirmed orders, how many dispatched
@@ -2619,14 +2631,17 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const delivery_rate  = dispatched > 0 ? Math.round(delivered / dispatched * 100) : 0;
       return { total, confirmed, dispatched, delivered, rto, cancelled,
                pending_count: confirmed - dispatched,
-               dispatch_rate, overall_rate, delivery_rate };
+               dispatch_rate, overall_rate, delivery_rate,
+               revConfirmed: parseFloat(revConfirmed.toFixed(2)),
+               revDispatched: parseFloat(revDispatched.toFixed(2)),
+               revDelivered: parseFloat(revDelivered.toFixed(2)) };
     })();
 
     // ── Payment split (30d)
     const paymentSplit = {
-      prepaid: orders30d.filter(isPrepaid).length,
-      cod:     orders30d.filter(o => !isPrepaid(o) && !isPartial(o)).length,
-      partial: orders30d.filter(isPartial).length,
+      prepaid: orders30d.filter(o => isPrepaid(o)).length,
+      partial: orders30d.filter(o => !isPrepaid(o) && ((metaMap[String(o.id)]?.advance_paid || 0) > 0 || isPartial(o))).length,
+      cod:     orders30d.filter(o => !isPrepaid(o) && !isPartial(o) && !((metaMap[String(o.id)]?.advance_paid || 0) > 0)).length,
     };
 
     // ── Top products by quantity sold (all time)
@@ -3834,6 +3849,7 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
     delivered_customer: { subject: `[TEST] Order Delivered: ${demoOrder.name} 🎉`, html: templateDelivered({ order: demoOrder, forRole: 'customer' }) },
     delivered_vendor:   { subject: `[TEST] Order Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'vendor' }) },
     delivered_admin:    { subject: `[TEST] Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'admin' }) },
+    order_on_hold:      { subject: `[TEST] Your Order ${demoOrder.name} is On Hold — Please Confirm`, html: templateOrderOnHoldCustomer({ order: demoOrder }) },
   };
 
   const tpl = TEMPLATES[template];
@@ -4026,7 +4042,7 @@ app.get("/vendor/shipping/partners", vendorAuth, async (req, res) => {
 app.post("/vendor/shipping/partners", vendorAuth, async (req, res) => {
   const { partner, credentials } = req.body || {};
   if (!partner || !credentials) return res.status(400).json({ error: "partner and credentials required" });
-  const allowed = ["shiprocket", "delhivery"];
+  const allowed = ["shiprocket", "delhivery", "shipmozo"];
   if (!allowed.includes(partner)) return res.status(400).json({ error: "Unknown partner" });
   await mdb.collection('vendor_shipping_partners').updateOne(
     { vendor_name: req.vendor, partner },
@@ -4191,6 +4207,75 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           || (typeof dlRes === "string" ? dlRes : JSON.stringify(dlRes));
         return res.status(400).json({ error: errMsg });
       }
+    } else if (partner === "shipmozo") {
+      // ShipMozo — base: https://shipping-api.com, auth via public-key + private-key headers
+      const smPublicKey  = creds.public_key  || "";
+      const smPrivateKey = creds.private_key || creds.api_key || "";
+      if (!smPublicKey || !smPrivateKey) return res.status(400).json({ error: "ShipMozo public and private keys required. Go to Shipping Settings." });
+
+      const smHeaders = { "Content-Type": "application/json", "public-key": smPublicKey, "private-key": smPrivateKey };
+      const safeJson = async (fetchPromise) => {
+        const r = await fetchPromise;
+        const text = await r.text();
+        try { return { ok: r.ok, status: r.status, data: JSON.parse(text) }; }
+        catch { return { ok: false, status: r.status, data: null, raw: text.slice(0, 400) }; }
+      };
+
+      const custName = `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || "Customer";
+      // ShipMozo expects weight in grams
+      const weightGrams = Math.round(parseFloat(weight) * 1000);
+
+      const smPayload = {
+        order_id:                   shopifyOrder.name,
+        order_date:                 (shopifyOrder.created_at || "").slice(0, 10),
+        consignee_name:             custName,
+        consignee_phone:            (addr.phone || "").replace(/\D/g, "").slice(-10),
+        consignee_email:            shopifyOrder.email || "",
+        consignee_address_line_one: addr.address1 || "",
+        consignee_address_line_two: addr.address2 || "",
+        consignee_pin_code:         addr.zip      || "",
+        consignee_city:             addr.city     || "",
+        consignee_state:            addr.province || "",
+        product_detail:             items.map(li => li.title).join(", ").slice(0, 250),
+        payment_type:               cod ? "COD" : "PREPAID",
+        cod_amount:                 cod ? String(codAmt) : "0",
+        weight:                     String(weightGrams),
+        length:                     String(length),
+        width:                      String(breadth),
+        height:                     String(height),
+        ...(creds.warehouse_id ? { warehouse_id: creds.warehouse_id } : {}),
+      };
+
+      console.log(`[ShipMozo] POST /push-order for ${shopifyOrder.name} weight=${weightGrams}g`);
+      const pushResult = await safeJson(fetch("https://shipping-api.com/api/v1/push-order", {
+        method: "POST", headers: smHeaders, body: JSON.stringify(smPayload),
+      }));
+
+      if (!pushResult.data) {
+        return res.status(500).json({ error: `ShipMozo returned non-JSON (HTTP ${pushResult.status}): ${pushResult.raw}` });
+      }
+      console.log(`[ShipMozo] push-order response:`, JSON.stringify(pushResult.data).slice(0, 300));
+
+      const smOrderId = pushResult.data?.order_id || pushResult.data?.data?.order_id;
+      if (!smOrderId && !pushResult.ok) {
+        return res.status(400).json({ error: pushResult.data?.message || JSON.stringify(pushResult.data) });
+      }
+
+      // Auto-assign courier to generate AWB
+      const assignResult = await safeJson(fetch("https://shipping-api.com/api/v1/auto-assign-order", {
+        method: "POST", headers: smHeaders, body: JSON.stringify({ order_id: smOrderId }),
+      }));
+      console.log(`[ShipMozo] auto-assign response:`, JSON.stringify(assignResult.data).slice(0, 300));
+
+      const awbNum = assignResult.data?.awb_number || assignResult.data?.data?.awb_number
+        || pushResult.data?.awb_number || pushResult.data?.data?.awb_number;
+
+      if (awbNum) {
+        result = { success: true, awb: awbNum };
+      } else {
+        const smMsg = assignResult.data?.message || pushResult.data?.message || "";
+        return res.status(400).json({ error: `ShipMozo order pushed (ID: ${smOrderId}) but AWB not yet assigned. ${smMsg}. Check ShipMozo panel.` });
+      }
     }
 
     // Save AWB to this vendor's order_vendor_stage only — never to order_meta.awb
@@ -4223,9 +4308,11 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
         }
 
         if (line_items_by_fulfillment_order.length) {
-          const courierName = partner === 'shiprocket' ? 'Shiprocket' : 'Delhivery';
+          const courierName = partner === 'shiprocket' ? 'Shiprocket' : partner === 'shipmozo' ? 'ShipMozo' : 'Delhivery';
           const trackUrl = partner === 'delhivery'
             ? `https://www.delhivery.com/track/package/${result.awb}`
+            : partner === 'shipmozo'
+            ? `https://panel.shipmozo.com/track-order?awb=${result.awb}`
             : `https://shiprocket.co/tracking/${result.awb}`;
           await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/fulfillments.json`, {
             method: 'POST',
@@ -4357,6 +4444,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
     const detectPartner = c => {
       if (c.includes("delhivery")) return "delhivery";
       if (c.includes("shiprocket")) return "shiprocket";
+      if (c.includes("shipmozo")) return "shipmozo";
       if (c.includes("bluedart") || c.includes("blue dart")) return "bluedart";
       if (c.includes("dtdc")) return "dtdc";
       if (c.includes("xpressbees")) return "xpressbees";
@@ -4450,6 +4538,18 @@ async function fetchDeliveryStatus(partner, creds, awb) {
       || track?.tracking_data?.shipment_status_name
       || "";
     return status;
+  }
+  if (partner === "shipmozo") {
+    const smPublic  = creds.public_key  || "";
+    const smPrivate = creds.private_key || creds.api_key || "";
+    if (!smPublic || !smPrivate) return "";
+    try {
+      const r = await fetch(`https://shipping-api.com/api/v1/track-order?awb_number=${awb}`, {
+        headers: { "public-key": smPublic, "private-key": smPrivate },
+      });
+      const track = await r.json();
+      return track?.data?.current_status || track?.data?.status || track?.status || "";
+    } catch { return ""; }
   }
   if (partner === "delhivery") {
     // Try authenticated API first, fall back to public tracking endpoint
@@ -5160,6 +5260,157 @@ app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
   res.json({ success: true, status, amount });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// GOOGLE CONTACTS INTEGRATION
+// ══════════════════════════════════════════════════════════════════════════
+
+const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REDIRECT_URI  = `${process.env.SERVER_URL || 'http://localhost:3001'}/admin/google/callback`;
+
+function getGoogleOAuth2Client() {
+  return new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI);
+}
+
+async function getGoogleTokens() {
+  return await mdb.collection('app_settings').findOne({ key: 'google_tokens' }, { projection: { value: 1, _id: 0 } }).then(r => r?.value || null);
+}
+
+async function saveGoogleTokens(tokens) {
+  await mdb.collection('app_settings').updateOne(
+    { key: 'google_tokens' },
+    { $set: { key: 'google_tokens', value: tokens, updated_at: new Date().toISOString() } },
+    { upsert: true }
+  );
+}
+
+async function getAuthedPeopleClient() {
+  const tokens = await getGoogleTokens();
+  if (!tokens) throw new Error("Google Contacts not connected. Go to Admin Settings → Integrations to connect.");
+  const auth = getGoogleOAuth2Client();
+  auth.setCredentials(tokens);
+  // Auto-refresh if expired
+  auth.on('tokens', async (newTokens) => {
+    const merged = { ...tokens, ...newTokens };
+    await saveGoogleTokens(merged);
+  });
+  return google.people({ version: 'v1', auth });
+}
+
+async function upsertGoogleContact({ name, phone, orderName }) {
+  const people = await getAuthedPeopleClient();
+  const contactName = `${name} — ${orderName}`;
+  const phoneClean  = (phone || "").replace(/\D/g, "");
+
+  // Search for existing contact by phone
+  let existingResourceName = null;
+  try {
+    const search = await people.people.searchContacts({
+      query: phoneClean,
+      readMask: 'names,phoneNumbers,biographies',
+      pageSize: 5,
+    });
+    const results = search.data?.results || [];
+    for (const r of results) {
+      const phones = r.person?.phoneNumbers || [];
+      if (phones.some(p => (p.value || "").replace(/\D/g, "").endsWith(phoneClean.slice(-10)))) {
+        existingResourceName = r.person.resourceName;
+        break;
+      }
+    }
+  } catch {}
+
+  if (existingResourceName) {
+    // Update: append order number to name if not already there
+    try {
+      const existing = await people.people.get({ resourceName: existingResourceName, personFields: 'names,phoneNumbers,biographies,metadata' });
+      const currentName = existing.data?.names?.[0]?.displayName || "";
+      // Append new order to name if not already present
+      const newDisplayName = currentName.includes(orderName) ? currentName : `${currentName}, ${orderName}`;
+      await people.people.updateContact({
+        resourceName: existingResourceName,
+        updatePersonFields: 'names',
+        requestBody: {
+          etag: existing.data.etag,
+          names: [{ givenName: newDisplayName }],
+        },
+      });
+      console.log(`📒 Google Contacts: updated ${existingResourceName} → ${newDisplayName}`);
+    } catch (e) {
+      console.error('Google Contacts update error:', e.message);
+    }
+  } else {
+    // Create new contact
+    await people.people.createContact({
+      requestBody: {
+        names: [{ givenName: contactName }],
+        phoneNumbers: [{ value: phone, type: 'mobile' }],
+        memberships: [{ contactGroupMembership: { contactGroupId: 'myContacts' } }],
+      },
+    });
+    console.log(`📒 Google Contacts: created "${contactName}" (${phone})`);
+  }
+}
+
+// GET /admin/google/auth — redirect to Google OAuth consent
+app.get("/admin/google/auth", adminAuth, (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(400).json({ error: "Google credentials not configured in .env" });
+  const auth = getGoogleOAuth2Client();
+  const url  = auth.generateAuthUrl({
+    access_type: 'offline',
+    prompt:      'consent',
+    scope:       ['https://www.googleapis.com/auth/contacts'],
+  });
+  res.redirect(url);
+});
+
+// GET /admin/google/callback — OAuth callback, save tokens
+app.get("/admin/google/callback", async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.send(`<script>window.opener?.postMessage({type:'google_auth',error:'${error}'},'*');window.close();</script>`);
+  try {
+    const auth = getGoogleOAuth2Client();
+    const { tokens } = await auth.getToken(code);
+    await saveGoogleTokens(tokens);
+    console.log("✅ Google Contacts connected");
+    res.send(`<script>window.opener?.postMessage({type:'google_auth',success:true},'*');window.close();</script>`);
+  } catch (e) {
+    res.send(`<script>window.opener?.postMessage({type:'google_auth',error:'${e.message}'},'*');window.close();</script>`);
+  }
+});
+
+// GET /admin/google/status — check if connected
+app.get("/admin/google/status", adminAuth, async (req, res) => {
+  const tokens = await getGoogleTokens();
+  res.json({ connected: !!tokens });
+});
+
+// DELETE /admin/google/disconnect
+app.delete("/admin/google/disconnect", adminAuth, async (req, res) => {
+  await mdb.collection('app_settings').deleteOne({ key: 'google_tokens' });
+  res.json({ ok: true });
+});
+
+// POST /admin/google/sync — manual bulk sync all customers to Google Contacts
+app.post("/admin/google/sync", adminAuth, async (req, res) => {
+  try {
+    const orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    let synced = 0, errors = 0;
+    for (const o of orders) {
+      const phone = o.shipping_address?.phone || o.billing_address?.phone || o.phone || "";
+      const name  = o.shipping_address ? `${o.shipping_address.first_name || ""} ${o.shipping_address.last_name || ""}`.trim() : (o.customer?.first_name || "Customer");
+      if (!phone) continue;
+      try {
+        await upsertGoogleContact({ name, phone, orderName: o.name });
+        synced++;
+      } catch (e) { errors++; console.error(`Google sync error for ${o.name}:`, e.message); }
+    }
+    res.json({ ok: true, synced, errors });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Background cron: penalty & warning checker (runs every 15 min) ────────
 const PENALTY_CHECK_MS = 15 * 60 * 1000;
 const HR24 = 24 * 60 * 60 * 1000;
@@ -5233,6 +5484,140 @@ setInterval(penaltyCronJob, PENALTY_CHECK_MS);
 const AUTO_HOLD_DAYS = 7;
 const AUTO_HOLD_TAG  = 'on hold';
 
+function templateOrderOnHoldCustomer({ order }) {
+  const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
+  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I want to confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
+  const items  = order.line_items || [];
+  const total  = parseFloat(order.total_price || 0);
+  const shipping = parseFloat(order.shipping_lines?.[0]?.price || 0);
+  const subtotal = items.reduce((s, li) => s + parseFloat(li.price || 0) * li.quantity, 0);
+  const addr   = order.shipping_address;
+  const IMG    = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO   = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const firstName = addr?.first_name || order.email?.split('@')[0] || 'there';
+  const firstItem = items[0];
+  const heroImg = firstItem?.image_url || firstItem?.image?.src || (firstItem?.properties?.find(p => p.name === '_image')?.value) || '';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <!-- HERO IMAGE -->
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">ORDER UPDATE &nbsp;|&nbsp; ACTION REQUIRED</div>
+      <div style="font-size:28px;font-weight:900;color:#f59e0b;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">ORDER<br>ON HOLD.</div>
+    </div>
+  </div>
+
+  <!-- ORDER ID BAR -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#f59e0b;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- BODY -->
+  <div style="background:#161616;padding:32px;">
+
+    <!-- Greeting -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${firstName} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has been placed on hold because we haven't received your confirmation yet. Please confirm on WhatsApp so we can get it processed right away.</div>
+    </div>
+
+    <!-- WhatsApp confirm banner -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#1c1208;border:2px solid #f59e0b;border-radius:8px;margin-bottom:28px;">
+      <tr><td style="padding:22px 24px;text-align:center;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;">⚠️ Confirmation Required</div>
+        <div style="font-size:13px;color:#aaa;line-height:1.7;margin-bottom:18px;">Tap the button below to confirm your order on WhatsApp. Takes less than 10 seconds.</div>
+        <a href="${waLink}" style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:800;font-size:12px;letter-spacing:3px;text-transform:uppercase;padding:14px 32px;border-radius:4px;">Confirm on WhatsApp</a>
+        <div style="font-size:10px;color:#555;margin-top:12px;">If your order is not confirmed, it may be cancelled.</div>
+      </td></tr>
+    </table>
+
+    ${heroImg ? `
+    <!-- Big Product Photo -->
+    <div style="margin-bottom:24px;text-align:center;">
+      <img src="${heroImg}" alt="${firstItem?.title || ''}" style="max-width:100%;width:320px;border-radius:10px;display:inline-block;object-fit:cover;">
+    </div>` : ''}
+
+    <!-- Items label -->
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
+
+    <!-- Items list -->
+    ${items.map(li => {
+      const img = li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+          <img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;">
+        </td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+          <div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div>
+        </td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    <!-- Payment summary -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;overflow:hidden;">
+      <tr>
+        <td style="padding:12px 20px;font-size:11px;color:#555;">Subtotal</td>
+        <td style="padding:12px 20px;text-align:right;font-size:11px;color:#888;">&#8377;${subtotal.toFixed(2)}</td>
+      </tr>
+      ${shipping > 0 ? `<tr>
+        <td style="padding:8px 20px;font-size:11px;color:#555;border-top:1px solid #1a1a1a;">Shipping</td>
+        <td style="padding:8px 20px;text-align:right;font-size:11px;color:#888;border-top:1px solid #1a1a1a;">&#8377;${shipping.toFixed(2)}</td>
+      </tr>` : ''}
+      <tr style="background:#1a1a1a;">
+        <td style="padding:14px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Cash on Delivery</td>
+        <td style="padding:14px 20px;text-align:right;font-size:20px;font-weight:900;color:#f59e0b;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+
+    <!-- Ship to -->
+    ${addr ? `
+    <div style="margin-bottom:24px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Shipping To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}<br>
+        ${addr.phone ? `<span style="color:#555;font-size:12px;">${addr.phone}</span>` : ''}
+      </div>
+    </div>` : ''}
+
+  </div>
+
+  <!-- FOOTER -->
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
 async function autoHoldCronJob() {
   try {
     const cutoff = Date.now() - AUTO_HOLD_DAYS * 24 * 60 * 60 * 1000;
@@ -5243,6 +5628,7 @@ async function autoHoldCronJob() {
     const metas = await mdb.collection('order_meta').find({}, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     const token = await getAccessToken();
+    const cfg = await getSmtpConfig();
 
     const moved = [];
     for (const o of oldOrders) {
@@ -5268,12 +5654,25 @@ async function autoHoldCronJob() {
       moved.push({ name: o.name, id: sid, created_at: o.created_at });
       auditLog('system', 'auto_hold', sid, { reason: `${AUTO_HOLD_DAYS}d in new stage` });
       console.log(`🔒 Auto-hold: ${o.name} (${sid}) moved to hold after ${AUTO_HOLD_DAYS} days`);
+
+      // Send hold notification email to customer (COD orders only)
+      const isCodOrder = o.financial_status !== 'paid';
+      const customerEmail = o.email;
+      if (isCodOrder && customerEmail && cfg) {
+        try {
+          const enriched = await enrichOrderImages(o);
+          const html = templateOrderOnHoldCustomer({ order: enriched });
+          await sendEmail({ to: customerEmail, subject: `Your Order ${o.name} is On Hold — Please Confirm`, html, trigger: 'auto_hold_customer' });
+          console.log(`📧 Hold email sent to ${customerEmail} for ${o.name}`);
+        } catch (emailErr) {
+          console.error(`⚠️  Hold email failed for ${o.name}:`, emailErr.message);
+        }
+      }
     }
 
     if (moved.length === 0) return;
 
     // Send notification email to admin + staff
-    const cfg = await getSmtpConfig();
     const rsSettings = await RS.get();
     const adminEmail = cfg?.adminEmail || cfg?.user;
     const staffList  = (rsSettings.staff_emails || '').split(',').map(e => e.trim()).filter(Boolean);

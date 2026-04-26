@@ -1338,7 +1338,7 @@
           {!aLoading && a && a.fulfillStats && (()=>{
             const fs = a.fulfillStats;
 
-            const MiniCard = ({icon, label, pct, num, den, sub, threshHi=80, threshMid=60}) => {
+            const MiniCard = ({icon, label, pct, num, den, sub, rev, threshHi=80, threshMid=60}) => {
               const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
               const bg    = pct>=threshHi?'rgba(16,185,129,0.08)':pct>=threshMid?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
               const bdr   = pct>=threshHi?'rgba(16,185,129,0.3)':pct>=threshMid?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
@@ -1353,23 +1353,42 @@
                     <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
                   </div>
                   <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',justifyContent:'space-between'}}>
-                    <span>{sub}</span><span>{periodLabel}</span>
+                    <span>{sub}</span>
+                    {rev != null && <span style={{color,fontWeight:700}}>{fmtCur(rev)}</span>}
                   </div>
+                  <div style={{fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>{periodLabel}</div>
                 </div>
               );
             };
 
+            const confirmedPct = fs.total > 0 ? Math.round(fs.confirmed / fs.total * 100) : 0;
+
             return (
               <React.Fragment>
+                <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:4}}>
+                  <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>📋 Confirmed Orders</div>
+                  <div style={{display:'flex',alignItems:'flex-end',gap:8}}>
+                    <span style={{fontSize:28,fontWeight:900,color:'var(--indigo)',lineHeight:1}}>{confirmedPct}%</span>
+                    <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{fs.confirmed}/{fs.total+' total'}</span>
+                  </div>
+                  <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
+                    <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:2,transition:'width 0.4s'}}/>
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',justifyContent:'space-between'}}>
+                    <span>{fs.confirmed} confirmed</span>
+                    <span style={{color:'var(--indigo)',fontWeight:700}}>{fmtCur(fs.revConfirmed||0)}</span>
+                  </div>
+                  <div style={{fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>{periodLabel}</div>
+                </div>
                 <MiniCard icon="📦" label="Dispatch Rate"
                   pct={fs.dispatch_rate} num={fs.dispatched} den={fs.confirmed+' confirmed'}
-                  sub={fs.pending_count+' pending dispatch'}/>
+                  sub={fs.pending_count+' pending dispatch'} rev={fs.revDispatched}/>
                 <MiniCard icon="🚀" label="Overall Fulfillment"
                   pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
                   sub={fs.cancelled+' cancelled'}/>
                 <MiniCard icon="✅" label="Delivery Rate"
                   pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
-                  sub={fs.rto+' RTO · '+fs.delivered+' delivered'} threshHi={70} threshMid={50}/>
+                  sub={fs.rto+' RTO · overall: '+Math.round(fs.delivered/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'} rev={fs.revDelivered} threshHi={70} threshMid={50}/>
               </React.Fragment>
             );
           })()}
@@ -2858,6 +2877,7 @@
       { key:'delivered_customer', label:'🎉 Delivered (Customer)',         desc:'Fires when stage → Delivered' },
       { key:'delivered_vendor',   label:'✔ Delivered (Vendor)',           desc:'Fires when stage → Delivered, sent to each vendor' },
       { key:'delivered_admin',    label:'🔔 Delivered (Admin)',            desc:'Fires when stage → Delivered, sent to admin email' },
+      { key:'order_on_hold',      label:'⚠️ Order On Hold (Customer)',      desc:'Fires when COD order is auto-moved to hold after 4 days — WhatsApp confirm prompt' },
     ];
 
     const saveVendorEmail = async (name) => {
@@ -3044,6 +3064,17 @@
         { key:'password', label:'Password', type:'password', placeholder:'Shiprocket password' },
       ],
       help: 'Use the same email & password you log into Shiprocket with.',
+    },
+    {
+      id: 'shipmozo',
+      name: 'ShipMozo',
+      logo: '🛳️',
+      color: '#0ea5e9',
+      fields: [
+        { key:'public_key',  label:'Public Key',  type:'text',     placeholder:'ShipMozo Public Key' },
+        { key:'private_key', label:'Private Key', type:'password', placeholder:'ShipMozo Private Key' },
+      ],
+      help: 'Log into ShipMozo → Settings → API Integration to get your public & private keys.',
     },
   ];
 
@@ -4238,6 +4269,7 @@
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
+      { id:'googlecontacts', icon:'📒', label:'Google Contacts', section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
@@ -4294,6 +4326,7 @@
           {view==='reports'     && <Reports token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
+          {view==='googlecontacts' && <GoogleContacts token={token}/>}
         </div>
       </div>
     );
@@ -4302,6 +4335,95 @@
   /* ══════════════════════════════════════════════════════════
      WEBHOOKS PANEL
   ══════════════════════════════════ */
+  function GoogleContacts({ token }) {
+    const [connected, setConnected] = useState(null);
+    const [syncing,   setSyncing]   = useState(false);
+    const [msg,       setMsg]       = useState(null);
+
+    useEffect(() => {
+      fetch(`${API}/admin/google/status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => setConnected(d.connected)).catch(() => setConnected(false));
+      // Listen for OAuth popup callback
+      const handler = (e) => {
+        if (e.data?.type === 'google_auth') {
+          if (e.data.success) { setConnected(true); setMsg({ type:'success', text:'Google Contacts connected!' }); }
+          else setMsg({ type:'error', text: e.data.error || 'Auth failed' });
+        }
+      };
+      window.addEventListener('message', handler);
+      return () => window.removeEventListener('message', handler);
+    }, [token]);
+
+    const connect = () => {
+      window.open(`${API}/admin/google/auth?token=${token}`, 'google_auth', 'width=500,height=650');
+    };
+
+    const disconnect = async () => {
+      await fetch(`${API}/admin/google/disconnect`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } });
+      setConnected(false); setMsg({ type:'success', text:'Disconnected.' });
+    };
+
+    const bulkSync = async () => {
+      setSyncing(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/google/sync`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`Synced ${d.synced} customers to Google Contacts. ${d.errors ? d.errors+' errors.' : ''}` });
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSyncing(false);
+    };
+
+    return (
+      <div className="page">
+        <div style={{maxWidth:560}}>
+          <div className="card" style={{padding:28}}>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+              <span style={{fontSize:32}}>📒</span>
+              <div>
+                <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Google Contacts</div>
+                <div style={{fontSize:12,color:'var(--text-muted)'}}>Auto-sync customers on every new order</div>
+              </div>
+              {connected !== null && (
+                <span style={{marginLeft:'auto',padding:'4px 12px',borderRadius:20,fontSize:11,fontWeight:700,
+                  background: connected ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                  color: connected ? '#10b981' : '#ef4444',
+                  border: `1px solid ${connected ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`}}>
+                  {connected ? '● Connected' : '○ Not Connected'}
+                </span>
+              )}
+            </div>
+
+            {msg && <div style={{padding:'10px 14px',borderRadius:6,marginBottom:16,fontSize:12,
+              background: msg.type==='success' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+              color: msg.type==='success' ? '#10b981' : '#ef4444',
+              border: `1px solid ${msg.type==='success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`}}>{msg.text}</div>}
+
+            <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'14px 16px',marginBottom:20,fontSize:12,color:'var(--text-muted)',lineHeight:1.8}}>
+              <strong style={{color:'var(--text)'}}>How it works:</strong><br/>
+              • Every new order → customer added to Google Contacts automatically<br/>
+              • Contact name format: <strong style={{color:'var(--indigo)'}}>John Doe — #1234</strong><br/>
+              • If customer already exists (same phone), order number is appended<br/>
+              • Use Bulk Sync to import all existing customers at once
+            </div>
+
+            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+              {!connected
+                ? <button className="btn btn-primary" onClick={connect}>🔗 Connect Google Account</button>
+                : <>
+                    <button className="btn btn-primary" onClick={bulkSync} disabled={syncing}>
+                      {syncing ? '⏳ Syncing…' : '🔄 Bulk Sync All Customers'}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={disconnect} style={{color:'var(--red)',borderColor:'var(--red)'}}>Disconnect</button>
+                  </>
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function Webhooks({ token }) {
     const [webhooks, setWebhooks] = useState([]);
     const [loading,  setLoading]  = useState(false);

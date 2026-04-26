@@ -409,6 +409,7 @@
     .sp-logo { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
     .sp-logo.shiprocket { background: #2d1a00; }
     .sp-logo.delhivery  { background: #001a2d; }
+    .sp-logo.shipmozo   { background: #001a2d; }
     .sp-name { font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
     .sp-tag { font-size: 9px; letter-spacing: 1px; padding: 2px 8px; border-radius: 20px; margin-top: 2px; display: inline-block; }
     .sp-tag.connected { background: var(--green-dim); color: var(--green); }
@@ -502,6 +503,7 @@
     { name:'Shadowfax',      url: awb => `https://track.shadowfax.in/?awb=${awb}` },
     { name:'Ekart',          url: awb => `https://ekartlogistics.com/track?trackingId=${awb}` },
     { name:'Shiprocket',     url: awb => `https://shiprocket.co/tracking/${awb}` },
+    { name:'ShipMozo',      url: awb => `https://panel.shipmozo.com/track-order?awb=${awb}` },
     { name:'Amazon Logistics', url: awb => `https://track.amazon.in/tracking/${awb}` },
     { name:'FedEx',          url: awb => `https://www.fedex.com/fedextrack/?trknbr=${awb}` },
     { name:'Other',          url: awb => '' },
@@ -691,7 +693,7 @@
         if (!r.ok) throw new Error(d.error);
         const awbCode = d.awb || d.shipmentId || '';
         setMsg({ type: 'success', text: `Shipment created on ${shipPartner}! AWB: ${awbCode}` });
-        if (awbCode) { setAwb(awbCode); setCourier(shipPartner === 'shiprocket' ? 'Shiprocket' : 'Delhivery'); }
+        if (awbCode) { setAwb(awbCode); setCourier(shipPartner === 'shiprocket' ? 'Shiprocket' : shipPartner === 'shipmozo' ? 'ShipMozo' : 'Delhivery'); }
         setShowShipment(false);
         onUpdated();
       } catch (e) { setMsg({ type: 'error', text: e.message }); }
@@ -1744,6 +1746,23 @@
         { key: 'email',           label: 'Shiprocket Email',    type: 'email',    placeholder: 'your@email.com' },
         { key: 'password',        label: 'Shiprocket Password', type: 'password', placeholder: '••••••••' },
         { key: 'pickup_location', label: 'Pickup Location Name',type: 'text',     placeholder: 'Primary' },
+      ],
+    },
+    {
+      id: 'shipmozo',
+      name: 'ShipMozo',
+      emoji: '🛳️',
+      desc: 'Multi-courier shipping aggregator with competitive rates and pan-India coverage.',
+      fields: [
+        { key: 'public_key',      label: 'Public Key',          type: 'text',     placeholder: 'ShipMozo Public Key' },
+        { key: 'private_key',     label: 'Private Key',         type: 'password', placeholder: 'ShipMozo Private Key' },
+        { key: 'pickup_location', label: 'Pickup Location Name',type: 'text',     placeholder: 'Primary' },
+        { key: 'company_name',    label: 'Company / Brand Name',type: 'text',     placeholder: 'Your Brand' },
+        { key: 'return_address',  label: 'Return Address',      type: 'text',     placeholder: '123 Warehouse St' },
+        { key: 'return_city',     label: 'Return City',         type: 'text',     placeholder: 'Mumbai' },
+        { key: 'return_state',    label: 'Return State',        type: 'text',     placeholder: 'Maharashtra' },
+        { key: 'return_pincode',  label: 'Return Pincode',      type: 'text',     placeholder: '400001' },
+        { key: 'return_phone',    label: 'Return Phone',        type: 'text',     placeholder: '9999999999' },
       ],
     },
     {
