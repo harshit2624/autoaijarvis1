@@ -35,6 +35,30 @@
       --text-dim:  #7db8ae;
     }
 
+    /* ── Light theme ── */
+    body.light-theme {
+      --bg:        #f0faf6;
+      --bg-card:   #ffffff;
+      --bg-card2:  #f4fbf8;
+      --bg-hover:  #e6f7f1;
+      --border:    #b6ddd0;
+      --border-hi: #6ab8a0;
+      --green:     #059669;
+      --green-dim: #d1fae5;
+      --green-glow:#05966920;
+      --teal:      #0d9488;
+      --red:       #dc2626;
+      --red-bg:    #fee2e2;
+      --yellow:    #d97706;
+      --yellow-bg: #fef3c7;
+      --purple:    #7c3aed;
+      --purple-bg: #ede9fe;
+      --orange:    #ea580c;
+      --orange-bg: #ffedd5;
+      --text:      #0f2d22;
+      --text-muted:#4b7a6e;
+      --text-dim:  #2d6e5a;
+    }
     body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: var(--bg); }
@@ -573,6 +597,115 @@
   const STAGE_COLOR = { new:'#6366f1', confirmed:'#10b981', partial:'#f59e0b', ready:'#06b6d4', pickup:'#8b5cf6', transit:'#3b82f6', delivered:'#10b981', rto:'#ef4444', hold:'#f97316', cancelled:'#6b7280' };
   const STAGE_BG    = { new:'#1a1a3a', confirmed:'#052e16', partial:'#1c1208', ready:'#0a2030', pickup:'#1a0a3a', transit:'#0a1a3a', delivered:'#052e16', rto:'#2d0a0a', hold:'#1c0f00', cancelled:'#111' };
 
+  function SuperHoldBadge() {
+    return (
+      <span style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4,
+        background:'rgba(239,68,68,0.15)',color:'#ef4444',border:'1px solid rgba(239,68,68,0.35)',letterSpacing:'0.03em',whiteSpace:'nowrap'}}>
+        🔒 SUPER HOLD
+      </span>
+    );
+  }
+
+  function PenaltyBadge({ triggered, confirmedAmount, shopifyId, token }) {
+    const [open, setOpen]       = React.useState(false);
+    const [penalties, setPenalties] = React.useState([]);
+    const [loading, setLoading] = React.useState(false);
+    const [msg, setMsg]         = React.useState('');
+    const [sending, setSending] = React.useState({});
+    const [sent, setSent]       = React.useState({});
+    const ref = React.useRef(null);
+
+    React.useEffect(() => {
+      const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+      if (open) document.addEventListener('mousedown', handler);
+      return () => document.removeEventListener('mousedown', handler);
+    }, [open]);
+
+    const openPopover = async e => {
+      e.stopPropagation();
+      setOpen(v => !v);
+      if (!shopifyId || penalties.length) return;
+      setLoading(true);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${shopifyId}/penalties`, { headers: { Authorization: `Bearer ${token}` } });
+        const d = await r.json();
+        setPenalties(d.penalties || []);
+      } catch(e) {}
+      setLoading(false);
+    };
+
+    const sendRequest = async (penaltyId, message) => {
+      if (!message.trim()) return;
+      setSending(s => ({ ...s, [penaltyId]: true }));
+      try {
+        const r = await fetch(`${API}/vendor/penalties/${penaltyId}/review-request`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ message }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setSent(s => ({ ...s, [penaltyId]: true }));
+      } catch(e) { alert(e.message); }
+      setSending(s => ({ ...s, [penaltyId]: false }));
+    };
+
+    if (!triggered && confirmedAmount <= 0) return null;
+
+    return (
+      <span ref={ref} style={{position:'relative',display:'inline-flex'}}>
+        <span onClick={openPopover} style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4,cursor:'pointer',whiteSpace:'nowrap',
+          ...(confirmedAmount > 0
+            ? {background:'rgba(239,68,68,0.18)',color:'#ef4444',border:'1px solid rgba(239,68,68,0.4)'}
+            : {background:'rgba(251,146,60,0.15)',color:'#f97316',border:'1px solid rgba(251,146,60,0.35)'})
+          }}>
+          {confirmedAmount > 0 ? `⚠ ₹${confirmedAmount} PENALTY` : '⚠ PENALTY'}
+        </span>
+
+        {open && (
+          <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:9999,
+            background:'#0d1f2d',border:'1px solid var(--border)',borderRadius:10,padding:14,minWidth:280,maxWidth:320,
+            boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+            {triggered && confirmedAmount <= 0 && (
+              <div style={{fontSize:12,color:'#f97316',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
+                🕐 Admin approval pending
+                <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:400}}>— no action needed from you</span>
+              </div>
+            )}
+            {confirmedAmount > 0 && (
+              loading ? <div style={{fontSize:11,color:'var(--text-muted)'}}>Loading…</div>
+              : penalties.filter(p=>p.status==='confirmed').map(p => (
+                <div key={p.id}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#ef4444',marginBottom:6}}>₹{(p.penalty_amount||0).toFixed(2)} Penalty Confirmed</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10,lineHeight:1.5}}>
+                    <span style={{color:'#f59e0b'}}>Reason: </span>{p.trigger_reason==='48hr_breach'?'48hr fulfilment breach':p.trigger_reason==='eta_breach'?'ETA date missed':p.trigger_reason}
+                    {p.admin_note && <><br/><span style={{color:'var(--text-muted)'}}>Note: {p.admin_note}</span></>}
+                  </div>
+                  {sent[p.id] ? (
+                    <div style={{fontSize:11,color:'#10b981',fontWeight:600}}>✓ Review request sent to admin</div>
+                  ) : p.vendor_review_request ? (
+                    <div style={{fontSize:11,color:'#6366f1'}}>📨 Request already submitted — admin will review</div>
+                  ) : (
+                    <div>
+                      <textarea rows={3} placeholder="Explain why this penalty should be removed…"
+                        value={msg} onChange={e=>setMsg(e.target.value)}
+                        style={{width:'100%',boxSizing:'border-box',background:'#0a1a2a',border:'1px solid var(--border)',borderRadius:6,
+                          color:'var(--text)',fontSize:11,padding:'6px 8px',resize:'vertical',marginBottom:6}}/>
+                      <button onClick={()=>sendRequest(p.id, msg)} disabled={sending[p.id]||!msg.trim()}
+                        style={{width:'100%',padding:'6px',borderRadius:6,border:'none',cursor:'pointer',fontWeight:700,fontSize:11,
+                          background:'#6366f1',color:'#fff',opacity:(sending[p.id]||!msg.trim())?0.5:1}}>
+                        {sending[p.id] ? 'Sending…' : '📨 Request Penalty Review'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </span>
+    );
+  }
+
   function StagePill({ stage='new', awb='', courier='', trackingUrl='' }) {
     const color = STAGE_COLOR[stage] || '#6366f1';
     const bg    = STAGE_BG[stage]    || '#1a1a3a';
@@ -842,7 +975,29 @@
               </div>
 
               <div className="detail-box">
-                <div className="detail-box-title">Ship To</div>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                  <div className="detail-box-title" style={{marginBottom:0}}>Ship To</div>
+                  {order.shippingAddress && (() => {
+                    const a = order.shippingAddress;
+                    const copyText = [
+                      a.name,
+                      a.line1 + (a.line2 ? ', ' + a.line2 : ''),
+                      `${a.city}, ${a.state} ${a.zip}`,
+                      a.phone || order.phone || '',
+                      order.email || '',
+                    ].filter(Boolean).join('\n');
+                    return (
+                      <button onClick={()=>{
+                        navigator.clipboard.writeText(copyText).then(()=>{
+                          setMsg({type:'success',text:'Address copied!'});
+                          setTimeout(()=>setMsg(null),2000);
+                        });
+                      }} style={{fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--teal)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',letterSpacing:0.5}}>
+                        📋 Copy
+                      </button>
+                    );
+                  })()}
+                </div>
                 {order.shippingAddress ? (
                   <>
                     <div className="detail-row"><span className="dr-label">Name</span>   <span className="dr-val">{order.shippingAddress.name}</span></div>
@@ -1150,7 +1305,7 @@
                     <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
                     <td>
                       <div style={{display:'flex',alignItems:'center',gap:2}}>
-                        <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>
+                        <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>{o.superHold&&<SuperHoldBadge/>}
                         <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
                       </div>
                     </td>
@@ -1167,16 +1322,16 @@
   }
 
   const STAGES = [
-    { id:'all',       label:'All',           icon:'◈' },
-    { id:'new',       label:'New',           icon:'◉' },
-    { id:'confirmed', label:'Confirmed',     icon:'✓' },
-    { id:'ready',     label:'Ready to Ship', icon:'⬡' },
-    { id:'pickup',    label:'Pickup Pending',icon:'⌛' },
-    { id:'transit',   label:'In Transit',    icon:'↑' },
-    { id:'delivered', label:'Delivered',     icon:'✅' },
-    { id:'rto',       label:'RTO',           icon:'↩' },
-    { id:'hold',      label:'Hold',          icon:'⏸' },
-    { id:'cancelled', label:'Cancelled',     icon:'✕' },
+    { id:'all',       label:'All',                icon:'◈' },
+    { id:'new',       label:'New',                icon:'◉' },
+    { id:'confirmed', label:'Confirmed / Partial', icon:'✓' },
+    { id:'ready',     label:'Ready to Ship',       icon:'⬡' },
+    { id:'pickup',    label:'Pickup Pending',       icon:'⌛' },
+    { id:'transit',   label:'In Transit',           icon:'↑' },
+    { id:'delivered', label:'Delivered',            icon:'✅' },
+    { id:'rto',       label:'RTO',                  icon:'↩' },
+    { id:'hold',      label:'Hold',                 icon:'⏸' },
+    { id:'cancelled', label:'Cancelled',            icon:'✕' },
   ];
 
   /* ══════════════════════════════════
@@ -1192,7 +1347,10 @@
     const filtered = useMemo(()=>{
       let l=[...orders];
       if(search.trim()){const q=search.toLowerCase();l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.email||'').toLowerCase().includes(q)||o.myItems.some(i=>i.title.toLowerCase().includes(q)));}
-      if(stage!=='all')l=l.filter(o=>(o.stage||'new')===stage);
+      if(stage!=='all'){
+        if(stage==='confirmed') l=l.filter(o=>['confirmed','partial'].includes(o.stage||'new'));
+        else l=l.filter(o=>(o.stage||'new')===stage);
+      }
       l.sort((a,b)=>{
         if(sort==='amount')return dir==='desc'?b.myRevenue-a.myRevenue:a.myRevenue-b.myRevenue;
         if(sort==='customer')return dir==='asc'?a.customer.localeCompare(b.customer):b.customer.localeCompare(a.customer);
@@ -1249,7 +1407,9 @@
                 border: `1px solid ${o.paymentType==='prepaid'?'rgba(16,185,129,0.3)':'rgba(245,158,11,0.3)'}`}}>
                 {o.paymentType==='prepaid'?'Prepaid':'COD'}
               </span>
+              {o.superHold && <SuperHoldBadge/>}
               <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
+              <PenaltyBadge triggered={o.penaltyTriggered>0} confirmedAmount={o.confirmedPenalty||0} shopifyId={o.shopifyId} token={token}/>
             </div>
             {o.awb && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>AWB: {o.awb} {o.courier?`· ${o.courier}`:''}</div>}
           </div>
@@ -1275,7 +1435,7 @@
           {/* Stage filter tabs — horizontal scroll */}
           <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:4,WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
             {STAGES.map(s=>{
-              const count = s.id==='all' ? orders.length : orders.filter(o=>(o.stage||'new')===s.id).length;
+              const count = s.id==='all' ? orders.length : s.id==='confirmed' ? orders.filter(o=>['confirmed','partial'].includes(o.stage||'new')).length : orders.filter(o=>(o.stage||'new')===s.id).length;
               return (
                 <button key={s.id} onClick={()=>{setStage(s.id);setPage(1);}} style={{
                   flexShrink:0, padding:'5px 12px', borderRadius:20, border:'none', cursor:'pointer',
@@ -1344,10 +1504,9 @@
                     <th style={{width:36}}>#</th>
                     <th className={`sort ${sort==='id'?'sorted':''}`} onClick={()=>hSort('id')}>Order {arrow('id')}</th>
                     <th className={`sort ${sort==='customer'?'sorted':''}`} onClick={()=>hSort('customer')}>Customer {arrow('customer')}</th>
-                    <th>Items</th><th>Products</th><th>Payment</th>
+                    <th>Items</th><th>Products</th><th>Stage / Tracking</th><th>Payment</th>
                     <th className={`sort ${sort==='amount'?'sorted':''}`} onClick={()=>hSort('amount')}>Revenue {arrow('amount')}</th>
                     <th>Shipping</th><th>Advance</th><th>Remaining COD</th>
-                    <th>Stage / Tracking</th>
                     <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
                     <th style={{width:28}}/>
                   </tr></thead>
@@ -1365,12 +1524,12 @@
                           <td><div style={{display:'flex',alignItems:'center',gap:7}}><div style={{width:24,height:24,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'var(--green)',flexShrink:0}}>{(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}</div><span style={{fontSize:12}}>{o.customer||'Guest'}</span></div></td>
                           <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{qty} item{qty!==1?'s':''}</span></td>
                           <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-dim)',fontSize:11}}>{o.myItems.map(i=>i.title).join(', ')}</td>
+                          <td><div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>{o.superHold&&<SuperHoldBadge/>}<PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/><PenaltyBadge triggered={o.penaltyTriggered>0} confirmedAmount={o.confirmedPenalty||0} shopifyId={o.shopifyId} token={token}/></div></td>
                           <td><PayBadge type={o.paymentType}/></td>
                           <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
                           <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                           <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                           <td className="td-amt" style={{color:o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
-                          <td><div style={{display:'flex',alignItems:'center',gap:2}}><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/><PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/></div></td>
                           <td className="td-muted">{fmtDate(o.date)}</td>
                           <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                         </tr>
@@ -2263,6 +2422,11 @@
     const [loginErr,setLoginErr]= useState('');
     const [loginLoad,setLoginLoad]=useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
+    const [lightTheme, setLightTheme] = useState(()=>localStorage.getItem('vendor_theme')==='light');
+    useEffect(()=>{
+      document.body.classList.toggle('light-theme', lightTheme);
+      localStorage.setItem('vendor_theme', lightTheme?'light':'dark');
+    },[lightTheme]);
 
     /* login */
     const [uname, setUname] = useState('');
@@ -2411,6 +2575,9 @@
               <span className="topbar-title">{pageTitle[view]}</span>
             </div>
             <div className="topbar-right">
+              <button onClick={()=>setLightTheme(t=>!t)} title={lightTheme?'Switch to Dark':'Switch to Light'} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:20,padding:'4px 10px',cursor:'pointer',display:'flex',alignItems:'center',gap:5,color:'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace',fontSize:11}}>
+                {lightTheme ? '🌙 Dark' : '☀️ Light'}
+              </button>
               {lastRef && <span className="topbar-badge"><span className="pulse"/>{lastRef.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span>}
               <button className="btn btn-ghost" style={{fontSize:10,padding:'5px 10px'}} onClick={fetchData} disabled={loading}>
                 {loading ? <span className="spin">↻</span> : '↻'} {loading?'Loading…':'Refresh'}

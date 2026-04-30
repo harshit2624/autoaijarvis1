@@ -56,6 +56,8 @@ async function startServer() {
       mdb.collection("settlement_penalties").createIndex({ settlement_id: 1 }),
       mdb.collection("wallet_tx").createIndex({ vendor_name: 1, created_at: -1 }),
       mdb.collection("audit_log").createIndex({ created_at: -1 }),
+      mdb.collection("product_commission_rules").createIndex({ vendor_name: 1, product_id: 1 }, { unique: true, sparse: true }),
+      mdb.collection("product_commission_rules").createIndex({ id: 1 }, { unique: true }),
     ];
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
@@ -271,7 +273,14 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
 const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','delivered','rto','cancelled'];
+const TERMINAL_STAGES = ['rto','cancelled']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
+  const aTerm = TERMINAL_STAGES.includes(a);
+  const bTerm = TERMINAL_STAGES.includes(b);
+  // Terminal stages always beat non-terminal
+  if (aTerm && !bTerm) return a;
+  if (bTerm && !aTerm) return b;
+  // Both terminal or both pipeline/hold: use STAGE_ORDER index
   const ia = STAGE_ORDER.indexOf(a ?? 'new');
   const ib = STAGE_ORDER.indexOf(b ?? 'new');
   return ia >= ib ? a : b;
@@ -330,6 +339,68 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
 }
 
 
+// ── Product-level flat/margin commission calculator ───────────────────────
+// rule: { mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive }
+// sellingPrice: the Shopify line item price (per unit)
+// qty: quantity
+// Returns same shape as calcCommission: { base, commission, gst, invoice, net, type }
+function calcProductCommission(rule, sellingPrice, qty) {
+  const price = parseFloat(sellingPrice) * (qty || 1);
+  let commission = 0, gst = 0;
+
+  if (rule.mode === 'flat' || rule.mode === 'mixed') {
+    const flatTotal = (rule.flat_amount || 0) * (qty || 1);
+    if (rule.flat_gst_inclusive) {
+      // GST extracted from flat amount (flat includes GST)
+      gst        += parseFloat((flatTotal * 18 / 118).toFixed(2));
+      commission += parseFloat((flatTotal * 100 / 118).toFixed(2));
+    } else {
+      // GST added on top of flat amount
+      commission += flatTotal;
+      gst        += parseFloat((flatTotal * GST_RATE).toFixed(2));
+    }
+  }
+
+  if (rule.mode === 'margin' || rule.mode === 'mixed') {
+    const base = (rule.vendor_cost || 0) * (qty || 1);
+    const pct  = (rule.margin_pct || 0) / 100;
+    const commOnBase = parseFloat((base * pct).toFixed(2));
+    if (rule.margin_gst_inclusive) {
+      gst        += parseFloat((commOnBase * 18 / 118).toFixed(2));
+      commission += parseFloat((commOnBase * 100 / 118).toFixed(2));
+    } else {
+      commission += commOnBase;
+      gst        += parseFloat((commOnBase * GST_RATE).toFixed(2));
+    }
+  }
+
+  commission = parseFloat(commission.toFixed(2));
+  gst        = parseFloat(gst.toFixed(2));
+  const invoice  = parseFloat((commission + gst).toFixed(2));
+  // Vendor's effective base: for margin mode use vendor_cost, otherwise selling price
+  const base = rule.mode === 'margin'
+    ? (rule.vendor_cost || 0) * (qty || 1)
+    : rule.mode === 'mixed'
+    ? (rule.vendor_cost || 0) * (qty || 1) // margin base for mixed
+    : price;
+  const net = parseFloat((invoice).toFixed(2)); // COD: vendor owes invoice to CrosCrow
+  return { base, commission, gst, invoice, net, type: 'receivable', isProductRule: true };
+}
+
+// Look up a product commission rule by product_id, then SKU, for a given vendor
+async function findProductRule(vendor_name, product_id, sku) {
+  const col = mdb.collection('product_commission_rules');
+  if (product_id) {
+    const r = await col.findOne({ vendor_name, product_id: String(product_id) }, { projection: { _id: 0 } });
+    if (r) return r;
+  }
+  if (sku) {
+    const r = await col.findOne({ vendor_name, sku }, { projection: { _id: 0 } });
+    if (r) return r;
+  }
+  return null;
+}
+
 // Derive payment_type from Shopify financial_status
 function paymentTypeFromFinancial(financialStatus) {
   if (financialStatus === "paid")            return "prepaid";
@@ -366,23 +437,39 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     if (hit) { winner = m; break; }
   }
   if (winner) {
-    const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
-    await OM.upsert(sid, { stage: winner.stage, updated_at: now });
-    if (!prev || prev.stage !== winner.stage) {
-      fireStageEmails(sid, winner.stage).catch(()=>{});
-      // Sync into order_vendor_stage so penalty cron can track 48hr timer.
-      // Never downgrade a vendor who already has AWB/tracking submitted (pickup or beyond).
-      if (['confirmed','partial'].includes(winner.stage)) {
-        const ADVANCED = ['ready','pickup','transit','delivered','rto','cancelled'];
+    const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1, super_hold: 1 } });
+    const isSuperHold = !!prev?.super_hold;
+
+    // If order is super-held, block tag mapping from overriding with pipeline stages
+    // Super hold can only be released by admin manually (POST /admin/orders/:id/super-hold)
+    if (isSuperHold && !['hold','rto','cancelled'].includes(winner.stage)) {
+      console.log(`🔒 Super Hold active on ${sid} — tag mapping to '${winner.stage}' blocked`);
+      return;
+    }
+
+    // If winner tag has super_hold_power, set super_hold flag + stage=hold
+    const isSuperHoldTag = !!winner.super_hold_power;
+    const newStage = isSuperHoldTag ? 'hold' : winner.stage;
+    const metaUpdate = { stage: newStage, updated_at: now };
+    if (isSuperHoldTag) metaUpdate.super_hold = true;
+
+    await OM.upsert(sid, metaUpdate);
+    if (!prev || prev.stage !== newStage) {
+      fireStageEmails(sid, newStage).catch(()=>{});
+      // Sync stage into order_vendor_stage so vendor panel always matches admin view.
+      // hold/rto/cancelled force-update all vendors unconditionally.
+      // Pipeline stages (confirmed/partial) respect ADVANCED guard — don't pull back dispatched vendors.
+      const ADVANCED = ['ready','pickup','transit','delivered'];
+      const isOverride = ['hold','rto','cancelled'].includes(newStage);
+      if (['confirmed','partial','hold','rto','cancelled'].includes(newStage)) {
         try {
           const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items`);
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
           const nowMs = Date.now();
           for (const vendor of vendors) {
             const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
-            // Skip: vendor already dispatched or further ahead — don't pull them back
-            if (existing && ADVANCED.includes(existing.stage)) continue;
-            await OVS.upsert(sid, vendor, { stage: winner.stage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
+            if (!isOverride && existing && ADVANCED.includes(existing.stage)) continue;
+            await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
           }
         } catch(e) { console.error('applyTagMappings vendor sync error:', e.message); }
       }
@@ -2245,6 +2332,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, penalty_triggered: 1, warning_sent: 1, _id: 0 } }).toArray();
     const vStageMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
+    // Confirmed penalties for this vendor
+    const vConfirmedPenalties = await mdb.collection('order_penalties').find({ vendor_name: req.vendor, status: 'confirmed' }, { projection: { shopify_id: 1, penalty_amount: 1, _id: 0 } }).toArray();
+    const vConfirmedPenaltyMap = {}; // { shopify_id: totalAmount }
+    vConfirmedPenalties.forEach(p => { vConfirmedPenaltyMap[p.shopify_id] = (vConfirmedPenaltyMap[p.shopify_id] || 0) + (p.penalty_amount || 0); });
 
     const orders = allOrders
       .filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName))
@@ -2276,7 +2367,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
           stage:        higherStage(
-            vStageMap[String(o.id)]?.stage || meta.stage || "new",
+            higherStage(vStageMap[String(o.id)]?.stage || 'new', meta.stage || 'new'),
             vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null
           ),
           financial:    o.financial_status ?? "—",
@@ -2288,14 +2379,16 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           advancePaid,
           totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
           remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
-          awb:          vStageMap[String(o.id)]?.awb || myFulfillment?.tracking_number || "",
-          courier:      vStageMap[String(o.id)]?.courier || myFulfillment?.tracking_company || "",
-          trackingUrl:  vStageMap[String(o.id)]?.tracking_url || myFulfillment?.tracking_url || "",
+          awb:          vStageMap[String(o.id)]?.awb || "",
+          courier:      vStageMap[String(o.id)]?.courier || "",
+          trackingUrl:  vStageMap[String(o.id)]?.tracking_url || "",
           deliveryStatus: meta.delivery_status || myFulfillment?.shipment_status || "",
           stageStartedAt:   vStageMap[String(o.id)]?.stage_started_at || 0,
           penaltyTriggered: vStageMap[String(o.id)]?.penalty_triggered || 0,
           warningSent:      vStageMap[String(o.id)]?.warning_sent || 0,
-          shopifyFulfilled: !meta.awb && (o.fulfillments||[]).length > 0,
+          shopifyFulfilled:    !meta.awb && (o.fulfillments||[]).length > 0,
+          superHold:           !!meta.super_hold,
+          confirmedPenalty:    vConfirmedPenaltyMap[String(o.id)] || 0,
           myItems: myItems.map(li => ({
             id:        li.id,
             title:     li.title,
@@ -2408,7 +2501,7 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
     );
     if (!foRes.ok) throw new Error(`Could not get fulfillment orders: ${foRes.status}`);
     const foData = await foRes.json();
-    const openFOs = (foData.fulfillment_orders || []).filter(fo => fo.status === "open");
+    const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
     if (!openFOs.length) return res.status(400).json({ error: "No open fulfillment orders found. Items may already be fulfilled." });
 
     // Build line_items_by_fulfillment_order with only this vendor's items
@@ -2775,6 +2868,13 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
     const vsMap  = {}; // { shopify_id: { vendor_name: stage } }
     const vtMap  = {}; // { shopify_id: { vendor_name: { awb, courier, tracking_url } } }
     const vpMap  = {}; // { shopify_id: { vendor_name: { stageStartedAt, penaltyTriggered, warningSent } } }
+    // Confirmed penalties per order: { shopify_id: { vendor_name: totalAmount } }
+    const confirmedPenaltyDocs = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { shopify_id: 1, vendor_name: 1, penalty_amount: 1, _id: 0 } }).toArray();
+    const confirmedPenaltyMap = {}; // { shopify_id: { vendor_name: amount } }
+    confirmedPenaltyDocs.forEach(p => {
+      if (!confirmedPenaltyMap[p.shopify_id]) confirmedPenaltyMap[p.shopify_id] = {};
+      confirmedPenaltyMap[p.shopify_id][p.vendor_name] = (confirmedPenaltyMap[p.shopify_id][p.vendor_name] || 0) + (p.penalty_amount || 0);
+    });
     allVS.forEach(r => {
       if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
       vsMap[r.shopify_id][r.vendor_name] = r.stage;
@@ -2848,8 +2948,9 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
             ];
             return allStages.reduce((best, s) => higherStage(best, s), base);
           })(),
-        vendorTracking: vtMap[String(o.id)] || {},
-        vendorPenalty:  vpMap[String(o.id)] || {},
+        vendorTracking:        vtMap[String(o.id)] || {},
+        vendorPenalty:         vpMap[String(o.id)] || {},
+        confirmedPenalties:    confirmedPenaltyMap[String(o.id)] || {},
         paymentType:    meta.payment_type || "cod",
         advancePaid:    meta.advance_paid || 0,
         notes:          meta.notes || "",
@@ -2858,6 +2959,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         trackingUrl:    meta.tracking_url || (vendors.length === 1 ? (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "" : ""),
         deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
+        superHold:      !!meta.super_hold,
         tags:           o.tags || "",
         lineItems:      (o.line_items || []).map(li => ({
           title: li.title, vendor: li.vendor, qty: li.quantity,
@@ -2890,16 +2992,13 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   const nowMs = Date.now();
   await OM.upsert(id, { stage, updated_at: now });
 
-  // Guard: don't pull back a vendor who already has tracking (dispatched).
-  // cancelled/rto excluded — admin can always move those back to any stage.
-  const ADVANCED = ['ready','pickup','transit','delivered'];
+  // Admin manual override — no guards, unconditional sync to all vendors
   const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
   try {
     const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
     const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
     for (const vendor of vendors) {
       const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
-      if (existing && ADVANCED.includes(existing.stage) && !ADVANCED.includes(stage)) continue;
       const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
       const newWarning   = fulfilledStages.includes(stage) ? 0 : (existing?.warning_sent || 0);
       const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
@@ -2910,6 +3009,34 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   auditLog("admin", "stage_change", id, { stage });
   fireStageEmails(id, stage).catch(()=>{});
   res.json({ success: true, stage });
+});
+
+// ── POST /admin/orders/:id/super-hold ────────────────────────────────────
+// Mark or release super hold on an order. Admin-only, bypasses all guards.
+app.post("/admin/orders/:id/super-hold", adminAuth, async (req, res) => {
+  const { id } = req.params;
+  const { enable } = req.body || {}; // true = mark super hold, false = release
+  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  if (enable) {
+    // Mark super hold: set flag + stage=hold on meta + all vendors
+    await OM.upsert(id, { super_hold: true, stage: 'hold', updated_at: now });
+    try {
+      const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+      const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+      for (const vendor of vendors) {
+        const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage_started_at: 1, _id: 0 } });
+        await OVS.upsert(id, vendor, { stage: 'hold', updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
+      }
+    } catch(e) { console.error('super-hold vendor sync error:', e.message); }
+    auditLog("admin", "super_hold_set", id, {});
+    res.json({ success: true, super_hold: true });
+  } else {
+    // Release super hold: clear flag. Stage stays as-is — admin should set stage separately or re-sync tags.
+    await OM.upsert(id, { super_hold: false, updated_at: now });
+    auditLog("admin", "super_hold_released", id, {});
+    res.json({ success: true, super_hold: false });
+  }
 });
 
 // ── POST /admin/orders/bulk-update ────────────────────────────────────────
@@ -2943,8 +3070,7 @@ app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
       if (stage) {
         await OM.upsert(id, { stage, updated_at: now });
         fireStageEmails(id, stage).catch(() => {});
-        // Guard: don't pull back dispatched vendors. cancelled/rto admin can override.
-        const ADVANCED = ['ready','pickup','transit','delivered'];
+        // Admin bulk override — no guards, unconditional sync to all vendors
         const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
         const nowMs = Date.now();
         try {
@@ -2952,7 +3078,6 @@ app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
           for (const vendor of vendors) {
             const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
-            if (existing && ADVANCED.includes(existing.stage) && !ADVANCED.includes(stage)) continue;
             const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
             await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: fulfilledStages.includes(stage)?0:(existing?.warning_sent||0), penalty_triggered: fulfilledStages.includes(stage)?0:(existing?.penalty_triggered||0) });
           }
@@ -3027,6 +3152,24 @@ app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
   res.json({ success: true, vendor_name, stage });
 });
 
+// ── POST /admin/migrate/stringify-ids — one-time fix: convert numeric shopify_id to string ──
+app.post("/admin/migrate/stringify-ids", adminAuth, async (req, res) => {
+  try {
+    const collections = ['order_vendor_stage', 'order_meta', 'order_penalties', 'delay_remarks'];
+    let total = 0;
+    for (const col of collections) {
+      const docs = await mdb.collection(col).find({ shopify_id: { $type: 'number' } }, { projection: { _id: 1, shopify_id: 1 } }).toArray();
+      for (const doc of docs) {
+        await mdb.collection(col).updateOne({ _id: doc._id }, { $set: { shopify_id: String(doc.shopify_id) } });
+        total++;
+      }
+    }
+    res.json({ ok: true, converted: total });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GET /admin/orders/:id/vendor-stages ──────────────────────────────────
 app.get("/admin/orders/:id/vendor-stages", adminAuth, async (req, res) => {
   const rows = await mdb.collection('order_vendor_stage').find({ shopify_id: req.params.id }, { projection: { vendor_name: 1, stage: 1, updated_at: 1, _id: 0 } }).toArray();
@@ -3060,7 +3203,7 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     );
     if (!foRes.ok) throw new Error(`Could not fetch fulfillment orders: ${foRes.status}`);
     const foData = await foRes.json();
-    const openFOs = (foData.fulfillment_orders || []).filter(fo => fo.status === "open");
+    const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
     if (!openFOs.length) return res.status(400).json({ error: "No open fulfillment orders. Order may already be fully fulfilled." });
 
     // Filter FO line items that belong to this vendor
@@ -3199,39 +3342,72 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     return res.status(400).json({ error: "vendor_name, period_start, period_end required." });
 
   try {
-    const existing = await mdb.collection('settlements').findOne({ vendor_name, period_start, period_end });
-    if (existing) return res.status(400).json({ error: "Settlement already exists for this period." });
+    // No duplicate-period block — same period can have multiple invoices for different batches of orders
 
+    // Build set of order IDs already invoiced for this vendor (any invoice, paid or pending)
+    const existingSettlements = await mdb.collection('settlements').find({ vendor_name }, { projection: { id: 1, _id: 0 } }).toArray();
+    const existingSettlIds = existingSettlements.map(s => s.id);
+    const alreadyInvoicedOrders = new Set();
+    if (existingSettlIds.length > 0) {
+      const existingSettlOrders = await mdb.collection('settlement_orders').find({ settlement_id: { $in: existingSettlIds } }, { projection: { shopify_order_id: 1, _id: 0 } }).toArray();
+      existingSettlOrders.forEach(so => alreadyInvoicedOrders.add(String(so.shopify_order_id)));
+    }
+
+    // Fetch orders created in the period — invoice is per creation date, not delivery date
     const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
     const vName  = vendor_name.toLowerCase();
-    // Commission priority: vendor_profiles → vendor_config → default 20%
     const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, _id: 0 } });
     const vConfig  = await VC.get(vendor_name);
     const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
     const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    // Per-vendor stage overrides
     const vendorStages = await mdb.collection('order_vendor_stage').find({ vendor_name }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
     const vendorStageMap = Object.fromEntries(vendorStages.map(r => [r.shopify_id, r.stage]));
 
-    // Only settle delivered orders — use vendor-specific stage if set, else order stage
+    // Only include delivered orders that have NOT been invoiced before
     const vendorDelivered = allOrders.filter(o => {
       const sid = String(o.id);
-      const effectiveStage = vendorStageMap[sid] || metaMap[sid]?.stage || "new";
+      if (alreadyInvoicedOrders.has(sid)) return false; // skip already-invoiced
+      const dbStage = higherStage(vendorStageMap[sid] || 'new', metaMap[sid]?.stage || 'new');
+      const shopifyStages = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || []);
+      const effectiveStage = higherStage(dbStage, shopifyStages[vendor_name] || null);
       return effectiveStage === "delivered" &&
         (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName);
     });
 
+    if (vendorDelivered.length === 0)
+      return res.status(400).json({ error: "No new uninvoiced delivered orders found for this period. All orders have already been included in previous invoices." });
+
     let totalRev = 0, totalComm = 0, totalGst = 0, totalAdv = 0, totalNet = 0, totalShipping = 0;
     const orderDetails = [];
 
-    vendorDelivered.forEach(o => {
+    for (const o of vendorDelivered) {
       const meta    = metaMap[String(o.id)] || {};
       const payType = meta.payment_type || "cod";
       const isCod   = payType !== "prepaid";
       const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       const myRev   = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
-      const calc    = calcCommission(myRev, payType, config.commission_pct, meta.advance_paid || 0);
+
+      // Check product-level rules per line item
+      let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
+      for (const li of myItems) {
+        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const productRule = await findProductRule(vendor_name, li.product_id, li.sku);
+        const liCalc = productRule
+          ? calcProductCommission(productRule, li.price, li.quantity || 1)
+          : calcCommission(itemRev, payType, config.commission_pct, 0);
+        totalItemComm += liCalc.commission;
+        totalItemGst  += liCalc.gst;
+        totalItemNet  += liCalc.net;
+      }
+      const advancePaid = meta.advance_paid || 0;
+      // Fold advance into net (reduces what vendor owes)
+      const calcNet = parseFloat((totalItemNet - advancePaid).toFixed(2));
+      const calc = {
+        commission: parseFloat(totalItemComm.toFixed(2)),
+        gst:        parseFloat(totalItemGst.toFixed(2)),
+        net:        calcNet,
+      };
 
       // Shipping: read from Shopify shipping_lines, split by unique vendor count in order
       const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
@@ -3257,7 +3433,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         shipping_charge:  shippingSplit,
         net:              parseFloat((calc.net + shippingSplit).toFixed(2)),
       });
-    });
+    }
 
     // netPayable: positive = vendor pays CrosCrow, negative = CrosCrow pays vendor
     let netPayable = parseFloat(totalNet.toFixed(2));
@@ -3314,6 +3490,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
   try {
     const { from, to } = req.query;
+    // Filter by order creation date — period represents when orders were placed
     const allOrders = await fetchAllOrders("any", from ? from + "T00:00:00Z" : "2020-01-01T00:00:00Z", to ? to + "T23:59:59Z" : null);
     const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
@@ -3323,21 +3500,50 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
 
     // Aggregate settled amounts per vendor from paid invoices
-    const paidSettlDocs = await mdb.collection('settlements').find({ status: 'paid' }, { projection: { vendor_name: 1, net_payable: 1, _id: 0 } }).toArray();
+    const allSettlDocs = await mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, _id: 0 } }).toArray();
     const settledMapRaw = {};
-    paidSettlDocs.forEach(s => { settledMapRaw[s.vendor_name] = (settledMapRaw[s.vendor_name] || 0) + (s.net_payable || 0); });
+    const settlByIdMap = {}; // { settlId: { vendor_name, invoice_no, status } }
+    allSettlDocs.forEach(s => {
+      if (s.status === 'paid') settledMapRaw[s.vendor_name] = (settledMapRaw[s.vendor_name] || 0) + (s.net_payable || 0);
+      settlByIdMap[s.id] = { vendor_name: s.vendor_name, invoice_no: s.invoice_no, status: s.status };
+    });
+    // Build per-vendor, per-order invoice lookup from settlement_orders
+    const allSettlOrders = await mdb.collection('settlement_orders').find({}, { projection: { settlement_id: 1, shopify_order_id: 1, _id: 0 } }).toArray();
+    const invoiceOrderMap = {}; // { vendor: { orderId: { invoice_no, status } } }
+    allSettlOrders.forEach(so => {
+      const s = settlByIdMap[so.settlement_id];
+      if (!s) return;
+      if (!invoiceOrderMap[s.vendor_name]) invoiceOrderMap[s.vendor_name] = {};
+      invoiceOrderMap[s.vendor_name][String(so.shopify_order_id)] = { invoice_no: s.invoice_no, status: s.status };
+    });
     const settledMap = Object.fromEntries(Object.entries(settledMapRaw).map(([k,v]) => [k, parseFloat(v.toFixed(2))]));
 
-    const vendorMap = {};
-    // Load all per-vendor stage overrides
-    const allVendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
-    const allVendorStageMap = {}; // { shopify_id: { vendor_name: stage } }
-    allVendorStages.forEach(r => {
-      if (!allVendorStageMap[r.shopify_id]) allVendorStageMap[r.shopify_id] = {};
-      allVendorStageMap[r.shopify_id][r.vendor_name] = r.stage;
+    // Load confirmed penalties per vendor (not yet invoiced = not in any settlement_penalties)
+    const invoicedPenaltyIds = new Set(
+      (await mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray()).map(p => p.penalty_id)
+    );
+    const allConfirmedPenalties = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray();
+    const pendingPenaltyMap = {}; // { vendor_name: totalPendingPenalty }
+    allConfirmedPenalties.forEach(p => {
+      if (!invoicedPenaltyIds.has(p.id)) {
+        pendingPenaltyMap[p.vendor_name] = (pendingPenaltyMap[p.vendor_name] || 0) + (p.penalty_amount || 0);
+      }
     });
 
-    allOrders.forEach(o => {
+    const vendorMap = {};
+    // Load all per-vendor stage overrides (include updated_at for date filtering)
+    const allVendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
+    const allVendorStageMap = {}; // { shopify_id: { vendor_name: { stage, updated_at } } }
+    allVendorStages.forEach(r => {
+      if (!allVendorStageMap[r.shopify_id]) allVendorStageMap[r.shopify_id] = {};
+      allVendorStageMap[r.shopify_id][r.vendor_name] = { stage: r.stage, updated_at: r.updated_at };
+    });
+
+    // Date filter: apply on delivery date (when vendor stage was last updated to delivered)
+    const fromDate = from ? new Date(from + "T00:00:00Z") : null;
+    const toDate   = to   ? new Date(to   + "T23:59:59Z") : null;
+
+    for (const o of allOrders) {
       const meta = metaMap[String(o.id)] || {};
       const orderStage = meta.stage || "new";
       const payType = meta.payment_type || "cod";
@@ -3349,28 +3555,49 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       // Track which vendors have DELIVERED items in THIS specific order
       const deliveredVendorsInOrder = new Set();
 
-      (o.line_items || []).forEach(li => {
+      // Also derive stages from Shopify fulfillments (same as admin orders endpoint)
+      const shopifyVendorStages = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || []);
+
+      for (const li of (o.line_items || [])) {
         const vendor = li.vendor;
-        if (!vendor) return;
-        const effectiveStage = allVendorStageMap[String(o.id)]?.[vendor] || orderStage;
-        if (effectiveStage !== "delivered") return;
+        if (!vendor) continue;
+        const vendorEntry = allVendorStageMap[String(o.id)]?.[vendor];
+        const dbStage = higherStage(vendorEntry?.stage || 'new', orderStage);
+        const shopifyStage = shopifyVendorStages[vendor] || null;
+        const effectiveStage = higherStage(dbStage, shopifyStage);
+        if (effectiveStage !== "delivered") continue;
         deliveredVendorsInOrder.add(vendor);
-        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0, prepaidCollected: 0, codCommission: 0 };
+        if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), orderDetails: {}, gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0, prepaidCollected: 0, codCommission: 0 };
         vendorMap[vendor].orders.add(String(o.id));
+        if (!vendorMap[vendor].orderDetails[String(o.id)]) {
+          const invTag = invoiceOrderMap[vendor]?.[String(o.id)] || null;
+          vendorMap[vendor].orderDetails[String(o.id)] = { orderId: String(o.id), orderName: o.name, customer: `${o.customer?.first_name||''} ${o.customer?.last_name||''}`.trim(), paymentType: payType, createdAt: o.created_at, revenue: 0, items: [], invoiceNo: invTag?.invoice_no || null, invoiceStatus: invTag?.status || null };
+        }
+        vendorMap[vendor].orderDetails[String(o.id)].revenue += parseFloat(li.price || 0) * (li.quantity || 1);
+        vendorMap[vendor].orderDetails[String(o.id)].items.push(`${li.name} x${li.quantity||1}`);
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
-        const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
-        const calc = calcCommission(itemRev, payType, commPct, 0);
+
+        // Check for product-level commission rule
+        const productRule = await findProductRule(vendor, li.product_id, li.sku);
+        let calc;
+        if (productRule) {
+          calc = calcProductCommission(productRule, li.price, li.quantity || 1);
+        } else {
+          const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+          calc = calcCommission(itemRev, payType, commPct, 0);
+        }
+
         vendorMap[vendor].gross += itemRev;
         if (!isCod) {
           vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
-          vendorMap[vendor].prepaidCollected += itemRev; // CrosCrow received full prepaid amount
+          vendorMap[vendor].prepaidCollected += itemRev;
         } else {
-          vendorMap[vendor].codCommission += calc.commission + calc.gst; // CrosCrow earns this from COD
+          vendorMap[vendor].codCommission += calc.commission + calc.gst;
         }
         vendorMap[vendor].commission += calc.commission;
         vendorMap[vendor].gst += calc.gst;
-        vendorMap[vendor].net += calc.net; // net without advance (advance deducted below)
-      });
+        vendorMap[vendor].net += calc.net;
+      }
 
       // Advance + shipping: only for vendors with delivered items IN THIS ORDER
       // Split advance equally across delivered vendors in this order (not all vendors)
@@ -3387,7 +3614,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
           vendorMap[vendor].net += shippingPerVendor;
         }
       });
-    });
+    }
 
     const vendors = Object.entries(vendorMap).map(([name, d]) => {
       const commPct = vProfileMap[name]?.commission_pct ?? vConfigMap[name]?.commission_pct ?? 20;
@@ -3403,7 +3630,9 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       const pendingSettlement = parseFloat((netPayable - totalSettled).toFixed(2));
       const prepaidCollected = parseFloat(d.prepaidCollected.toFixed(2));
       const codCommission = parseFloat(d.codCommission.toFixed(2));
-      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement, prepaidCollected, codCommission };
+      const pendingPenalty = parseFloat((pendingPenaltyMap[name] || 0).toFixed(2));
+      const ordersList = Object.values(d.orderDetails || {}).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
+      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement, prepaidCollected, codCommission, pendingPenalty, ordersList };
     }).sort((a, b) => b.gross - a.gross);
 
     // Overall totals
@@ -3419,8 +3648,9 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       acc.netPayable += v.netPayable;
       acc.totalSettled += v.totalSettled;
       acc.pendingSettlement += v.pendingSettlement;
+      acc.pendingPenalty += v.pendingPenalty;
       return acc;
-    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, shipping: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0, prepaidCollected: 0, codCommission: 0 });
+    }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, shipping: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0, prepaidCollected: 0, codCommission: 0, pendingPenalty: 0 });
 
     Object.keys(totals).forEach(k => { if (typeof totals[k] === 'number') totals[k] = parseFloat(totals[k].toFixed(2)); });
 
@@ -3697,15 +3927,21 @@ app.put("/admin/tag-mappings/:id/priority", adminAuth, async (req, res) => {
 });
 
 app.post("/admin/tag-mappings", adminAuth, async (req, res) => {
-  const { shopify_tag, stage, priority = 99 } = req.body || {};
+  const { shopify_tag, stage, priority = 99, super_hold_power = false } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
   const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID_STAGES.includes(stage)) return res.status(400).json({ error: `Invalid stage '${stage}'. Valid: ${VALID_STAGES.join(", ")}` });
   const existing = await mdb.collection('tag_mappings').findOne({ shopify_tag: { $regex: new RegExp(`^${shopify_tag.trim()}$`, 'i') } });
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
   const id = await nextId('tag_mappings');
-  await mdb.collection('tag_mappings').insertOne({ id, shopify_tag: shopify_tag.trim(), stage, priority: Number(priority), created_at: new Date().toISOString() });
+  await mdb.collection('tag_mappings').insertOne({ id, shopify_tag: shopify_tag.trim(), stage, priority: Number(priority), super_hold_power: !!super_hold_power, created_at: new Date().toISOString() });
   res.json({ success: true, id });
+});
+
+app.put("/admin/tag-mappings/:id/super-hold-power", adminAuth, async (req, res) => {
+  const { enabled } = req.body || {};
+  await mdb.collection('tag_mappings').updateOne({ id: parseInt(req.params.id) }, { $set: { super_hold_power: !!enabled } });
+  res.json({ success: true });
 });
 
 app.delete("/admin/tag-mappings/:id", adminAuth, async (req, res) => {
@@ -4294,7 +4530,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           { headers: { 'X-Shopify-Access-Token': shopifyToken } }
         );
         const foData = await foRes.json();
-        const openFOs = (foData.fulfillment_orders || []).filter(fo => fo.status === 'open');
+        const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
 
         const line_items_by_fulfillment_order = [];
         for (const fo of openFOs) {
@@ -4341,6 +4577,69 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 });
 
 // ── Admin Global Shipping Credentials ────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// PRODUCT COMMISSION RULES
+// ══════════════════════════════════════════════════════════════════════════
+
+app.get("/admin/commission-rules", adminAuth, async (req, res) => {
+  const { vendor } = req.query;
+  const q = vendor ? { vendor_name: vendor } : {};
+  const rules = await mdb.collection('product_commission_rules').find(q, { projection: { _id: 0 } }).sort({ vendor_name: 1, title: 1 }).toArray();
+  res.json({ rules });
+});
+
+app.post("/admin/commission-rules", adminAuth, async (req, res) => {
+  try {
+    const { vendor_name, product_id, sku, title, image, mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive } = req.body || {};
+    if (!vendor_name) return res.status(400).json({ error: "vendor_name required" });
+    if (!['flat','margin','mixed'].includes(mode)) return res.status(400).json({ error: "mode must be flat, margin, or mixed" });
+    const id = await nextId('product_commission_rules');
+    const rule = {
+      id, vendor_name, product_id: product_id ? String(product_id) : null,
+      sku: sku || null, title: title || '', image: image || null,
+      mode, flat_amount: parseFloat(flat_amount || 0),
+      flat_gst_inclusive: !!flat_gst_inclusive,
+      vendor_cost: parseFloat(vendor_cost || 0),
+      margin_pct: parseFloat(margin_pct || 0),
+      margin_gst_inclusive: !!margin_gst_inclusive,
+      created_at: new Date().toISOString(),
+    };
+    await mdb.collection('product_commission_rules').insertOne(rule);
+    auditLog("admin", "commission_rule_created", String(id), { vendor_name, title, mode });
+    res.json({ ok: true, rule });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/admin/commission-rules/:id", adminAuth, async (req, res) => {
+  try {
+    const { mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive, title, sku, product_id, image } = req.body || {};
+    if (mode && !['flat','margin','mixed'].includes(mode)) return res.status(400).json({ error: "Invalid mode" });
+    const upd = {};
+    if (mode !== undefined)                upd.mode = mode;
+    if (title !== undefined)               upd.title = title;
+    if (sku !== undefined)                 upd.sku = sku;
+    if (product_id !== undefined)          upd.product_id = product_id ? String(product_id) : null;
+    if (image !== undefined)               upd.image = image || null;
+    if (flat_amount !== undefined)         upd.flat_amount = parseFloat(flat_amount);
+    if (flat_gst_inclusive !== undefined)  upd.flat_gst_inclusive = !!flat_gst_inclusive;
+    if (vendor_cost !== undefined)         upd.vendor_cost = parseFloat(vendor_cost);
+    if (margin_pct !== undefined)          upd.margin_pct = parseFloat(margin_pct);
+    if (margin_gst_inclusive !== undefined) upd.margin_gst_inclusive = !!margin_gst_inclusive;
+    upd.updated_at = new Date().toISOString();
+    await mdb.collection('product_commission_rules').updateOne({ id: parseInt(req.params.id) }, { $set: upd });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/admin/commission-rules/:id", adminAuth, async (req, res) => {
+  await mdb.collection('product_commission_rules').deleteOne({ id: parseInt(req.params.id) });
+  res.json({ ok: true });
+});
+
 app.get("/admin/shipping-creds", adminAuth, async (req, res) => {
   const rows = await mdb.collection('global_shipping_creds').find({}, { projection: { id: 1, partner: 1, connected_at: 1, _id: 0 } }).toArray();
   res.json({ partners: rows });
@@ -4794,6 +5093,27 @@ app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
 });
 
 // ── Admin: browse a vendor's products ─────────────────────────────────────
+// GET /admin/products?vendor=NAME — fetch Shopify products filtered by vendor name
+app.get("/admin/products", adminAuth, async (req, res) => {
+  try {
+    const { vendor } = req.query;
+    const url = vendor
+      ? `/products.json?limit=250&fields=id,title,variants,image&vendor=${encodeURIComponent(vendor)}`
+      : `/products.json?limit=250&fields=id,title,variants,image`;
+    const data = await shopifyREST(url);
+    const products = (data.products || []).map(p => ({
+      id: String(p.id),
+      title: p.title,
+      image: p.image?.src || null,
+      variants: (p.variants || []).map(v => ({ id: String(v.id), sku: v.sku, title: v.title, price: parseFloat(v.price||0) })),
+      price: parseFloat(p.variants?.[0]?.price || 0),
+    }));
+    res.json({ products });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   const conn = await VSC.get(req.params.vendor);
   if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
@@ -5215,9 +5535,94 @@ app.post("/admin/penalties/test-trigger", adminAuth, async (req, res) => {
   res.json({ success: true, message: `Penalty triggered for ${vendor_name} on ${order_name || shopify_id}` });
 });
 
+app.delete("/admin/penalties/:id", adminAuth, async (req, res) => {
+  const p = await OP.get(req.params.id);
+  if (!p) return res.status(404).json({ error: "Penalty not found." });
+  await mdb.collection('order_penalties').deleteOne({ id: parseInt(req.params.id) });
+  auditLog("admin", "penalty_deleted", req.params.id, { vendor: p.vendor_name, order: p.order_name, was: p.status });
+  res.json({ ok: true });
+
+  // Email vendor that penalty has been waived
+  (async () => {
+    try {
+      const cfg = await getSmtpConfig();
+      const vcfg = await VC.get(p.vendor_name);
+      if (!cfg?.host || !vcfg?.email) return;
+      await sendEmail({
+        to: vcfg.email,
+        subject: `✅ Penalty Waived — ${p.order_name}`,
+        html: emailBase(
+          'Penalty Waived',
+          '#10b981',
+          `<div class="subtitle">Good news! The penalty raised for order <strong>${p.order_name}</strong> has been waived off by CrosCrow. No amount will be deducted from your settlement.</div>
+           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+             <tr><td style="padding:8px;color:#94a3b8;width:130px">Order</td><td style="padding:8px;color:#e2e8f0;font-weight:600">${p.order_name}</td></tr>
+             <tr style="background:#0f1f2e"><td style="padding:8px;color:#94a3b8">Original Reason</td><td style="padding:8px;color:#f59e0b">${p.trigger_reason==='48hr_breach'?'48hr fulfilment breach':p.trigger_reason==='eta_breach'?'ETA date missed':p.trigger_reason}</td></tr>
+             ${p.penalty_amount>0?`<tr><td style="padding:8px;color:#94a3b8">Amount Waived</td><td style="padding:8px;color:#10b981;font-weight:700">₹${(p.penalty_amount||0).toFixed(2)}</td></tr>`:''}
+           </table>
+           <div style="text-align:center;color:#64748b;font-size:12px;margin-top:16px">This penalty will not appear in your settlement invoice.</div>`,
+        ),
+        shopifyId: p.shopify_id, trigger: 'penalty_waived',
+      });
+    } catch(e) { console.error('penalty waived email error:', e.message); }
+  })();
+});
+
 app.get("/admin/penalties", adminAuth, async (req, res) => {
   const { status } = req.query;
   res.json({ penalties: await OP.all(status) });
+});
+
+// Vendor: get penalties for a specific order (their vendor only)
+app.get("/vendor/orders/:shopifyId/penalties", vendorAuth, async (req, res) => {
+  const penalties = await mdb.collection('order_penalties').find(
+    { shopify_id: String(req.params.shopifyId), vendor_name: req.vendor },
+    { projection: { _id: 0 } }
+  ).sort({ triggered_at: -1 }).toArray();
+  res.json({ penalties });
+});
+
+// Vendor: submit review request on a confirmed penalty
+app.post("/vendor/penalties/:id/review-request", vendorAuth, async (req, res) => {
+  const { message } = req.body || {};
+  if (!message?.trim()) return res.status(400).json({ error: "Message required." });
+  const p = await OP.get(req.params.id);
+  if (!p) return res.status(404).json({ error: "Penalty not found." });
+  if (p.vendor_name !== req.vendor) return res.status(403).json({ error: "Forbidden." });
+  await mdb.collection('order_penalties').updateOne(
+    { id: parseInt(req.params.id) },
+    { $set: { vendor_review_request: message.trim(), vendor_review_at: new Date().toISOString() } }
+  );
+  auditLog("vendor", "penalty_review_request", req.params.id, { vendor: req.vendor, message: message.trim() });
+
+  // Email admin
+  (async () => {
+    try {
+      const cfg = await getSmtpConfig();
+      if (!cfg?.adminEmail) return;
+      await sendEmail({
+        to: cfg.adminEmail,
+        subject: `📨 Penalty Review Request — ${p.order_name} (${req.vendor})`,
+        html: emailBase(
+          `Penalty Review Request`,
+          '#6366f1',
+          `<div class="subtitle">Vendor <strong>${req.vendor}</strong> has requested a review for the penalty on order <strong>${p.order_name}</strong>.</div>
+           <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+             <tr><td style="padding:8px;color:#94a3b8;width:130px">Order</td><td style="padding:8px;color:#e2e8f0;font-weight:600">${p.order_name}</td></tr>
+             <tr style="background:#0f1f2e"><td style="padding:8px;color:#94a3b8">Penalty Amount</td><td style="padding:8px;color:#ef4444;font-weight:700">₹${(p.penalty_amount||0).toFixed(2)}</td></tr>
+             <tr><td style="padding:8px;color:#94a3b8">Reason</td><td style="padding:8px;color:#f59e0b">${p.trigger_reason==='48hr_breach'?'48hr fulfilment breach':p.trigger_reason==='eta_breach'?'ETA date missed':p.trigger_reason}</td></tr>
+             <tr style="background:#0f1f2e"><td style="padding:8px;color:#94a3b8;vertical-align:top">Vendor Message</td><td style="padding:8px;color:#e2e8f0;line-height:1.6">${message.trim()}</td></tr>
+           </table>
+           <div style="text-align:center;margin-top:20px">
+             <a href="${process.env.ADMIN_URL||'#'}/admin#penalties" style="background:#6366f1;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px">Review in Admin Panel →</a>
+           </div>`,
+        ),
+        shopifyId: p.shopify_id, trigger: 'penalty_review_request',
+      });
+    } catch(e) { console.error('penalty review email error:', e.message); }
+  })();
+
+  res.json({ success: true });
 });
 
 app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
