@@ -7199,7 +7199,8 @@ app.get("/track/product/:productId/variants", async (req, res) => {
       id: v.id,
       title: v.title,
       sku: v.sku,
-      available: v.inventory_quantity > 0,
+      // If inventory_management is null/blank, tracking is OFF → always available
+      available: !v.inventory_management || v.inventory_quantity > 0,
     }));
     res.json({ variants });
   } catch (err) {
