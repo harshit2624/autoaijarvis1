@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Track Your Order — CrosCrow</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #06100e;
+      --bg-card:   #0a1a17;
+      --bg-card2:  #0d2420;
+      --bg-hover:  #0f2e28;
+      --border:    #1a3d35;
+      --border-hi: #235c51;
+      --green:     #10b981;
+      --green-dim: #064e3b;
+      --green-glow:#05766050;
+      --teal:      #2dd4bf;
+      --red:       #f87171;
+      --red-bg:    #2d0a0a;
+      --yellow:    #fbbf24;
+      --yellow-bg: #422006;
+      --purple:    #a78bfa;
+      --blue:      #60a5fa;
+      --orange:    #fb923c;
+      --text:      #e2e8f0;
+      --text-muted:#4b7a6e;
+      --text-dim:  #7db8ae;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Mono', monospace;
+      min-height: 100vh;
+      background-image: radial-gradient(ellipse at 50% 0%, #05766015 0%, transparent 60%),
+                        radial-gradient(ellipse at 80% 100%, #10b98108 0%, transparent 50%);
+    }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .page-wrap {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 24px 16px 80px;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      padding: 32px 0 28px;
+    }
+    .header-logo {
+      width: 52px; height: 52px; border-radius: 14px;
+      background: linear-gradient(135deg, #10b981, #059669);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 800; color: #000;
+      margin: 0 auto 16px;
+      box-shadow: 0 0 30px #10b98140;
+    }
+    .header-title {
+      font-size: 22px; font-weight: 700; letter-spacing: 1px; color: var(--text);
+    }
+    .header-sub {
+      font-size: 11px; color: var(--text-muted); letter-spacing: 1px; margin-top: 5px;
+    }
+
+    /* Search card */
+    .search-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 24px #00000030;
+    }
+    .search-row {
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .search-field {
+      flex: 1; min-width: 140px;
+    }
+    .field-label {
+      font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--text-muted); margin-bottom: 6px; display: block;
+    }
+    .field-input {
+      width: 100%; background: var(--bg-card2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px; color: var(--text);
+      font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+      outline: none; transition: border-color 0.15s;
+    }
+    .field-input:focus { border-color: var(--green); }
+    .field-input::placeholder { color: var(--text-muted); }
+
+    .btn {
+      padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer;
+      font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700;
+      letter-spacing: 1px; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-green {
+      background: var(--green); color: #000;
+    }
+    .btn-green:hover:not(:disabled) { background: #34d399; }
+    .btn-green:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-full { width: 100%; justify-content: center; margin-top: 12px; }
+
+    .alert {
+      border-radius: 8px; padding: 10px 14px; font-size: 12px; margin-bottom: 14px;
+    }
+    .alert-error { background: var(--red-bg); border: 1px solid #5a1a1a; color: var(--red); }
+    .alert-success { background: var(--green-dim); border: 1px solid #1a4731; color: var(--green); }
+
+    /* Order result card */
+    .order-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      margin-bottom: 16px;
+      overflow: hidden;
+      animation: fadeIn 0.3s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+    .order-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+      flex-wrap: wrap;
+    }
+    .order-name {
+      font-size: 18px; font-weight: 700; color: var(--green);
+    }
+    .order-date { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .order-customer { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+    /* Stage badge */
+    .stage-pill {
+      padding: 5px 12px; border-radius: 99px; font-size: 10px; font-weight: 700;
+      letter-spacing: 1.5px; text-transform: uppercase; white-space: nowrap;
+    }
+    .stage-new       { background:#1a3d35; color:#2dd4bf; }
+    .stage-confirmed { background:#1a3d35; color:#10b981; }
+    .stage-partial   { background:#2d1f05; color:#f59e0b; }
+    .stage-hold      { background:#2d1805; color:#fb923c; }
+    .stage-ready     { background:#1e1b4b; color:#a78bfa; }
+    .stage-pickup    { background:#1e1b4b; color:#818cf8; }
+    .stage-transit   { background:#0f2a3f; color:#60a5fa; }
+    .stage-delivered { background:#064e3b; color:#10b981; }
+    .stage-rto       { background:#2d0a0a; color:#f87171; }
+    .stage-cancelled { background:#1a0a0a; color:#6b7280; }
+
+    /* AWB row */
+    .awb-row {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      font-size: 12px;
+    }
+    .awb-label { color: var(--text-muted); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+    .awb-value { color: var(--teal); font-weight: 600; }
+    .awb-link { color: var(--green); text-decoration: none; font-size: 11px; }
+    .awb-link:hover { text-decoration: underline; }
+
+    /* Items list */
+    .items-section { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+    .items-title { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; }
+    .item-row {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 8px 0; border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+    .item-row:last-child { border-bottom: none; }
+    .item-title { font-size: 12px; color: var(--text); font-weight: 500; }
+    .item-variant { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .item-price { font-size: 12px; color: var(--green); white-space: nowrap; font-weight: 600; }
+    .item-qty { font-size: 10px; color: var(--text-dim); margin-top: 2px; text-align: right; }
+
+    /* Action tiles */
+    .tiles-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      padding: 16px 20px;
+    }
+    .tile {
+      border-radius: 12px; padding: 18px; cursor: pointer;
+      border: 1px solid var(--border); transition: all 0.2s;
+      background: var(--bg-card2);
+      position: relative; overflow: hidden;
+    }
+    .tile:hover:not(.tile-disabled) {
+      border-color: var(--border-hi);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px #00000040;
+    }
+    .tile-disabled {
+      opacity: 0.5; cursor: not-allowed;
+    }
+    .tile-exchange { border-color: #1a3d35; }
+    .tile-exchange:hover:not(.tile-disabled) { border-color: var(--green); box-shadow: 0 8px 24px #10b98120; }
+    .tile-return   { border-color: #1a3d35; }
+    .tile-return:hover:not(.tile-disabled)   { border-color: var(--blue); box-shadow: 0 8px 24px #60a5fa20; }
+    .tile-return-disabled { border-color: var(--red-bg) !important; }
+
+    .tile-icon { font-size: 26px; margin-bottom: 8px; }
+    .tile-label { font-size: 13px; font-weight: 700; color: var(--text); }
+    .tile-desc { font-size: 10px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+
+    /* Request form */
+    .form-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 16px;
+      animation: fadeIn 0.3s ease;
+    }
+    .form-title { font-size: 14px; font-weight: 700; margin-bottom: 16px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+    .form-section-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; display: block; }
+
+    .item-check-row {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 10px 12px;
+      border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg-card2);
+      margin-bottom: 8px;
+      transition: border-color 0.15s;
+    }
+    .item-check-row.selected { border-color: var(--green); }
+    .item-check-row input[type=checkbox] {
+      accent-color: var(--green); width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;
+    }
+    .item-check-body { flex: 1; }
+    .item-check-title { font-size: 12px; color: var(--text); }
+    .item-check-variant { font-size: 10px; color: var(--text-muted); }
+
+    .qty-row {
+      display: flex; align-items: center; gap: 8px; margin-top: 8px;
+    }
+    .qty-label { font-size: 10px; color: var(--text-muted); }
+    .qty-select {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+      padding: 4px 8px; outline: none;
+    }
+
+    .variant-select-row { margin-top: 10px; }
+    .variant-select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border-hi);
+      border-radius: 6px; color: var(--text); font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px; padding: 7px 10px; outline: none;
+    }
+
+    .reason-textarea {
+      width: 100%; background: var(--bg-card2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px; color: var(--text);
+      font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.6;
+      outline: none; resize: vertical; min-height: 80px; transition: border-color 0.15s;
+    }
+    .reason-textarea:focus { border-color: var(--green); }
+    .reason-textarea::placeholder { color: var(--text-muted); }
+
+    /* Confirmation */
+    .confirm-card {
+      background: var(--bg-card);
+      border: 1px solid var(--green-dim);
+      border-radius: 14px;
+      padding: 32px 24px;
+      text-align: center;
+      animation: fadeIn 0.4s ease;
+    }
+    .confirm-icon { font-size: 48px; margin-bottom: 16px; }
+    .confirm-title { font-size: 18px; font-weight: 700; color: var(--green); margin-bottom: 8px; }
+    .confirm-sub { font-size: 12px; color: var(--text-muted); line-height: 1.7; }
+    .confirm-id {
+      display: inline-block; background: var(--green-dim); border: 1px solid var(--border-hi);
+      border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 700;
+      color: var(--green); letter-spacing: 1px; margin: 16px 0;
+    }
+
+    /* Embed info */
+    .embed-section {
+      margin-top: 32px;
+    }
+    .embed-toggle {
+      width: 100%; background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 16px; cursor: pointer;
+      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; letter-spacing: 1px; text-align: left;
+      display: flex; justify-content: space-between; align-items: center;
+      transition: border-color 0.15s;
+    }
+    .embed-toggle:hover { border-color: var(--border-hi); color: var(--text); }
+    .embed-body {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-top: none; border-radius: 0 0 10px 10px;
+      padding: 16px; font-size: 11px; color: var(--text-dim); line-height: 1.8;
+    }
+    .embed-code {
+      background: var(--bg-card2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 14px; font-size: 11px;
+      color: var(--teal); word-break: break-all; margin: 8px 0 12px;
+      white-space: pre-wrap;
+    }
+    .copy-btn {
+      background: var(--bg-card2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 12px; cursor: pointer;
+      color: var(--text-muted); font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; transition: all 0.15s;
+    }
+    .copy-btn:hover { border-color: var(--green); color: var(--green); }
+
+    .spin { display: inline-block; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Stage progress bar */
+    .stage-bar {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .stage-bar-label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .stage-steps {
+      display: flex; align-items: center; gap: 0;
+    }
+    .stage-step {
+      display: flex; flex-direction: column; align-items: center; flex: 1;
+    }
+    .stage-dot {
+      width: 10px; height: 10px; border-radius: 50%; background: var(--border);
+      position: relative; z-index: 1;
+    }
+    .stage-dot.done { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .stage-dot.active { background: var(--teal); box-shadow: 0 0 10px var(--teal); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 6px var(--teal)} 50%{box-shadow:0 0 14px var(--teal)} }
+    .stage-line {
+      flex: 1; height: 2px; background: var(--border); margin: 0 -1px;
+      position: relative; top: -13px;
+    }
+    .stage-line.done { background: var(--green); }
+    .stage-step-label {
+      font-size: 9px; color: var(--text-muted); margin-top: 5px; letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+    .stage-step-label.active { color: var(--teal); font-weight: 700; }
+    .stage-step-label.done { color: var(--green); }
+
+    @media (max-width: 480px) {
+      .tiles-row { grid-template-columns: 1fr; }
+      .search-row { flex-direction: column; }
+      .order-header { flex-direction: column; }
+      .header-title { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect, useCallback } = React;
+
+  const API = window.location.origin;
+
+  const STAGE_STEPS = ['confirmed','ready','pickup','transit','delivered'];
+  const STAGE_LABELS = { new:'New', confirmed:'Confirmed', partial:'Partial', hold:'On Hold', ready:'Packed', pickup:'Picked Up', transit:'In Transit', delivered:'Delivered', rto:'Returned', cancelled:'Cancelled' };
+
+  function stagePillClass(stage) {
+    const map = { new:'stage-new', confirmed:'stage-confirmed', partial:'stage-partial', hold:'stage-hold', ready:'stage-ready', pickup:'stage-pickup', transit:'stage-transit', delivered:'stage-delivered', rto:'stage-rto', cancelled:'stage-cancelled' };
+    return 'stage-pill ' + (map[stage] || 'stage-new');
+  }
+
+  function StageProgress({ stage }) {
+    const idx = STAGE_STEPS.indexOf(stage);
+    return (
+      <div className="stage-bar">
+        <div className="stage-bar-label">Delivery Progress</div>
+        <div className="stage-steps">
+          {STAGE_STEPS.map((s, i) => {
+            const done = idx > i || (idx === -1 && stage === 'delivered');
+            const active = idx === i;
+            const isLast = i === STAGE_STEPS.length - 1;
+            return (
+              <React.Fragment key={s}>
+                <div className="stage-step">
+                  <div className={`stage-dot ${done?'done':''} ${active?'active':''}`}/>
+                  <div className={`stage-step-label ${done?'done':''} ${active?'active':''}`}>{STAGE_LABELS[s]}</div>
+                </div>
+                {!isLast && <div className={`stage-line ${done?'done':''}`}/>}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function ItemCheckRow({ item, checked, onCheck, qty, onQtyChange, showVariants, variants, loadingVariants, exchangeVariantId, onVariantChange }) {
+    return (
+      <div className={`item-check-row ${checked?'selected':''}`}>
+        <input type="checkbox" checked={checked} onChange={e=>onCheck(e.target.checked)}/>
+        <div className="item-check-body">
+          <div className="item-check-title">{item.title}</div>
+          {item.variant_title && <div className="item-check-variant">{item.variant_title}</div>}
+          {checked && (
+            <div className="qty-row">
+              <span className="qty-label">Qty:</span>
+              <select className="qty-select" value={qty} onChange={e=>onQtyChange(Number(e.target.value))}>
+                {Array.from({length:item.qty},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}
+              </select>
+            </div>
+          )}
+          {checked && showVariants && (
+            <div className="variant-select-row">
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:5}}>Select exchange size/variant:</div>
+              {loadingVariants ? (
+                <div style={{fontSize:11,color:'var(--text-muted)'}}><span className="spin">↻</span> Loading variants…</div>
+              ) : (
+                <select className="variant-select" value={exchangeVariantId||''} onChange={e=>onVariantChange(e.target.value, variants.find(v=>String(v.id)===e.target.value)?.title)}>
+                  <option value="">— Select size/variant —</option>
+                  {variants.map(v=>(
+                    <option key={v.id} value={v.id} disabled={!v.available}>{v.title}{!v.available?' (out of stock)':''}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function RequestForm({ order, type, onSuccess, onCancel }) {
+    const [selectedItems, setSelectedItems] = useState({}); // line_item_id → {checked,qty,exchangeVariantId,exchangeSizeLabel}
+    const [variantCache, setVariantCache] = useState({});
+    const [loadingVariants, setLoadingVariants] = useState({});
+    const [reason, setReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState(null);
+
+    // Fetch variants when item is checked (exchange only)
+    const handleCheck = useCallback(async (item, checked) => {
+      setSelectedItems(prev => ({
+        ...prev,
+        [item.line_item_id]: checked
+          ? { checked: true, qty: 1, exchangeVariantId: '', exchangeSizeLabel: '' }
+          : { checked: false }
+      }));
+      if (checked && type === 'exchange' && item.product_id && !variantCache[item.product_id]) {
+        setLoadingVariants(p => ({ ...p, [item.product_id]: true }));
+        try {
+          const r = await fetch(`${API}/track/product/${item.product_id}/variants`);
+          const d = await r.json();
+          setVariantCache(p => ({ ...p, [item.product_id]: d.variants || [] }));
+        } catch {}
+        setLoadingVariants(p => ({ ...p, [item.product_id]: false }));
+      }
+    }, [type, variantCache]);
+
+    const handleQtyChange = (id, qty) => setSelectedItems(p => ({ ...p, [id]: { ...p[id], qty } }));
+    const handleVariantChange = (productId, lineItemId, variantId, sizeLabel) => {
+      setSelectedItems(p => ({ ...p, [lineItemId]: { ...p[lineItemId], exchangeVariantId: variantId, exchangeSizeLabel: sizeLabel } }));
+    };
+
+    const checkedItems = (order.items || []).filter(it => selectedItems[it.line_item_id]?.checked);
+
+    const submit = async () => {
+      if (!checkedItems.length) { setError('Please select at least one item.'); return; }
+      if (!reason.trim()) { setError('Please provide a reason.'); return; }
+      if (type === 'exchange') {
+        const missing = checkedItems.find(it => !selectedItems[it.line_item_id]?.exchangeVariantId);
+        if (missing) { setError('Please select an exchange variant for each selected item.'); return; }
+      }
+
+      setSubmitting(true); setError(null);
+      const vendorName = checkedItems[0]?.vendor || '';
+      const items = checkedItems.map(it => {
+        const sel = selectedItems[it.line_item_id];
+        return {
+          line_item_id: it.line_item_id,
+          variant_id: it.variant_id,
+          title: it.title,
+          variant_title: it.variant_title,
+          qty: sel.qty,
+          price: it.price,
+          exchange_variant_id: sel.exchangeVariantId || null,
+          exchange_size_label: sel.exchangeSizeLabel || null,
+        };
+      });
+      try {
+        const r = await fetch(`${API}/track/request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shopify_order_id: order.shopify_order_id,
+            order_name: order.order_name,
+            customer_email: order.customer_email,
+            customer_name: order.customer_name,
+            customer_phone: order.customer_phone,
+            type,
+            items,
+            reason: reason.trim(),
+            vendor_name: vendorName,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        onSuccess(d.request_id);
+      } catch(e) { setError(e.message); }
+      setSubmitting(false);
+    };
+
+    return (
+      <div className="form-card">
+        <div className="form-title">
+          {type === 'exchange' ? '🔄' : '↩'} {type === 'exchange' ? 'Exchange' : 'Return'} Request
+          <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400}}>— {order.order_name}</span>
+        </div>
+
+        {error && <div className="alert alert-error">⚠ {error}</div>}
+
+        <span className="form-section-label">Select items</span>
+        {(order.items || []).map(item => (
+          <ItemCheckRow
+            key={item.line_item_id}
+            item={item}
+            checked={!!selectedItems[item.line_item_id]?.checked}
+            onCheck={checked => handleCheck(item, checked)}
+            qty={selectedItems[item.line_item_id]?.qty || 1}
+            onQtyChange={qty => handleQtyChange(item.line_item_id, qty)}
+            showVariants={type === 'exchange'}
+            variants={variantCache[item.product_id] || []}
+            loadingVariants={!!loadingVariants[item.product_id]}
+            exchangeVariantId={selectedItems[item.line_item_id]?.exchangeVariantId}
+            onVariantChange={(varId, sizeLabel) => handleVariantChange(item.product_id, item.line_item_id, varId, sizeLabel)}
+          />
+        ))}
+
+        <div style={{marginTop:16,marginBottom:16}}>
+          <span className="form-section-label">Reason <span style={{color:'var(--red)'}}>*</span></span>
+          <textarea
+            className="reason-textarea"
+            placeholder={type === 'exchange' ? 'E.g. Wrong size ordered, would like to exchange for L instead of M.' : 'E.g. Product damaged on arrival / not as described.'}
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+          />
+        </div>
+
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <button className="btn btn-green" onClick={submit} disabled={submitting}>
+            {submitting ? <><span className="spin">↻</span> Submitting…</> : `Submit ${type === 'exchange' ? 'Exchange' : 'Return'} Request`}
+          </button>
+          <button className="btn" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-muted)'}} onClick={onCancel} disabled={submitting}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function EmbedSection() {
+    const [open, setOpen] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const code = `<iframe src="${window.location.origin}/track" width="100%" height="900" frameborder="0"></iframe>`;
+    const copy = () => { navigator.clipboard.writeText(code).then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),2000); }); };
+
+    return (
+      <div className="embed-section">
+        <button className="embed-toggle" onClick={()=>setOpen(o=>!o)}>
+          <span>📦 Embed in your Shopify store</span>
+          <span>{open ? '▲' : '▼'}</span>
+        </button>
+        {open && (
+          <div className="embed-body">
+            <p>Add the following iframe to any Shopify page to let customers track their orders directly on your store:</p>
+            <div className="embed-code">{code}</div>
+            <button className="copy-btn" onClick={copy}>{copied ? '✓ Copied!' : 'Copy Code'}</button>
+            <p style={{marginTop:10,color:'var(--text-muted)',fontSize:10}}>In Shopify Admin → Pages → Add Page → Custom HTML → paste the code above.</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function App() {
+    const [orderNum, setOrderNum] = useState('');
+    const [email, setEmail] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [order, setOrder] = useState(null);
+    const [activeForm, setActiveForm] = useState(null); // 'exchange' | 'return' | null
+    const [confirmed, setConfirmed] = useState(null); // request_id after submit
+
+    const lookup = async () => {
+      if (!orderNum.trim() || !email.trim()) { setError('Please enter both order number and email.'); return; }
+      setLoading(true); setError(null); setOrder(null); setActiveForm(null); setConfirmed(null);
+      try {
+        const r = await fetch(`${API}/track/order?q=${encodeURIComponent(orderNum.trim())}&email=${encodeURIComponent(email.trim())}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setOrder(d);
+      } catch(e) { setError(e.message); }
+      setLoading(false);
+    };
+
+    const handleSuccess = (requestId) => {
+      setActiveForm(null);
+      setConfirmed(requestId);
+    };
+
+    const returnCfg = order ? (() => {
+      // Collect return config across all vendors — if ANY vendor disables returns, show disabled
+      const cfgs = Object.values(order.return_configs || {});
+      if (!cfgs.length) return { return_enabled: true };
+      return { return_enabled: cfgs.every(c => c.return_enabled !== false) };
+    })() : null;
+
+    return (
+      <div className="page-wrap">
+        <div className="header">
+          <div className="header-logo">C</div>
+          <div className="header-title">Track Your Order</div>
+          <div className="header-sub">Enter your order number and email to see real-time status</div>
+        </div>
+
+        {/* Search */}
+        <div className="search-card">
+          <div className="search-row">
+            <div className="search-field">
+              <label className="field-label">Order Number</label>
+              <input
+                className="field-input"
+                placeholder="#1905 or 1905"
+                value={orderNum}
+                onChange={e=>setOrderNum(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&lookup()}
+              />
+            </div>
+            <div className="search-field">
+              <label className="field-label">Email Address</label>
+              <input
+                className="field-input"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={e=>setEmail(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&lookup()}
+              />
+            </div>
+          </div>
+          {error && <div className="alert alert-error" style={{marginTop:12,marginBottom:0}}>⚠ {error}</div>}
+          <button className="btn btn-green btn-full" onClick={lookup} disabled={loading}>
+            {loading ? <><span className="spin">↻</span> Searching…</> : '🔍 Track Order'}
+          </button>
+        </div>
+
+        {/* Order Result */}
+        {order && !confirmed && (
+          <>
+            <div className="order-card">
+              <div className="order-header">
+                <div>
+                  <div className="order-name">{order.order_name}</div>
+                  <div className="order-customer">{order.customer_name}</div>
+                  <div className="order-date">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}) : ''}</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div className={stagePillClass(order.stage)}>{STAGE_LABELS[order.stage] || order.stage}</div>
+                  {order.financial_status && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:5}}>{order.financial_status}</div>}
+                </div>
+              </div>
+
+              <StageProgress stage={order.stage}/>
+
+              {order.awb && (
+                <div className="awb-row">
+                  <span className="awb-label">AWB</span>
+                  <span className="awb-value">{order.awb}</span>
+                  {order.tracking_url && <a className="awb-link" href={order.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track Shipment →</a>}
+                </div>
+              )}
+
+              <div className="items-section">
+                <div className="items-title">Items in this order ({order.items?.length})</div>
+                {(order.items || []).map(item => (
+                  <div key={item.line_item_id} className="item-row">
+                    <div>
+                      <div className="item-title">{item.title}</div>
+                      {item.variant_title && <div className="item-variant">{item.variant_title}</div>}
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div className="item-price">₹{parseFloat(item.price).toFixed(2)}</div>
+                      <div className="item-qty">Qty: {item.qty}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Action tiles */}
+              {!activeForm && (
+                <div className="tiles-row">
+                  <div
+                    className="tile tile-exchange"
+                    onClick={() => setActiveForm('exchange')}
+                    title="Request an exchange"
+                  >
+                    <div className="tile-icon">🔄</div>
+                    <div className="tile-label">Exchange</div>
+                    <div className="tile-desc">Swap for a different size or variant</div>
+                  </div>
+
+                  {returnCfg?.return_enabled ? (
+                    <div
+                      className="tile tile-return"
+                      onClick={() => setActiveForm('return')}
+                      title="Request a return"
+                    >
+                      <div className="tile-icon">↩</div>
+                      <div className="tile-label">Return</div>
+                      <div className="tile-desc">Return items for a refund or credit</div>
+                    </div>
+                  ) : (
+                    <div className="tile tile-disabled tile-return-disabled" title="Returns not accepted">
+                      <div className="tile-icon">↩</div>
+                      <div className="tile-label" style={{color:'var(--red)'}}>Return</div>
+                      <div className="tile-desc" style={{color:'var(--red)'}}>Returns not accepted by this vendor</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Request Form */}
+            {activeForm && (
+              <RequestForm
+                order={order}
+                type={activeForm}
+                onSuccess={handleSuccess}
+                onCancel={() => setActiveForm(null)}
+              />
+            )}
+          </>
+        )}
+
+        {/* Confirmation */}
+        {confirmed && (
+          <div className="confirm-card">
+            <div className="confirm-icon">✅</div>
+            <div className="confirm-title">Request Submitted!</div>
+            <div className="confirm-id">{confirmed}</div>
+            <div className="confirm-sub">
+              Your request has been received. Our team will review it and get back to you within 1–2 business days.<br/><br/>
+              Please save your request ID for reference.
+            </div>
+            <button className="btn btn-green" style={{marginTop:20}} onClick={()=>{setConfirmed(null);setActiveForm(null);}}>
+              Track Another Order
+            </button>
+          </div>
+        )}
+
+        <EmbedSection/>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

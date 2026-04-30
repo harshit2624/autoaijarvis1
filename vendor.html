@@ -571,6 +571,158 @@
   const fmtDate = s => { const d=new Date(s); return isNaN(d)?s:d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
   const ls = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }, del:(k)=>localStorage.removeItem(k) };
 
+  /* ── period helpers ── */
+  const isoToday     = () => new Date().toISOString().slice(0,10);
+  const isoDaysAgo   = n => { const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); };
+  const isoMonthStart= () => { const d=new Date(); d.setDate(1); return d.toISOString().slice(0,10); };
+  const PERIOD_PRESETS = [
+    { label:'Today',        from: isoToday(),      to: isoToday() },
+    { label:'Yesterday',    from: isoDaysAgo(1),   to: isoDaysAgo(1) },
+    { label:'Last 7 Days',  from: isoDaysAgo(6),   to: isoToday() },
+    { label:'Last 30 Days', from: isoDaysAgo(29),  to: isoToday() },
+    { label:'Last 90 Days', from: isoDaysAgo(89),  to: isoToday() },
+    { label:'This Month',   from: isoMonthStart(), to: isoToday() },
+    { label:'All Time',     from: '2020-01-01',    to: isoToday() },
+  ];
+
+  function CalendarMonth({ year, month, rangeStart, rangeEnd, hoverDate, onDayClick, onDayHover }) {
+    const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const cells = [];
+    for(let i=0;i<firstDay;i++) cells.push(null);
+    for(let d=1;d<=daysInMonth;d++) cells.push(d);
+    const isoDay = d => { if(!d) return null; return `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; };
+    const inRange = iso => {
+      if(!rangeStart||!iso) return false;
+      const end = rangeEnd || hoverDate;
+      if(!end) return false;
+      const [lo,hi] = rangeStart<=end ? [rangeStart,end] : [end,rangeStart];
+      return iso>lo && iso<hi;
+    };
+    const isStart = iso => iso && iso===rangeStart;
+    const isEnd   = iso => iso && rangeEnd && iso===rangeEnd;
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    return (
+      <div style={{minWidth:210}}>
+        <div style={{textAlign:'center',fontWeight:700,fontSize:12,color:'var(--text)',marginBottom:8,letterSpacing:1}}>{MONTH_NAMES[month]} {year}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1,marginBottom:4}}>
+          {DAYS.map(d=><div key={d} style={{textAlign:'center',fontSize:9,color:'var(--text-muted)',fontWeight:600,padding:'2px 0'}}>{d}</div>)}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1}}>
+          {cells.map((d,i)=>{
+            const iso = isoDay(d);
+            const start = isStart(iso), end = isEnd(iso), range = inRange(iso);
+            const isToday = iso === isoToday();
+            return (
+              <div key={i} onClick={()=>d && onDayClick(iso)} onMouseEnter={()=>d && onDayHover(iso)} style={{
+                textAlign:'center',fontSize:11,padding:'5px 2px',borderRadius:5,cursor:d?'pointer':'default',userSelect:'none',
+                background:(start||end)?'var(--indigo)':range?'#1e1b4b':'transparent',
+                color:(start||end)?'#fff':d?'var(--text)':'transparent',
+                fontWeight:(start||end||isToday)?700:400,
+                outline:isToday&&!(start||end)?'1px solid #6366f160':'none',
+              }}>{d||''}</div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function PeriodPicker({ period, onChange, align='left' }) {
+    const [open, setOpen]           = useState(false);
+    const [view, setView]           = useState('presets');
+    const [calYear,  setCalYear]    = useState(new Date().getFullYear());
+    const [calMonth, setCalMonth]   = useState(new Date().getMonth());
+    const [rangeStart, setRangeStart] = useState(null);
+    const [rangeEnd,   setRangeEnd]   = useState(null);
+    const [hoverDate,  setHoverDate]  = useState(null);
+    const ref = useRef(null);
+    useEffect(()=>{ const close=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); }; document.addEventListener('mousedown',close); return()=>document.removeEventListener('mousedown',close); },[]);
+    const selectPreset = p => { onChange({label:p.label,from:p.from,to:p.to}); setOpen(false); };
+    const handleDayClick = iso => {
+      if(!rangeStart||(rangeStart&&rangeEnd)) { setRangeStart(iso); setRangeEnd(null); setHoverDate(null); }
+      else {
+        const [lo,hi] = iso>=rangeStart?[rangeStart,iso]:[iso,rangeStart];
+        setRangeEnd(hi); setRangeStart(lo);
+        onChange({label:'Custom',from:lo,to:hi});
+        setTimeout(()=>setOpen(false),300);
+      }
+    };
+    const prevMonth = () => { if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1);}else setCalMonth(m=>m-1); };
+    const nextMonth = () => { if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1);}else setCalMonth(m=>m+1); };
+    const nextYear = calMonth===11?calYear+1:calYear;
+    const nextMon  = calMonth===11?0:calMonth+1;
+    const label = period?period.label:'All Time';
+    const sub   = period?`${period.from}  →  ${period.to}`:'';
+    return (
+      <div ref={ref} style={{position:'relative',display:'inline-block'}}>
+        <button onClick={()=>setOpen(o=>!o)} style={{
+          display:'flex',alignItems:'center',gap:8,padding:'7px 12px',
+          background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,
+          color:'var(--text)',fontSize:11,fontFamily:'inherit',cursor:'pointer',minWidth:180,
+        }}>
+          <span style={{fontSize:13}}>📅</span>
+          <span style={{flex:1,textAlign:'left'}}>
+            <span style={{fontWeight:700,color:'var(--text)'}}>{label}</span>
+            {sub&&<span style={{display:'block',fontSize:9,color:'var(--text-muted)',marginTop:1}}>{sub}</span>}
+          </span>
+          <span style={{color:'var(--text-muted)',fontSize:9}}>{open?'▲':'▼'}</span>
+        </button>
+        {open&&(
+          <div style={{
+            position:'absolute',[align==='right'?'right':'left']:0,top:'calc(100% + 6px)',zIndex:999,
+            background:'var(--bg-card)',border:'1px solid var(--border-hi)',borderRadius:10,
+            boxShadow:'0 8px 40px #000a',minWidth:260,overflow:'hidden',
+          }}>
+            <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+              {['presets','calendar'].map(t=>(
+                <button key={t} onClick={()=>setView(t)} style={{
+                  flex:1,padding:'9px',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:1,
+                  background:view===t?'var(--bg-card2)':'transparent',
+                  color:view===t?'var(--indigo)':'var(--text-muted)',
+                  border:'none',cursor:'pointer',fontFamily:'inherit',
+                }}>{t==='presets'?'Quick Select':'Calendar'}</button>
+              ))}
+            </div>
+            {view==='presets'?(
+              <div style={{padding:8}}>
+                {PERIOD_PRESETS.map(p=>(
+                  <button key={p.label} onClick={()=>selectPreset(p)} style={{
+                    display:'block',width:'100%',textAlign:'left',padding:'8px 12px',fontSize:12,
+                    background:period&&period.label===p.label?'var(--indigo-dim)':'transparent',
+                    color:period&&period.label===p.label?'var(--indigo)':'var(--text)',
+                    border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit',
+                    fontWeight:period&&period.label===p.label?700:400,
+                  }}>{p.label}</button>
+                ))}
+              </div>
+            ):(
+              <div style={{padding:12}}>
+                <div style={{display:'flex',gap:16}}>
+                  <div>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                      <button onClick={prevMonth} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 4px'}}>‹</button>
+                      <div/><div/>
+                    </div>
+                    <CalendarMonth year={calYear} month={calMonth} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
+                  </div>
+                  <div>
+                    <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',marginBottom:8}}>
+                      <button onClick={nextMonth} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 4px'}}>›</button>
+                    </div>
+                    <CalendarMonth year={nextYear} month={nextMon} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
+                  </div>
+                </div>
+                {rangeStart&&!rangeEnd&&<div style={{textAlign:'center',fontSize:10,color:'var(--text-muted)',marginTop:8}}>Click end date to complete range</div>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   /* ── Couriers ── */
   const COURIERS = [
     { name:'Delhivery',      url: awb => `https://www.delhivery.com/track/package/${awb}` },
@@ -1263,20 +1415,135 @@
     );
   }
 
+  /* ── Dispatch Rate Card (reusable) ── */
+  function DispatchCard({ stats, periodLabel }) {
+    const [showBreakdown, setShowBreakdown] = useState(false);
+    if (!stats?.dispatch) return null;
+    const d = stats.dispatch;
+    const rate = d.rate || 0;
+    const barColor = rate >= 80 ? '#10b981' : rate >= 50 ? '#f59e0b' : '#ef4444';
+    const urgency = rate >= 90 ? null : rate >= 70
+      ? { label:'Almost there!', msg:`${d.pendingCount} order${d.pendingCount!==1?'s':''} confirmed but not yet shipped — don't let them go cold.` }
+      : rate >= 40
+      ? { label:'Action needed', msg:`${d.pendingCount} confirmed order${d.pendingCount!==1?'s':''} are sitting unshipped. Every day you wait, the customer gets closer to cancelling.` }
+      : { label:'🚨 Urgent', msg:`${d.pendingCount} orders confirmed and waiting — your customers already paid and are expecting their product. Ship now before they lose trust.` };
+
+    const ACTIVE_STAGES = ['confirmed','partial','ready','pickup','transit','delivered','rto'];
+    const DISPATCHED_STAGES = ['ready','pickup','transit','delivered','rto'];
+
+    return (
+      <div style={{background:'linear-gradient(135deg,#0d1f2d 0%,#0a1520 100%)',border:`1px solid ${barColor}44`,borderRadius:12,padding:'20px 24px',marginBottom:16,position:'relative',overflow:'hidden'}}>
+        <div style={{position:'absolute',top:-40,right:-40,width:120,height:120,borderRadius:'50%',background:`${barColor}11`,pointerEvents:'none'}}/>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:16,flexWrap:'wrap'}}>
+          <div style={{minWidth:160}}>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:6}}>
+              Your Dispatch Rate{periodLabel?` · ${periodLabel}`:''}
+            </div>
+            <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:10}}>
+              <span style={{fontSize:48,fontWeight:900,color:barColor,lineHeight:1}}>{rate}%</span>
+              <span style={{fontSize:12,color:'var(--text-muted)'}}>{d.dispatched}/{d.totalActive} orders</span>
+            </div>
+            <div style={{height:6,borderRadius:3,background:'rgba(255,255,255,0.08)',overflow:'hidden',marginBottom:6}}>
+              <div style={{height:'100%',width:`${rate}%`,background:barColor,borderRadius:3,transition:'width 0.6s ease'}}/>
+            </div>
+            <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>confirmed orders dispatched{periodLabel?` · ${periodLabel}`:''}</div>
+            <button onClick={()=>setShowBreakdown(b=>!b)} style={{
+              background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',
+              borderRadius:6,padding:'5px 10px',fontSize:10,color:'var(--text-muted)',
+              cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,
+            }}>
+              {showBreakdown?'▲':'▼'} How is this calculated?
+            </button>
+          </div>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:8,padding:'12px 14px'}}>
+                <div style={{fontSize:9,fontWeight:700,color:'#10b981',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:4}}>✓ Revenue Dispatched</div>
+                <div style={{fontSize:20,fontWeight:800,color:'#10b981'}}>{fmtCur(d.dispatchedRev)}</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{d.dispatched} orders shipped</div>
+              </div>
+              <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:'12px 14px'}}>
+                <div style={{fontSize:9,fontWeight:700,color:'#ef4444',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:4}}>⏳ Revenue Stuck</div>
+                <div style={{fontSize:20,fontWeight:800,color:'#ef4444'}}>{fmtCur(d.pendingRev)}</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{d.pendingCount} orders waiting</div>
+              </div>
+            </div>
+          </div>
+          {urgency && (
+            <div style={{maxWidth:240,background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:'12px 14px'}}>
+              <div style={{fontSize:11,fontWeight:800,color:'#ef4444',marginBottom:6}}>{urgency.label}</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.6}}>{urgency.msg}</div>
+              <div style={{marginTop:10,fontSize:10,color:'#f59e0b',fontStyle:'italic'}}>
+                You're sitting on {fmtCur(d.pendingRev)} in potential profit — every hour it stays unshipped, you're leaving money on the table.
+              </div>
+            </div>
+          )}
+          {!urgency && (
+            <div style={{maxWidth:200,background:'rgba(16,185,129,0.06)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:8,padding:'12px 14px'}}>
+              <div style={{fontSize:11,fontWeight:800,color:'#10b981',marginBottom:6}}>🏆 Top performer!</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.6}}>Exceptional dispatch rate. Keep this up — fast shipping = happy customers = more orders.</div>
+            </div>
+          )}
+        </div>
+
+        {/* Breakdown dropdown */}
+        {showBreakdown && (
+          <div style={{marginTop:16,padding:16,background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text)',marginBottom:10}}>📊 Dispatch Rate Breakdown</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:12}}>
+              <div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,fontWeight:600}}>✅ DISPATCHED ({d.dispatched} orders)</div>
+                {DISPATCHED_STAGES.map(s=>(
+                  <div key={s} style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#10b981',padding:'2px 0'}}>
+                    <span style={{textTransform:'capitalize'}}>{s==='ready'?'Ready to Ship':s==='pickup'?'Pickup Pending':s==='transit'?'In Transit':s==='delivered'?'Delivered':'RTO'}</span>
+                    <span style={{color:'var(--text-muted)'}}>counted ✓</span>
+                  </div>
+                ))}
+                <div style={{fontSize:10,color:'#10b981',padding:'2px 0',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4}}>+ Any confirmed order with AWB</div>
+              </div>
+              <div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,fontWeight:600}}>⏳ PENDING ({d.pendingCount} orders)</div>
+                {['confirmed','partial'].map(s=>(
+                  <div key={s} style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#ef4444',padding:'2px 0'}}>
+                    <span style={{textTransform:'capitalize'}}>{s==='partial'?'Partial / Advance':s}</span>
+                    <span style={{color:'var(--text-muted)'}}>not yet shipped</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{fontSize:10,color:'var(--text-muted)',borderTop:'1px solid rgba(255,255,255,0.08)',paddingTop:8}}>
+              <strong style={{color:'var(--text)'}}>Formula:</strong> Dispatched ÷ Total Active × 100<br/>
+              <strong style={{color:'var(--text)'}}>Total Active</strong> = all orders in stages: {ACTIVE_STAGES.join(', ')}<br/>
+              <strong style={{color:'var(--text)'}}>Period:</strong> {periodLabel || 'All Time'}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   /* ══════════════════════════════════
      DASHBOARD VIEW
   ══════════════════════════════════ */
-  function Dashboard({ stats, orders, loading, onOpenOrder }) {
+  function Dashboard({ stats, orders, loading, onOpenOrder, period, onPeriodChange }) {
     const recent = orders.slice(0,8);
+    const periodSub = period ? period.label : 'All Time';
     return (
       <div className="page">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>Showing data for <strong style={{color:'var(--text)'}}>{periodSub}</strong></div>
+          {onPeriodChange && <PeriodPicker period={period} onChange={onPeriodChange} align="right"/>}
+        </div>
         <div className="stats-grid">
-          <StatCard color="green"  icon="◈" label="Total Orders"  value={stats?.total?.toLocaleString()||'—'} sub="all time"/>
-          <StatCard color="teal"   icon="₹" label="Your Revenue"  value={stats ? fmtCur(stats.revenue) : '—'} sub="all time"/>
+          <StatCard color="green"  icon="◈" label="Total Orders"  value={stats?.total?.toLocaleString()||'—'} sub={periodSub}/>
+          <StatCard color="teal"   icon="₹" label="Your Revenue"  value={stats ? fmtCur(stats.revenue) : '—'} sub={periodSub}/>
           <StatCard color="purple" icon="~" label="Avg Order"     value={stats ? fmtCur(stats.avg) : '—'} sub="per order"/>
           <StatCard color="green"  icon="✓" label="Fulfilled"     value={stats?.fulfilled?.toLocaleString()||'—'} sub={stats?.total?`${Math.round(stats.fulfilled/stats.total*100)}%`:''}/>
           <StatCard color="yellow" icon="○" label="Pending"       value={stats?.pending?.toLocaleString()||'—'} sub={stats?.total?`${Math.round(stats.pending/stats.total*100)}%`:''}/>
         </div>
+
+        {/* ── Dispatch Rate Card ─────────────────────────────── */}
+        <DispatchCard stats={stats} periodLabel={period?.label}/>
 
         <div className="card">
           <div className="card-header">
@@ -1337,7 +1604,7 @@
   /* ══════════════════════════════════
      ORDERS VIEW
   ══════════════════════════════════ */
-  function Orders({ orders, loading, onOpenOrder, token, onRefresh }) {
+  function Orders({ orders, loading, onOpenOrder, token, onRefresh, stats, period, onPeriodChange }) {
     const [search, setSearch]   = useState('');
     const [stage,  setStage]    = useState('all');
     const [sort,   setSort]     = useState('date');
@@ -1424,6 +1691,13 @@
 
     return (
       <div className="page" style={{padding: isMobile ? '0' : undefined}}>
+
+        {/* ── Period Picker + Dispatch Rate Card ── */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:8,padding:isMobile?'12px 12px 0':0}}>
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>Orders for <strong style={{color:'var(--text)'}}>{period?.label||'All Time'}</strong></div>
+          {onPeriodChange && <PeriodPicker period={period} onChange={onPeriodChange} align="right"/>}
+        </div>
+        <DispatchCard stats={stats} periodLabel={period?.label}/>
 
         {/* Search — mobile style */}
         <div style={{padding: isMobile?'12px 12px 8px':'0 0 10px', background: isMobile?'var(--bg-card)':undefined, position: isMobile?'sticky':'static', top: isMobile?54:undefined, zIndex:50, borderBottom: isMobile?'1px solid var(--border)':'none'}}>
@@ -1889,6 +2163,132 @@
   }
 
   /* ══════════════════════════════════
+     VENDOR RETURNS VIEW
+  ══════════════════════════════════ */
+  function VendorReturns({ token }) {
+    const [requests, setRequests] = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [tab,      setTab]      = useState('all');
+    const [expanded, setExpanded] = useState(null);
+    const [noteVal,  setNoteVal]  = useState('');
+    const [saving,   setSaving]   = useState(false);
+    const [msg,      setMsg]      = useState(null);
+
+    const load = () => {
+      setLoading(true);
+      const q = tab !== 'all' ? `?status=${tab}` : '';
+      fetch(`${API}/vendor/return-requests${q}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setRequests(d.requests||[])).catch(()=>{}).finally(()=>setLoading(false));
+    };
+    useEffect(load, [tab]);
+
+    const saveNote = async (id) => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/return-requests/${id}`, {
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ vendor_note: noteVal }),
+        });
+        if (!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Note saved.'});
+        load();
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const TYPE_COLOR = { return:'var(--blue)', exchange:'var(--green)' };
+    const STATUS_COLOR = { pending:'var(--yellow)', approved:'var(--green)', rejected:'var(--red)', completed:'var(--teal)' };
+    const TABS = ['all','pending','approved','rejected','completed'];
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+          {TABS.map(t=>(
+            <button key={t} onClick={()=>setTab(t)} style={{
+              padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',
+              background:tab===t?'var(--green-dim)':'var(--bg-card2)',
+              color:tab===t?'var(--green)':'var(--text-muted)',
+              fontFamily:'IBM Plex Mono,monospace',fontSize:11,fontWeight:tab===t?700:400,
+              textTransform:'capitalize',
+            }}>{t}</button>
+          ))}
+        </div>
+
+        {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">Return & Exchange Requests</span></div>
+          {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div> : (
+            <div style={{overflowX:'auto'}}>
+              {requests.length === 0 ? (
+                <div style={{padding:32,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>No requests found.</div>
+              ) : (
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:'1px solid var(--border)'}}>
+                      {['Request ID','Order','Customer','Type','Items','Status','Date',''].map(h=>(
+                        <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,letterSpacing:1,color:'var(--text-muted)',textTransform:'uppercase',whiteSpace:'nowrap'}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requests.map(rq=>{
+                      const isExp = expanded===rq.request_id;
+                      return (
+                        <React.Fragment key={rq.request_id}>
+                          <tr style={{borderBottom:'1px solid var(--border)',background:isExp?'var(--bg-hover)':'',cursor:'pointer'}} onClick={()=>{ setExpanded(isExp?null:rq.request_id); setNoteVal(rq.vendor_note||''); setMsg(null); }}>
+                            <td style={{padding:'9px 12px',color:'var(--teal)',fontWeight:700,whiteSpace:'nowrap'}}>{rq.request_id}</td>
+                            <td style={{padding:'9px 12px',color:'var(--text)',whiteSpace:'nowrap'}}>{rq.order_name}</td>
+                            <td style={{padding:'9px 12px',color:'var(--text-dim)'}}>{rq.customer_name||rq.customer_email}</td>
+                            <td style={{padding:'9px 12px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${TYPE_COLOR[rq.type]||'var(--border)'}`,color:TYPE_COLOR[rq.type]||'var(--text)',borderRadius:99,padding:'3px 10px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.type}</span></td>
+                            <td style={{padding:'9px 12px',color:'var(--text-dim)'}}>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</td>
+                            <td style={{padding:'9px 12px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${STATUS_COLOR[rq.status]||'var(--border)'}`,color:STATUS_COLOR[rq.status]||'var(--text)',borderRadius:99,padding:'3px 10px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.status}</span></td>
+                            <td style={{padding:'9px 12px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{rq.created_at?.split('T')[0]}</td>
+                            <td style={{padding:'9px 12px',color:'var(--text-muted)'}}>{isExp?'▲':'▼'}</td>
+                          </tr>
+                          {isExp && (
+                            <tr><td colSpan={8} style={{padding:'0 0 0 0',background:'var(--bg-hover)'}}>
+                              <div style={{padding:'14px 16px'}}>
+                                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>Reason: <span style={{color:'var(--text)'}}>{rq.reason}</span></div>
+                                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Items:</div>
+                                <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>
+                                  {(rq.items||[]).map((it,i)=>(
+                                    <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',fontSize:12}}>
+                                      <span style={{color:'var(--text)'}}>{it.title}</span>
+                                      {it.variant_title&&<span style={{color:'var(--text-muted)'}}> · {it.variant_title}</span>}
+                                      <span style={{color:'var(--text-dim)'}}> × {it.qty}</span>
+                                      {it.exchange_size_label&&<span style={{color:'var(--green)'}}> → {it.exchange_size_label}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                                {rq.admin_note && <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Admin note: <span style={{color:'var(--yellow)'}}>{rq.admin_note}</span></div>}
+                                <div style={{marginBottom:6,fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Your Note</div>
+                                <textarea
+                                  style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,minHeight:60,outline:'none',resize:'vertical'}}
+                                  placeholder="Add a note for the customer/admin…"
+                                  value={noteVal}
+                                  onChange={e=>setNoteVal(e.target.value)}
+                                />
+                                <button className="btn btn-green" style={{marginTop:8,fontSize:11,padding:'7px 16px'}} onClick={()=>saveNote(rq.request_id)} disabled={saving}>
+                                  {saving?<><span className="spin">↻</span> Saving…</>:'Save Note'}
+                                </button>
+                              </div>
+                            </td></tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      PROFILE VIEW
   ══════════════════════════════════ */
   function Profile({ token }) {
@@ -2020,6 +2420,113 @@
             </div>
             <button className="btn btn-green" onClick={changePassword} disabled={chgSaving} style={{width:'100%'}}>
               {chgSaving?<><span className="spin">↻</span> Saving…</>:'🔒 Change Password'}
+            </button>
+          </div>
+        </div>
+
+        {/* Return & Exchange Settings */}
+        <ReturnConfig token={token}/>
+      </div>
+    );
+  }
+
+  function ReturnConfig({ token }) {
+    const EMPTY_CFG = { exchange_enabled:true, return_enabled:true, return_window_days:7, return_address:{name:'',address1:'',city:'',state:'',pincode:'',phone:''} };
+    const [cfg,     setCfg]    = useState(EMPTY_CFG);
+    const [loading, setLoading]= useState(true);
+    const [saving,  setSaving] = useState(false);
+    const [msg,     setMsg]    = useState(null);
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/return-config`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ if(d.config) setCfg({...EMPTY_CFG,...d.config,return_address:{...EMPTY_CFG.return_address,...(d.config.return_address||{})}}); })
+        .catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    const updAddr = (k,v) => setCfg(p=>({...p,return_address:{...p.return_address,[k]:v}}));
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/return-config`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(cfg)});
+        if(!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Return settings saved.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    if(loading) return <div className="card" style={{padding:20,color:'var(--text-muted)',fontSize:12}}><span className="spin">↻</span> Loading return settings…</div>;
+
+    return (
+      <div className="card" style={{marginTop:14}}>
+        <div className="card-header">
+          <span className="card-title">📦 Return & Exchange Settings</span>
+          <span className="card-sub">Configure how customers can return or exchange items</span>
+        </div>
+        <div style={{padding:16}}>
+          {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+          {/* Exchange toggle — always locked on */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 0',borderBottom:'1px solid var(--border)'}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>🔄 Exchange</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>Always enabled — customers can always request exchanges</div>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:10,color:'var(--text-muted)'}}>🔒 Locked</span>
+              <div style={{width:42,height:24,borderRadius:12,background:'var(--green)',border:'1px solid var(--green)',display:'flex',alignItems:'center',padding:'0 3px',cursor:'not-allowed',opacity:0.7}}>
+                <div style={{width:18,height:18,borderRadius:50,background:'#000',marginLeft:'auto'}}/>
+              </div>
+            </div>
+          </div>
+
+          {/* Return toggle */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 0',borderBottom:'1px solid var(--border)'}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>↩ Returns</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>Allow customers to request returns / refunds</div>
+            </div>
+            <div
+              onClick={()=>setCfg(p=>({...p,return_enabled:!p.return_enabled}))}
+              style={{width:42,height:24,borderRadius:12,background:cfg.return_enabled?'var(--green)':'var(--border)',border:'1px solid '+(cfg.return_enabled?'var(--green)':'var(--border)'),display:'flex',alignItems:'center',padding:'0 3px',cursor:'pointer',transition:'all 0.2s'}}
+            >
+              <div style={{width:18,height:18,borderRadius:50,background:'#000',marginLeft:cfg.return_enabled?'auto':'0',transition:'margin 0.2s'}}/>
+            </div>
+          </div>
+
+          {/* Return window */}
+          <div style={{padding:'12px 0',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>Return Window</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>Days after delivery customer can raise a return</div>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <input
+                type="number" min={1} max={90}
+                style={{width:70,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:13,outline:'none',textAlign:'center'}}
+                value={cfg.return_window_days}
+                onChange={e=>setCfg(p=>({...p,return_window_days:parseInt(e.target.value)||7}))}
+              />
+              <span style={{fontSize:12,color:'var(--text-muted)'}}>days</span>
+            </div>
+          </div>
+
+          {/* Return/Pickup address */}
+          <div style={{paddingTop:14}}>
+            <div style={{fontSize:12,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:12}}>Return / Pickup Address</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              {[{k:'name',l:'Contact Name'},{k:'address1',l:'Address',full:true},{k:'city',l:'City'},{k:'state',l:'State'},{k:'pincode',l:'Pincode'},{k:'phone',l:'Phone'}].map(f=>(
+                <div key={f.k} style={f.full?{gridColumn:'1/-1'}:{}}>
+                  <label className="form-label">{f.l}</label>
+                  <input className="form-input" type="text" value={cfg.return_address?.[f.k]||''} onChange={e=>updAddr(f.k,e.target.value)}/>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{marginTop:14,display:'flex',justifyContent:'flex-end'}}>
+            <button className="btn btn-green" onClick={save} disabled={saving}>
+              {saving?<><span className="spin">↻</span> Saving…</>:'✓ Save Return Settings'}
             </button>
           </div>
         </div>
@@ -2419,12 +2926,25 @@
   }
 
   function App() {
-    const [auth,    setAuth]    = useState(()=>ls.get('vendor_auth',null));
+    const [auth,    setAuth]    = useState(()=>{
+      // Admin impersonation: ?token=XXX in URL auto-logins without credentials
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        const impersonatedAuth = { token: urlToken, vendorName: '…', impersonated: true };
+        ls.set('vendor_auth', impersonatedAuth);
+        // Clean token from URL without reload
+        window.history.replaceState({}, '', window.location.pathname);
+        return impersonatedAuth;
+      }
+      return ls.get('vendor_auth', null);
+    });
     const [view,    setView]    = useState('dashboard');
     const [orders,  setOrders]  = useState([]);
     const [stats,   setStats]   = useState(null);
     const [loading, setLoading] = useState(false);
     const [lastRef, setLastRef] = useState(null);
+    const [period,  setPeriod]  = useState(PERIOD_PRESETS[3]); // Last 30 Days
     const [modal,   setModal]   = useState(null); // selected order
     const [autoDelay, setAutoDelay] = useState(false); // scroll to delay section on open
     const [loginErr,setLoginErr]= useState('');
@@ -2460,13 +2980,18 @@
     };
 
     /* fetch data */
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (p) => {
       if(!auth) return;
+      const per = p || period;
       setLoading(true);
       try {
+        const fromISO = per.from ? `${per.from}T00:00:00Z` : '2000-01-01T00:00:00Z';
+        const toISO   = per.to   ? `${per.to}T23:59:59Z`   : null;
+        const oParams = `created_at_min=${encodeURIComponent(fromISO)}${toISO?`&created_at_max=${encodeURIComponent(toISO)}`:''}`;
+        const sParams = `from=${encodeURIComponent(per.from||'2000-01-01')}&to=${encodeURIComponent(per.to||isoToday())}`;
         const [oRes, sRes] = await Promise.all([
-          fetch(`${API}/vendor/orders`,{headers:{Authorization:`Bearer ${auth.token}`}}),
-          fetch(`${API}/vendor/stats`, {headers:{Authorization:`Bearer ${auth.token}`}}),
+          fetch(`${API}/vendor/orders?${oParams}`,{headers:{Authorization:`Bearer ${auth.token}`}}),
+          fetch(`${API}/vendor/stats?${sParams}`, {headers:{Authorization:`Bearer ${auth.token}`}}),
         ]);
         if(oRes.status===401||sRes.status===401){ logout(); return; }
         const oData = await oRes.json();
@@ -2476,7 +3001,7 @@
         setLastRef(new Date());
       } catch{}
       setLoading(false);
-    },[auth]);
+    },[auth, period]);
 
     useEffect(()=>{
       if(auth) {
@@ -2494,7 +3019,7 @@
           }
         });
       }
-    },[auth]);
+    },[auth]); // eslint-disable-line
 
     /* ── Login screen ── */
     if(!auth) return (
@@ -2522,12 +3047,13 @@
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'wallet',      icon:'◉', label:'Wallet',       section:'finance' },
       { id:'shopifysync', icon:'🔄', label:'Shopify Sync',  section:'finance' },
+      { id:'returns',     icon:'↩', label:'Returns',      section:'main' },
       { id:'profile',     icon:'⚙', label:'My Profile',   section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Store', finance:'Finance' };
 
-    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', shipping:'Shipping Partners', settlements:'Settlements', wallet:'Wallet', profile:'My Profile' };
+    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', shipping:'Shipping Partners', settlements:'Settlements', wallet:'Wallet', returns:'Returns', profile:'My Profile' };
     const closeSidebar = () => setSidebarOpen(false);
 
     // Bottom nav shows most important 5 items
@@ -2599,13 +3125,14 @@
               <button className="btn btn-sm" style={{background:'#f59e0b',color:'#000',fontWeight:700,whiteSpace:'nowrap'}} onClick={()=>setView('profile')}>Change Now →</button>
             </div>
           )}
-          {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal}/>}
-          {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData}/>}
+          {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
+          {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
           {view==='settlements' && <Settlements       token={auth.token} stats={stats}/>}
           {view==='wallet'      && <Wallet            token={auth.token}/>}
           {view==='shopifysync' && <ShopifySync token={auth.token} vendorName={auth.vendorName}/>}
+          {view==='returns'     && <VendorReturns     token={auth.token}/>}
           {view==='profile'     && <Profile           token={auth.token}/>}
         </div>
 

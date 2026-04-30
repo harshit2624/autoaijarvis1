@@ -1414,6 +1414,91 @@
     );
   }
 
+  function VendorDispatchCard({ v, color, rank }) {
+    const [open, setOpen] = useState(false);
+    const fmtCur = n => { try { return new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0); } catch { return `₹${(n||0).toFixed(0)}`; } };
+    const DISPATCHED_STAGES = ['ready','pickup','transit','delivered','rto'];
+    const PENDING_STAGES    = ['confirmed','partial'];
+    return (
+      <div style={{background:`linear-gradient(135deg,#0d1f2d 0%,#0a1520 100%)`,border:`1px solid ${color}44`,borderRadius:10,padding:'16px 20px',position:'relative',overflow:'hidden'}}>
+        <div style={{position:'absolute',top:-30,right:-30,width:90,height:90,borderRadius:'50%',background:`${color}0d`,pointerEvents:'none'}}/>
+
+        {/* Header row */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:28,height:28,borderRadius:'50%',background:`${color}22`,border:`1px solid ${color}66`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:800,color}}>
+              {rank}
+            </div>
+            <div>
+              <div style={{fontWeight:700,fontSize:14,color:'var(--text)'}}>{v.vendor}</div>
+              {v.pendingOld>0 && <div style={{fontSize:10,color:'#ef4444',marginTop:1}}>⚠ {v.pendingOld} orders stuck 48hr+</div>}
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:16}}>
+            <div style={{textAlign:'right'}}>
+              <div style={{fontSize:32,fontWeight:900,color,lineHeight:1}}>{v.dispatchRate}%</div>
+              <div style={{fontSize:10,color:'var(--text-muted)'}}>{v.dispatched}/{v.confirmed} dispatched</div>
+            </div>
+            <div style={{width:50,height:50,position:'relative'}}>
+              <svg viewBox="0 0 36 36" style={{transform:'rotate(-90deg)'}}>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3"/>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke={color} strokeWidth="3"
+                  strokeDasharray={`${v.dispatchRate} ${100-v.dispatchRate}`} strokeLinecap="round"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* Revenue bars */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'8px 10px'}}>
+            <div style={{fontSize:8,fontWeight:700,color:'#10b981',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>✓ Dispatched Revenue</div>
+            <div style={{fontSize:15,fontWeight:800,color:'#10b981'}}>{fmtCur(v.dispatchedRev)}</div>
+            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{v.dispatched} orders</div>
+          </div>
+          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'8px 10px'}}>
+            <div style={{fontSize:8,fontWeight:700,color:'#ef4444',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>⏳ Pending Revenue</div>
+            <div style={{fontSize:15,fontWeight:800,color:'#ef4444'}}>{fmtCur(v.pendingRev)}</div>
+            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{v.pending} orders waiting</div>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden',marginBottom:8}}>
+          <div style={{height:'100%',width:`${v.dispatchRate}%`,background:color,borderRadius:2,transition:'width 0.6s ease'}}/>
+        </div>
+
+        {/* Breakdown toggle */}
+        <button onClick={()=>setOpen(o=>!o)} style={{
+          background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.1)',
+          borderRadius:5,padding:'4px 10px',fontSize:10,color:'var(--text-muted)',
+          cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,
+        }}>
+          {open?'▲':'▼'} Breakdown
+        </button>
+
+        {open && (
+          <div style={{marginTop:10,padding:12,background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,fontSize:10}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:8}}>
+              <div>
+                <div style={{color:'var(--text-muted)',fontWeight:600,marginBottom:4}}>✅ DISPATCHED STAGES</div>
+                {DISPATCHED_STAGES.map(s=><div key={s} style={{color:'#10b981',padding:'1px 0',textTransform:'capitalize'}}>{s==='ready'?'Ready to Ship':s==='pickup'?'Pickup Pending':s==='transit'?'In Transit':s==='delivered'?'Delivered':'RTO'} ✓</div>)}
+                <div style={{color:'#10b981',padding:'1px 0'}}>+ Any with AWB ✓</div>
+              </div>
+              <div>
+                <div style={{color:'var(--text-muted)',fontWeight:600,marginBottom:4}}>⏳ PENDING STAGES</div>
+                {PENDING_STAGES.map(s=><div key={s} style={{color:'#ef4444',padding:'1px 0',textTransform:'capitalize'}}>{s==='partial'?'Partial / Advance':s} ✗</div>)}
+              </div>
+            </div>
+            <div style={{color:'var(--text-muted)',borderTop:'1px solid rgba(255,255,255,0.08)',paddingTop:6}}>
+              <strong style={{color:'var(--text)'}}>Formula:</strong> {v.dispatched} dispatched ÷ {v.confirmed} total active × 100 = <strong style={{color}}>{v.dispatchRate}%</strong>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function Dashboard({ token, onStageClick }) {
     const [data,      setData]      = useState(null);
     const [analytics, setAnalytics] = useState(null);
@@ -1582,11 +1667,18 @@
           <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:12,flexWrap:'wrap',gap:8}}>
             <span className="card-title">📊 Founder Analytics</span>
             <div style={{display:'flex',gap:6}}>
-              {['overview','products','brands','cities'].map(t=>(
-                <button key={t} onClick={()=>setATab(t)}
-                  style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',
-                    background:aTab===t?'var(--indigo)':'transparent',color:aTab===t?'#fff':'var(--text-muted)',cursor:'pointer',textTransform:'capitalize'}}>
-                  {t}
+              {[
+                {id:'overview', label:'Overview'},
+                {id:'vendors',  label:'🚚 Vendor Fulfillment'},
+                {id:'products', label:'Products'},
+                {id:'brands',   label:'Brands'},
+                {id:'cities',   label:'Cities'},
+              ].map(t=>(
+                <button key={t.id} onClick={()=>setATab(t.id)}
+                  style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid '+(aTab===t.id?'var(--indigo)':'var(--border)'),
+                    background:aTab===t.id?'var(--indigo)':'transparent',color:aTab===t.id?'#fff':'var(--text-muted)',cursor:'pointer',
+                    fontWeight:t.id==='vendors'&&aTab!==t.id?600:400}}>
+                  {t.label}
                 </button>
               ))}
             </div>
@@ -1696,6 +1788,21 @@
                   })}
                 </div>
               </div>
+            </div>
+
+          ) : aTab==='vendors' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>All-time vendor fulfillment · sorted by most pending orders · min 3 orders</div>
+              {!(a.vendorLeaderboard||[]).length ? (
+                <div style={{color:'var(--text-muted)',fontSize:12}}>No vendor data yet.</div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                  {(a.vendorLeaderboard||[]).map((v,i)=>{
+                    const color = v.dispatchRate>=80?'#10b981':v.dispatchRate>=50?'#f59e0b':'#ef4444';
+                    return <VendorDispatchCard key={v.vendor} v={v} color={color} rank={i+1}/>;
+                  })}
+                </div>
+              )}
             </div>
 
           ) : aTab==='products' ? (
@@ -2122,6 +2229,242 @@
   }
 
   /* ══════════════════════════════════
+     RETURN REQUESTS VIEW
+  ══════════════════════════════════ */
+  function ReturnRequests({ token }) {
+    const [requests, setRequests] = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [tab,      setTab]      = useState('all');
+    const [expanded, setExpanded] = useState(null);
+    const [noteVal,  setNoteVal]  = useState('');
+    const [saving,   setSaving]   = useState(false);
+    const [msg,      setMsg]      = useState(null);
+    const [retCfgVendor, setRetCfgVendor] = useState(null);
+    const [vendors,  setVendors]  = useState([]);
+
+    const load = () => {
+      setLoading(true);
+      const q = tab !== 'all' ? `?status=${tab}` : '';
+      fetch(`${API}/admin/return-requests${q}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setRequests(d.requests||[])).catch(()=>{}).finally(()=>setLoading(false));
+    };
+    useEffect(load, [tab]);
+    useEffect(()=>{
+      fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setVendors(d.vendors||[])).catch(()=>{});
+    },[]);
+
+    const updateRequest = async (id, fields) => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/return-requests/${id}`, {
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify(fields),
+        });
+        if (!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Updated.'});
+        load();
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const TYPE_COLOR = { return:'var(--cyan)', exchange:'var(--green)' };
+    const STATUS_COLOR = { pending:'var(--yellow)', approved:'var(--green)', rejected:'var(--red)', completed:'var(--teal)' };
+    const TABS = ['all','pending','approved','rejected','completed'];
+
+    return (
+      <div className="page">
+        {/* Tab bar */}
+        <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+          {TABS.map(t=>(
+            <button key={t} onClick={()=>setTab(t)} style={{
+              padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',
+              background:tab===t?'var(--indigo-dim)':'var(--bg-card2)',
+              color:tab===t?'var(--indigo)':'var(--text-muted)',
+              fontFamily:'IBM Plex Mono,monospace',fontSize:11,fontWeight:tab===t?700:400,
+              textTransform:'capitalize',
+            }}>{t}</button>
+          ))}
+          <button onClick={()=>setRetCfgVendor(retCfgVendor?null:'__open')} style={{padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',background:retCfgVendor?'var(--yellow-bg)':'var(--bg-card2)',color:retCfgVendor?'var(--yellow)':'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,marginLeft:'auto'}}>
+            ⚙ Vendor Return Config
+          </button>
+        </div>
+
+        {/* Vendor return config panel */}
+        {retCfgVendor && <VendorReturnConfigPanel token={token} vendors={vendors} onClose={()=>setRetCfgVendor(null)}/>}
+
+        {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">Return & Exchange Requests</span></div>
+          {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div> : (
+            <div style={{overflowX:'auto'}}>
+              {requests.length === 0 ? (
+                <div style={{padding:32,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>No requests found.</div>
+              ) : (
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:'1px solid var(--border)'}}>
+                      {['Request ID','Order','Customer','Type','Items','Vendor','Status','Date','Actions'].map(h=>(
+                        <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:10,letterSpacing:1,color:'var(--text-muted)',textTransform:'uppercase',whiteSpace:'nowrap'}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requests.map(rq=>{
+                      const isExp = expanded===rq.request_id;
+                      return (
+                        <React.Fragment key={rq.request_id}>
+                          <tr style={{borderBottom:'1px solid var(--border)',background:isExp?'var(--bg-hover)':'',cursor:'pointer'}} onClick={()=>{ setExpanded(isExp?null:rq.request_id); setNoteVal(rq.admin_note||''); setMsg(null); }}>
+                            <td style={{padding:'8px 10px',color:'var(--cyan)',fontWeight:700,whiteSpace:'nowrap'}}>{rq.request_id}</td>
+                            <td style={{padding:'8px 10px',color:'var(--text)',whiteSpace:'nowrap'}}>{rq.order_name}</td>
+                            <td style={{padding:'8px 10px',color:'var(--text-dim)',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{rq.customer_name||rq.customer_email}</td>
+                            <td style={{padding:'8px 10px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${TYPE_COLOR[rq.type]||'var(--border)'}`,color:TYPE_COLOR[rq.type]||'var(--text)',borderRadius:99,padding:'2px 9px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.type}</span></td>
+                            <td style={{padding:'8px 10px',color:'var(--text-dim)'}}>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</td>
+                            <td style={{padding:'8px 10px',color:'var(--text-dim)',whiteSpace:'nowrap'}}>{rq.vendor_name||'—'}</td>
+                            <td style={{padding:'8px 10px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${STATUS_COLOR[rq.status]||'var(--border)'}`,color:STATUS_COLOR[rq.status]||'var(--text)',borderRadius:99,padding:'2px 9px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.status}</span></td>
+                            <td style={{padding:'8px 10px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{rq.created_at?.split('T')[0]}</td>
+                            <td style={{padding:'8px 10px'}} onClick={e=>e.stopPropagation()}>
+                              <div style={{display:'flex',gap:4}}>
+                                {rq.status==='pending'&&<><button onClick={()=>updateRequest(rq.request_id,{status:'approved'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--green)',background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>✓</button><button onClick={()=>updateRequest(rq.request_id,{status:'rejected'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>✗</button></>}
+                                {rq.status==='approved'&&<button onClick={()=>updateRequest(rq.request_id,{status:'completed'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--teal)',background:'#042f2e',color:'var(--teal)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>Done</button>}
+                              </div>
+                            </td>
+                          </tr>
+                          {isExp && (
+                            <tr><td colSpan={9} style={{background:'var(--bg-hover)',padding:0}}>
+                              <div style={{padding:'14px 16px'}}>
+                                <div style={{display:'flex',gap:24,flexWrap:'wrap',marginBottom:12}}>
+                                  <div><span style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1}}>CUSTOMER</span><div style={{fontSize:12,color:'var(--text)',marginTop:3}}>{rq.customer_name} · {rq.customer_email} {rq.customer_phone?`· ${rq.customer_phone}`:''}</div></div>
+                                  <div><span style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1}}>REASON</span><div style={{fontSize:12,color:'var(--text)',marginTop:3}}>{rq.reason}</div></div>
+                                </div>
+                                <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>
+                                  {(rq.items||[]).map((it,i)=>(
+                                    <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',fontSize:12,display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+                                      <span style={{color:'var(--text)'}}>{it.title}{it.variant_title?` · ${it.variant_title}`:''} × {it.qty}</span>
+                                      {it.exchange_size_label&&<span style={{color:'var(--green)'}}>→ {it.exchange_size_label}</span>}
+                                      <span style={{color:'var(--text-muted)'}}>₹{it.price}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {rq.vendor_note&&<div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Vendor note: <span style={{color:'var(--yellow)'}}>{rq.vendor_note}</span></div>}
+                                <div style={{marginBottom:6,fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Admin Note</div>
+                                <textarea
+                                  style={{width:'100%',maxWidth:480,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,minHeight:60,outline:'none',resize:'vertical'}}
+                                  placeholder="Internal note…"
+                                  value={noteVal}
+                                  onChange={e=>setNoteVal(e.target.value)}
+                                />
+                                <button className="btn btn-primary" style={{marginTop:8,fontSize:11,padding:'7px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontWeight:700}} onClick={()=>updateRequest(rq.request_id,{admin_note:noteVal})} disabled={saving}>
+                                  {saving?<><span className="spin">↻</span> Saving…</>:'Save Note'}
+                                </button>
+                              </div>
+                            </td></tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function VendorReturnConfigPanel({ token, vendors, onClose }) {
+    const [selectedVendor, setSelectedVendor] = useState(vendors[0]||'');
+    const EMPTY = { exchange_enabled:true, return_enabled:true, return_window_days:7, return_address:{name:'',address1:'',city:'',state:'',pincode:'',phone:''} };
+    const [cfg,     setCfg]    = useState(EMPTY);
+    const [loading, setLoading]= useState(false);
+    const [saving,  setSaving] = useState(false);
+    const [msg,     setMsg]    = useState(null);
+
+    const loadCfg = async (v) => {
+      if (!v) return;
+      setLoading(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(v)}/return-config`,{headers:{Authorization:`Bearer ${token}`}});
+        const d = await r.json();
+        if (d.config) setCfg({...EMPTY,...d.config,return_address:{...EMPTY.return_address,...(d.config.return_address||{})}});
+      } catch {}
+      setLoading(false);
+    };
+    useEffect(()=>{ if(selectedVendor) loadCfg(selectedVendor); },[selectedVendor]);
+
+    const updAddr = (k,v) => setCfg(p=>({...p,return_address:{...p.return_address,[k]:v}}));
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(selectedVendor)}/return-config`,{
+          method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify(cfg),
+        });
+        if(!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Saved.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    return (
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span className="card-title">Vendor Return Config</span>
+          <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:16}}>✕</button>
+        </div>
+        <div style={{padding:16}}>
+          <div style={{marginBottom:14}}>
+            <label className="field-label">Select Vendor</label>
+            <select style={{width:'100%',maxWidth:260,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:7,padding:'8px 12px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none'}} value={selectedVendor} onChange={e=>setSelectedVendor(e.target.value)}>
+              {vendors.map(v=><option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+          {loading ? <div style={{color:'var(--text-muted)',fontSize:12}}><span className="spin">↻</span> Loading…</div> : (
+            <>
+              {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:12}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+              <div style={{display:'flex',gap:24,flexWrap:'wrap',marginBottom:14}}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:12,color:'var(--text)'}}>Exchange</span>
+                  <div style={{width:42,height:24,borderRadius:12,background:'var(--green)',border:'1px solid var(--green)',display:'flex',alignItems:'center',padding:'0 3px',cursor:'not-allowed',opacity:0.7}}>
+                    <div style={{width:18,height:18,borderRadius:50,background:'#000',marginLeft:'auto'}}/>
+                  </div>
+                  <span style={{fontSize:10,color:'var(--text-muted)'}}>Always on</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:12,color:'var(--text)'}}>Returns</span>
+                  <div onClick={()=>setCfg(p=>({...p,return_enabled:!p.return_enabled}))} style={{width:42,height:24,borderRadius:12,background:cfg.return_enabled?'var(--green)':'var(--border)',border:'1px solid '+(cfg.return_enabled?'var(--green)':'var(--border)'),display:'flex',alignItems:'center',padding:'0 3px',cursor:'pointer',transition:'all 0.2s'}}>
+                    <div style={{width:18,height:18,borderRadius:50,background:'#000',marginLeft:cfg.return_enabled?'auto':'0',transition:'margin 0.2s'}}/>
+                  </div>
+                  <span style={{fontSize:10,color:'var(--text-muted)'}}>{cfg.return_enabled?'Enabled':'Disabled'}</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:12,color:'var(--text)'}}>Window</span>
+                  <input type="number" min={1} max={90} style={{width:60,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.return_window_days} onChange={e=>setCfg(p=>({...p,return_window_days:parseInt(e.target.value)||7}))}/>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>days</span>
+                </div>
+              </div>
+              <div style={{fontSize:10,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>Return Address</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,maxWidth:480}}>
+                {[{k:'name',l:'Contact Name'},{k:'address1',l:'Address Line 1',full:true},{k:'city',l:'City'},{k:'state',l:'State'},{k:'pincode',l:'Pincode'},{k:'phone',l:'Phone'}].map(f=>(
+                  <div key={f.k} style={f.full?{gridColumn:'1/-1'}:{}}>
+                    <label className="field-label">{f.l}</label>
+                    <input className="field-input" type="text" value={cfg.return_address?.[f.k]||''} onChange={e=>updAddr(f.k,e.target.value)}/>
+                  </div>
+                ))}
+              </div>
+              <button onClick={save} disabled={saving} style={{marginTop:14,padding:'8px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',fontFamily:'IBM Plex Mono,monospace',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
+                {saving?<><span className="spin">↻</span> Saving…</>:'✓ Save Config'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      VENDORS VIEW
   ══════════════════════════════════ */
   function Vendors({ token }) {
@@ -2135,9 +2478,10 @@
     const [generating, setGenerating] = useState(false);
     const [sending,    setSending]    = useState(false);
     const [genResult,  setGenResult]  = useState(null);
-    const [resetting,  setResetting]  = useState({});
-    const [credMsg,    setCredMsg]    = useState(null);
-    const [showPass,   setShowPass]   = useState({});
+    const [resetting,     setResetting]     = useState({});
+    const [impersonating, setImpersonating] = useState({});
+    const [credMsg,       setCredMsg]       = useState(null);
+    const [showPass,      setShowPass]      = useState({});
 
     const load = ()=>{
       setLoading(true);
@@ -2177,6 +2521,17 @@
       setResetting(p=>({...p,[name]:false}));
       setCredMsg({type: d.success?'success':'error', text: d.success?`Password reset for ${name}`:(d.error||'Error')});
       loadCreds();
+    };
+
+    const openAsVendor = async name => {
+      setImpersonating(p=>({...p,[name]:true}));
+      try {
+        const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/impersonate`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        window.open(`/vendor.html?token=${d.token}`, '_blank');
+      } catch(e) { setCredMsg({type:'error',text:e.message}); }
+      setImpersonating(p=>({...p,[name]:false}));
     };
 
     const visible = search ? vendors.filter(v=>v.name.toLowerCase().includes(search.toLowerCase())) : vendors;
@@ -2310,9 +2665,16 @@
                         : <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'#052e16',color:'#10b981',border:'1px solid #065f46',fontWeight:700}}>✓ Password set</span>}
                     </td>
                     <td>
-                      <button className="btn btn-ghost btn-sm" disabled={!!resetting[c.vendor_name]} onClick={()=>resetPassword(c.vendor_name)}>
-                        {resetting[c.vendor_name]?'…':'↺ Reset Password'}
-                      </button>
+                      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                        <button className="btn btn-ghost btn-sm" disabled={!!resetting[c.vendor_name]} onClick={()=>resetPassword(c.vendor_name)}>
+                          {resetting[c.vendor_name]?'…':'↺ Reset Password'}
+                        </button>
+                        <button className="btn btn-sm" disabled={!!impersonating[c.vendor_name]}
+                          onClick={()=>openAsVendor(c.vendor_name)}
+                          style={{background:'var(--indigo)',color:'#fff',border:'none'}}>
+                          {impersonating[c.vendor_name]?'…':'↗ Open as Vendor'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -3491,7 +3853,7 @@
           setConnected(map);
         }).catch(()=>{});
     };
-    useEffect(()=>{ load(); }, [token]);
+    useEffect(()=>{ load(); fetchDlLogs(); }, [token]);
 
     const setField = (partnerId, key, val) =>
       setForms(f=>({ ...f, [partnerId]: { ...(f[partnerId]||{}), [key]: val } }));
@@ -3516,6 +3878,11 @@
       load();
     };
 
+    const [dlSyncing, setDlSyncing] = useState(false);
+    const [dlSyncMsg, setDlSyncMsg] = useState(null);
+    const [dlLogs,    setDlLogs]    = useState([]);
+    const [dlLogsOpen,setDlLogsOpen]= useState(true);
+
     const syncAll = async () => {
       setSyncing(true); setSyncResult(null);
       try {
@@ -3524,6 +3891,37 @@
         setSyncResult(d);
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSyncing(false);
+    };
+
+    const syncDelhivery = async () => {
+      setDlSyncing(true); setDlSyncMsg('Running…');
+      try {
+        await fetch(`${API}/admin/delhivery/sync`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        // Poll logs every 2s until a new run appears
+        const before = dlLogs[0]?.ran_at || '';
+        let attempts = 0;
+        const poll = setInterval(async () => {
+          attempts++;
+          await fetchDlLogs();
+          setDlLogs(prev => {
+            if (prev[0]?.ran_at !== before || attempts >= 15) {
+              clearInterval(poll);
+              setDlSyncing(false);
+              setDlSyncMsg('✓ Done — see log below');
+            }
+            return prev;
+          });
+        }, 2000);
+      } catch(e) { setDlSyncMsg('Error: ' + e.message); setDlSyncing(false); }
+    };
+
+    const fetchDlLogs = async () => {
+      try {
+        const r = await fetch(`${API}/admin/delhivery/logs`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setDlLogs(d.logs || []);
+        setDlLogsOpen(true);
+      } catch(e) {}
     };
 
     return (
@@ -3582,15 +3980,88 @@
         </div>
 
         <div className="card">
-          <div style={{padding:16,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <div>
-              <div style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>Bulk Sync Delivery Status</div>
-              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>Refresh delivery status for all orders with an AWB number using connected partners.</div>
-              {syncResult && <div style={{fontSize:11,color:'#10b981',marginTop:6}}>✓ Updated {syncResult.updated} orders{syncResult.message?` · ${syncResult.message}`:''}</div>}
+          <div style={{padding:16}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>Bulk Sync Delivery Status</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>Refresh delivery status for all orders with an AWB number using connected partners.</div>
+                {syncResult && <div style={{fontSize:11,color:'#10b981',marginTop:6}}>✓ Updated {syncResult.updated} orders{syncResult.message?` · ${syncResult.message}`:''}</div>}
+              </div>
+              <button className="btn btn-indigo" onClick={syncAll} disabled={syncing}>
+                {syncing ? <><span className="spin">↻</span> Syncing…</> : '↻ Sync All Now'}
+              </button>
             </div>
-            <button className="btn btn-indigo" onClick={syncAll} disabled={syncing}>
-              {syncing ? <><span className="spin">↻</span> Syncing…</> : '↻ Sync All Now'}
-            </button>
+            <div style={{borderRadius:8,background:'rgba(6,182,212,0.06)',border:'1px solid rgba(6,182,212,0.2)'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 14px'}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#06b6d4'}}>🚚 Delhivery Tracking Cron</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Auto-runs every 3 hours · checks all in-transit Delhivery AWBs and updates stage to Delivered/RTO automatically.</div>
+                  {dlSyncMsg && <div style={{fontSize:11,color:'#10b981',marginTop:4}}>{dlSyncMsg}</div>}
+                </div>
+                <div style={{display:'flex',gap:6,flexShrink:0}}>
+                  <button className="btn btn-sm btn-ghost" onClick={fetchDlLogs}>📋 View Logs</button>
+                  <button className="btn btn-sm" onClick={syncDelhivery} disabled={dlSyncing}
+                    style={{background:'#06b6d4',color:'#000',border:'none',fontWeight:600}}>
+                    {dlSyncing ? <><span className="spin">↻</span> Running…</> : '▶ Run Now'}
+                  </button>
+                </div>
+              </div>
+              {dlLogsOpen && (
+                <div style={{borderTop:'1px solid rgba(6,182,212,0.2)',padding:'10px 14px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Last {dlLogs.length} Runs</span>
+                    <button onClick={()=>setDlLogsOpen(false)} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12}}>✕</button>
+                  </div>
+                  {dlLogs.length===0 ? (
+                    <div style={{fontSize:11,color:'var(--text-muted)'}}>No logs yet — run the cron first.</div>
+                  ) : dlLogs.map((log,i)=>(
+                    <div key={i} style={{marginBottom:10,padding:'8px 10px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+                        <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{new Date(log.ran_at).toLocaleString('en-IN')}</span>
+                        <div style={{display:'flex',gap:8,fontSize:10}}>
+                          <span style={{color:'var(--text-muted)'}}>Checked: <strong style={{color:'var(--text)'}}>{log.checked||0}</strong></span>
+                          <span style={{color:'#10b981'}}>Updated: <strong>{log.updated||0}</strong></span>
+                          <span style={{color:'var(--text-muted)'}}>Skipped: {log.skipped||0}</span>
+                          {(log.errors||[]).length>0 && <span style={{color:'#ef4444'}}>Errors: {log.errors.length}</span>}
+                        </div>
+                      </div>
+                      {(()=>{
+                        const details = log.checked_detail || [];
+                        const updates = log.updates || [];
+                        const allRows = details.length > 0 ? details : updates.map(u=>({...u, action:'updated_to_'+u.to, delhivery_status:u.status, current_stage:u.from}));
+                        if (!allRows.length) return <div style={{fontSize:10,color:'var(--text-muted)'}}>{log.message||'No data.'}</div>;
+                        const actionColor = a => a?.startsWith('updated')?'#10b981':a==='not_found'?'#ef4444':a==='unmapped'?'#f59e0b':'var(--text-muted)';
+                        const actionLabel = a => a?.startsWith('updated_to_')?'→ '+a.replace('updated_to_','').toUpperCase():a==='not_found'?'Not Found':a==='no_change'?'No Change':a==='unmapped'?'Unknown Status':a;
+                        return (
+                          <div style={{marginTop:6,maxHeight:260,overflowY:'auto'}}>
+                            <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
+                              <thead><tr style={{color:'var(--text-muted)',borderBottom:'1px solid var(--border)'}}>
+                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Order</th>
+                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Vendor</th>
+                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>AWB</th>
+                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Delhivery Status</th>
+                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Result</th>
+                              </tr></thead>
+                              <tbody>
+                                {allRows.map((r,j)=>(
+                                  <tr key={j} style={{borderBottom:'1px solid var(--border)',background:r.action?.startsWith('updated')?'rgba(16,185,129,0.05)':r.action==='not_found'?'rgba(239,68,68,0.05)':'transparent'}}>
+                                    <td style={{padding:'3px 6px',color:'var(--indigo)',fontWeight:600}}>{r.shopify_id}</td>
+                                    <td style={{padding:'3px 6px',color:'var(--text-muted)',maxWidth:80,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.vendor}</td>
+                                    <td style={{padding:'3px 6px',fontFamily:'monospace',color:'var(--text-muted)',fontSize:9}}>{r.awb}</td>
+                                    <td style={{padding:'3px 6px',color:'var(--text)'}}>{r.delhivery_status}</td>
+                                    <td style={{padding:'3px 6px',fontWeight:700,color:actionColor(r.action)}}>{actionLabel(r.action)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -4556,18 +5027,36 @@
      JARVIS CHAT
   ══════════════════════════════════ */
   const JARVIS_PRESETS = [
-    { label:"Today's Summary",       query:"today's summary",            icon:"📅" },
-    { label:"Pending Orders",         query:"pending orders",             icon:"⏳" },
-    { label:"This Week",              query:"week summary",               icon:"📆" },
-    { label:"This Month",             query:"month summary",              icon:"🗓" },
-    { label:"Revenue Breakdown",      query:"revenue breakdown",          icon:"💰" },
-    { label:"COD vs Prepaid",         query:"cod vs prepaid",             icon:"💳" },
-    { label:"Top Products",           query:"top products",               icon:"🏆" },
-    { label:"Fulfilled Orders",       query:"fulfilled orders",           icon:"✅" },
-    { label:"Cancelled / RTO",        query:"cancelled rto return",       icon:"❌" },
-    { label:"Vendor Revenue",         query:"vendor revenue",             icon:"🏪" },
-    { label:"Settlements",            query:"settlement payout",          icon:"📄" },
-    { label:"Store Overview",         query:"store overview summary",     icon:"📊" },
+    { category:"📊 Overview", items:[
+      { label:"Today's Summary",        query:"give me today's full summary — orders, revenue, pending, dispatched",                                    icon:"📅" },
+      { label:"This Week",              query:"week summary with revenue, orders and fulfillment rate",                                                  icon:"📆" },
+      { label:"This Month",             query:"month summary — revenue, orders, COD vs prepaid, dispatch rate",                                          icon:"🗓" },
+      { label:"Store Overview",         query:"full store overview — all time stats, top vendors, delivery rate",                                        icon:"📊" },
+    ]},
+    { category:"🚚 Dispatch & Fulfillment", items:[
+      { label:"Overall Dispatch Rate",  query:"what is our overall dispatch rate this month? orders with AWB vs total confirmed",                         icon:"📦" },
+      { label:"Dispatch Rate/Vendor",   query:"show dispatch rate per vendor this month — who is dispatching well and who is not",                       icon:"🏪" },
+      { label:"Stuck Confirmed 48hr+",  query:"show all orders stuck in confirmed stage for more than 48 hours with no AWB",                             icon:"⚠️" },
+      { label:"Holding Multi-Vendor",   query:"which multi-vendor orders have one vendor still not shipped while others already dispatched?",             icon:"🔴" },
+      { label:"Vendor Fulfillment",     query:"show full vendor fulfillment performance — confirmed pending, dispatched, delivered, RTO, dispatch rate",  icon:"📋" },
+    ]},
+    { category:"💰 COD & Revenue", items:[
+      { label:"COD Outstanding",        query:"how much COD amount is outstanding — in transit and not yet collected?",                                  icon:"💵" },
+      { label:"Advance Unshipped",      query:"show orders where advance is collected but items not yet dispatched",                                      icon:"⏳" },
+      { label:"COD vs Prepaid",         query:"COD vs prepaid split this month — counts and revenue",                                                   icon:"💳" },
+      { label:"Revenue by Vendor",      query:"revenue breakdown by vendor this month",                                                                  icon:"💰" },
+    ]},
+    { category:"❌ RTO & Returns", items:[
+      { label:"RTO Rate",               query:"what is our overall RTO rate? which vendors and cities have the most RTOs?",                              icon:"↩️" },
+      { label:"Orders in Transit 7d+",  query:"show orders stuck in transit for more than 7 days — possible lost or delayed shipments",                 icon:"🚨" },
+      { label:"RTO by City",            query:"which cities have the highest RTO rate?",                                                                 icon:"🗺️" },
+    ]},
+    { category:"🏪 Vendors", items:[
+      { label:"On Hold Orders",         query:"how many orders are on hold right now and for how long?",                                                 icon:"⏸️" },
+      { label:"Pending Penalties",      query:"which vendors have pending penalties right now?",                                                         icon:"⚡" },
+      { label:"Top Vendors",            query:"top 5 vendors by revenue and order count this month",                                                     icon:"🏆" },
+      { label:"Settlements",            query:"pending settlement payouts — how much is owed to each vendor?",                                           icon:"📄" },
+    ]},
   ];
 
   function JarvisChat({ token }) {
@@ -4611,12 +5100,19 @@
             <span className="chat-sub">Powered by Claude AI · Live store data</span>
           </div>
 
-          {/* Quick report buttons */}
-          <div style={{padding:'12px 20px 0',display:'flex',flexWrap:'wrap',gap:6,borderBottom:'1px solid var(--border)',paddingBottom:12}}>
-            {JARVIS_PRESETS.map(p => (
-              <button key={p.query} className="suggestion" style={{fontSize:10}} onClick={() => send(p.query)} disabled={loading}>
-                {p.icon} {p.label}
-              </button>
+          {/* Quick report buttons — grouped by category */}
+          <div style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',maxHeight:160,overflowY:'auto'}}>
+            {JARVIS_PRESETS.map(cat => (
+              <div key={cat.category} style={{marginBottom:8}}>
+                <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:4}}>{cat.category}</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                  {cat.items.map(p => (
+                    <button key={p.query} className="suggestion" style={{fontSize:10}} onClick={() => send(p.query)} disabled={loading}>
+                      {p.icon} {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
 
@@ -4708,6 +5204,7 @@
       { id:'orders',      icon:'◎', label:'Orders',       section:'main' },
       { id:'vendors',     icon:'🏪', label:'Vendors',      section:'main' },
       { id:'jarvis',      icon:'⚡', label:'JARVIS AI',    section:'main' },
+      { id:'returns',     icon:'↩', label:'Returns',       section:'main' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'settings',    icon:'⚙', label:'Settings',     section:'finance' },
       { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
@@ -4775,6 +5272,7 @@
           {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick}/>}
           {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
           {view==='vendors'     && <Vendors     token={token}/>}
+          {view==='returns'     && <ReturnRequests token={token}/>}
           {view==='jarvis'      && <JarvisChat  token={token}/>}
           {view==='settlements' && <Settlements token={token}/>}
           {view==='settings'    && <Settings    token={token}/>}

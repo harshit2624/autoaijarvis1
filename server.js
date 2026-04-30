@@ -1794,7 +1794,7 @@ const JARVIS_TOOLS = [
         type: "object",
         properties: {
           type: { type: "string", enum: ["repeat","top_spenders","all","city_breakdown"], description: "What customer data to fetch" },
-          limit: { type: "number", description: "Max results to return (default 20)" },
+          limit: { type: "string", description: "Max results to return as a number string e.g. '20'" },
         },
         required: ["type"],
       },
@@ -1809,7 +1809,7 @@ const JARVIS_TOOLS = [
         type: "object",
         properties: {
           sort_by: { type: "string", enum: ["units","revenue"], description: "Sort by units sold or revenue" },
-          limit: { type: "number", description: "Max results (default 10)" },
+          limit: { type: "string", description: "Max results as a number string e.g. '10'" },
           period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
         },
         required: ["sort_by"],
@@ -1866,7 +1866,7 @@ const JARVIS_TOOLS = [
           stage:    { type: "string", description: "Internal stage from order_meta: rto, advance_paid, etc." },
           vendor:   { type: "string", description: "Filter by vendor name" },
           period:   { type: "string", enum: ["today","week","month","all"], description: "Time period" },
-          limit:    { type: "number", description: "Max orders to return (default 15)" },
+          limit:    { type: "string", description: "Max orders to return as a number string e.g. '15'" },
         },
         required: [],
       },
@@ -1881,7 +1881,95 @@ const JARVIS_TOOLS = [
         type: "object",
         properties: {
           period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
-          limit:  { type: "number", description: "Top N cities (default 10)" },
+          limit:  { type: "string", description: "Top N cities as a number string e.g. '10'" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_dispatch_rate",
+      description: "Get dispatch rate — how many confirmed/above orders have been dispatched (have AWB or stage ready/pickup/transit/delivered). Use for: dispatch rate overall, per vendor dispatch rate, fulfillment efficiency.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+          vendor: { type: "string", description: "Filter by specific vendor name, or omit for all" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_stuck_orders",
+      description: "Find orders stuck in a stage for too long. Use for: orders confirmed 48hr+ with no AWB, orders in transit 7+ days, orders on hold, vendors not fulfilling.",
+      parameters: {
+        type: "object",
+        properties: {
+          stage:    { type: "string", enum: ["confirmed","partial","hold","transit","ready","all"], description: "Which stage to check for stuck orders" },
+          min_hours: { type: "string", description: "Minimum hours in stage to be considered stuck e.g. '48'" },
+          vendor:   { type: "string", description: "Filter by specific vendor" },
+        },
+        required: ["stage"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_multi_vendor_stuck",
+      description: "Find multi-vendor orders where some vendors have dispatched but at least one vendor hasn't — causing the order to appear incomplete. Shows which vendor is holding up the order.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_vendor_fulfillment",
+      description: "Get detailed fulfillment performance per vendor: confirmed/dispatched/delivered/rto counts, dispatch rate, avg dispatch time, pending penalties. Best for vendor comparison and accountability.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+          vendor: { type: "string", description: "Specific vendor or omit for all vendors" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cod_outstanding",
+      description: "Get outstanding COD amount — orders dispatched/in-transit/delivered but cash not yet settled. Also shows advance collected but unshipped orders.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_rto_analysis",
+      description: "Get RTO (Return to Origin) analysis: RTO rate overall and per vendor, which cities have highest RTO, RTO trend.",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
         },
         required: [],
       },
@@ -1890,9 +1978,22 @@ const JARVIS_TOOLS = [
 ];
 
 // ── JARVIS tool executor — runs whichever tool the AI asked for ───────────────
-async function runJarvisTool(name, args) {
-  const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-  const metas     = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
+// Per-request cache so parallel tool calls don't each fetch all orders
+let _jarvisOrdersCache = null;
+let _jarvisMetasCache  = null;
+
+async function runJarvisTool(name, args, reqCache) {
+  // Coerce numeric args that Groq sometimes returns as strings
+  if (args.limit   !== undefined) args.limit   = parseInt(args.limit)   || 15;
+  if (args.top     !== undefined) args.top      = parseInt(args.top)     || 10;
+  if (args.days    !== undefined) args.days     = parseInt(args.days)    || 30;
+
+  // Use per-request cache to avoid hitting Shopify rate limits on parallel tool calls
+  if (!reqCache.orders) reqCache.orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+  if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
+
+  const allOrders = reqCache.orders;
+  const metas     = reqCache.metas;
 
   const now      = new Date();
   const today    = new Date(now); today.setHours(0,0,0,0);
@@ -2026,7 +2127,10 @@ async function runJarvisTool(name, args) {
     }
     if (args.stage) os=os.filter(o=>metas[String(o.id)]?.stage===args.stage);
     if (args.vendor) os=os.filter(o=>(o.line_items||[]).some(li=>li.vendor?.toLowerCase()===args.vendor.toLowerCase()));
-    return os.slice(0,args.limit||15).map(o=>({
+    const vendorStages = await mdb.collection('order_vendor_stage').find({shopify_id:{$in:os.map(o=>String(o.id))}},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,courier:1,_id:0}}).toArray();
+    const vsMap = {};
+    vendorStages.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]={stage:r.stage,awb:r.awb,courier:r.courier}; });
+    return os.slice(0,parseInt(args.limit)||15).map(o=>({
       id: o.id,
       name: o.name,
       customer: o.billing_address?.name || o.email,
@@ -2035,8 +2139,11 @@ async function runJarvisTool(name, args) {
       payment: isCOD(o)?"COD":"Prepaid",
       status: o.fulfillment_status||"unfulfilled",
       stage: metas[String(o.id)]?.stage||null,
+      advance_paid: metas[String(o.id)]?.advance_paid||0,
+      awb: metas[String(o.id)]?.awb||null,
       date: o.created_at?.slice(0,10),
       vendors: [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))],
+      vendor_stages: vsMap[String(o.id)]||{},
     }));
   }
 
@@ -2056,6 +2163,180 @@ async function runJarvisTool(name, args) {
     };
   }
 
+  // ── get_dispatch_rate ─────────────────────────────────────────────────────
+  if (name === "get_dispatch_rate") {
+    const DISPATCHED_STAGES = ['ready','pickup','transit','delivered','rto','cancelled'];
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,_id:0}}).toArray();
+    const vsMap = {};
+    allVS.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]={stage:r.stage,awb:r.awb}; });
+
+    const vendorMap = {};
+    os.forEach(o=>{
+      const sid=String(o.id);
+      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      vendors.forEach(v=>{
+        if(args.vendor && v.toLowerCase()!==args.vendor.toLowerCase()) return;
+        const vs=vsMap[sid]?.[v];
+        const stage=vs?.stage||metas[sid]?.stage||'new';
+        const hasAWB=!!(vs?.awb||metas[sid]?.awb);
+        const isDispatched=DISPATCHED_STAGES.includes(stage)||hasAWB;
+        const isActive=['confirmed','partial','hold','ready','pickup','transit','delivered'].includes(stage);
+        if(!isActive) return;
+        if(!vendorMap[v]) vendorMap[v]={total:0,dispatched:0,pending:0};
+        vendorMap[v].total++;
+        if(isDispatched) vendorMap[v].dispatched++;
+        else vendorMap[v].pending++;
+      });
+    });
+
+    const vendors=Object.entries(vendorMap).map(([v,d])=>({
+      vendor:v, total:d.total, dispatched:d.dispatched, pending:d.pending,
+      dispatchRate:`${d.total>0?Math.round(d.dispatched/d.total*100):0}%`
+    })).sort((a,b)=>b.total-a.total);
+
+    const totals=vendors.reduce((a,v)=>({total:a.total+v.total,dispatched:a.dispatched+v.dispatched,pending:a.pending+v.pending}),{total:0,dispatched:0,pending:0});
+    return { period:args.period||"all", overall_dispatch_rate:`${totals.total>0?Math.round(totals.dispatched/totals.total*100):0}%`, ...totals, by_vendor:vendors };
+  }
+
+  // ── get_stuck_orders ──────────────────────────────────────────────────────
+  if (name === "get_stuck_orders") {
+    const minHours = parseInt(args.min_hours)||48;
+    const minMs = minHours * 60 * 60 * 1000;
+    const now = Date.now();
+    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,stage_started_at:1,_id:0}}).toArray();
+    const vsMap = {};
+    allVS.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]=r; });
+
+    const stuck = [];
+    allOrders.forEach(o=>{
+      const sid=String(o.id);
+      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      vendors.forEach(v=>{
+        if(args.vendor && v.toLowerCase()!==args.vendor.toLowerCase()) return;
+        const vs=vsMap[sid]?.[v];
+        const stage=vs?.stage||metas[sid]?.stage||'new';
+        const targetStages = args.stage==='all'?['confirmed','partial','hold','transit','ready']:
+          args.stage==='transit'?['transit']:args.stage==='hold'?['hold']:
+          args.stage==='ready'?['ready']:[args.stage];
+        if(!targetStages.includes(stage)) return;
+        const startedAt = vs?.stage_started_at||0;
+        const hoursStuck = startedAt>0?Math.round((now-startedAt)/1000/3600):null;
+        if(startedAt>0 && (now-startedAt)<minMs) return;
+        stuck.push({ order:o.name, shopify_id:sid, vendor:v, stage, hours_in_stage:hoursStuck, awb:vs?.awb||null, customer:o.billing_address?.name, total:parseFloat(o.total_price||0) });
+      });
+    });
+    stuck.sort((a,b)=>(b.hours_in_stage||0)-(a.hours_in_stage||0));
+    return { stuck_count:stuck.length, min_hours:minHours, stage:args.stage, orders:stuck.slice(0,30) };
+  }
+
+  // ── get_multi_vendor_stuck ────────────────────────────────────────────────
+  if (name === "get_multi_vendor_stuck") {
+    const DISPATCHED=['ready','pickup','transit','delivered'];
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,_id:0}}).toArray();
+    const vsMap = {};
+    allVS.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]={stage:r.stage,awb:r.awb}; });
+
+    const stuck = [];
+    os.forEach(o=>{
+      const sid=String(o.id);
+      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      if(vendors.length<2) return;
+      const vendorStatuses=vendors.map(v=>({ vendor:v, stage:vsMap[sid]?.[v]?.stage||metas[sid]?.stage||'new', awb:vsMap[sid]?.[v]?.awb||null }));
+      const dispatched=vendorStatuses.filter(v=>DISPATCHED.includes(v.stage)||v.awb);
+      const pending=vendorStatuses.filter(v=>!DISPATCHED.includes(v.stage)&&!v.awb&&['confirmed','partial','new'].includes(v.stage));
+      if(dispatched.length>0 && pending.length>0) {
+        stuck.push({ order:o.name, shopify_id:sid, customer:o.billing_address?.name, total:parseFloat(o.total_price||0), date:o.created_at?.slice(0,10), dispatched_vendors:dispatched.map(v=>v.vendor), holding_vendors:pending.map(v=>v.vendor) });
+      }
+    });
+    return { count:stuck.length, orders:stuck.slice(0,25) };
+  }
+
+  // ── get_vendor_fulfillment ────────────────────────────────────────────────
+  if (name === "get_vendor_fulfillment") {
+    const DISPATCHED=['ready','pickup','transit','delivered'];
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,stage_started_at:1,_id:0}}).toArray();
+    const vsMap = {};
+    allVS.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]={stage:r.stage,awb:r.awb,stage_started_at:r.stage_started_at}; });
+    const penalties = await mdb.collection('order_penalties').find({status:'pending'},{projection:{vendor_name:1,_id:0}}).toArray();
+    const penaltyCount = {};
+    penalties.forEach(p=>{ penaltyCount[p.vendor_name]=(penaltyCount[p.vendor_name]||0)+1; });
+
+    const vMap = {};
+    os.forEach(o=>{
+      const sid=String(o.id);
+      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      vendors.forEach(v=>{
+        if(args.vendor && v.toLowerCase()!==args.vendor.toLowerCase()) return;
+        const vs=vsMap[sid]?.[v];
+        const stage=vs?.stage||metas[sid]?.stage||'new';
+        if(!vMap[v]) vMap[v]={confirmed:0,dispatched:0,delivered:0,rto:0,hold:0,total:0,dispatchTimes:[]};
+        vMap[v].total++;
+        if(['confirmed','partial'].includes(stage)) vMap[v].confirmed++;
+        if(DISPATCHED.includes(stage)||vs?.awb) vMap[v].dispatched++;
+        if(stage==='delivered') vMap[v].delivered++;
+        if(stage==='rto') vMap[v].rto++;
+        if(stage==='hold') vMap[v].hold++;
+        if(vs?.stage_started_at && ['confirmed','partial'].includes(stage)) {
+          const hrs=Math.round((Date.now()-vs.stage_started_at)/3600000);
+          vMap[v].dispatchTimes.push(hrs);
+        }
+      });
+    });
+
+    return Object.entries(vMap).map(([v,d])=>({
+      vendor:v, total_orders:d.total, confirmed_pending:d.confirmed, dispatched:d.dispatched,
+      delivered:d.delivered, rto:d.rto, on_hold:d.hold,
+      dispatch_rate:`${d.total>0?Math.round(d.dispatched/d.total*100):0}%`,
+      rto_rate:`${d.dispatched>0?Math.round(d.rto/d.dispatched*100):0}%`,
+      avg_hours_in_confirmed: d.dispatchTimes.length>0?Math.round(d.dispatchTimes.reduce((a,b)=>a+b,0)/d.dispatchTimes.length):null,
+      pending_penalties: penaltyCount[v]||0,
+    })).sort((a,b)=>b.total_orders-a.total_orders);
+  }
+
+  // ── get_cod_outstanding ───────────────────────────────────────────────────
+  if (name === "get_cod_outstanding") {
+    const os = filterByPeriod(allOrders, isCOD).filter(isCOD);
+    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,stage:1,awb:1,_id:0}}).toArray();
+    const vsMap = Object.fromEntries(allVS.map(r=>[r.shopify_id,r]));
+    let inTransit=0,inTransitAmt=0,delivered=0,deliveredAmt=0,advanceUnshipped=0,advanceUnshippedAmt=0;
+    filterByPeriod(allOrders,args.period||"all").filter(isCOD).forEach(o=>{
+      const sid=String(o.id);
+      const stage=metas[sid]?.stage||vsMap[sid]?.stage||'new';
+      const amt=parseFloat(o.total_price||0);
+      const adv=metas[sid]?.advance_paid||0;
+      if(['transit','pickup','ready'].includes(stage)){inTransit++;inTransitAmt+=amt;}
+      if(stage==='delivered'){delivered++;deliveredAmt+=amt;}
+      if(adv>0&&!['ready','pickup','transit','delivered','rto','cancelled'].includes(stage)){advanceUnshipped++;advanceUnshippedAmt+=adv;}
+    });
+    return { period:args.period||"all", in_transit:{orders:inTransit,amount:Math.round(inTransitAmt)}, delivered_not_settled:{orders:delivered,amount:Math.round(deliveredAmt)}, advance_collected_unshipped:{orders:advanceUnshipped,amount:Math.round(advanceUnshippedAmt)} };
+  }
+
+  // ── get_rto_analysis ──────────────────────────────────────────────────────
+  if (name === "get_rto_analysis") {
+    const os = filterByPeriod(allOrders, args.period||"all");
+    const allVS = await mdb.collection('order_vendor_stage').find({stage:'rto'},{projection:{shopify_id:1,vendor_name:1,_id:0}}).toArray();
+    const rtoOrderIds = new Set(allVS.map(r=>r.shopify_id));
+    const rtoByVendor = {};
+    allVS.forEach(r=>{ rtoByVendor[r.vendor_name]=(rtoByVendor[r.vendor_name]||0)+1; });
+
+    const rtoOrders=os.filter(o=>metas[String(o.id)]?.stage==='rto'||rtoOrderIds.has(String(o.id)));
+    const cityRTO={};
+    rtoOrders.forEach(o=>{ const city=o.shipping_address?.city||'Unknown'; cityRTO[city]=(cityRTO[city]||0)+1; });
+
+    const dispatched=os.filter(o=>{ const s=metas[String(o.id)]?.stage; return ['ready','pickup','transit','delivered','rto'].includes(s); });
+    return {
+      period:args.period||"all",
+      total_rto:rtoOrders.length,
+      total_dispatched:dispatched.length,
+      rto_rate:`${dispatched.length>0?Math.round(rtoOrders.length/dispatched.length*100):0}%`,
+      by_vendor:Object.entries(rtoByVendor).map(([v,c])=>({vendor:v,rto_orders:c})).sort((a,b)=>b.rto_orders-a.rto_orders),
+      top_rto_cities:Object.entries(cityRTO).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([city,count])=>({city,rto_orders:count})),
+    };
+  }
+
   return { error: "Unknown tool" };
 }
 
@@ -2069,14 +2350,31 @@ app.post("/jarvis", async (req, res) => {
     return res.json({ reply: "No AI key set. Add GROQ_API_KEY (free at console.groq.com) to your .env." });
   }
 
-  const systemPrompt = `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify store.
+  const systemPrompt = `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify marketplace.
 You have tools to fetch any live store data. Always call the right tool(s) to get real data before answering.
 
+Key concepts:
+- Stage = internal fulfillment stage tracked in our DB: new → confirmed → partial → ready → pickup → transit → delivered / rto / cancelled / hold
+- Dispatched = orders with AWB saved OR stage is ready/pickup/transit/delivered
+- Dispatch rate = dispatched orders / total active (confirmed+above) orders
+- Multi-vendor orders = single customer order with products from multiple vendors — each vendor fulfills independently
+- COD = cash on delivery, Prepaid = online payment
+- Advance/Partial = customer paid partial amount upfront, rest COD
+
+Tools available:
+- get_dispatch_rate: overall and per-vendor dispatch rates
+- get_stuck_orders: orders stuck in a stage too long (confirmed 48hr+, transit 7d+, etc.)
+- get_multi_vendor_stuck: multi-vendor orders where one vendor hasn't shipped while others have
+- get_vendor_fulfillment: full vendor performance — confirmed pending, dispatched, delivered, RTO, penalties
+- get_cod_outstanding: COD money in transit, advance collected but unshipped
+- get_rto_analysis: RTO rates overall, per vendor, per city
+- get_orders_list: actual order list with stage, AWB, vendor stages
+- get_order_stats, get_vendor_stats, get_delivery_stats, get_products, get_customers, get_city_stats, get_settlements
+
 Rules:
-- ALWAYS use tools to fetch data. Never guess or make up numbers.
-- Be concise — bullet points preferred. Max 8 lines unless a detailed breakdown is asked.
+- ALWAYS use tools. Never guess or make up numbers.
+- Be concise — bullet points preferred. Flag risks and anomalies proactively.
 - Currency is INR (₹). Format large numbers with commas.
-- Spot patterns, anomalies, and risks proactively when relevant.
 - If data is zero or missing, say so clearly.
 - Today's date: ${new Date().toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}`;
 
@@ -2092,6 +2390,7 @@ Rules:
     if (GROQ_KEY) {
       // ── Groq tool-calling loop ──────────────────────────────────────────
       const messages = [{ role:"system", content: systemPrompt }, ...msgs];
+      const reqCache = {}; // shared cache for this request — fetches orders once, reuses across parallel tools
       let finalReply = "";
 
       for (let turn = 0; turn < 5; turn++) {
@@ -2113,13 +2412,15 @@ Rules:
         const msg    = choice?.message;
 
         if (choice?.finish_reason === "tool_calls" && msg?.tool_calls?.length) {
-          // AI wants data — execute all requested tools in parallel
+          // Pre-fetch orders once before parallel tool calls to avoid 429
+          if (!reqCache.orders) reqCache.orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+          if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
           messages.push(msg);
           const toolResults = await Promise.all(msg.tool_calls.map(async tc => {
             let args = {};
             try { args = JSON.parse(tc.function.arguments || "{}"); } catch(_){}
             console.log(`🔧 JARVIS tool: ${tc.function.name}`, args);
-            const result = await runJarvisTool(tc.function.name, args);
+            const result = await runJarvisTool(tc.function.name, args, reqCache);
             return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
           }));
           messages.push(...toolResults);
@@ -2318,6 +2619,17 @@ app.post("/vendor/logout", vendorAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// Admin: generate a one-time vendor session token to impersonate a vendor
+app.post("/admin/vendors/:name/impersonate", adminAuth, async (req, res) => {
+  const vendorName = decodeURIComponent(req.params.name);
+  const vc = await VC.get(vendorName);
+  if (!vc) return res.status(404).json({ error: "Vendor not found." });
+  const token = require('crypto').randomBytes(32).toString('hex');
+  vendorSessions.set(token, { vendorName, expiresAt: Date.now() + 2 * 60 * 60 * 1000 }); // 2hr
+  auditLog("admin", "vendor_impersonate", vendorName, {});
+  res.json({ token });
+});
+
 // ── GET /vendor/orders ────────────────────────────────────────────────────
 app.get("/vendor/orders", vendorAuth, async (req, res) => {
   try {
@@ -2443,23 +2755,48 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
 // ── GET /vendor/stats ─────────────────────────────────────────────────────
 app.get("/vendor/stats", vendorAuth, async (req, res) => {
   try {
-    const allOrders = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
+    const fromDate = req.query.from ? `${req.query.from}T00:00:00Z` : "2000-01-01T00:00:00Z";
+    const toDate   = req.query.to   ? `${req.query.to}T23:59:59Z`   : null;
+    const allOrders = await fetchAllOrders("any", fromDate, toDate);
     const vName = req.vendor.toLowerCase();
     const mine  = allOrders.filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName));
 
-    const revenue = mine.reduce((s, o) => {
-      const items = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
-      return s + items.reduce((ss, li) => ss + parseFloat(li.price || 0) * (li.quantity || 1), 0);
-    }, 0);
+    const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, _id: 0 } }).toArray();
+    const vsMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
+    const DISPATCHED_S = ['ready','pickup','transit','delivered','rto'];
+
+    let revenue = 0, dispatchedRev = 0, pendingRev = 0;
+    let totalActive = 0, dispatched = 0, pendingCount = 0;
     const fulfilled = mine.filter(o => o.fulfillment_status === "fulfilled").length;
-    const pending   = mine.filter(o => !o.fulfillment_status || o.fulfillment_status === "unfulfilled").length;
-    const cancelled = mine.filter(o => o.financial_status   === "voided" || o.cancelled_at).length;
+    const cancelled = mine.filter(o => o.financial_status === "voided" || o.cancelled_at).length;
+
+    mine.forEach(o => {
+      const items = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
+      const rev = items.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+      revenue += rev;
+      const vs = vsMap[String(o.id)];
+      const stage = vs?.stage || 'new';
+      if (!['confirmed','partial','ready','pickup','transit','delivered','rto'].includes(stage)) return;
+      totalActive++;
+      if (DISPATCHED_S.includes(stage) || vs?.awb) { dispatched++; dispatchedRev += rev; }
+      else if (['confirmed','partial'].includes(stage)) { pendingCount++; pendingRev += rev; }
+    });
+
+    const dispatchRate = totalActive > 0 ? Math.round(dispatched / totalActive * 100) : 0;
 
     res.json({
       total: mine.length,
       revenue: parseFloat(revenue.toFixed(2)),
       avg: mine.length ? parseFloat((revenue / mine.length).toFixed(2)) : 0,
-      fulfilled, pending, cancelled,
+      fulfilled, pending: mine.filter(o => !o.fulfillment_status || o.fulfillment_status === "unfulfilled").length, cancelled,
+      dispatch: {
+        rate: dispatchRate,
+        totalActive,
+        dispatched,
+        pendingCount,
+        dispatchedRev: parseFloat(dispatchedRev.toFixed(2)),
+        pendingRev: parseFloat(pendingRev.toFixed(2)),
+      },
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2657,11 +2994,58 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
 
     const pendDocs = await mdb.collection('settlements').find({ status: 'pending' }, { projection: { commission: 1, gst_amount: 1, _id: 0 } }).toArray();
     const pendRow = { t: pendDocs.reduce((s, d) => s + (d.commission || 0) + (d.gst_amount || 0), 0) };
+
+    // ── Vendor fulfillment leaderboard ────────────────────────────────────
+    const DISPATCHED_S = new Set(['ready','pickup','transit','delivered','rto']);
+    const PENDING_S    = new Set(['confirmed','partial']);
+    const allVS = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, stage_started_at: 1, _id: 0 } }).toArray();
+    const vsMap = {};
+    allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r; });
+
+    const vendorFulfill = {};
+    const now = Date.now();
+    raw.forEach(o => {
+      const sid = String(o.id);
+      const vendors = [...new Set((o.line_items || []).map(li => li.vendor).filter(Boolean))];
+      vendors.forEach(v => {
+        const vs = vsMap[sid]?.[v];
+        const stage = vs?.stage || metaMap[sid]?.stage || 'new';
+        if (!['confirmed','partial','ready','pickup','transit','delivered','rto'].includes(stage)) return;
+        if (!vendorFulfill[v]) vendorFulfill[v] = { confirmed: 0, dispatched: 0, pending: 0, pendingOld: 0, dispatchedRev: 0, pendingRev: 0 };
+        const vItems = (o.line_items || []).filter(li => (li.vendor || '') === v);
+        const rev = vItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+        vendorFulfill[v].confirmed++;
+        if (DISPATCHED_S.has(stage) || vs?.awb) { vendorFulfill[v].dispatched++; vendorFulfill[v].dispatchedRev += rev; }
+        else if (PENDING_S.has(stage)) {
+          vendorFulfill[v].pending++;
+          vendorFulfill[v].pendingRev += rev;
+          const hoursInStage = vs?.stage_started_at ? (now - vs.stage_started_at) / 3600000 : 0;
+          if (hoursInStage > 48) vendorFulfill[v].pendingOld++;
+        }
+      });
+    });
+
+    const vendorLeaderboard = Object.entries(vendorFulfill)
+      .filter(([, d]) => d.confirmed >= 3) // only vendors with meaningful order count
+      .map(([vendor, d]) => ({
+        vendor,
+        confirmed: d.confirmed,
+        dispatched: d.dispatched,
+        pending: d.pending,
+        pendingOld: d.pendingOld, // pending >48hr
+        dispatchRate: d.confirmed > 0 ? Math.round(d.dispatched / d.confirmed * 100) : 0,
+        dispatchedRev: parseFloat(d.dispatchedRev.toFixed(2)),
+        pendingRev: parseFloat(d.pendingRev.toFixed(2)),
+      }))
+      .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate) // most pending first, then lowest rate
+      .slice(0, 15);
+
     res.json({
       totalOrders: raw.length,
       stageCounts,
       totalRevenue: parseFloat(totalRevenue.toFixed(2)),
       pendingCommission: parseFloat((pendRow?.t || 0).toFixed(2)),
+      vendorLeaderboard,
     });
   } catch (err) {
     console.error("❌ /admin/dashboard:", err.message);
@@ -2843,6 +3227,42 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       pendingCommission: parseFloat((pendRow?.t || 0).toFixed(2)),
     };
 
+    // ── Vendor fulfillment leaderboard (all time, sorted by most pending)
+    const allVSForLb = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, stage_started_at: 1, _id: 0 } }).toArray();
+    const vsMapLb = {};
+    allVSForLb.forEach(r => { if (!vsMapLb[r.shopify_id]) vsMapLb[r.shopify_id] = {}; vsMapLb[r.shopify_id][r.vendor_name] = r; });
+    const vfMap = {};
+    const nowMs = Date.now();
+    raw.forEach(o => {
+      const sid = String(o.id);
+      const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      vendors.forEach(v => {
+        const vs = vsMapLb[sid]?.[v];
+        const stage = vs?.stage || metaMap[sid]?.stage || 'new';
+        if (!['confirmed','partial','ready','pickup','transit','delivered','rto'].includes(stage)) return;
+        if (!vfMap[v]) vfMap[v] = { confirmed: 0, dispatched: 0, pending: 0, pendingOld48: 0 };
+        vfMap[v].confirmed++;
+        if (['ready','pickup','transit','delivered','rto'].includes(stage) || vs?.awb) vfMap[v].dispatched++;
+        else if (['confirmed','partial'].includes(stage)) {
+          vfMap[v].pending++;
+          const hrs = vs?.stage_started_at ? (nowMs - vs.stage_started_at) / 3600000 : 0;
+          if (hrs > 48) vfMap[v].pendingOld48++;
+        }
+      });
+    });
+    const vendorLeaderboard = Object.entries(vfMap)
+      .filter(([, d]) => d.confirmed >= 3)
+      .map(([vendor, d]) => ({
+        vendor,
+        confirmed: d.confirmed,
+        dispatched: d.dispatched,
+        pending: d.pending,
+        pendingOld48: d.pendingOld48,
+        dispatchRate: d.confirmed > 0 ? Math.round(d.dispatched / d.confirmed * 100) : 0,
+      }))
+      .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate)
+      .slice(0, 15);
+
     const periodDays = Math.round((periodTo - periodFrom) / DAY) + 1;
 
     res.json({
@@ -2864,6 +3284,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       topBrands,
       topCities,
       trend14d,
+      vendorLeaderboard,
     });
   } catch (err) {
     console.error("❌ /admin/analytics:", err.message);
@@ -6154,6 +6575,124 @@ autoHoldCronJob().catch(() => {});
 setInterval(autoHoldCronJob, 6 * 60 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════════════════
+//  DELHIVERY TRACKING CRON
+// ══════════════════════════════════════════════════════════════════════════
+
+// Map Delhivery status strings → our internal stage
+function delhiveryStatusToStage(status) {
+  if (!status) return null;
+  const s = status.toLowerCase();
+  if (s.includes('delivered'))                          return 'delivered';
+  if (s.includes('rto') || s.includes('return'))        return 'rto';
+  if (s.includes('out for delivery') || s.includes('out_for_delivery')) return 'transit';
+  if (s.includes('in transit') || s.includes('in_transit') || s.includes('transit')) return 'transit';
+  if (s.includes('picked up') || s.includes('pickup') || s.includes('manifested')) return 'pickup';
+  if (s.includes('lost') || s.includes('damage'))       return 'rto';
+  return null;
+}
+
+async function delhiveryTrackingCron() {
+  const runLog = { ran_at: new Date().toISOString(), checked: 0, updated: 0, skipped: 0, errors: [], updates: [] };
+  try {
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner: 'delhivery' }, { projection: { credentials: 1, _id: 0 } });
+    if (!credRow) { runLog.message = 'No Delhivery credentials configured.'; await mdb.collection('delhivery_cron_log').insertOne(runLog); return; }
+    const creds = JSON.parse(credRow.credentials);
+    if (!creds.api_token) { runLog.message = 'Delhivery API token missing in credentials.'; await mdb.collection('delhivery_cron_log').insertOne(runLog); return; }
+
+    const activeStages = await mdb.collection('order_vendor_stage').find(
+      { stage: { $in: ['transit', 'pickup', 'ready'] }, awb: { $exists: true, $ne: '' } },
+      { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
+    ).toArray();
+
+    const delhiveryStages = activeStages.filter(r => (r.courier || '').toLowerCase().includes('delhivery') || (r.awb || '').match(/^\d{14,}$/));
+    runLog.checked = delhiveryStages.length;
+
+    if (!delhiveryStages.length) {
+      runLog.message = 'No active Delhivery shipments to check.';
+      await mdb.collection('delhivery_cron_log').insertOne(runLog);
+      return;
+    }
+
+    console.log(`🚚 Delhivery cron: checking ${delhiveryStages.length} active shipments…`);
+
+    const BATCH = 10;
+    for (let i = 0; i < delhiveryStages.length; i += BATCH) {
+      const batch = delhiveryStages.slice(i, i + BATCH);
+      const waybills = batch.map(r => r.awb).join(',');
+      try {
+        const dlRes = await fetch(
+          `https://track.delhivery.com/api/v1/packages/json/?waybill=${waybills}`,
+          { headers: { 'Authorization': `Token ${creds.api_token}`, 'Content-Type': 'application/json' } }
+        ).then(r => r.json());
+
+        for (const shipData of (dlRes.ShipmentData || [])) {
+          const shipment = shipData.Shipment;
+          const awb = shipment?.AWB || shipment?.waybill || '';
+          const rawStatus = shipment?.Status?.Status || shipment?.status || '';
+          const newStage = delhiveryStatusToStage(rawStatus);
+          const record = batch.find(r => r.awb === awb);
+          if (!record) continue;
+
+          if (!newStage || record.stage === newStage) {
+            runLog.skipped++;
+            runLog.checked_detail = runLog.checked_detail || [];
+            runLog.checked_detail.push({ shopify_id: record.shopify_id, vendor: record.vendor_name, awb, current_stage: record.stage, delhivery_status: rawStatus || '(no status)', action: !newStage ? 'unmapped' : 'no_change' });
+            continue;
+          }
+
+          const now = new Date().toISOString();
+          await OVS.upsert(record.shopify_id, record.vendor_name, { stage: newStage, updated_at: now });
+          await OM.upsert(record.shopify_id, { delivery_status: rawStatus, delivery_status_updated_at: now });
+          auditLog('cron', 'delhivery_stage_update', record.shopify_id, { vendor: record.vendor_name, awb, rawStatus, newStage });
+          runLog.updated++;
+          runLog.updates.push({ shopify_id: record.shopify_id, vendor: record.vendor_name, awb, from: record.stage, to: newStage, status: rawStatus });
+          runLog.checked_detail = runLog.checked_detail || [];
+          runLog.checked_detail.push({ shopify_id: record.shopify_id, vendor: record.vendor_name, awb, current_stage: record.stage, delhivery_status: rawStatus, action: 'updated_to_' + newStage });
+          console.log(`  ✓ ${record.shopify_id} (${record.vendor_name}) AWB ${awb}: ${record.stage} → ${newStage} (${rawStatus})`);
+        }
+        // Track AWBs Delhivery returned no data for
+        for (const rec of batch) {
+          const found = (dlRes.ShipmentData || []).some(s => (s.Shipment?.AWB || s.Shipment?.waybill) === rec.awb);
+          if (!found) {
+            runLog.checked_detail = runLog.checked_detail || [];
+            runLog.checked_detail.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, current_stage: rec.stage, delhivery_status: '(not found in response)', action: 'not_found' });
+          }
+        }
+      } catch(e) {
+        runLog.errors.push({ batch: waybills, error: e.message });
+        console.error(`  ✗ Delhivery batch error: ${e.message}`);
+      }
+
+      if (i + BATCH < delhiveryStages.length) await new Promise(r => setTimeout(r, 1000));
+    }
+
+    runLog.message = `Checked ${runLog.checked}, updated ${runLog.updated}, skipped ${runLog.skipped}`;
+    console.log(`🚚 Delhivery cron done: ${runLog.message}`);
+  } catch(e) {
+    runLog.errors.push({ error: e.message });
+    console.error('❌ delhiveryTrackingCron:', e.message);
+  }
+  // Save log (keep last 50 runs)
+  await mdb.collection('delhivery_cron_log').insertOne(runLog);
+  await mdb.collection('delhivery_cron_log').deleteMany({ ran_at: { $lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() } });
+}
+
+// Manual trigger + log endpoints
+app.post("/admin/delhivery/sync", adminAuth, async (req, res) => {
+  delhiveryTrackingCron().catch(() => {});
+  res.json({ success: true, message: "Delhivery sync triggered — check logs in a moment." });
+});
+
+app.get("/admin/delhivery/logs", adminAuth, async (req, res) => {
+  const logs = await mdb.collection('delhivery_cron_log').find({}, { projection: { _id: 0 } }).sort({ ran_at: -1 }).limit(20).toArray();
+  res.json({ logs });
+});
+
+// Run every 3 hours (delay startup run by 30s to let MongoDB connect first)
+setTimeout(() => delhiveryTrackingCron().catch(() => {}), 30000);
+setInterval(delhiveryTrackingCron, 3 * 60 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════════════════
 //  WEEKLY REPORT SYSTEM
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -6552,4 +7091,277 @@ app.post("/admin/reports/send", adminAuth, async (req, res) => {
 // ── Include confirmed penalties in settlement generation ──────────────────
 // Patch: wrap the settlement generate route to add penalty deductions
 // (The logic is injected into the existing route via post-insert query)
+
+// ══════════════════════════════════════════════════════════════════════════
+// RETURN / EXCHANGE SYSTEM
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Serve track.html ──────────────────────────────────────────────────────
+app.get("/track", (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'track.html'));
+});
+
+// ── Public: lookup order by order number + email ──────────────────────────
+app.get("/track/order", async (req, res) => {
+  try {
+    const { q, email } = req.query;
+    if (!q || !email) return res.status(400).json({ error: "q and email are required" });
+
+    const normalized = q.replace(/^#/, '').trim();
+    const name = `#${normalized}`;
+
+    // Search Shopify by order name
+    const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
+    const orders = data.orders || [];
+
+    const emailLower = email.toLowerCase().trim();
+    const order = orders.find(o => {
+      const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
+      return oEmail === emailLower;
+    });
+
+    if (!order) return res.status(404).json({ error: "Order not found. Please check the order number and email address." });
+
+    // Get meta (stage, AWB etc.)
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
+
+    // Get per-vendor stage
+    const vendorStages = await mdb.collection('order_vendor_stage').find({ shopify_id: String(order.id) }, { projection: { _id: 0 } }).toArray();
+
+    // Collect unique vendors in this order
+    const vendorNames = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+
+    // Fetch return configs for all vendors
+    const returnConfigs = {};
+    for (const v of vendorNames) {
+      const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
+      returnConfigs[v] = {
+        exchange_enabled: true,
+        return_enabled: cfg.return_enabled !== false,
+        return_window_days: cfg.return_window_days || 7,
+        return_address: cfg.return_address || null,
+      };
+    }
+
+    // Build line items with vendor info
+    const items = (order.line_items || []).map(li => ({
+      line_item_id: li.id,
+      product_id: li.product_id,
+      variant_id: li.variant_id,
+      title: li.title,
+      variant_title: li.variant_title,
+      sku: li.sku,
+      qty: li.quantity,
+      price: li.price,
+      vendor: li.vendor || '',
+    }));
+
+    // Derive overall stage
+    const stage = meta.stage || 'new';
+
+    // AWB tracking info
+    let awb = null, trackingUrl = null;
+    for (const f of (order.fulfillments || [])) {
+      if (f.tracking_number) { awb = f.tracking_number; trackingUrl = f.tracking_url || null; break; }
+    }
+
+    const customerName = order.shipping_address
+      ? `${order.shipping_address.first_name || ''} ${order.shipping_address.last_name || ''}`.trim()
+      : order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : '';
+
+    res.json({
+      shopify_order_id: order.id,
+      order_name: order.name,
+      customer_name: customerName,
+      customer_email: order.email || '',
+      customer_phone: order.shipping_address?.phone || order.billing_address?.phone || '',
+      stage,
+      financial_status: order.financial_status,
+      fulfillment_status: order.fulfillment_status,
+      created_at: order.created_at,
+      awb,
+      tracking_url: trackingUrl,
+      items,
+      vendor_names: vendorNames,
+      return_configs: returnConfigs,
+    });
+  } catch (err) {
+    console.error("❌ /track/order:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Public: get product variants for exchange ─────────────────────────────
+app.get("/track/product/:productId/variants", async (req, res) => {
+  try {
+    const data = await shopifyREST(`/products/${req.params.productId}.json?fields=id,title,variants`);
+    const variants = (data.product?.variants || []).map(v => ({
+      id: v.id,
+      title: v.title,
+      sku: v.sku,
+      available: v.inventory_quantity > 0,
+    }));
+    res.json({ variants });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Public: submit return/exchange request ────────────────────────────────
+app.post("/track/request", async (req, res) => {
+  try {
+    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name } = req.body;
+
+    if (!shopify_order_id || !customer_email || !type || !items?.length || !reason) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (!['return', 'exchange'].includes(type)) {
+      return res.status(400).json({ error: "type must be 'return' or 'exchange'" });
+    }
+
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const rand = String(Math.floor(Math.random() * 9000) + 1000);
+    const request_id = `RR-${datePart}-${rand}`;
+
+    const doc = {
+      request_id,
+      shopify_order_id: String(shopify_order_id),
+      order_name: order_name || '',
+      customer_email: customer_email.toLowerCase().trim(),
+      customer_name: customer_name || '',
+      customer_phone: customer_phone || '',
+      type,
+      items,
+      reason,
+      status: 'pending',
+      vendor_name: vendor_name || '',
+      created_at: now.toISOString(),
+      admin_note: '',
+      vendor_note: '',
+    };
+
+    await mdb.collection('return_requests').insertOne(doc);
+
+    // Create indexes on first use
+    mdb.collection('return_requests').createIndex({ request_id: 1 }, { unique: true }).catch(() => {});
+    mdb.collection('return_requests').createIndex({ vendor_name: 1, status: 1 }).catch(() => {});
+    mdb.collection('return_requests').createIndex({ customer_email: 1 }).catch(() => {});
+
+    // Email admin
+    const itemsHtml = items.map(it => `<li>${it.title}${it.variant_title ? ` (${it.variant_title})` : ''} × ${it.qty}${it.exchange_size_label ? ` → Exchange for: ${it.exchange_size_label}` : ''}</li>`).join('');
+    await sendEmail({
+      to: 'harshitvj24@gmail.com',
+      subject: `New ${type} Request ${request_id} — ${order_name}`,
+      html: `<div style="font-family:sans-serif;max-width:600px;margin:auto;background:#0a1020;color:#e2e8f0;border-radius:12px;padding:28px;">
+        <h2 style="color:#10b981;margin:0 0 16px">New ${type.charAt(0).toUpperCase() + type.slice(1)} Request</h2>
+        <p style="color:#94a3b8;margin:0 0 20px">Request ID: <strong style="color:#fff">${request_id}</strong></p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <tr><td style="padding:6px 0;color:#64748b">Order</td><td style="color:#fff">${order_name}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b">Customer</td><td style="color:#fff">${customer_name} &lt;${customer_email}&gt;</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b">Vendor</td><td style="color:#fff">${vendor_name || '—'}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b">Type</td><td style="color:#fff">${type}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b">Reason</td><td style="color:#fff">${reason}</td></tr>
+        </table>
+        <p style="margin:16px 0 6px;color:#64748b">Items:</p>
+        <ul style="margin:0;padding-left:20px;color:#e2e8f0">${itemsHtml}</ul>
+        <hr style="border:none;border-top:1px solid #1e293b;margin:20px 0">
+        <p style="color:#64748b;font-size:12px">Go to Admin Portal → Returns to manage this request.</p>
+      </div>`,
+      shopifyId: String(shopify_order_id),
+      trigger: 'return_request',
+    });
+
+    res.json({ success: true, request_id });
+  } catch (err) {
+    console.error("❌ /track/request:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin: list all return requests ──────────────────────────────────────
+app.get("/admin/return-requests", adminAuth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const q = status && status !== 'all' ? { status } : {};
+    const requests = await mdb.collection('return_requests').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+    res.json({ requests });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: update return request status / notes ───────────────────────────
+app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
+  try {
+    const { status, admin_note } = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    if (status) update.status = status;
+    if (admin_note !== undefined) update.admin_note = admin_note;
+    await mdb.collection('return_requests').updateOne({ request_id: req.params.id }, { $set: update });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: get vendor return config ──────────────────────────────────────
+app.get("/admin/vendors/:name/return-config", adminAuth, async (req, res) => {
+  try {
+    const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: req.params.name }, { projection: { _id: 0 } }) || {};
+    res.json({ config: { exchange_enabled: true, return_enabled: true, return_window_days: 7, return_address: {}, ...cfg } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: save vendor return config ─────────────────────────────────────
+app.put("/admin/vendors/:name/return-config", adminAuth, async (req, res) => {
+  try {
+    const { return_enabled, return_window_days, return_address } = req.body;
+    await mdb.collection('vendor_return_config').updateOne(
+      { vendor_name: req.params.name },
+      { $set: { vendor_name: req.params.name, exchange_enabled: true, return_enabled: !!return_enabled, return_window_days: parseInt(return_window_days) || 7, return_address: return_address || {}, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Vendor: list own return requests ─────────────────────────────────────
+app.get("/vendor/return-requests", vendorAuth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const q = { vendor_name: req.vendor };
+    if (status && status !== 'all') q.status = status;
+    const requests = await mdb.collection('return_requests').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+    res.json({ requests });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Vendor: update own return request (vendor note only) ──────────────────
+app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
+  try {
+    const { vendor_note } = req.body;
+    const update = { updated_at: new Date().toISOString() };
+    if (vendor_note !== undefined) update.vendor_note = vendor_note;
+    await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: req.vendor }, { $set: update });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Vendor: get own return config ─────────────────────────────────────────
+app.get("/vendor/return-config", vendorAuth, async (req, res) => {
+  try {
+    const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } }) || {};
+    res.json({ config: { exchange_enabled: true, return_enabled: true, return_window_days: 7, return_address: {}, ...cfg } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Vendor: save own return config ────────────────────────────────────────
+app.put("/vendor/return-config", vendorAuth, async (req, res) => {
+  try {
+    const { return_enabled, return_window_days, return_address } = req.body;
+    await mdb.collection('vendor_return_config').updateOne(
+      { vendor_name: req.vendor },
+      { $set: { vendor_name: req.vendor, exchange_enabled: true, return_enabled: !!return_enabled, return_window_days: parseInt(return_window_days) || 7, return_address: return_address || {}, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
