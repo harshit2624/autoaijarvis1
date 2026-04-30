@@ -2382,7 +2382,16 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           awb:          vStageMap[String(o.id)]?.awb || "",
           courier:      vStageMap[String(o.id)]?.courier || "",
           trackingUrl:  vStageMap[String(o.id)]?.tracking_url || "",
-          deliveryStatus: meta.delivery_status || myFulfillment?.shipment_status || "",
+          deliveryStatus: (()=>{
+            // Shopify tracks shipment_status for some couriers; for panel-created orders fall back to our stage
+            if (myFulfillment?.shipment_status) return myFulfillment.shipment_status;
+            const vs = vStageMap[String(o.id)]?.stage;
+            if (vs === 'delivered') return 'delivered';
+            if (vs === 'transit')   return 'in_transit';
+            if (vs === 'pickup')    return 'ready_for_pickup';
+            if (vs === 'rto')       return 'failure';
+            return "";
+          })(),
           stageStartedAt:   vStageMap[String(o.id)]?.stage_started_at || 0,
           penaltyTriggered: vStageMap[String(o.id)]?.penalty_triggered || 0,
           warningSent:      vStageMap[String(o.id)]?.warning_sent || 0,
@@ -2398,14 +2407,19 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             price:     parseFloat(li.price || 0),
             fulfilled: li.fulfillment_status === "fulfilled",
           })),
-          fulfillments: (o.fulfillments || []).map(f => ({
-            id:       f.id,
-            status:   f.status,
-            courier:  f.tracking_company || "",
-            awb:      f.tracking_number  || "",
-            url:      f.tracking_url     || "",
-            date:     (f.created_at || "").split("T")[0],
-          })),
+          fulfillments: (o.fulfillments || [])
+            .filter(f => (f.line_items || []).some(fli => {
+              const vendor = (o.line_items || []).find(li => li.id === fli.id)?.vendor || "";
+              return vendor.toLowerCase() === vName;
+            }))
+            .map(f => ({
+              id:       f.id,
+              status:   f.status,
+              courier:  f.tracking_company || "",
+              awb:      f.tracking_number  || "",
+              url:      f.tracking_url     || "",
+              date:     (f.created_at || "").split("T")[0],
+            })),
           shippingAddress: o.shipping_address ? {
             name:    o.shipping_address.name    || "",
             line1:   o.shipping_address.address1 || "",

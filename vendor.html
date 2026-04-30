@@ -953,7 +953,7 @@
                 <div className="detail-box-title">Order Info</div>
                 <div className="detail-row"><span className="dr-label">Order ID</span>   <span className="dr-val" style={{color:'var(--green)'}}>{order.id}</span></div>
                 <div className="detail-row"><span className="dr-label">Date</span>        <span className="dr-val">{fmtDate(order.date)}</span></div>
-                <div className="detail-row"><span className="dr-label">Status</span>      <span className="dr-val"><Badge status={order.status}/></span></div>
+                <div className="detail-row"><span className="dr-label">Stage</span>        <span className="dr-val"><StagePill stage={order.stage} awb={order.awb} courier={order.courier} trackingUrl={order.trackingUrl}/></span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span>     <span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
                 {order.awb && <div className="detail-row"><span className="dr-label">AWB</span><span className="dr-val" style={{color:'var(--teal)',fontFamily:'monospace'}}>{order.awb}</span></div>}
                 {order.courier && <div className="detail-row"><span className="dr-label">Courier</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.courier}</span></div>}
@@ -1504,7 +1504,7 @@
                     <th style={{width:36}}>#</th>
                     <th className={`sort ${sort==='id'?'sorted':''}`} onClick={()=>hSort('id')}>Order {arrow('id')}</th>
                     <th className={`sort ${sort==='customer'?'sorted':''}`} onClick={()=>hSort('customer')}>Customer {arrow('customer')}</th>
-                    <th>Items</th><th>Products</th><th>Stage / Tracking</th><th>Payment</th>
+                    <th>Items</th><th>Products</th><th>Stage / Tracking</th><th>Delivery</th><th>Payment</th>
                     <th className={`sort ${sort==='amount'?'sorted':''}`} onClick={()=>hSort('amount')}>Revenue {arrow('amount')}</th>
                     <th>Shipping</th><th>Advance</th><th>Remaining COD</th>
                     <th className={`sort ${sort==='date'?'sorted':''}`} onClick={()=>hSort('date')}>Date {arrow('date')}</th>
@@ -1525,6 +1525,14 @@
                           <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{qty} item{qty!==1?'s':''}</span></td>
                           <td style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-dim)',fontSize:11}}>{o.myItems.map(i=>i.title).join(', ')}</td>
                           <td><div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>{o.superHold&&<SuperHoldBadge/>}<PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/><PenaltyBadge triggered={o.penaltyTriggered>0} confirmedAmount={o.confirmedPenalty||0} shopifyId={o.shopifyId} token={token}/></div></td>
+                          <td>{(()=>{
+                            const ds = o.deliveryStatus;
+                            const allFulfilled = o.myItems.length > 0 && o.myItems.every(i=>i.fulfilled);
+                            if (!ds && !allFulfilled) return <span style={{fontSize:10,color:'var(--text-muted)'}}>—</span>;
+                            const label = ds==='delivered'?'Delivered':ds==='in_transit'||ds==='out_for_delivery'?'In Transit':ds==='attempted_delivery'?'Attempted':ds==='failure'?'RTO':ds==='ready_for_pickup'?'Ready Pickup':allFulfilled&&!ds?'Fulfilled':ds||'Fulfilled';
+                            const color = ds==='delivered'?'#10b981':ds==='in_transit'||ds==='out_for_delivery'?'#06b6d4':ds==='failure'?'#ef4444':ds==='attempted_delivery'?'#f59e0b':'#6366f1';
+                            return <span style={{fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:4,background:`${color}18`,color,border:`1px solid ${color}33`,whiteSpace:'nowrap'}}>{label}</span>;
+                          })()}</td>
                           <td><PayBadge type={o.paymentType}/></td>
                           <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
                           <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
