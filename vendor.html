@@ -1182,21 +1182,6 @@
               </table>
             </div>
 
-            {/* Tags */}
-            <div style={{marginBottom:18}}>
-              <div className="detail-box-title" style={{marginBottom:8}}>Status Tags</div>
-              <div className="tags-wrap">
-                {tags.map(t => (
-                  <span key={t} className="tag-chip">{t}<button className="tag-remove" onClick={()=>removeTag(t)}>✕</button></span>
-                ))}
-                <input
-                  className="tag-add-input" placeholder="+ Add tag"
-                  value={tagInput} onChange={e=>setTagInput(e.target.value)}
-                  onKeyDown={e=>{ if(e.key==='Enter'||e.key===','){e.preventDefault();addTag();} }}
-                />
-              </div>
-              <div style={{marginTop:10}}><button className="btn btn-ghost btn-sm" onClick={saveTags} disabled={saving}>{saving?'Saving…':'Save Tags'}</button></div>
-            </div>
 
             {/* Fulfillment history */}
             {order.fulfillments.length > 0 && (
