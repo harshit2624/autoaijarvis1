@@ -3115,7 +3115,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
       // Single stageMap — one entry per unique order, stage = higherStage of meta + all vendor stages
       const stageMap = {};
-      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0;
+      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0, revNotConfirmed=0;
       const IN_TRANSIT_SET = new Set(['ready','pickup','transit']);
 
       ordersMain.forEach(o => {
@@ -3136,6 +3136,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
           revNotDispatched += price;  // confirmed + partial
         } else if (stage === 'new' || stage === 'hold') {
           revNotDispatched += price;  // new + hold — not yet confirmed but still orders
+          revNotConfirmed  += price;
         }
         // cancelled excluded from revNotDispatched intentionally
       });
@@ -3164,7 +3165,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         revDelivered:     parseFloat(revDelivered.toFixed(2)),
         revInTransit:     parseFloat(revInTransit.toFixed(2)),
         revRto:           parseFloat(revRto.toFixed(2)),
-        revNotDispatched: parseFloat(revNotDispatched.toFixed(2)),  // all non-dispatched excl. cancelled
+        revNotDispatched:  parseFloat(revNotDispatched.toFixed(2)),  // all non-dispatched excl. cancelled
+        revNotConfirmed:   parseFloat(revNotConfirmed.toFixed(2)),  // new + hold revenue
         rto_rate: dispatched > 0 ? Math.round(rto / dispatched * 100) : 0,
         // legacy aliases so existing frontend doesn't break
         confirmed:     active,

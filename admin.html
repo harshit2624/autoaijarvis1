@@ -1660,8 +1660,8 @@
                           <div style={{fontSize:13,fontWeight:800,color:'#34d399'}}>{fmtCur((fs.revDispatched||0)+(fs.revPending||0))}</div>
                         </div>
                         <div style={{background:'rgba(148,163,184,0.08)',border:'1px solid rgba(148,163,184,0.2)',borderRadius:6,padding:'6px 10px'}}>
-                          <div style={{fontSize:9,color:'#94a3b8',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Confirmed</div>
-                          <div style={{fontSize:13,fontWeight:800,color:'#94a3b8'}}>{notConfirmedCount} orders</div>
+                          <div style={{fontSize:9,color:'#94a3b8',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Confirmed Revenue</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#94a3b8'}}>{fmtCur(fs.revNotConfirmed||0)}</div>
                         </div>
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:4}}>
