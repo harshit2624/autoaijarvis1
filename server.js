@@ -3143,16 +3143,27 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
       });
 
-      const total          = ordersMain.length;
+      const total = ordersMain.length;
+      // Dispatched count from order_meta (matches order list, unique orders)
+      const DISPATCHED_STAGES = ['ready','pickup','transit','delivered','rto'];
+      const dispatchedMeta = DISPATCHED_STAGES.reduce((s, k) => s + (stageBreakdown[k]||0), 0);
+      const pendingMeta    = (stageBreakdown.confirmed||0) + (stageBreakdown.partial||0);
+      const totalActiveMeta = dispatchedMeta + pendingMeta;
+
+      // Dispatch rate: vendor-pair based (accurate per-vendor accountability)
       const totalActive    = dispatched + pending;
       const dispatch_rate  = totalActive > 0 ? Math.round(dispatched / totalActive * 100) : 0;
-      const overall_rate   = total > 0 ? Math.round(dispatched / total * 100) : 0;
-      const delivery_rate  = dispatched > 0 ? Math.round((stageBreakdown.delivered||0) / dispatched * 100) : 0;
+
+      // Delivery & overall rates: order_meta based (matches order list exactly)
+      const delivery_rate  = dispatchedMeta > 0 ? Math.round((stageBreakdown.delivered||0) / dispatchedMeta * 100) : 0;
+      const overall_rate   = total > 0 ? Math.round(dispatchedMeta / total * 100) : 0;
 
       return {
         total, confirmed: totalActive, dispatched, pending_count: pending,
+        // order_meta counts — match the order list
         delivered: stageBreakdown.delivered||0, rto: stageBreakdown.rto||0,
         cancelled: stageBreakdown.cancelled||0,
+        dispatched_meta: dispatchedMeta,   // unique orders in dispatched stages
         dispatch_rate, overall_rate, delivery_rate,
         stageBreakdown,   // per unique order from order_meta — matches order list
         revConfirmed: parseFloat(revPending.toFixed(2)),

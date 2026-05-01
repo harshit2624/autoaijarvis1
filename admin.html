@@ -1738,10 +1738,10 @@
                   );
                 })()}
                 <MiniCard icon="🚀" label="Overall Fulfillment"
-                  pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
+                  pct={fs.overall_rate} num={fs.dispatched_meta||fs.dispatched} den={fs.total+' total orders'}
                   sub={fs.cancelled+' cancelled'}/>
                 <MiniCard icon="✅" label="Delivery Rate"
-                  pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
+                  pct={fs.delivery_rate} num={fs.delivered} den={(fs.dispatched_meta||fs.dispatched)+' dispatched orders'}
                   sub={fs.rto+' RTO · overall: '+Math.round(fs.delivered/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'} rev={fs.revDelivered} threshHi={70} threshMid={50}/>
               </React.Fragment>
             );
