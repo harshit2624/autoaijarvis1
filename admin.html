@@ -1575,13 +1575,12 @@
               <React.Fragment>
                 {/* ── Confirmed Orders Card with left/right breakdown ── */}
                 {(()=>{
-                  const sb  = fs.stageBreakdown || {};
-                  const confirmedTotal    = fs.confirmed || 1;
-                  const notConfirmedCount = (sb.new||0) + (sb.hold||0) + (sb.cancelled||0);
+                  const sm  = fs.stageMap || {};
+                  const confirmedTotal   = fs.active || 1;
+                  const notConfirmedCount = fs.notConfirmed || 0;
                   const notConfirmedTotal = notConfirmedCount || 1;
-                  // Use vendor-pair total (confirmed + not-confirmed) so math is consistent
                   const grandTotal   = confirmedTotal + notConfirmedCount;
-                  const confirmedPct = grandTotal > 0 ? Math.round(fs.confirmed / grandTotal * 100) : 0;
+                  const confirmedPct = grandTotal > 0 ? Math.round(fs.active / grandTotal * 100) : 0;
 
                   const confirmedStages = [
                     { key:'delivered', label:'Delivered',      icon:'✅', c:'#10b981' },
@@ -1599,7 +1598,7 @@
                   ];
 
                   const StageRow = ({ s, count, den }) => {
-                    const pct = Math.round(count / den * 100);
+                    const pct = den > 0 ? Math.round(count / den * 100) : 0;
                     return (
                       <div style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
                         <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:4,minWidth:130}}>{s.icon} {s.label}</span>
@@ -1614,19 +1613,18 @@
 
                   return (
                     <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6,gridColumn:'span 2'}}>
-                      {/* Header */}
                       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
                         <div>
                           <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📋 Order Confirmation Breakdown · {periodLabel}</div>
                           <div style={{display:'flex',alignItems:'baseline',gap:8}}>
                             <span style={{fontSize:36,fontWeight:900,color:'var(--indigo)',lineHeight:1}}>{confirmedPct}%</span>
-                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.confirmed} confirmed / {grandTotal} total</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.active} confirmed / {grandTotal} total</span>
                           </div>
                         </div>
                         <div style={{display:'flex',gap:16}}>
                           <div style={{textAlign:'right'}}>
                             <div style={{fontSize:10,color:'var(--text-muted)'}}>Confirmed</div>
-                            <div style={{fontSize:18,fontWeight:800,color:'#34d399'}}>{fs.confirmed}</div>
+                            <div style={{fontSize:18,fontWeight:800,color:'#34d399'}}>{fs.active}</div>
                           </div>
                           <div style={{textAlign:'right'}}>
                             <div style={{fontSize:10,color:'var(--text-muted)'}}>Not Confirmed</div>
@@ -1634,27 +1632,23 @@
                           </div>
                         </div>
                       </div>
-                      {/* Progress bar */}
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:3,transition:'width 0.4s'}}/>
                       </div>
-                      {/* Two-column breakdown */}
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:4}}>
-                        {/* Left: confirmed stages */}
                         <div>
-                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#34d399',marginBottom:6}}>✓ Confirmed ({fs.confirmed})</div>
-                          {confirmedStages.filter(s=>(sb[s.key]||0)>0).map(s=>(
-                            <StageRow key={s.key} s={s} count={sb[s.key]||0} den={confirmedTotal}/>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#34d399',marginBottom:6}}>✓ Confirmed ({fs.active})</div>
+                          {confirmedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
+                            <StageRow key={s.key} s={s} count={sm[s.key]||0} den={confirmedTotal}/>
                           ))}
-                          {confirmedStages.every(s=>(sb[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No confirmed orders yet</div>}
+                          {confirmedStages.every(s=>(sm[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No confirmed orders yet</div>}
                         </div>
-                        {/* Right: not confirmed stages */}
                         <div>
-                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#94a3b8',marginBottom:6}}>○ Not Confirmed ({(sb.new||0)+(sb.hold||0)+(sb.cancelled||0)})</div>
-                          {notConfirmedStages.filter(s=>(sb[s.key]||0)>0).map(s=>(
-                            <StageRow key={s.key} s={s} count={sb[s.key]||0} den={notConfirmedTotal}/>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#94a3b8',marginBottom:6}}>○ Not Confirmed ({notConfirmedCount})</div>
+                          {notConfirmedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
+                            <StageRow key={s.key} s={s} count={sm[s.key]||0} den={notConfirmedTotal}/>
                           ))}
-                          {notConfirmedStages.every(s=>(sb[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>All orders confirmed</div>}
+                          {notConfirmedStages.every(s=>(sm[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>All orders confirmed</div>}
                         </div>
                       </div>
                     </div>
@@ -1662,87 +1656,83 @@
                 })()}
                 {/* ── Dispatch Rate Card with stage breakdown ── */}
                 {(()=>{
+                  const sm    = fs.stageMap || {};
                   const pct   = fs.dispatch_rate;
                   const color = pct>=80?'#10b981':pct>=50?'#f59e0b':'#ef4444';
                   const bg    = pct>=80?'rgba(16,185,129,0.08)':pct>=50?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
                   const bdr   = pct>=80?'rgba(16,185,129,0.3)':pct>=50?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
-                  const sb    = fs.stageBreakdown || {};
+
                   const dispStages = [
-                    { key:'delivered', label:'Delivered',    icon:'✅', c:'#10b981' },
-                    { key:'transit',   label:'In Transit',   icon:'🚚', c:'#60a5fa' },
-                    { key:'pickup',    label:'Pickup',       icon:'⌛', c:'#f59e0b' },
-                    { key:'ready',     label:'Ready to Ship',icon:'📦', c:'#a78bfa' },
-                    { key:'rto',       label:'RTO',          icon:'↩', c:'#f87171' },
+                    { key:'delivered', label:'Delivered',     icon:'✅', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',    icon:'🚚', c:'#60a5fa' },
+                    { key:'pickup',    label:'Pickup Pending',icon:'⌛', c:'#f59e0b' },
+                    { key:'ready',     label:'Ready to Ship', icon:'📦', c:'#a78bfa' },
+                    { key:'rto',       label:'RTO',           icon:'↩', c:'#f87171' },
                   ];
                   const pendStages = [
                     { key:'confirmed', label:'Confirmed', icon:'✓', c:'#34d399' },
                     { key:'partial',   label:'Partial',   icon:'₹', c:'#fbbf24' },
                   ];
+
                   return (
                     <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6,gridColumn:'span 2'}}>
-                      {/* Header row */}
                       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
                         <div>
                           <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📦 Dispatch Rate · {periodLabel}</div>
                           <div style={{display:'flex',alignItems:'baseline',gap:8}}>
                             <span style={{fontSize:36,fontWeight:900,color,lineHeight:1}}>{pct}%</span>
-                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.dispatched} dispatched / {fs.confirmed} active orders</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.dispatched} dispatched / {fs.active} active orders</span>
                           </div>
                         </div>
                         <div style={{textAlign:'right'}}>
                           <div style={{fontSize:10,color:'var(--text-muted)'}}>Pending dispatch</div>
-                          <div style={{fontSize:20,fontWeight:800,color:'#f87171'}}>{fs.pending_count}</div>
+                          <div style={{fontSize:20,fontWeight:800,color:'#f87171'}}>{fs.pending}</div>
                           <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{fmtCur(fs.revDispatched)} dispatched rev</div>
                         </div>
                       </div>
-                      {/* Progress bar */}
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:pct+'%',background:color,borderRadius:3,transition:'width 0.4s'}}/>
                       </div>
-                      {/* Stage breakdown */}
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
-                        {/* Dispatched breakdown */}
                         <div>
                           <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color,marginBottom:5}}>✅ {pct}% Dispatched ({fs.dispatched})</div>
-                          {dispStages.filter(s=>(sb[s.key]||0)>0).map(s=>(
+                          {dispStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
                             <div key={s.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
                               <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
                               <div style={{display:'flex',alignItems:'center',gap:6}}>
                                 <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
-                                  <div style={{height:'100%',width:`${Math.round((sb[s.key]||0)/Math.max(fs.dispatched,1)*100)}%`,background:s.c,borderRadius:2}}/>
+                                  <div style={{height:'100%',width:`${fs.dispatched>0?Math.round((sm[s.key]||0)/fs.dispatched*100):0}%`,background:s.c,borderRadius:2}}/>
                                 </div>
-                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sb[s.key]||0}</span>
+                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sm[s.key]||0}</span>
                               </div>
                             </div>
                           ))}
-                          {dispStages.every(s=>(sb[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No dispatched orders yet</div>}
                         </div>
-                        {/* Pending breakdown */}
                         <div>
-                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#f87171',marginBottom:5}}>⏳ {100-pct}% Pending ({fs.pending_count})</div>
-                          {pendStages.filter(s=>(sb[s.key]||0)>0).map(s=>(
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#f87171',marginBottom:5}}>⏳ {100-pct}% Pending ({fs.pending})</div>
+                          {pendStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
                             <div key={s.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
                               <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
                               <div style={{display:'flex',alignItems:'center',gap:6}}>
                                 <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
-                                  <div style={{height:'100%',width:`${Math.round((sb[s.key]||0)/Math.max(fs.pending_count,1)*100)}%`,background:s.c,borderRadius:2}}/>
+                                  <div style={{height:'100%',width:`${fs.pending>0?Math.round((sm[s.key]||0)/fs.pending*100):0}%`,background:s.c,borderRadius:2}}/>
                                 </div>
-                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sb[s.key]||0}</span>
+                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sm[s.key]||0}</span>
                               </div>
                             </div>
                           ))}
-                          {pendStages.every(s=>(sb[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No pending orders</div>}
                         </div>
                       </div>
                     </div>
                   );
                 })()}
                 <MiniCard icon="🚀" label="Overall Fulfillment"
-                  pct={fs.overall_rate} num={fs.dispatched_meta||fs.dispatched} den={fs.total+' total orders'}
+                  pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
                   sub={fs.cancelled+' cancelled'}/>
                 <MiniCard icon="✅" label="Delivery Rate"
-                  pct={fs.delivery_rate} num={fs.delivered} den={(fs.dispatched_meta||fs.dispatched)+' dispatched orders'}
-                  sub={fs.rto+' RTO · overall: '+Math.round(fs.delivered/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'} rev={fs.revDelivered} threshHi={70} threshMid={50}/>
+                  pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
+                  sub={fs.rto+' RTO · overall: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'}
+                  rev={fs.revDelivered} threshHi={70} threshMid={50}/>
               </React.Fragment>
             );
           })()}
