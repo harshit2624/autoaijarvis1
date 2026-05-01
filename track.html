@@ -524,22 +524,55 @@
 
 
   function App() {
-    const [orderNum, setOrderNum] = useState('');
-    const [email, setEmail] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
-    const [order, setOrder] = useState(null);
-    const [activeForm, setActiveForm] = useState(null); // 'exchange' | 'return' | null
-    const [confirmed, setConfirmed] = useState(null); // request_id after submit
+    const [orderNum, setOrderNum]   = useState('');
+    const [contact,  setContact]    = useState(''); // email or phone
+    const [loading,  setLoading]    = useState(false);
+    const [error,    setError]      = useState(null);
+    const [order,    setOrder]      = useState(null);
+    const [activeForm,  setActiveForm]  = useState(null);
+    const [confirmed,   setConfirmed]   = useState(null);
+
+    // "Find my orders" mode
+    const [findMode,    setFindMode]    = useState(false);
+    const [findContact, setFindContact] = useState('');
+    const [findLoading, setFindLoading] = useState(false);
+    const [findError,   setFindError]   = useState(null);
+    const [orderList,   setOrderList]   = useState(null); // array of orders
+
+    const resetResult = () => { setOrder(null); setActiveForm(null); setConfirmed(null); setOrderList(null); };
 
     const lookup = async () => {
-      if (!orderNum.trim() || !email.trim()) { setError('Please enter both order number and email.'); return; }
-      setLoading(true); setError(null); setOrder(null); setActiveForm(null); setConfirmed(null);
+      if (!orderNum.trim()) { setError('Please enter your order number.'); return; }
+      setLoading(true); setError(null); resetResult();
       try {
-        const r = await fetch(`${API}/track/order?q=${encodeURIComponent(orderNum.trim())}&email=${encodeURIComponent(email.trim())}`);
+        const contactParam = contact.trim() || 'na';
+        const r = await fetch(`${API}/track/order?q=${encodeURIComponent(orderNum.trim())}&contact=${encodeURIComponent(contactParam)}`);
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         setOrder(d);
+      } catch(e) { setError(e.message); }
+      setLoading(false);
+    };
+
+    const findMyOrders = async () => {
+      if (!findContact.trim()) { setFindError('Enter your email or mobile number.'); return; }
+      setFindLoading(true); setFindError(null); setOrderList(null);
+      try {
+        const r = await fetch(`${API}/track/my-orders?contact=${encodeURIComponent(findContact.trim())}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setOrderList(d.orders);
+      } catch(e) { setFindError(e.message); }
+      setFindLoading(false);
+    };
+
+    const selectOrder = async (shopifyId) => {
+      setLoading(true); setError(null); setOrder(null); setActiveForm(null); setConfirmed(null);
+      try {
+        const r = await fetch(`${API}/track/order-by-id?id=${shopifyId}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setOrder(d); setOrderList(null); setFindMode(false);
       } catch(e) { setError(e.message); }
       setLoading(false);
     };
@@ -562,38 +595,101 @@
           <div className="header-logo">
             <img src="/croscrow-logo.png" alt="CrosCrow" style={{height:40,width:'auto'}}/>
           </div>
-          <div className="header-sub" style={{marginTop:8}}>Enter your order number and email to see real-time status</div>
+          <div className="header-sub" style={{marginTop:8}}>Track your order · Request returns & exchanges</div>
         </div>
 
         {/* Search */}
         <div className="search-card">
-          <div className="search-row">
-            <div className="search-field">
-              <label className="field-label">Order Number</label>
-              <input
-                className="field-input"
-                placeholder="#1905 or 1905"
-                value={orderNum}
-                onChange={e=>setOrderNum(e.target.value)}
-                onKeyDown={e=>e.key==='Enter'&&lookup()}
-              />
-            </div>
-            <div className="search-field">
-              <label className="field-label">Email Address</label>
-              <input
-                className="field-input"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={e=>setEmail(e.target.value)}
-                onKeyDown={e=>e.key==='Enter'&&lookup()}
-              />
-            </div>
+          {/* Toggle: normal vs find-my-orders */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+            <span style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+              {findMode ? '🔍 Find My Orders' : '📦 Track by Order Number'}
+            </span>
+            <button onClick={()=>{setFindMode(m=>!m);resetResult();setError(null);setFindError(null);}} style={{
+              background: findMode?'var(--green)':'var(--bg-card2)',
+              border:`1px solid ${findMode?'var(--green)':'var(--border)'}`,
+              borderRadius:20, padding:'3px 10px', cursor:'pointer',
+              fontSize:10, fontWeight:600, color: findMode?'#fff':'var(--text-muted)',
+              fontFamily:'inherit', transition:'all 0.2s', display:'flex', alignItems:'center', gap:5,
+            }}>
+              <span style={{
+                display:'inline-block', width:28, height:14, borderRadius:7,
+                background: findMode?'rgba(255,255,255,0.3)':'var(--border)',
+                position:'relative', transition:'all 0.2s',
+              }}>
+                <span style={{
+                  position:'absolute', top:2, left: findMode?14:2, width:10, height:10,
+                  borderRadius:'50%', background: findMode?'#fff':'var(--text-muted)',
+                  transition:'left 0.2s',
+                }}/>
+              </span>
+              {findMode ? "Don't know order #" : "Don't know order #"}
+            </button>
           </div>
-          {error && <div className="alert alert-error" style={{marginTop:12,marginBottom:0}}>⚠ {error}</div>}
-          <button className="btn btn-green btn-full" onClick={lookup} disabled={loading}>
-            {loading ? <><span className="spin">↻</span> Searching…</> : '🔍 Track Order'}
-          </button>
+
+          {!findMode ? (
+            <>
+              <div className="search-row">
+                <div className="search-field">
+                  <label className="field-label">Order Number</label>
+                  <input className="field-input" placeholder="#1905 or 1905"
+                    value={orderNum} onChange={e=>setOrderNum(e.target.value)} onKeyDown={e=>e.key==='Enter'&&lookup()}/>
+                </div>
+                <div className="search-field">
+                  <label className="field-label">Email or Mobile</label>
+                  <input className="field-input" placeholder="you@example.com or 98765 43210"
+                    value={contact} onChange={e=>setContact(e.target.value)} onKeyDown={e=>e.key==='Enter'&&lookup()}/>
+                </div>
+              </div>
+              {error && <div className="alert alert-error" style={{marginTop:10,marginBottom:0}}>⚠ {error}</div>}
+              <button className="btn btn-green btn-full" onClick={lookup} disabled={loading}>
+                {loading ? <><span className="spin">↻</span> Searching…</> : '🔍 Track Order'}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{marginBottom:10}}>
+                <label className="field-label">Email or Mobile Number</label>
+                <input className="field-input" placeholder="you@example.com or 98765 43210"
+                  value={findContact} onChange={e=>setFindContact(e.target.value)} onKeyDown={e=>e.key==='Enter'&&findMyOrders()}/>
+              </div>
+              {findError && <div className="alert alert-error" style={{marginBottom:8}}>⚠ {findError}</div>}
+              <button className="btn btn-green btn-full" onClick={findMyOrders} disabled={findLoading}>
+                {findLoading ? <><span className="spin">↻</span> Searching…</> : '🔍 Find My Orders'}
+              </button>
+
+              {/* Order list */}
+              {orderList && (
+                <div style={{marginTop:14}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8,fontWeight:500}}>
+                    {orderList.length} order{orderList.length!==1?'s':''} found — select one to track
+                  </div>
+                  {orderList.map(o=>(
+                    <div key={o.shopify_order_id} onClick={()=>selectOrder(o.shopify_order_id)}
+                      style={{
+                        display:'flex', alignItems:'center', justifyContent:'space-between', gap:10,
+                        padding:'10px 12px', borderRadius:8, border:'1px solid var(--border)',
+                        background:'var(--bg-card2)', marginBottom:6, cursor:'pointer',
+                        transition:'all 0.15s',
+                      }}
+                      onMouseEnter={e=>{ e.currentTarget.style.borderColor='var(--green)'; e.currentTarget.style.background='var(--bg-hover)'; }}
+                      onMouseLeave={e=>{ e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.background='var(--bg-card2)'; }}
+                    >
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13,color:'var(--green)'}}>{o.order_name}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{o.items_preview}{o.item_count>2?` +${o.item_count-2} more`:''}</div>
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{new Date(o.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</div>
+                      </div>
+                      <div style={{textAlign:'right',flexShrink:0}}>
+                        <div className={stagePillClass(o.stage)} style={{marginBottom:4}}>{STAGE_LABELS[o.stage]||o.stage}</div>
+                        <div style={{fontSize:11,fontWeight:600,color:'var(--text)'}}>₹{parseFloat(o.total).toFixed(0)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* Order Result */}

@@ -7102,91 +7102,150 @@ app.get("/track", (req, res) => {
 });
 
 // ── Public: lookup order by order number + email ──────────────────────────
+// normalize phone: strip all non-digits, remove leading country code 91
+function normalizePhone(p='') {
+  const d = p.replace(/\D/g,'');
+  return d.startsWith('91') && d.length > 10 ? d.slice(2) : d;
+}
+
+async function buildOrderPayload(order) {
+  const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
+  const vendorStages = await mdb.collection('order_vendor_stage').find({ shopify_id: String(order.id) }, { projection: { _id: 0 } }).toArray();
+  const vendorNames = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+  const returnConfigs = {};
+  for (const v of vendorNames) {
+    const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
+    returnConfigs[v] = { exchange_enabled: true, return_enabled: cfg.return_enabled !== false, return_window_days: cfg.return_window_days || 7, return_address: cfg.return_address || null };
+  }
+  const items = (order.line_items || []).map(li => ({
+    line_item_id: li.id, product_id: li.product_id, variant_id: li.variant_id,
+    title: li.title, variant_title: li.variant_title, sku: li.sku,
+    qty: li.quantity, price: li.price, vendor: li.vendor || '',
+  }));
+  const stage = meta.stage || 'new';
+  let awb = null, trackingUrl = null;
+  for (const f of (order.fulfillments || [])) { if (f.tracking_number) { awb = f.tracking_number; trackingUrl = f.tracking_url || null; break; } }
+  const customerName = order.shipping_address
+    ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim()
+    : order.customer ? `${order.customer.first_name||''} ${order.customer.last_name||''}`.trim() : '';
+  return {
+    shopify_order_id: order.id, order_name: order.name, customer_name: customerName,
+    customer_email: order.email || '', customer_phone: order.shipping_address?.phone || order.billing_address?.phone || order.phone || '',
+    stage, financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
+    created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames, return_configs: returnConfigs,
+  };
+}
+
 app.get("/track/order", async (req, res) => {
   try {
-    const { q, email } = req.query;
-    if (!q || !email) return res.status(400).json({ error: "q and email are required" });
+    const { q, contact } = req.query;
+    if (!q) return res.status(400).json({ error: "Order number is required" });
 
     const normalized = q.replace(/^#/, '').trim();
     const name = `#${normalized}`;
 
-    // Search Shopify by order name
     const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
     const orders = data.orders || [];
 
-    const emailLower = email.toLowerCase().trim();
-    const order = orders.find(o => {
-      const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
-      return oEmail === emailLower;
-    });
+    // If contact is "na" or empty — return by order number only (no identity check)
+    const skipContact = !contact || contact.trim().toLowerCase() === 'na';
+    let order;
+    if (skipContact) {
+      order = orders[0];
+    } else {
+      const contactClean = contact.toLowerCase().trim();
+      const contactPhone = normalizePhone(contact);
+      order = orders.find(o => {
+        const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
+        const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+        return oEmail === contactClean || (contactPhone.length >= 10 && oPhone === contactPhone);
+      });
+    }
 
-    if (!order) return res.status(404).json({ error: "Order not found. Please check the order number and email address." });
+    if (!order) return res.status(404).json({ error: "Order not found. Please check the order number and your contact details." });
 
     // Get meta (stage, AWB etc.)
-    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
-
-    // Get per-vendor stage
-    const vendorStages = await mdb.collection('order_vendor_stage').find({ shopify_id: String(order.id) }, { projection: { _id: 0 } }).toArray();
-
-    // Collect unique vendors in this order
-    const vendorNames = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
-
-    // Fetch return configs for all vendors
-    const returnConfigs = {};
-    for (const v of vendorNames) {
-      const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
-      returnConfigs[v] = {
-        exchange_enabled: true,
-        return_enabled: cfg.return_enabled !== false,
-        return_window_days: cfg.return_window_days || 7,
-        return_address: cfg.return_address || null,
-      };
-    }
-
-    // Build line items with vendor info
-    const items = (order.line_items || []).map(li => ({
-      line_item_id: li.id,
-      product_id: li.product_id,
-      variant_id: li.variant_id,
-      title: li.title,
-      variant_title: li.variant_title,
-      sku: li.sku,
-      qty: li.quantity,
-      price: li.price,
-      vendor: li.vendor || '',
-    }));
-
-    // Derive overall stage
-    const stage = meta.stage || 'new';
-
-    // AWB tracking info
-    let awb = null, trackingUrl = null;
-    for (const f of (order.fulfillments || [])) {
-      if (f.tracking_number) { awb = f.tracking_number; trackingUrl = f.tracking_url || null; break; }
-    }
-
-    const customerName = order.shipping_address
-      ? `${order.shipping_address.first_name || ''} ${order.shipping_address.last_name || ''}`.trim()
-      : order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : '';
-
-    res.json({
-      shopify_order_id: order.id,
-      order_name: order.name,
-      customer_name: customerName,
-      customer_email: order.email || '',
-      customer_phone: order.shipping_address?.phone || order.billing_address?.phone || '',
-      stage,
-      financial_status: order.financial_status,
-      fulfillment_status: order.fulfillment_status,
-      created_at: order.created_at,
-      awb,
-      tracking_url: trackingUrl,
-      items,
-      vendor_names: vendorNames,
-      return_configs: returnConfigs,
-    });
+    res.json(await buildOrderPayload(order));
   } catch (err) {
     console.error("❌ /track/order:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Public: find all orders by email or phone ─────────────────────────────
+app.get("/track/my-orders", async (req, res) => {
+  try {
+    const { contact } = req.query;
+    if (!contact || contact.trim().length < 5) return res.status(400).json({ error: "Please enter a valid email or phone number." });
+
+    const contactClean = contact.trim().toLowerCase();
+    const contactPhone = normalizePhone(contact);
+    const isPhone = /^\d{7,}$/.test(contactPhone);
+
+    let shopifyOrders = [];
+    if (isPhone) {
+      const d = await shopifyREST(`/orders.json?status=any&limit=250&phone=${encodeURIComponent(contact.trim())}`);
+      shopifyOrders = d.orders || [];
+      if (!shopifyOrders.length) {
+        // fallback: fetch recent and filter
+        const d2 = await shopifyREST(`/orders.json?status=any&limit=250`);
+        shopifyOrders = (d2.orders || []).filter(o => {
+          const p = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+          return p === contactPhone;
+        });
+      }
+    } else {
+      const d = await shopifyREST(`/orders.json?status=any&limit=250&email=${encodeURIComponent(contactClean)}`);
+      shopifyOrders = d.orders || [];
+      if (!shopifyOrders.length) {
+        const d2 = await shopifyREST(`/orders.json?status=any&limit=250`);
+        shopifyOrders = (d2.orders || []).filter(o => (o.email||'').toLowerCase() === contactClean);
+      }
+    }
+
+    if (!shopifyOrders.length) return res.status(404).json({ error: "No orders found for this contact." });
+
+    // Get meta for all orders
+    const ids = shopifyOrders.map(o => String(o.id));
+    const metas = await mdb.collection('order_meta').find({ shopify_id: { $in: ids } }, { projection: { shopify_id:1, stage:1, _id:0 } }).toArray();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+
+    const result = shopifyOrders.slice(0, 20).map(o => {
+      const meta = metaMap[String(o.id)] || {};
+      const customerName = o.shipping_address
+        ? `${o.shipping_address.first_name||''} ${o.shipping_address.last_name||''}`.trim()
+        : o.customer ? `${o.customer.first_name||''} ${o.customer.last_name||''}`.trim() : '';
+      return {
+        shopify_order_id: o.id,
+        order_name: o.name,
+        customer_name: customerName,
+        created_at: o.created_at,
+        stage: meta.stage || 'new',
+        financial_status: o.financial_status,
+        item_count: (o.line_items||[]).reduce((s,li)=>s+li.quantity,0),
+        items_preview: (o.line_items||[]).slice(0,2).map(li=>li.title).join(', '),
+        total: o.total_price,
+        currency: o.currency,
+      };
+    });
+
+    res.json({ orders: result });
+  } catch (err) {
+    console.error("❌ /track/my-orders:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Public: get single order by shopify ID (after customer selects from list) ──
+app.get("/track/order-by-id", async (req, res) => {
+  try {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: "id required" });
+    const data = await shopifyREST(`/orders/${id}.json`);
+    if (!data.order) return res.status(404).json({ error: "Order not found" });
+    res.json(await buildOrderPayload(data.order));
+  } catch (err) {
+    console.error("❌ /track/order-by-id:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
