@@ -1576,9 +1576,12 @@
                 {/* ── Confirmed Orders Card with left/right breakdown ── */}
                 {(()=>{
                   const sb  = fs.stageBreakdown || {};
-                  const confirmedTotal = fs.confirmed || 1; // dispatched + pending (excludes hold/new/cancelled)
-                  const notConfirmedTotal = (sb.new||0) + (sb.hold||0) + (sb.cancelled||0) || 1;
-                  const confirmedPct = fs.total > 0 ? Math.round(fs.confirmed / fs.total * 100) : 0;
+                  const confirmedTotal    = fs.confirmed || 1;
+                  const notConfirmedCount = (sb.new||0) + (sb.hold||0) + (sb.cancelled||0);
+                  const notConfirmedTotal = notConfirmedCount || 1;
+                  // Use vendor-pair total (confirmed + not-confirmed) so math is consistent
+                  const grandTotal   = confirmedTotal + notConfirmedCount;
+                  const confirmedPct = grandTotal > 0 ? Math.round(fs.confirmed / grandTotal * 100) : 0;
 
                   const confirmedStages = [
                     { key:'delivered', label:'Delivered',      icon:'✅', c:'#10b981' },
@@ -1617,7 +1620,7 @@
                           <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📋 Order Confirmation Breakdown · {periodLabel}</div>
                           <div style={{display:'flex',alignItems:'baseline',gap:8}}>
                             <span style={{fontSize:36,fontWeight:900,color:'var(--indigo)',lineHeight:1}}>{confirmedPct}%</span>
-                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.confirmed} confirmed / {fs.total} total orders</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.confirmed} confirmed / {grandTotal} total</span>
                           </div>
                         </div>
                         <div style={{display:'flex',gap:16}}>
@@ -1627,7 +1630,7 @@
                           </div>
                           <div style={{textAlign:'right'}}>
                             <div style={{fontSize:10,color:'var(--text-muted)'}}>Not Confirmed</div>
-                            <div style={{fontSize:18,fontWeight:800,color:'#94a3b8'}}>{(sb.new||0)+(sb.hold||0)+(sb.cancelled||0)}</div>
+                            <div style={{fontSize:18,fontWeight:800,color:'#94a3b8'}}>{notConfirmedCount}</div>
                           </div>
                         </div>
                       </div>
