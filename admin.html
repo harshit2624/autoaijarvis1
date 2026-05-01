@@ -907,9 +907,16 @@
               <div className="detail-box">
                 <div className="detail-box-title">Line Items</div>
                 {(order.lineItems||[]).map((li,i)=>(
-                  <div key={i} className="detail-row">
-                    <span className="dr-label" style={{maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{li.title}</span>
-                    <span className="dr-val">{li.qty}× {fmtCur(li.price)} <span style={{color:'var(--text-muted)',fontSize:10}}>({li.vendor})</span></span>
+                  <div key={i} className="detail-row" style={{alignItems:'center',gap:10}}>
+                    {li.image
+                      ? <img src={li.image} alt="" style={{width:36,height:36,borderRadius:6,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}}/>
+                      : <div style={{width:36,height:36,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>📦</div>
+                    }
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:12,color:'var(--text)'}}>{li.title}</div>
+                      {li.variant && li.variant!=='Default Title' && <div style={{fontSize:10,color:'var(--text-muted)'}}>{li.variant}</div>}
+                    </div>
+                    <span className="dr-val" style={{flexShrink:0}}>{li.qty}× {fmtCur(li.price)} <span style={{color:'var(--text-muted)',fontSize:10}}>({li.vendor})</span></span>
                   </div>
                 ))}
               </div>
@@ -2447,7 +2454,18 @@
                            <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
                          </td>
                          <td className="td-mut">{(cur-1)*PER+i+1}</td>
-                         <td><div className="td-id">{o.id}</div>{showTags && o.tags && o.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(<span key={t} style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:3,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0',marginTop:2,marginRight:2}}>{t}</span>))}</td>
+                         <td>
+                           <div className="td-id">{o.id}</div>
+                           {showTags && o.tags && o.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(<span key={t} style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:3,background:'#1a2a3a',border:'1px solid #2a4a6a',color:'#6fa8d0',marginTop:2,marginRight:2}}>{t}</span>))}
+                           <div style={{display:'flex',gap:3,marginTop:4,flexWrap:'wrap'}}>
+                             {(o.lineItems||[]).slice(0,3).map((li,idx)=>(
+                               li.image
+                                 ? <img key={idx} src={li.image} title={li.title+(li.variant&&li.variant!=='Default Title'?' · '+li.variant:'')} alt="" style={{width:28,height:28,borderRadius:4,objectFit:'cover',border:'1px solid var(--border)'}}/>
+                                 : <div key={idx} title={li.title} style={{width:28,height:28,borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12}}>📦</div>
+                             ))}
+                             {(o.lineItems||[]).length>3 && <div style={{width:28,height:28,borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'var(--text-muted)',fontWeight:700}}>+{(o.lineItems||[]).length-3}</div>}
+                           </div>
+                         </td>
                          <td><div style={{display:'flex',alignItems:'center',gap:7}}><div style={{width:22,height:22,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'var(--indigo)',flexShrink:0}}>{(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}</div><div><div style={{fontSize:12}}>{o.customer}</div>{o.email&&<div style={{fontSize:10,color:'var(--text-muted)'}}>{o.email}</div>}</div></div></td>
                          <td style={{color:'var(--text-dim)',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(o.vendors||[]).join(', ')||'—'}</td>
                          <td className="td-amt">{fmtCur(o.orderValue)}</td>

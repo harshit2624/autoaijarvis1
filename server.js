@@ -2718,6 +2718,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             quantity:  li.quantity,
             price:     parseFloat(li.price || 0),
             fulfilled: li.fulfillment_status === "fulfilled",
+            image:     li.image?.src || null,
           })),
           fulfillments: (o.fulfillments || [])
             .filter(f => (f.line_items || []).some(fli => {
@@ -3447,6 +3448,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         lineItems:      (o.line_items || []).map(li => ({
           title: li.title, vendor: li.vendor, qty: li.quantity,
           price: parseFloat(li.price || 0), sku: li.sku || "",
+          variant: li.variant_title || '', image: li.image?.src || null,
         })),
         shippingAddress: o.shipping_address || null,
       };
