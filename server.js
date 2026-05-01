@@ -3102,23 +3102,21 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const DISPATCHED_SET = new Set(['ready', 'pickup', 'transit', 'delivered', 'rto']);
       const PENDING_SET    = new Set(['confirmed', 'partial']);
 
-      // Build vendor-stage map for orders in period
-      const periodIds = new Set(ordersMain.map(o => String(o.id)));
+      // ── Dispatch rate: uses order_vendor_stage (per-vendor accuracy) ──────
+      const periodIds  = new Set(ordersMain.map(o => String(o.id)));
       const vsInPeriod = allVS.filter(r => periodIds.has(r.shopify_id));
 
-      // Stage breakdown counters (per vendor-order pair)
-      const stageBreakdown = { ready:0, pickup:0, transit:0, delivered:0, rto:0, confirmed:0, partial:0 };
-      let dispatched=0, pending=0, revDispatched=0, revPending=0, revDelivered=0;
+      // Build price lookup
+      const priceMap = Object.fromEntries(ordersMain.map(o => [String(o.id), parseFloat(o.total_price || 0)]));
 
-      // Track which orders have been handled via vendor stages
+      let dispatched=0, pending=0, revDispatched=0, revPending=0, revDelivered=0;
       const handledOrders = new Set();
+
       vsInPeriod.forEach(r => {
         handledOrders.add(r.shopify_id);
         const stage = r.stage || 'new';
         if (!DISPATCHED_SET.has(stage) && !PENDING_SET.has(stage)) return;
-        const o = ordersMain.find(x => String(x.id) === r.shopify_id);
-        const price = o ? parseFloat(o.total_price || 0) : 0;
-        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+        const price = priceMap[r.shopify_id] || 0;
         if (DISPATCHED_SET.has(stage) || r.awb) {
           dispatched++; revDispatched += price;
           if (stage === 'delivered') revDelivered += price;
@@ -3127,41 +3125,36 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         }
       });
 
-      // Orders with no vendor stage record: fall back to order_meta stage
+      // Orders with no vendor stage: fall back to order_meta for dispatch count
       ordersMain.forEach(o => {
         const sid = String(o.id);
         if (handledOrders.has(sid)) return;
-        const meta = metaMap[sid] || {};
-        const stage = meta.stage || 'new';
-        if (!DISPATCHED_SET.has(stage) && !PENDING_SET.has(stage)) return;
-        const price = parseFloat(o.total_price || 0);
-        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+        const stage = metaMap[sid]?.stage || 'new';
+        const price = priceMap[sid] || 0;
         if (DISPATCHED_SET.has(stage)) { dispatched++; revDispatched += price; if (stage==='delivered') revDelivered += price; }
         else if (PENDING_SET.has(stage)) { pending++; revPending += price; }
       });
 
-      // Count new / hold / cancelled from order_meta for remaining orders
+      // ── Stage breakdown: uses order_meta.stage per unique order ───────────
+      // This matches exactly what the orders list shows (single source of truth)
+      const stageBreakdown = {};
       ordersMain.forEach(o => {
-        const sid = String(o.id);
-        const meta = metaMap[sid] || {};
-        const stage = o.cancelled_at ? 'cancelled' : (meta.stage || 'new');
-        if (['new','hold','cancelled'].includes(stage)) {
-          stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
-        }
+        const stage = o.cancelled_at ? 'cancelled' : (metaMap[String(o.id)]?.stage || 'new');
+        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
       });
 
-      const total       = ordersMain.length;
-      const cancelled   = stageBreakdown.cancelled || 0;
-      const totalActive = dispatched + pending;
+      const total          = ordersMain.length;
+      const totalActive    = dispatched + pending;
       const dispatch_rate  = totalActive > 0 ? Math.round(dispatched / totalActive * 100) : 0;
       const overall_rate   = total > 0 ? Math.round(dispatched / total * 100) : 0;
       const delivery_rate  = dispatched > 0 ? Math.round((stageBreakdown.delivered||0) / dispatched * 100) : 0;
 
       return {
         total, confirmed: totalActive, dispatched, pending_count: pending,
-        delivered: stageBreakdown.delivered||0, rto: stageBreakdown.rto||0, cancelled,
+        delivered: stageBreakdown.delivered||0, rto: stageBreakdown.rto||0,
+        cancelled: stageBreakdown.cancelled||0,
         dispatch_rate, overall_rate, delivery_rate,
-        stageBreakdown,   // { ready, pickup, transit, delivered, rto, confirmed, partial }
+        stageBreakdown,   // per unique order from order_meta — matches order list
         revConfirmed: parseFloat(revPending.toFixed(2)),
         revDispatched: parseFloat(revDispatched.toFixed(2)),
         revDelivered: parseFloat(revDelivered.toFixed(2)),
