@@ -3059,6 +3059,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const raw     = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
     const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const allVS   = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, awb:1, _id:0 } }).toArray();
 
     const now      = Date.now();
     const DAY      = 86400000;
@@ -3096,36 +3097,65 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const revenueGrowth = revPrior > 0 ? parseFloat(((revMain - revPrior)/revPrior*100).toFixed(1)) : null;
     const orderGrowth   = ordersPrior.length > 0 ? parseFloat(((ordersMain.length - ordersPrior.length)/ordersPrior.length*100).toFixed(1)) : null;
 
-    // ── Fulfillment stats (30d)
+    // ── Fulfillment stats — uses order_vendor_stage for accurate per-vendor dispatch
     const fulfillStats = (() => {
-      const EXCLUDE    = new Set(['new', 'hold', 'cancelled']);
-      const DISPATCHED = new Set(['ready', 'pickup', 'transit', 'delivered', 'rto']);
+      const DISPATCHED_SET = new Set(['ready', 'pickup', 'transit', 'delivered', 'rto']);
+      const PENDING_SET    = new Set(['confirmed', 'partial']);
 
-      let total=0, confirmed=0, dispatched=0, delivered=0, rto=0, cancelled=0;
-      let revConfirmed=0, revDispatched=0, revDelivered=0;
-      orders30d.forEach(o => {
-        const meta  = metaMap[String(o.id)] || {};
-        const stage = meta.stage || 'new';
-        const price = parseFloat(o.total_price || 0);
-        total++;
-        if (o.cancelled_at || stage === 'cancelled') { cancelled++; return; }
-        if (!EXCLUDE.has(stage)) { confirmed++; revConfirmed += price; }
-        if (DISPATCHED.has(stage))  { dispatched++; revDispatched += price; }
-        if (stage === 'delivered')  { delivered++; revDelivered += price; }
-        if (stage === 'rto')        rto++;
+      // Build vendor-stage map for orders in period
+      const periodIds = new Set(ordersMain.map(o => String(o.id)));
+      const vsInPeriod = allVS.filter(r => periodIds.has(r.shopify_id));
+
+      // Stage breakdown counters (per vendor-order pair)
+      const stageBreakdown = { ready:0, pickup:0, transit:0, delivered:0, rto:0, confirmed:0, partial:0 };
+      let dispatched=0, pending=0, revDispatched=0, revPending=0, revDelivered=0;
+
+      // Track which orders have been handled via vendor stages
+      const handledOrders = new Set();
+      vsInPeriod.forEach(r => {
+        handledOrders.add(r.shopify_id);
+        const stage = r.stage || 'new';
+        if (!DISPATCHED_SET.has(stage) && !PENDING_SET.has(stage)) return;
+        const o = ordersMain.find(x => String(x.id) === r.shopify_id);
+        const price = o ? parseFloat(o.total_price || 0) : 0;
+        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+        if (DISPATCHED_SET.has(stage) || r.awb) {
+          dispatched++; revDispatched += price;
+          if (stage === 'delivered') revDelivered += price;
+        } else if (PENDING_SET.has(stage)) {
+          pending++; revPending += price;
+        }
       });
-      // Dispatch rate: of confirmed orders, how many dispatched
-      const dispatch_rate  = confirmed > 0 ? Math.round(dispatched / confirmed * 100) : 0;
-      // Overall fulfillment rate: of ALL orders, how many dispatched
+
+      // Orders with no vendor stage record: fall back to order_meta stage
+      ordersMain.forEach(o => {
+        const sid = String(o.id);
+        if (handledOrders.has(sid)) return;
+        const meta = metaMap[sid] || {};
+        const stage = meta.stage || 'new';
+        if (!DISPATCHED_SET.has(stage) && !PENDING_SET.has(stage)) return;
+        const price = parseFloat(o.total_price || 0);
+        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+        if (DISPATCHED_SET.has(stage)) { dispatched++; revDispatched += price; if (stage==='delivered') revDelivered += price; }
+        else if (PENDING_SET.has(stage)) { pending++; revPending += price; }
+      });
+
+      const total       = ordersMain.length;
+      const cancelled   = ordersMain.filter(o => o.cancelled_at || metaMap[String(o.id)]?.stage === 'cancelled').length;
+      const totalActive = dispatched + pending;
+      const dispatch_rate  = totalActive > 0 ? Math.round(dispatched / totalActive * 100) : 0;
       const overall_rate   = total > 0 ? Math.round(dispatched / total * 100) : 0;
-      // Delivery rate: of dispatched orders, how many delivered
-      const delivery_rate  = dispatched > 0 ? Math.round(delivered / dispatched * 100) : 0;
-      return { total, confirmed, dispatched, delivered, rto, cancelled,
-               pending_count: confirmed - dispatched,
-               dispatch_rate, overall_rate, delivery_rate,
-               revConfirmed: parseFloat(revConfirmed.toFixed(2)),
-               revDispatched: parseFloat(revDispatched.toFixed(2)),
-               revDelivered: parseFloat(revDelivered.toFixed(2)) };
+      const delivery_rate  = dispatched > 0 ? Math.round((stageBreakdown.delivered||0) / dispatched * 100) : 0;
+
+      return {
+        total, confirmed: totalActive, dispatched, pending_count: pending,
+        delivered: stageBreakdown.delivered||0, rto: stageBreakdown.rto||0, cancelled,
+        dispatch_rate, overall_rate, delivery_rate,
+        stageBreakdown,   // { ready, pickup, transit, delivered, rto, confirmed, partial }
+        revConfirmed: parseFloat(revPending.toFixed(2)),
+        revDispatched: parseFloat(revDispatched.toFixed(2)),
+        revDelivered: parseFloat(revDelivered.toFixed(2)),
+      };
     })();
 
     // ── Payment split (30d)

@@ -1588,9 +1588,83 @@
                   </div>
                   <div style={{fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>{periodLabel}</div>
                 </div>
-                <MiniCard icon="📦" label="Dispatch Rate"
-                  pct={fs.dispatch_rate} num={fs.dispatched} den={fs.confirmed+' confirmed'}
-                  sub={fs.pending_count+' pending dispatch'} rev={fs.revDispatched}/>
+                {/* ── Dispatch Rate Card with stage breakdown ── */}
+                {(()=>{
+                  const pct   = fs.dispatch_rate;
+                  const color = pct>=80?'#10b981':pct>=50?'#f59e0b':'#ef4444';
+                  const bg    = pct>=80?'rgba(16,185,129,0.08)':pct>=50?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
+                  const bdr   = pct>=80?'rgba(16,185,129,0.3)':pct>=50?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+                  const sb    = fs.stageBreakdown || {};
+                  const dispStages = [
+                    { key:'delivered', label:'Delivered',    icon:'✅', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',   icon:'🚚', c:'#60a5fa' },
+                    { key:'pickup',    label:'Pickup',       icon:'⌛', c:'#f59e0b' },
+                    { key:'ready',     label:'Ready to Ship',icon:'📦', c:'#a78bfa' },
+                    { key:'rto',       label:'RTO',          icon:'↩', c:'#f87171' },
+                  ];
+                  const pendStages = [
+                    { key:'confirmed', label:'Confirmed', icon:'✓', c:'#34d399' },
+                    { key:'partial',   label:'Partial',   icon:'₹', c:'#fbbf24' },
+                  ];
+                  return (
+                    <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6,gridColumn:'span 2'}}>
+                      {/* Header row */}
+                      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+                        <div>
+                          <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📦 Dispatch Rate · {periodLabel}</div>
+                          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                            <span style={{fontSize:36,fontWeight:900,color,lineHeight:1}}>{pct}%</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.dispatched} dispatched / {fs.confirmed} active orders</span>
+                          </div>
+                        </div>
+                        <div style={{textAlign:'right'}}>
+                          <div style={{fontSize:10,color:'var(--text-muted)'}}>Pending dispatch</div>
+                          <div style={{fontSize:20,fontWeight:800,color:'#f87171'}}>{fs.pending_count}</div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{fmtCur(fs.revDispatched)} dispatched rev</div>
+                        </div>
+                      </div>
+                      {/* Progress bar */}
+                      <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:pct+'%',background:color,borderRadius:3,transition:'width 0.4s'}}/>
+                      </div>
+                      {/* Stage breakdown */}
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
+                        {/* Dispatched breakdown */}
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color,marginBottom:5}}>✅ {pct}% Dispatched ({fs.dispatched})</div>
+                          {dispStages.filter(s=>(sb[s.key]||0)>0).map(s=>(
+                            <div key={s.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                                  <div style={{height:'100%',width:`${Math.round((sb[s.key]||0)/Math.max(fs.dispatched,1)*100)}%`,background:s.c,borderRadius:2}}/>
+                                </div>
+                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sb[s.key]||0}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {dispStages.every(s=>(sb[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No dispatched orders yet</div>}
+                        </div>
+                        {/* Pending breakdown */}
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#f87171',marginBottom:5}}>⏳ {100-pct}% Pending ({fs.pending_count})</div>
+                          {pendStages.filter(s=>(sb[s.key]||0)>0).map(s=>(
+                            <div key={s.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                                  <div style={{height:'100%',width:`${Math.round((sb[s.key]||0)/Math.max(fs.pending_count,1)*100)}%`,background:s.c,borderRadius:2}}/>
+                                </div>
+                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sb[s.key]||0}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {pendStages.every(s=>(sb[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No pending orders</div>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <MiniCard icon="🚀" label="Overall Fulfillment"
                   pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
                   sub={fs.cancelled+' cancelled'}/>
