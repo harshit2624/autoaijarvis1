@@ -282,35 +282,6 @@
       color: var(--green); letter-spacing: 1px; margin: 12px 0; font-family: monospace;
     }
 
-    /* Embed info */
-    .embed-section { margin-top: 20px; }
-    .embed-toggle {
-      width: 100%; background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px 14px; cursor: pointer;
-      color: var(--text-muted); font-family: inherit;
-      font-size: 11px; font-weight: 500; text-align: left;
-      display: flex; justify-content: space-between; align-items: center;
-      transition: border-color 0.15s;
-    }
-    .embed-toggle:hover { border-color: var(--border-hi); color: var(--text); }
-    .embed-body {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-top: none; border-radius: 0 0 8px 8px;
-      padding: 14px; font-size: 11px; color: var(--text-dim); line-height: 1.8;
-    }
-    .embed-code {
-      background: var(--bg-card2); border: 1px solid var(--border);
-      border-radius: 6px; padding: 9px 12px; font-size: 11px;
-      color: var(--teal); word-break: break-all; margin: 6px 0 10px;
-      white-space: pre-wrap; font-family: monospace;
-    }
-    .copy-btn {
-      background: var(--bg-card2); border: 1px solid var(--border);
-      border-radius: 6px; padding: 4px 10px; cursor: pointer;
-      color: var(--text-muted); font-family: inherit;
-      font-size: 10px; font-weight: 500; transition: all 0.15s;
-    }
-    .copy-btn:hover { border-color: var(--green); color: var(--green); }
 
     .spin { display: inline-block; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -555,29 +526,6 @@
     );
   }
 
-  function EmbedSection() {
-    const [open, setOpen] = useState(false);
-    const [copied, setCopied] = useState(false);
-    const code = `<iframe src="${window.location.origin}/track" width="100%" height="900" frameborder="0"></iframe>`;
-    const copy = () => { navigator.clipboard.writeText(code).then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),2000); }); };
-
-    return (
-      <div className="embed-section">
-        <button className="embed-toggle" onClick={()=>setOpen(o=>!o)}>
-          <span>📦 Embed in your Shopify store</span>
-          <span>{open ? '▲' : '▼'}</span>
-        </button>
-        {open && (
-          <div className="embed-body">
-            <p>Add the following iframe to any Shopify page to let customers track their orders directly on your store:</p>
-            <div className="embed-code">{code}</div>
-            <button className="copy-btn" onClick={copy}>{copied ? '✓ Copied!' : 'Copy Code'}</button>
-            <p style={{marginTop:10,color:'var(--text-muted)',fontSize:10}}>In Shopify Admin → Pages → Add Page → Custom HTML → paste the code above.</p>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   function App() {
     const [orderNum, setOrderNum] = useState('');
@@ -755,7 +703,6 @@
           </div>
         )}
 
-        <EmbedSection/>
       </div>
     );
   }
