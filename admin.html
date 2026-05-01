@@ -1546,7 +1546,7 @@
           {!aLoading && a && a.fulfillStats && (()=>{
             const fs = a.fulfillStats;
 
-            const MiniCard = ({icon, label, pct, num, den, sub, revGreen, revGreenLabel, revRed, revRedLabel, threshHi=80, threshMid=60}) => {
+            const MiniCard = ({icon, label, pct, num, den, sub, revGreen, revGreenLabel, revRed, revRedLabel, revOrange, revOrangeLabel, threshHi=80, threshMid=60}) => {
               const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
               const bg    = pct>=threshHi?'rgba(16,185,129,0.08)':pct>=threshMid?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
               const bdr   = pct>=threshHi?'rgba(16,185,129,0.3)':pct>=threshMid?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
@@ -1560,8 +1560,8 @@
                   <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
                     <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
                   </div>
-                  {(revGreen!=null || revRed!=null) && (
-                    <div style={{display:'grid',gridTemplateColumns:revGreen!=null&&revRed!=null?'1fr 1fr':'1fr',gap:6,marginTop:4}}>
+                  {(revGreen!=null || revRed!=null || revOrange!=null) && (
+                    <div style={{display:'grid',gridTemplateColumns:`repeat(${[revGreen,revRed,revOrange].filter(v=>v!=null).length},1fr)`,gap:6,marginTop:4}}>
                       {revGreen!=null && (
                         <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px'}}>
                           <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revGreenLabel||'Revenue'}</div>
@@ -1572,6 +1572,12 @@
                         <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
                           <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revRedLabel||'Pending'}</div>
                           <div style={{fontSize:13,fontWeight:800,color:'#ef4444'}}>{fmtCur(revRed)}</div>
+                        </div>
+                      )}
+                      {revOrange!=null && (
+                        <div style={{background:'rgba(251,146,60,0.08)',border:'1px solid rgba(251,146,60,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#fb923c',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revOrangeLabel||'RTO'}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#fb923c'}}>{fmtCur(revOrange)}</div>
                         </div>
                       )}
                     </div>
@@ -1758,12 +1764,13 @@
                   pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
                   sub={fs.cancelled+' cancelled'}
                   revGreen={fs.revDispatched} revGreenLabel="Dispatched Revenue"
-                  revRed={fs.revPending} revRedLabel="Pending Revenue"/>
+                  revRed={fs.revNotDispatched} revRedLabel="Not Dispatched Revenue"/>
                 <MiniCard icon="✅" label="Delivery Rate"
                   pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
-                  sub={fs.rto+' RTO · overall: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'}
+                  sub={'RTO rate: '+(fs.rto_rate||0)+'% ('+fs.rto+'/'+fs.dispatched+' dispatched) · overall delivery: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'%'}
                   revGreen={fs.revDelivered} revGreenLabel="Delivered Revenue"
                   revRed={fs.revInTransit} revRedLabel="In Transit / Pickup"
+                  revOrange={fs.revRto} revOrangeLabel={'RTO Revenue ('+fs.rto_rate+'%)'}
                   threshHi={70} threshMid={50}/>
               </React.Fragment>
             );

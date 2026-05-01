@@ -3115,7 +3115,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
       // Single stageMap — one entry per unique order, stage = higherStage of meta + all vendor stages
       const stageMap = {};
-      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0;
+      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0;
       const IN_TRANSIT_SET = new Set(['ready','pickup','transit']);
 
       ordersMain.forEach(o => {
@@ -3129,8 +3129,15 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         if (DISPATCHED_SET.has(stage)) {
           revDispatched += price;
           if (stage === 'delivered') revDelivered += price;
+          else if (stage === 'rto') revRto += price;
           else if (IN_TRANSIT_SET.has(stage)) revInTransit += price;
-        } else if (PENDING_SET.has(stage)) { revPending += price; }
+        } else if (PENDING_SET.has(stage)) {
+          revPending += price;
+          revNotDispatched += price;  // confirmed + partial
+        } else if (stage === 'new' || stage === 'hold') {
+          revNotDispatched += price;  // new + hold — not yet confirmed but still orders
+        }
+        // cancelled excluded from revNotDispatched intentionally
       });
 
       // Derived counts — all from stageMap (unique orders)
@@ -3152,10 +3159,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         dispatch_rate, delivery_rate, overall_rate,
         stageMap,      // { new, confirmed, partial, ready, pickup, transit, delivered, rto, hold, cancelled }
         stageBreakdown: stageMap,  // alias — some frontend code uses this name
-        revDispatched:  parseFloat(revDispatched.toFixed(2)),
-        revPending:     parseFloat(revPending.toFixed(2)),
-        revDelivered:   parseFloat(revDelivered.toFixed(2)),
-        revInTransit:   parseFloat(revInTransit.toFixed(2)),
+        revDispatched:    parseFloat(revDispatched.toFixed(2)),
+        revPending:       parseFloat(revPending.toFixed(2)),
+        revDelivered:     parseFloat(revDelivered.toFixed(2)),
+        revInTransit:     parseFloat(revInTransit.toFixed(2)),
+        revRto:           parseFloat(revRto.toFixed(2)),
+        revNotDispatched: parseFloat(revNotDispatched.toFixed(2)),  // all non-dispatched excl. cancelled
+        rto_rate: dispatched > 0 ? Math.round(rto / dispatched * 100) : 0,
         // legacy aliases so existing frontend doesn't break
         confirmed:     active,
         pending_count: pending,
