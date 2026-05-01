@@ -1548,9 +1548,6 @@
         {/* Big breakdown cards — always 3 equal columns */}
         {!aLoading && a && a.fulfillStats && (()=>{
             const fs = a.fulfillStats;
-            return (
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
-
 
             const MiniCard = ({icon, label, pct, num, den, sub, revGreen, revGreenLabel, revRed, revRedLabel, revOrange, revOrangeLabel, threshHi=80, threshMid=60}) => {
               const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
@@ -1594,8 +1591,8 @@
               );
             };
 
-            const confirmedPct = fs.total > 0 ? Math.round(fs.confirmed / fs.total * 100) : 0;
-
+            return (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
                 {/* ── Confirmed Orders Card with left/right breakdown ── */}
                 {(()=>{
                   const sm  = fs.stageMap || {};
