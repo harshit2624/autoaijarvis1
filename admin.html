@@ -1573,21 +1573,66 @@
 
             return (
               <React.Fragment>
-                <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:4}}>
-                  <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>📋 Confirmed Orders</div>
-                  <div style={{display:'flex',alignItems:'flex-end',gap:8}}>
-                    <span style={{fontSize:28,fontWeight:900,color:'var(--indigo)',lineHeight:1}}>{confirmedPct}%</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{fs.confirmed}/{fs.total+' total'}</span>
-                  </div>
-                  <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
-                    <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:2,transition:'width 0.4s'}}/>
-                  </div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',justifyContent:'space-between'}}>
-                    <span>{fs.confirmed} confirmed</span>
-                    <span style={{color:'var(--indigo)',fontWeight:700}}>{fmtCur(fs.revConfirmed||0)}</span>
-                  </div>
-                  <div style={{fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>{periodLabel}</div>
-                </div>
+                {/* ── Confirmed Orders Card with full stage breakdown ── */}
+                {(()=>{
+                  const sb  = fs.stageBreakdown || {};
+                  const tot = fs.total || 1;
+                  const allStages = [
+                    { key:'delivered', label:'Delivered',     icon:'✅', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',    icon:'🚚', c:'#60a5fa' },
+                    { key:'pickup',    label:'Pickup Pending',icon:'⌛', c:'#f59e0b' },
+                    { key:'ready',     label:'Ready to Ship', icon:'📦', c:'#a78bfa' },
+                    { key:'rto',       label:'RTO',           icon:'↩', c:'#f87171' },
+                    { key:'confirmed', label:'Confirmed',     icon:'✓',  c:'#34d399' },
+                    { key:'partial',   label:'Partial/Advance',icon:'₹', c:'#fbbf24' },
+                    { key:'new',       label:'New / Pending', icon:'◉',  c:'#94a3b8' },
+                    { key:'hold',      label:'On Hold',       icon:'⏸', c:'#fb923c' },
+                    { key:'cancelled', label:'Cancelled',     icon:'✕',  c:'#6b7280' },
+                  ].filter(s => (sb[s.key]||0) > 0);
+                  return (
+                    <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6,gridColumn:'span 2'}}>
+                      {/* Header */}
+                      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+                        <div>
+                          <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📋 Order Stage Breakdown · {periodLabel}</div>
+                          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                            <span style={{fontSize:36,fontWeight:900,color:'var(--indigo)',lineHeight:1}}>{fs.total}</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>total orders</span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Active (confirmed+)</div>
+                            <div style={{fontSize:18,fontWeight:800,color:'var(--indigo)'}}>{fs.confirmed}</div>
+                          </div>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Cancelled</div>
+                            <div style={{fontSize:18,fontWeight:800,color:'#6b7280'}}>{fs.cancelled||0}</div>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Stage rows */}
+                      <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:2}}>
+                        {allStages.map(s => {
+                          const count = sb[s.key] || 0;
+                          const pct   = Math.round(count / tot * 100);
+                          return (
+                            <div key={s.key} style={{display:'flex',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,minWidth:130,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5}}>
+                                <span>{s.icon}</span>{s.label}
+                              </span>
+                              <div style={{flex:1,height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
+                                <div style={{height:'100%',width:`${pct}%`,background:s.c,borderRadius:3,transition:'width 0.4s'}}/>
+                              </div>
+                              <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:28,textAlign:'right'}}>{count}</span>
+                              <span style={{fontSize:10,color:'var(--text-muted)',minWidth:30,textAlign:'right'}}>{pct}%</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {/* ── Dispatch Rate Card with stage breakdown ── */}
                 {(()=>{
                   const pct   = fs.dispatch_rate;

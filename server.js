@@ -3140,8 +3140,18 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         else if (PENDING_SET.has(stage)) { pending++; revPending += price; }
       });
 
+      // Count new / hold / cancelled from order_meta for remaining orders
+      ordersMain.forEach(o => {
+        const sid = String(o.id);
+        const meta = metaMap[sid] || {};
+        const stage = o.cancelled_at ? 'cancelled' : (meta.stage || 'new');
+        if (['new','hold','cancelled'].includes(stage)) {
+          stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+        }
+      });
+
       const total       = ordersMain.length;
-      const cancelled   = ordersMain.filter(o => o.cancelled_at || metaMap[String(o.id)]?.stage === 'cancelled').length;
+      const cancelled   = stageBreakdown.cancelled || 0;
       const totalActive = dispatched + pending;
       const dispatch_rate  = totalActive > 0 ? Math.round(dispatched / totalActive * 100) : 0;
       const overall_rate   = total > 0 ? Math.round(dispatched / total * 100) : 0;
