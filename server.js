@@ -3135,12 +3135,22 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         else if (PENDING_SET.has(stage)) { pending++; revPending += price; }
       });
 
-      // ── Stage breakdown: uses order_meta.stage per unique order ───────────
-      // This matches exactly what the orders list shows (single source of truth)
+      // ── Stage breakdown: same higherStage logic as admin orders list ───────
+      // Build vsMap for period orders: shopify_id → array of vendor stages
+      const vsMapPeriod = {};
+      vsInPeriod.forEach(r => {
+        if (!vsMapPeriod[r.shopify_id]) vsMapPeriod[r.shopify_id] = [];
+        if (r.stage) vsMapPeriod[r.shopify_id].push(r.stage);
+      });
+
       const stageBreakdown = {};
       ordersMain.forEach(o => {
-        const stage = o.cancelled_at ? 'cancelled' : (metaMap[String(o.id)]?.stage || 'new');
-        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+        const sid  = String(o.id);
+        const base = o.cancelled_at ? 'cancelled' : (metaMap[sid]?.stage || 'new');
+        // Apply higherStage across all vendor stages — same as admin orders endpoint
+        const vendorStages = vsMapPeriod[sid] || [];
+        const effectiveStage = vendorStages.reduce((best, s) => higherStage(best, s), base);
+        stageBreakdown[effectiveStage] = (stageBreakdown[effectiveStage] || 0) + 1;
       });
 
       const total = ordersMain.length;
