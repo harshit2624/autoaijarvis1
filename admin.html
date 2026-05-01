@@ -1757,14 +1757,33 @@
                           ))}
                         </div>
                       </div>
+
+                      {/* ── Overall Fulfillment section inside dispatch card ── */}
+                      <div style={{borderTop:'1px solid var(--border)',paddingTop:10,marginTop:4}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8,marginBottom:8}}>
+                          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                            <span style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>🚀 Overall Fulfillment</span>
+                            <span style={{fontSize:20,fontWeight:900,color,lineHeight:1,marginLeft:4}}>{fs.overall_rate}%</span>
+                            <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.dispatched}/{fs.total} total orders · {fs.cancelled} cancelled</span>
+                          </div>
+                        </div>
+                        <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
+                          <div style={{height:'100%',width:`${fs.overall_rate}%`,background:color,borderRadius:2,transition:'width 0.4s'}}/>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                            <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Dispatched Revenue</div>
+                            <div style={{fontSize:13,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched)}</div>
+                          </div>
+                          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                            <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Dispatched Revenue</div>
+                            <div style={{fontSize:13,fontWeight:800,color:'#ef4444'}}>{fmtCur(fs.revNotDispatched)}</div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   );
                 })()}
-                <MiniCard icon="🚀" label="Overall Fulfillment"
-                  pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
-                  sub={fs.cancelled+' cancelled'}
-                  revGreen={fs.revDispatched} revGreenLabel="Dispatched Revenue"
-                  revRed={fs.revNotDispatched} revRedLabel="Not Dispatched Revenue"/>
                 <MiniCard icon="✅" label="Delivery Rate"
                   pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
                   sub={'RTO rate: '+(fs.rto_rate||0)+'% ('+fs.rto+'/'+fs.dispatched+' dispatched) · overall delivery: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'%'}
