@@ -1784,13 +1784,71 @@
                     </div>
                   );
                 })()}
-                <MiniCard icon="✅" label="Delivery Rate"
-                  pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
-                  sub={'RTO rate: '+(fs.rto_rate||0)+'% ('+fs.rto+'/'+fs.dispatched+' dispatched) · overall delivery: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'%'}
-                  revGreen={fs.revDelivered} revGreenLabel="Delivered Revenue"
-                  revRed={fs.revInTransit} revRedLabel="In Transit / Pickup"
-                  revOrange={fs.revRto} revOrangeLabel={'RTO Revenue ('+fs.rto_rate+'%)'}
-                  threshHi={70} threshMid={50}/>
+                {(()=>{
+                  const sm   = fs.stageMap || {};
+                  const delRate  = fs.delivery_rate || 0;
+                  const rtoRate  = fs.rto_rate || 0;
+                  const inTransitCount = (sm.ready||0)+(sm.pickup||0)+(sm.transit||0);
+                  const inTransitPct   = fs.dispatched > 0 ? Math.round(inTransitCount/fs.dispatched*100) : 0;
+                  const delColor = delRate>=70?'#10b981':delRate>=50?'#f59e0b':'#ef4444';
+                  const delBg    = delRate>=70?'rgba(16,185,129,0.08)':delRate>=50?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
+                  const delBdr   = delRate>=70?'rgba(16,185,129,0.3)':delRate>=50?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+
+                  // From-all-orders rates
+                  const allDelRate = fs.total > 0 ? Math.round((fs.delivered||0)/fs.total*100) : 0;
+                  const allRtoRate = fs.total > 0 ? Math.round((fs.rto||0)/fs.total*100) : 0;
+                  const allInTRate = fs.total > 0 ? Math.round(inTransitCount/fs.total*100) : 0;
+
+                  const DistRow = ({ icon, label, count, pct, color, rev, revLabel }) => (
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5,minWidth:120}}>{icon} {label}</span>
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2}}/>
+                        </div>
+                        <span style={{fontSize:11,fontWeight:700,color,minWidth:22,textAlign:'right'}}>{count}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{pct}%</span>
+                        {rev!=null && <span style={{fontSize:10,color,minWidth:60,textAlign:'right',fontWeight:600}}>{fmtCur(rev)}</span>}
+                      </div>
+                    </div>
+                  );
+
+                  return (
+                    <div style={{background:delBg,border:`1px solid ${delBdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6}}>
+
+                      {/* ── Section 1: From dispatched orders ── */}
+                      <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>✅ Delivery Rate · {periodLabel}</div>
+                      <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                        <span style={{fontSize:28,fontWeight:900,color:delColor,lineHeight:1}}>{delRate}%</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.delivered}/{fs.dispatched} dispatched orders</span>
+                      </div>
+                      <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${delRate}%`,background:delColor,borderRadius:2,transition:'width 0.4s'}}/>
+                      </div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',margin:'4px 0 2px'}}>
+                        Breakdown of {fs.dispatched} dispatched
+                      </div>
+                      <DistRow icon="✅" label="Delivered"      count={fs.delivered||0}   pct={delRate}      color="#10b981" rev={fs.revDelivered}  revLabel="Delivered Rev"/>
+                      <DistRow icon="🚚" label="In Transit"     count={inTransitCount}     pct={inTransitPct} color="#60a5fa" rev={fs.revInTransit}  revLabel="In Transit Rev"/>
+                      <DistRow icon="↩"  label="RTO"            count={fs.rto||0}          pct={rtoRate}      color="#f87171" rev={fs.revRto}        revLabel="RTO Rev"/>
+
+                      {/* ── Section 2: From all orders ── */}
+                      <div style={{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:2}}>
+                        <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
+                          <span style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>📊 From All Orders</span>
+                          <span style={{fontSize:16,fontWeight:900,color:delColor,lineHeight:1}}>{allDelRate}%</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}>delivered of {fs.total} total</span>
+                        </div>
+                        <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:6}}>
+                          <div style={{height:'100%',width:`${allDelRate}%`,background:delColor,borderRadius:2,transition:'width 0.4s'}}/>
+                        </div>
+                        <DistRow icon="✅" label="Delivered"  count={fs.delivered||0} pct={allDelRate} color="#10b981" rev={null}/>
+                        <DistRow icon="🚚" label="In Transit" count={inTransitCount}   pct={allInTRate} color="#60a5fa" rev={null}/>
+                        <DistRow icon="↩"  label="RTO"        count={fs.rto||0}        pct={allRtoRate} color="#f87171" rev={null}/>
+                      </div>
+                    </div>
+                  );
+                })()}
               </React.Fragment>
             );
           })()}
