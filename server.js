@@ -2718,7 +2718,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             quantity:  li.quantity,
             price:     parseFloat(li.price || 0),
             fulfilled: li.fulfillment_status === "fulfilled",
-            image:     li.image?.src || null,
+            product_id: li.product_id || null,
           })),
           fulfillments: (o.fulfillments || [])
             .filter(f => (f.line_items || []).some(fli => {
@@ -3448,7 +3448,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         lineItems:      (o.line_items || []).map(li => ({
           title: li.title, vendor: li.vendor, qty: li.quantity,
           price: parseFloat(li.price || 0), sku: li.sku || "",
-          variant: li.variant_title || '', image: li.image?.src || null,
+          variant: li.variant_title || '', product_id: li.product_id || null,
         })),
         shippingAddress: o.shipping_address || null,
       };
@@ -7315,6 +7315,40 @@ app.get("/track/product/:productId/variants", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Batch product images — ?ids=pid1,pid2,pid3 (adminAuth) ───────────────
+app.get("/admin/product-images", adminAuth, async (req, res) => {
+  try {
+    const ids = (req.query.ids || '').split(',').map(s=>s.trim()).filter(Boolean);
+    if (!ids.length) return res.json({ images: {} });
+    const imageMap = {};
+    await Promise.all(ids.map(async pid => {
+      try {
+        const d = await shopifyREST(`/products/${pid}.json?fields=id,image,images`);
+        const src = d.product?.image?.src || d.product?.images?.[0]?.src || null;
+        if (src) imageMap[pid] = src;
+      } catch {}
+    }));
+    res.json({ images: imageMap });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Same for vendor
+app.get("/vendor/product-images", vendorAuth, async (req, res) => {
+  try {
+    const ids = (req.query.ids || '').split(',').map(s=>s.trim()).filter(Boolean);
+    if (!ids.length) return res.json({ images: {} });
+    const imageMap = {};
+    await Promise.all(ids.map(async pid => {
+      try {
+        const d = await shopifyREST(`/products/${pid}.json?fields=id,image,images`);
+        const src = d.product?.image?.src || d.product?.images?.[0]?.src || null;
+        if (src) imageMap[pid] = src;
+      } catch {}
+    }));
+    res.json({ images: imageMap });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Public: submit return/exchange request ────────────────────────────────
