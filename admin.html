@@ -1536,15 +1536,21 @@
           <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
         </div>
 
-        {/* Summary row — all from analytics, respects period */}
+        {/* Summary row — small stat cards */}
         <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
           <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(a&&a.summary?a.summary.period.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
           <StatCard color="cyan"   icon="₹" label="Total Revenue (All Time)"    value={aLoading?'…':fmtCur(at.revenue||0)} sub={'all '+((at.orders||0).toLocaleString())+' orders'}/>
           <StatCard color="yellow" icon="⬡" label="Pending Commission"          value={aLoading?'…':fmtCur(at.pendingCommission||0)} sub="unsettled"/>
           <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
           <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
-          {!aLoading && a && a.fulfillStats && (()=>{
+        </div>
+
+        {/* Big breakdown cards — always 3 equal columns */}
+        {!aLoading && a && a.fulfillStats && (()=>{
             const fs = a.fulfillStats;
+            return (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
+
 
             const MiniCard = ({icon, label, pct, num, den, sub, revGreen, revGreenLabel, revRed, revRedLabel, revOrange, revOrangeLabel, threshHi=80, threshMid=60}) => {
               const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
@@ -1590,8 +1596,6 @@
 
             const confirmedPct = fs.total > 0 ? Math.round(fs.confirmed / fs.total * 100) : 0;
 
-            return (
-              <React.Fragment>
                 {/* ── Confirmed Orders Card with left/right breakdown ── */}
                 {(()=>{
                   const sm  = fs.stageMap || {};
@@ -1631,7 +1635,7 @@
                   };
 
                   return (
-                    <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6,gridColumn:'span 2'}}>
+                    <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6}}>
                       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
                         <div>
                           <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📋 Order Confirmation Breakdown · {periodLabel}</div>
@@ -1704,7 +1708,7 @@
                   ];
 
                   return (
-                    <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6,gridColumn:'span 2'}}>
+                    <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6}}>
                       <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
                         <div>
                           <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📦 Dispatch Rate · {periodLabel}</div>
@@ -1799,17 +1803,23 @@
                   const allRtoRate = fs.total > 0 ? Math.round((fs.rto||0)/fs.total*100) : 0;
                   const allInTRate = fs.total > 0 ? Math.round(inTransitCount/fs.total*100) : 0;
 
-                  const DistRow = ({ icon, label, count, pct, color, rev, revLabel }) => (
-                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
-                      <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5,minWidth:120}}>{icon} {label}</span>
-                      <div style={{display:'flex',alignItems:'center',gap:6}}>
-                        <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
-                          <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2}}/>
+                  const DistRow = ({ icon, label, count, pct, color, rev }) => (
+                    <div style={{padding:'5px 0',borderBottom:'1px solid var(--border)'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                        <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5}}>{icon} {label}</span>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <div style={{width:44,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2}}/>
+                          </div>
+                          <span style={{fontSize:11,fontWeight:700,color,minWidth:20,textAlign:'right'}}>{count}</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)',minWidth:26,textAlign:'right'}}>{pct}%</span>
                         </div>
-                        <span style={{fontSize:11,fontWeight:700,color,minWidth:22,textAlign:'right'}}>{count}</span>
-                        <span style={{fontSize:10,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{pct}%</span>
-                        {rev!=null && <span style={{fontSize:10,color,minWidth:60,textAlign:'right',fontWeight:600}}>{fmtCur(rev)}</span>}
                       </div>
+                      {rev!=null && (
+                        <div style={{marginTop:3,background:`${color}15`,border:`1px solid ${color}35`,borderRadius:5,padding:'2px 8px',display:'inline-block'}}>
+                          <span style={{fontSize:11,fontWeight:700,color}}>{fmtCur(rev)}</span>
+                        </div>
+                      )}
                     </div>
                   );
 
@@ -1849,7 +1859,7 @@
                     </div>
                   );
                 })()}
-              </React.Fragment>
+              </div>
             );
           })()}
 
