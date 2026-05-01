@@ -1546,7 +1546,7 @@
           {!aLoading && a && a.fulfillStats && (()=>{
             const fs = a.fulfillStats;
 
-            const MiniCard = ({icon, label, pct, num, den, sub, rev, threshHi=80, threshMid=60}) => {
+            const MiniCard = ({icon, label, pct, num, den, sub, revGreen, revGreenLabel, revRed, revRedLabel, threshHi=80, threshMid=60}) => {
               const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
               const bg    = pct>=threshHi?'rgba(16,185,129,0.08)':pct>=threshMid?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
               const bdr   = pct>=threshHi?'rgba(16,185,129,0.3)':pct>=threshMid?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
@@ -1560,10 +1560,23 @@
                   <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
                     <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
                   </div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',display:'flex',justifyContent:'space-between'}}>
-                    <span>{sub}</span>
-                    {rev != null && <span style={{color,fontWeight:700}}>{fmtCur(rev)}</span>}
-                  </div>
+                  {(revGreen!=null || revRed!=null) && (
+                    <div style={{display:'grid',gridTemplateColumns:revGreen!=null&&revRed!=null?'1fr 1fr':'1fr',gap:6,marginTop:4}}>
+                      {revGreen!=null && (
+                        <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revGreenLabel||'Revenue'}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#10b981'}}>{fmtCur(revGreen)}</div>
+                        </div>
+                      )}
+                      {revRed!=null && (
+                        <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revRedLabel||'Pending'}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#ef4444'}}>{fmtCur(revRed)}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{sub}</div>
                   <div style={{fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>{periodLabel}</div>
                 </div>
               );
@@ -1635,9 +1648,15 @@
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:3,transition:'width 0.4s'}}/>
                       </div>
-                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
-                        <span style={{color:'#34d399',fontWeight:600}}>▲ {fmtCur((fs.revDispatched||0)+(fs.revPending||0))} confirmed rev</span>
-                        <span style={{color:'#94a3b8',fontWeight:600}}>{notConfirmedCount} orders not yet confirmed</span>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:2,marginBottom:2}}>
+                        <div style={{background:'rgba(52,211,153,0.08)',border:'1px solid rgba(52,211,153,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#34d399',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Confirmed Revenue</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#34d399'}}>{fmtCur((fs.revDispatched||0)+(fs.revPending||0))}</div>
+                        </div>
+                        <div style={{background:'rgba(148,163,184,0.08)',border:'1px solid rgba(148,163,184,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#94a3b8',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Confirmed</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#94a3b8'}}>{notConfirmedCount} orders</div>
+                        </div>
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:4}}>
                         <div>
@@ -1688,23 +1707,19 @@
                             <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.dispatched} dispatched / {fs.active} active orders</span>
                           </div>
                         </div>
-                        <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
-                          <div style={{textAlign:'right'}}>
-                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Dispatched revenue</div>
-                            <div style={{fontSize:16,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched)}</div>
+                        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 12px'}}>
+                            <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Dispatched Revenue</div>
+                            <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched)}</div>
                           </div>
-                          <div style={{textAlign:'right'}}>
-                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Pending revenue</div>
-                            <div style={{fontSize:16,fontWeight:800,color:'#f87171'}}>{fmtCur(fs.revPending)}</div>
+                          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 12px'}}>
+                            <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Pending Revenue</div>
+                            <div style={{fontSize:14,fontWeight:800,color:'#ef4444'}}>{fmtCur(fs.revPending)}</div>
                           </div>
                         </div>
                       </div>
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:pct+'%',background:color,borderRadius:3,transition:'width 0.4s'}}/>
-                      </div>
-                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
-                        <span style={{color:'#10b981',fontWeight:600}}>▲ {fmtCur(fs.revDispatched)} shipped</span>
-                        <span style={{color:'#f87171',fontWeight:600}}>{fmtCur(fs.revPending)} stuck ▼</span>
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
                         <div>
@@ -1741,11 +1756,14 @@
                 })()}
                 <MiniCard icon="🚀" label="Overall Fulfillment"
                   pct={fs.overall_rate} num={fs.dispatched} den={fs.total+' total orders'}
-                  sub={fs.cancelled+' cancelled'}/>
+                  sub={fs.cancelled+' cancelled'}
+                  revGreen={fs.revDispatched} revGreenLabel="Dispatched Revenue"
+                  revRed={fs.revPending} revRedLabel="Pending Revenue"/>
                 <MiniCard icon="✅" label="Delivery Rate"
                   pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
                   sub={fs.rto+' RTO · overall: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'}
-                  rev={fs.revDelivered} threshHi={70} threshMid={50}/>
+                  revGreen={fs.revDelivered} revGreenLabel="Delivered Revenue"
+                  threshHi={70} threshMid={50}/>
               </React.Fragment>
             );
           })()}
