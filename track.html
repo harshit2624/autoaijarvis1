@@ -542,11 +542,12 @@
     const resetResult = () => { setOrder(null); setActiveForm(null); setConfirmed(null); setOrderList(null); };
 
     const lookup = async () => {
+      const contactVal = contact.trim();
       if (!orderNum.trim()) { setError('Please enter your order number.'); return; }
+      if (!contactVal) { setError('Please enter your email or mobile number.'); return; }
       setLoading(true); setError(null); resetResult();
       try {
-        const contactParam = contact.trim() || 'na';
-        const r = await fetch(`${API}/track/order?q=${encodeURIComponent(orderNum.trim())}&contact=${encodeURIComponent(contactParam)}`);
+        const r = await fetch(`${API}/track/order?q=${encodeURIComponent(orderNum.trim())}&contact=${encodeURIComponent(contactVal)}`);
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         setOrder(d);

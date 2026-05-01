@@ -7140,6 +7140,8 @@ app.get("/track/order", async (req, res) => {
   try {
     const { q, contact } = req.query;
     if (!q) return res.status(400).json({ error: "Order number is required" });
+    if (!contact || (!contact.trim() && contact.trim().toLowerCase() !== 'na'))
+      return res.status(400).json({ error: "Email or mobile number is required" });
 
     const normalized = q.replace(/^#/, '').trim();
     const name = `#${normalized}`;
@@ -7182,26 +7184,24 @@ app.get("/track/my-orders", async (req, res) => {
     const contactPhone = normalizePhone(contact);
     const isPhone = /^\d{7,}$/.test(contactPhone);
 
-    let shopifyOrders = [];
-    if (isPhone) {
-      const d = await shopifyREST(`/orders.json?status=any&limit=250&phone=${encodeURIComponent(contact.trim())}`);
-      shopifyOrders = d.orders || [];
-      if (!shopifyOrders.length) {
-        // fallback: fetch recent and filter
-        const d2 = await shopifyREST(`/orders.json?status=any&limit=250`);
-        shopifyOrders = (d2.orders || []).filter(o => {
-          const p = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
-          return p === contactPhone;
-        });
-      }
-    } else {
-      const d = await shopifyREST(`/orders.json?status=any&limit=250&email=${encodeURIComponent(contactClean)}`);
-      shopifyOrders = d.orders || [];
-      if (!shopifyOrders.length) {
-        const d2 = await shopifyREST(`/orders.json?status=any&limit=250`);
-        shopifyOrders = (d2.orders || []).filter(o => (o.email||'').toLowerCase() === contactClean);
-      }
+    // Fetch all orders and filter locally — Shopify's phone/email params are unreliable
+    let allOrders = [];
+    let page = await shopifyREST(`/orders.json?status=any&limit=250`);
+    allOrders = allOrders.concat(page.orders || []);
+    // follow pagination if needed (up to 1000 recent orders)
+    for (let i = 0; i < 3 && (page.orders||[]).length === 250; i++) {
+      const lastId = page.orders[page.orders.length - 1]?.id;
+      if (!lastId) break;
+      page = await shopifyREST(`/orders.json?status=any&limit=250&since_id=${lastId}`);
+      allOrders = allOrders.concat(page.orders || []);
     }
+
+    const shopifyOrders = allOrders.filter(o => {
+      const oEmail = (o.email || o.contact_email || '').toLowerCase().trim();
+      const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+      if (isPhone) return oPhone === contactPhone && contactPhone.length >= 7;
+      return oEmail === contactClean && contactClean.includes('@');
+    });
 
     if (!shopifyOrders.length) return res.status(404).json({ error: "No orders found for this contact." });
 
