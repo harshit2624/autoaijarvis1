@@ -1635,6 +1635,10 @@
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:3,transition:'width 0.4s'}}/>
                       </div>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
+                        <span style={{color:'#34d399',fontWeight:600}}>▲ {fmtCur((fs.revDispatched||0)+(fs.revPending||0))} confirmed rev</span>
+                        <span style={{color:'#94a3b8',fontWeight:600}}>{notConfirmedCount} orders not yet confirmed</span>
+                      </div>
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:4}}>
                         <div>
                           <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#34d399',marginBottom:6}}>✓ Confirmed ({fs.active})</div>
@@ -1684,14 +1688,23 @@
                             <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.dispatched} dispatched / {fs.active} active orders</span>
                           </div>
                         </div>
-                        <div style={{textAlign:'right'}}>
-                          <div style={{fontSize:10,color:'var(--text-muted)'}}>Pending dispatch</div>
-                          <div style={{fontSize:20,fontWeight:800,color:'#f87171'}}>{fs.pending}</div>
-                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{fmtCur(fs.revDispatched)} dispatched rev</div>
+                        <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Dispatched revenue</div>
+                            <div style={{fontSize:16,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched)}</div>
+                          </div>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Pending revenue</div>
+                            <div style={{fontSize:16,fontWeight:800,color:'#f87171'}}>{fmtCur(fs.revPending)}</div>
+                          </div>
                         </div>
                       </div>
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:pct+'%',background:color,borderRadius:3,transition:'width 0.4s'}}/>
+                      </div>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
+                        <span style={{color:'#10b981',fontWeight:600}}>▲ {fmtCur(fs.revDispatched)} shipped</span>
+                        <span style={{color:'#f87171',fontWeight:600}}>{fmtCur(fs.revPending)} stuck ▼</span>
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
                         <div>
