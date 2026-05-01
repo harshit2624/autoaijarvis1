@@ -3115,7 +3115,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
       // Single stageMap — one entry per unique order, stage = higherStage of meta + all vendor stages
       const stageMap = {};
-      let revDispatched=0, revPending=0, revDelivered=0;
+      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0;
+      const IN_TRANSIT_SET = new Set(['ready','pickup','transit']);
 
       ordersMain.forEach(o => {
         const sid    = String(o.id);
@@ -3125,8 +3126,11 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         stageMap[stage] = (stageMap[stage] || 0) + 1;
 
         const price = parseFloat(o.total_price || 0);
-        if (DISPATCHED_SET.has(stage))      { revDispatched += price; if (stage==='delivered') revDelivered += price; }
-        else if (PENDING_SET.has(stage))    { revPending += price; }
+        if (DISPATCHED_SET.has(stage)) {
+          revDispatched += price;
+          if (stage === 'delivered') revDelivered += price;
+          else if (IN_TRANSIT_SET.has(stage)) revInTransit += price;
+        } else if (PENDING_SET.has(stage)) { revPending += price; }
       });
 
       // Derived counts — all from stageMap (unique orders)
@@ -3148,9 +3152,10 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         dispatch_rate, delivery_rate, overall_rate,
         stageMap,      // { new, confirmed, partial, ready, pickup, transit, delivered, rto, hold, cancelled }
         stageBreakdown: stageMap,  // alias — some frontend code uses this name
-        revDispatched: parseFloat(revDispatched.toFixed(2)),
-        revPending:    parseFloat(revPending.toFixed(2)),
-        revDelivered:  parseFloat(revDelivered.toFixed(2)),
+        revDispatched:  parseFloat(revDispatched.toFixed(2)),
+        revPending:     parseFloat(revPending.toFixed(2)),
+        revDelivered:   parseFloat(revDelivered.toFixed(2)),
+        revInTransit:   parseFloat(revInTransit.toFixed(2)),
         // legacy aliases so existing frontend doesn't break
         confirmed:     active,
         pending_count: pending,

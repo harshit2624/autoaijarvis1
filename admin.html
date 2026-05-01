@@ -1763,6 +1763,7 @@
                   pct={fs.delivery_rate} num={fs.delivered} den={fs.dispatched+' dispatched'}
                   sub={fs.rto+' RTO · overall: '+Math.round((fs.delivered||0)/Math.max(fs.total,1)*100)+'% ('+fs.delivered+'/'+fs.total+')'}
                   revGreen={fs.revDelivered} revGreenLabel="Delivered Revenue"
+                  revRed={fs.revInTransit} revRedLabel="In Transit / Pickup"
                   threshHi={70} threshMid={50}/>
               </React.Fragment>
             );
