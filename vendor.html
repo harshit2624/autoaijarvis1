@@ -2745,12 +2745,9 @@
     const [msg,    setMsg]    = useState(null);
     const EMPTY = { name:'', address:'', city:'', state:'', pincode:'' };
 
-    const [apiResults, setApiResults] = useState([]);
-    const [source, setSource] = useState('');
-
     const load = () => {
       fetch(`${API}/vendor/shipping/partners/${partner}/locations`, { headers:{ Authorization:`Bearer ${token}` } })
-        .then(r=>r.json()).then(d=>{ setLocs(d.locations||[]); setSource(d.source||''); }).catch(()=>{});
+        .then(r=>r.json()).then(d=>setLocs(d.locations||[])).catch(()=>{});
     };
     useEffect(()=>{ if(open) load(); },[open]);
 
@@ -2759,15 +2756,13 @@
     const del  = (i) => setLocs(ls=>ls.filter((_,j)=>j!==i));
 
     const save = async () => {
-      setSaving(true); setMsg(null); setApiResults([]);
+      setSaving(true); setMsg(null);
       try {
         const r = await fetch(`${API}/vendor/shipping/partners/${partner}/locations`, {
           method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
           body: JSON.stringify({ locations: locs.filter(l=>l.name.trim()) }),
         });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || 'Save failed');
-        setApiResults(d.apiResults || []);
+        if (!r.ok) throw new Error('Save failed');
         setMsg({type:'success',text:'Locations saved.'});
         load();
       } catch(e) { setMsg({type:'error',text:e.message}); }
@@ -2782,20 +2777,10 @@
         {open && (
           <div style={{marginTop:10}}>
             {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:8,fontSize:11}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
-            {apiResults.length > 0 && (
-              <div style={{marginBottom:8}}>
-                {apiResults.map((r,i)=>(
-                  <div key={i} style={{fontSize:10,color:r.status==='created'?'var(--green)':r.status==='exists'?'var(--text-muted)':'var(--red)',marginBottom:2}}>
-                    {r.status==='created'?'✓ Created in Delhivery:':r.status==='exists'?'● Already exists:':'✗ Error:'} <strong>{r.name}</strong>{r.detail?` — ${r.detail}`:''}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>
+            <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8,lineHeight:1.6}}>
               {partner==='delhivery'
-                ? '📡 Loaded from your Delhivery account. Adding a new location will create it in Delhivery via API.'
+                ? <>⚠ Enter the <strong style={{color:'var(--text)'}}>exact warehouse name</strong> as it appears in your Delhivery account — Delhivery will match it by name when creating the shipment.</>
                 : 'These appear as dropdown options when creating return/exchange shipments.'}
-              {source==='api' && <span style={{color:'var(--green)',marginLeft:6}}>● Live from API</span>}
             </div>
             {locs.map((l,i)=>(
               <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr auto',gap:6,marginBottom:6,alignItems:'center'}}>
