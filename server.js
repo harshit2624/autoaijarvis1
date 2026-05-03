@@ -8088,29 +8088,36 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
   } else if (partner === 'delhivery') {
     const orderDateStr = new Date().toISOString().replace('T',' ').replace(/\.\d+Z$/,'').replace('Z','');
     const warehouseNameFinal = warehouseName || warehouseId || creds.pickup_location || 'Primary';
-    // Phone: customer phone from RR, fallback to creds phone, then a placeholder Delhivery accepts
-    const deliveryPhone = (delivery.phone||'').replace(/\D/g,'').slice(-10) || (creds.return_phone||'').replace(/\D/g,'').slice(-10) || '9999999999';
-    const pickupPhone   = (pickup.phone||'').replace(/\D/g,'').slice(-10)   || (creds.return_phone||'').replace(/\D/g,'').slice(-10) || '9999999999';
+
+    // In Delhivery's API, `add`/`city`/`pin`/`phone` is ALWAYS the customer (consignee).
+    // `pickup_location.name` is always your registered warehouse.
+    // For reverse: driver goes to customer (add), picks up, returns to warehouse (pickup_location).
+    // For forward: driver goes from warehouse (pickup_location), delivers to customer (add).
+    const custAddr  = isReverse ? pickup   : delivery;   // customer is always the "add" side
+    const custPhone = (custAddr.phone||'').replace(/\D/g,'').slice(-10) || '9999999999';
+    // return_* fields = warehouse address (fallback if consignee refuses)
+    const wh = vendorAddr;
+    const whPhone = (wh.phone||'').replace(/\D/g,'').slice(-10) || (creds.return_phone||'').replace(/\D/g,'').slice(-10) || '9999999999';
+
     const shipData = {
-      // Delhivery resolves the warehouse address by name — no need to pass return_* address fields
       pickup_location: { name: warehouseNameFinal },
       shipments: [{
-        name:          delivery.name,
-        add:           delivery.address1 || '',
-        add2:          delivery.address2 || '',
-        pin:           String(delivery.zip||''),
-        city:          delivery.city     || '',
-        state:         delivery.state    || '',
+        name:          custAddr.name    || rr.customer_name || 'Customer',
+        add:           custAddr.address1|| '',
+        add2:          custAddr.address2|| '',
+        pin:           String(custAddr.zip||custAddr.pincode||''),
+        city:          custAddr.city    || '',
+        state:         custAddr.state   || '',
         country:       'India',
-        phone:         deliveryPhone,
+        phone:         custPhone,
         order:         orderId,
         payment_mode:  'Pre-paid',
-        return_pin:    String(pickup.zip||''),
-        return_city:   pickup.city    || '',
-        return_phone:  pickupPhone,
-        return_name:   pickup.name    || '',
-        return_add:    pickup.address1|| '',
-        return_state:  pickup.state   || '',
+        return_pin:    String(wh.zip||wh.pincode||''),
+        return_city:   wh.city    || '',
+        return_phone:  whPhone,
+        return_name:   wh.name    || '',
+        return_add:    wh.address1|| '',
+        return_state:  wh.state   || '',
         return_country:'India',
         products_desc: desc,
         hsn_code:      '',
