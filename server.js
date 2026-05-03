@@ -7946,7 +7946,7 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
 });
 
 // ── Shared: create reverse/forward shipment for a return/exchange request ─
-async function createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height }) {
+async function createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, warehouseId, warehouseName }) {
   // direction: 'reverse' = customer→vendor (pickup from customer)
   //            'forward' = vendor→customer (send exchange item out)
   const isReverse = direction === 'reverse';
@@ -7988,7 +7988,7 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
     const payload = {
       order_id:                orderId,
       order_date:              new Date().toISOString(),
-      pickup_location:         creds.pickup_location || 'Primary',
+      pickup_location:         warehouseName || warehouseId || creds.pickup_location || 'Primary',
       billing_customer_name:   pickup.name.split(' ')[0] || 'Customer',
       billing_last_name:       pickup.name.split(' ').slice(1).join(' ') || '',
       billing_address:         pickup.address1,
@@ -8015,7 +8015,7 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
   } else if (partner === 'delhivery') {
     const orderDateStr = new Date().toISOString().replace('T',' ').replace(/\.\d+Z$/,'').replace('Z','');
     const shipData = {
-      pickup_location: { name: creds.pickup_location || 'Primary' },
+      pickup_location: { name: warehouseName || warehouseId || creds.pickup_location || 'Primary' },
       shipments: [{
         name:          delivery.name,
         add:           delivery.address1 || '',
@@ -8082,7 +8082,7 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
       cod_amount:                 '0',
       weight:                     String(Math.round(parseFloat(weight)*1000)),
       length: String(length), width: String(breadth), height: String(height),
-      ...(creds.warehouse_id ? { warehouse_id: creds.warehouse_id } : {}),
+      ...(warehouseId || creds.warehouse_id ? { warehouse_id: warehouseId || creds.warehouse_id } : {}),
     };
     const safeJson = async (p) => { const r = await p; const t = await r.text(); try { return {ok:r.ok,data:JSON.parse(t)}; } catch { return {ok:false,data:null,raw:t.slice(0,400)}; } };
     const push = await safeJson(fetch('https://shipping-api.com/api/v1/push-order',{method:'POST',headers:smHeaders,body:JSON.stringify(smPayload)}));
@@ -8097,10 +8097,84 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
   throw new Error('Unknown partner: ' + partner);
 }
 
+// ── Shared: fetch warehouses/pickup locations from a shipping partner ────────
+async function fetchPartnerWarehouses(partner, creds) {
+  if (partner === 'shiprocket') {
+    const authRes = await fetch('https://apiv2.shiprocket.in/v1/external/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: creds.email, password: creds.password }),
+    }).then(r => r.json());
+    if (!authRes.token) throw new Error('Shiprocket auth failed.');
+    const data = await fetch('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
+      headers: { 'Authorization': `Bearer ${authRes.token}` },
+    }).then(r => r.json());
+    const locs = data?.data?.shipping_address || [];
+    return locs.map(l => ({
+      id: String(l.pickup_location || l.id || l.pickup_id || ''),
+      name: l.pickup_location || l.warehouse_name || l.address || '',
+      address: [l.address, l.city, l.state, l.pin_code].filter(Boolean).join(', '),
+    }));
+
+  } else if (partner === 'delhivery') {
+    const data = await fetch('https://track.delhivery.com/api/backend/clientwarehouse/list/?format=json', {
+      headers: { 'Authorization': `Token ${creds.api_token}` },
+    }).then(r => r.json());
+    const locs = data?.results || data?.data || [];
+    if (!locs.length) {
+      // Fallback: return the one pickup location from credentials
+      const name = creds.pickup_location || 'Primary';
+      return [{ id: name, name, address: [creds.return_address, creds.return_city, creds.return_state, creds.return_pincode].filter(Boolean).join(', ') }];
+    }
+    return locs.map(l => ({
+      id: l.name || l.warehouse_name || '',
+      name: l.name || l.warehouse_name || '',
+      address: [l.address, l.city, l.state, l.pin].filter(Boolean).join(', '),
+    }));
+
+  } else if (partner === 'shipmozo') {
+    const smHeaders = { 'Content-Type': 'application/json', 'public-key': creds.public_key, 'private-key': creds.private_key || creds.api_key };
+    const data = await fetch('https://shipping-api.com/api/v1/warehouses', { headers: smHeaders }).then(r => r.json());
+    const locs = data?.data || data?.warehouses || data || [];
+    if (!Array.isArray(locs) || !locs.length) {
+      return [{ id: creds.warehouse_id || 'default', name: 'Default Warehouse', address: '' }];
+    }
+    return locs.map(l => ({
+      id: String(l.id || l.warehouse_id || ''),
+      name: l.name || l.warehouse_name || String(l.id || ''),
+      address: [l.address, l.city, l.state, l.pincode].filter(Boolean).join(', '),
+    }));
+  }
+  return [];
+}
+
+app.get("/admin/shipping/warehouses", adminAuth, async (req, res) => {
+  const { partner } = req.query;
+  if (!partner) return res.status(400).json({ error: 'partner required' });
+  try {
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected` });
+    const creds = JSON.parse(credRow.credentials);
+    const warehouses = await fetchPartnerWarehouses(partner, creds);
+    res.json({ warehouses });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/vendor/shipping/warehouses", vendorAuth, async (req, res) => {
+  const { partner } = req.query;
+  if (!partner) return res.status(400).json({ error: 'partner required' });
+  try {
+    const credRow = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected` });
+    const creds = JSON.parse(credRow.credentials);
+    const warehouses = await fetchPartnerWarehouses(partner, creds);
+    res.json({ warehouses });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Admin: create shipment for return/exchange request ─────────────────────
 app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, res) => {
   try {
-    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8, warehouseId, warehouseName } = req.body || {};
     if (!direction || !partner) return res.status(400).json({ error: 'direction and partner required' });
     if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
 
@@ -8128,7 +8202,7 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
       } catch {}
     }
 
-    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height });
+    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, warehouseId, warehouseName });
 
     // Save AWB to return_request doc
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
@@ -8146,7 +8220,7 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
 // ── Vendor: create shipment for return/exchange request ────────────────────
 app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, res) => {
   try {
-    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8, warehouseId, warehouseName } = req.body || {};
     if (!direction || !partner) return res.status(400).json({ error: 'direction and partner required' });
     if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
 
@@ -8173,7 +8247,7 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
       } catch {}
     }
 
-    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height });
+    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, warehouseId, warehouseName });
 
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
     await mdb.collection('return_requests').updateOne(

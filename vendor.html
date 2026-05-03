@@ -2180,8 +2180,11 @@
      VENDOR RETURNS VIEW
   ══════════════════════════════════ */
   function RRShipmentPanel({ token, rr, onUpdated }) {
-    const [partners, setPartners] = useState([]);
-    const [partner, setPartner]   = useState('');
+    const [partners,   setPartners]   = useState([]);
+    const [partner,    setPartner]    = useState('');
+    const [warehouses, setWarehouses] = useState([]);
+    const [warehouse,  setWarehouse]  = useState(null);
+    const [whLoading,  setWhLoading]  = useState(false);
     const [weight,  setWeight]    = useState('0.5');
     const [length,  setLength]    = useState('15');
     const [breadth, setBreadth]   = useState('12');
@@ -2194,13 +2197,20 @@
         .then(r=>r.json()).then(d=>{ const ps=(d.partners||[]).map(p=>p.partner||p); setPartners(ps); if(ps.length) setPartner(ps[0]); }).catch(()=>{});
     },[]);
 
+    useEffect(()=>{
+      if (!partner) return;
+      setWarehouses([]); setWarehouse(null); setWhLoading(true);
+      fetch(`${API}/vendor/shipping/warehouses?partner=${partner}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{ const wh=d.warehouses||[]; setWarehouses(wh); setWarehouse(wh[0]||null); }).catch(()=>{}).finally(()=>setWhLoading(false));
+    },[partner]);
+
     const createShipment = async (direction) => {
       if (!partner) { setMsg({type:'error',text:'Select a shipping partner first.'}); return; }
       setCreating(direction); setMsg(null);
       try {
         const r = await fetch(`${API}/vendor/return-requests/${rr.request_id}/create-shipment`, {
           method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-          body: JSON.stringify({ direction, partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8 }),
+          body: JSON.stringify({ direction, partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8, warehouseId: warehouse?.id||'', warehouseName: warehouse?.name||'' }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
@@ -2249,6 +2259,17 @@
                   {partners.map(p=><option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}
                 </select>
               </div>
+              <div style={{minWidth:180}}>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Deliver To (Warehouse){whLoading&&<span style={{marginLeft:6,opacity:0.5}}>↻</span>}</div>
+                {warehouses.length > 0 ? (
+                  <select value={warehouse?.id||''} onChange={e=>setWarehouse(warehouses.find(w=>w.id===e.target.value)||null)}
+                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                    {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}{w.address?` — ${w.address}`:''}</option>)}
+                  </select>
+                ) : (
+                  <div style={{fontSize:10,color:'var(--text-muted)',padding:'6px 0'}}>{whLoading?'Loading…':'No warehouses found'}</div>
+                )}
+              </div>
               {[['Wt(kg)','weight',weight,setWeight],['L','length',length,setLength],['B','breadth',breadth,setBreadth],['H','height',height,setHeight]].map(([lbl,k,val,set])=>(
                 <div key={k}>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{lbl}</div>
@@ -2257,6 +2278,7 @@
               ))}
             </div>
 
+            {warehouse?.address && <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:10}}>📍 {warehouse.address}</div>}
             <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
               <div style={{flex:1,minWidth:200,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
                 <div style={{fontSize:11,fontWeight:700,color:'var(--blue)',marginBottom:4}}>↩ Reverse Pickup</div>
