@@ -1097,6 +1097,246 @@ function emailBase(title, accentColor, bodyHtml) {
 </div></body></html>`;
 }
 
+// ── Return/Exchange Request Email Templates ──────────────────────────────
+
+function rrItemsHtml(items) {
+  const rows = (items || []).map(it => `
+    <tr>
+      <td style="padding:11px 14px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:600;color:#1a2a3a;">${it.title || ''}${it.variant_title ? ` <span style="color:#6b7280;font-weight:400">(${it.variant_title})</span>` : ''}</div>
+        ${it.exchange_size_label ? `<div style="font-size:12px;color:#002eff;margin-top:3px;">↔ Exchange for: <strong>${it.exchange_size_label}</strong></div>` : ''}
+      </td>
+      <td style="padding:11px 14px;border-bottom:1px solid #f1f5f9;text-align:center;font-weight:600;color:#374151;">${it.qty || 1}</td>
+    </tr>`).join('');
+  return `<table class="items-table" style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+    <thead><tr>
+      <th style="background:#f1f5f9;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:left;">Item</th>
+      <th style="background:#f1f5f9;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:center;">Qty</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function rrInfoBox(rr) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  return `<div class="info-box">
+    <div class="info-row"><span class="info-label">Request ID</span><span class="info-val">${rr.request_id}</span></div>
+    <div class="info-row"><span class="info-label">Order</span><span class="info-val">${rr.order_name || rr.shopify_order_id}</span></div>
+    <div class="info-row"><span class="info-label">Type</span><span class="info-val">${typeLabel}</span></div>
+    <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${rr.customer_name || '—'}</span></div>
+    ${rr.customer_phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${rr.customer_phone}</span></div>` : ''}
+    <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${rr.reason}</span></div>
+    ${rr.vendor_name ? `<div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${rr.vendor_name}</span></div>` : ''}
+  </div>`;
+}
+
+function templateRRSubmittedCustomer({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">We've received your ${typeLabel.toLowerCase()} request and will review it shortly.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items in your request:</p>
+    ${rrItemsHtml(rr.items)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our team will review your request and get back to you within 1–2 business days. You'll receive an email once a decision has been made.</p>
+  `;
+  return emailBase(`${typeLabel} Request Received — ${rr.request_id}`, '#002eff', body);
+}
+
+function templateRRSubmittedAdmin({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">A new ${typeLabel.toLowerCase()} request has been submitted and requires your review.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Requested items:</p>
+    ${rrItemsHtml(rr.items)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Log in to the Admin Portal → Returns to approve or reject this request.</p>
+  `;
+  return emailBase(`New ${typeLabel} Request — ${rr.order_name}`, '#002eff', body);
+}
+
+function templateRRSubmittedVendor({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">A ${typeLabel.toLowerCase()} request has been submitted for one of your orders.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Requested items:</p>
+    ${rrItemsHtml(rr.items)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">The admin team is reviewing this request. You'll be notified if any action is required from you.</p>
+  `;
+  return emailBase(`New ${typeLabel} Request for Order ${rr.order_name}`, '#002eff', body);
+}
+
+function templateRRApprovedCustomer({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle" style="color:#10b981;font-weight:600;">Great news — your ${typeLabel.toLowerCase()} request has been approved!</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items:</p>
+    ${rrItemsHtml(rr.items)}
+    ${rr.admin_note ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#065f46;"><strong>Note from our team:</strong> ${rr.admin_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">We'll arrange pickup of your item(s) and keep you updated. Please ensure the items are packed and ready.</p>
+  `;
+  return emailBase(`${typeLabel} Request Approved ✓`, '#10b981', body);
+}
+
+function templateRRApprovedVendor({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">The admin has approved this ${typeLabel.toLowerCase()} request. Please arrange pickup from the customer.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items to collect:</p>
+    ${rrItemsHtml(rr.items)}
+    ${rr.admin_note ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#065f46;"><strong>Admin note:</strong> ${rr.admin_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Please update the status in your Vendor Portal once pickup has been arranged.</p>
+  `;
+  return emailBase(`Action Required: Arrange ${typeLabel} Pickup — ${rr.order_name}`, '#10b981', body);
+}
+
+function templateRRApprovedAdmin({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">The vendor has approved this ${typeLabel.toLowerCase()} request and is arranging pickup.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items:</p>
+    ${rrItemsHtml(rr.items)}
+    ${rr.vendor_note ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#065f46;"><strong>Vendor note:</strong> ${rr.vendor_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Monitor the request in Admin Portal → Returns for further status updates.</p>
+  `;
+  return emailBase(`Vendor Approved ${typeLabel} — ${rr.request_id}`, '#10b981', body);
+}
+
+function templateRRRejectedCustomer({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">Unfortunately, your ${typeLabel.toLowerCase()} request could not be approved at this time.</div>
+    ${rrInfoBox(rr)}
+    ${rr.admin_note ? `<div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#991b1b;"><strong>Reason:</strong> ${rr.admin_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">If you believe this is an error or have further questions, please contact our support team with your Request ID: <strong>${rr.request_id}</strong>.</p>
+  `;
+  return emailBase(`Update on Your ${typeLabel} Request`, '#dc2626', body);
+}
+
+function templateRRPickupCustomer({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">Pickup has been scheduled for your ${typeLabel.toLowerCase()} request.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items to be collected:</p>
+    ${rrItemsHtml(rr.items)}
+    ${rr.admin_note ? `<div style="background:#eef2ff;border:2px solid #6366f1;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#3730a3;"><strong>Pickup details:</strong> ${rr.admin_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Please ensure the items are packed securely and ready for collection. You'll receive another update once your items are in transit.</p>
+  `;
+  return emailBase(`Pickup Scheduled — ${rr.request_id}`, '#6366f1', body);
+}
+
+function templateRRInTransitCustomer({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const body = `
+    <div class="subtitle">Your ${typeLabel.toLowerCase()} items have been picked up and are on their way.</div>
+    ${rrInfoBox(rr)}
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items in transit:</p>
+    ${rrItemsHtml(rr.items)}
+    ${rr.admin_note ? `<div style="background:#eef2ff;border:2px solid #6366f1;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#3730a3;"><strong>Tracking info:</strong> ${rr.admin_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">We'll notify you once your ${rr.type === 'exchange' ? 'exchange item has been delivered' : 'return has been received and processed'}.</p>
+  `;
+  return emailBase(`Your ${typeLabel} is In Transit — ${rr.request_id}`, '#6366f1', body);
+}
+
+function templateRRDeliveredCustomer({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const completedMsg = rr.type === 'exchange'
+    ? 'Your exchange item has been delivered. We hope you love it!'
+    : 'Your return has been received and processed. Refund (if applicable) will be initiated shortly.';
+  const body = `
+    <div class="subtitle" style="color:#10b981;font-weight:600;">${completedMsg}</div>
+    ${rrInfoBox(rr)}
+    ${rr.admin_note ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#065f46;"><strong>Note:</strong> ${rr.admin_note}</div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Thank you for shopping with CrosCrow. If you have any questions, please contact us with your Request ID: <strong>${rr.request_id}</strong>.</p>
+  `;
+  return emailBase(`${typeLabel} Request Complete ✓`, '#10b981', body);
+}
+
+function templateRRReminder24Admin({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const createdAt = rr.created_at ? new Date(rr.created_at).toLocaleString('en-IN') : '—';
+  const body = `
+    <div class="subtitle" style="color:#f59e0b;font-weight:600;">This ${typeLabel.toLowerCase()} request has been pending for over 24 hours and requires attention.</div>
+    ${rrInfoBox(rr)}
+    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#92400e;">
+      <strong>⏰ Submitted:</strong> ${createdAt}<br>
+      <strong>Current Status:</strong> Pending — no action taken yet
+    </div>
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Please log in to the Admin Portal → Returns to review and approve or reject this request promptly.</p>
+  `;
+  return emailBase(`24hr Reminder: ${typeLabel} Request Still Pending`, '#f59e0b', body);
+}
+
+function templateRRReminder24Vendor({ req: rr }) {
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const updatedAt = rr.updated_at ? new Date(rr.updated_at).toLocaleString('en-IN') : '—';
+  const body = `
+    <div class="subtitle" style="color:#f59e0b;font-weight:600;">This ${typeLabel.toLowerCase()} was approved over 24 hours ago and pickup has not yet been arranged.</div>
+    ${rrInfoBox(rr)}
+    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#92400e;">
+      <strong>⏰ Approved on:</strong> ${updatedAt}<br>
+      <strong>Current Status:</strong> Approved — awaiting vendor action
+    </div>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:8px;font-weight:600;">Items to collect from customer:</p>
+    ${rrItemsHtml(rr.items)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Please arrange pickup as soon as possible and update the status in your Vendor Portal.</p>
+  `;
+  return emailBase(`⏰ Action Needed: Approved ${typeLabel} Not Yet Fulfilled — ${rr.request_id}`, '#f59e0b', body);
+}
+
+// ── Return/Exchange Email Helper ──────────────────────────────────────────
+
+async function sendRREmail(type, rr) {
+  try {
+    const cfg = await mdb.collection('email_settings').findOne({}) || {};
+    const from = `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`;
+    const adminEmail = 'harshitvj24@gmail.com';
+
+    const vendorCfg = await mdb.collection('vendor_config').findOne({ vendor_name: rr.vendor_name }) || {};
+    const vendorEmail = vendorCfg.email || null;
+
+    const send = async (to, subject, html) => {
+      if (!to) return;
+      await transporter.sendMail({ from, to, subject, html });
+    };
+
+    switch (type) {
+      case 'submitted':
+        await send(rr.customer_email, `Your ${rr.type} request ${rr.request_id} received`, templateRRSubmittedCustomer({ req: rr }));
+        await send(adminEmail, `New ${rr.type} request ${rr.request_id} — ${rr.order_name}`, templateRRSubmittedAdmin({ req: rr }));
+        if (vendorEmail) await send(vendorEmail, `New ${rr.type} request for order ${rr.order_name}`, templateRRSubmittedVendor({ req: rr }));
+        break;
+      case 'approved':
+        await send(rr.customer_email, `Your ${rr.type} request ${rr.request_id} is approved ✓`, templateRRApprovedCustomer({ req: rr }));
+        if (rr._approvedBy === 'admin' && vendorEmail) await send(vendorEmail, `Action needed: ${rr.type} approved for ${rr.order_name}`, templateRRApprovedVendor({ req: rr }));
+        if (rr._approvedBy === 'vendor') await send(adminEmail, `Vendor approved ${rr.type} request ${rr.request_id}`, templateRRApprovedAdmin({ req: rr }));
+        break;
+      case 'rejected':
+        await send(rr.customer_email, `Update on your ${rr.type} request ${rr.request_id}`, templateRRRejectedCustomer({ req: rr }));
+        break;
+      case 'pickup':
+        await send(rr.customer_email, `Pickup scheduled for your ${rr.type} request ${rr.request_id}`, templateRRPickupCustomer({ req: rr }));
+        break;
+      case 'in_transit':
+        await send(rr.customer_email, `Your ${rr.type} is on its way — ${rr.request_id}`, templateRRInTransitCustomer({ req: rr }));
+        break;
+      case 'completed':
+        await send(rr.customer_email, `Your ${rr.type} request ${rr.request_id} is complete ✓`, templateRRDeliveredCustomer({ req: rr }));
+        break;
+      case 'reminder_admin':
+        await send(adminEmail, `⏰ 24hr reminder: ${rr.type} request ${rr.request_id} still pending`, templateRRReminder24Admin({ req: rr }));
+        break;
+      case 'reminder_vendor':
+        if (vendorEmail) await send(vendorEmail, `⏰ Action needed: approved ${rr.type} not yet arranged — ${rr.request_id}`, templateRRReminder24Vendor({ req: rr }));
+        break;
+    }
+  } catch (e) { console.error('RR email error:', e.message); }
+}
+
 function templateOrderConfirmedCustomer({ order }) {
   const isPrepaid = order.financial_status === 'paid';
   const body = `
@@ -4539,26 +4779,31 @@ app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
-  const { to, template } = req.body || {};
-  if (!to || !template) return res.status(400).json({ error: "to and template required" });
-  const cfg = await getSmtpConfig();
-  if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
-
+function buildDemoTemplates(to) {
   const demoOrder = {
     id: 99999, name: '#TEST-001',
     created_at: new Date().toISOString(),
     financial_status: 'pending',
     total_price: '1299.00',
     total_shipping_price_set: { shop_money: { amount: '49.00' } },
-    email: to,
+    email: to || 'test@example.com',
     line_items: [{ title: 'Demo Product (Size: M)', variant_title: 'Size: M', quantity: 1, price: '1250.00', vendor: 'Demo Vendor', sku: 'DEMO-001' }],
     shipping_address: { name: 'Test Customer', address1: '123 Test Street', address2: '', city: 'Mumbai', province: 'Maharashtra', zip: '400001', phone: '+91 9876543210' },
     shipping_lines: [{ price: '49.00' }],
   };
   const demoMeta = { advance_paid: 200, payment_type: 'cod' };
-
-  const TEMPLATES = {
+  const demoRR = {
+    request_id: 'RR-20240501-0001',
+    type: 'exchange',
+    order_name: '#TEST-001',
+    customer_name: 'Test Customer',
+    customer_email: to || 'test@example.com',
+    vendor_name: 'Demo Vendor',
+    reason: 'Wrong size received',
+    items: [{ title: 'Demo Product', variant_title: 'Size: M', qty: 1, exchange_size_label: 'Size: L' }],
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+  };
+  return {
     vendor_welcome: { subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
     new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder }) },
     confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder }) },
@@ -4571,7 +4816,34 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
     delivered_vendor:   { subject: `[TEST] Order Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'vendor' }) },
     delivered_admin:    { subject: `[TEST] Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'admin' }) },
     order_on_hold:      { subject: `[TEST] Your Order ${demoOrder.name} is On Hold — Please Confirm`, html: templateOrderOnHoldCustomer({ order: demoOrder }) },
+    rr_submitted:       { subject: `Return/Exchange Request Received — ${demoRR.request_id}`, html: rrTplCustomerSubmitted(demoRR) },
+    rr_approved_admin:  { subject: `Return/Exchange Approved — ${demoRR.request_id}`, html: rrTplCustomerApprovedByAdmin(demoRR) },
+    rr_rejected:        { subject: `Return/Exchange Update — ${demoRR.request_id}`, html: rrTplCustomerRejected(demoRR) },
+    rr_pickup:          { subject: `Pickup Scheduled — ${demoRR.request_id}`, html: rrTplCustomerPickup(demoRR) },
+    rr_in_transit:      { subject: `Return In Transit — ${demoRR.request_id}`, html: rrTplCustomerInTransit(demoRR) },
+    rr_completed:       { subject: `Return/Exchange Complete — ${demoRR.request_id}`, html: rrTplCustomerCompleted(demoRR) },
+    rr_admin_new:       { subject: `New Return/Exchange Request — ${demoRR.request_id}`, html: rrTplAdminNew(demoRR) },
+    rr_vendor_new:      { subject: `New Return/Exchange for Your Order — ${demoRR.request_id}`, html: rrTplVendorNew(demoRR) },
+    rr_vendor_approved: { subject: `Return/Exchange Approved — Arrange Pickup — ${demoRR.request_id}`, html: rrTplVendorApprovedByAdmin(demoRR) },
   };
+}
+
+app.get("/admin/email-settings/preview-template", adminAuth, async (req, res) => {
+  const { template } = req.query;
+  if (!template) return res.status(400).json({ error: "template required" });
+  const TEMPLATES = buildDemoTemplates('preview@example.com');
+  const tpl = TEMPLATES[template];
+  if (!tpl) return res.status(400).json({ error: `Unknown template. Valid: ${Object.keys(TEMPLATES).join(', ')}` });
+  res.json({ subject: tpl.subject, html: tpl.html });
+});
+
+app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
+  const { to, template } = req.body || {};
+  if (!to || !template) return res.status(400).json({ error: "to and template required" });
+  const cfg = await getSmtpConfig();
+  if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
+
+  const TEMPLATES = buildDemoTemplates(to);
 
   const tpl = TEMPLATES[template];
   if (!tpl) return res.status(400).json({ error: `Unknown template. Valid: ${Object.keys(TEMPLATES).join(', ')}` });
@@ -7143,6 +7415,253 @@ app.post("/admin/reports/send", adminAuth, async (req, res) => {
 // (The logic is injected into the existing route via post-insert query)
 
 // ══════════════════════════════════════════════════════════════════════════
+// RETURN / EXCHANGE EMAIL TEMPLATES
+// ══════════════════════════════════════════════════════════════════════════
+
+function rrItemsHtml(items = [], type = 'return') {
+  const rows = items.map(it => `
+    <tr>
+      <td style="padding:10px 14px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#374151;vertical-align:middle">
+        <strong>${it.title || ''}</strong>
+        ${it.variant_title ? `<br><span style="font-size:11px;color:#9ca3af">${it.variant_title}</span>` : ''}
+        ${type === 'exchange' && it.exchange_size_label ? `<br><span style="font-size:11px;color:#002eff;font-weight:600">↔ Exchange for: ${it.exchange_size_label}</span>` : ''}
+      </td>
+      <td style="padding:10px 14px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:center;color:#6b7280;vertical-align:middle">${it.qty || 1}</td>
+    </tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+    <thead><tr style="background:#f8fafc">
+      <th style="padding:10px 14px;text-align:left;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px">Item</th>
+      <th style="padding:10px 14px;text-align:center;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px">Qty</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function rrInfoBox(req) {
+  return `<div class="info-box">
+    <div class="info-row"><span class="info-label">Request ID</span><span class="info-val">${req.request_id}</span></div>
+    <div class="info-row"><span class="info-label">Order</span><span class="info-val">${req.order_name}</span></div>
+    <div class="info-row"><span class="info-label">Type</span><span class="info-val">${req.type === 'exchange' ? '🔄 Exchange' : '↩ Return'}</span></div>
+    <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${req.customer_name}</span></div>
+    <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${req.reason}</span></div>
+  </div>`;
+}
+
+// Customer: submitted
+function templateRRSubmittedCustomer({ req }) {
+  const accent = '#002eff';
+  const body = `
+    <div class="subtitle">We've received your ${req.type} request and will review it shortly.</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our team typically reviews requests within 24 hours. We'll email you once a decision is made.</p>`;
+  return emailBase(`${req.type === 'exchange' ? 'Exchange' : 'Return'} Request Received`, accent, body);
+}
+
+// Admin: new request
+function templateRRSubmittedAdmin({ req }) {
+  const accent = '#002eff';
+  const body = `
+    <div class="subtitle">A customer has submitted a new ${req.type} request.</div>
+    ${rrInfoBox(req)}
+    <div class="info-box"><div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${req.vendor_name || '—'}</span></div>
+    <div class="info-row"><span class="info-label">Email</span><span class="info-val">${req.customer_email}</span></div>
+    <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${req.customer_phone || '—'}</span></div></div>
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280">Go to <strong>Admin Portal → Returns</strong> to approve or reject this request.</p>`;
+  return emailBase(`New ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request — ${req.order_name}`, accent, body);
+}
+
+// Vendor: new request
+function templateRRSubmittedVendor({ req }) {
+  const accent = '#6366f1';
+  const body = `
+    <div class="subtitle">A customer has submitted a ${req.type} request for one of your orders.</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280">Please log in to the <strong>Vendor Portal → Returns</strong> to review. Admin will approve or reject within 24 hours.</p>`;
+  return emailBase(`New ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request — ${req.order_name}`, accent, body);
+}
+
+// Customer: approved
+function templateRRApprovedCustomer({ req }) {
+  const body = `
+    <div class="subtitle">Great news — your ${req.type} request has been approved!</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our team will arrange pickup of your item${req.items.length > 1 ? 's' : ''} shortly. Please keep the item${req.items.length > 1 ? 's' : ''} ready and packed. You'll receive another email when pickup is scheduled.</p>`;
+  return emailBase(`Your ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request Approved ✓`, '#10b981', body);
+}
+
+// Vendor: admin approved — arrange pickup
+function templateRRApprovedVendor({ req }) {
+  const body = `
+    <div class="subtitle">Admin has approved a ${req.type} request. Please arrange reverse pickup from the customer.</div>
+    ${rrInfoBox(req)}
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${req.customer_name}</span></div>
+      <div class="info-row"><span class="info-label">Email</span><span class="info-val">${req.customer_email}</span></div>
+      <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${req.customer_phone || '—'}</span></div>
+    </div>
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Please arrange reverse pickup within <strong>24 hours</strong>. Log in to <strong>Vendor Portal → Returns</strong> to update the status.</p>`;
+  return emailBase(`Action Needed: ${req.type === 'exchange' ? 'Exchange' : 'Return'} Approved — ${req.order_name}`, '#f59e0b', body);
+}
+
+// Admin: vendor approved
+function templateRRApprovedAdmin({ req }) {
+  const body = `
+    <div class="subtitle">Vendor has approved the ${req.type} request and will arrange pickup.</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280">Monitor progress in <strong>Admin Portal → Returns</strong>.</p>`;
+  return emailBase(`Vendor Approved: ${req.type === 'exchange' ? 'Exchange' : 'Return'} ${req.request_id}`, '#10b981', body);
+}
+
+// Customer: rejected
+function templateRRRejectedCustomer({ req }) {
+  const body = `
+    <div class="subtitle">Unfortunately, your ${req.type} request could not be approved at this time.</div>
+    ${rrInfoBox(req)}
+    ${req.admin_note ? `<div class="info-box"><div class="info-row"><span class="info-label">Reason</span><span class="info-val">${req.admin_note}</span></div></div>` : ''}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">If you believe this is an error or need further assistance, please contact our support team.</p>`;
+  return emailBase(`Update on Your ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request`, '#dc2626', body);
+}
+
+// Customer: pickup scheduled
+function templateRRPickupCustomer({ req }) {
+  const body = `
+    <div class="subtitle">Pickup has been scheduled for your ${req.type} request. Please keep your item ready.</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our pickup partner will collect the item from your address. Please ensure it is securely packed. You'll receive a tracking update once picked up.</p>`;
+  return emailBase(`Pickup Scheduled — ${req.request_id}`, '#6366f1', body);
+}
+
+// Customer: in transit
+function templateRRInTransitCustomer({ req }) {
+  const body = `
+    <div class="subtitle">Your ${req.type} item is on its way to us.</div>
+    ${rrInfoBox(req)}
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">${req.type === 'exchange' ? 'We\'ll process your exchange and dispatch the new item once we receive yours.' : 'We\'ll process your return and initiate the refund once we receive the item.'}</p>`;
+  return emailBase(`Your ${req.type === 'exchange' ? 'Exchange' : 'Return'} is In Transit`, '#6366f1', body);
+}
+
+// Customer: completed
+function templateRRCompletedCustomer({ req }) {
+  const body = `
+    <div class="subtitle">${req.type === 'exchange' ? 'Your exchange order has been delivered!' : 'We\'ve received your returned item. Your request is complete.'}</div>
+    ${rrInfoBox(req)}
+    ${req.type === 'exchange' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">Enjoy your new item! Thank you for shopping with CrosCrow.</p>` : `<p style="font-size:13px;color:#6b7280;line-height:1.7">Your refund will be processed within 5–7 business days. Thank you for your patience.</p>`}`;
+  return emailBase(`${req.type === 'exchange' ? 'Exchange Complete ✓' : 'Return Received ✓'} — ${req.request_id}`, '#10b981', body);
+}
+
+// Admin: 24hr reminder — still pending
+function templateRRReminder24Admin({ req }) {
+  const hrs = Math.round((Date.now() - new Date(req.created_at).getTime()) / 3600000);
+  const body = `
+    <div class="subtitle">This ${req.type} request has been pending for <strong>${hrs} hours</strong> and needs your attention.</div>
+    ${rrInfoBox(req)}
+    <div class="info-box"><div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${req.vendor_name || '—'}</span></div>
+    <div class="info-row"><span class="info-label">Customer Email</span><span class="info-val">${req.customer_email}</span></div></div>
+    <p style="font-size:13px;color:#6b7280">Go to <strong>Admin Portal → Returns</strong> to approve or reject.</p>`;
+  return emailBase(`⏰ 24hr Reminder: ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request Still Pending`, '#f59e0b', body);
+}
+
+// Vendor: 24hr reminder — approved but not fulfilled
+function templateRRReminder24Vendor({ req }) {
+  const hrs = Math.round((Date.now() - new Date(req.updated_at || req.created_at).getTime()) / 3600000);
+  const body = `
+    <div class="subtitle">This ${req.type} request was approved <strong>${hrs} hours ago</strong> but pickup has not been arranged yet.</div>
+    ${rrInfoBox(req)}
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${req.customer_name}</span></div>
+      <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${req.customer_phone || '—'}</span></div>
+    </div>
+    <p style="font-size:13px;color:#f59e0b;font-weight:700">Please arrange reverse pickup immediately from the customer's address.</p>
+    <p style="font-size:13px;color:#6b7280">Log in to <strong>Vendor Portal → Returns</strong> to update the status.</p>`;
+  return emailBase(`⏰ Action Needed: ${req.type === 'exchange' ? 'Exchange' : 'Return'} Not Yet Arranged`, '#f59e0b', body);
+}
+
+// ── Helper: send RR email by type ─────────────────────────────────────────
+async function sendRREmail(type, req) {
+  try {
+    const cfg = await mdb.collection('email_settings').findOne({}) || {};
+    const from = `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`;
+    const ADMIN = 'harshitvj24@gmail.com';
+    const vendorCfg = req.vendor_name ? (await mdb.collection('vendor_config').findOne({ vendor_name: req.vendor_name }) || {}) : {};
+    const vendorEmail = vendorCfg.email || null;
+
+    const send = async (to, subject, html) => {
+      if (!to || !cfg.user) return;
+      await transporter.sendMail({ from, to, subject, html });
+    };
+
+    const T = req.type === 'exchange' ? 'Exchange' : 'Return';
+    switch (type) {
+      case 'submitted':
+        if (req.customer_email) await send(req.customer_email, `${T} Request Received — ${req.request_id}`, templateRRSubmittedCustomer({req}));
+        await send(ADMIN, `New ${T} Request ${req.request_id} — ${req.order_name}`, templateRRSubmittedAdmin({req}));
+        if (vendorEmail) await send(vendorEmail, `New ${T} Request for Order ${req.order_name}`, templateRRSubmittedVendor({req}));
+        break;
+      case 'approved_by_admin':
+        if (req.customer_email) await send(req.customer_email, `Your ${T} Request Approved ✓ — ${req.request_id}`, templateRRApprovedCustomer({req}));
+        if (vendorEmail) await send(vendorEmail, `Action Needed: ${T} Approved — ${req.order_name}`, templateRRApprovedVendor({req}));
+        break;
+      case 'approved_by_vendor':
+        if (req.customer_email) await send(req.customer_email, `Your ${T} Request Approved ✓ — ${req.request_id}`, templateRRApprovedCustomer({req}));
+        await send(ADMIN, `Vendor Approved ${T} Request ${req.request_id}`, templateRRApprovedAdmin({req}));
+        break;
+      case 'rejected':
+        if (req.customer_email) await send(req.customer_email, `Update on Your ${T} Request — ${req.request_id}`, templateRRRejectedCustomer({req}));
+        break;
+      case 'pickup':
+        if (req.customer_email) await send(req.customer_email, `Pickup Scheduled — ${req.request_id}`, templateRRPickupCustomer({req}));
+        break;
+      case 'in_transit':
+        if (req.customer_email) await send(req.customer_email, `Your ${T} is In Transit — ${req.request_id}`, templateRRInTransitCustomer({req}));
+        break;
+      case 'completed':
+        if (req.customer_email) await send(req.customer_email, `${T} Complete ✓ — ${req.request_id}`, templateRRCompletedCustomer({req}));
+        break;
+      case 'reminder_admin':
+        await send(ADMIN, `⏰ 24hr Reminder: ${T} Request Still Pending — ${req.request_id}`, templateRRReminder24Admin({req}));
+        break;
+      case 'reminder_vendor':
+        if (vendorEmail) await send(vendorEmail, `⏰ Action Needed: Approved ${T} Not Yet Arranged — ${req.request_id}`, templateRRReminder24Vendor({req}));
+        break;
+    }
+  } catch(e) { console.error('RR email error:', e.message); }
+}
+
+// ── 24hr reminder cron ────────────────────────────────────────────────────
+async function rrReminderCron() {
+  try {
+    const ago24 = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    // Pending > 24hrs — remind admin
+    const pendingOld = await mdb.collection('return_requests').find({
+      status: 'pending', created_at: { $lt: ago24 }, reminder_sent_pending: { $ne: true }
+    }).toArray();
+    for (const r of pendingOld) {
+      await sendRREmail('reminder_admin', r);
+      await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_pending: true } });
+    }
+    // Approved > 24hrs — remind vendor
+    const approvedOld = await mdb.collection('return_requests').find({
+      status: 'approved', updated_at: { $lt: ago24 }, reminder_sent_approved: { $ne: true }
+    }).toArray();
+    for (const r of approvedOld) {
+      await sendRREmail('reminder_vendor', r);
+      await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_approved: true } });
+    }
+    if (pendingOld.length + approvedOld.length > 0)
+      console.log(`📧 RR reminders sent: ${pendingOld.length} admin, ${approvedOld.length} vendor`);
+  } catch(e) { console.error('RR reminder cron error:', e.message); }
+}
+setTimeout(rrReminderCron, 90000);
+setInterval(rrReminderCron, 3600000);
+
+// ══════════════════════════════════════════════════════════════════════════
 // RETURN / EXCHANGE SYSTEM
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -7392,29 +7911,7 @@ app.post("/track/request", async (req, res) => {
     mdb.collection('return_requests').createIndex({ vendor_name: 1, status: 1 }).catch(() => {});
     mdb.collection('return_requests').createIndex({ customer_email: 1 }).catch(() => {});
 
-    // Email admin
-    const itemsHtml = items.map(it => `<li>${it.title}${it.variant_title ? ` (${it.variant_title})` : ''} × ${it.qty}${it.exchange_size_label ? ` → Exchange for: ${it.exchange_size_label}` : ''}</li>`).join('');
-    await sendEmail({
-      to: 'harshitvj24@gmail.com',
-      subject: `New ${type} Request ${request_id} — ${order_name}`,
-      html: `<div style="font-family:sans-serif;max-width:600px;margin:auto;background:#0a1020;color:#e2e8f0;border-radius:12px;padding:28px;">
-        <h2 style="color:#10b981;margin:0 0 16px">New ${type.charAt(0).toUpperCase() + type.slice(1)} Request</h2>
-        <p style="color:#94a3b8;margin:0 0 20px">Request ID: <strong style="color:#fff">${request_id}</strong></p>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <tr><td style="padding:6px 0;color:#64748b">Order</td><td style="color:#fff">${order_name}</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b">Customer</td><td style="color:#fff">${customer_name} &lt;${customer_email}&gt;</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b">Vendor</td><td style="color:#fff">${vendor_name || '—'}</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b">Type</td><td style="color:#fff">${type}</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b">Reason</td><td style="color:#fff">${reason}</td></tr>
-        </table>
-        <p style="margin:16px 0 6px;color:#64748b">Items:</p>
-        <ul style="margin:0;padding-left:20px;color:#e2e8f0">${itemsHtml}</ul>
-        <hr style="border:none;border-top:1px solid #1e293b;margin:20px 0">
-        <p style="color:#64748b;font-size:12px">Go to Admin Portal → Returns to manage this request.</p>
-      </div>`,
-      shopifyId: String(shopify_order_id),
-      trigger: 'return_request',
-    });
+    sendRREmail('submitted', doc).catch(() => {});
 
     res.json({ success: true, request_id });
   } catch (err) {
@@ -7441,6 +7938,13 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
     if (status) update.status = status;
     if (admin_note !== undefined) update.admin_note = admin_note;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id }, { $set: update });
+    if (status) {
+      const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+      if (updated) {
+        const emailType = { approved: 'approved_by_admin', rejected: 'rejected', pickup: 'pickup', in_transit: 'in_transit', completed: 'completed' }[status];
+        if (emailType) sendRREmail(emailType, updated).catch(() => {});
+      }
+    }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7477,13 +7981,18 @@ app.get("/vendor/return-requests", vendorAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Vendor: update own return request (vendor note only) ──────────────────
+// ── Vendor: update own return request ────────────────────────────────────
 app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
   try {
-    const { vendor_note } = req.body;
+    const { vendor_note, status } = req.body;
     const update = { updated_at: new Date().toISOString() };
     if (vendor_note !== undefined) update.vendor_note = vendor_note;
+    if (status) update.status = status;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: req.vendor }, { $set: update });
+    if (status === 'approved') {
+      const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+      if (updated) sendRREmail('approved_by_vendor', updated).catch(() => {});
+    }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
