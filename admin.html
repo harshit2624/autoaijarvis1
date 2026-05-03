@@ -4306,6 +4306,62 @@
     },
   ];
 
+  function PickupLocationsManager({ token, partner, apiBase }) {
+    const [locs,    setLocs]    = useState([]);
+    const [open,    setOpen]    = useState(false);
+    const [saving,  setSaving]  = useState(false);
+    const [msg,     setMsg]     = useState(null);
+    const EMPTY = { name:'', address:'', city:'', state:'', pincode:'' };
+
+    const load = () => {
+      fetch(`${apiBase}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setLocs(d.locations||[])).catch(()=>{});
+    };
+    useEffect(()=>{ if(open) load(); },[open]);
+
+    const upd = (i,k,v) => setLocs(ls=>ls.map((l,j)=>j===i?{...l,[k]:v}:l));
+    const add  = () => setLocs(ls=>[...ls, {...EMPTY}]);
+    const del  = (i) => setLocs(ls=>ls.filter((_,j)=>j!==i));
+
+    const save = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${apiBase}`, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`}, body: JSON.stringify({ locations: locs.filter(l=>l.name.trim()) }) });
+        if (!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Locations saved.'});
+        load();
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    return (
+      <div style={{marginTop:10,borderTop:'1px solid var(--border)',paddingTop:10}}>
+        <button onClick={()=>setOpen(o=>!o)} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,fontFamily:'IBM Plex Mono,monospace',padding:0}}>
+          {open?'▼':'▶'} 📍 Pickup / Warehouse Locations ({locs.length})
+        </button>
+        {open && (
+          <div style={{marginTop:10}}>
+            {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:8,fontSize:11}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+            <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>These locations appear as dropdown options when creating return/exchange shipments.</div>
+            {locs.map((l,i)=>(
+              <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr auto',gap:6,marginBottom:6,alignItems:'center'}}>
+                <input className="form-input" style={{fontSize:11}} placeholder="Location name (e.g. Primary)" value={l.name} onChange={e=>upd(i,'name',e.target.value)} />
+                <input className="form-input" style={{fontSize:11}} placeholder="Address" value={l.address||''} onChange={e=>upd(i,'address',e.target.value)} />
+                <input className="form-input" style={{fontSize:11}} placeholder="City" value={l.city||''} onChange={e=>upd(i,'city',e.target.value)} />
+                <input className="form-input" style={{fontSize:11}} placeholder="Pincode" value={l.pincode||''} onChange={e=>upd(i,'pincode',e.target.value)} />
+                <button onClick={()=>del(i)} style={{background:'none',border:'none',color:'var(--red)',cursor:'pointer',fontSize:14}}>✕</button>
+              </div>
+            ))}
+            <div style={{display:'flex',gap:8,marginTop:6}}>
+              <button className="btn btn-ghost btn-sm" onClick={add} style={{fontSize:11}}>+ Add Location</button>
+              <button className="btn btn-green btn-sm" onClick={save} disabled={saving} style={{fontSize:11}}>{saving?'Saving…':'Save Locations'}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function ShippingCreds({ token }) {
     const [connected, setConnected] = useState({});
     const [forms,     setForms]     = useState({});
@@ -4423,8 +4479,12 @@
                 </div>
                 <div style={{padding:16}}>
                   {isConnected ? (
-                    <div style={{fontSize:12,color:'var(--text-muted)',textAlign:'center',padding:'8px 0'}}>
-                      ✓ Credentials saved. Tracking is active for all {partner.name} AWBs.
+                    <div>
+                      <div style={{fontSize:12,color:'var(--text-muted)',textAlign:'center',padding:'8px 0'}}>
+                        ✓ Credentials saved. Tracking is active for all {partner.name} AWBs.
+                      </div>
+                      <PickupLocationsManager token={token} partner={partner.id}
+                        apiBase={`${API}/admin/shipping-creds/${partner.id}/locations`} />
                     </div>
                   ) : (
                     <>

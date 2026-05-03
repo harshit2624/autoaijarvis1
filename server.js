@@ -5418,6 +5418,42 @@ app.delete("/admin/shipping-creds/:partner", adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Manage saved pickup locations for a partner (admin)
+app.get("/admin/shipping-creds/:partner/locations", adminAuth, async (req, res) => {
+  const row = await mdb.collection('global_shipping_creds').findOne({ partner: req.params.partner });
+  if (!row) return res.status(404).json({ error: 'Partner not connected' });
+  const creds = JSON.parse(row.credentials || '{}');
+  res.json({ locations: creds.pickup_locations || [] });
+});
+app.put("/admin/shipping-creds/:partner/locations", adminAuth, async (req, res) => {
+  const { locations } = req.body || {};
+  if (!Array.isArray(locations)) return res.status(400).json({ error: 'locations array required' });
+  const row = await mdb.collection('global_shipping_creds').findOne({ partner: req.params.partner });
+  if (!row) return res.status(404).json({ error: 'Partner not connected' });
+  const creds = JSON.parse(row.credentials || '{}');
+  creds.pickup_locations = locations;
+  await mdb.collection('global_shipping_creds').updateOne({ partner: req.params.partner }, { $set: { credentials: JSON.stringify(creds) } });
+  res.json({ ok: true });
+});
+
+// Manage saved pickup locations for a partner (vendor)
+app.get("/vendor/shipping/partners/:partner/locations", vendorAuth, async (req, res) => {
+  const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner: req.params.partner, active: 1 });
+  if (!row) return res.status(404).json({ error: 'Partner not connected' });
+  const creds = JSON.parse(row.credentials || '{}');
+  res.json({ locations: creds.pickup_locations || [] });
+});
+app.put("/vendor/shipping/partners/:partner/locations", vendorAuth, async (req, res) => {
+  const { locations } = req.body || {};
+  if (!Array.isArray(locations)) return res.status(400).json({ error: 'locations array required' });
+  const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner: req.params.partner, active: 1 });
+  if (!row) return res.status(404).json({ error: 'Partner not connected' });
+  const creds = JSON.parse(row.credentials || '{}');
+  creds.pickup_locations = locations;
+  await mdb.collection('vendor_shipping_partners').updateOne({ vendor_name: req.vendor, partner: req.params.partner }, { $set: { credentials: JSON.stringify(creds) } });
+  res.json({ ok: true });
+});
+
 // Debug endpoint — shows every step of tracking for an AWB
 app.get("/admin/debug-tracking", adminAuth, async (req, res) => {
   const { awb, partner = "delhivery" } = req.query;
@@ -8098,53 +8134,52 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
 }
 
 // ── Shared: fetch warehouses/pickup locations from a shipping partner ────────
-async function fetchPartnerWarehouses(partner, creds) {
-  if (partner === 'shiprocket') {
-    const authRes = await fetch('https://apiv2.shiprocket.in/v1/external/auth/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: creds.email, password: creds.password }),
-    }).then(r => r.json());
-    if (!authRes.token) throw new Error('Shiprocket auth failed.');
-    const data = await fetch('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
-      headers: { 'Authorization': `Bearer ${authRes.token}` },
-    }).then(r => r.json());
-    const locs = data?.data?.shipping_address || [];
-    return locs.map(l => ({
-      id: String(l.pickup_location || l.id || l.pickup_id || ''),
-      name: l.pickup_location || l.warehouse_name || l.address || '',
-      address: [l.address, l.city, l.state, l.pin_code].filter(Boolean).join(', '),
-    }));
-
-  } else if (partner === 'delhivery') {
-    const data = await fetch('https://track.delhivery.com/api/backend/clientwarehouse/list/?format=json', {
-      headers: { 'Authorization': `Token ${creds.api_token}` },
-    }).then(r => r.json());
-    const locs = data?.results || data?.data || [];
-    if (!locs.length) {
-      // Fallback: return the one pickup location from credentials
-      const name = creds.pickup_location || 'Primary';
-      return [{ id: name, name, address: [creds.return_address, creds.return_city, creds.return_state, creds.return_pincode].filter(Boolean).join(', ') }];
-    }
-    return locs.map(l => ({
-      id: l.name || l.warehouse_name || '',
-      name: l.name || l.warehouse_name || '',
-      address: [l.address, l.city, l.state, l.pin].filter(Boolean).join(', '),
-    }));
-
-  } else if (partner === 'shipmozo') {
-    const smHeaders = { 'Content-Type': 'application/json', 'public-key': creds.public_key, 'private-key': creds.private_key || creds.api_key };
-    const data = await fetch('https://shipping-api.com/api/v1/warehouses', { headers: smHeaders }).then(r => r.json());
-    const locs = data?.data || data?.warehouses || data || [];
-    if (!Array.isArray(locs) || !locs.length) {
-      return [{ id: creds.warehouse_id || 'default', name: 'Default Warehouse', address: '' }];
-    }
-    return locs.map(l => ({
-      id: String(l.id || l.warehouse_id || ''),
-      name: l.name || l.warehouse_name || String(l.id || ''),
+function credsToWarehouses(creds) {
+  // Saved pickup_locations array (managed on settings page) — always authoritative
+  if (Array.isArray(creds.pickup_locations) && creds.pickup_locations.length) {
+    return creds.pickup_locations.map(l => ({
+      id: l.name, name: l.name,
       address: [l.address, l.city, l.state, l.pincode].filter(Boolean).join(', '),
     }));
   }
-  return [];
+  // Fall back to the single pickup_location string saved in credentials
+  const name = creds.pickup_location || creds.return_city || 'Primary';
+  const address = [creds.return_address, creds.return_city, creds.return_state, creds.return_pincode].filter(Boolean).join(', ');
+  return [{ id: name, name, address }];
+}
+
+async function fetchPartnerWarehouses(partner, creds) {
+  // Always try saved locations first — reliable, no API call needed
+  const saved = credsToWarehouses(creds);
+
+  // For Shiprocket, also try live API and merge (deduplicate by name)
+  if (partner === 'shiprocket') {
+    try {
+      const authRes = await fetch('https://apiv2.shiprocket.in/v1/external/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: creds.email, password: creds.password }),
+      }).then(r => r.json());
+      if (authRes.token) {
+        const data = await fetch('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
+          headers: { 'Authorization': `Bearer ${authRes.token}` },
+        }).then(r => r.json());
+        // Shiprocket returns data.data.shipping_address OR data.shipping_address
+        const locs = data?.data?.shipping_address || data?.shipping_address || [];
+        if (locs.length) {
+          const live = locs.map(l => ({
+            id: String(l.pickup_location || l.id || ''),
+            name: l.pickup_location || l.warehouse_name || '',
+            address: [l.address, l.city, l.state, l.pin_code].filter(Boolean).join(', '),
+          })).filter(l => l.name);
+          // Merge: live first, then any saved ones not already in live
+          const liveNames = new Set(live.map(l => l.name));
+          return [...live, ...saved.filter(s => !liveNames.has(s.name))];
+        }
+      }
+    } catch {}
+  }
+
+  return saved;
 }
 
 app.get("/admin/shipping/warehouses", adminAuth, async (req, res) => {
