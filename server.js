@@ -8087,8 +8087,13 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
 
   } else if (partner === 'delhivery') {
     const orderDateStr = new Date().toISOString().replace('T',' ').replace(/\.\d+Z$/,'').replace('Z','');
+    const warehouseNameFinal = warehouseName || warehouseId || creds.pickup_location || 'Primary';
+    // Phone: customer phone from RR, fallback to creds phone, then a placeholder Delhivery accepts
+    const deliveryPhone = (delivery.phone||'').replace(/\D/g,'').slice(-10) || (creds.return_phone||'').replace(/\D/g,'').slice(-10) || '9999999999';
+    const pickupPhone   = (pickup.phone||'').replace(/\D/g,'').slice(-10)   || (creds.return_phone||'').replace(/\D/g,'').slice(-10) || '9999999999';
     const shipData = {
-      pickup_location: { name: warehouseName || warehouseId || creds.pickup_location || 'Primary' },
+      // Delhivery resolves the warehouse address by name — no need to pass return_* address fields
+      pickup_location: { name: warehouseNameFinal },
       shipments: [{
         name:          delivery.name,
         add:           delivery.address1 || '',
@@ -8097,12 +8102,12 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
         city:          delivery.city     || '',
         state:         delivery.state    || '',
         country:       'India',
-        phone:         (delivery.phone||'').replace(/\D/g,'').slice(-10),
+        phone:         deliveryPhone,
         order:         orderId,
         payment_mode:  'Pre-paid',
         return_pin:    String(pickup.zip||''),
         return_city:   pickup.city    || '',
-        return_phone:  (pickup.phone||'').replace(/\D/g,'').slice(-10),
+        return_phone:  pickupPhone,
         return_name:   pickup.name    || '',
         return_add:    pickup.address1|| '',
         return_state:  pickup.state   || '',

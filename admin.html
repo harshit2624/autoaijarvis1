@@ -4344,15 +4344,17 @@
             {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:8,fontSize:11}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
             <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8,lineHeight:1.6}}>
               {partner==='delhivery'
-                ? <>⚠ Delhivery warehouse management API is not publicly accessible. Enter the <strong style={{color:'var(--text)'}}>exact warehouse name</strong> as it appears in your Delhivery account — Delhivery will use that name to find the pickup location.</>
+                ? <>Enter the <strong style={{color:'var(--text)'}}>exact warehouse name</strong> as registered in your Delhivery account. Delhivery looks up your warehouse by name — no address needed.</>
                 : 'These locations appear as dropdown options when creating return/exchange shipments.'}
             </div>
             {locs.map((l,i)=>(
-              <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr auto',gap:6,marginBottom:6,alignItems:'center'}}>
-                <input className="form-input" style={{fontSize:11}} placeholder="Location name (e.g. Primary)" value={l.name} onChange={e=>upd(i,'name',e.target.value)} />
-                <input className="form-input" style={{fontSize:11}} placeholder="Address" value={l.address||''} onChange={e=>upd(i,'address',e.target.value)} />
-                <input className="form-input" style={{fontSize:11}} placeholder="City" value={l.city||''} onChange={e=>upd(i,'city',e.target.value)} />
-                <input className="form-input" style={{fontSize:11}} placeholder="Pincode" value={l.pincode||''} onChange={e=>upd(i,'pincode',e.target.value)} />
+              <div key={i} style={{display:'grid',gridTemplateColumns: partner==='delhivery' ? '1fr auto' : '1fr 1fr 1fr 1fr auto',gap:6,marginBottom:6,alignItems:'center'}}>
+                <input className="form-input" style={{fontSize:11}} placeholder="Warehouse name (must match exactly)" value={l.name} onChange={e=>upd(i,'name',e.target.value)} />
+                {partner!=='delhivery' && <>
+                  <input className="form-input" style={{fontSize:11}} placeholder="Address" value={l.address||''} onChange={e=>upd(i,'address',e.target.value)} />
+                  <input className="form-input" style={{fontSize:11}} placeholder="City" value={l.city||''} onChange={e=>upd(i,'city',e.target.value)} />
+                  <input className="form-input" style={{fontSize:11}} placeholder="Pincode" value={l.pincode||''} onChange={e=>upd(i,'pincode',e.target.value)} />
+                </>}
                 <button onClick={()=>del(i)} style={{background:'none',border:'none',color:'var(--red)',cursor:'pointer',fontSize:14}}>✕</button>
               </div>
             ))}
