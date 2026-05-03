@@ -8263,16 +8263,17 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
     const creds = JSON.parse(credRow.credentials);
 
     // For reverse, also pull customer address from Shopify order if not on RR doc
-    if (!rr.customer_address1) {
+    if (!rr.customer_address1 || !rr.customer_phone) {
       try {
-        const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,shipping_address`);
-        if (order?.shipping_address) {
-          rr.customer_address1 = order.shipping_address.address1 || '';
-          rr.customer_address2 = order.shipping_address.address2 || '';
-          rr.customer_city     = order.shipping_address.city     || '';
-          rr.customer_state    = order.shipping_address.province || '';
-          rr.customer_pincode  = order.shipping_address.zip      || '';
-          if (!rr.customer_phone) rr.customer_phone = order.shipping_address.phone || '';
+        const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,shipping_address,billing_address,phone`);
+        if (order) {
+          const sa = order.shipping_address || order.billing_address || {};
+          rr.customer_address1 = rr.customer_address1 || sa.address1 || '';
+          rr.customer_address2 = rr.customer_address2 || sa.address2 || '';
+          rr.customer_city     = rr.customer_city     || sa.city     || '';
+          rr.customer_state    = rr.customer_state    || sa.province || '';
+          rr.customer_pincode  = rr.customer_pincode  || sa.zip      || '';
+          rr.customer_phone    = rr.customer_phone    || sa.phone || order.phone || '';
         }
       } catch {}
     }
@@ -8308,16 +8309,17 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
     if (!credRow) return res.status(404).json({ error: `${partner} not connected. Go to Shipping Settings.` });
     const creds = JSON.parse(credRow.credentials);
 
-    if (!rr.customer_address1) {
+    if (!rr.customer_address1 || !rr.customer_phone) {
       try {
-        const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,shipping_address`);
-        if (order?.shipping_address) {
-          rr.customer_address1 = order.shipping_address.address1 || '';
-          rr.customer_address2 = order.shipping_address.address2 || '';
-          rr.customer_city     = order.shipping_address.city     || '';
-          rr.customer_state    = order.shipping_address.province || '';
-          rr.customer_pincode  = order.shipping_address.zip      || '';
-          if (!rr.customer_phone) rr.customer_phone = order.shipping_address.phone || '';
+        const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,shipping_address,billing_address,phone`);
+        if (order) {
+          const sa = order.shipping_address || order.billing_address || {};
+          rr.customer_address1 = rr.customer_address1 || sa.address1 || '';
+          rr.customer_address2 = rr.customer_address2 || sa.address2 || '';
+          rr.customer_city     = rr.customer_city     || sa.city     || '';
+          rr.customer_state    = rr.customer_state    || sa.province || '';
+          rr.customer_pincode  = rr.customer_pincode  || sa.zip      || '';
+          rr.customer_phone    = rr.customer_phone    || sa.phone || order.phone || '';
         }
       } catch {}
     }
