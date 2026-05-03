@@ -2509,7 +2509,7 @@
   /* ══════════════════════════════════
      RETURN REQUESTS VIEW
   ══════════════════════════════════ */
-  function RRShipmentPanel({ token, rr, apiBase, onUpdated }) {
+  function RRShipmentPanel({ token, rr, onUpdated }) {
     const [partners, setPartners] = useState([]);
     const [partner, setPartner]   = useState('');
     const [weight,  setWeight]    = useState('0.5');
@@ -2520,7 +2520,7 @@
     const [msg, setMsg]           = useState(null);
 
     useEffect(()=>{
-      fetch(`${apiBase}/partners`, { headers:{ Authorization:`Bearer ${token}` } })
+      fetch(`${API}/admin/shipping-creds`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>{ const ps=(d.partners||[]).map(p=>p.partner||p); setPartners(ps); if(ps.length) setPartner(ps[0]); }).catch(()=>{});
     },[]);
 
@@ -2528,7 +2528,7 @@
       if (!partner) { setMsg({type:'error',text:'Select a shipping partner first.'}); return; }
       setCreating(direction); setMsg(null);
       try {
-        const r = await fetch(`${apiBase}/create-shipment`, {
+        const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/create-shipment`, {
           method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
           body: JSON.stringify({ direction, partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8 }),
         });
@@ -2746,9 +2746,7 @@
                                 )}
 
                                 {/* Shipment panel */}
-                                <RRShipmentPanel token={token} rr={rq}
-                                  apiBase={`${API}/admin/return-requests/${rq.request_id}`}
-                                  onUpdated={load} />
+                                <RRShipmentPanel token={token} rr={rq} onUpdated={load} />
 
                                 <div style={{marginTop:14,marginBottom:6,fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Admin Note</div>
                                 <textarea
