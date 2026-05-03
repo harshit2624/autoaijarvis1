@@ -2179,6 +2179,110 @@
   /* ══════════════════════════════════
      VENDOR RETURNS VIEW
   ══════════════════════════════════ */
+  function RRShipmentPanel({ token, rr, onUpdated }) {
+    const [partners, setPartners] = useState([]);
+    const [partner, setPartner]   = useState('');
+    const [weight,  setWeight]    = useState('0.5');
+    const [length,  setLength]    = useState('15');
+    const [breadth, setBreadth]   = useState('12');
+    const [height,  setHeight]    = useState('8');
+    const [creating, setCreating] = useState('');
+    const [msg, setMsg]           = useState(null);
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/shipping/partners`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{ const ps=(d.partners||[]).map(p=>p.partner||p); setPartners(ps); if(ps.length) setPartner(ps[0]); }).catch(()=>{});
+    },[]);
+
+    const createShipment = async (direction) => {
+      if (!partner) { setMsg({type:'error',text:'Select a shipping partner first.'}); return; }
+      setCreating(direction); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/return-requests/${rr.request_id}/create-shipment`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ direction, partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8 }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({type:'success',text:`${direction==='reverse'?'Reverse':'Forward'} shipment created! AWB: ${d.awb}`});
+        onUpdated && onUpdated();
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setCreating('');
+    };
+
+    const isExchange = rr.type === 'exchange';
+    const revShip = rr.reverse_shipment;
+    const fwdShip = rr.forward_shipment;
+
+    return (
+      <div style={{marginTop:14,borderTop:'1px solid var(--border)',paddingTop:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:10}}>📦 Shipments</div>
+        {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:10,fontSize:11}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        {(revShip||fwdShip) && (
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
+            {revShip && (
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--blue)',borderRadius:8,padding:'8px 14px',fontSize:11}}>
+                <div style={{color:'var(--blue)',fontWeight:700,marginBottom:3}}>↩ Reverse Pickup</div>
+                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</div>
+                <div style={{color:'var(--text-muted)',marginTop:2}}>{revShip.courier} · {revShip.created_at?.split('T')[0]}</div>
+              </div>
+            )}
+            {fwdShip && (
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--green)',borderRadius:8,padding:'8px 14px',fontSize:11}}>
+                <div style={{color:'var(--green)',fontWeight:700,marginBottom:3}}>→ Forward Dispatch</div>
+                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</div>
+                <div style={{color:'var(--text-muted)',marginTop:2}}>{fwdShip.courier} · {fwdShip.created_at?.split('T')[0]}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {partners.length === 0 ? (
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>No shipping partners connected. Go to Shipping Settings in your profile.</div>
+        ) : (
+          <>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end',marginBottom:10}}>
+              <div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Partner</div>
+                <select value={partner} onChange={e=>setPartner(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                  {partners.map(p=><option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}
+                </select>
+              </div>
+              {[['Wt(kg)','weight',weight,setWeight],['L','length',length,setLength],['B','breadth',breadth,setBreadth],['H','height',height,setHeight]].map(([lbl,k,val,set])=>(
+                <div key={k}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{lbl}</div>
+                  <input type="number" value={val} onChange={e=>set(e.target.value)} style={{width:58,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}} />
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              <div style={{flex:1,minWidth:200,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
+                <div style={{fontSize:11,fontWeight:700,color:'var(--blue)',marginBottom:4}}>↩ Reverse Pickup</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>Pick up return item from customer</div>
+                {revShip
+                  ? <div style={{fontSize:10,color:'var(--text-muted)'}}>Created: <span style={{color:'var(--blue)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</span></div>
+                  : <button className="btn btn-sm" style={{fontSize:11,background:'var(--blue-dim)',border:'1px solid var(--blue)',color:'var(--blue)',borderRadius:6,padding:'5px 12px',cursor:'pointer'}} onClick={()=>createShipment('reverse')} disabled={!!creating}>{creating==='reverse'?<><span className="spin">↻</span> Creating…</>:'Create Reverse Pickup'}</button>
+                }
+              </div>
+              {isExchange && (
+                <div style={{flex:1,minWidth:200,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
+                  <div style={{fontSize:11,fontWeight:700,color:'var(--green)',marginBottom:4}}>→ Forward Dispatch</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>Send exchange item to customer</div>
+                  {fwdShip
+                    ? <div style={{fontSize:10,color:'var(--text-muted)'}}>Created: <span style={{color:'var(--green)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</span></div>
+                    : <button className="btn btn-sm" style={{fontSize:11,background:'var(--green-dim)',border:'1px solid var(--green)',color:'var(--green)',borderRadius:6,padding:'5px 12px',cursor:'pointer'}} onClick={()=>createShipment('forward')} disabled={!!creating}>{creating==='forward'?<><span className="spin">↻</span> Creating…</>:'Create Forward Shipment'}</button>
+                  }
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   function VendorReturns({ token }) {
     const [requests, setRequests] = useState([]);
     const [loading,  setLoading]  = useState(true);
@@ -2276,7 +2380,21 @@
                                   ))}
                                 </div>
                                 {rq.admin_note && <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Admin note: <span style={{color:'var(--yellow)'}}>{rq.admin_note}</span></div>}
-                                <div style={{marginBottom:6,fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Your Note</div>
+
+                                {/* Vendor approve button */}
+                                {rq.status==='approved' && (
+                                  <div style={{marginBottom:12}}>
+                                    <button className="btn btn-sm" style={{fontSize:11,background:'var(--green-dim)',border:'1px solid var(--green)',color:'var(--green)',borderRadius:6,padding:'5px 14px',cursor:'pointer'}} disabled={saving}
+                                      onClick={async()=>{ setSaving(true); await fetch(`${API}/vendor/return-requests/${rq.request_id}`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify({status:'approved'})}); load(); setSaving(false); }}>
+                                      ✓ Confirm Approved
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Shipment panel */}
+                                <RRShipmentPanel token={token} rr={rq} onUpdated={load} />
+
+                                <div style={{marginTop:14,marginBottom:6,fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Your Note</div>
                                 <textarea
                                   style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,minHeight:60,outline:'none',resize:'vertical'}}
                                   placeholder="Add a note for the customer/admin…"

@@ -7586,16 +7586,12 @@ function templateRRReminder24Vendor({ req }) {
 // ── Helper: send RR email by type ─────────────────────────────────────────
 async function sendRREmail(type, req) {
   try {
-    const cfg = await mdb.collection('email_settings').findOne({}) || {};
-    const from = `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`;
-    const ADMIN = 'harshitvj24@gmail.com';
+    const cfg = await getSmtpConfig();
+    const ADMIN = cfg?.adminEmail || 'harshitvj24@gmail.com';
     const vendorCfg = req.vendor_name ? (await mdb.collection('vendor_config').findOne({ vendor_name: req.vendor_name }) || {}) : {};
     const vendorEmail = vendorCfg.email || null;
 
-    const send = async (to, subject, html) => {
-      if (!to || !cfg.user) return;
-      await transporter.sendMail({ from, to, subject, html });
-    };
+    const send = (to, subject, html) => sendEmail({ to, subject, html, trigger: 'return_request' });
 
     const T = req.type === 'exchange' ? 'Exchange' : 'Return';
     switch (type) {
@@ -7947,6 +7943,248 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Shared: create reverse/forward shipment for a return/exchange request ─
+async function createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height }) {
+  // direction: 'reverse' = customer→vendor (pickup from customer)
+  //            'forward' = vendor→customer (send exchange item out)
+  const isReverse = direction === 'reverse';
+
+  // Addresses
+  const customerAddr = {
+    name:     rr.customer_name || 'Customer',
+    address1: rr.customer_address1 || '',
+    address2: rr.customer_address2 || '',
+    city:     rr.customer_city    || '',
+    state:    rr.customer_state   || '',
+    zip:      rr.customer_pincode || rr.customer_zip || '',
+    phone:    rr.customer_phone   || '',
+    email:    rr.customer_email   || '',
+  };
+  const vendorAddr = {
+    name:     creds.company_name  || rr.vendor_name || 'Vendor',
+    address1: creds.return_address || creds.pickup_address || '',
+    city:     creds.return_city   || creds.pickup_city   || '',
+    state:    creds.return_state  || creds.pickup_state  || '',
+    zip:      creds.return_pincode|| creds.pickup_pincode|| '',
+    phone:    creds.return_phone  || creds.pickup_phone  || '',
+  };
+
+  const pickup   = isReverse ? customerAddr : vendorAddr;
+  const delivery = isReverse ? vendorAddr   : customerAddr;
+
+  const orderId  = `${rr.request_id}-${direction.toUpperCase()[0]}`;
+  const desc     = (rr.items||[]).map(it=>it.title).join(', ').slice(0,250) || 'Return/Exchange items';
+  const itemVal  = (rr.items||[]).reduce((s,it)=>s+parseFloat(it.price||0)*it.qty,0);
+
+  if (partner === 'shiprocket') {
+    const authRes = await fetch('https://apiv2.shiprocket.in/v1/external/auth/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ email: creds.email, password: creds.password }),
+    }).then(r=>r.json());
+    if (!authRes.token) throw new Error('Shiprocket auth failed. Check credentials.');
+
+    const payload = {
+      order_id:                orderId,
+      order_date:              new Date().toISOString(),
+      pickup_location:         creds.pickup_location || 'Primary',
+      billing_customer_name:   pickup.name.split(' ')[0] || 'Customer',
+      billing_last_name:       pickup.name.split(' ').slice(1).join(' ') || '',
+      billing_address:         pickup.address1,
+      billing_address_2:       pickup.address2 || '',
+      billing_city:            pickup.city,
+      billing_pincode:         String(pickup.zip||''),
+      billing_state:           pickup.state,
+      billing_country:         'India',
+      billing_email:           pickup.email || '',
+      billing_phone:           (pickup.phone||'').replace(/\D/g,'').slice(-10),
+      shipping_is_billing:     true,
+      order_items: (rr.items||[]).map(it=>({ name: it.title, sku: it.line_item_id||it.title.slice(0,40), units: it.qty, selling_price: parseFloat(it.price||0) })),
+      payment_method: 'Prepaid',
+      sub_total: itemVal,
+      length, breadth, height, weight,
+    };
+    const srRes = await fetch('https://apiv2.shiprocket.in/v1/external/orders/create/adhoc', {
+      method: 'POST', headers: {'Content-Type':'application/json','Authorization':`Bearer ${authRes.token}`},
+      body: JSON.stringify(payload),
+    }).then(r=>r.json());
+    if (srRes.status_code === 1) return { awb: srRes.awb_code, courier: 'shiprocket' };
+    throw new Error(srRes.message || JSON.stringify(srRes));
+
+  } else if (partner === 'delhivery') {
+    const orderDateStr = new Date().toISOString().replace('T',' ').replace(/\.\d+Z$/,'').replace('Z','');
+    const shipData = {
+      pickup_location: { name: creds.pickup_location || 'Primary' },
+      shipments: [{
+        name:          delivery.name,
+        add:           delivery.address1 || '',
+        add2:          delivery.address2 || '',
+        pin:           String(delivery.zip||''),
+        city:          delivery.city     || '',
+        state:         delivery.state    || '',
+        country:       'India',
+        phone:         (delivery.phone||'').replace(/\D/g,'').slice(-10),
+        order:         orderId,
+        payment_mode:  'Pre-paid',
+        return_pin:    String(pickup.zip||''),
+        return_city:   pickup.city    || '',
+        return_phone:  (pickup.phone||'').replace(/\D/g,'').slice(-10),
+        return_name:   pickup.name    || '',
+        return_add:    pickup.address1|| '',
+        return_state:  pickup.state   || '',
+        return_country:'India',
+        products_desc: desc,
+        hsn_code:      '',
+        cod_amount:    '',
+        order_date:    orderDateStr,
+        total_amount:  itemVal,
+        seller_inv:    orderId,
+        quantity:      String((rr.items||[]).reduce((s,it)=>s+it.qty,0)||1),
+        shipment_length: String(length),
+        shipment_width:  String(breadth),
+        shipment_height: String(height),
+        weight:          String(weight),
+        seller_name:   vendorAddr.name,
+        seller_add:    vendorAddr.address1  || '',
+        seller_city:   vendorAddr.city      || '',
+        seller_state:  vendorAddr.state     || '',
+        seller_pin:    String(vendorAddr.zip||''),
+        seller_country:'India',
+      }],
+    };
+    const dlBody = new URLSearchParams();
+    dlBody.append('format','json');
+    dlBody.append('data', JSON.stringify(shipData));
+    const dlRes = await fetch('https://track.delhivery.com/api/cmu/create.json', {
+      method:'POST', headers:{'Authorization':`Token ${creds.api_token}`,'Content-Type':'application/x-www-form-urlencoded'},
+      body: dlBody.toString(),
+    }).then(r=>r.json());
+    if (dlRes.packages?.[0]?.waybill) return { awb: dlRes.packages[0].waybill, courier: 'delhivery' };
+    throw new Error(dlRes.packages?.[0]?.remarks || dlRes.rmk || JSON.stringify(dlRes));
+
+  } else if (partner === 'shipmozo') {
+    if (!creds.public_key || !(creds.private_key||creds.api_key)) throw new Error('ShipMozo public and private keys required.');
+    const smHeaders = {'Content-Type':'application/json','public-key':creds.public_key,'private-key':creds.private_key||creds.api_key};
+    const smPayload = {
+      order_id:                   orderId,
+      order_date:                 new Date().toISOString().slice(0,10),
+      consignee_name:             delivery.name,
+      consignee_phone:            (delivery.phone||'').replace(/\D/g,'').slice(-10),
+      consignee_email:            delivery.email || '',
+      consignee_address_line_one: delivery.address1 || '',
+      consignee_address_line_two: delivery.address2 || '',
+      consignee_pin_code:         String(delivery.zip||''),
+      consignee_city:             delivery.city  || '',
+      consignee_state:            delivery.state || '',
+      product_detail:             desc,
+      payment_type:               'PREPAID',
+      cod_amount:                 '0',
+      weight:                     String(Math.round(parseFloat(weight)*1000)),
+      length: String(length), width: String(breadth), height: String(height),
+      ...(creds.warehouse_id ? { warehouse_id: creds.warehouse_id } : {}),
+    };
+    const safeJson = async (p) => { const r = await p; const t = await r.text(); try { return {ok:r.ok,data:JSON.parse(t)}; } catch { return {ok:false,data:null,raw:t.slice(0,400)}; } };
+    const push = await safeJson(fetch('https://shipping-api.com/api/v1/push-order',{method:'POST',headers:smHeaders,body:JSON.stringify(smPayload)}));
+    if (!push.data) throw new Error('ShipMozo non-JSON: '+(push.raw||''));
+    const smOrderId = push.data?.order_id || push.data?.data?.order_id;
+    if (!smOrderId && !push.ok) throw new Error(push.data?.message || JSON.stringify(push.data));
+    const assign = await safeJson(fetch('https://shipping-api.com/api/v1/auto-assign-order',{method:'POST',headers:smHeaders,body:JSON.stringify({order_id:smOrderId})}));
+    const awbNum = assign.data?.awb_number || assign.data?.data?.awb_number || push.data?.awb_number;
+    if (awbNum) return { awb: awbNum, courier: 'shipmozo' };
+    throw new Error(`ShipMozo order pushed (ID:${smOrderId}) but AWB not yet assigned.`);
+  }
+  throw new Error('Unknown partner: ' + partner);
+}
+
+// ── Admin: create shipment for return/exchange request ─────────────────────
+app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, res) => {
+  try {
+    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    if (!direction || !partner) return res.status(400).json({ error: 'direction and partner required' });
+    if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
+
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+    if (direction === 'forward' && rr.type !== 'exchange') return res.status(400).json({ error: 'Forward shipment only valid for exchange requests' });
+
+    // Get creds — admin uses global_shipping_creds
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected. Go to Shipping Settings.` });
+    const creds = JSON.parse(credRow.credentials);
+
+    // For reverse, also pull customer address from Shopify order if not on RR doc
+    if (!rr.customer_address1) {
+      try {
+        const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,shipping_address`);
+        if (order?.shipping_address) {
+          rr.customer_address1 = order.shipping_address.address1 || '';
+          rr.customer_address2 = order.shipping_address.address2 || '';
+          rr.customer_city     = order.shipping_address.city     || '';
+          rr.customer_state    = order.shipping_address.province || '';
+          rr.customer_pincode  = order.shipping_address.zip      || '';
+          if (!rr.customer_phone) rr.customer_phone = order.shipping_address.phone || '';
+        }
+      } catch {}
+    }
+
+    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height });
+
+    // Save AWB to return_request doc
+    const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id },
+      { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+    );
+    res.json({ success: true, awb: result.awb, courier: result.courier });
+  } catch (err) {
+    console.error('❌ admin create-shipment RR:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Vendor: create shipment for return/exchange request ────────────────────
+app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, res) => {
+  try {
+    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    if (!direction || !partner) return res.status(400).json({ error: 'direction and partner required' });
+    if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
+
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: req.vendor }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+    if (direction === 'forward' && rr.type !== 'exchange') return res.status(400).json({ error: 'Forward shipment only valid for exchange requests' });
+
+    // Get creds — vendor uses vendor_shipping_partners
+    const credRow = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected. Go to Shipping Settings.` });
+    const creds = JSON.parse(credRow.credentials);
+
+    if (!rr.customer_address1) {
+      try {
+        const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,shipping_address`);
+        if (order?.shipping_address) {
+          rr.customer_address1 = order.shipping_address.address1 || '';
+          rr.customer_address2 = order.shipping_address.address2 || '';
+          rr.customer_city     = order.shipping_address.city     || '';
+          rr.customer_state    = order.shipping_address.province || '';
+          rr.customer_pincode  = order.shipping_address.zip      || '';
+          if (!rr.customer_phone) rr.customer_phone = order.shipping_address.phone || '';
+        }
+      } catch {}
+    }
+
+    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height });
+
+    const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id, vendor_name: req.vendor },
+      { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+    );
+    res.json({ success: true, awb: result.awb, courier: result.courier });
+  } catch (err) {
+    console.error('❌ vendor create-shipment RR:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Admin: get vendor return config ──────────────────────────────────────
