@@ -4816,15 +4816,15 @@ function buildDemoTemplates(to) {
     delivered_vendor:   { subject: `[TEST] Order Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'vendor' }) },
     delivered_admin:    { subject: `[TEST] Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'admin' }) },
     order_on_hold:      { subject: `[TEST] Your Order ${demoOrder.name} is On Hold — Please Confirm`, html: templateOrderOnHoldCustomer({ order: demoOrder }) },
-    rr_submitted:       { subject: `Return/Exchange Request Received — ${demoRR.request_id}`, html: rrTplCustomerSubmitted(demoRR) },
-    rr_approved_admin:  { subject: `Return/Exchange Approved — ${demoRR.request_id}`, html: rrTplCustomerApprovedByAdmin(demoRR) },
-    rr_rejected:        { subject: `Return/Exchange Update — ${demoRR.request_id}`, html: rrTplCustomerRejected(demoRR) },
-    rr_pickup:          { subject: `Pickup Scheduled — ${demoRR.request_id}`, html: rrTplCustomerPickup(demoRR) },
-    rr_in_transit:      { subject: `Return In Transit — ${demoRR.request_id}`, html: rrTplCustomerInTransit(demoRR) },
-    rr_completed:       { subject: `Return/Exchange Complete — ${demoRR.request_id}`, html: rrTplCustomerCompleted(demoRR) },
-    rr_admin_new:       { subject: `New Return/Exchange Request — ${demoRR.request_id}`, html: rrTplAdminNew(demoRR) },
-    rr_vendor_new:      { subject: `New Return/Exchange for Your Order — ${demoRR.request_id}`, html: rrTplVendorNew(demoRR) },
-    rr_vendor_approved: { subject: `Return/Exchange Approved — Arrange Pickup — ${demoRR.request_id}`, html: rrTplVendorApprovedByAdmin(demoRR) },
+    rr_submitted:       { subject: `Return/Exchange Request Received — ${demoRR.request_id}`, html: templateRRSubmittedCustomer({ req: demoRR }) },
+    rr_approved_admin:  { subject: `Return/Exchange Approved — ${demoRR.request_id}`, html: templateRRApprovedCustomer({ req: demoRR }) },
+    rr_rejected:        { subject: `Return/Exchange Update — ${demoRR.request_id}`, html: templateRRRejectedCustomer({ req: demoRR }) },
+    rr_pickup:          { subject: `Pickup Scheduled — ${demoRR.request_id}`, html: templateRRPickupCustomer({ req: demoRR }) },
+    rr_in_transit:      { subject: `Return In Transit — ${demoRR.request_id}`, html: templateRRInTransitCustomer({ req: demoRR }) },
+    rr_completed:       { subject: `Return/Exchange Complete — ${demoRR.request_id}`, html: templateRRCompletedCustomer({ req: demoRR }) },
+    rr_admin_new:       { subject: `New Return/Exchange Request — ${demoRR.request_id}`, html: templateRRSubmittedAdmin({ req: demoRR }) },
+    rr_vendor_new:      { subject: `New Return/Exchange for Your Order — ${demoRR.request_id}`, html: templateRRSubmittedVendor({ req: demoRR }) },
+    rr_vendor_approved: { subject: `Return/Exchange Approved — Arrange Pickup — ${demoRR.request_id}`, html: templateRRApprovedVendor({ req: demoRR }) },
   };
 }
 
@@ -7875,7 +7875,7 @@ app.post("/track/request", async (req, res) => {
   try {
     const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name } = req.body;
 
-    if (!shopify_order_id || !customer_email || !type || !items?.length || !reason) {
+    if (!shopify_order_id || !type || !items?.length || !reason) {
       return res.status(400).json({ error: "Missing required fields" });
     }
     if (!['return', 'exchange'].includes(type)) {
