@@ -4451,7 +4451,7 @@
           setConnected(map);
         }).catch(()=>{});
     };
-    useEffect(()=>{ load(); fetchDlLogs(); fetchSsLogs(); }, [token]);
+    useEffect(()=>{ load(); fetchSsLogs(); }, [token]);
 
     const setField = (partnerId, key, val) =>
       setForms(f=>({ ...f, [partnerId]: { ...(f[partnerId]||{}), [key]: val } }));
@@ -4476,10 +4476,6 @@
       load();
     };
 
-    const [dlSyncing, setDlSyncing] = useState(false);
-    const [dlSyncMsg, setDlSyncMsg] = useState(null);
-    const [dlLogs,    setDlLogs]    = useState([]);
-    const [dlLogsOpen,setDlLogsOpen]= useState(true);
     const [ssSyncing, setSsSyncing] = useState(false);
     const [ssSyncMsg, setSsSyncMsg] = useState(null);
     const [ssLogs,    setSsLogs]    = useState([]);
@@ -4493,37 +4489,6 @@
         setSyncResult(d);
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSyncing(false);
-    };
-
-    const syncDelhivery = async () => {
-      setDlSyncing(true); setDlSyncMsg('Running…');
-      try {
-        await fetch(`${API}/admin/delhivery/sync`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
-        // Poll logs every 2s until a new run appears
-        const before = dlLogs[0]?.ran_at || '';
-        let attempts = 0;
-        const poll = setInterval(async () => {
-          attempts++;
-          await fetchDlLogs();
-          setDlLogs(prev => {
-            if (prev[0]?.ran_at !== before || attempts >= 15) {
-              clearInterval(poll);
-              setDlSyncing(false);
-              setDlSyncMsg('✓ Done — see log below');
-            }
-            return prev;
-          });
-        }, 2000);
-      } catch(e) { setDlSyncMsg('Error: ' + e.message); setDlSyncing(false); }
-    };
-
-    const fetchDlLogs = async () => {
-      try {
-        const r = await fetch(`${API}/admin/delhivery/logs`, { headers:{ Authorization:`Bearer ${token}` } });
-        const d = await r.json();
-        setDlLogs(d.logs || []);
-        setDlLogsOpen(true);
-      } catch(e) {}
     };
 
     const fetchSsLogs = async () => {
@@ -4625,77 +4590,7 @@
                 {syncing ? <><span className="spin">↻</span> Syncing…</> : '↻ Sync All Now'}
               </button>
             </div>
-            <div style={{borderRadius:8,background:'rgba(6,182,212,0.06)',border:'1px solid rgba(6,182,212,0.2)'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 14px'}}>
-                <div>
-                  <div style={{fontSize:12,fontWeight:700,color:'#06b6d4'}}>🚚 Delhivery Tracking Cron</div>
-                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Auto-runs every 3 hours · checks all in-transit Delhivery AWBs and updates stage to Delivered/RTO automatically.</div>
-                  {dlSyncMsg && <div style={{fontSize:11,color:'#10b981',marginTop:4}}>{dlSyncMsg}</div>}
-                </div>
-                <div style={{display:'flex',gap:6,flexShrink:0}}>
-                  <button className="btn btn-sm btn-ghost" onClick={fetchDlLogs}>📋 View Logs</button>
-                  <button className="btn btn-sm" onClick={syncDelhivery} disabled={dlSyncing}
-                    style={{background:'#06b6d4',color:'#000',border:'none',fontWeight:600}}>
-                    {dlSyncing ? <><span className="spin">↻</span> Running…</> : '▶ Run Now'}
-                  </button>
-                </div>
-              </div>
-              {dlLogsOpen && (
-                <div style={{borderTop:'1px solid rgba(6,182,212,0.2)',padding:'10px 14px 14px'}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-                    <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Last {dlLogs.length} Runs</span>
-                    <button onClick={()=>setDlLogsOpen(false)} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12}}>✕</button>
-                  </div>
-                  {dlLogs.length===0 ? (
-                    <div style={{fontSize:11,color:'var(--text-muted)'}}>No logs yet — run the cron first.</div>
-                  ) : dlLogs.map((log,i)=>(
-                    <div key={i} style={{marginBottom:10,padding:'8px 10px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)'}}>
-                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-                        <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{new Date(log.ran_at).toLocaleString('en-IN')}</span>
-                        <div style={{display:'flex',gap:8,fontSize:10}}>
-                          <span style={{color:'var(--text-muted)'}}>Checked: <strong style={{color:'var(--text)'}}>{log.checked||0}</strong></span>
-                          <span style={{color:'#10b981'}}>Updated: <strong>{log.updated||0}</strong></span>
-                          <span style={{color:'var(--text-muted)'}}>Skipped: {log.skipped||0}</span>
-                          {(log.errors||[]).length>0 && <span style={{color:'#ef4444'}}>Errors: {log.errors.length}</span>}
-                        </div>
-                      </div>
-                      {(()=>{
-                        const details = log.checked_detail || [];
-                        const updates = log.updates || [];
-                        const allRows = details.length > 0 ? details : updates.map(u=>({...u, action:'updated_to_'+u.to, delhivery_status:u.status, current_stage:u.from}));
-                        if (!allRows.length) return <div style={{fontSize:10,color:'var(--text-muted)'}}>{log.message||'No data.'}</div>;
-                        const actionColor = a => a?.startsWith('updated')?'#10b981':a==='not_found'?'#ef4444':a==='unmapped'?'#f59e0b':'var(--text-muted)';
-                        const actionLabel = a => a?.startsWith('updated_to_')?'→ '+a.replace('updated_to_','').toUpperCase():a==='not_found'?'Not Found':a==='no_change'?'No Change':a==='unmapped'?'Unknown Status':a;
-                        return (
-                          <div style={{marginTop:6,maxHeight:260,overflowY:'auto'}}>
-                            <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
-                              <thead><tr style={{color:'var(--text-muted)',borderBottom:'1px solid var(--border)'}}>
-                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Order</th>
-                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Vendor</th>
-                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>AWB</th>
-                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Delhivery Status</th>
-                                <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Result</th>
-                              </tr></thead>
-                              <tbody>
-                                {allRows.map((r,j)=>(
-                                  <tr key={j} style={{borderBottom:'1px solid var(--border)',background:r.action?.startsWith('updated')?'rgba(16,185,129,0.05)':r.action==='not_found'?'rgba(239,68,68,0.05)':'transparent'}}>
-                                    <td style={{padding:'3px 6px',color:'var(--indigo)',fontWeight:600}}>{r.shopify_id}</td>
-                                    <td style={{padding:'3px 6px',color:'var(--text-muted)',maxWidth:80,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.vendor}</td>
-                                    <td style={{padding:'3px 6px',fontFamily:'monospace',color:'var(--text-muted)',fontSize:9}}>{r.awb}</td>
-                                    <td style={{padding:'3px 6px',color:'var(--text)'}}>{r.delhivery_status}</td>
-                                    <td style={{padding:'3px 6px',fontWeight:700,color:actionColor(r.action)}}>{actionLabel(r.action)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+
 
             {/* ShipSagar cron */}
             <div style={{borderRadius:8,background:'rgba(99,102,241,0.06)',border:'1px solid rgba(99,102,241,0.25)',marginTop:12}}>
