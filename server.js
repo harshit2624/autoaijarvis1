@@ -5465,63 +5465,78 @@ app.put("/vendor/shipping/partners/:partner/locations", vendorAuth, async (req, 
 });
 
 
-// Admin delivery status refresh — uses global creds
+// Admin delivery status refresh — tracks all vendor AWBs, updates vendor-level stages
 app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) => {
   try {
     const { shopifyId } = req.params;
-    // Get AWB from vendor stage (most reliable) or order_meta or Shopify fulfillments
-    let awb = '', courier = '';
-    const vendorStage = await mdb.collection('order_vendor_stage').findOne(
-      { shopify_id: shopifyId, awb: { $exists: true, $ne: '' } },
-      { projection: { awb: 1, courier: 1, _id: 0 } }
-    );
-    if (vendorStage?.awb) { awb = vendorStage.awb; courier = vendorStage.courier || ''; }
-
-    if (!awb) {
-      const meta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } }) || {};
-      awb = meta.awb || '';
-      courier = (meta.courier || '').toLowerCase();
-    }
-    if (!awb) {
-      const { data } = await shopifyRESTRaw(`/orders/${shopifyId}.json?fields=fulfillments`);
-      const f = (data.order?.fulfillments || []).find(f => f.tracking_number);
-      if (f) { awb = f.tracking_number; courier = (f.tracking_company || '').toLowerCase(); }
-    }
-    if (!awb) return res.json({ status: '', awb: '' });
-
-    // Use ShipSagar if configured — tracks any courier
     const ssCreds = await getShipSagarCreds();
-    if (ssCreds?.api_key) {
-      const ss = await shipsagarTrackShipment(awb);
-      const cached = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } });
-      const cachedStatus = cached?.delivery_status || '';
+    const cached = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } });
 
+    // Fetch all vendor AWBs for this order
+    const allVendorStages = await mdb.collection('order_vendor_stage').find(
+      { shopify_id: shopifyId, awb: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
+    ).toArray();
+
+    // Single AWB fallback — order_meta or Shopify fulfillments
+    if (!allVendorStages.length) {
+      let awb = '', courier = '';
+      const meta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { awb: 1, courier: 1, _id: 0 } }) || {};
+      awb = meta.awb || '';
+      if (!awb) {
+        try {
+          const { data } = await shopifyRESTRaw(`/orders/${shopifyId}.json?fields=fulfillments`);
+          const f = (data.order?.fulfillments || []).find(f => f.tracking_number);
+          if (f) { awb = f.tracking_number; courier = f.tracking_company || ''; }
+        } catch {}
+      }
+      if (!awb) return res.json({ status: cached?.delivery_status || '', awb: '' });
+      if (!ssCreds?.api_key) return res.json({ status: cached?.delivery_status || '', awb, message: 'ShipSagar not configured' });
+      const ss = await shipsagarTrackShipment(awb);
       if (ss?.found && ss.history?.length) {
-        // Has tracking events — use latest
         const latest = ss.history[ss.history.length - 1];
         const status = latest.ActionDescription || '';
         const newStage = shipsagarStatusToStage(status);
-        if (newStage) {
-          if (vendorStage) await OVS.upsert(shopifyId, vendorStage.vendor_name || '', { stage: newStage, updated_at: new Date().toISOString() });
-          await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
-        }
+        if (newStage) await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
         applyShipSagarTag(shopifyId, status).catch(() => {});
-        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+        return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
       }
-
-      if (ss?.found && !ss.history?.length) {
-        // Registered in ShipSagar but no events yet — show cached, no push needed
-        return res.json({ status: cachedStatus, awb, source: 'shipsagar', message: 'Shipment tracked — no events yet. Check back soon.' });
-      }
-
-      // AWB not in ShipSagar at all — register it and return cached
+      if (ss?.found) return res.json({ status: cached?.delivery_status || '', awb, message: 'No events yet.' });
       shipsagarPushShipment({ awb, courierCode: courier, orderNo: shopifyId }).catch(() => {});
-      return res.json({ status: cachedStatus, awb, message: 'AWB registered with ShipSagar — refresh in a moment to see live tracking.' });
+      return res.json({ status: cached?.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
     }
 
-    // ShipSagar not configured — return cached status
-    const cached2 = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } });
-    res.json({ status: cached2?.delivery_status || '', awb, message: 'ShipSagar not configured' });
+    if (!ssCreds?.api_key) return res.json({ status: cached?.delivery_status || '', message: 'ShipSagar not configured', vendors: [] });
+
+    // Track each vendor AWB separately — update vendor-level stage
+    const vendorResults = [];
+    const now = new Date().toISOString();
+    let latestOverallStatus = cached?.delivery_status || '';
+    let latestOverallTag = null;
+
+    for (const vs of allVendorStages) {
+      const ss = await shipsagarTrackShipment(vs.awb);
+      if (ss?.found && ss.history?.length) {
+        const latest = ss.history[ss.history.length - 1];
+        const status = latest.ActionDescription || '';
+        const newStage = shipsagarStatusToStage(status);
+        if (newStage && vs.stage !== newStage) {
+          await OVS.upsert(shopifyId, vs.vendor_name, { stage: newStage, updated_at: now });
+        }
+        await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: now });
+        applyShipSagarTag(shopifyId, status).catch(() => {});
+        latestOverallStatus = status;
+        latestOverallTag = shipsagarDescToTag(status);
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status, stage: newStage || vs.stage, history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+      } else if (ss?.found) {
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'No events yet.' });
+      } else {
+        shipsagarPushShipment({ awb: vs.awb, courierCode: vs.courier || '', orderNo: shopifyId }).catch(() => {});
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'Registered — refresh in a moment.' });
+      }
+    }
+
+    res.json({ status: latestOverallStatus, source: 'shipsagar', tag: latestOverallTag, vendors: vendorResults });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -7857,6 +7872,44 @@ app.get("/track/my-orders", async (req, res) => {
     console.error("❌ /track/my-orders:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Public: track a specific AWB via ShipSagar and update vendor stage ───────
+app.get("/track/shipment-status", async (req, res) => {
+  try {
+    const { shopify_order_id, awb, vendor_name } = req.query;
+    if (!awb) return res.status(400).json({ error: 'awb required' });
+
+    const ss = await shipsagarTrackShipment(awb);
+    if (!ss) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
+
+    if (ss.found && ss.history?.length) {
+      const latest = ss.history[ss.history.length - 1];
+      const status = latest.ActionDescription || '';
+      const newStage = shipsagarStatusToStage(status);
+      const now = new Date().toISOString();
+
+      // Update vendor-level stage if vendor and order are known
+      if (shopify_order_id && vendor_name && newStage) {
+        await OVS.upsert(String(shopify_order_id), vendor_name, { stage: newStage, updated_at: now });
+      }
+      // Update order-level delivery status
+      if (shopify_order_id && newStage) {
+        await OM.upsert(String(shopify_order_id), { delivery_status: status, delivery_status_updated_at: now });
+        applyShipSagarTag(String(shopify_order_id), status).catch(() => {});
+      }
+
+      return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status), stage: newStage });
+    }
+
+    if (ss.found && !ss.history?.length) {
+      return res.json({ status: '', awb, message: 'Shipment registered — no events yet. Check back soon.' });
+    }
+
+    // Not registered — push it
+    shipsagarPushShipment({ awb, orderNo: shopify_order_id || awb }).catch(() => {});
+    return res.json({ status: '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Public: get single order by shopify ID (after customer selects from list) ──

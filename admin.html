@@ -784,17 +784,27 @@
       setFulfillingV(p=>({...p,[vendor]:false}));
     };
 
-    const [trackHistory, setTrackHistory] = useState([]);
-    const [trackTag,     setTrackTag]     = useState('');
+    const [trackHistory,  setTrackHistory]  = useState([]);
+    const [trackTag,      setTrackTag]      = useState('');
+    const [vendorTracking2, setVendorTracking2] = useState({}); // { vendorName: { status, history, tag, message } }
     const refreshDelivery = async () => {
       setRefreshing(true);
       try {
         const r = await fetch(`${API}/admin/orders/${order.shopifyId}/delivery-status`, { headers:{ Authorization:`Bearer ${token}` } });
         const d = await r.json();
         if (d.status) setDelivStatus(d.status);
+        if (d.tag)    setTrackTag(d.tag);
         if (d.history) setTrackHistory(d.history);
-        if (d.tag)     setTrackTag(d.tag);
         if (d.message) setMsg({ type:'info', text: d.message });
+        // Multi-vendor: store per-vendor results
+        if (d.vendors?.length) {
+          const vMap = {};
+          d.vendors.forEach(v => { vMap[v.vendor] = v; });
+          setVendorTracking2(vMap);
+          // Use latest vendor's history for main display
+          const withHistory = d.vendors.find(v => v.history?.length);
+          if (withHistory) { setDelivStatus(withHistory.status); setTrackHistory(withHistory.history); setTrackTag(withHistory.tag||''); }
+        }
       } catch(_) {}
       setRefreshing(false);
     };
@@ -1084,7 +1094,30 @@
                         {order.shopifyFulfilled && <span style={{marginLeft:8,fontSize:9,border:'1px solid var(--border)',borderRadius:3,padding:'1px 5px'}}>fulfilled via Shopify</span>}
                       </div>
                   }
-                  {trackHistory.length > 0 && (
+                  {/* Multi-vendor: per-vendor tracking results */}
+                  {Object.keys(vendorTracking2).length > 0 ? (
+                    <div style={{marginTop:8,borderTop:'1px solid var(--border)',paddingTop:8}}>
+                      {Object.entries(vendorTracking2).map(([vName, vd])=>(
+                        <div key={vName} style={{marginBottom:10,padding:'8px 10px',borderRadius:7,background:'var(--bg-card2)',border:'1px solid var(--border)'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                            <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{vName}</span>
+                            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                              {vd.tag && <span style={{fontSize:10,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 8px'}}>{vd.tag}</span>}
+                              <span style={{fontSize:9,color:'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace'}}>{vd.awb}</span>
+                            </div>
+                          </div>
+                          {vd.message && <div style={{fontSize:10,color:'var(--text-muted)'}}>{vd.message}</div>}
+                          {(vd.history||[]).map((h,i)=>(
+                            <div key={i} style={{display:'flex',gap:8,fontSize:10,color:i===vd.history.length-1?'var(--text)':'var(--text-muted)',marginBottom:2}}>
+                              <span style={{whiteSpace:'nowrap',minWidth:90}}>{h.ActionDate} {h.ActionTime}</span>
+                              <span>{h.ActionDescription}{h.ActionLocation?` · ${h.ActionLocation}`:''}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>via ShipSagar</div>
+                    </div>
+                  ) : trackHistory.length > 0 && (
                     <div style={{marginTop:8,borderTop:'1px solid var(--border)',paddingTop:8}}>
                       {trackHistory.map((h,i)=>(
                         <div key={i} style={{display:'flex',gap:8,fontSize:10,color: i===trackHistory.length-1?'var(--text)':'var(--text-muted)',marginBottom:3,alignItems:'baseline'}}>

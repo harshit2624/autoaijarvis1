@@ -323,6 +323,78 @@
     return 'stage-pill ' + (map[stage] || 'stage-new');
   }
 
+  function VendorShipmentCard({ vs, shopifyOrderId, index, total }) {
+    const [shipment, setShipment] = React.useState(vs);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [msg, setMsg] = React.useState('');
+
+    const refresh = async () => {
+      if (!shipment.awb) return;
+      setRefreshing(true); setMsg('');
+      try {
+        const params = new URLSearchParams({ awb: shipment.awb, shopify_order_id: shopifyOrderId, vendor_name: shipment.vendor_name });
+        const r = await fetch(`${API}/track/shipment-status?${params}`);
+        const d = await r.json();
+        if (d.stage || d.status) {
+          setShipment(prev => ({ ...prev, stage: d.stage || prev.stage, awb_status: d.status, history: d.history, tag: d.tag }));
+        }
+        if (d.message) setMsg(d.message);
+      } catch {}
+      setRefreshing(false);
+    };
+
+    return (
+      <div style={{marginBottom: index < total-1 ? 16 : 0, padding:'12px 14px', borderRadius:10, background:'#f8f9ff', border:'1px solid #e8eaf6'}}>
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
+          <div style={{fontSize:12, fontWeight:700, color:'#002eff'}}>📦 Shipment {index+1} — {shipment.vendor_name}</div>
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <div className={stagePillClass(shipment.stage)} style={{fontSize:10}}>{STAGE_LABELS[shipment.stage] || shipment.stage}</div>
+            {shipment.awb && (
+              <button onClick={refresh} disabled={refreshing}
+                style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'3px 8px',display:'flex',alignItems:'center',gap:3}}>
+                {refreshing ? '…' : '↻ Refresh'}
+              </button>
+            )}
+          </div>
+        </div>
+        <StageProgress stage={shipment.stage}/>
+        {shipment.awb && (
+          <div className="awb-row" style={{marginTop:8}}>
+            <span className="awb-label">AWB</span>
+            <span className="awb-value">{shipment.awb}</span>
+            {shipment.courier && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:6}}>{shipment.courier}</span>}
+            {shipment.tracking_url && <a className="awb-link" href={shipment.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track →</a>}
+          </div>
+        )}
+        {msg && <div style={{fontSize:10,color:'#4433cc',marginTop:6}}>{msg}</div>}
+        {shipment.awb_status && (
+          <div style={{fontSize:11,color:'#333',marginTop:6,fontWeight:600}}>{shipment.awb_status}
+            {shipment.tag && <span style={{marginLeft:8,fontSize:10,background:'#f0f0ff',border:'1px solid #d8d4ff',color:'#4433cc',borderRadius:99,padding:'2px 8px'}}>{shipment.tag}</span>}
+          </div>
+        )}
+        {shipment.history?.length > 0 && (
+          <div style={{marginTop:8,borderTop:'1px solid #e8eaf6',paddingTop:8}}>
+            {shipment.history.map((h,i)=>(
+              <div key={i} style={{display:'flex',gap:8,fontSize:10,color:i===shipment.history.length-1?'#333':'#888',marginBottom:3}}>
+                <span style={{whiteSpace:'nowrap',minWidth:90}}>{h.ActionDate} {h.ActionTime}</span>
+                <span>{h.ActionDescription}{h.ActionLocation?` · ${h.ActionLocation}`:''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {shipment.items?.length > 0 && (
+          <div style={{marginTop:8, fontSize:11, color:'var(--text-muted)'}}>
+            {shipment.items.map(it => (
+              <div key={it.line_item_id} style={{padding:'4px 0', borderBottom:'1px solid #eee'}}>
+                {it.title}{it.variant_title ? ` · ${it.variant_title}` : ''} × {it.qty}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function StageProgress({ stage }) {
     const isRto = stage === 'rto';
     const idx = isRto ? STAGE_STEPS.indexOf('transit') : STAGE_STEPS.indexOf(stage);
@@ -704,34 +776,11 @@
                 </div>
               </div>
 
-              {/* Multi-vendor: show per-shipment progress */}
+              {/* Multi-vendor: per-shipment progress with individual refresh */}
               {(order.vendor_shipments?.length > 1) ? (
                 <div style={{marginBottom:12}}>
                   {order.vendor_shipments.map((vs, i) => (
-                    <div key={vs.vendor_name} style={{marginBottom: i < order.vendor_shipments.length-1 ? 16 : 0, padding:'12px 14px', borderRadius:10, background:'#f8f9ff', border:'1px solid #e8eaf6'}}>
-                      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
-                        <div style={{fontSize:12, fontWeight:700, color:'#002eff'}}>📦 Shipment {i+1} — {vs.vendor_name}</div>
-                        <div className={stagePillClass(vs.stage)} style={{fontSize:10}}>{STAGE_LABELS[vs.stage] || vs.stage}</div>
-                      </div>
-                      <StageProgress stage={vs.stage}/>
-                      {vs.awb && (
-                        <div className="awb-row" style={{marginTop:8}}>
-                          <span className="awb-label">AWB</span>
-                          <span className="awb-value">{vs.awb}</span>
-                          {vs.courier && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:6}}>{vs.courier}</span>}
-                          {vs.tracking_url && <a className="awb-link" href={vs.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track →</a>}
-                        </div>
-                      )}
-                      {vs.items?.length > 0 && (
-                        <div style={{marginTop:8, fontSize:11, color:'var(--text-muted)'}}>
-                          {vs.items.map(it => (
-                            <div key={it.line_item_id} style={{padding:'4px 0', borderBottom:'1px solid #eee'}}>
-                              {it.title}{it.variant_title ? ` · ${it.variant_title}` : ''} × {it.qty}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <VendorShipmentCard key={vs.vendor_name} vs={vs} shopifyOrderId={String(order.shopify_order_id)} index={i} total={order.vendor_shipments.length}/>
                   ))}
                 </div>
               ) : (
