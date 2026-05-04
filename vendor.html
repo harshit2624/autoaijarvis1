@@ -963,7 +963,8 @@
     const [awb,       setAwb]       = useState(order.awb || '');
     const [trackUrl,  setTrackUrl]  = useState(order.trackingUrl || '');
     const [notify,    setNotify]    = useState(true);
-    const [delivStatus, setDelivStatus] = useState(order.deliveryStatus || '');
+    const [delivStatus,  setDelivStatus]  = useState(order.deliveryStatus || '');
+    const [trackHistory, setTrackHistory] = useState([]);
     const [saving,       setSaving]      = useState(false);
     const [fulfilling,   setFulfilling]  = useState(false);
     const [msg,          setMsg]         = useState(null); // {type, text}
@@ -1125,13 +1126,27 @@
                     <button style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}
                       onClick={async()=>{
                         const r=await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`,{headers:{Authorization:`Bearer ${token}`}});
-                        const d=await r.json(); if(d.status) setDelivStatus(d.status);
+                        const d=await r.json();
+                        if(d.status) setDelivStatus(d.status);
+                        if(d.history?.length) setTrackHistory(d.history);
                       }}>↻ Refresh</button>
                   </span>
                 </div>}
                 <div className="detail-row"><span className="dr-label">Your Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
                 {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CrosCrow)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
                 {order.advancePaid>0 && <div className="detail-row"><span className="dr-label">Advance / Partial Paid</span><span className="dr-val" style={{color:'var(--green)'}}>− {fmtCur(order.advancePaid, order.currency)}</span></div>}
+                {trackHistory.length > 0 && (
+                  <div className="detail-row" style={{flexDirection:'column',alignItems:'flex-start',gap:4}}>
+                    <span className="dr-label">Tracking History</span>
+                    {trackHistory.map((h,i)=>(
+                      <div key={i} style={{fontSize:10,color:i===trackHistory.length-1?'var(--text)':'var(--text-muted)',display:'flex',gap:8}}>
+                        <span style={{whiteSpace:'nowrap',minWidth:110}}>{h.ActionDate} {h.ActionTime}</span>
+                        <span>{h.ActionDescription}{h.ActionLocation?` · ${h.ActionLocation}`:''}</span>
+                      </div>
+                    ))}
+                    <span style={{fontSize:9,color:'var(--text-muted)'}}>via ShipSagar</span>
+                  </div>
+                )}
                 <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}><span className="dr-label" style={{fontWeight:700}}>Remaining COD to Collect</span><span className="dr-val" style={{color: order.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(order.remainingCOD, order.currency)}</span></div>
               </div>
 

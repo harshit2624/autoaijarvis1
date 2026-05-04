@@ -3966,7 +3966,6 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     // Save AWB/courier/tracking to order_vendor_stage — ready = tracking submitted, awaiting pickup
     await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'ready', updated_at: new Date().toISOString() });
     auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
-    shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: shopifyId }).catch(() => {});
 
     // Send customer shipped email
     const cfg = await getSmtpConfig();
@@ -4025,7 +4024,6 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
         const curStage = ovs?.stage || existing.stage || 'new';
         if (PRE_DISPATCH.includes(curStage)) {
           await OVS.upsert(id, vendor, { stage: 'ready', awb: awb.trim(), courier: courier || '', tracking_url: tracking_url || '', updated_at: now });
-          shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: id }).catch(() => {});
         }
       }
     } catch(e) { console.error('meta awb vendor sync error:', e.message); }
@@ -5278,7 +5276,6 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     if (result?.awb) {
       const sid = String(shopifyOrder.id);
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
-      shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: (shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||''), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
       // Also create a Shopify partial fulfillment for this vendor's line items
       try {
@@ -5556,36 +5553,56 @@ app.get("/admin/debug-tracking", adminAuth, async (req, res) => {
 app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) => {
   try {
     const { shopifyId } = req.params;
-    // Get AWB from our DB or Shopify fulfillments
-    let meta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } }) || {};
-    let awb = meta.awb;
-    let courier = (meta.courier || "").toLowerCase();
+    // Get AWB from vendor stage (most reliable) or order_meta or Shopify fulfillments
+    let awb = '', courier = '';
+    const vendorStage = await mdb.collection('order_vendor_stage').findOne(
+      { shopify_id: shopifyId, awb: { $exists: true, $ne: '' } },
+      { projection: { awb: 1, courier: 1, _id: 0 } }
+    );
+    if (vendorStage?.awb) { awb = vendorStage.awb; courier = vendorStage.courier || ''; }
 
     if (!awb) {
-      // Fall back to Shopify fulfillment data
-      const { data } = await shopifyRESTRaw(`/orders/${shopifyId}.json?fields=fulfillments`);
-      const fulfillment = (data.order?.fulfillments || []).find(f => f.tracking_number);
-      if (fulfillment) {
-        awb = fulfillment.tracking_number;
-        courier = (fulfillment.tracking_company || "").toLowerCase();
-      }
+      const meta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } }) || {};
+      awb = meta.awb || '';
+      courier = (meta.courier || '').toLowerCase();
     }
-    if (!awb) return res.json({ status: "", awb: "" });
+    if (!awb) {
+      const { data } = await shopifyRESTRaw(`/orders/${shopifyId}.json?fields=fulfillments`);
+      const f = (data.order?.fulfillments || []).find(f => f.tracking_number);
+      if (f) { awb = f.tracking_number; courier = (f.tracking_company || '').toLowerCase(); }
+    }
+    if (!awb) return res.json({ status: '', awb: '' });
 
-    // Try global creds for the detected courier
+    // Use ShipSagar if configured — tracks any courier
+    const ssCreds = await getShipSagarCreds();
+    if (ssCreds?.api_key) {
+      const detail = await shipsagarTrackShipment(awb);
+      if (detail?.TrackingHistory?.length) {
+        const latest = detail.TrackingHistory[detail.TrackingHistory.length - 1];
+        const status = latest.ActionDescription || '';
+        const newStage = shipsagarStatusToStage(status);
+        if (newStage) {
+          if (vendorStage) await OVS.upsert(shopifyId, vendorStage.vendor_name || '', { stage: newStage, updated_at: new Date().toISOString() });
+          await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
+        }
+        return res.json({ status, awb, courier: detail.CourierCode || courier, source: 'shipsagar', history: detail.TrackingHistory.slice(-5) });
+      }
+      // AWB not yet in ShipSagar — push it first then return cached status
+      shipsagarPushShipment({ awb, courierCode: courier, orderNo: shopifyId }).catch(() => {});
+      const cached = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } });
+      return res.json({ status: cached?.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+    }
+
+    // Fallback: old direct-courier fetch
     const detectPartner = c => {
-      if (c.includes("delhivery")) return "delhivery";
-      if (c.includes("shiprocket")) return "shiprocket";
-      if (c.includes("shipmozo")) return "shipmozo";
-      if (c.includes("bluedart") || c.includes("blue dart")) return "bluedart";
-      if (c.includes("dtdc")) return "dtdc";
-      if (c.includes("xpressbees")) return "xpressbees";
+      if (c.includes('delhivery')) return 'delhivery';
+      if (c.includes('shiprocket')) return 'shiprocket';
+      if (c.includes('shipmozo')) return 'shipmozo';
       return c;
     };
     const partner = detectPartner(courier);
     const credRow = await mdb.collection('global_shipping_creds').findOne({ partner }, { projection: { credentials: 1, _id: 0 } });
-    if (!credRow) return res.json({ status: meta.delivery_status || "", awb, message: `No global credentials saved for ${partner}` });
-
+    if (!credRow) { const m = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } }); return res.json({ status: m?.delivery_status || '', awb, message: 'ShipSagar not configured' }); }
     const creds = JSON.parse(credRow.credentials);
     const status = await fetchDeliveryStatus(partner, creds, awb);
     if (status) await OM.upsert(shopifyId, { awb, courier, delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
@@ -5708,21 +5725,47 @@ async function fetchDeliveryStatus(partner, creds, awb) {
 // GET /vendor/orders/:shopifyId/delivery-status — fetch live status from partner
 app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res) => {
   try {
-    const meta = await mdb.collection('order_meta').findOne({ shopify_id: req.params.shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } });
-    if (!meta?.awb) return res.json({ status: "", awb: "" });
+    const shopifyId = req.params.shopifyId;
+    // Get AWB from vendor stage for this vendor first
+    const vs = await mdb.collection('order_vendor_stage').findOne(
+      { shopify_id: shopifyId, vendor_name: req.vendor, awb: { $exists: true, $ne: '' } },
+      { projection: { awb: 1, courier: 1, _id: 0 } }
+    );
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { awb: 1, courier: 1, delivery_status: 1, _id: 0 } }) || {};
+    const awb = vs?.awb || meta.awb || '';
+    const courier = vs?.courier || meta.courier || '';
+    if (!awb) return res.json({ status: '', awb: '' });
 
-    const partner = (meta.courier || "").toLowerCase();
+    // Use ShipSagar if configured
+    const ssCreds = await getShipSagarCreds();
+    if (ssCreds?.api_key) {
+      const detail = await shipsagarTrackShipment(awb);
+      if (detail?.TrackingHistory?.length) {
+        const latest = detail.TrackingHistory[detail.TrackingHistory.length - 1];
+        const status = latest.ActionDescription || '';
+        const newStage = shipsagarStatusToStage(status);
+        if (newStage) {
+          await OVS.upsert(shopifyId, req.vendor, { stage: newStage, updated_at: new Date().toISOString() });
+          await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
+        }
+        return res.json({ status, awb, courier: detail.CourierCode || courier, source: 'shipsagar', history: detail.TrackingHistory.slice(-5) });
+      }
+      shipsagarPushShipment({ awb, courierCode: courier, orderNo: shopifyId }).catch(() => {});
+      return res.json({ status: meta.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+    }
+
+    // Fallback: vendor's own shipping partner creds
+    const partner = courier.toLowerCase();
     const partnerRow = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });
-
-    let status = meta.delivery_status || "";
+    let status = meta.delivery_status || '';
     if (partnerRow) {
       try {
         const creds = JSON.parse(partnerRow.credentials);
-        status = await fetchDeliveryStatus(partner, creds, meta.awb);
-        await OM.upsert(req.params.shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
+        status = await fetchDeliveryStatus(partner, creds, awb);
+        if (status) await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
       } catch {}
     }
-    res.json({ status, awb: meta.awb });
+    res.json({ status, awb });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
