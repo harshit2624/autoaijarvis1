@@ -706,6 +706,7 @@
     const [awb,        setAwb]        = useState(order.awb || '');
     const [courier,    setCourier]    = useState(order.courier || '');
     const [trackUrl,   setTrackUrl]   = useState(order.trackingUrl || '');
+    const [ssCouriers, setSsCouriers] = useState([]);
     const [delivStatus,setDelivStatus]= useState(order.deliveryStatus || '');
     const [refreshing, setRefreshing] = useState(false);
     const [saving,     setSaving]     = useState(false);
@@ -721,12 +722,14 @@
     };
 
     useEffect(()=>{
-      // Fetch product images
       const pids = [...new Set((order.lineItems||[]).map(li=>li.product_id).filter(Boolean))];
       if (pids.length) {
         fetch(`${API}/admin/product-images?ids=${pids.join(',')}`,{headers:{Authorization:`Bearer ${token}`}})
           .then(r=>r.json()).then(d=>setProductImages(d.images||{})).catch(()=>{});
       }
+      // Fetch ShipSagar courier list
+      fetch(`${API}/admin/shipsagar/couriers`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setSsCouriers(d.getCourier||[])).catch(()=>{});
     },[]);
 
     useEffect(()=>{
@@ -1035,12 +1038,23 @@
                 <div>
                   <label className="form-label">Courier Partner</label>
                   <select className="form-input" value={courier} onChange={e=>{
-                    setCourier(e.target.value);
-                    const c = COURIERS.find(x=>x.name===e.target.value);
+                    const val = e.target.value;
+                    setCourier(val);
+                    const c = COURIERS.find(x=>x.name===val);
                     if (c && awb) setTrackUrl(c.url(awb));
                   }} style={{cursor:'pointer'}}>
                     <option value="">— Select courier —</option>
-                    {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                    <optgroup label="Common">
+                      {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                    </optgroup>
+                    {ssCouriers.length > 0 && (
+                      <optgroup label="ShipSagar (all couriers)">
+                        {ssCouriers
+                          .filter(c => !COURIERS.some(k => k.name.toLowerCase() === c.courierName.toLowerCase()))
+                          .map(c=><option key={c.courierCode} value={c.courierName}>{c.courierName}</option>)
+                        }
+                      </optgroup>
+                    )}
                   </select>
                 </div>
                 <div>

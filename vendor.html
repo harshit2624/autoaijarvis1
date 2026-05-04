@@ -959,9 +959,10 @@
     const initCourier = order.courier
       ? (COURIERS.find(c => c.name.toLowerCase() === order.courier.toLowerCase())?.name || 'Delhivery')
       : 'Delhivery';
-    const [courier,   setCourier]   = useState(initCourier);
-    const [awb,       setAwb]       = useState(order.awb || '');
-    const [trackUrl,  setTrackUrl]  = useState(order.trackingUrl || '');
+    const [courier,    setCourier]   = useState(initCourier);
+    const [awb,        setAwb]       = useState(order.awb || '');
+    const [trackUrl,   setTrackUrl]  = useState(order.trackingUrl || '');
+    const [ssCouriers, setSsCouriers]= useState([]);
     const [notify,    setNotify]    = useState(true);
     const [delivStatus,  setDelivStatus]  = useState(order.deliveryStatus || '');
     const [trackHistory, setTrackHistory] = useState([]);
@@ -1016,6 +1017,8 @@
         fetch(`${API}/vendor/product-images?ids=${pids.join(',')}`,{headers:{Authorization:`Bearer ${token}`}})
           .then(r=>r.json()).then(d=>setProductImages(d.images||{})).catch(()=>{});
       }
+      fetch(`${API}/vendor/shipsagar/couriers`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setSsCouriers(d.getCourier||[])).catch(()=>{});
     },[]);
 
     useEffect(() => {
@@ -1321,12 +1324,23 @@
                   <div>
                     <label className="form-label">Courier Partner</label>
                     <select className="form-select" value={courier} onChange={e=>{
-                      setCourier(e.target.value);
-                      const c = COURIERS.find(x=>x.name===e.target.value);
+                      const val = e.target.value;
+                      setCourier(val);
+                      const c = COURIERS.find(x=>x.name===val);
                       if (c && awb) setTrackUrl(c.url(awb));
                     }}>
                       <option value="">— Select courier —</option>
-                      {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                      <optgroup label="Common">
+                        {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                      </optgroup>
+                      {ssCouriers.length > 0 && (
+                        <optgroup label="ShipSagar (all couriers)">
+                          {ssCouriers
+                            .filter(c => !COURIERS.some(k => k.name.toLowerCase() === c.courierName.toLowerCase()))
+                            .map(c=><option key={c.courierCode} value={c.courierName}>{c.courierName}</option>)
+                          }
+                        </optgroup>
+                      )}
                     </select>
                   </div>
                   <div>

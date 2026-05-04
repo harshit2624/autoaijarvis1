@@ -7442,15 +7442,27 @@ app.post("/admin/shipsagar/register-all", adminAuth, async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 // Get supported couriers
-app.get("/admin/shipsagar/couriers", adminAuth, async (req, res) => {
+async function fetchShipSagarCouriers() {
   const creds = await getShipSagarCreds();
-  if (!creds?.api_key) return res.status(400).json({ error: 'ShipSagar not configured' });
+  if (!creds?.api_key) return [];
+  const data = await fetch('https://app.shipsagar.com/api/Web/GetCourier', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code }),
+  }).then(r => r.json());
+  return data.getCourier || [];
+}
+
+app.get("/admin/shipsagar/couriers", adminAuth, async (req, res) => {
   try {
-    const data = await fetch('https://app.shipsagar.com/api/Web/GetCourier', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code }),
-    }).then(r => r.json());
-    res.json(data);
+    const list = await fetchShipSagarCouriers();
+    res.json({ getCourier: list });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/vendor/shipsagar/couriers", vendorAuth, async (req, res) => {
+  try {
+    const list = await fetchShipSagarCouriers();
+    res.json({ getCourier: list });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
