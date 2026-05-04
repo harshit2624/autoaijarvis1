@@ -1081,7 +1081,9 @@
                 <div>
                   <label className="form-label" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                     Delivery Status
-                    {awb && <button onClick={refreshDelivery} disabled={refreshing} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,padding:0}}>{refreshing?'…':'↻ Refresh'}</button>}
+                    {(awb || (order.vendors||[]).length > 1 || order.vendorTracking) && (
+                      <button onClick={refreshDelivery} disabled={refreshing} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,padding:0}}>{refreshing?<><span className="spin">↻</span> Refreshing…</>:'↻ Refresh'}</button>
+                    )}
                   </label>
                   {delivStatus
                     ? <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:12,color: delivStatus==='Delivered'||delivStatus==='delivered'?'#10b981':delivStatus.toLowerCase().includes('transit')?'#06b6d4':delivStatus.toLowerCase().includes('rto')?'#f87171':'#fbbf24',fontWeight:600}}>
