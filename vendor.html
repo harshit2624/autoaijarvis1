@@ -965,6 +965,7 @@
     const [notify,    setNotify]    = useState(true);
     const [delivStatus,  setDelivStatus]  = useState(order.deliveryStatus || '');
     const [trackHistory, setTrackHistory] = useState([]);
+    const [trackTag,     setTrackTag]     = useState('');
     const [saving,       setSaving]      = useState(false);
     const [fulfilling,   setFulfilling]  = useState(false);
     const [msg,          setMsg]         = useState(null); // {type, text}
@@ -1123,12 +1124,14 @@
                   <span className="dr-label">Delivery Status</span>
                   <span style={{display:'flex',alignItems:'center',gap:6}}>
                     <span className="dr-val" style={{color: delivStatus?'var(--yellow)':'var(--text-muted)',fontSize:11}}>{delivStatus||'—'}</span>
+                    {trackTag && <span style={{fontSize:10,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 8px'}}>{trackTag}</span>}
                     <button style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}
                       onClick={async()=>{
                         const r=await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`,{headers:{Authorization:`Bearer ${token}`}});
                         const d=await r.json();
                         if(d.status) setDelivStatus(d.status);
                         if(d.history?.length) setTrackHistory(d.history);
+                        if(d.tag) setTrackTag(d.tag);
                       }}>↻ Refresh</button>
                   </span>
                 </div>}

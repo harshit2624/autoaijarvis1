@@ -768,6 +768,7 @@
     };
 
     const [trackHistory, setTrackHistory] = useState([]);
+    const [trackTag,     setTrackTag]     = useState('');
     const refreshDelivery = async () => {
       setRefreshing(true);
       try {
@@ -775,6 +776,7 @@
         const d = await r.json();
         if (d.status) setDelivStatus(d.status);
         if (d.history) setTrackHistory(d.history);
+        if (d.tag)     setTrackTag(d.tag);
         if (d.message) setMsg({ type:'info', text: d.message });
       } catch(_) {}
       setRefreshing(false);
@@ -1035,6 +1037,7 @@
                   {delivStatus
                     ? <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:12,color: delivStatus==='Delivered'||delivStatus==='delivered'?'#10b981':delivStatus.toLowerCase().includes('transit')?'#06b6d4':delivStatus.toLowerCase().includes('rto')?'#f87171':'#fbbf24',fontWeight:600}}>
                         {delivStatus}
+                        {trackTag && <span style={{marginLeft:8,fontSize:11,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 10px',fontWeight:500}}>{trackTag}</span>}
                         {order.shopifyFulfilled && <span style={{marginLeft:8,fontSize:9,color:'var(--text-muted)',fontWeight:400,border:'1px solid var(--border)',borderRadius:3,padding:'1px 5px'}}>via Shopify</span>}
                       </div>
                     : <div style={{padding:'8px 12px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)',fontSize:11,color:'var(--text-muted)'}}>

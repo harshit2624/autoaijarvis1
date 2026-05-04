@@ -5589,7 +5589,8 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
           if (vendorStage) await OVS.upsert(shopifyId, vendorStage.vendor_name || '', { stage: newStage, updated_at: new Date().toISOString() });
           await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
         }
-        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5) });
+        applyShipSagarTag(shopifyId, status).catch(() => {});
+        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
       }
 
       if (ss?.found && !ss.history?.length) {
@@ -5759,7 +5760,8 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
           await OVS.upsert(shopifyId, req.vendor, { stage: newStage, updated_at: new Date().toISOString() });
           await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
         }
-        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5) });
+        applyShipSagarTag(shopifyId, status).catch(() => {});
+        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
       }
 
       if (ss?.found && !ss.history?.length) {
@@ -7159,6 +7161,54 @@ async function getShipSagarCreds() {
   return JSON.parse(row.credentials || '{}');
 }
 
+// Emoji tag for each ShipSagar tracking status
+const SS_STATUS_TAG_MAP = [
+  { match: ['successfully delivered'],                                    tag: '✅ Delivered' },
+  { match: ['rto', 'return to origin', 'return initiated'],              tag: '🔄 RTO' },
+  { match: ['lost', 'damage'],                                           tag: '⚠️ Lost/Damaged' },
+  { match: ['out for delivery', 'ofd'],                                  tag: '🛵 Out for Delivery' },
+  { match: ['undelivered', 'failed delivery', 'delivery attempt', 'not delivered'], tag: '❌ Delivery Attempted' },
+  { match: ['pickdone', 'pick done', 'picked up', 'pickup done'],        tag: '📦 Picked Up' },
+  { match: ['manifested', 'shipment booked', 'dispatched'],              tag: '📋 Manifested' },
+  { match: ['in transit', 'intransit', 'arrived', 'received at', 'facility', 'hub', 'sorting'], tag: '🚚 In Transit' },
+  { match: ['data received', 'label created', 'softdata', 'booked'],     tag: '🏷️ Label Created' },
+];
+
+// All tracking tags we manage — used to remove old one before adding new
+const SS_ALL_TRACKING_TAGS = SS_STATUS_TAG_MAP.map(e => e.tag);
+
+function shipsagarDescToTag(desc) {
+  if (!desc) return null;
+  const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
+  for (const entry of SS_STATUS_TAG_MAP) {
+    if (entry.match.some(m => s.includes(m))) return entry.tag;
+  }
+  return null;
+}
+
+async function applyShipSagarTag(shopifyId, desc) {
+  const newTag = shipsagarDescToTag(desc);
+  if (!newTag) return;
+  try {
+    const shopifyToken = await getAccessToken();
+    // Fetch current tags
+    const od = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}.json?fields=id,tags`, {
+      headers: { 'X-Shopify-Access-Token': shopifyToken },
+    }).then(r => r.json());
+    const currentTags = (od.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    // Remove old tracking tags, add new one
+    const cleaned = currentTags.filter(t => !SS_ALL_TRACKING_TAGS.includes(t));
+    if (!cleaned.includes(newTag)) cleaned.push(newTag);
+    const tagStr = cleaned.join(', ');
+    await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}.json`, {
+      method: 'PUT',
+      headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: { id: shopifyId, tags: tagStr } }),
+    });
+    console.log(`🏷️  ShipSagar tag updated: order ${shopifyId} → "${newTag}"`);
+  } catch(e) { console.error('ShipSagar tag error:', e.message); }
+}
+
 // Map ShipSagar ActionDescription / CurrentStatus → internal stage
 function shipsagarStatusToStage(desc) {
   if (!desc) return null;
@@ -7295,10 +7345,11 @@ async function shipsagarTrackingCron() {
         const now = new Date().toISOString();
         await OVS.upsert(rec.shopify_id, rec.vendor_name, { stage: newStage, updated_at: now });
         await OM.upsert(rec.shopify_id, { delivery_status: latest.ActionDescription, delivery_status_updated_at: now });
+        applyShipSagarTag(rec.shopify_id, latest.ActionDescription).catch(() => {});
         auditLog('cron', 'shipsagar_stage_update', rec.shopify_id, { vendor: rec.vendor_name, awb: rec.awb, desc: latest.ActionDescription, newStage });
         runLog.updated++;
-        runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc: latest.ActionDescription });
-        console.log(`  ✓ ${rec.shopify_id} (${rec.vendor_name}) ${rec.awb}: ${rec.stage} → ${newStage} (${latest.ActionDescription})`);
+        runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc: latest.ActionDescription, tag: shipsagarDescToTag(latest.ActionDescription) });
+        console.log(`  ✓ ${rec.shopify_id} (${rec.vendor_name}) ${rec.awb}: ${rec.stage} → ${newStage} (${latest.ActionDescription}) → tag: ${shipsagarDescToTag(latest.ActionDescription)||'none'}`);
       } catch(e) { runLog.errors.push({ awb: rec.awb, error: e.message }); }
 
       await new Promise(r => setTimeout(r, 300)); // 300ms between calls
