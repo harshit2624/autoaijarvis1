@@ -1320,13 +1320,22 @@
                 <div className="form-grid">
                   <div>
                     <label className="form-label">Courier Partner</label>
-                    <select className="form-select" value={courier} onChange={e=>setCourier(e.target.value)}>
-                      {COURIERS.map(c=><option key={c.name}>{c.name}</option>)}
+                    <select className="form-select" value={courier} onChange={e=>{
+                      setCourier(e.target.value);
+                      const c = COURIERS.find(x=>x.name===e.target.value);
+                      if (c && awb) setTrackUrl(c.url(awb));
+                    }}>
+                      <option value="">— Select courier —</option>
+                      {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="form-label">AWB / Tracking Number</label>
-                    <input className="form-input" placeholder="Enter AWB number" value={awb} onChange={e=>setAwb(e.target.value)}/>
+                    <input className="form-input" placeholder="Enter AWB number" value={awb} onChange={e=>{
+                      setAwb(e.target.value);
+                      const c = COURIERS.find(x=>x.name===courier);
+                      if (c && e.target.value) setTrackUrl(c.url(e.target.value));
+                    }}/>
                   </div>
                   <div className="form-full">
                     <label className="form-label">Tracking URL</label>

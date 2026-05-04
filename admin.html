@@ -570,6 +570,21 @@
     return '';
   }
 
+  const COURIERS = [
+    { name:'Delhivery',        url: awb => `https://www.delhivery.com/track/package/${awb}` },
+    { name:'XpressBees',       url: awb => `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}` },
+    { name:'BlueDart',         url: awb => `https://www.bluedart.com/tracking?trackNo=${awb}` },
+    { name:'DTDC',             url: awb => `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}` },
+    { name:'Ecom Express',     url: awb => `https://ecomexpress.in/tracking/?awb_field=${awb}` },
+    { name:'Shadowfax',        url: awb => `https://track.shadowfax.in/?awb=${awb}` },
+    { name:'Ekart',            url: awb => `https://ekartlogistics.com/track?trackingId=${awb}` },
+    { name:'Shiprocket',       url: awb => `https://shiprocket.co/tracking/${awb}` },
+    { name:'ShipMozo',         url: awb => `https://panel.shipmozo.com/track-order?awb=${awb}` },
+    { name:'Amazon Logistics', url: awb => `https://track.amazon.in/tracking/${awb}` },
+    { name:'FedEx',            url: awb => `https://www.fedex.com/fedextrack/?trknbr=${awb}` },
+    { name:'Other',            url: awb => '' },
+  ];
+
   // Shows a circular countdown for the 48hr penalty window
   function PenaltyTimer({ vendorPenalty={}, vendorStages={} }) {
     const WATCH = ['confirmed','partial'];
@@ -1018,16 +1033,27 @@
                   <input className="form-input" type="number" min="0" placeholder="0" value={advance} onChange={e=>setAdvance(e.target.value)}/>
                 </div>
                 <div>
-                  <label className="form-label">Courier</label>
-                  <input className="form-input" placeholder="Delhivery, BlueDart…" value={courier} onChange={e=>setCourier(e.target.value)}/>
+                  <label className="form-label">Courier Partner</label>
+                  <select className="form-input" value={courier} onChange={e=>{
+                    setCourier(e.target.value);
+                    const c = COURIERS.find(x=>x.name===e.target.value);
+                    if (c && awb) setTrackUrl(c.url(awb));
+                  }} style={{cursor:'pointer'}}>
+                    <option value="">— Select courier —</option>
+                    {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="form-label">AWB / Tracking No</label>
-                  <input className="form-input" placeholder="Enter AWB" value={awb} onChange={e=>setAwb(e.target.value)}/>
+                  <input className="form-input" placeholder="Enter AWB" value={awb} onChange={e=>{
+                    setAwb(e.target.value);
+                    const c = COURIERS.find(x=>x.name===courier);
+                    if (c && e.target.value) setTrackUrl(c.url(e.target.value));
+                  }}/>
                 </div>
                 <div>
                   <label className="form-label">Tracking URL</label>
-                  <input className="form-input" placeholder="https://…" value={trackUrl} onChange={e=>setTrackUrl(e.target.value)}/>
+                  <input className="form-input" placeholder="Auto-filled or enter custom URL" value={trackUrl} onChange={e=>setTrackUrl(e.target.value)}/>
                 </div>
                 <div>
                   <label className="form-label" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
