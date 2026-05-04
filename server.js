@@ -7735,11 +7735,27 @@ async function buildOrderPayload(order) {
   const customerName = order.shipping_address
     ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim()
     : order.customer ? `${order.customer.first_name||''} ${order.customer.last_name||''}`.trim() : '';
+
+  // Per-vendor shipment details for multi-vendor progress display
+  const vendorShipments = vendorNames.map(v => {
+    const vs = vendorStages.find(s => s.vendor_name === v) || {};
+    const vendorItems = items.filter(i => i.vendor === v);
+    return {
+      vendor_name: v,
+      stage: vs.stage || stage || 'new',
+      awb: vs.awb || null,
+      courier: vs.courier || null,
+      tracking_url: vs.tracking_url || null,
+      items: vendorItems,
+    };
+  });
+
   return {
     shopify_order_id: order.id, order_name: order.name, customer_name: customerName,
     customer_email: order.email || '', customer_phone: order.shipping_address?.phone || order.billing_address?.phone || order.phone || '',
     stage, financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
-    created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames, return_configs: returnConfigs,
+    created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames,
+    vendor_shipments: vendorShipments, return_configs: returnConfigs,
   };
 }
 

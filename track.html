@@ -704,14 +704,48 @@
                 </div>
               </div>
 
-              <StageProgress stage={order.stage}/>
-
-              {order.awb && (
-                <div className="awb-row">
-                  <span className="awb-label">AWB</span>
-                  <span className="awb-value">{order.awb}</span>
-                  {order.tracking_url && <a className="awb-link" href={order.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track Shipment →</a>}
+              {/* Multi-vendor: show per-shipment progress */}
+              {(order.vendor_shipments?.length > 1) ? (
+                <div style={{marginBottom:12}}>
+                  {order.vendor_shipments.map((vs, i) => (
+                    <div key={vs.vendor_name} style={{marginBottom: i < order.vendor_shipments.length-1 ? 16 : 0, padding:'12px 14px', borderRadius:10, background:'#f8f9ff', border:'1px solid #e8eaf6'}}>
+                      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
+                        <div style={{fontSize:12, fontWeight:700, color:'#002eff'}}>📦 Shipment {i+1} — {vs.vendor_name}</div>
+                        <div className={stagePillClass(vs.stage)} style={{fontSize:10}}>{STAGE_LABELS[vs.stage] || vs.stage}</div>
+                      </div>
+                      <StageProgress stage={vs.stage}/>
+                      {vs.awb && (
+                        <div className="awb-row" style={{marginTop:8}}>
+                          <span className="awb-label">AWB</span>
+                          <span className="awb-value">{vs.awb}</span>
+                          {vs.courier && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:6}}>{vs.courier}</span>}
+                          {vs.tracking_url && <a className="awb-link" href={vs.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track →</a>}
+                        </div>
+                      )}
+                      {vs.items?.length > 0 && (
+                        <div style={{marginTop:8, fontSize:11, color:'var(--text-muted)'}}>
+                          {vs.items.map(it => (
+                            <div key={it.line_item_id} style={{padding:'4px 0', borderBottom:'1px solid #eee'}}>
+                              {it.title}{it.variant_title ? ` · ${it.variant_title}` : ''} × {it.qty}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
+              ) : (
+                <>
+                  <StageProgress stage={order.stage}/>
+                  {order.awb && (
+                    <div className="awb-row">
+                      <span className="awb-label">AWB</span>
+                      <span className="awb-value">{order.awb}</span>
+                      {(order.vendor_shipments?.[0]?.courier) && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:6}}>{order.vendor_shipments[0].courier}</span>}
+                      {order.tracking_url && <a className="awb-link" href={order.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track Shipment →</a>}
+                    </div>
+                  )}
+                </>
               )}
 
               <div className="items-section">
