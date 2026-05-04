@@ -7275,6 +7275,29 @@ app.post("/admin/shipsagar/sync", adminAuth, async (req, res) => {
   shipsagarTrackingCron().catch(() => {});
   res.json({ success: true, message: 'ShipSagar sync triggered — check logs.' });
 });
+// Raw debug — shows exact ShipSagar response for any AWB
+app.get("/admin/shipsagar/debug", adminAuth, async (req, res) => {
+  const { awb } = req.query;
+  if (!awb) return res.status(400).json({ error: 'Pass ?awb=YOUR_AWB' });
+  const creds = await getShipSagarCreds();
+  if (!creds?.api_key) return res.status(400).json({ error: 'ShipSagar not configured' });
+  try {
+    // Raw track response
+    const trackRes = await fetch('https://app.shipsagar.com/api/Web/TrackShipment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code, TrackingNo: awb }),
+    }).then(r => r.json());
+
+    // Also try push to see if it registers
+    const pushRes = await fetch('https://app.shipsagar.com/api/Web/PushShipment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code, TrackingNo: awb, OrderNo: awb, CourierCode: '', CustomerName: 'Test', EmailID: '', MobileNo: '', ShipmentType: '', CountryName: 'India', CompanyName: 'CrosCrow' }),
+    }).then(r => r.json());
+
+    res.json({ awb, track: trackRes, push: pushRes });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/shipsagar/logs", adminAuth, async (req, res) => {
   const logs = await mdb.collection('shipsagar_cron_log').find({}, { projection: { _id: 0 } }).sort({ ran_at: -1 }).limit(20).toArray();
   res.json({ logs });
