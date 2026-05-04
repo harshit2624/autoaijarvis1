@@ -5576,21 +5576,30 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
     // Use ShipSagar if configured — tracks any courier
     const ssCreds = await getShipSagarCreds();
     if (ssCreds?.api_key) {
-      const detail = await shipsagarTrackShipment(awb);
-      if (detail?.TrackingHistory?.length) {
-        const latest = detail.TrackingHistory[detail.TrackingHistory.length - 1];
+      const ss = await shipsagarTrackShipment(awb);
+      const cached = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } });
+      const cachedStatus = cached?.delivery_status || '';
+
+      if (ss?.found && ss.history?.length) {
+        // Has tracking events — use latest
+        const latest = ss.history[ss.history.length - 1];
         const status = latest.ActionDescription || '';
         const newStage = shipsagarStatusToStage(status);
         if (newStage) {
           if (vendorStage) await OVS.upsert(shopifyId, vendorStage.vendor_name || '', { stage: newStage, updated_at: new Date().toISOString() });
           await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
         }
-        return res.json({ status, awb, courier: detail.CourierCode || courier, source: 'shipsagar', history: detail.TrackingHistory.slice(-5) });
+        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5) });
       }
-      // AWB not yet in ShipSagar — push it first then return cached status
+
+      if (ss?.found && !ss.history?.length) {
+        // Registered in ShipSagar but no events yet — show cached, no push needed
+        return res.json({ status: cachedStatus, awb, source: 'shipsagar', message: 'Shipment tracked — no events yet. Check back soon.' });
+      }
+
+      // AWB not in ShipSagar at all — register it and return cached
       shipsagarPushShipment({ awb, courierCode: courier, orderNo: shopifyId }).catch(() => {});
-      const cached = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { delivery_status: 1, _id: 0 } });
-      return res.json({ status: cached?.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+      return res.json({ status: cachedStatus, awb, message: 'AWB registered with ShipSagar — refresh in a moment to see live tracking.' });
     }
 
     // Fallback: old direct-courier fetch
@@ -5739,19 +5748,26 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
     // Use ShipSagar if configured
     const ssCreds = await getShipSagarCreds();
     if (ssCreds?.api_key) {
-      const detail = await shipsagarTrackShipment(awb);
-      if (detail?.TrackingHistory?.length) {
-        const latest = detail.TrackingHistory[detail.TrackingHistory.length - 1];
+      const ss = await shipsagarTrackShipment(awb);
+      const cachedStatus = meta?.delivery_status || '';
+
+      if (ss?.found && ss.history?.length) {
+        const latest = ss.history[ss.history.length - 1];
         const status = latest.ActionDescription || '';
         const newStage = shipsagarStatusToStage(status);
         if (newStage) {
           await OVS.upsert(shopifyId, req.vendor, { stage: newStage, updated_at: new Date().toISOString() });
           await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString() });
         }
-        return res.json({ status, awb, courier: detail.CourierCode || courier, source: 'shipsagar', history: detail.TrackingHistory.slice(-5) });
+        return res.json({ status, awb, courier: ss.detail?.CourierCode || courier, source: 'shipsagar', history: ss.history.slice(-5) });
       }
+
+      if (ss?.found && !ss.history?.length) {
+        return res.json({ status: cachedStatus, awb, source: 'shipsagar', message: 'Shipment tracked — no events yet. Check back soon.' });
+      }
+
       shipsagarPushShipment({ awb, courierCode: courier, orderNo: shopifyId }).catch(() => {});
-      return res.json({ status: meta.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+      return res.json({ status: cachedStatus, awb, message: 'AWB registered with ShipSagar — refresh in a moment to see live tracking.' });
     }
 
     // Fallback: vendor's own shipping partner creds
@@ -7184,6 +7200,7 @@ async function shipsagarPushShipment({ awb, courierCode = '', orderNo = '', cust
 }
 
 // Track a single AWB via ShipSagar
+// Returns: { found: true, detail, history } | { found: false } | null (not configured)
 async function shipsagarTrackShipment(awb) {
   const creds = await getShipSagarCreds();
   if (!creds?.api_key) return null;
@@ -7193,9 +7210,10 @@ async function shipsagarTrackShipment(awb) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code, TrackingNo: awb }),
     }).then(r => r.json());
-    if (res.status?.toUpperCase() !== 'SUCCESS') return null;
-    return res.TrackingDetails?.[0] || null;
-  } catch { return null; }
+    if (res.status?.toUpperCase() !== 'SUCCESS') return { found: false };
+    const detail = res.TrackingDetails?.[0] || null;
+    return { found: true, detail, history: detail?.TrackingHistory || [] };
+  } catch { return { found: false }; }
 }
 
 async function shipsagarTrackingCron() {
@@ -7221,12 +7239,10 @@ async function shipsagarTrackingCron() {
 
     for (const rec of toCheck) {
       try {
-        const detail = await shipsagarTrackShipment(rec.awb);
-        if (!detail) { runLog.skipped++; continue; }
+        const ss = await shipsagarTrackShipment(rec.awb);
+        if (!ss?.found || !ss.history?.length) { runLog.skipped++; continue; }
 
-        const history = detail.TrackingHistory || [];
-        // Latest event is last in array
-        const latest = history[history.length - 1];
+        const latest = ss.history[ss.history.length - 1];
         if (!latest) { runLog.skipped++; continue; }
 
         const newStage = shipsagarStatusToStage(latest.ActionDescription);
