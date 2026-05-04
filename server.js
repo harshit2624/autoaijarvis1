@@ -3967,7 +3967,7 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'ready', updated_at: new Date().toISOString() });
     auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
     // Auto-register with ShipSagar for tracking
-    shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: shopifyId }).catch(() => {});
+    shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: order.name || shopifyId, customerName: ((order.shipping_address?.first_name||'') + ' ' + (order.shipping_address?.last_name||'')).trim(), email: order.email || '', mobileNo: (order.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
     // Send customer shipped email
     const cfg = await getSmtpConfig();
@@ -4019,14 +4019,14 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
   if (awb && awb.trim()) {
     const PRE_DISPATCH = ['new','confirmed','partial','hold'];
     try {
-      const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+      const od = await shopifyREST(`/orders/${id}.json?fields=id,name,email,line_items,shipping_address`);
       const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
       for (const vendor of vendors) {
         const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, _id: 0 } });
         const curStage = ovs?.stage || existing.stage || 'new';
         if (PRE_DISPATCH.includes(curStage)) {
           await OVS.upsert(id, vendor, { stage: 'ready', awb: awb.trim(), courier: courier || '', tracking_url: tracking_url || '', updated_at: now });
-          shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: id }).catch(() => {});
+          shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: od?.order?.name || id, customerName: ((od?.order?.shipping_address?.first_name||'') + ' ' + (od?.order?.shipping_address?.last_name||'')).trim(), email: od?.order?.email || '', mobileNo: (od?.order?.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
         }
       }
     } catch(e) { console.error('meta awb vendor sync error:', e.message); }
@@ -5507,7 +5507,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
         return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
       }
       if (ss?.found) return res.json({ status: cached?.delivery_status || '', awb, message: 'No events yet.' });
-      shipsagarPushShipment({ awb, courierCode: courier, orderNo: shopifyId }).catch(() => {});
+      { const soData = await shopifyREST(`/orders/${shopifyId}.json?fields=name,email,shipping_address`).catch(() => null); const so = soData?.order || {}; shipsagarPushShipment({ awb, courierCode: courier, orderNo: so.name || shopifyId, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {}); }
       return res.json({ status: cached?.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
     }
 
@@ -5518,6 +5518,8 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
     const now = new Date().toISOString();
     let latestOverallStatus = cached?.delivery_status || '';
     let latestOverallTag = null;
+    const soData2 = await shopifyREST(`/orders/${shopifyId}.json?fields=name,email,shipping_address`).catch(() => null);
+    const so2 = soData2?.order || {};
 
     for (const vs of allVendorStages) {
       const ss = await shipsagarTrackShipment(vs.awb);
@@ -5536,7 +5538,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
       } else if (ss?.found) {
         vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'No events yet.' });
       } else {
-        shipsagarPushShipment({ awb: vs.awb, courierCode: vs.courier || '', orderNo: shopifyId }).catch(() => {});
+        shipsagarPushShipment({ awb: vs.awb, courierCode: vs.courier || '', orderNo: so2.name || shopifyId, customerName: ((so2.shipping_address?.first_name||'') + ' ' + (so2.shipping_address?.last_name||'')).trim(), email: so2.email || '', mobileNo: (so2.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
         vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'Registered — refresh in a moment.' });
       }
     }
@@ -7911,8 +7913,15 @@ app.get("/track/shipment-status", async (req, res) => {
       return res.json({ status: '', awb, message: 'Shipment registered — no events yet. Check back soon.' });
     }
 
-    // Not registered — push it
-    shipsagarPushShipment({ awb, orderNo: shopify_order_id || awb }).catch(() => {});
+    // Not registered — push it (fetch order details for proper orderNo + customer data)
+    if (shopify_order_id) {
+      shopifyREST(`/orders/${shopify_order_id}.json?fields=name,email,shipping_address`).then(soData => {
+        const so = soData?.order || {};
+        shipsagarPushShipment({ awb, orderNo: so.name || shopify_order_id, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
+      }).catch(() => { shipsagarPushShipment({ awb, orderNo: awb }).catch(() => {}); });
+    } else {
+      shipsagarPushShipment({ awb, orderNo: awb }).catch(() => {});
+    }
     return res.json({ status: '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CrosCrow — Vendor Portal</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -74,11 +75,10 @@
       border-radius: 14px; padding: 36px; box-shadow: 0 0 60px var(--green-glow);
     }
     .login-logo {
-      width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 20px;
-      background: linear-gradient(135deg, var(--green), #059669);
+      width: 56px; height: 56px; margin: 0 auto 20px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 18px; font-weight: 800; color: #000;
     }
+    .login-logo img { width: 100%; height: 100%; object-fit: contain; }
     .login-title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-align: center; color: var(--text); margin-bottom: 4px; }
     .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 28px; }
     .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
@@ -118,11 +118,10 @@
       display: flex; align-items: center; gap: 10px;
     }
     .sidebar-logo {
-      width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0;
-      background: linear-gradient(135deg, var(--green), #059669);
+      width: 32px; height: 32px; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 13px; font-weight: 800; color: #000;
     }
+    .sidebar-logo img { width: 100%; height: 100%; object-fit: contain; }
     .sidebar-name { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
     .sidebar-role { font-size: 9px; color: var(--green); letter-spacing: 1px; }
 
@@ -3286,7 +3285,7 @@
     if(!auth) return (
       <div className="login-wrap">
         <div className="login-box">
-          <div className="login-logo">C</div>
+          <div className="login-logo"><img src="/croscrow-logo.png" alt="CrosCrow"/></div>
           <div className="login-title">CROSCROW</div>
           <div className="login-sub">Vendor Portal</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
@@ -3334,7 +3333,7 @@
         {/* Sidebar */}
         <aside className={`sidebar ${sidebarOpen?'mobile-open':''}`}>
           <div className="sidebar-brand">
-            <div className="sidebar-logo">C</div>
+            <div className="sidebar-logo"><img src="/croscrow-logo.png" alt="CrosCrow"/></div>
             <div>
               <div className="sidebar-name">CROSCROW</div>
               <div className="sidebar-role">Vendor Portal</div>
