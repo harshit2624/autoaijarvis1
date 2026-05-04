@@ -3966,6 +3966,8 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     // Save AWB/courier/tracking to order_vendor_stage — ready = tracking submitted, awaiting pickup
     await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'ready', updated_at: new Date().toISOString() });
     auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
+    // Auto-register with ShipSagar for tracking
+    shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: shopifyId }).catch(() => {});
 
     // Send customer shipped email
     const cfg = await getSmtpConfig();
@@ -4024,6 +4026,7 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
         const curStage = ovs?.stage || existing.stage || 'new';
         if (PRE_DISPATCH.includes(curStage)) {
           await OVS.upsert(id, vendor, { stage: 'ready', awb: awb.trim(), courier: courier || '', tracking_url: tracking_url || '', updated_at: now });
+          shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: id }).catch(() => {});
         }
       }
     } catch(e) { console.error('meta awb vendor sync error:', e.message); }
@@ -5276,6 +5279,8 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     if (result?.awb) {
       const sid = String(shopifyOrder.id);
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+      // Auto-register with ShipSagar for tracking
+      shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: ((shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||'')).trim(), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
       // Also create a Shopify partial fulfillment for this vendor's line items
       try {
