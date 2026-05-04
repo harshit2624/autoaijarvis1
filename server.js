@@ -7159,24 +7159,47 @@ async function getShipSagarCreds() {
   return JSON.parse(row.credentials || '{}');
 }
 
-// Map ShipSagar ActionDescription → internal stage
+// Map ShipSagar ActionDescription / CurrentStatus → internal stage
 function shipsagarStatusToStage(desc) {
   if (!desc) return null;
-  const s = desc.toLowerCase();
-  if (s.includes('delivered') && !s.includes('out for'))       return 'delivered';
-  if (s.includes('rto') || (s.includes('return') && s.includes('origin'))) return 'rto';
-  if (s.includes('undelivered') || s.includes('failed delivery')) return 'transit';
-  if (s.includes('out for delivery'))                           return 'transit';
-  if (s.includes('in transit') || s.includes('arrived') || s.includes('facility') || s.includes('hub')) return 'transit';
-  if (s.includes('picked up') || s.includes('pickup') || s.includes('manifested') || s.includes('dispatched')) return 'pickup';
-  if (s.includes('lost') || s.includes('damage'))              return 'rto';
+  const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
+  if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated')) return 'rto';
+  if (s.includes('lost') || s.includes('damage'))               return 'rto';
+  if (s.includes('out for delivery') || s.includes('ofd'))      return 'transit';
+  if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('delivery attempt')) return 'transit';
+  if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting')) return 'transit';
+  if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received')) return 'pickup';
   return null;
+}
+
+// Map our internal courier names to ShipSagar courier codes
+function toShipSagarCourierCode(courier) {
+  const c = (courier || '').toLowerCase();
+  if (c.includes('xpressbees'))                        return 'XPRESSBEES';
+  if (c.includes('delhivery'))                         return 'DELHIVERY';
+  if (c.includes('bluedart') || c.includes('blue dart')) return 'BLUEDART';
+  if (c.includes('dtdc'))                              return 'DTDC';
+  if (c.includes('ecom') || c.includes('ecom express')) return 'ECME';
+  if (c.includes('fedex'))                             return 'FEDEX';
+  if (c.includes('dhl'))                               return 'DHL';
+  if (c.includes('ups'))                               return 'UPS';
+  if (c.includes('aramex'))                            return 'ARAMEX';
+  if (c.includes('india post') || c.includes('indiapost')) return 'INDIAPOST';
+  if (c.includes('shadowfax'))                         return 'SHADOWFAX';
+  if (c.includes('ekart'))                             return 'EKART';
+  if (c.includes('shiprocket'))                        return '';  // aggregator, no single code
+  if (c.includes('shipmozo'))                          return '';
+  return courier.toUpperCase();  // pass through as-is
 }
 
 // Push a single AWB to ShipSagar for tracking
 async function shipsagarPushShipment({ awb, courierCode = '', orderNo = '', customerName = '', email = '', mobileNo = '' }) {
   const creds = await getShipSagarCreds();
   if (!creds?.api_key) return { ok: false, reason: 'ShipSagar not configured' };
+  // ShipSagar requires EmailID, MobileNo, ShipmentType — use fallbacks if not provided
+  const adminEmail = creds.admin_email || 'harshitvj24@gmail.com';
+  const adminPhone = (creds.admin_phone || mobileNo || '9999999999').replace(/\D/g,'').slice(-10);
   try {
     const res = await fetch('https://app.shipsagar.com/api/Web/PushShipment', {
       method: 'POST',
@@ -7184,17 +7207,18 @@ async function shipsagarPushShipment({ awb, courierCode = '', orderNo = '', cust
       body: JSON.stringify({
         Token:        creds.api_key,
         ClientCode:   creds.client_code,
-        CourierCode:  courierCode || '',
+        CourierCode:  toShipSagarCourierCode(courierCode),
         TrackingNo:   awb,
         OrderNo:      orderNo || awb,
-        CustomerName: customerName || '',
-        EmailID:      email || '',
-        MobileNo:     mobileNo || '',
-        ShipmentType: '',
+        CustomerName: customerName || 'Customer',
+        EmailID:      email || adminEmail,
+        MobileNo:     mobileNo || adminPhone,
+        ShipmentType: 'surface',
         CountryName:  'India',
         CompanyName:  'CrosCrow',
       }),
     }).then(r => r.json());
+    console.log(`📦 ShipSagar push AWB ${awb}: ${res.status} — ${res.message}`);
     return { ok: res.status?.toLowerCase() === 'success', response: res };
   } catch(e) { return { ok: false, reason: e.message }; }
 }
@@ -7211,8 +7235,28 @@ async function shipsagarTrackShipment(awb) {
       body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code, TrackingNo: awb }),
     }).then(r => r.json());
     if (res.status?.toUpperCase() !== 'SUCCESS') return { found: false };
-    const detail = res.TrackingDetails?.[0] || null;
-    return { found: true, detail, history: detail?.TrackingHistory || [] };
+
+    // ShipSagar returns trackingDetails as a double-encoded JSON string
+    // e.g. trackingDetails: "\"{ ... }\""  OR TrackingDetails: [...]
+    let detail = null;
+    if (res.TrackingDetails?.[0]) {
+      detail = res.TrackingDetails[0];
+    } else if (res.trackingDetails) {
+      try {
+        let raw = res.trackingDetails;
+        // Unwrap double encoding: might be "\"{ json }\"" or "{ json }"
+        if (typeof raw === 'string') {
+          raw = raw.trim();
+          if (raw.startsWith('"')) raw = JSON.parse(raw); // unwrap outer quotes
+          if (typeof raw === 'string') raw = JSON.parse(raw); // parse inner JSON
+          detail = raw;
+        }
+      } catch { detail = null; }
+    }
+
+    if (!detail) return { found: false };
+    const history = detail.TrackingHistory || [];
+    return { found: true, detail, history, currentStatus: detail.CurrentStatus || '' };
   } catch { return { found: false }; }
 }
 
@@ -7289,10 +7333,8 @@ app.get("/admin/shipsagar/debug", adminAuth, async (req, res) => {
     }).then(r => r.json());
 
     // Also try push to see if it registers
-    const pushRes = await fetch('https://app.shipsagar.com/api/Web/PushShipment', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code, TrackingNo: awb, OrderNo: awb, CourierCode: '', CustomerName: 'Test', EmailID: '', MobileNo: '', ShipmentType: '', CountryName: 'India', CompanyName: 'CrosCrow' }),
-    }).then(r => r.json());
+    const { courier } = req.query;
+    const pushRes = await shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: awb });
 
     res.json({ awb, track: trackRes, push: pushRes });
   } catch(e) { res.status(500).json({ error: e.message }); }
