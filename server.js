@@ -272,7 +272,7 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
-const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','delivered','rto','cancelled'];
+const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled'];
 const TERMINAL_STAGES = ['rto','cancelled']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
   const aTerm = TERMINAL_STAGES.includes(a);
@@ -2406,7 +2406,7 @@ async function runJarvisTool(name, args, reqCache) {
 
   // ── get_dispatch_rate ─────────────────────────────────────────────────────
   if (name === "get_dispatch_rate") {
-    const DISPATCHED_STAGES = ['ready','pickup','transit','delivered','rto','cancelled'];
+    const DISPATCHED_STAGES = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
     const os = filterByPeriod(allOrders, args.period||"all");
     const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,_id:0}}).toArray();
     const vsMap = {};
@@ -7043,7 +7043,7 @@ function delhiveryStatusToStage(status) {
   const s = status.toLowerCase();
   if (s.includes('delivered'))                          return 'delivered';
   if (s.includes('rto') || s.includes('return'))        return 'rto';
-  if (s.includes('out for delivery') || s.includes('out_for_delivery')) return 'transit';
+  if (s.includes('out for delivery') || s.includes('out_for_delivery')) return 'ofd';
   if (s.includes('in transit') || s.includes('in_transit') || s.includes('transit')) return 'transit';
   if (s.includes('picked up') || s.includes('pickup') || s.includes('manifested')) return 'pickup';
   if (s.includes('lost') || s.includes('damage'))       return 'rto';
@@ -7166,7 +7166,7 @@ const SS_STATUS_TAG_MAP = [
   { match: ['successfully delivered'],                                    tag: '✅ Delivered' },
   { match: ['rto', 'return to origin', 'return initiated'],              tag: '🔄 RTO' },
   { match: ['lost', 'damage'],                                           tag: '⚠️ Lost/Damaged' },
-  { match: ['out for delivery', 'ofd'],                                  tag: '🛵 Out for Delivery' },
+  { match: ['out for delivery', 'ofd'],                                  tag: '🛵 Out for Delivery' },  // → maps to 'ofd' stage
   { match: ['undelivered', 'failed delivery', 'delivery attempt', 'not delivered'], tag: '❌ Delivery Attempted' },
   { match: ['pickdone', 'pick done', 'picked up', 'pickup done'],        tag: '📦 Picked Up' },
   { match: ['manifested', 'shipment booked', 'dispatched'],              tag: '📋 Manifested' },
@@ -7216,7 +7216,7 @@ function shipsagarStatusToStage(desc) {
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated')) return 'rto';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
-  if (s.includes('out for delivery') || s.includes('ofd'))      return 'transit';
+  if (s.includes('out for delivery') || s.includes('ofd'))      return 'ofd';
   if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('delivery attempt')) return 'transit';
   if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting')) return 'transit';
   if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received')) return 'pickup';

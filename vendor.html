@@ -744,8 +744,8 @@
     return <span className={`badge b-${s}`}><span className="bdot"/>{SLABEL[s]||status.toUpperCase()}</span>;
   }
 
-  const STAGE_COLOR = { new:'#6366f1', confirmed:'#10b981', partial:'#f59e0b', ready:'#06b6d4', pickup:'#8b5cf6', transit:'#3b82f6', delivered:'#10b981', rto:'#ef4444', hold:'#f97316', cancelled:'#6b7280' };
-  const STAGE_BG    = { new:'#1a1a3a', confirmed:'#052e16', partial:'#1c1208', ready:'#0a2030', pickup:'#1a0a3a', transit:'#0a1a3a', delivered:'#052e16', rto:'#2d0a0a', hold:'#1c0f00', cancelled:'#111' };
+  const STAGE_COLOR = { new:'#6366f1', confirmed:'#10b981', partial:'#f59e0b', ready:'#06b6d4', pickup:'#8b5cf6', transit:'#3b82f6', ofd:'#f97316', delivered:'#10b981', rto:'#ef4444', hold:'#a855f7', cancelled:'#6b7280' };
+  const STAGE_BG    = { new:'#1a1a3a', confirmed:'#052e16', partial:'#1c1208', ready:'#0a2030', pickup:'#1a0a3a', transit:'#0a1a3a', ofd:'#1c0f00', delivered:'#052e16', rto:'#2d0a0a', hold:'#1a0a3a', cancelled:'#111' };
 
   function SuperHoldBadge() {
     return (

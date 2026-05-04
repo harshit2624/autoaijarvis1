@@ -147,6 +147,7 @@
     .stage-ready     { background:#f0f0ff; color:#4433cc; border:1px solid #d8d4ff; }
     .stage-pickup    { background:#f0f0ff; color:#4433cc; border:1px solid #d8d4ff; }
     .stage-transit   { background:#e8f4ff; color:#0055cc; border:1px solid #bbd8ff; }
+    .stage-ofd       { background:#fff4e6; color:#b45309; border:1px solid #fcd6a0; }
     .stage-delivered { background:#e8fff4; color:#007a3a; border:1px solid #9fedd0; }
     .stage-rto       { background:var(--red-bg); color:var(--red); border:1px solid var(--red-border); }
     .stage-cancelled { background:#f7f7f7; color:#999; border:1px solid #e5e5e5; }
@@ -314,23 +315,29 @@
 
   const API = window.location.origin;
 
-  const STAGE_STEPS = ['confirmed','ready','pickup','transit','delivered'];
-  const STAGE_LABELS = { new:'New', confirmed:'Confirmed', partial:'Partial', hold:'On Hold', ready:'Packed', pickup:'Picked Up', transit:'In Transit', delivered:'Delivered', rto:'Returned', cancelled:'Cancelled' };
+  const STAGE_STEPS = ['confirmed','ready','pickup','transit','ofd','delivered'];
+  const STAGE_LABELS = { new:'New', confirmed:'Confirmed', partial:'Partial', hold:'On Hold', ready:'Packed', pickup:'Picked Up', transit:'In Transit', ofd:'Out for Delivery', delivered:'Delivered', rto:'Returned', cancelled:'Cancelled' };
 
   function stagePillClass(stage) {
-    const map = { new:'stage-new', confirmed:'stage-confirmed', partial:'stage-partial', hold:'stage-hold', ready:'stage-ready', pickup:'stage-pickup', transit:'stage-transit', delivered:'stage-delivered', rto:'stage-rto', cancelled:'stage-cancelled' };
+    const map = { new:'stage-new', confirmed:'stage-confirmed', partial:'stage-partial', hold:'stage-hold', ready:'stage-ready', pickup:'stage-pickup', transit:'stage-transit', ofd:'stage-ofd', delivered:'stage-delivered', rto:'stage-rto', cancelled:'stage-cancelled' };
     return 'stage-pill ' + (map[stage] || 'stage-new');
   }
 
   function StageProgress({ stage }) {
-    const idx = STAGE_STEPS.indexOf(stage);
+    const isRto = stage === 'rto';
+    const idx = isRto ? STAGE_STEPS.indexOf('transit') : STAGE_STEPS.indexOf(stage);
     return (
       <div className="stage-bar">
         <div className="stage-bar-label">Delivery Progress</div>
+        {isRto && (
+          <div style={{marginBottom:10,padding:'7px 12px',borderRadius:8,background:'#fff0f0',border:'1px solid #ffb3b3',color:'#cc0000',fontSize:12,fontWeight:600}}>
+            🔄 Shipment is being returned to origin
+          </div>
+        )}
         <div className="stage-steps">
           {STAGE_STEPS.map((s, i) => {
-            const done = idx > i || (idx === -1 && stage === 'delivered');
-            const active = idx === i;
+            const done = isRto ? i < idx : (idx > i);
+            const active = isRto ? false : (idx === i);
             const isLast = i === STAGE_STEPS.length - 1;
             return (
               <React.Fragment key={s}>
