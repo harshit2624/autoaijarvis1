@@ -324,23 +324,47 @@
     return 'stage-pill ' + (map[stage] || 'stage-new');
   }
 
-  function VendorShipmentCard({ vs, shopifyOrderId, index, total, singleVendor }) {
+  function VendorShipmentCard({ vs, shopifyOrderId, index, total, singleVendor, onOrderRefresh }) {
     const [shipment, setShipment] = React.useState(vs);
     const [refreshing, setRefreshing] = React.useState(false);
     const [msg, setMsg] = React.useState('');
 
+    React.useEffect(() => { setShipment(vs); }, [vs]);
+
     const refresh = async () => {
-      if (!shipment.awb) return;
       setRefreshing(true); setMsg('');
       try {
-        const params = new URLSearchParams({ awb: shipment.awb, shopify_order_id: shopifyOrderId, vendor_name: shipment.vendor_name });
-        const r = await fetch(`${API}/track/shipment-status?${params}`);
-        const d = await r.json();
-        if (d.stage || d.status) {
-          setShipment(prev => ({ ...prev, stage: d.stage || prev.stage, awb_status: d.status, history: d.history, tag: d.tag }));
+        if (shipment.awb) {
+          // AWB known — track it via ShipSagar
+          const params = new URLSearchParams({ awb: shipment.awb, shopify_order_id: shopifyOrderId, vendor_name: shipment.vendor_name });
+          const r = await fetch(`${API}/track/shipment-status?${params}`);
+          const d = await r.json();
+          if (d.stage || d.status) {
+            setShipment(prev => ({ ...prev, stage: d.stage || prev.stage, awb_status: d.status, history: d.history, tag: d.tag }));
+          }
+          if (d.message) setMsg(d.message);
+        } else {
+          // No AWB yet — re-fetch the order to check if it's been fulfilled since last load
+          if (!shopifyOrderId) { setMsg('Awaiting shipment update from CrosCrow.'); setRefreshing(false); return; }
+          const r = await fetch(`${API}/track/order-by-id?id=${shopifyOrderId}`);
+          const d = await r.json();
+          if (d.vendor_shipments?.length) {
+            const updated = d.vendor_shipments.find(s => s.vendor_name === shipment.vendor_name);
+            if (updated?.awb) {
+              setShipment(prev => ({ ...prev, ...updated }));
+              setMsg('Shipment found! Tracking activated.');
+            } else {
+              setMsg('Not yet dispatched — check back soon.');
+            }
+          } else if (d.awb) {
+            setShipment(prev => ({ ...prev, awb: d.awb, courier: d.courier, stage: d.stage || prev.stage }));
+            setMsg('Shipment found! Tracking activated.');
+          } else {
+            setMsg('Not yet dispatched — check back soon.');
+          }
+          if (onOrderRefresh) onOrderRefresh(d);
         }
-        if (d.message) setMsg(d.message);
-      } catch {}
+      } catch { setMsg('Could not reach CrosCrow — try again.'); }
       setRefreshing(false);
     };
 
@@ -350,12 +374,10 @@
           {!singleVendor && <div style={{fontSize:12, fontWeight:700, color:'#002eff'}}>📦 Shipment {index+1} — {shipment.vendor_name}</div>}
           <div style={{display:'flex', alignItems:'center', gap:8, marginLeft: singleVendor ? 'auto' : 0}}>
             {singleVendor && <div className={stagePillClass(shipment.stage)} style={{fontSize:10}}>{STAGE_LABELS[shipment.stage] || shipment.stage}</div>}
-            {shipment.awb && (
-              <button onClick={refresh} disabled={refreshing}
-                style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'3px 8px',display:'flex',alignItems:'center',gap:3}}>
-                {refreshing ? '…' : '↻ Refresh'}
-              </button>
-            )}
+            <button onClick={refresh} disabled={refreshing}
+              style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'3px 8px',display:'flex',alignItems:'center',gap:3}}>
+              {refreshing ? '…' : '↻ Refresh'}
+            </button>
           </div>
         </div>
         <StageProgress stage={shipment.stage}/>
