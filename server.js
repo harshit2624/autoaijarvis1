@@ -15,11 +15,26 @@
 const express    = require("express");
 const cors       = require("cors");
 const crypto     = require("crypto");
+const path       = require("path");
+const fs         = require("fs");
 const fetch      = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 const nodemailer = require("nodemailer");
+const multer     = require("multer");
 const { MongoClient } = require("mongodb");
 const { google }     = require("googleapis");
 require("dotenv").config();
+
+// ── Multer — ads image uploads ─────────────────────────────────────────────
+const adsUploadDir = path.join(__dirname, 'ads-uploads');
+if (!fs.existsSync(adsUploadDir)) fs.mkdirSync(adsUploadDir, { recursive: true });
+const adsStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, adsUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `ad_${Date.now()}${ext}`);
+  },
+});
+const adsUpload = multer({ storage: adsStorage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ── MongoDB connection ─────────────────────────────────────────────────────
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sicos2725:Harshit4321@cluster27.i8cmlu4.mongodb.net/jarvis?appName=Cluster27";
@@ -110,6 +125,15 @@ const ES = {
   },
   async save(fields) {
     await mdb.collection('email_settings').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
+  },
+};
+
+const EA = {
+  async get() {
+    return (await mdb.collection('email_ads').findOne({}, { projection: { _id: 0 } })) || { enabled: false, headline: 'Shop More at CrosCrow', products: [] };
+  },
+  async save(fields) {
+    await mdb.collection('email_ads').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
   },
 };
 
@@ -238,6 +262,7 @@ const OP = {
 const app = express();
 
 app.use(express.static('.'));
+app.use('/ads-uploads', express.static(adsUploadDir));
 
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
@@ -852,10 +877,11 @@ app.post("/webhooks/orders", (req, res) => {
           setTimeout(async () => {
             try {
               const enriched = await enrichOrderImages(payload);
+              const adsStrip = await getEmailAdsStrip();
               await sendEmail({
                 to: payload.email,
                 subject: `Your Order ${payload.name} — Please Confirm on WhatsApp`,
-                html: templateNewOrderCustomerSky({ order: enriched }),
+                html: templateNewOrderCustomerSky({ order: enriched, adsStrip }),
                 shopifyId: sid, trigger: 'new_order_customer',
               });
             } catch (e) { console.error('Delayed new_order_customer email error:', e.message); }
@@ -1338,22 +1364,108 @@ async function sendRREmail(type, rr) {
   } catch (e) { console.error('RR email error:', e.message); }
 }
 
-function templateOrderConfirmedCustomer({ order }) {
+function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
   const isPrepaid = order.financial_status === 'paid';
-  const body = `
-    <div class="subtitle">Your order has been confirmed and is being prepared.</div>
-    ${isPrepaid ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">✅ PREPAID ORDER — No payment due on delivery</div>` : ''}
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
-      <div class="info-row"><span class="info-label">Payment Mode</span><span class="info-val">${isPrepaid ? '✅ Prepaid (Paid Online)' : '💵 Cash on Delivery'}</span></div>
-      <div class="info-row"><span class="info-label">Order Total</span><span class="info-val" style="color:#10b981;font-size:16px;font-weight:800">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
-      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address.name}, ${order.shipping_address.city}, ${order.shipping_address.province} ${order.shipping_address.zip}</span></div>` : ''}
+  const addr  = order.shipping_address;
+  const items = order.line_items || [];
+  const total = parseFloat(order.total_price || 0);
+  const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">60+ BRANDS &nbsp;|&nbsp; ONE STOP</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">ORDER<br>CONFIRMED.</div>
     </div>
-    ${itemsTableHtml(order.line_items || [])}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">We'll notify you once your order is shipped. Thank you for shopping with CrosCrow!</p>
-  `;
-  return emailBase(`Order Confirmed: ${order.name}`, '#10b981', body);
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#161616;padding:32px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is confirmed and being prepared. We'll notify you as soon as it ships.</div>
+    </div>
+
+    ${isPrepaid ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1520;border:1px solid #1a3a6a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:18px 24px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#7eb8f7;text-transform:uppercase;margin-bottom:6px;">Prepaid — All Set</div>
+        <div style="font-size:13px;color:#aaa;">Payment received. No action needed — sit back and relax.</div>
+      </td></tr>
+    </table>` : `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#1a1200;border:1px solid #3a2a00;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:18px 24px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#c9922a;text-transform:uppercase;margin-bottom:6px;">Cash on Delivery</div>
+        <div style="font-size:13px;color:#888;">Please keep <strong style="color:#e8a818;">&#8377;${total.toFixed(2)}</strong> ready at the time of delivery.</div>
+      </td></tr>
+    </table>`}
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;margin-top:8px;">Your Items</div>
+
+    ${items.map(li => {
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
+      <tr>
+        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
+        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+
+    ${addr ? `
+    <div style="margin-bottom:24px;margin-top:4px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Shipping To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}<br>
+        ${addr.phone ? `<span style="color:#555;font-size:12px;">${addr.phone}</span>` : ''}
+      </div>
+    </div>` : ''}
+  </div>
+
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
 }
 
 function itemsTableHtml(lineItems, showVendor = false) {
@@ -1386,7 +1498,7 @@ function itemsTableHtml(lineItems, showVendor = false) {
 const WA_ICON = `<svg width="36" height="36" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="20" fill="#25d366"/><path d="M28.5 11.5C26.3 9.3 23.3 8 20 8C13.4 8 8 13.4 8 20C8 22.1 8.6 24.1 9.6 25.9L8 32L14.3 30.4C16 31.3 17.9 31.8 20 31.8C26.6 31.8 32 26.4 32 19.8C32 16.6 30.7 13.7 28.5 11.5ZM20 29.8C18.1 29.8 16.3 29.3 14.7 28.4L14.3 28.2L10.7 29.1L11.6 25.6L11.4 25.2C10.4 23.5 9.9 21.8 9.9 19.9C9.9 14.4 14.4 9.9 20 9.9C22.7 9.9 25.2 10.9 27.1 12.8C29 14.7 30 17.2 30 19.9C30 25.5 25.5 29.8 20 29.8ZM25.4 22.5C25.1 22.4 23.6 21.6 23.3 21.5C23 21.4 22.8 21.4 22.6 21.7C22.4 22 21.8 22.7 21.6 22.9C21.4 23.1 21.3 23.1 21 23C19.1 22 17.9 21.3 16.6 19.1C16.3 18.6 16.9 18.6 17.4 17.6C17.5 17.4 17.4 17.2 17.4 17C17.3 16.8 16.7 15.3 16.4 14.7C16.2 14.1 15.9 14.2 15.7 14.2C15.5 14.2 15.3 14.2 15.1 14.2C14.9 14.2 14.5 14.3 14.2 14.6C13.9 14.9 13.1 15.7 13.1 17.2C13.1 18.7 14.2 20.1 14.4 20.3C14.6 20.5 16.7 23.7 19.9 25C22 25.9 22.8 25.9 23.8 25.8C24.4 25.7 25.7 25 26 24.2C26.3 23.4 26.3 22.8 26.2 22.6C26.1 22.6 25.7 22.6 25.4 22.5Z" fill="white"/></svg>`;
 
 // ── Sky-theme new order template (preview/test version) ───────────────────
-function templateNewOrderCustomerSky({ order }) {
+function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
   const isPrepaid = order.financial_status === 'paid';
   const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
   const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
@@ -1509,6 +1621,7 @@ function templateNewOrderCustomerSky({ order }) {
   </div>
 
   <!-- FOOTER -->
+  ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
     <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
@@ -1733,20 +1846,239 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
 }
 
-function templateInTransit({ order, awb, courier }) {
-  const body = `
-    <div class="subtitle">Your order is on its way!</div>
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier || 'Our delivery partner'}</span></div>
-      ${awb ? `<div class="info-row"><span class="info-label">Tracking AWB</span><span class="info-val" style="font-family:monospace;color:#6366f1">${awb}</span></div>` : ''}
-      <div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address?.city || ''}, ${order.shipping_address?.province || ''}</span></div>
+function templateInTransit({ order, awb, courier, adsStrip = '' }) {
+  const addr  = order.shipping_address;
+  const items = order.line_items || [];
+  const total = parseFloat(order.total_price || 0);
+  const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">SHIPPED &nbsp;|&nbsp; ON THE MOVE</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS ON ITS WAY.</div>
     </div>
-    ${itemsTableHtml(order.line_items || [])}
-    ${awb && courier ? `<div style="text-align:center"><a class="cta" href="https://www.${(courier||'').toLowerCase().includes('delhivery') ? `delhivery.com/track/package/${awb}` : `shiprocket.co/tracking/${awb}`}">Track Your Order →</a></div>` : ''}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Estimated delivery in 3–7 business days. You'll receive another update once it's delivered.</p>
-  `;
-  return emailBase(`Your Order is Shipped! 🚚`, '#6366f1', body);
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#161616;padding:32px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has left the facility and is on its way to you. Estimated delivery in 3–7 business days.</div>
+    </div>
+
+    ${awb ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:24px;">
+      <tr>
+        <td style="padding:14px 20px;">
+          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Courier</div>
+          <div style="font-size:13px;font-weight:700;color:#ccc;">${courier || 'Delivery Partner'}</div>
+        </td>
+        <td style="padding:14px 20px;text-align:right;">
+          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Tracking AWB</div>
+          <div style="font-size:13px;font-weight:700;color:#7eb8f7;font-family:monospace;">${awb}</div>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
+
+    ${items.map(li => {
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
+      <tr>
+        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
+        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+
+    ${addr ? `
+    <div style="margin-bottom:8px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Delivering To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}
+      </div>
+    </div>` : ''}
+  </div>
+
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
+function templateOfd({ order, awb, courier, adsStrip = '' }) {
+  const addr  = order.shipping_address;
+  const items = order.line_items || [];
+  const total = parseFloat(order.total_price || 0);
+  const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <!-- HERO IMAGE -->
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">OUT FOR DELIVERY &nbsp;|&nbsp; TODAY</div>
+      <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">GET READY TO<br>DRIP HARD TODAY.</div>
+    </div>
+  </div>
+
+  <!-- ORDER ID BAR -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- BODY -->
+  <div style="background:#161616;padding:32px;">
+
+    <!-- Greeting -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is out for delivery. Our delivery partner is on the way — keep your phone nearby!</div>
+    </div>
+
+    <!-- Delivery banner -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1520;border:1px solid #1a3a6a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:20px 24px;text-align:center;">
+        <div style="font-size:36px;margin-bottom:8px;">🛵</div>
+        <div style="font-size:16px;font-weight:800;color:#7eb8f7;letter-spacing:1px;margin-bottom:4px;">Your order is on the way!</div>
+        <div style="font-size:12px;color:#666;">Expected delivery: <strong style="color:#aaa;">Today</strong></div>
+      </td></tr>
+    </table>
+
+    <!-- AWB info -->
+    ${awb ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:24px;">
+      <tr>
+        <td style="padding:14px 20px;">
+          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Courier</div>
+          <div style="font-size:13px;font-weight:700;color:#ccc;">${courier || 'Delivery Partner'}</div>
+        </td>
+        <td style="padding:14px 20px;text-align:right;">
+          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Tracking AWB</div>
+          <div style="font-size:13px;font-weight:700;color:#7eb8f7;font-family:monospace;">${awb}</div>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    <!-- Divider label -->
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
+
+    <!-- Items -->
+    ${items.map(li => {
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    <!-- Total -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
+      <tr>
+        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
+        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+
+    <!-- Deliver to -->
+    ${addr ? `
+    <div style="margin-bottom:24px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Delivering To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}<br>
+        ${addr.phone ? `<span style="color:#555;font-size:12px;">${addr.phone}</span>` : ''}
+      </div>
+    </div>` : ''}
+
+    <!-- Payment reminder -->
+    ${order.financial_status !== 'paid' ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#1a1200;border:1px solid #3a2a00;border-radius:8px;margin-bottom:8px;">
+      <tr><td style="padding:16px 20px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#c9922a;text-transform:uppercase;margin-bottom:6px;">COD — Keep Cash Ready</div>
+        <div style="font-size:13px;color:#888;">Please keep <strong style="color:#e8a818;">&#8377;${total.toFixed(2)}</strong> ready to hand to the delivery person.</div>
+      </td></tr>
+    </table>` : ''}
+
+  </div>
+
+  <!-- FOOTER -->
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
 }
 
 function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl }) {
@@ -1773,27 +2105,112 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
   return emailBase(`Your Items Have Shipped! 🚚`, '#6366f1', body);
 }
 
-function templateDelivered({ order, forRole = 'customer' }) {
-  const titles = { customer: '🎉 Order Delivered!', vendor: `Order Delivered: ${order.name}`, admin: `Delivered: ${order.name}` };
-  const subtitles = {
-    customer: 'Your order has been successfully delivered.',
-    vendor: 'This order has been marked as delivered.',
-    admin: `Order ${order.name} has been delivered to the customer.`,
-  };
-  const body = `
-    <div class="subtitle">${subtitles[forRole]}</div>
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${order.shipping_address?.name || order.email}</span></div>
-      <div class="info-row"><span class="info-label">Total</span><span class="info-val">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
-      <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${order.financial_status === 'paid' ? '✅ Prepaid' : '💵 COD'}</span></div>
-      ${order.shipping_address ? `<div class="info-row"><span class="info-label">Delivered To</span><span class="info-val">${order.shipping_address.city}, ${order.shipping_address.province}</span></div>` : ''}
+function templateDelivered({ order, forRole = 'customer', adsStrip = '' }) {
+  // Vendor and admin use the compact emailBase theme
+  if (forRole !== 'customer') {
+    const titles = { vendor: `Order Delivered: ${order.name}`, admin: `Delivered: ${order.name}` };
+    const subtitles = { vendor: 'This order has been marked as delivered.', admin: `Order ${order.name} has been delivered to the customer.` };
+    const body = `
+      <div class="subtitle">${subtitles[forRole]}</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
+        <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${order.shipping_address?.name || order.email}</span></div>
+        <div class="info-row"><span class="info-label">Total</span><span class="info-val">₹${parseFloat(order.total_price).toFixed(2)}</span></div>
+        <div class="info-row"><span class="info-label">Payment</span><span class="info-val">${order.financial_status === 'paid' ? '✅ Prepaid' : '💵 COD'}</span></div>
+        ${order.shipping_address ? `<div class="info-row"><span class="info-label">Delivered To</span><span class="info-val">${order.shipping_address.city}, ${order.shipping_address.province}</span></div>` : ''}
+      </div>
+      ${itemsTableHtml(order.line_items || [])}
+      ${forRole === 'vendor' ? `<div style="text-align:center;margin-top:16px;"><a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a></div>` : ''}
+    `;
+    return emailBase(titles[forRole], '#10b981', body);
+  }
+
+  // Customer — sky dark theme
+  const addr  = order.shipping_address;
+  const items = order.line_items || [];
+  const total = parseFloat(order.total_price || 0);
+  const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">DELIVERED &nbsp;|&nbsp; THANK YOU</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
     </div>
-    ${itemsTableHtml(order.line_items || [])}
-    ${forRole === 'customer' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">We hope you love your purchase! If you have any issues, please contact us.</p>` : ''}
-    ${forRole === 'vendor' ? `<div style="text-align:center;margin-top:16px;"><a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a></div>` : ''}
-  `;
-  return emailBase(titles[forRole], '#10b981', body);
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#161616;padding:32px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has been delivered! We hope you love your new pieces. Rock it. 🖤</div>
+    </div>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a1a0a;border:1px solid #1a4a1a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:20px 24px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">🎉</div>
+        <div style="font-size:15px;font-weight:800;color:#34d399;letter-spacing:1px;">Order Delivered Successfully</div>
+        ${addr ? `<div style="font-size:12px;color:#555;margin-top:4px;">${addr.city}, ${addr.province}</div>` : ''}
+      </td></tr>
+    </table>
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
+
+    ${items.map(li => {
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 8px;background:#0f0f0f;border-radius:6px;">
+      <tr>
+        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
+        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+
+    <p style="font-size:12px;color:#555;margin-top:16px;text-align:center;line-height:1.7;">If you have any issues with your order, just reply to this email or reach us on WhatsApp.</p>
+  </div>
+
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
 }
 
 function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
@@ -1845,57 +2262,118 @@ function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
   return emailBase(`Advance Collected: ${order.name} — Updated COD`, '#f59e0b', body);
 }
 
-function templatePartialAdvanceCustomer({ order, meta = {} }) {
+function templatePartialAdvanceCustomer({ order, meta = {}, adsStrip = '' }) {
   const allItems  = order.line_items || [];
   const subTotal  = allItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
   const shipping  = parseFloat(order.total_shipping_price_set?.shop_money?.amount || (order.shipping_lines||[]).reduce((s,l)=>s+parseFloat(l.price||0),0));
   const advance   = parseFloat(meta.advance_paid || 0);
   const remaining = Math.max(0, subTotal + shipping - advance);
   const addr      = order.shipping_address;
+  const total     = parseFloat(order.total_price || 0);
+  const IMG       = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO      = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
 
-  const body = `
-    <!-- Hero drip -->
-    <div style="text-align:center;padding:8px 0 24px">
-      <div style="font-size:40px;margin-bottom:8px">🎉</div>
-      <div style="font-size:22px;font-weight:800;color:#f8fafc;letter-spacing:-0.5px">You're almost there!</div>
-      <div style="font-size:14px;color:#94a3b8;margin-top:6px;">Your advance payment has been received. Your order <strong style="color:#a5b4fc">${order.name}</strong> is confirmed and being prepared.</div>
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">ADVANCE RECEIVED &nbsp;|&nbsp; ORDER SECURED</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOU'RE<br>LOCKED IN.</div>
+    </div>
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Advance Paid</div>
+        <div style="font-size:20px;font-weight:900;color:#34d399;letter-spacing:1px;">&#8377;${advance.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#161616;padding:32px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your advance payment has been received and your order is confirmed. We're preparing your items now.</div>
     </div>
 
     <!-- Advance badge -->
-    <div style="background:linear-gradient(135deg,#10b981 0%,#059669 100%);border-radius:12px;padding:18px 24px;margin-bottom:20px;text-align:center;">
-      <div style="font-size:11px;font-weight:700;color:#d1fae5;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">✅ Advance Received</div>
-      <div style="font-size:32px;font-weight:800;color:#fff;">₹${advance.toFixed(2)}</div>
-      <div style="font-size:12px;color:#a7f3d0;margin-top:4px;">Thank you for paying in advance — your order is secured!</div>
-    </div>
-
-    <!-- Delivery info -->
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#a5b4fc;font-weight:700">${order.name}</span></div>
-      ${addr ? `<div class="info-row"><span class="info-label">Delivering To</span><span class="info-val">${addr.name ? addr.name+', ':''} ${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city} ${addr.zip}</span></div>` : ''}
-      ${addr?.phone ? `<div class="info-row"><span class="info-label">Contact</span><span class="info-val">${addr.phone}</span></div>` : ''}
-    </div>
-
-    ${itemsTableHtml(allItems)}
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a1a0a;border:1px solid #1a4a1a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:20px 24px;text-align:center;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#34d399;text-transform:uppercase;margin-bottom:8px;">✅ Advance Received</div>
+        <div style="font-size:32px;font-weight:900;color:#ffffff;">&#8377;${advance.toFixed(2)}</div>
+        <div style="font-size:12px;color:#555;margin-top:4px;">Your order is secured. Sit tight!</div>
+      </td></tr>
+    </table>
 
     <!-- Amount breakdown -->
-    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;">
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#e2e8f0">₹${subTotal.toFixed(2)}</td></tr>
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #1e293b">Shipping</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #1e293b;font-weight:600;color:#e2e8f0">₹${shipping.toFixed(2)}</td></tr>
-      <tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #1e293b">✅ Advance Paid</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #1e293b;font-weight:700;color:#10b981">− ₹${advance.toFixed(2)}</td></tr>
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Amount Breakdown</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+      <tr><td style="padding:10px 0;font-size:13px;color:#666;border-bottom:1px solid #1e1e1e;">Items Subtotal</td><td style="padding:10px 0;text-align:right;font-size:13px;font-weight:600;color:#aaa;border-bottom:1px solid #1e1e1e;">&#8377;${subTotal.toFixed(2)}</td></tr>
+      <tr><td style="padding:10px 0;font-size:13px;color:#666;border-bottom:1px solid #1e1e1e;">Shipping</td><td style="padding:10px 0;text-align:right;font-size:13px;font-weight:600;color:#aaa;border-bottom:1px solid #1e1e1e;">&#8377;${shipping.toFixed(2)}</td></tr>
+      <tr><td style="padding:10px 0;font-size:13px;color:#34d399;border-bottom:1px solid #1e1e1e;">✅ Advance Paid</td><td style="padding:10px 0;text-align:right;font-size:13px;font-weight:700;color:#34d399;border-bottom:1px solid #1e1e1e;">− &#8377;${advance.toFixed(2)}</td></tr>
       ${remaining > 0
-        ? `<tr style="background:#fffbeb"><td style="padding:12px 10px;font-weight:800;font-size:14px;color:#92400e;border-radius:6px 0 0 6px">💵 Pay on Delivery</td><td style="text-align:right;padding:12px 10px;font-weight:800;font-size:20px;color:#b45309;border-radius:0 6px 6px 0">₹${remaining.toFixed(2)}</td></tr>`
-        : `<tr style="background:#f0fdf4"><td style="padding:12px 10px;font-weight:800;font-size:14px;color:#065f46;border-radius:6px 0 0 6px">✅ Fully Paid</td><td style="text-align:right;padding:12px 10px;font-weight:800;font-size:20px;color:#059669;border-radius:0 6px 6px 0">₹0.00</td></tr>`
+        ? `<tr style="background:#1a1200;"><td style="padding:14px 12px;font-size:13px;font-weight:800;color:#c9922a;border-radius:6px 0 0 6px;">💵 Pay on Delivery</td><td style="padding:14px 12px;text-align:right;font-size:20px;font-weight:900;color:#e8a818;border-radius:0 6px 6px 0;">&#8377;${remaining.toFixed(2)}</td></tr>`
+        : `<tr style="background:#0a1a0a;"><td style="padding:14px 12px;font-size:13px;font-weight:800;color:#34d399;border-radius:6px 0 0 6px;">✅ Fully Paid</td><td style="padding:14px 12px;text-align:right;font-size:20px;font-weight:900;color:#34d399;border-radius:0 6px 6px 0;">&#8377;0.00</td></tr>`
       }
     </table>
 
     ${remaining > 0 ? `
-    <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#94a3b8;line-height:1.7;text-align:center;">
-      Please keep <strong style="color:#fbbf24">₹${remaining.toFixed(2)}</strong> ready to pay the delivery person when your order arrives. 🚚
-    </div>` : ''}
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#1a1200;border:1px solid #3a2a00;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:16px 20px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#c9922a;text-transform:uppercase;margin-bottom:6px;">Keep Cash Ready</div>
+        <div style="font-size:13px;color:#888;">Please keep <strong style="color:#e8a818;">&#8377;${remaining.toFixed(2)}</strong> ready to hand to the delivery person.</div>
+      </td></tr>
+    </table>` : ''}
 
-    <p style="font-size:13px;color:#64748b;text-align:center;line-height:1.7">Questions? Reply to this email or reach us on WhatsApp anytime.</p>
-  `;
-  return emailBase(`Order Confirmed: ${order.name} — ₹${advance.toFixed(2)} Advance Received 🎉`, '#10b981', body);
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
+
+    ${allItems.map(li => {
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    ${addr ? `
+    <div style="margin-top:20px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Shipping To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}
+      </div>
+    </div>` : ''}
+  </div>
+
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
 }
 
 // ── Send email helper ─────────────────────────────────────────────────────
@@ -1961,8 +2439,10 @@ async function fireStageEmails(shopifyId, newStage) {
     const adminEmail = cfg.adminEmail;
     const customerEmail = order.email;
     const vendors = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+    const adsStrip = await getEmailAdsStrip();
 
     if (newStage === 'confirmed') {
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmedCustomer({ order, adsStrip }), shopifyId, trigger: 'confirmed_customer' });
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
         const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
@@ -1972,14 +2452,12 @@ async function fireStageEmails(shopifyId, newStage) {
 
     if (newStage === 'partial') {
       const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
-      // Customer email
       if (customerEmail) await sendEmail({
         to: customerEmail,
         subject: `Your Advance is Confirmed — ${order.name} 🎉`,
-        html: templatePartialAdvanceCustomer({ order, meta: vendorMeta }),
+        html: templatePartialAdvanceCustomer({ order, meta: vendorMeta, adsStrip }),
         shopifyId, trigger: 'partial_customer'
       });
-      // Vendor emails
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
         if (vendorRow?.email) await sendEmail({
@@ -1992,11 +2470,15 @@ async function fireStageEmails(shopifyId, newStage) {
     }
 
     if (newStage === 'transit') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier }), shopifyId, trigger: 'transit' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, adsStrip }), shopifyId, trigger: 'transit' });
+    }
+
+    if (newStage === 'ofd') {
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Get Ready to Drip Hard Today 🛵 — ${order.name} is Out for Delivery!`, html: templateOfd({ order, awb: meta.awb, courier: meta.courier, adsStrip }), shopifyId, trigger: 'ofd' });
     }
 
     if (newStage === 'delivered') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, forRole: 'customer' }), shopifyId, trigger: 'delivered_customer' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, forRole: 'customer', adsStrip }), shopifyId, trigger: 'delivered_customer' });
       if (adminEmail)    await sendEmail({ to: adminEmail,    subject: `Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'admin' }), shopifyId, trigger: 'delivered_admin' });
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
@@ -4783,7 +5265,7 @@ app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-function buildDemoTemplates(to) {
+function buildDemoTemplates(to, adsStrip = '') {
   const demoOrder = {
     id: 99999, name: '#TEST-001',
     created_at: new Date().toISOString(),
@@ -4809,17 +5291,18 @@ function buildDemoTemplates(to) {
   };
   return {
     vendor_welcome: { subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
-    new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder }) },
-    confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder }) },
+    new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder, adsStrip }) },
+    confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder, adsStrip }) },
     new_order_vendor:   { subject: `New Order Received: ${demoOrder.name}`, html: templateNewOrderVendor({ order: demoOrder, vendorName: 'Demo Vendor' }) },
     confirmed_vendor:   { subject: `Order Confirmed: ${demoOrder.name} — Dispatch Now`, html: templateOrderConfirmedVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
-    partial_customer:   { subject: `[TEST] Your Advance is Confirmed — ${demoOrder.name} 🎉`, html: templatePartialAdvanceCustomer({ order: demoOrder, meta: demoMeta }) },
+    partial_customer:   { subject: `Your Advance is Confirmed — ${demoOrder.name} 🎉`, html: templatePartialAdvanceCustomer({ order: demoOrder, meta: demoMeta, adsStrip }) },
     partial_vendor:     { subject: `[TEST] Advance Collected — Updated COD for ${demoOrder.name}`, html: templatePartialAdvanceVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
-    transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery' }) },
-    delivered_customer: { subject: `[TEST] Order Delivered: ${demoOrder.name} 🎉`, html: templateDelivered({ order: demoOrder, forRole: 'customer' }) },
+    transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery', adsStrip }) },
+    ofd:        { subject: `[TEST] Get Ready to Drip Hard Today 🛵 — ${demoOrder.name} is Out for Delivery!`, html: templateOfd({ order: demoOrder, awb: '1234567890', courier: 'Delhivery', adsStrip }) },
+    delivered_customer: { subject: `[TEST] Order Delivered: ${demoOrder.name} 🎉`, html: templateDelivered({ order: demoOrder, forRole: 'customer', adsStrip }) },
     delivered_vendor:   { subject: `[TEST] Order Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'vendor' }) },
     delivered_admin:    { subject: `[TEST] Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'admin' }) },
-    order_on_hold:      { subject: `[TEST] Your Order ${demoOrder.name} is On Hold — Please Confirm`, html: templateOrderOnHoldCustomer({ order: demoOrder }) },
+    order_on_hold:      { subject: `[TEST] Your Order ${demoOrder.name} is On Hold — Please Confirm`, html: templateOrderOnHoldCustomer({ order: demoOrder, adsStrip }) },
     rr_submitted:       { subject: `Return/Exchange Request Received — ${demoRR.request_id}`, html: templateRRSubmittedCustomer({ req: demoRR }) },
     rr_approved_admin:  { subject: `Return/Exchange Approved — ${demoRR.request_id}`, html: templateRRApprovedCustomer({ req: demoRR }) },
     rr_rejected:        { subject: `Return/Exchange Update — ${demoRR.request_id}`, html: templateRRRejectedCustomer({ req: demoRR }) },
@@ -4835,7 +5318,8 @@ function buildDemoTemplates(to) {
 app.get("/admin/email-settings/preview-template", adminAuth, async (req, res) => {
   const { template } = req.query;
   if (!template) return res.status(400).json({ error: "template required" });
-  const TEMPLATES = buildDemoTemplates('preview@example.com');
+  const adsStrip = await getEmailAdsStrip();
+  const TEMPLATES = buildDemoTemplates('preview@example.com', adsStrip);
   const tpl = TEMPLATES[template];
   if (!tpl) return res.status(400).json({ error: `Unknown template. Valid: ${Object.keys(TEMPLATES).join(', ')}` });
   res.json({ subject: tpl.subject, html: tpl.html });
@@ -4847,7 +5331,8 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
   const cfg = await getSmtpConfig();
   if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured yet" });
 
-  const TEMPLATES = buildDemoTemplates(to);
+  const adsStrip = await getEmailAdsStrip();
+  const TEMPLATES = buildDemoTemplates(to, adsStrip);
 
   const tpl = TEMPLATES[template];
   if (!tpl) return res.status(400).json({ error: `Unknown template. Valid: ${Object.keys(TEMPLATES).join(', ')}` });
@@ -4858,6 +5343,55 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
     res.json({ ok: true, message: `Test "${template}" sent to ${to}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ── Email Ads endpoints ───────────────────────────────────────────────────
+app.get("/admin/email-settings/ads", adminAuth, async (req, res) => {
+  try { res.json(await EA.get()); } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put("/admin/email-settings/ads", adminAuth, async (req, res) => {
+  try {
+    const { enabled, headline, products } = req.body || {};
+    await EA.save({ enabled: !!enabled, headline: headline || 'Shop More at CrosCrow', products: products || [] });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/admin/email-settings/ads/upload", adminAuth, adsUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const url = `/ads-uploads/${req.file.filename}`;
+    res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+async function getEmailAdsStrip() {
+  try {
+    const ads = await EA.get();
+    if (!ads.enabled || !ads.products?.length) return '';
+    const products = ads.products.slice(0, 10);
+    const headline = ads.headline || 'Shop More at CrosCrow';
+    const cells = products.map(p => `
+      <td style="padding:0 8px 0 0;vertical-align:top;min-width:130px;max-width:140px;">
+        <a href="${p.link || '#'}" target="_blank" style="text-decoration:none;display:block;">
+          <img src="${p.image}" width="130" height="130" alt="${p.title||''}"
+            style="width:130px;height:130px;object-fit:cover;border-radius:8px;display:block;background:#1e1e1e;">
+          ${p.title ? `<div style="font-size:11px;font-weight:600;color:#cccccc;margin-top:6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;">${p.title}</div>` : ''}
+        </a>
+      </td>`).join('');
+
+    return `
+  <!-- ADS STRIP -->
+  <div style="background:#111111;padding:20px 24px 24px;border-top:1px solid #1a1a1a;">
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">${headline}</div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+      <table cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;white-space:nowrap;">
+        <tr>${cells}</tr>
+      </table>
+    </div>
+  </div>`;
+  } catch(e) { return ''; }
+}
 
 // ── POST /admin/vendors/send-credentials ─────────────────────────────────
 // Sends welcome email with credentials to all vendors that have email + username set
@@ -5508,7 +6042,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
       }
       if (ss?.found) return res.json({ status: cached?.delivery_status || '', awb, message: 'No events yet.' });
       { const soData = await shopifyREST(`/orders/${shopifyId}.json?fields=name,email,shipping_address`).catch(() => null); const so = soData?.order || {}; shipsagarPushShipment({ awb, courierCode: courier, orderNo: so.name || shopifyId, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {}); }
-      return res.json({ status: cached?.delivery_status || '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+      return res.json({ status: cached?.delivery_status || '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
     }
 
     if (!ssCreds?.api_key) return res.json({ status: cached?.delivery_status || '', message: 'ShipSagar not configured', vendors: [] });
@@ -5539,7 +6073,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
         vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'No events yet.' });
       } else {
         shipsagarPushShipment({ awb: vs.awb, courierCode: vs.courier || '', orderNo: so2.name || shopifyId, customerName: ((so2.shipping_address?.first_name||'') + ' ' + (so2.shipping_address?.last_name||'')).trim(), email: so2.email || '', mobileNo: (so2.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
-        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'Registered — refresh in a moment.' });
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
       }
     }
 
@@ -6513,7 +7047,7 @@ setInterval(penaltyCronJob, PENALTY_CHECK_MS);
 const AUTO_HOLD_DAYS = 7;
 const AUTO_HOLD_TAG  = 'on hold';
 
-function templateOrderOnHoldCustomer({ order }) {
+function templateOrderOnHoldCustomer({ order, adsStrip = '' }) {
   const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
   const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I want to confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
   const items  = order.line_items || [];
@@ -6637,6 +7171,7 @@ function templateOrderOnHoldCustomer({ order }) {
   </div>
 
   <!-- FOOTER -->
+  ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
     <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
@@ -6690,7 +7225,8 @@ async function autoHoldCronJob() {
       if (isCodOrder && customerEmail && cfg) {
         try {
           const enriched = await enrichOrderImages(o);
-          const html = templateOrderOnHoldCustomer({ order: enriched });
+          const adsStrip = await getEmailAdsStrip();
+          const html = templateOrderOnHoldCustomer({ order: enriched, adsStrip });
           await sendEmail({ to: customerEmail, subject: `Your Order ${o.name} is On Hold — Please Confirm`, html, trigger: 'auto_hold_customer' });
           console.log(`📧 Hold email sent to ${customerEmail} for ${o.name}`);
         } catch (emailErr) {
@@ -7922,7 +8458,7 @@ app.get("/track/shipment-status", async (req, res) => {
     } else {
       shipsagarPushShipment({ awb, orderNo: awb }).catch(() => {});
     }
-    return res.json({ status: '', awb, message: 'AWB registered with ShipSagar — refresh in a moment.' });
+    return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

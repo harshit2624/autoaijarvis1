@@ -4085,9 +4085,19 @@
     const [emailEnabled, setEmailEnabled] = useState(true);
     const [togglingEmail, setTogglingEmail] = useState(false);
 
+    // Ads state
+    const [ads, setAds] = useState({ enabled: false, headline: 'Shop More at CrosCrow', products: [] });
+    const [adsLoading, setAdsLoading] = useState(false);
+    const [adsSaving, setAdsSaving] = useState(false);
+    const [adsMsg, setAdsMsg] = useState(null);
+    const [newProduct, setNewProduct] = useState({ title: '', link: '', image: '' });
+    const [uploadingImg, setUploadingImg] = useState(false);
+
     useEffect(()=>{
       fetch(`${API}/admin/email-settings`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{ if(d.smtp) setSmtp(s=>({...s,...d.smtp})); if(d.enabled!==undefined) setEmailEnabled(d.enabled); }).catch(()=>{});
+      fetch(`${API}/admin/email-settings/ads`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setAds(d)).catch(()=>{});
       fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{
           setVendors(d.vendors||[]);
@@ -4154,11 +4164,13 @@
       { key:'vendor_welcome',     label:'🚀 Vendor Welcome + Credentials', desc:'Sent once to all vendors with login username/password and panel guide' },
       { key:'new_order',          label:'🟢 New Order (Customer)',        desc:'Sky theme — fires on order creation via webhook' },
       { key:'new_order_vendor',   label:'📬 New Order Heads-Up (Vendor)', desc:'Fires on order creation — heads up, do not dispatch yet' },
-      { key:'confirmed_customer', label:'✅ Order Confirmed (Customer)',   desc:'Fires when stage → Confirmed' },
+      { key:'confirmed_customer', label:'✅ Order Confirmed (Customer)',    desc:'Sky theme — fires when stage → Confirmed' },
       { key:'confirmed_vendor',   label:'📦 Order Confirmed (Vendor)',     desc:'Fires when stage → Confirmed, sent to each vendor' },
+      { key:'partial_customer',   label:'💚 Advance Received (Customer)',  desc:'Sky theme — fires when advance payment is saved on the order' },
       { key:'partial_vendor',     label:'💛 Partial/Advance (Vendor)',     desc:'Fires when advance amount saved — updated COD breakdown' },
-      { key:'transit',            label:'🚚 In Transit (Customer)',        desc:'Fires when stage → In Transit' },
-      { key:'delivered_customer', label:'🎉 Delivered (Customer)',         desc:'Fires when stage → Delivered' },
+      { key:'transit',            label:'🚚 In Transit (Customer)',        desc:'Sky theme — fires when stage → In Transit' },
+      { key:'ofd',                label:'🛵 Out for Delivery (Customer)',  desc:'Sky theme — fires when stage → Out for Delivery' },
+      { key:'delivered_customer', label:'🎉 Delivered (Customer)',         desc:'Sky theme — fires when stage → Delivered' },
       { key:'delivered_vendor',   label:'✔ Delivered (Vendor)',           desc:'Fires when stage → Delivered, sent to each vendor' },
       { key:'delivered_admin',    label:'🔔 Delivered (Admin)',            desc:'Fires when stage → Delivered, sent to admin email' },
       { key:'order_on_hold',      label:'⚠️ Order On Hold (Customer)',      desc:'Fires when COD order is auto-moved to hold after 4 days — WhatsApp confirm prompt' },
@@ -4188,6 +4200,38 @@
     );
 
     const statusColor = s => s==='sent'?'#10b981':s==='failed'?'#f87171':'#fbbf24';
+
+    const saveAds = async () => {
+      setAdsSaving(true); setAdsMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/email-settings/ads`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(ads)});
+        if(!r.ok) throw new Error((await r.json()).error);
+        setAdsMsg({type:'success',text:'Ads settings saved.'});
+      } catch(e){ setAdsMsg({type:'error',text:e.message}); }
+      setAdsSaving(false);
+    };
+
+    const uploadAdImage = async (file) => {
+      if (!file) return;
+      setUploadingImg(true);
+      try {
+        const fd = new FormData(); fd.append('image', file);
+        const r = await fetch(`${API}/admin/email-settings/ads/upload`,{method:'POST',headers:{Authorization:`Bearer ${token}`},body:fd});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setNewProduct(p=>({...p, image: d.url}));
+      } catch(e){ setAdsMsg({type:'error',text:'Upload failed: '+e.message}); }
+      setUploadingImg(false);
+    };
+
+    const addProduct = () => {
+      if (!newProduct.image || !newProduct.link) { setAdsMsg({type:'error',text:'Image and link are required.'}); return; }
+      setAds(a=>({...a, products:[...a.products, {...newProduct}]}));
+      setNewProduct({ title:'', link:'', image:'' });
+      setAdsMsg(null);
+    };
+
+    const removeProduct = (idx) => setAds(a=>({...a, products:a.products.filter((_,i)=>i!==idx)}));
 
     const toggleEmail = async () => {
       setTogglingEmail(true);
@@ -4300,6 +4344,86 @@
             </div>
           </div>
         )}
+
+        {/* ── Email Ads ── */}
+        <div className="card" style={{marginBottom:16}}>
+          <div className="card-header" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div>
+              <span className="card-title">🛍 Email Ads Strip</span>
+              <span className="card-sub" style={{marginLeft:8}}>Scrollable product row shown above the footer in all customer emails</span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:12,color:ads.enabled?'#4ade80':'#f87171',fontWeight:700}}>{ads.enabled?'ON':'OFF'}</span>
+              <button onClick={()=>setAds(a=>({...a,enabled:!a.enabled}))}
+                style={{background:ads.enabled?'#7f1d1d':'#14532d',color:'#fff',border:'none',borderRadius:7,padding:'6px 16px',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                {ads.enabled?'Turn Off':'Turn On'}
+              </button>
+            </div>
+          </div>
+          <div style={{padding:16}}>
+            {adsMsg && <div className={`alert alert-${adsMsg.type}`} style={{marginBottom:12}}>{adsMsg.type==='success'?'✓':'⚠'} {adsMsg.text}</div>}
+
+            {/* Headline */}
+            <div style={{marginBottom:16}}>
+              <label className="form-label">Strip Headline</label>
+              <input className="form-input" value={ads.headline||''} onChange={e=>setAds(a=>({...a,headline:e.target.value}))} placeholder="Shop More at CrosCrow"/>
+            </div>
+
+            {/* Current products */}
+            {ads.products?.length > 0 && (
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,letterSpacing:2,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:10}}>Current Products ({ads.products.length})</div>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                  {ads.products.map((p,i)=>(
+                    <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:10,width:130,position:'relative'}}>
+                      <img src={p.image} alt={p.title} style={{width:110,height:110,objectFit:'cover',borderRadius:6,display:'block',marginBottom:6,background:'#1e1e1e'}}/>
+                      <div style={{fontSize:11,color:'var(--text)',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.title||'(no title)'}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginTop:2}}>{p.link}</div>
+                      <button onClick={()=>removeProduct(i)}
+                        style={{position:'absolute',top:6,right:6,background:'#7f1d1d',border:'none',color:'#fff',borderRadius:4,width:20,height:20,cursor:'pointer',fontSize:12,lineHeight:'20px',textAlign:'center',padding:0}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Add new product */}
+            <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14,marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:2,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:12}}>Add Product</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                <div>
+                  <label className="form-label">Product Title</label>
+                  <input className="form-input" value={newProduct.title} onChange={e=>setNewProduct(p=>({...p,title:e.target.value}))} placeholder="Oversized Hoodie"/>
+                </div>
+                <div>
+                  <label className="form-label">Product Link (URL)</label>
+                  <input className="form-input" value={newProduct.link} onChange={e=>setNewProduct(p=>({...p,link:e.target.value}))} placeholder="https://yourstore.com/product/..."/>
+                </div>
+              </div>
+              <div style={{marginBottom:10}}>
+                <label className="form-label">Product Image</label>
+                <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+                  <input className="form-input" style={{flex:1,minWidth:180}} value={newProduct.image} onChange={e=>setNewProduct(p=>({...p,image:e.target.value}))} placeholder="Paste image URL, or upload below"/>
+                  <label style={{display:'inline-flex',alignItems:'center',gap:6,background:'var(--indigo)',color:'#fff',borderRadius:7,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>
+                    {uploadingImg?<><span className="spin">↻</span> Uploading…</>:<>📎 Upload Image</>}
+                    <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>uploadAdImage(e.target.files[0])}/>
+                  </label>
+                </div>
+                {newProduct.image && <img src={newProduct.image} alt="" style={{marginTop:8,width:90,height:90,objectFit:'cover',borderRadius:6,display:'block',background:'#1e1e1e'}}/>}
+              </div>
+              <button className="btn btn-indigo btn-sm" onClick={addProduct}>+ Add to Strip</button>
+            </div>
+
+            <div style={{display:'flex',gap:10}}>
+              <button className="btn btn-indigo" onClick={saveAds} disabled={adsSaving}>
+                {adsSaving?<><span className="spin">↻</span> Saving…</>:'💾 Save Ads Settings'}
+              </button>
+              <div style={{fontSize:12,color:'var(--text-muted)',alignSelf:'center'}}>
+                {ads.enabled ? `Strip active — ${ads.products?.length||0} product(s) will show in all customer emails.` : 'Strip is OFF — no ad row will appear in emails.'}
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Template Test Buttons */}
         <div className="card" style={{marginBottom:16}}>
