@@ -8280,7 +8280,7 @@ async function buildOrderPayload(order) {
   const returnConfigs = {};
   for (const v of vendorNames) {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
-    returnConfigs[v] = { exchange_enabled: true, return_enabled: cfg.return_enabled !== false, return_window_days: cfg.return_window_days || 7, return_address: cfg.return_address || null };
+    returnConfigs[v] = { exchange_enabled: true, return_enabled: cfg.return_enabled === true, return_window_days: cfg.return_window_days || 7, return_address: cfg.return_address || null };
   }
   const items = (order.line_items || []).map(li => ({
     line_item_id: li.id, product_id: li.product_id, variant_id: li.variant_id,
@@ -8939,7 +8939,7 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
 app.get("/admin/vendors/:name/return-config", adminAuth, async (req, res) => {
   try {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: req.params.name }, { projection: { _id: 0 } }) || {};
-    res.json({ config: { exchange_enabled: true, return_enabled: true, return_window_days: 7, return_address: {}, ...cfg } });
+    res.json({ config: { exchange_enabled: true, return_enabled: false, return_window_days: 7, return_address: {}, ...cfg } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -8987,7 +8987,7 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
 app.get("/vendor/return-config", vendorAuth, async (req, res) => {
   try {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } }) || {};
-    res.json({ config: { exchange_enabled: true, return_enabled: true, return_window_days: 7, return_address: {}, ...cfg } });
+    res.json({ config: { exchange_enabled: true, return_enabled: false, return_window_days: 7, return_address: {}, ...cfg } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
