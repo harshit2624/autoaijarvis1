@@ -8449,15 +8449,17 @@ app.get("/track/shipment-status", async (req, res) => {
       return res.json({ status: '', awb, message: 'Shipment registered — no events yet. Check back soon.' });
     }
 
-    // Not registered — push it (fetch order details for proper orderNo + customer data)
-    if (shopify_order_id) {
-      shopifyREST(`/orders/${shopify_order_id}.json?fields=name,email,shipping_address`).then(soData => {
-        const so = soData?.order || {};
-        shipsagarPushShipment({ awb, orderNo: so.name || shopify_order_id, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
-      }).catch(() => { shipsagarPushShipment({ awb, orderNo: awb }).catch(() => {}); });
-    } else {
-      shipsagarPushShipment({ awb, orderNo: awb }).catch(() => {});
-    }
+    // Not registered — look up courier from DB then push (same as admin refresh)
+    try {
+      const [ovs, soData] = await Promise.all([
+        mdb.collection('order_vendor_stage').findOne({ awb }, { projection: { courier: 1, _id: 0 } }).catch(() => null),
+        shopify_order_id ? shopifyREST(`/orders/${shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null) : Promise.resolve(null),
+      ]);
+      const courier = ovs?.courier || '';
+      const so = soData?.order || {};
+      const pushResult = await shipsagarPushShipment({ awb, courierCode: courier, orderNo: so.name || shopify_order_id || awb, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) });
+      console.log(`📦 Track-page push AWB ${awb}: ok=${pushResult?.ok} courier=${courier}`);
+    } catch(e) { console.error('Track-page push error:', e.message); }
     return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
