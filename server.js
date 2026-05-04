@@ -7311,24 +7311,27 @@ async function shipsagarTrackShipment(awb) {
 }
 
 async function shipsagarTrackingCron() {
-  const runLog = { ran_at: new Date().toISOString(), checked: 0, updated: 0, skipped: 0, errors: [], updates: [] };
+  const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [] };
   try {
     const creds = await getShipSagarCreds();
     if (!creds?.api_key) { runLog.message = 'ShipSagar not configured.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
 
-    // Track all active orders that have an AWB and aren't already delivered/rto
+    // Only orders with AWB updated/created after 3 May 2026
+    const TRACK_FROM = new Date('2026-05-03T00:00:00.000Z').toISOString();
     const activeStages = await mdb.collection('order_vendor_stage').find(
-      { stage: { $in: ['ready', 'pickup', 'transit'] }, awb: { $exists: true, $ne: '' } },
+      { stage: { $nin: ['new', 'cancelled'] }, awb: { $exists: true, $ne: '' }, updated_at: { $gte: TRACK_FROM } },
       { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
     ).toArray();
 
-    // Exclude Delhivery AWBs — those are handled by Delhivery cron already
-    const toCheck = activeStages.filter(r => !(
-      (r.courier || '').toLowerCase().includes('delhivery') || (r.awb || '').match(/^\d{14,}$/)
-    ));
+    // Deduplicate by AWB — one ShipSagar call per unique AWB
+    const awbMap = new Map();
+    for (const r of activeStages) {
+      if (!awbMap.has(r.awb)) awbMap.set(r.awb, r);
+    }
+    const toCheck = [...awbMap.values()];
 
     runLog.checked = toCheck.length;
-    if (!toCheck.length) { runLog.message = 'No active non-Delhivery shipments.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
+    if (!toCheck.length) { runLog.message = 'No active shipments with AWB.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
     console.log(`📦 ShipSagar cron: checking ${toCheck.length} shipments…`);
 
     for (const rec of toCheck) {
@@ -7337,19 +7340,28 @@ async function shipsagarTrackingCron() {
         if (!ss?.found || !ss.history?.length) { runLog.skipped++; continue; }
 
         const latest = ss.history[ss.history.length - 1];
-        if (!latest) { runLog.skipped++; continue; }
-
-        const newStage = shipsagarStatusToStage(latest.ActionDescription);
-        if (!newStage || rec.stage === newStage) { runLog.skipped++; continue; }
-
+        const desc = latest.ActionDescription || '';
+        const tag = shipsagarDescToTag(desc);
+        const newStage = shipsagarStatusToStage(desc);
         const now = new Date().toISOString();
-        await OVS.upsert(rec.shopify_id, rec.vendor_name, { stage: newStage, updated_at: now });
-        await OM.upsert(rec.shopify_id, { delivery_status: latest.ActionDescription, delivery_status_updated_at: now });
-        applyShipSagarTag(rec.shopify_id, latest.ActionDescription).catch(() => {});
-        auditLog('cron', 'shipsagar_stage_update', rec.shopify_id, { vendor: rec.vendor_name, awb: rec.awb, desc: latest.ActionDescription, newStage });
-        runLog.updated++;
-        runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc: latest.ActionDescription, tag: shipsagarDescToTag(latest.ActionDescription) });
-        console.log(`  ✓ ${rec.shopify_id} (${rec.vendor_name}) ${rec.awb}: ${rec.stage} → ${newStage} (${latest.ActionDescription}) → tag: ${shipsagarDescToTag(latest.ActionDescription)||'none'}`);
+
+        // Always update delivery_status and apply tag
+        await OM.upsert(rec.shopify_id, { delivery_status: desc, delivery_status_updated_at: now });
+        if (tag) {
+          applyShipSagarTag(rec.shopify_id, desc).catch(() => {});
+          runLog.tagged++;
+        }
+
+        // Update stage only if it changed
+        if (newStage && rec.stage !== newStage) {
+          await OVS.upsert(rec.shopify_id, rec.vendor_name, { stage: newStage, updated_at: now });
+          auditLog('cron', 'shipsagar_stage_update', rec.shopify_id, { vendor: rec.vendor_name, awb: rec.awb, desc, newStage });
+          runLog.updated++;
+          runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc, tag });
+          console.log(`  ✓ ${rec.shopify_id} ${rec.awb}: ${rec.stage}→${newStage} "${desc}" ${tag||''}`);
+        } else {
+          runLog.skipped++;
+        }
       } catch(e) { runLog.errors.push({ awb: rec.awb, error: e.message }); }
 
       await new Promise(r => setTimeout(r, 300)); // 300ms between calls
@@ -7396,11 +7408,38 @@ app.get("/admin/shipsagar/logs", adminAuth, async (req, res) => {
   res.json({ logs });
 });
 // Push a single AWB manually
+// Push single AWB
 app.post("/admin/shipsagar/push", adminAuth, async (req, res) => {
   const { awb, courierCode, orderNo, customerName, email, mobileNo } = req.body || {};
   if (!awb) return res.status(400).json({ error: 'awb required' });
   const result = await shipsagarPushShipment({ awb, courierCode, orderNo, customerName, email, mobileNo });
   res.json(result);
+});
+
+// Bulk register all AWBs from orders after 3 May 2026
+app.post("/admin/shipsagar/register-all", adminAuth, async (req, res) => {
+  try {
+    const TRACK_FROM = new Date('2026-05-03T00:00:00.000Z').toISOString();
+    const rows = await mdb.collection('order_vendor_stage').find(
+      { awb: { $exists: true, $ne: '' }, updated_at: { $gte: TRACK_FROM } },
+      { projection: { shopify_id: 1, awb: 1, courier: 1, _id: 0 } }
+    ).toArray();
+
+    // Deduplicate by AWB
+    const unique = [...new Map(rows.map(r => [r.awb, r])).values()];
+    res.json({ message: `Registering ${unique.length} AWBs with ShipSagar in background…`, count: unique.length });
+
+    // Fire and forget — push all in background
+    (async () => {
+      let success = 0, failed = 0;
+      for (const r of unique) {
+        const result = await shipsagarPushShipment({ awb: r.awb, courierCode: r.courier || '', orderNo: r.shopify_id });
+        if (result.ok) success++; else failed++;
+        await new Promise(resolve => setTimeout(resolve, 400)); // rate limit
+      }
+      console.log(`📦 ShipSagar bulk register done: ${success} registered, ${failed} failed`);
+    })().catch(e => console.error('ShipSagar bulk register error:', e.message));
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 // Get supported couriers
 app.get("/admin/shipsagar/couriers", adminAuth, async (req, res) => {
