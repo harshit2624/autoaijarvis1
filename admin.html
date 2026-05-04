@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CrosCrow — Admin Portal</title>
-  <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -74,8 +73,7 @@
     /* ── Login ── */
     .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 0%, #1e1b4b20 0%, transparent 70%); }
     .login-box  { width: 380px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 36px; box-shadow: 0 0 60px var(--indigo-glow); }
-    .login-logo { width: 56px; height: 56px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; }
-    .login-logo img { width: 100%; height: 100%; object-fit: contain; }
+    .login-logo { width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 20px; background: linear-gradient(135deg, var(--indigo), #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; color: #fff; }
     .login-title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-align: center; color: var(--text); margin-bottom: 4px; }
     .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 28px; }
     .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
@@ -91,8 +89,7 @@
     .app-shell { display: flex; min-height: 100vh; }
     .sidebar   { width: 230px; flex-shrink: 0; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
     .sidebar-brand { padding: 20px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
-    .sidebar-logo  { width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-    .sidebar-logo img { width: 100%; height: 100%; object-fit: contain; }
+    .sidebar-logo  { width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0; background: linear-gradient(135deg, var(--indigo), #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #fff; }
     .sidebar-name  { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
     .sidebar-role  { font-size: 9px; color: var(--indigo); letter-spacing: 1px; }
     .nav           { padding: 12px 10px; flex: 1; }
@@ -5822,7 +5819,7 @@
     if (!token) return (
       <div className="login-wrap">
         <div className="login-box">
-          <div className="login-logo"><img src="/croscrow-logo.png" alt="CrosCrow"/></div>
+          <div className="login-logo">A</div>
           <div className="login-title">CROSCROW</div>
           <div className="login-sub">Admin Portal</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
@@ -5867,7 +5864,7 @@
 
         <aside className={`sidebar ${sidebarOpen?'mobile-open':''}`}>
           <div className="sidebar-brand">
-            <div className="sidebar-logo"><img src="/croscrow-logo.png" alt="CrosCrow"/></div>
+            <div className="sidebar-logo">A</div>
             <div><div className="sidebar-name">CROSCROW</div><div className="sidebar-role">Admin Portal</div></div>
           </div>
           <nav className="nav">
