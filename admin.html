@@ -4304,6 +4304,17 @@
       ],
       help: 'Log into ShipMozo → Settings → API Integration to get your public & private keys.',
     },
+    {
+      id: 'shipsagar',
+      name: 'ShipSagar',
+      logo: '🌊',
+      color: '#6366f1',
+      fields: [
+        { key:'client_code', label:'Client Code', type:'text',     placeholder:'e.g. C1278' },
+        { key:'api_key',     label:'API Key',     type:'password', placeholder:'Paste your ShipSagar API Key' },
+      ],
+      help: 'Log into ShipSagar → Client Profile → copy Client Code and API Key. Auto-tracks all couriers.',
+    },
   ];
 
   function PickupLocationsManager({ token, partner, apiBase }) {
@@ -4384,7 +4395,7 @@
           setConnected(map);
         }).catch(()=>{});
     };
-    useEffect(()=>{ load(); fetchDlLogs(); }, [token]);
+    useEffect(()=>{ load(); fetchDlLogs(); fetchSsLogs(); }, [token]);
 
     const setField = (partnerId, key, val) =>
       setForms(f=>({ ...f, [partnerId]: { ...(f[partnerId]||{}), [key]: val } }));
@@ -4413,6 +4424,10 @@
     const [dlSyncMsg, setDlSyncMsg] = useState(null);
     const [dlLogs,    setDlLogs]    = useState([]);
     const [dlLogsOpen,setDlLogsOpen]= useState(true);
+    const [ssSyncing, setSsSyncing] = useState(false);
+    const [ssSyncMsg, setSsSyncMsg] = useState(null);
+    const [ssLogs,    setSsLogs]    = useState([]);
+    const [ssLogsOpen,setSsLogsOpen]= useState(false);
 
     const syncAll = async () => {
       setSyncing(true); setSyncResult(null);
@@ -4453,6 +4468,23 @@
         setDlLogs(d.logs || []);
         setDlLogsOpen(true);
       } catch(e) {}
+    };
+
+    const fetchSsLogs = async () => {
+      try {
+        const r = await fetch(`${API}/admin/shipsagar/logs`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setSsLogs(d.logs || []);
+        setSsLogsOpen(true);
+      } catch(e) {}
+    };
+
+    const syncShipSagar = async () => {
+      setSsSyncing(true); setSsSyncMsg('Running…');
+      try {
+        await fetch(`${API}/admin/shipsagar/sync`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        setTimeout(()=>{ fetchSsLogs(); setSsSyncing(false); setSsSyncMsg('✓ Done — see log below'); }, 4000);
+      } catch(e) { setSsSyncMsg('Error: ' + e.message); setSsSyncing(false); }
     };
 
     return (
@@ -4592,6 +4624,69 @@
                           </div>
                         );
                       })()}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ShipSagar cron */}
+            <div style={{borderRadius:8,background:'rgba(99,102,241,0.06)',border:'1px solid rgba(99,102,241,0.25)',marginTop:12}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 14px'}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#818cf8'}}>🌊 ShipSagar Tracking Cron</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Auto-runs every 2 hours · tracks all non-Delhivery AWBs across 500+ couriers. AWBs auto-pushed to ShipSagar when created.</div>
+                  {ssSyncMsg && <div style={{fontSize:11,color:'#10b981',marginTop:4}}>{ssSyncMsg}</div>}
+                </div>
+                <div style={{display:'flex',gap:6,flexShrink:0}}>
+                  <button className="btn btn-sm btn-ghost" onClick={fetchSsLogs}>📋 View Logs</button>
+                  <button className="btn btn-sm" onClick={syncShipSagar} disabled={ssSyncing}
+                    style={{background:'#6366f1',color:'#fff',border:'none',fontWeight:600}}>
+                    {ssSyncing ? <><span className="spin">↻</span> Running…</> : '▶ Run Now'}
+                  </button>
+                </div>
+              </div>
+              {ssLogsOpen && (
+                <div style={{borderTop:'1px solid rgba(99,102,241,0.25)',padding:'10px 14px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Last {ssLogs.length} Runs</span>
+                    <button onClick={()=>setSsLogsOpen(false)} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12}}>✕</button>
+                  </div>
+                  {ssLogs.length===0 ? (
+                    <div style={{fontSize:11,color:'var(--text-muted)'}}>No logs yet — run the cron or wait for the next auto-run.</div>
+                  ) : ssLogs.map((log,i)=>(
+                    <div key={i} style={{marginBottom:10,padding:'8px 10px',borderRadius:6,background:'var(--bg-card)',border:'1px solid var(--border)'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+                        <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{new Date(log.ran_at).toLocaleString('en-IN')}</span>
+                        <div style={{display:'flex',gap:8,fontSize:10}}>
+                          <span style={{color:'var(--text-muted)'}}>Checked: <strong style={{color:'var(--text)'}}>{log.checked||0}</strong></span>
+                          <span style={{color:'#10b981'}}>Updated: <strong>{log.updated||0}</strong></span>
+                          <span style={{color:'var(--text-muted)'}}>Skipped: {log.skipped||0}</span>
+                          {(log.errors||[]).length>0 && <span style={{color:'#ef4444'}}>Errors: {log.errors.length}</span>}
+                        </div>
+                      </div>
+                      {(log.updates||[]).length > 0 ? (
+                        <div style={{marginTop:6,maxHeight:200,overflowY:'auto'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
+                            <thead><tr style={{color:'var(--text-muted)',borderBottom:'1px solid var(--border)'}}>
+                              <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Order</th>
+                              <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>AWB</th>
+                              <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Status</th>
+                              <th style={{textAlign:'left',padding:'2px 6px',fontWeight:500}}>Result</th>
+                            </tr></thead>
+                            <tbody>
+                              {(log.updates||[]).map((u,j)=>(
+                                <tr key={j} style={{borderBottom:'1px solid var(--border)',background:'rgba(16,185,129,0.05)'}}>
+                                  <td style={{padding:'3px 6px',color:'var(--indigo)',fontWeight:600}}>{u.shopify_id}</td>
+                                  <td style={{padding:'3px 6px',fontFamily:'monospace',color:'var(--text-muted)',fontSize:9}}>{u.awb}</td>
+                                  <td style={{padding:'3px 6px',color:'var(--text)'}}>{u.desc}</td>
+                                  <td style={{padding:'3px 6px',fontWeight:700,color:'#10b981'}}>{u.from} → {u.to}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <div style={{fontSize:10,color:'var(--text-muted)'}}>{log.message||'No updates.'}</div>}
                     </div>
                   ))}
                 </div>

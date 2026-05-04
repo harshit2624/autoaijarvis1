@@ -3966,6 +3966,7 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     // Save AWB/courier/tracking to order_vendor_stage — ready = tracking submitted, awaiting pickup
     await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'ready', updated_at: new Date().toISOString() });
     auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
+    shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: shopifyId }).catch(() => {});
 
     // Send customer shipped email
     const cfg = await getSmtpConfig();
@@ -4024,6 +4025,7 @@ app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
         const curStage = ovs?.stage || existing.stage || 'new';
         if (PRE_DISPATCH.includes(curStage)) {
           await OVS.upsert(id, vendor, { stage: 'ready', awb: awb.trim(), courier: courier || '', tracking_url: tracking_url || '', updated_at: now });
+          shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: id }).catch(() => {});
         }
       }
     } catch(e) { console.error('meta awb vendor sync error:', e.message); }
@@ -5276,6 +5278,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     if (result?.awb) {
       const sid = String(shopifyOrder.id);
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+      shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: (shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||''), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
       // Also create a Shopify partial fulfillment for this vendor's line items
       try {
@@ -7086,6 +7089,160 @@ app.get("/admin/delhivery/logs", adminAuth, async (req, res) => {
 // Run every 3 hours (delay startup run by 30s to let MongoDB connect first)
 setTimeout(() => delhiveryTrackingCron().catch(() => {}), 30000);
 setInterval(delhiveryTrackingCron, 3 * 60 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SHIPSAGAR INTEGRATION
+// ══════════════════════════════════════════════════════════════════════════
+
+async function getShipSagarCreds() {
+  const row = await mdb.collection('global_shipping_creds').findOne({ partner: 'shipsagar' });
+  if (!row) return null;
+  return JSON.parse(row.credentials || '{}');
+}
+
+// Map ShipSagar ActionDescription → internal stage
+function shipsagarStatusToStage(desc) {
+  if (!desc) return null;
+  const s = desc.toLowerCase();
+  if (s.includes('delivered') && !s.includes('out for'))       return 'delivered';
+  if (s.includes('rto') || (s.includes('return') && s.includes('origin'))) return 'rto';
+  if (s.includes('undelivered') || s.includes('failed delivery')) return 'transit';
+  if (s.includes('out for delivery'))                           return 'transit';
+  if (s.includes('in transit') || s.includes('arrived') || s.includes('facility') || s.includes('hub')) return 'transit';
+  if (s.includes('picked up') || s.includes('pickup') || s.includes('manifested') || s.includes('dispatched')) return 'pickup';
+  if (s.includes('lost') || s.includes('damage'))              return 'rto';
+  return null;
+}
+
+// Push a single AWB to ShipSagar for tracking
+async function shipsagarPushShipment({ awb, courierCode = '', orderNo = '', customerName = '', email = '', mobileNo = '' }) {
+  const creds = await getShipSagarCreds();
+  if (!creds?.api_key) return { ok: false, reason: 'ShipSagar not configured' };
+  try {
+    const res = await fetch('https://app.shipsagar.com/api/Web/PushShipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        Token:        creds.api_key,
+        ClientCode:   creds.client_code,
+        CourierCode:  courierCode || '',
+        TrackingNo:   awb,
+        OrderNo:      orderNo || awb,
+        CustomerName: customerName || '',
+        EmailID:      email || '',
+        MobileNo:     mobileNo || '',
+        ShipmentType: '',
+        CountryName:  'India',
+        CompanyName:  'CrosCrow',
+      }),
+    }).then(r => r.json());
+    return { ok: res.status?.toLowerCase() === 'success', response: res };
+  } catch(e) { return { ok: false, reason: e.message }; }
+}
+
+// Track a single AWB via ShipSagar
+async function shipsagarTrackShipment(awb) {
+  const creds = await getShipSagarCreds();
+  if (!creds?.api_key) return null;
+  try {
+    const res = await fetch('https://app.shipsagar.com/api/Web/TrackShipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code, TrackingNo: awb }),
+    }).then(r => r.json());
+    if (res.status?.toUpperCase() !== 'SUCCESS') return null;
+    return res.TrackingDetails?.[0] || null;
+  } catch { return null; }
+}
+
+async function shipsagarTrackingCron() {
+  const runLog = { ran_at: new Date().toISOString(), checked: 0, updated: 0, skipped: 0, errors: [], updates: [] };
+  try {
+    const creds = await getShipSagarCreds();
+    if (!creds?.api_key) { runLog.message = 'ShipSagar not configured.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
+
+    // Track all active orders that have an AWB and aren't already delivered/rto
+    const activeStages = await mdb.collection('order_vendor_stage').find(
+      { stage: { $in: ['ready', 'pickup', 'transit'] }, awb: { $exists: true, $ne: '' } },
+      { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
+    ).toArray();
+
+    // Exclude Delhivery AWBs — those are handled by Delhivery cron already
+    const toCheck = activeStages.filter(r => !(
+      (r.courier || '').toLowerCase().includes('delhivery') || (r.awb || '').match(/^\d{14,}$/)
+    ));
+
+    runLog.checked = toCheck.length;
+    if (!toCheck.length) { runLog.message = 'No active non-Delhivery shipments.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
+    console.log(`📦 ShipSagar cron: checking ${toCheck.length} shipments…`);
+
+    for (const rec of toCheck) {
+      try {
+        const detail = await shipsagarTrackShipment(rec.awb);
+        if (!detail) { runLog.skipped++; continue; }
+
+        const history = detail.TrackingHistory || [];
+        // Latest event is last in array
+        const latest = history[history.length - 1];
+        if (!latest) { runLog.skipped++; continue; }
+
+        const newStage = shipsagarStatusToStage(latest.ActionDescription);
+        if (!newStage || rec.stage === newStage) { runLog.skipped++; continue; }
+
+        const now = new Date().toISOString();
+        await OVS.upsert(rec.shopify_id, rec.vendor_name, { stage: newStage, updated_at: now });
+        await OM.upsert(rec.shopify_id, { delivery_status: latest.ActionDescription, delivery_status_updated_at: now });
+        auditLog('cron', 'shipsagar_stage_update', rec.shopify_id, { vendor: rec.vendor_name, awb: rec.awb, desc: latest.ActionDescription, newStage });
+        runLog.updated++;
+        runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc: latest.ActionDescription });
+        console.log(`  ✓ ${rec.shopify_id} (${rec.vendor_name}) ${rec.awb}: ${rec.stage} → ${newStage} (${latest.ActionDescription})`);
+      } catch(e) { runLog.errors.push({ awb: rec.awb, error: e.message }); }
+
+      await new Promise(r => setTimeout(r, 300)); // 300ms between calls
+    }
+
+    runLog.message = `Checked ${runLog.checked}, updated ${runLog.updated}, skipped ${runLog.skipped}`;
+    console.log(`📦 ShipSagar cron done: ${runLog.message}`);
+  } catch(e) {
+    runLog.errors.push({ error: e.message });
+    console.error('❌ shipsagarTrackingCron:', e.message);
+  }
+  await mdb.collection('shipsagar_cron_log').insertOne(runLog);
+  await mdb.collection('shipsagar_cron_log').deleteMany({ ran_at: { $lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() } });
+}
+
+// Manual trigger
+app.post("/admin/shipsagar/sync", adminAuth, async (req, res) => {
+  shipsagarTrackingCron().catch(() => {});
+  res.json({ success: true, message: 'ShipSagar sync triggered — check logs.' });
+});
+app.get("/admin/shipsagar/logs", adminAuth, async (req, res) => {
+  const logs = await mdb.collection('shipsagar_cron_log').find({}, { projection: { _id: 0 } }).sort({ ran_at: -1 }).limit(20).toArray();
+  res.json({ logs });
+});
+// Push a single AWB manually
+app.post("/admin/shipsagar/push", adminAuth, async (req, res) => {
+  const { awb, courierCode, orderNo, customerName, email, mobileNo } = req.body || {};
+  if (!awb) return res.status(400).json({ error: 'awb required' });
+  const result = await shipsagarPushShipment({ awb, courierCode, orderNo, customerName, email, mobileNo });
+  res.json(result);
+});
+// Get supported couriers
+app.get("/admin/shipsagar/couriers", adminAuth, async (req, res) => {
+  const creds = await getShipSagarCreds();
+  if (!creds?.api_key) return res.status(400).json({ error: 'ShipSagar not configured' });
+  try {
+    const data = await fetch('https://app.shipsagar.com/api/Web/GetCourier', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code }),
+    }).then(r => r.json());
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Run every 2 hours, offset 60s from startup
+setTimeout(() => shipsagarTrackingCron().catch(() => {}), 60000);
+setInterval(shipsagarTrackingCron, 2 * 60 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════════════════
 //  WEEKLY REPORT SYSTEM
