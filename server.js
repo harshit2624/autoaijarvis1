@@ -239,7 +239,16 @@ const DR = {
 const OP = {
   async all(status) {
     const q = status && status !== 'all' ? { status } : {};
-    return mdb.collection('order_penalties').find(q, { projection: { _id: 0 } }).sort({ triggered_at: -1 }).toArray();
+    const penalties = await mdb.collection('order_penalties').find(q, { projection: { _id: 0 } }).sort({ triggered_at: -1 }).toArray();
+    // Attach delay remarks for each penalty so admin can review before confirming
+    await Promise.all(penalties.map(async p => {
+      const remarks = await mdb.collection('delay_remarks').find(
+        { shopify_id: String(p.shopify_id), vendor_name: p.vendor_name },
+        { projection: { _id: 0 } }
+      ).sort({ submitted_at: -1 }).toArray();
+      p.delay_remarks = remarks;
+    }));
+    return penalties;
   },
   async get(id) {
     return mdb.collection('order_penalties').findOne({ id: parseInt(id) }, { projection: { _id: 0 } });
