@@ -2617,6 +2617,12 @@
     const [manualCourier, setManualCourier] = useState('');
     const [manualAwb,     setManualAwb]     = useState('');
     const [savingManual,  setSavingManual]  = useState(false);
+    const [ssCouriers,    setSsCouriers]    = useState([]);
+
+    useEffect(()=>{
+      fetch(`${API}/admin/shipsagar/couriers`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setSsCouriers(d.getCourier||[])).catch(()=>{});
+    },[]);
 
     const saveManualAwb = async () => {
       if (!manualAwb.trim()) return;
@@ -2709,7 +2715,10 @@
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
               <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none',minWidth:130}}>
                 <option value="">— Select —</option>
-                {['Delhivery','XpressBees','Bluedart','DTDC','Ecom Express','FedEx','Shiprocket','ShipMozo','Other'].map(c=><option key={c} value={c}>{c}</option>)}
+                {ssCouriers.length > 0
+                  ? ssCouriers.map(c=><option key={c.CourierCode||c.CourierName} value={c.CourierCode||c.CourierName}>{c.CourierName||c.CourierCode}</option>)
+                  : ['DELHIVERY','XPRESSBEES','BLUEDART','DTDC','ECME','FEDEX','DHL','UPS','ARAMEX','INDIAPOST','SHADOWFAX','EKART'].map(c=><option key={c} value={c}>{c}</option>)
+                }
               </select>
             </div>
             <div style={{flex:1,minWidth:160}}>
