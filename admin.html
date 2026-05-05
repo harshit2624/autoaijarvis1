@@ -8,6 +8,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -338,6 +339,85 @@
     .chat-send { width: 40px; height: 40px; border-radius: 8px; border: none; background: var(--indigo); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; flex-shrink: 0; }
     .chat-send:hover:not(:disabled) { background: #4f46e5; }
     .chat-send:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* ── Jarvis mode tabs ─────────────────────────────── */
+    .jv-tabs { display:flex; gap:4px; padding:14px 20px 0; flex-shrink:0; }
+    .jv-tab  { flex:1; padding:8px; border-radius:8px 8px 0 0; border:1px solid var(--border); border-bottom:none;
+               background:transparent; color:var(--text-muted); font-family:'IBM Plex Mono',monospace; font-size:11px;
+               font-weight:700; letter-spacing:1.5px; cursor:pointer; text-transform:uppercase; transition:all 0.15s; }
+    .jv-tab.active { background:var(--bg-card); color:var(--cyan); border-color:var(--cyan); }
+
+    /* ── Voice mode panel ─────────────────────────────── */
+    .voice-panel {
+      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:space-between;
+      background: radial-gradient(ellipse at 60% 20%, #1a0a2e 0%, #0d0d1a 50%, #050510 100%);
+      border-radius:0 0 12px 12px; border:1px solid var(--border); border-top:none;
+      padding:28px 24px 32px; overflow:hidden; position:relative; min-height:0;
+    }
+    .voice-status { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,0.5); text-transform:uppercase; text-align:center; }
+    .voice-status.listening { color:#c084fc; animation:pulse 1s infinite; }
+    .voice-status.speaking  { color:#22d3ee; }
+
+    /* Orb */
+    .orb-wrap { position:relative; width:200px; height:200px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .orb-ring { position:absolute; inset:0; border-radius:50%; border:1.5px solid rgba(139,92,246,0.3); animation:orb-breathe 3s ease-in-out infinite; }
+    .orb-ring:nth-child(2) { inset:-16px; border-color:rgba(139,92,246,0.18); animation-delay:0.4s; }
+    .orb-ring:nth-child(3) { inset:-34px; border-color:rgba(139,92,246,0.1); animation-delay:0.8s; }
+    .orb-core {
+      width:160px; height:160px; border-radius:50%;
+      background: radial-gradient(circle at 38% 36%, rgba(192,132,252,0.9) 0%, rgba(139,92,246,0.8) 30%, rgba(79,46,180,0.7) 60%, rgba(30,10,80,0.9) 100%);
+      box-shadow: 0 0 60px rgba(139,92,246,0.5), 0 0 120px rgba(139,92,246,0.2), inset 0 0 40px rgba(192,132,252,0.3);
+      position:relative; transition:transform 0.3s;
+    }
+    .orb-core::before {
+      content:''; position:absolute; top:18%; left:20%; width:28%; height:22%;
+      background:rgba(255,255,255,0.25); border-radius:50%; filter:blur(8px);
+    }
+    .orb-core::after {
+      content:''; position:absolute; inset:0; border-radius:50%;
+      background:conic-gradient(from 180deg, transparent 60%, rgba(192,132,252,0.4) 75%, transparent 90%);
+      animation:orb-spin 4s linear infinite;
+    }
+    .orb-wrap.listening .orb-core { animation:orb-listen 0.6s ease-in-out infinite alternate; box-shadow: 0 0 80px rgba(192,132,252,0.7), 0 0 160px rgba(139,92,246,0.35), inset 0 0 50px rgba(192,132,252,0.4); }
+    .orb-wrap.listening .orb-ring  { border-color:rgba(192,132,252,0.5); animation-duration:1.2s; }
+    .orb-wrap.speaking  .orb-core { animation:orb-speak 0.4s ease-in-out infinite alternate; box-shadow: 0 0 80px rgba(34,211,238,0.6), 0 0 160px rgba(34,211,238,0.3), inset 0 0 50px rgba(34,211,238,0.3); background: radial-gradient(circle at 38% 36%, rgba(167,243,255,0.9) 0%, rgba(34,211,238,0.8) 30%, rgba(6,182,212,0.7) 60%, rgba(10,30,60,0.9) 100%); }
+    .orb-wrap.speaking  .orb-ring  { border-color:rgba(34,211,238,0.4); }
+
+    @keyframes orb-breathe { 0%,100%{transform:scale(1);opacity:0.7;} 50%{transform:scale(1.06);opacity:1;} }
+    @keyframes orb-spin    { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    @keyframes orb-listen  { from{transform:scale(0.96);} to{transform:scale(1.07);} }
+    @keyframes orb-speak   { from{transform:scale(0.98);} to{transform:scale(1.05);} }
+
+    /* Transcript */
+    .voice-transcript { text-align:center; max-width:300px; min-height:60px; display:flex; flex-direction:column; gap:6px; }
+    .voice-transcript .vt-user { font-size:14px; color:rgba(255,255,255,0.85); line-height:1.5; }
+    .voice-transcript .vt-user em { color:#c084fc; font-style:normal; }
+    .voice-transcript .vt-reply { font-size:12px; color:rgba(255,255,255,0.45); line-height:1.6; }
+
+    /* Voice bottom bar */
+    .voice-actions { display:flex; align-items:center; gap:28px; }
+    .va-btn { width:52px; height:52px; border-radius:50%; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:20px; transition:all 0.2s; flex-shrink:0; }
+    .va-btn.mic { background:rgba(255,255,255,0.1); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.2); color:#fff; }
+    .va-btn.mic.active { background:rgba(192,132,252,0.25); border-color:#c084fc; box-shadow:0 0 24px rgba(192,132,252,0.4); animation:pulse 1s infinite; }
+    .va-btn.mic-main { width:68px; height:68px; font-size:26px; background:linear-gradient(135deg,#7c3aed,#4f46e5); box-shadow:0 4px 24px rgba(124,58,237,0.5); border:none; color:#fff; }
+    .va-btn.mic-main.active { background:linear-gradient(135deg,#c084fc,#7c3aed); box-shadow:0 0 40px rgba(192,132,252,0.6); }
+    .va-btn.close { background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.5); font-size:16px; }
+    .va-btn.close:hover { background:rgba(239,68,68,0.2); border-color:#ef4444; color:#ef4444; }
+
+    /* ── Rich message types ───────────────────────────── */
+    .rich-chart { background:var(--bg-card2); border:1px solid var(--border); border-radius:10px; padding:14px; margin-top:8px; max-width:500px; }
+    .rich-chart-title { font-size:10px; font-weight:700; letter-spacing:2px; color:var(--text-muted); text-transform:uppercase; margin-bottom:10px; }
+    .rich-table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+    .rich-table th { padding:7px 10px; background:var(--bg-card); color:var(--text-muted); font-size:9px; letter-spacing:1.5px; text-transform:uppercase; text-align:left; border-bottom:1px solid var(--border); }
+    .rich-table td { padding:7px 10px; border-bottom:1px solid var(--border); color:var(--text); }
+    .rich-table tr:last-child td { border-bottom:none; }
+    .rich-table tr:hover td { background:var(--bg-hover); }
+    .rich-products { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; max-width:500px; }
+    .rich-product { width:110px; background:var(--bg-card2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+    .rich-product img { width:100%; height:90px; object-fit:cover; display:block; background:#1e1e1e; }
+    .rich-product-info { padding:6px 8px; }
+    .rich-product-name { font-size:10px; font-weight:600; color:var(--text); line-height:1.3; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .rich-product-val { font-size:10px; color:var(--cyan); margin-top:2px; font-weight:700; }
 
   </style>
 </head>
@@ -5916,68 +5996,143 @@
     ]},
   ];
 
+  // ── Chart renderer ─────────────────────────────────────────────────────
+  function JarvisChart({ data }) {
+    const canvasRef = useRef(null);
+    const chartRef  = useRef(null);
+    useEffect(() => {
+      if (!canvasRef.current || !window.Chart) return;
+      if (chartRef.current) chartRef.current.destroy();
+      const PALETTE = ['#6366f1','#22d3ee','#a78bfa','#34d399','#f59e0b','#f87171','#60a5fa','#fb923c','#e879f9','#4ade80'];
+      const isDark = !document.body.classList.contains('light-theme');
+      const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+      const textColor = isDark ? '#94a3b8' : '#64748b';
+      chartRef.current = new Chart(canvasRef.current, {
+        type: data.type || 'bar',
+        data: {
+          labels: data.labels || [],
+          datasets: (data.datasets || []).map((ds, i) => ({
+            ...ds,
+            backgroundColor: data.type === 'doughnut' || data.type === 'pie'
+              ? PALETTE.slice(0, (data.labels||[]).length)
+              : ds.backgroundColor || PALETTE[i % PALETTE.length] + '99',
+            borderColor: data.type === 'doughnut' || data.type === 'pie'
+              ? PALETTE.slice(0, (data.labels||[]).length)
+              : ds.borderColor || PALETTE[i % PALETTE.length],
+            borderWidth: 2,
+            borderRadius: data.type === 'bar' ? 4 : 0,
+            tension: 0.4,
+            fill: data.type === 'line' ? { target:'origin', above: PALETTE[i%PALETTE.length]+'22' } : false,
+          })),
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: {
+            legend: { labels: { color: textColor, font: { family:'IBM Plex Mono', size:10 }, boxWidth:12 } },
+            tooltip: { backgroundColor: isDark?'#1e293b':'#fff', titleColor: isDark?'#e2e8f0':'#1e293b', bodyColor: textColor, borderColor: gridColor, borderWidth:1 },
+          },
+          scales: (data.type === 'doughnut' || data.type === 'pie') ? {} : {
+            x: { grid:{ color:gridColor }, ticks:{ color:textColor, font:{family:'IBM Plex Mono',size:9} } },
+            y: { grid:{ color:gridColor }, ticks:{ color:textColor, font:{family:'IBM Plex Mono',size:9} } },
+          },
+        },
+      });
+      return () => chartRef.current?.destroy();
+    }, [data]);
+    return <canvas ref={canvasRef} style={{maxHeight:240}}/>;
+  }
+
+  // ── Rich message block ──────────────────────────────────────────────────
+  function RichMessage({ msg }) {
+    const rd = msg.renderData;
+    return (
+      <div>
+        {msg.text && <div style={{whiteSpace:'pre-wrap'}}>{msg.text}</div>}
+        {rd?.chart && (
+          <div className="rich-chart">
+            {rd.chart.title && <div className="rich-chart-title">{rd.chart.title}</div>}
+            <JarvisChart data={rd.chart}/>
+          </div>
+        )}
+        {rd?.table && (
+          <div className="rich-chart" style={{padding:0,overflow:'hidden'}}>
+            {rd.table.title && <div className="rich-chart-title" style={{padding:'10px 14px 0'}}>{rd.table.title}</div>}
+            <table className="rich-table">
+              <thead><tr>{(rd.table.headers||[]).map((h,i)=><th key={i}>{h}</th>)}</tr></thead>
+              <tbody>{(rd.table.rows||[]).map((row,i)=><tr key={i}>{row.map((cell,j)=><td key={j}>{cell}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
+        )}
+        {rd?.products?.length > 0 && (
+          <div className="rich-products">
+            {rd.products.map((p,i)=>(
+              <div key={i} className="rich-product">
+                {p.image ? <img src={p.image} alt={p.title} onError={e=>e.target.style.display='none'}/> : <div style={{height:90,background:'#1e1e1e'}}/>}
+                <div className="rich-product-info">
+                  <div className="rich-product-name">{p.title}</div>
+                  {p.value && <div className="rich-product-val">{p.value}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function JarvisChat({ token }) {
-    const [messages, setMessages] = useState([
-      { role:'bot', text:"⚡ JARVIS online — powered by Claude AI with live store data.\n\nAsk me anything: 'Why are my RTOs up?', 'Which vendor has the worst fulfillment?', 'Am I on track for this month?'\n\nOr click a quick report below." }
+    const [mode,       setMode]       = useState('chat'); // 'chat' | 'voice'
+    const [messages,   setMessages]   = useState([
+      { role:'bot', text:"⚡ JARVIS online. Ask me anything — sales, RTOs, vendor performance, stuck orders.\n\nSwitch to Voice mode to talk hands-free." }
     ]);
     const [input,      setInput]      = useState('');
     const [loading,    setLoading]    = useState(false);
     const [listening,  setListening]  = useState(false);
-    const [voiceOn,    setVoiceOn]    = useState(true); // voice response toggle
     const [speaking,   setSpeaking]   = useState(false);
-    const endRef      = useRef(null);
-    const recognRef   = useRef(null);
+    const [voiceTranscript, setVoiceTranscript] = useState('');
+    const [voiceReply,      setVoiceReply]      = useState('');
+    const endRef    = useRef(null);
+    const recognRef = useRef(null);
     useEffect(() => { endRef.current?.scrollIntoView({ behavior:'smooth' }); }, [messages, loading]);
 
-    // ── Text-to-speech ─────────────────────────────────────────────────────
     const speak = (text) => {
-      if (!voiceOn || !window.speechSynthesis) return;
+      if (!window.speechSynthesis) return;
       window.speechSynthesis.cancel();
-      // Strip markdown-style formatting for cleaner speech
-      const clean = text.replace(/[*_`#►•●]/g,'').replace(/\n+/g,' ').slice(0, 600);
+      const clean = text.replace(/[*_`#►•●]/g,'').replace(/\n+/g,' ').slice(0, 500);
       const utt = new SpeechSynthesisUtterance(clean);
-      utt.rate  = 1.05;
-      utt.pitch = 0.9;
-      utt.volume = 1;
-      // Pick a deeper voice if available
+      utt.rate = 1.0; utt.pitch = 0.85; utt.volume = 1;
       const voices = window.speechSynthesis.getVoices();
-      const pref = voices.find(v => /google uk english male|daniel|alex|fred/i.test(v.name))
-                || voices.find(v => v.lang === 'en-US' || v.lang === 'en-GB');
+      const pref = voices.find(v=>/google uk english male|daniel|alex|fred/i.test(v.name))
+                || voices.find(v=>v.lang==='en-US'||v.lang==='en-GB');
       if (pref) utt.voice = pref;
-      utt.onstart  = () => setSpeaking(true);
-      utt.onend    = () => setSpeaking(false);
-      utt.onerror  = () => setSpeaking(false);
+      utt.onstart = ()=>setSpeaking(true);
+      utt.onend   = ()=>setSpeaking(false);
+      utt.onerror = ()=>setSpeaking(false);
       window.speechSynthesis.speak(utt);
     };
-
     const stopSpeaking = () => { window.speechSynthesis?.cancel(); setSpeaking(false); };
 
-    // ── Voice input ────────────────────────────────────────────────────────
     const startListening = () => {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) { alert('Voice input not supported in this browser. Try Chrome.'); return; }
+      if (!SR) { alert('Voice input requires Chrome or Edge.'); return; }
       stopSpeaking();
       const rec = new SR();
-      rec.lang = 'en-IN';
-      rec.continuous = false;
-      rec.interimResults = false;
-      rec.onstart  = () => setListening(true);
+      rec.lang = 'en-IN'; rec.continuous = false; rec.interimResults = false;
+      rec.onstart  = () => { setListening(true); setVoiceTranscript(''); setVoiceReply(''); };
       rec.onresult = e => {
-        const transcript = e.results[0][0].transcript;
-        setInput(transcript);
+        const t = e.results[0][0].transcript;
+        setVoiceTranscript(t);
         setListening(false);
-        // Auto-send after a short delay
-        setTimeout(() => send(transcript), 300);
+        send(t, true);
       };
-      rec.onerror  = () => setListening(false);
-      rec.onend    = () => setListening(false);
+      rec.onerror = () => setListening(false);
+      rec.onend   = () => setListening(false);
       recognRef.current = rec;
       rec.start();
     };
-
     const stopListening = () => { recognRef.current?.stop(); setListening(false); };
 
-    const send = async (query) => {
+    const send = async (query, isVoice=false) => {
       const q = (query || input).trim();
       if (!q || loading) return;
       stopSpeaking();
@@ -5987,113 +6142,137 @@
       setLoading(true);
       try {
         const r = await fetch(`${API}/jarvis`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
           body: JSON.stringify({ query: q, history: nextMessages.slice(1) }),
         });
         const d = await r.json();
         const reply = d.reply || d.error || 'No data.';
-        setMessages(m => [...m, { role:'bot', text: reply }]);
+        const botMsg = { role:'bot', text: reply, renderData: d.renderData || null };
+        setMessages(m => [...m, botMsg]);
+        if (isVoice) setVoiceReply(reply);
         speak(reply);
       } catch {
-        const err = "Couldn't reach JARVIS. Check the server.";
-        setMessages(m => [...m, { role:'bot', text: err }]);
-        speak(err);
+        const err = "Couldn't reach JARVIS.";
+        setMessages(m=>[...m,{role:'bot',text:err}]);
+        if (isVoice) setVoiceReply(err);
       }
       setLoading(false);
     };
 
-    const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
-
-    const hasSR = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    const hasSS = !!window.speechSynthesis;
+    const onKey = e => { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} };
+    const hasSR = !!(window.SpeechRecognition||window.webkitSpeechRecognition);
+    const orbState = listening ? 'listening' : speaking ? 'speaking' : '';
 
     return (
       <div className="chat-wrap">
-        <div className="chat-panel">
-          <div className="chat-header">
-            <div className="chat-logo" style={{position:'relative'}}>
-              J
-              {speaking && <span style={{position:'absolute',inset:-3,borderRadius:10,border:'2px solid var(--cyan)',animation:'pulse 1s infinite'}}/>}
+        {/* Mode tabs */}
+        <div className="jv-tabs">
+          <button className={`jv-tab ${mode==='chat'?'active':''}`} onClick={()=>{setMode('chat');stopSpeaking();}}>💬 Chat</button>
+          <button className={`jv-tab ${mode==='voice'?'active':''}`} onClick={()=>{setMode('voice');stopSpeaking();}}>🎙 Voice</button>
+        </div>
+
+        {/* ── VOICE MODE ── */}
+        {mode==='voice' && (
+          <div className="voice-panel">
+            {/* Status */}
+            <div className={`voice-status ${orbState}`}>
+              {listening ? 'JARVIS is listening…' : speaking ? 'JARVIS is speaking…' : loading ? 'Processing…' : 'Tap the mic to speak'}
             </div>
-            <div><div className="chat-title">JARVIS {listening && <span style={{color:'var(--red)',fontSize:11,marginLeft:6,animation:'pulse 0.8s infinite'}}>● LISTENING</span>}</div></div>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:'auto'}}>
-              {hasSS && (
-                <button onClick={()=>{ setVoiceOn(v=>!v); stopSpeaking(); }}
-                  title={voiceOn?'Voice response ON — click to mute':'Voice response OFF — click to unmute'}
-                  style={{background:'none',border:`1px solid ${voiceOn?'var(--cyan)':'var(--border)'}`,borderRadius:7,padding:'4px 10px',color:voiceOn?'var(--cyan)':'var(--text-muted)',cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',gap:4}}>
-                  {voiceOn ? '🔊 Voice' : '🔇 Muted'}
-                </button>
-              )}
-              {speaking && <button onClick={stopSpeaking} style={{background:'var(--red-bg)',border:'1px solid var(--red)',borderRadius:7,padding:'4px 10px',color:'var(--red)',cursor:'pointer',fontSize:11}}>■ Stop</button>}
+
+            {/* Orb */}
+            <div className={`orb-wrap ${orbState}`}>
+              <div className="orb-ring"/>
+              <div className="orb-ring"/>
+              <div className="orb-ring"/>
+              <div className="orb-core"/>
             </div>
-            <span className="chat-sub" style={{marginLeft:8}}>Live store data · {hasSR?'Voice enabled':'No mic'}</span>
-          </div>
 
-          {/* Quick report buttons — grouped by category */}
-          <div style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',maxHeight:160,overflowY:'auto'}}>
-            {JARVIS_PRESETS.map(cat => (
-              <div key={cat.category} style={{marginBottom:8}}>
-                <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:4}}>{cat.category}</div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                  {cat.items.map(p => (
-                    <button key={p.query} className="suggestion" style={{fontSize:10}} onClick={() => send(p.query)} disabled={loading}>
-                      {p.icon} {p.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+            {/* Transcript */}
+            <div className="voice-transcript">
+              {voiceTranscript && <div className="vt-user">{voiceTranscript}</div>}
+              {voiceReply && !speaking && <div className="vt-reply">{voiceReply.slice(0,160)}{voiceReply.length>160?'…':''}</div>}
+              {loading && <div className="vt-reply" style={{animation:'pulse 1s infinite'}}>Thinking…</div>}
+            </div>
 
-          <div className="chat-messages">
-            {messages.map((m, i) => (
-              <div key={i} className={`cmsg ${m.role}`}>
-                <div className="cmsg-av">{m.role==='bot' ? 'J' : 'A'}</div>
-                <div className="cmsg-bubble" style={{whiteSpace:'pre-wrap'}}>{m.text}</div>
-              </div>
-            ))}
-            {loading && (
-              <div className="cmsg bot">
-                <div className="cmsg-av">J</div>
-                <div className="cmsg-bubble"><span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/></div>
-              </div>
-            )}
-            <div ref={endRef}/>
-          </div>
-
-          <div className="chat-input-row">
-            <textarea
-              className="chat-textarea" rows={1}
-              placeholder={listening ? '🎙 Listening… speak now' : "Ask JARVIS anything, or tap 🎙 to speak…"}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={onKey}
-              style={{fontStyle: listening ? 'italic' : 'normal'}}
-            />
-            {hasSR && (
-              <button
+            {/* Controls */}
+            <div className="voice-actions">
+              <button className="va-btn close" onClick={()=>setMode('chat')} title="Back to chat">←</button>
+              <button className={`va-btn mic-main ${listening?'active':''}`}
                 onClick={listening ? stopListening : startListening}
                 disabled={loading}
-                title={listening ? 'Stop listening' : 'Voice input'}
-                style={{
-                  background: listening ? 'var(--red-bg)' : 'var(--bg-card2)',
-                  border: `1px solid ${listening ? 'var(--red)' : 'var(--border)'}`,
-                  borderRadius: 8, padding: '0 12px', cursor: 'pointer',
-                  color: listening ? 'var(--red)' : 'var(--text-muted)',
-                  fontSize: 18, transition: 'all 0.2s',
-                  animation: listening ? 'pulse 0.8s infinite' : 'none',
-                }}>
-                🎙
+                title={listening?'Stop':'Start listening'}>
+                {listening ? '■' : '🎙'}
               </button>
-            )}
-            <button className="chat-send" onClick={() => send()} disabled={!input.trim() || loading}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-              </svg>
-            </button>
+              <button className="va-btn close" onClick={stopSpeaking} title="Stop speaking">✕</button>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* ── CHAT MODE ── */}
+        {mode==='chat' && (
+          <div className="chat-panel" style={{borderRadius:'0 0 12px 12px',borderTop:'none'}}>
+            <div className="chat-header">
+              <div className="chat-logo">J</div>
+              <div><div className="chat-title">JARVIS</div></div>
+              <div style={{display:'flex',gap:6,marginLeft:'auto',alignItems:'center'}}>
+                {hasSR && <button onClick={()=>setMode('voice')} style={{background:'none',border:'1px solid var(--border)',borderRadius:7,padding:'4px 10px',color:'var(--text-muted)',cursor:'pointer',fontSize:11}}>🎙 Voice</button>}
+                {speaking && <button onClick={stopSpeaking} style={{background:'var(--red-bg)',border:'1px solid var(--red)',borderRadius:7,padding:'4px 10px',color:'var(--red)',cursor:'pointer',fontSize:11}}>■ Stop</button>}
+              </div>
+              <span className="chat-sub" style={{marginLeft:8}}>Live store data</span>
+            </div>
+
+            {/* Quick report buttons */}
+            <div style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',maxHeight:140,overflowY:'auto'}}>
+              {JARVIS_PRESETS.map(cat => (
+                <div key={cat.category} style={{marginBottom:6}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:3}}>{cat.category}</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+                    {cat.items.map(p => (
+                      <button key={p.query} className="suggestion" style={{fontSize:10}} onClick={() => send(p.query)} disabled={loading}>
+                        {p.icon} {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="chat-messages">
+              {messages.map((m, i) => (
+                <div key={i} className={`cmsg ${m.role}`}>
+                  <div className="cmsg-av">{m.role==='bot' ? 'J' : 'A'}</div>
+                  <div className="cmsg-bubble">
+                    {m.role==='bot' ? <RichMessage msg={m}/> : <span style={{whiteSpace:'pre-wrap'}}>{m.text}</span>}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="cmsg bot">
+                  <div className="cmsg-av">J</div>
+                  <div className="cmsg-bubble"><span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/></div>
+                </div>
+              )}
+              <div ref={endRef}/>
+            </div>
+
+            <div className="chat-input-row">
+              <textarea className="chat-textarea" rows={1}
+                placeholder="Ask JARVIS anything — 'sales chart', 'vendor split', 'top 10 products'…"
+                value={input} onChange={e=>setInput(e.target.value)} onKeyDown={onKey}/>
+              {hasSR && (
+                <button onClick={()=>setMode('voice')} title="Switch to voice mode"
+                  style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'0 12px',cursor:'pointer',color:'var(--text-muted)',fontSize:18}}>
+                  🎙
+                </button>
+              )}
+              <button className="chat-send" onClick={()=>send()} disabled={!input.trim()||loading}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

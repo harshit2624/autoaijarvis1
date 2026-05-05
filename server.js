@@ -3079,6 +3079,100 @@ async function runJarvisTool(name, args, reqCache) {
   return { error: "Unknown tool" };
 }
 
+// ── Build rich renderData from tool results for frontend charts/tables/products ──
+function buildRenderData(toolResults, query = '') {
+  if (!toolResults.length) return null;
+  const q = query.toLowerCase();
+
+  for (const { tool, args, result } of toolResults) {
+
+    // ── Vendor split → doughnut chart ───────────────────────────────────────
+    if (tool === 'get_vendor_stats' || tool === 'get_vendor_fulfillment') {
+      const vendors = result?.vendors || result?.data || [];
+      if (vendors.length > 0) {
+        const wantChart = /chart|graph|split|pie|breakdown|visual|show/i.test(q) || true;
+        if (wantChart) {
+          const labels   = vendors.slice(0,12).map(v => v.vendor_name || v.name || v.vendor);
+          const revenue  = vendors.slice(0,12).map(v => parseFloat(v.revenue || v.total_revenue || 0));
+          const orders   = vendors.slice(0,12).map(v => parseInt(v.orders || v.total_orders || 0));
+          return {
+            chart: { type:'doughnut', title:'Vendor-wise Revenue Split', labels, datasets:[{ label:'Revenue (₹)', data:revenue }] },
+            table: { title:'Vendor Performance', headers:['Vendor','Orders','Revenue','Dispatched'],
+              rows: vendors.slice(0,15).map(v=>[v.vendor_name||v.name||v.vendor, v.orders||v.total_orders||0, `₹${parseFloat(v.revenue||v.total_revenue||0).toFixed(0)}`, v.dispatched||'—']) }
+          };
+        }
+      }
+    }
+
+    // ── Order stats → bar/line chart ────────────────────────────────────────
+    if (tool === 'get_order_stats') {
+      const d = result;
+      if (d?.daily || d?.weekly) {
+        const series = d.daily || d.weekly || [];
+        return { chart: { type:'bar', title:'Orders Over Time', labels: series.map(s=>s.date||s.label), datasets:[
+          { label:'Orders', data: series.map(s=>s.orders||s.count||0) },
+          { label:'Revenue (₹)', data: series.map(s=>parseFloat(s.revenue||0)) },
+        ]}};
+      }
+      if (d?.cod_count !== undefined) {
+        return { chart: { type:'doughnut', title:'COD vs Prepaid', labels:['COD','Prepaid'],
+          datasets:[{ label:'Orders', data:[d.cod_count||0, d.prepaid_count||0] }] }};
+      }
+    }
+
+    // ── RTO analysis → bar chart ────────────────────────────────────────────
+    if (tool === 'get_rto_analysis') {
+      const vendors = result?.by_vendor || [];
+      if (vendors.length) return { chart: { type:'bar', title:'RTO Rate by Vendor (%)', labels: vendors.slice(0,10).map(v=>v.vendor),
+        datasets:[{ label:'RTO %', data: vendors.slice(0,10).map(v=>parseFloat(v.rto_rate||0)) }] },
+        table: { title:'RTO Breakdown', headers:['Vendor','Total','RTO','RTO%'],
+          rows: vendors.slice(0,10).map(v=>[v.vendor, v.total||0, v.rto||0, `${parseFloat(v.rto_rate||0).toFixed(1)}%`]) }
+      };
+    }
+
+    // ── City stats → bar chart ───────────────────────────────────────────────
+    if (tool === 'get_city_stats') {
+      const cities = result?.cities || [];
+      if (cities.length) return { chart: { type:'bar', title:'Orders by City', labels: cities.slice(0,12).map(c=>c.city),
+        datasets:[{ label:'Orders', data: cities.slice(0,12).map(c=>c.orders||c.count||0) }] }};
+    }
+
+    // ── Products → product photo grid ───────────────────────────────────────
+    if (tool === 'get_products') {
+      const prods = result?.products || result || [];
+      if (prods.length) {
+        return { products: prods.slice(0,10).map(p => ({
+          title: p.title || p.name || 'Product',
+          image: p.image || p.image_url || p.thumbnail || '',
+          value: p.revenue ? `₹${parseFloat(p.revenue).toFixed(0)}` : p.orders ? `${p.orders} orders` : '',
+        })),
+        table: { title:'Top Products', headers:['Product','Orders','Revenue'],
+          rows: prods.slice(0,10).map(p=>[p.title||p.name, p.orders||'—', p.revenue?`₹${parseFloat(p.revenue).toFixed(0)}`:'—']) }
+        };
+      }
+    }
+
+    // ── Dispatch rate → simple chart ─────────────────────────────────────────
+    if (tool === 'get_dispatch_rate') {
+      const vendors = result?.vendor_rates || result?.vendors || [];
+      if (vendors.length > 1) return { chart: { type:'bar', title:'Dispatch Rate by Vendor (%)', labels: vendors.slice(0,12).map(v=>v.vendor),
+        datasets:[{ label:'Dispatch %', data: vendors.slice(0,12).map(v=>parseFloat(v.rate||v.dispatch_rate||0)) }] }};
+    }
+
+    // ── Settlements/COD → table ──────────────────────────────────────────────
+    if (tool === 'get_settlements' || tool === 'get_cod_outstanding') {
+      const rows = result?.vendors || result?.settlements || result?.data || [];
+      if (rows.length) {
+        const keys = Object.keys(rows[0] || {}).filter(k=>k!=='_id').slice(0,5);
+        return { table: { title: tool==='get_cod_outstanding'?'COD Outstanding':'Settlements',
+          headers: keys.map(k=>k.replace(/_/g,' ').toUpperCase()),
+          rows: rows.slice(0,15).map(r=>keys.map(k=>r[k]??'—')) }};
+      }
+    }
+  }
+  return null;
+}
+
 // ── POST /jarvis — tool-calling AI, fetches only what it needs ───────────────
 app.post("/jarvis", async (req, res) => {
   const { query = "", history = [] } = req.body;
@@ -3131,8 +3225,10 @@ Rules:
     if (GROQ_KEY) {
       // ── Groq tool-calling loop ──────────────────────────────────────────
       const messages = [{ role:"system", content: systemPrompt }, ...msgs];
-      const reqCache = {}; // shared cache for this request — fetches orders once, reuses across parallel tools
+      const reqCache = {};
       let finalReply = "";
+      let renderData = null; // structured chart/table/product data for frontend rendering
+      const allToolResults = []; // collect all tool results for renderData extraction
 
       for (let turn = 0; turn < 5; turn++) {
         const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -3175,6 +3271,7 @@ Rules:
             try { args = JSON.parse(tc.function.arguments || "{}"); } catch(_){}
             console.log(`🔧 JARVIS tool: ${tc.function.name}`, args);
             const result = await runJarvisTool(tc.function.name, args, reqCache);
+            allToolResults.push({ tool: tc.function.name, args, result });
             return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
           }));
           messages.push(...toolResults);
@@ -3185,7 +3282,8 @@ Rules:
         break;
       }
 
-      return res.json({ reply: finalReply || "No response after tool calls." });
+      renderData = buildRenderData(allToolResults, query);
+      return res.json({ reply: finalReply || "No response after tool calls.", renderData });
     }
 
     // ── Anthropic fallback ─────────────────────────────────────────────────
