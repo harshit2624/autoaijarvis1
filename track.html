@@ -668,9 +668,15 @@
       setLoading(false);
     };
 
-    const handleSuccess = (requestId) => {
+    const handleSuccess = async (requestId) => {
       setActiveForm(null);
       setConfirmed(requestId);
+      // Re-fetch order so the new request shows in progress view immediately
+      try {
+        const r = await fetch(`${API}/track/order-by-id?id=${order.shopify_order_id}`);
+        const d = await r.json();
+        if (d.shopify_order_id) setOrder(d);
+      } catch {}
     };
 
     const returnCfg = order ? (() => {
@@ -832,38 +838,94 @@
                 ))}
               </div>
 
-              {/* Action tiles */}
-              {!activeForm && (
-                <div className="tiles-row">
-                  <div
-                    className="tile tile-exchange"
-                    onClick={() => setActiveForm('exchange')}
-                    title="Request an exchange"
-                  >
-                    <div className="tile-icon">🔄</div>
-                    <div className="tile-label">Exchange</div>
-                    <div className="tile-desc">Swap for a different size or variant</div>
-                  </div>
+              {/* Return/Exchange: show progress if request exists, else show action tiles */}
+              {!activeForm && (() => {
+                const rrs = order.return_requests || [];
+                if (rrs.length > 0) {
+                  const RR_STEPS = ['submitted','approved','pickup_scheduled','in_transit','completed'];
+                  const RR_LABELS = { submitted:'Submitted', approved:'Approved', pickup_scheduled:'Pickup Scheduled', in_transit:'In Transit', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
+                  const RR_ICONS  = { submitted:'📋', approved:'✅', pickup_scheduled:'🚚', in_transit:'📦', completed:'🎉', rejected:'❌', cancelled:'✕' };
+                  const statusColor = s => s==='completed'?'#10b981':s==='rejected'||s==='cancelled'?'#ef4444':'#6366f1';
+                  return (
+                    <div style={{marginTop:12}}>
+                      {rrs.map((rr, idx) => {
+                        const isTerminal = ['rejected','cancelled'].includes(rr.status);
+                        const currentStep = isTerminal ? -1 : RR_STEPS.indexOf(rr.status);
+                        return (
+                          <div key={rr.request_id} style={{background:'#f8f9ff',border:'1px solid #e8eaf6',borderRadius:10,padding:'14px 16px',marginBottom: idx < rrs.length-1 ? 10 : 0}}>
+                            {/* Header */}
+                            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                                <span style={{fontSize:16}}>{rr.type==='exchange'?'🔄':'↩'}</span>
+                                <div>
+                                  <div style={{fontSize:12,fontWeight:700,color:'#1a1a2e'}}>{rr.type==='exchange'?'Exchange':'Return'} Request</div>
+                                  <div style={{fontSize:10,color:'#888',marginTop:1}}>ID: {rr.request_id}</div>
+                                </div>
+                              </div>
+                              <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,background:statusColor(rr.status)+'18',color:statusColor(rr.status)}}>
+                                {RR_ICONS[rr.status]} {RR_LABELS[rr.status]||rr.status}
+                              </span>
+                            </div>
 
-                  {returnCfg?.return_enabled ? (
-                    <div
-                      className="tile tile-return"
-                      onClick={() => setActiveForm('return')}
-                      title="Request a return"
-                    >
-                      <div className="tile-icon">↩</div>
-                      <div className="tile-label">Return</div>
-                      <div className="tile-desc">Return items for a refund or credit</div>
+                            {/* Progress bar — only for non-terminal */}
+                            {!isTerminal && (
+                              <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:10}}>
+                                {RR_STEPS.map((step, i) => (
+                                  <React.Fragment key={step}>
+                                    <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:'none'}}>
+                                      <div style={{width:20,height:20,borderRadius:'50%',background:i<=currentStep?'#6366f1':'#e8eaf6',border:`2px solid ${i<=currentStep?'#6366f1':'#d0d4f0'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:i<=currentStep?'#fff':'#aaa',fontWeight:700,transition:'all 0.3s'}}>
+                                        {i<currentStep?'✓':i===currentStep?'●':''}
+                                      </div>
+                                      <div style={{fontSize:8,color:i<=currentStep?'#6366f1':'#aaa',marginTop:3,textAlign:'center',whiteSpace:'nowrap',maxWidth:50,overflow:'hidden',textOverflow:'ellipsis'}}>
+                                        {RR_LABELS[step]}
+                                      </div>
+                                    </div>
+                                    {i < RR_STEPS.length-1 && (
+                                      <div style={{flex:1,height:2,background:i<currentStep?'#6366f1':'#e8eaf6',margin:'0 2px',marginBottom:14,transition:'all 0.3s'}}/>
+                                    )}
+                                  </React.Fragment>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Reason + note */}
+                            {rr.reason && <div style={{fontSize:11,color:'#666',marginBottom:4}}>Reason: {rr.reason}</div>}
+                            {rr.admin_note && (
+                              <div style={{fontSize:11,color:'#6366f1',background:'#f0f0ff',borderRadius:6,padding:'6px 10px',marginTop:4}}>
+                                💬 {rr.admin_note}
+                              </div>
+                            )}
+                            <div style={{fontSize:10,color:'#aaa',marginTop:6}}>{rr.created_at ? new Date(rr.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ) : (
-                    <div className="tile tile-disabled tile-return-disabled" title="Returns not accepted">
-                      <div className="tile-icon">↩</div>
-                      <div className="tile-label" style={{color:'var(--red)'}}>Return</div>
-                      <div className="tile-desc" style={{color:'var(--red)'}}>Returns not accepted by this vendor</div>
+                  );
+                }
+                // No existing requests — show normal action tiles
+                return (
+                  <div className="tiles-row">
+                    <div className="tile tile-exchange" onClick={() => setActiveForm('exchange')} title="Request an exchange">
+                      <div className="tile-icon">🔄</div>
+                      <div className="tile-label">Exchange</div>
+                      <div className="tile-desc">Swap for a different size or variant</div>
                     </div>
-                  )}
-                </div>
-              )}
+                    {returnCfg?.return_enabled ? (
+                      <div className="tile tile-return" onClick={() => setActiveForm('return')} title="Request a return">
+                        <div className="tile-icon">↩</div>
+                        <div className="tile-label">Return</div>
+                        <div className="tile-desc">Return items for a refund or credit</div>
+                      </div>
+                    ) : (
+                      <div className="tile tile-disabled tile-return-disabled" title="Returns not accepted">
+                        <div className="tile-icon">↩</div>
+                        <div className="tile-label" style={{color:'var(--red)'}}>Return</div>
+                        <div className="tile-desc" style={{color:'var(--red)'}}>Returns not accepted by this vendor</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Request Form */}

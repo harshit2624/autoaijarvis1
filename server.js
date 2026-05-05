@@ -8324,12 +8324,18 @@ async function buildOrderPayload(order) {
     };
   });
 
+  // Fetch existing return/exchange requests for this order
+  const returnRequests = await mdb.collection('return_requests').find(
+    { shopify_order_id: String(order.id) },
+    { projection: { _id: 0, request_id: 1, type: 1, status: 1, reason: 1, created_at: 1, vendor_name: 1, items: 1, admin_note: 1 } }
+  ).sort({ created_at: -1 }).toArray();
+
   return {
     shopify_order_id: order.id, order_name: order.name, customer_name: customerName,
     customer_email: order.email || '', customer_phone: order.shipping_address?.phone || order.billing_address?.phone || order.phone || '',
     stage, financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
     created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames,
-    vendor_shipments: vendorShipments, return_configs: returnConfigs,
+    vendor_shipments: vendorShipments, return_configs: returnConfigs, return_requests: returnRequests,
   };
 }
 
