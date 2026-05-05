@@ -3082,92 +3082,171 @@ async function runJarvisTool(name, args, reqCache) {
 // ── Build rich renderData from tool results for frontend charts/tables/products ──
 function buildRenderData(toolResults, query = '') {
   if (!toolResults.length) return null;
-  const q = query.toLowerCase();
 
-  for (const { tool, args, result } of toolResults) {
+  for (const { tool, result } of toolResults) {
 
-    // ── Vendor split → doughnut chart ───────────────────────────────────────
-    if (tool === 'get_vendor_stats' || tool === 'get_vendor_fulfillment') {
-      const vendors = result?.vendors || result?.data || [];
-      if (vendors.length > 0) {
-        const wantChart = /chart|graph|split|pie|breakdown|visual|show/i.test(q) || true;
-        if (wantChart) {
-          const labels   = vendors.slice(0,12).map(v => v.vendor_name || v.name || v.vendor);
-          const revenue  = vendors.slice(0,12).map(v => parseFloat(v.revenue || v.total_revenue || 0));
-          const orders   = vendors.slice(0,12).map(v => parseInt(v.orders || v.total_orders || 0));
-          return {
-            chart: { type:'doughnut', title:'Vendor-wise Revenue Split', labels, datasets:[{ label:'Revenue (₹)', data:revenue }] },
-            table: { title:'Vendor Performance', headers:['Vendor','Orders','Revenue','Dispatched'],
-              rows: vendors.slice(0,15).map(v=>[v.vendor_name||v.name||v.vendor, v.orders||v.total_orders||0, `₹${parseFloat(v.revenue||v.total_revenue||0).toFixed(0)}`, v.dispatched||'—']) }
-          };
-        }
-      }
-    }
-
-    // ── Order stats → bar/line chart ────────────────────────────────────────
-    if (tool === 'get_order_stats') {
-      const d = result;
-      if (d?.daily || d?.weekly) {
-        const series = d.daily || d.weekly || [];
-        return { chart: { type:'bar', title:'Orders Over Time', labels: series.map(s=>s.date||s.label), datasets:[
-          { label:'Orders', data: series.map(s=>s.orders||s.count||0) },
-          { label:'Revenue (₹)', data: series.map(s=>parseFloat(s.revenue||0)) },
-        ]}};
-      }
-      if (d?.cod_count !== undefined) {
-        return { chart: { type:'doughnut', title:'COD vs Prepaid', labels:['COD','Prepaid'],
-          datasets:[{ label:'Orders', data:[d.cod_count||0, d.prepaid_count||0] }] }};
-      }
-    }
-
-    // ── RTO analysis → bar chart ────────────────────────────────────────────
-    if (tool === 'get_rto_analysis') {
-      const vendors = result?.by_vendor || [];
-      if (vendors.length) return { chart: { type:'bar', title:'RTO Rate by Vendor (%)', labels: vendors.slice(0,10).map(v=>v.vendor),
-        datasets:[{ label:'RTO %', data: vendors.slice(0,10).map(v=>parseFloat(v.rto_rate||0)) }] },
-        table: { title:'RTO Breakdown', headers:['Vendor','Total','RTO','RTO%'],
-          rows: vendors.slice(0,10).map(v=>[v.vendor, v.total||0, v.rto||0, `${parseFloat(v.rto_rate||0).toFixed(1)}%`]) }
+    // ── get_vendor_stats → array of {vendor, revenue, orders, rto, rtoRate}
+    if (tool === 'get_vendor_stats' && Array.isArray(result) && result.length > 0) {
+      const top = result.slice(0, 15);
+      return {
+        chart: {
+          type: 'doughnut',
+          title: 'Vendor-wise Revenue Split',
+          labels: top.map(v => v.vendor),
+          datasets: [{ label: 'Revenue (₹)', data: top.map(v => v.revenue) }],
+        },
+        table: {
+          title: 'Vendor Performance',
+          headers: ['Vendor', 'Orders', 'Revenue (₹)', 'RTO', 'RTO%'],
+          rows: top.map(v => [v.vendor, v.orders, `₹${v.revenue.toLocaleString()}`, v.rto, v.rtoRate]),
+        },
       };
     }
 
-    // ── City stats → bar chart ───────────────────────────────────────────────
-    if (tool === 'get_city_stats') {
-      const cities = result?.cities || [];
-      if (cities.length) return { chart: { type:'bar', title:'Orders by City', labels: cities.slice(0,12).map(c=>c.city),
-        datasets:[{ label:'Orders', data: cities.slice(0,12).map(c=>c.orders||c.count||0) }] }};
+    // ── get_order_stats → {total, revenue, cod, prepaid, fulfilled, pending, rto}
+    if (tool === 'get_order_stats' && result?.total !== undefined) {
+      return {
+        chart: {
+          type: 'doughnut',
+          title: 'COD vs Prepaid',
+          labels: ['COD', 'Prepaid'],
+          datasets: [{ label: 'Orders', data: [result.cod || 0, result.prepaid || 0] }],
+        },
+        table: {
+          title: `Order Stats — ${result.period || 'All time'}`,
+          headers: ['Metric', 'Value'],
+          rows: [
+            ['Total Orders', result.total],
+            ['Revenue', `₹${(result.revenue||0).toLocaleString()}`],
+            ['Avg Order Value', `₹${(result.avgOrderValue||0).toLocaleString()}`],
+            ['Fulfilled', result.fulfilled],
+            ['Pending', result.pending],
+            ['COD', result.cod],
+            ['Prepaid', result.prepaid],
+            ['RTO', result.rto],
+          ],
+        },
+      };
     }
 
-    // ── Products → product photo grid ───────────────────────────────────────
-    if (tool === 'get_products') {
-      const prods = result?.products || result || [];
-      if (prods.length) {
-        return { products: prods.slice(0,10).map(p => ({
-          title: p.title || p.name || 'Product',
-          image: p.image || p.image_url || p.thumbnail || '',
-          value: p.revenue ? `₹${parseFloat(p.revenue).toFixed(0)}` : p.orders ? `${p.orders} orders` : '',
+    // ── get_dispatch_rate → {by_vendor: [{vendor, total, dispatched, pending, dispatchRate}]}
+    if (tool === 'get_dispatch_rate' && result?.by_vendor?.length > 0) {
+      const top = result.by_vendor.slice(0, 15);
+      return {
+        chart: {
+          type: 'bar',
+          title: 'Dispatch Rate by Vendor',
+          labels: top.map(v => v.vendor),
+          datasets: [
+            { label: 'Dispatched', data: top.map(v => v.dispatched) },
+            { label: 'Pending', data: top.map(v => v.pending) },
+          ],
+        },
+        table: {
+          title: `Dispatch Rates (Overall: ${result.overall_dispatch_rate})`,
+          headers: ['Vendor', 'Total', 'Dispatched', 'Pending', 'Rate'],
+          rows: top.map(v => [v.vendor, v.total, v.dispatched, v.pending, v.dispatchRate]),
+        },
+      };
+    }
+
+    // ── get_city_stats → {topCities: [{city, orders}], topStates: [{state, orders}]}
+    if (tool === 'get_city_stats' && result?.topCities?.length > 0) {
+      const cities = result.topCities.slice(0, 12);
+      return {
+        chart: {
+          type: 'bar',
+          title: 'Top Cities by Orders',
+          labels: cities.map(c => c.city),
+          datasets: [{ label: 'Orders', data: cities.map(c => c.orders) }],
+        },
+        table: {
+          title: 'Orders by City',
+          headers: ['City', 'Orders'],
+          rows: cities.map(c => [c.city, c.orders]),
+        },
+      };
+    }
+
+    // ── get_products → {products: [{name, vendor, units, revenue}]}
+    if (tool === 'get_products' && result?.products?.length > 0) {
+      const prods = result.products.slice(0, 10);
+      return {
+        chart: {
+          type: 'bar',
+          title: 'Top Products by Revenue',
+          labels: prods.map(p => p.name.slice(0, 20)),
+          datasets: [{ label: 'Revenue (₹)', data: prods.map(p => p.revenue) }],
+        },
+        products: prods.map(p => ({
+          title: p.name,
+          image: p.image || '',
+          value: `₹${(p.revenue||0).toLocaleString()} · ${p.units} units`,
         })),
-        table: { title:'Top Products', headers:['Product','Orders','Revenue'],
-          rows: prods.slice(0,10).map(p=>[p.title||p.name, p.orders||'—', p.revenue?`₹${parseFloat(p.revenue).toFixed(0)}`:'—']) }
-        };
-      }
+        table: {
+          title: 'Top Products',
+          headers: ['Product', 'Vendor', 'Units', 'Revenue'],
+          rows: prods.map(p => [p.name, p.vendor||'—', p.units, `₹${(p.revenue||0).toLocaleString()}`]),
+        },
+      };
     }
 
-    // ── Dispatch rate → simple chart ─────────────────────────────────────────
-    if (tool === 'get_dispatch_rate') {
-      const vendors = result?.vendor_rates || result?.vendors || [];
-      if (vendors.length > 1) return { chart: { type:'bar', title:'Dispatch Rate by Vendor (%)', labels: vendors.slice(0,12).map(v=>v.vendor),
-        datasets:[{ label:'Dispatch %', data: vendors.slice(0,12).map(v=>parseFloat(v.rate||v.dispatch_rate||0)) }] }};
+    // ── get_rto_analysis → {by_vendor: [{vendor, total, rto, rto_rate}]}
+    if (tool === 'get_rto_analysis' && result?.by_vendor?.length > 0) {
+      const top = result.by_vendor.slice(0, 12);
+      return {
+        chart: {
+          type: 'bar',
+          title: 'RTO Rate by Vendor (%)',
+          labels: top.map(v => v.vendor),
+          datasets: [{ label: 'RTO %', data: top.map(v => parseFloat(v.rto_rate)||0) }],
+        },
+        table: {
+          title: 'RTO Breakdown',
+          headers: ['Vendor', 'Total', 'RTO', 'RTO%'],
+          rows: top.map(v => [v.vendor, v.total||0, v.rto||0, `${parseFloat(v.rto_rate||0).toFixed(1)}%`]),
+        },
+      };
     }
 
-    // ── Settlements/COD → table ──────────────────────────────────────────────
-    if (tool === 'get_settlements' || tool === 'get_cod_outstanding') {
-      const rows = result?.vendors || result?.settlements || result?.data || [];
-      if (rows.length) {
-        const keys = Object.keys(rows[0] || {}).filter(k=>k!=='_id').slice(0,5);
-        return { table: { title: tool==='get_cod_outstanding'?'COD Outstanding':'Settlements',
-          headers: keys.map(k=>k.replace(/_/g,' ').toUpperCase()),
-          rows: rows.slice(0,15).map(r=>keys.map(k=>r[k]??'—')) }};
-      }
+    // ── get_vendor_fulfillment → array of {vendor, confirmed_pending, dispatched, delivered, rto}
+    if (tool === 'get_vendor_fulfillment' && Array.isArray(result) && result.length > 0) {
+      const top = result.slice(0, 12);
+      return {
+        chart: {
+          type: 'bar',
+          title: 'Vendor Fulfilment Status',
+          labels: top.map(v => v.vendor),
+          datasets: [
+            { label: 'Dispatched', data: top.map(v => v.dispatched||0) },
+            { label: 'Delivered',  data: top.map(v => v.delivered||0) },
+            { label: 'Pending',    data: top.map(v => v.confirmed_pending||0) },
+          ],
+        },
+        table: {
+          title: 'Vendor Fulfilment',
+          headers: ['Vendor', 'Pending', 'Dispatched', 'Delivered', 'RTO'],
+          rows: top.map(v => [v.vendor, v.confirmed_pending||0, v.dispatched||0, v.delivered||0, v.rto||0]),
+        },
+      };
+    }
+
+    // ── get_cod_outstanding → array of {vendor, cod_amount, orders}
+    if (tool === 'get_cod_outstanding' && Array.isArray(result) && result.length > 0) {
+      const top = result.slice(0, 12);
+      return {
+        chart: {
+          type: 'bar',
+          title: 'COD Outstanding by Vendor',
+          labels: top.map(v => v.vendor||v.name),
+          datasets: [{ label: 'COD Amount (₹)', data: top.map(v => parseFloat(v.cod_amount||v.amount||0)) }],
+        },
+        table: {
+          title: 'COD Outstanding',
+          headers: ['Vendor', 'Orders', 'COD Amount'],
+          rows: top.map(v => [v.vendor||v.name, v.orders||'—', `₹${parseFloat(v.cod_amount||v.amount||0).toLocaleString()}`]),
+        },
+      };
     }
   }
   return null;
