@@ -261,6 +261,13 @@ const OP = {
 
 const app = express();
 
+function mapStatus(s) {
+  if (!s) return 'unfulfilled';
+  if (s === 'fulfilled') return 'fulfilled';
+  if (s === 'partial') return 'partial';
+  return s;
+}
+
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
 
