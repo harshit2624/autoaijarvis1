@@ -8611,6 +8611,20 @@ app.get("/admin/return-requests", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Admin: remove a shipment from a return request ───────────────────────
+app.delete("/admin/return-requests/:id/shipment/:direction", adminAuth, async (req, res) => {
+  try {
+    const { direction } = req.params;
+    if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
+    const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id },
+      { $unset: { [field]: '' }, $set: { updated_at: new Date().toISOString() } }
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Admin: manually set AWB on a return request shipment ─────────────────
 app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
   try {

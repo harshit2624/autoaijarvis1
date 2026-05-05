@@ -2681,20 +2681,26 @@
         {/* Existing shipments */}
         {(revShip||fwdShip) && (
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
-            {revShip && (
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--cyan)',borderRadius:8,padding:'8px 14px',fontSize:11}}>
-                <div style={{color:'var(--cyan)',fontWeight:700,marginBottom:3}}>↩ Reverse Pickup</div>
-                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</div>
-                <div style={{color:'var(--text-muted)',marginTop:2}}>{revShip.courier} · {revShip.created_at?.split('T')[0]}</div>
+            {[revShip && {ship:revShip,dir:'reverse',color:'var(--cyan)',label:'↩ Reverse Pickup'},
+              fwdShip && {ship:fwdShip,dir:'forward',color:'var(--green)',label:'→ Forward Dispatch'}
+            ].filter(Boolean).map(({ship,dir,color,label})=>(
+              <div key={dir} style={{background:'var(--bg-card2)',border:`1px solid ${color}`,borderRadius:8,padding:'8px 14px',fontSize:11,position:'relative',minWidth:180}}>
+                <div style={{color,fontWeight:700,marginBottom:3}}>{label}</div>
+                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{ship.awb}</div>
+                <div style={{color:'var(--text-muted)',marginTop:2}}>{ship.courier} · {ship.created_at?.split('T')[0]}</div>
+                <button
+                  onClick={async()=>{
+                    if(!window.confirm(`Remove this ${dir} shipment (AWB: ${ship.awb})? You can then recreate or re-enter a new one.`)) return;
+                    setMsg(null);
+                    const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/shipment/${dir}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                    if(r.ok){ setMsg({type:'success',text:`${dir} shipment removed.`}); onUpdated&&onUpdated(); }
+                    else setMsg({type:'error',text:'Remove failed.'});
+                  }}
+                  style={{position:'absolute',top:6,right:6,background:'var(--red-bg)',border:'1px solid var(--red)',color:'var(--red)',borderRadius:4,padding:'2px 7px',fontSize:10,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace'}}>
+                  ✕ Remove
+                </button>
               </div>
-            )}
-            {fwdShip && (
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--green)',borderRadius:8,padding:'8px 14px',fontSize:11}}>
-                <div style={{color:'var(--green)',fontWeight:700,marginBottom:3}}>→ Forward Dispatch</div>
-                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</div>
-                <div style={{color:'var(--text-muted)',marginTop:2}}>{fwdShip.courier} · {fwdShip.created_at?.split('T')[0]}</div>
-              </div>
-            )}
+            ))}
           </div>
         )}
 
@@ -2771,7 +2777,7 @@
                 <div style={{fontSize:11,fontWeight:700,color:'var(--cyan)',marginBottom:4}}>↩ Reverse Pickup</div>
                 <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>Customer → Vendor · Pickup return item from customer</div>
                 {revShip
-                  ? <div style={{fontSize:10,color:'var(--text-muted)'}}>Already created: <span style={{color:'var(--cyan)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</span></div>
+                  ? <div style={{fontSize:10,color:'var(--text-muted)'}}>AWB: <span style={{color:'var(--cyan)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</span> — remove above to recreate</div>
                   : <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>createShipment('reverse')} disabled={!!creating}>{creating==='reverse'?<><span className="spin">↻</span> Creating…</>:'Create Reverse Pickup'}</button>
                 }
               </div>
@@ -2782,7 +2788,7 @@
                   <div style={{fontSize:11,fontWeight:700,color:'var(--green)',marginBottom:4}}>→ Forward Dispatch</div>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>Vendor → Customer · Send exchange item to customer</div>
                   {fwdShip
-                    ? <div style={{fontSize:10,color:'var(--text-muted)'}}>Already created: <span style={{color:'var(--green)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</span></div>
+                    ? <div style={{fontSize:10,color:'var(--text-muted)'}}>AWB: <span style={{color:'var(--green)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</span> — remove above to recreate</div>
                     : <button className="btn btn-ghost btn-sm" style={{fontSize:11,borderColor:'var(--green)',color:'var(--green)'}} onClick={()=>createShipment('forward')} disabled={!!creating}>{creating==='forward'?<><span className="spin">↻</span> Creating…</>:'Create Forward Shipment'}</button>
                   }
                 </div>
