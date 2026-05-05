@@ -3115,6 +3115,8 @@ Rules:
 - Be concise — bullet points preferred. Flag risks and anomalies proactively.
 - Currency is INR (₹). Format large numbers with commas.
 - If data is zero or missing, say so clearly.
+- When calling tools, always provide valid JSON arguments matching the schema exactly.
+- If unsure which tool to use, default to get_order_stats with period="week".
 - Today's date: ${new Date().toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}`;
 
   const msgs = [
@@ -3138,7 +3140,7 @@ Rules:
           headers: { "Content-Type":"application/json", "Authorization":`Bearer ${GROQ_KEY}` },
           body: JSON.stringify({
             model: "llama-3.3-70b-versatile",
-            max_tokens: 1000,
+            max_tokens: 1200,
             messages,
             tools: JARVIS_TOOLS,
             tool_choice: "auto",
@@ -3149,6 +3151,19 @@ Rules:
 
         const choice = d.choices?.[0];
         const msg    = choice?.message;
+
+        // Groq tool-generation failure — retry once without tools as plain chat
+        if (choice?.finish_reason === "error" || d.error?.code === "tool_use_failed") {
+          console.warn("⚠️ JARVIS tool-gen failed, retrying without tools…");
+          const fallback = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type":"application/json", "Authorization":`Bearer ${GROQ_KEY}` },
+            body: JSON.stringify({ model: "llama-3.3-70b-versatile", max_tokens: 1200, messages }),
+          });
+          const fd = await fallback.json();
+          finalReply = fd.choices?.[0]?.message?.content || "I ran into a processing error. Please rephrase your question.";
+          break;
+        }
 
         if (choice?.finish_reason === "tool_calls" && msg?.tool_calls?.length) {
           // Pre-fetch orders once before parallel tool calls to avoid 429
@@ -3163,7 +3178,7 @@ Rules:
             return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
           }));
           messages.push(...toolResults);
-          continue; // let AI respond with the data
+          continue;
         }
 
         finalReply = msg?.content || "No response.";
