@@ -2604,7 +2604,7 @@
     const [partners,   setPartners]   = useState([]);
     const [partner,    setPartner]    = useState('');
     const [warehouses, setWarehouses] = useState([]);
-    const [warehouse,  setWarehouse]  = useState(null); // {id,name,address}
+    const [warehouse,  setWarehouse]  = useState(null);
     const [whLoading,  setWhLoading]  = useState(false);
     const [weight,  setWeight]    = useState('0.5');
     const [length,  setLength]    = useState('15');
@@ -2612,6 +2612,28 @@
     const [height,  setHeight]    = useState('8');
     const [creating, setCreating] = useState('');
     const [msg, setMsg]           = useState(null);
+    // Manual AWB state
+    const [manualDir,     setManualDir]     = useState('reverse');
+    const [manualCourier, setManualCourier] = useState('');
+    const [manualAwb,     setManualAwb]     = useState('');
+    const [savingManual,  setSavingManual]  = useState(false);
+
+    const saveManualAwb = async () => {
+      if (!manualAwb.trim()) return;
+      setSavingManual(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/awb`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ direction: manualDir, awb: manualAwb.trim(), courier: manualCourier }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type: 'success', text: `AWB saved${d.ok?' & pushed to ShipSagar for tracking':''}.` });
+        setManualAwb(''); setManualCourier('');
+        onUpdated && onUpdated();
+      } catch(e) { setMsg({ type: 'error', text: e.message }); }
+      setSavingManual(false);
+    };
 
     useEffect(()=>{
       fetch(`${API}/admin/shipping-creds`, { headers:{ Authorization:`Bearer ${token}` } })
@@ -2669,6 +2691,37 @@
             )}
           </div>
         )}
+
+        {/* Manual AWB entry — always shown, works for update too */}
+        <div style={{background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px',marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>
+            ✏️ {(rr.reverse_shipment||rr.forward_shipment) ? 'Update' : 'Enter'} Tracking AWB Manually
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
+            <div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Direction</div>
+              <select value={manualDir} onChange={e=>setManualDir(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                <option value="reverse">↩ Reverse (Return pickup)</option>
+                {rr.type==='exchange'&&<option value="forward">→ Forward (Exchange dispatch)</option>}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
+              <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none',minWidth:130}}>
+                <option value="">— Select —</option>
+                {['Delhivery','XpressBees','Bluedart','DTDC','Ecom Express','FedEx','Shiprocket','ShipMozo','Other'].map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking Number</div>
+              <input value={manualAwb} onChange={e=>setManualAwb(e.target.value)} placeholder="Enter AWB…"
+                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none',boxSizing:'border-box'}}/>
+            </div>
+            <button className="btn btn-primary" style={{fontSize:11,padding:'7px 14px',whiteSpace:'nowrap'}} onClick={saveManualAwb} disabled={savingManual||!manualAwb.trim()}>
+              {savingManual?<><span className="spin">↻</span> Saving…</>:'💾 Save AWB'}
+            </button>
+          </div>
+        </div>
 
         {partners.length === 0 ? (
           <div style={{fontSize:11,color:'var(--text-muted)'}}>No shipping partners connected. Go to Shipping Settings.</div>

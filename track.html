@@ -613,6 +613,113 @@
   }
 
 
+  function RRShipmentTracker({ awb, courier, direction, requestId, trackingStatus }) {
+    const [status, setStatus] = React.useState(trackingStatus || '');
+    const [history, setHistory] = React.useState([]);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [msg, setMsg] = React.useState('');
+
+    const refresh = async () => {
+      if (!awb) return;
+      setRefreshing(true); setMsg('');
+      try {
+        const params = new URLSearchParams({ awb, request_id: requestId || '', direction: direction || '' });
+        const r = await fetch(`${API}/track/rr-shipment-status?${params}`);
+        const d = await r.json();
+        if (d.status) setStatus(d.status);
+        if (d.history) setHistory(d.history);
+        if (d.message) setMsg(d.message);
+      } catch { setMsg('Could not fetch status.'); }
+      setRefreshing(false);
+    };
+
+    return (
+      <div style={{background:'#f0f0ff',border:'1px solid #d8d4ff',borderRadius:8,padding:'10px 12px',marginTop:8}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:11,fontWeight:700,color:'#4433cc'}}>{direction==='reverse'?'↩ Return Pickup':'→ Exchange Dispatch'}</span>
+            <span style={{fontSize:10,color:'#888',fontFamily:'monospace'}}>{awb}</span>
+            {courier && <span style={{fontSize:10,color:'#aaa'}}>{courier}</span>}
+          </div>
+          <button onClick={refresh} disabled={refreshing}
+            style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'2px 8px',display:'flex',alignItems:'center',gap:3}}>
+            {refreshing?'…':'↻ Refresh'}
+          </button>
+        </div>
+        {status && <div style={{fontSize:11,color:'#4433cc',fontWeight:600,marginBottom:4}}>{status}</div>}
+        {msg && <div style={{fontSize:10,color:'#888',marginTop:2}}>{msg}</div>}
+        {history.length > 0 && (
+          <div style={{marginTop:6,borderTop:'1px solid #e8e4ff',paddingTop:6}}>
+            {history.slice().reverse().slice(0,3).map((h,i)=>(
+              <div key={i} style={{fontSize:10,color:'#666',marginBottom:2,display:'flex',gap:8}}>
+                <span style={{color:'#aaa',flexShrink:0}}>{h.ActionDate||''}</span>
+                <span>{h.ActionDescription||''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function RRProgressCard({ rr, idx, total, RR_STEPS, RR_LABELS, RR_ICONS, statusColor, isTerminal, currentStep }) {
+    return (
+      <div style={{background:'#f8f9ff',border:'1px solid #e8eaf6',borderRadius:10,padding:'14px 16px',marginBottom: idx < total-1 ? 10 : 0}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:16}}>{rr.type==='exchange'?'🔄':'↩'}</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#1a1a2e'}}>{rr.type==='exchange'?'Exchange':'Return'} Request</div>
+              <div style={{fontSize:10,color:'#888',marginTop:1}}>ID: {rr.request_id}</div>
+            </div>
+          </div>
+          <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,background:statusColor(rr.status)+'18',color:statusColor(rr.status)}}>
+            {RR_ICONS[rr.status]} {RR_LABELS[rr.status]||rr.status}
+          </span>
+        </div>
+
+        {/* Progress bar */}
+        {!isTerminal && (
+          <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:10}}>
+            {RR_STEPS.map((step, i) => (
+              <React.Fragment key={step}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:'none'}}>
+                  <div style={{width:20,height:20,borderRadius:'50%',background:i<=currentStep?'#6366f1':'#e8eaf6',border:`2px solid ${i<=currentStep?'#6366f1':'#d0d4f0'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:i<=currentStep?'#fff':'#aaa',fontWeight:700}}>
+                    {i<currentStep?'✓':i===currentStep?'●':''}
+                  </div>
+                  <div style={{fontSize:8,color:i<=currentStep?'#6366f1':'#aaa',marginTop:3,textAlign:'center',whiteSpace:'nowrap',maxWidth:50,overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {RR_LABELS[step]}
+                  </div>
+                </div>
+                {i < RR_STEPS.length-1 && <div style={{flex:1,height:2,background:i<currentStep?'#6366f1':'#e8eaf6',margin:'0 2px',marginBottom:14}}/>}
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+
+        {/* AWB shipment trackers */}
+        {rr.reverse_shipment?.awb && (
+          <RRShipmentTracker awb={rr.reverse_shipment.awb} courier={rr.reverse_shipment.courier} direction="reverse"
+            requestId={rr.request_id} trackingStatus={rr.reverse_shipment.tracking_status}/>
+        )}
+        {rr.forward_shipment?.awb && (
+          <RRShipmentTracker awb={rr.forward_shipment.awb} courier={rr.forward_shipment.courier} direction="forward"
+            requestId={rr.request_id} trackingStatus={rr.forward_shipment.tracking_status}/>
+        )}
+
+        {/* Reason + admin note */}
+        {rr.reason && <div style={{fontSize:11,color:'#666',marginTop:8}}>Reason: {rr.reason}</div>}
+        {rr.admin_note && (
+          <div style={{fontSize:11,color:'#6366f1',background:'#f0f0ff',borderRadius:6,padding:'6px 10px',marginTop:6}}>
+            💬 {rr.admin_note}
+          </div>
+        )}
+        <div style={{fontSize:10,color:'#aaa',marginTop:6}}>{rr.created_at ? new Date(rr.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+      </div>
+    );
+  }
+
   function App() {
     const [orderNum, setOrderNum]   = useState('');
     const [contact,  setContact]    = useState(''); // email or phone
@@ -852,51 +959,8 @@
                         const isTerminal = ['rejected','cancelled'].includes(rr.status);
                         const currentStep = isTerminal ? -1 : RR_STEPS.indexOf(rr.status);
                         return (
-                          <div key={rr.request_id} style={{background:'#f8f9ff',border:'1px solid #e8eaf6',borderRadius:10,padding:'14px 16px',marginBottom: idx < rrs.length-1 ? 10 : 0}}>
-                            {/* Header */}
-                            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-                              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                                <span style={{fontSize:16}}>{rr.type==='exchange'?'🔄':'↩'}</span>
-                                <div>
-                                  <div style={{fontSize:12,fontWeight:700,color:'#1a1a2e'}}>{rr.type==='exchange'?'Exchange':'Return'} Request</div>
-                                  <div style={{fontSize:10,color:'#888',marginTop:1}}>ID: {rr.request_id}</div>
-                                </div>
-                              </div>
-                              <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,background:statusColor(rr.status)+'18',color:statusColor(rr.status)}}>
-                                {RR_ICONS[rr.status]} {RR_LABELS[rr.status]||rr.status}
-                              </span>
-                            </div>
-
-                            {/* Progress bar — only for non-terminal */}
-                            {!isTerminal && (
-                              <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:10}}>
-                                {RR_STEPS.map((step, i) => (
-                                  <React.Fragment key={step}>
-                                    <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:'none'}}>
-                                      <div style={{width:20,height:20,borderRadius:'50%',background:i<=currentStep?'#6366f1':'#e8eaf6',border:`2px solid ${i<=currentStep?'#6366f1':'#d0d4f0'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:i<=currentStep?'#fff':'#aaa',fontWeight:700,transition:'all 0.3s'}}>
-                                        {i<currentStep?'✓':i===currentStep?'●':''}
-                                      </div>
-                                      <div style={{fontSize:8,color:i<=currentStep?'#6366f1':'#aaa',marginTop:3,textAlign:'center',whiteSpace:'nowrap',maxWidth:50,overflow:'hidden',textOverflow:'ellipsis'}}>
-                                        {RR_LABELS[step]}
-                                      </div>
-                                    </div>
-                                    {i < RR_STEPS.length-1 && (
-                                      <div style={{flex:1,height:2,background:i<currentStep?'#6366f1':'#e8eaf6',margin:'0 2px',marginBottom:14,transition:'all 0.3s'}}/>
-                                    )}
-                                  </React.Fragment>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Reason + note */}
-                            {rr.reason && <div style={{fontSize:11,color:'#666',marginBottom:4}}>Reason: {rr.reason}</div>}
-                            {rr.admin_note && (
-                              <div style={{fontSize:11,color:'#6366f1',background:'#f0f0ff',borderRadius:6,padding:'6px 10px',marginTop:4}}>
-                                💬 {rr.admin_note}
-                              </div>
-                            )}
-                            <div style={{fontSize:10,color:'#aaa',marginTop:6}}>{rr.created_at ? new Date(rr.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
-                          </div>
+                          <RRProgressCard key={rr.request_id} rr={rr} idx={idx} total={rrs.length}
+                            RR_STEPS={RR_STEPS} RR_LABELS={RR_LABELS} RR_ICONS={RR_ICONS} statusColor={statusColor} isTerminal={isTerminal} currentStep={currentStep}/>
                         );
                       })}
                     </div>

@@ -8327,7 +8327,7 @@ async function buildOrderPayload(order) {
   // Fetch existing return/exchange requests for this order
   const returnRequests = await mdb.collection('return_requests').find(
     { shopify_order_id: String(order.id) },
-    { projection: { _id: 0, request_id: 1, type: 1, status: 1, reason: 1, created_at: 1, vendor_name: 1, items: 1, admin_note: 1 } }
+    { projection: { _id: 0, request_id: 1, type: 1, status: 1, reason: 1, created_at: 1, vendor_name: 1, items: 1, admin_note: 1, reverse_shipment: 1, forward_shipment: 1 } }
   ).sort({ created_at: -1 }).toArray();
 
   return {
@@ -8608,6 +8608,59 @@ app.get("/admin/return-requests", adminAuth, async (req, res) => {
     const q = status && status !== 'all' ? { status } : {};
     const requests = await mdb.collection('return_requests').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
     res.json({ requests });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: manually set AWB on a return request shipment ─────────────────
+app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
+  try {
+    const { direction, awb, courier } = req.body || {};
+    if (!direction || !awb) return res.status(400).json({ error: 'direction and awb required' });
+    if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
+    const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id },
+      { $set: { [field]: { awb: awb.trim(), courier: courier || '', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+    );
+    // Push to ShipSagar for tracking
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    if (rr) {
+      const soData = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null);
+      const so = soData?.order || {};
+      shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: so.name || rr.request_id, customerName: rr.customer_name || '', email: rr.customer_email || so.email || '', mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) }).catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Public: track RR shipment AWB via ShipSagar ───────────────────────────
+app.get("/track/rr-shipment-status", async (req, res) => {
+  try {
+    const { awb, request_id, direction } = req.query;
+    if (!awb) return res.status(400).json({ error: 'awb required' });
+    const ss = await shipsagarTrackShipment(awb);
+    if (!ss) return res.json({ status: '', awb, message: 'Tracking not configured' });
+    if (ss.found && ss.history?.length) {
+      const latest = ss.history[ss.history.length - 1];
+      const status = latest.ActionDescription || '';
+      if (request_id && direction) {
+        const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
+        await mdb.collection('return_requests').updateOne(
+          { request_id },
+          { $set: { [`${field}.tracking_status`]: status, [`${field}.tracking_updated_at`]: new Date().toISOString() } }
+        ).catch(() => {});
+      }
+      return res.json({ status, awb, history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+    }
+    if (ss.found) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
+    // Not on ShipSagar — push it
+    try {
+      const ovs = await mdb.collection('return_requests').findOne({ request_id }, { projection: { customer_name: 1, customer_email: 1, customer_phone: 1, shopify_order_id: 1, _id: 0 } }).catch(() => null);
+      const soData = ovs?.shopify_order_id ? await shopifyREST(`/orders/${ovs.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null) : null;
+      const so = soData?.order || {};
+      await shipsagarPushShipment({ awb, courierCode: '', orderNo: so.name || request_id || awb, customerName: ovs?.customer_name || '', email: ovs?.customer_email || so.email || '', mobileNo: (ovs?.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) });
+    } catch {}
+    return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
