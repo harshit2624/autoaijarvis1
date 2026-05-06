@@ -3936,6 +3936,16 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
 });
 
 // ── POST /vendor/orders/:shopifyId/tag ────────────────────────────────────
+// ── PUT /vendor/orders/:shopifyId/mark-delivered ─────────────────────────
+app.put("/vendor/orders/:shopifyId/mark-delivered", vendorAuth, async (req, res) => {
+  const { shopifyId } = req.params;
+  try {
+    await OVS.upsert(shopifyId, req.vendor, { stage: 'delivered', updated_at: new Date().toISOString() });
+    auditLog("vendor", "mark_delivered", shopifyId, { vendor: req.vendor });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post("/vendor/orders/:shopifyId/tag", vendorAuth, async (req, res) => {
   const { shopifyId } = req.params;
   const { tags } = req.body || {};

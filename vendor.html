@@ -966,9 +966,10 @@
     const [delivStatus,  setDelivStatus]  = useState(order.deliveryStatus || '');
     const [trackHistory, setTrackHistory] = useState([]);
     const [trackTag,     setTrackTag]     = useState('');
-    const [saving,       setSaving]      = useState(false);
-    const [fulfilling,   setFulfilling]  = useState(false);
-    const [msg,          setMsg]         = useState(null); // {type, text}
+    const [saving,           setSaving]         = useState(false);
+    const [fulfilling,       setFulfilling]     = useState(false);
+    const [markingDelivered, setMarkingDelivered] = useState(false);
+    const [msg,              setMsg]            = useState(null); // {type, text}
     const [connPartners, setConnPartners]= useState([]);
     const [showShipment, setShowShipment]= useState(false);
     const [shipPartner,  setShipPartner] = useState('');
@@ -1096,7 +1097,23 @@
       setFulfilling(false);
     };
 
+    const markDelivered = async () => {
+      if (!window.confirm('Mark this order as Delivered? This updates your vendor stage to Delivered.')) return;
+      setMarkingDelivered(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/mark-delivered`, {
+          method: 'PUT', headers: { Authorization: `Bearer ${token}` },
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type: 'success', text: '✓ Order marked as Delivered.' });
+        onUpdated();
+      } catch(e) { setMsg({ type: 'error', text: e.message }); }
+      setMarkingDelivered(false);
+    };
+
     const alreadyFulfilled = order.status === 'fulfilled';
+    const alreadyDelivered = order.stage === 'delivered';
 
     return (
       <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1445,6 +1462,12 @@
           {!alreadyFulfilled && (
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+              {!alreadyDelivered && order.awb && (
+                <button onClick={markDelivered} disabled={markingDelivered}
+                  style={{background:'#10b981',color:'#fff',border:'none',borderRadius:8,padding:'9px 18px',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+                  {markingDelivered ? <><span className="spin">↻</span> Saving…</> : '✓ DELIVERED'}
+                </button>
+              )}
               <button className="btn btn-green" onClick={fulfill} disabled={fulfilling||!awb.trim()}>
                 {fulfilling ? <><span className="spin">↻</span> Fulfilling…</> : '⬡ Mark as Fulfilled'}
               </button>
@@ -1453,6 +1476,12 @@
           {alreadyFulfilled && (
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={onClose}>Close</button>
+              {!alreadyDelivered && (
+                <button onClick={markDelivered} disabled={markingDelivered}
+                  style={{background:'#10b981',color:'#fff',border:'none',borderRadius:8,padding:'9px 18px',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+                  {markingDelivered ? <><span className="spin">↻</span> Saving…</> : '✓ DELIVERED'}
+                </button>
+              )}
             </div>
           )}
         </div>
