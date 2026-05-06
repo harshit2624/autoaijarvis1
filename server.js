@@ -3936,6 +3936,44 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
 });
 
 // ── POST /vendor/orders/:shopifyId/tag ────────────────────────────────────
+// ── GET /vendor/orders/:shopifyId/delivery-status ────────────────────────
+app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res) => {
+  try {
+    const { shopifyId } = req.params;
+    // Only look at this vendor's AWB
+    const vs = await mdb.collection('order_vendor_stage').findOne(
+      { shopify_id: shopifyId, vendor_name: req.vendor },
+      { projection: { awb: 1, courier: 1, stage: 1, _id: 0 } }
+    );
+    const awb = vs?.awb || '';
+    if (!awb) return res.json({ status: '', awb: '', message: 'No AWB found for your shipment.' });
+
+    const ss = await shipsagarTrackShipment(awb);
+    if (!ss) return res.json({ status: '', awb, message: 'Tracking not configured.' });
+
+    if (ss.found && ss.history?.length) {
+      const latest = ss.history[ss.history.length - 1];
+      const status = latest.ActionDescription || '';
+      const newStage = shipsagarStatusToStage(status);
+      const now = new Date().toISOString();
+      if (newStage) await OVS.upsert(shopifyId, req.vendor, { stage: newStage, updated_at: now });
+      await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: now });
+      applyShipSagarTag(shopifyId, status).catch(() => {});
+      return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+    }
+
+    if (ss.found) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
+
+    // Not on ShipSagar — push it
+    const [soData] = await Promise.all([
+      shopifyREST(`/orders/${shopifyId}.json?fields=name,email,shipping_address`).catch(() => null),
+    ]);
+    const so = soData?.order || {};
+    await shipsagarPushShipment({ awb, courierCode: vs?.courier || '', orderNo: so.name || shopifyId, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) });
+    return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── PUT /vendor/orders/:shopifyId/mark-delivered ─────────────────────────
 app.put("/vendor/orders/:shopifyId/mark-delivered", vendorAuth, async (req, res) => {
   const { shopifyId } = req.params;
