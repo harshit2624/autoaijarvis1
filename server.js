@@ -8859,13 +8859,28 @@ app.get("/track/rr-shipment-status", async (req, res) => {
       return res.json({ status, awb, history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
     }
     if (ss.found) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
-    // Not on ShipSagar — push it
+    // Not on ShipSagar — fetch full RR doc to get courier + customer data, then push
     try {
-      const ovs = await mdb.collection('return_requests').findOne({ request_id }, { projection: { customer_name: 1, customer_email: 1, customer_phone: 1, shopify_order_id: 1, _id: 0 } }).catch(() => null);
-      const soData = ovs?.shopify_order_id ? await shopifyREST(`/orders/${ovs.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null) : null;
+      const rr = request_id
+        ? await mdb.collection('return_requests').findOne({ request_id }, { projection: { _id: 0 } }).catch(() => null)
+        : null;
+      // Get courier from the correct shipment field
+      const shipField = direction === 'forward' ? rr?.forward_shipment : rr?.reverse_shipment;
+      const courierCode = shipField?.courier || '';
+      const [soData] = await Promise.all([
+        rr?.shopify_order_id ? shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null) : Promise.resolve(null),
+      ]);
       const so = soData?.order || {};
-      await shipsagarPushShipment({ awb, courierCode: '', orderNo: so.name || request_id || awb, customerName: ovs?.customer_name || '', email: ovs?.customer_email || so.email || '', mobileNo: (ovs?.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) });
-    } catch {}
+      const pushResult = await shipsagarPushShipment({
+        awb,
+        courierCode,
+        orderNo: so.name || rr?.order_name || request_id || awb,
+        customerName: rr?.customer_name || '',
+        email: rr?.customer_email || so.email || '',
+        mobileNo: (rr?.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10),
+      });
+      console.log(`📦 RR ShipSagar push AWB ${awb} (${direction}): ok=${pushResult?.ok} courier=${courierCode}`);
+    } catch(e) { console.error('RR ShipSagar push error:', e.message); }
     return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
