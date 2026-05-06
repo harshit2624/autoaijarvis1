@@ -3767,9 +3767,21 @@ app.get("/vendor/stats", vendorAuth, async (req, res) => {
     const vName = req.vendor.toLowerCase();
     const mine  = allOrders.filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName));
 
-    const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, _id: 0 } }).toArray();
+    // Only fetch stages for the orders in this period — avoids stale stages from other periods bleeding in
+    const mineIds = mine.map(o => String(o.id));
+    const vStages = mineIds.length
+      ? await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor, shopify_id: { $in: mineIds } }, { projection: { shopify_id: 1, stage: 1, awb: 1, _id: 0 } }).toArray()
+      : [];
     const vsMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
+
+    // Also fetch order_meta stages as fallback (some orders set stage there, not in vendor_stage)
+    const metaRows = mineIds.length
+      ? await mdb.collection('order_meta').find({ shopify_id: { $in: mineIds } }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray()
+      : [];
+    const metaMap = Object.fromEntries(metaRows.map(m => [m.shopify_id, m]));
+
     const DISPATCHED_S = ['ready','pickup','transit','delivered','rto'];
+    const ACTIVE_S = ['confirmed','partial','ready','pickup','transit','delivered','rto'];
 
     let revenue = 0, dispatchedRev = 0, pendingRev = 0;
     let totalActive = 0, dispatched = 0, pendingCount = 0;
@@ -3777,12 +3789,14 @@ app.get("/vendor/stats", vendorAuth, async (req, res) => {
     const cancelled = mine.filter(o => o.financial_status === "voided" || o.cancelled_at).length;
 
     mine.forEach(o => {
+      const sid = String(o.id);
       const items = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       const rev = items.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
       revenue += rev;
-      const vs = vsMap[String(o.id)];
-      const stage = vs?.stage || 'new';
-      if (!['confirmed','partial','ready','pickup','transit','delivered','rto'].includes(stage)) return;
+      const vs = vsMap[sid];
+      // Use vendor-level stage first, fall back to order-level meta stage
+      const stage = vs?.stage || metaMap[sid]?.stage || 'new';
+      if (!ACTIVE_S.includes(stage)) return;
       totalActive++;
       if (DISPATCHED_S.includes(stage) || vs?.awb) { dispatched++; dispatchedRev += rev; }
       else if (['confirmed','partial'].includes(stage)) { pendingCount++; pendingRev += rev; }
