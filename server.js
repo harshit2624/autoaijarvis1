@@ -1040,10 +1040,11 @@ app.post("/webhooks/fulfillments", (req, res) => {
           // Email customer about this vendor's shipment
           const cfg = await getSmtpConfig();
           if (cfg && order.email && vendorItems.length) {
+            const adsStrip = await getEmailAdsStrip();
             await sendEmail({
               to: order.email,
               subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
-              html: templateVendorShipped({ order, vendorName, items: vendorItems, awb, courier, trackingUrl: trackUrl }),
+              html: templateVendorShipped({ order, vendorName, items: vendorItems, awb, courier, trackingUrl: trackUrl, adsStrip }),
               shopifyId, trigger: 'vendor_shipped',
             });
           }
@@ -2097,28 +2098,101 @@ function templateOfd({ order, awb, courier, adsStrip = '' }) {
 </body></html>`;
 }
 
-function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl }) {
-  const itemRows = (items || []).map(li =>
-    `<div class="info-row"><span class="info-label">${li.title || li.name}</span><span class="info-val">Qty: ${li.quantity || li.qty || 1} — ₹${parseFloat(li.price||0).toFixed(2)}</span></div>`
-  ).join('');
-  const trackLink = trackingUrl || (courier && awb
-    ? `https://www.${(courier||'').toLowerCase().includes('delhivery') ? `delhivery.com/track/package/${awb}` : `shiprocket.co/tracking/${awb}`}`
-    : '');
-  const body = `
-    <div class="subtitle">Part of your order has left the facility and is on its way!</div>
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Shipped By</span><span class="info-val">${vendorName}</span></div>
-      <div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier || 'Our delivery partner'}</span></div>
-      ${awb ? `<div class="info-row"><span class="info-label">Tracking AWB</span><span class="info-val" style="font-family:monospace;color:#6366f1">${awb}</span></div>` : ''}
-      <div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${order.shipping_address?.city || ''}, ${order.shipping_address?.province || ''}</span></div>
+function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl, adsStrip = '' }) {
+  const addr  = order.shipping_address;
+  const total = parseFloat(order.total_price || 0);
+  const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const lineItems = items || [];
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">SHIPPED &nbsp;|&nbsp; ON THE WAY</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR ITEMS<br>ARE SHIPPED.</div>
     </div>
-    <div style="margin:18px 0 8px;font-weight:600;font-size:13px;color:#374151">Items Shipped</div>
-    <div class="info-box">${itemRows}</div>
-    ${trackLink ? `<div style="text-align:center;margin:20px 0"><a class="cta" href="${trackLink}">Track Your Shipment →</a></div>` : ''}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Your remaining items (if any) will be shipped separately. You'll get another update once everything is on its way.</p>
-  `;
-  return emailBase(`Your Items Have Shipped! 🚚`, '#6366f1', body);
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#161616;padding:32px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your items from <strong style="color:#ccc;">${vendorName}</strong> have left the facility and are on their way to you.</div>
+    </div>
+
+    ${awb ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:24px;">
+      <tr>
+        <td style="padding:14px 20px;">
+          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Courier</div>
+          <div style="font-size:13px;font-weight:700;color:#ccc;">${courier || 'Delivery Partner'}</div>
+        </td>
+        <td style="padding:14px 20px;text-align:right;">
+          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Tracking AWB</div>
+          <div style="font-size:13px;font-weight:700;color:#7eb8f7;font-family:monospace;">${awb}</div>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Items Shipped</div>
+
+    ${lineItems.map(li => {
+      const img = li.image_url || li.image?.src || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title || li.name}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity || li.qty || 1}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*(li.quantity||li.qty||1)).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    ${addr ? `
+    <div style="margin-top:20px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Delivering To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}
+      </div>
+    </div>` : ''}
+
+    <div style="margin-top:20px;font-size:12px;color:#555;line-height:1.7;">Any remaining items from your order will be shipped separately. You'll get another update when they're on the way.</div>
+  </div>
+
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
 }
 
 function templateDelivered({ order, forRole = 'customer', adsStrip = '' }) {
@@ -3830,10 +3904,11 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
     // Step 5: email customer about this vendor's shipment
     const cfg = await getSmtpConfig();
     if (cfg && order.email) {
+      const adsStrip = await getEmailAdsStrip();
       await sendEmail({
         to: order.email,
         subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
-        html: templateVendorShipped({ order, vendorName, items: vendorLineItems, awb, courier, trackingUrl }),
+        html: templateVendorShipped({ order, vendorName, items: vendorLineItems, awb, courier, trackingUrl, adsStrip }),
         shopifyId, trigger: 'vendor_shipped',
       });
     }
@@ -4662,7 +4737,8 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
     // Send customer shipped email
     const cfg = await getSmtpConfig();
     if (cfg && order.email) {
-      const html = templateVendorShipped({ order, vendorName: vendor_name, items: vendorLineItems, awb, courier, trackingUrl: tracking_url });
+      const adsStrip = await getEmailAdsStrip();
+      const html = templateVendorShipped({ order, vendorName: vendor_name, items: vendorLineItems, awb, courier, trackingUrl: tracking_url, adsStrip });
       await sendEmail({ to: order.email, subject: `Your Items from ${vendor_name} Have Shipped! 🚚`, html, shopifyId, trigger: 'vendor_shipped' });
     }
 
@@ -5498,7 +5574,8 @@ function buildDemoTemplates(to, adsStrip = '') {
     created_at: new Date(Date.now() - 86400000).toISOString(),
   };
   return {
-    vendor_welcome: { subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
+    vendor_welcome:  { subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
+    vendor_shipped:  { subject: `Your Items from Demo Vendor Have Shipped! 🚚`, html: templateVendorShipped({ order: demoOrder, vendorName: 'Demo Vendor', items: demoOrder.line_items, awb: '1234567890', courier: 'Delhivery', trackingUrl: '', adsStrip }) },
     new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder, adsStrip }) },
     confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder, adsStrip }) },
     new_order_vendor:   { subject: `New Order Received: ${demoOrder.name}`, html: templateNewOrderVendor({ order: demoOrder, vendorName: 'Demo Vendor' }) },
