@@ -482,10 +482,15 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     const isSuperHold = !!prev?.super_hold;
 
     // If order is super-held, block tag mapping from overriding with pipeline stages
+    // Terminal courier outcomes (delivered, rto) always pass through — they can't be undone
     // Super hold can only be released by admin manually (POST /admin/orders/:id/super-hold)
-    if (isSuperHold && !['hold','rto','cancelled'].includes(winner.stage)) {
+    if (isSuperHold && !['hold','rto','cancelled','delivered'].includes(winner.stage)) {
       console.log(`🔒 Super Hold active on ${sid} — tag mapping to '${winner.stage}' blocked`);
       return;
+    }
+    // Auto-release super_hold when courier confirms delivered or rto
+    if (isSuperHold && ['delivered','rto'].includes(winner.stage)) {
+      console.log(`🔓 Super Hold auto-released on ${sid} — courier confirmed ${winner.stage}`);
     }
 
     // If winner tag has super_hold_power, set super_hold flag + stage=hold
@@ -493,6 +498,8 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     const newStage = isSuperHoldTag ? 'hold' : winner.stage;
     const metaUpdate = { stage: newStage, updated_at: now };
     if (isSuperHoldTag) metaUpdate.super_hold = true;
+    // Auto-clear super_hold on terminal courier outcomes
+    if (isSuperHold && ['delivered','rto'].includes(newStage)) metaUpdate.super_hold = false;
 
     await OM.upsert(sid, metaUpdate);
     if (!prev || prev.stage !== newStage) {
