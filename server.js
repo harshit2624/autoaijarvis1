@@ -478,28 +478,9 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     if (hit) { winner = m; break; }
   }
   if (winner) {
-    const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1, super_hold: 1 } });
-    const isSuperHold = !!prev?.super_hold;
-
-    // If order is super-held, block tag mapping from overriding with pipeline stages
-    // Terminal courier outcomes (delivered, rto) always pass through — they can't be undone
-    // Super hold can only be released by admin manually (POST /admin/orders/:id/super-hold)
-    if (isSuperHold && !['hold','rto','cancelled','delivered'].includes(winner.stage)) {
-      console.log(`🔒 Super Hold active on ${sid} — tag mapping to '${winner.stage}' blocked`);
-      return;
-    }
-    // Auto-release super_hold when courier confirms delivered or rto
-    if (isSuperHold && ['delivered','rto'].includes(winner.stage)) {
-      console.log(`🔓 Super Hold auto-released on ${sid} — courier confirmed ${winner.stage}`);
-    }
-
-    // If winner tag has super_hold_power, set super_hold flag + stage=hold
-    const isSuperHoldTag = !!winner.super_hold_power;
-    const newStage = isSuperHoldTag ? 'hold' : winner.stage;
+    const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
+    const newStage = winner.stage;
     const metaUpdate = { stage: newStage, updated_at: now };
-    if (isSuperHoldTag) metaUpdate.super_hold = true;
-    // Auto-clear super_hold on terminal courier outcomes
-    if (isSuperHold && ['delivered','rto'].includes(newStage)) metaUpdate.super_hold = false;
 
     await OM.upsert(sid, metaUpdate);
     if (!prev || prev.stage !== newStage) {
@@ -658,6 +639,8 @@ function logWebhook(topic, payload) {
 // ══════════════════════════════════════════════════════════════════════════
 
 // ── Health / wake-up ping (Render free tier keep-alive) ───────────────────
+
+app.get("/admin/ping", adminAuth, (_, res) => res.json({ ok: true }));
 
 app.get("/health", (_, res) => res.json({
   status: "ok",
@@ -934,6 +917,21 @@ app.post("/webhooks/orders", (req, res) => {
                 shopifyId: sid, trigger: 'new_order_vendor',
               });
             }
+          }
+        }
+        // CC inventory check — flag if any line item variant is in stock at admin
+        const orderVariantIds = (payload.line_items || []).map(li => String(li.variant_id)).filter(Boolean);
+        if (orderVariantIds.length) {
+          const ccMatches = await mdb.collection('cc_inventory').find(
+            { variant_id: { $in: orderVariantIds }, quantity: { $gt: 0 } },
+            { projection: { variant_id: 1, product_title: 1, variant_title: 1, vendor_name: 1, quantity: 1, _id: 0 } }
+          ).toArray();
+          if (ccMatches.length) {
+            console.log(`🏬 CC STOCK MATCH on ${payload.name}: ${ccMatches.map(m=>`${m.product_title} (${m.variant_title}) qty:${m.quantity}`).join(', ')}`);
+            await mdb.collection('cc_inventory_alerts').insertOne({
+              order_id: sid, order_name: payload.name, matches: ccMatches,
+              created_at: new Date().toISOString(), seen: false,
+            });
           }
         }
         console.log(`📦 orders/create processed: ${payload.name} (${isPrepaid ? 'prepaid → confirmed' : 'COD'})`);
@@ -1870,10 +1868,13 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
 }
 
-function templateInTransit({ order, awb, courier, adsStrip = '' }) {
-  const addr  = order.shipping_address;
-  const items = order.line_items || [];
-  const total = parseFloat(order.total_price || 0);
+function templateInTransit({ order, awb, courier, meta = {}, adsStrip = '' }) {
+  const addr      = order.shipping_address;
+  const items     = order.line_items || [];
+  const total     = parseFloat(order.total_price || 0);
+  const isPrepaid = (meta.payment_type || order.financial_status) === 'prepaid' || order.financial_status === 'paid';
+  const advancePaid = parseFloat(meta.advance_paid || 0);
+  const codPending  = isPrepaid ? 0 : Math.max(0, parseFloat((total - advancePaid).toFixed(2)));
   const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
 
@@ -1897,8 +1898,9 @@ function templateInTransit({ order, awb, courier, adsStrip = '' }) {
         <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
       </td>
       <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">${isPrepaid ? 'Order Total' : 'To Pay on Delivery'}</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
+        ${isPrepaid ? '<div style="font-size:10px;color:#10b981;margin-top:3px;font-weight:600">✓ Fully Paid</div>' : advancePaid > 0 ? `<div style="font-size:10px;color:#f59e0b;margin-top:3px;">Advance paid: &#8377;${advancePaid.toFixed(2)}</div>` : ''}
       </td>
     </tr>
   </table>
@@ -1906,7 +1908,7 @@ function templateInTransit({ order, awb, courier, adsStrip = '' }) {
   <div style="background:#161616;padding:32px;">
     <div style="margin-bottom:24px;">
       <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has left the facility and is on its way to you. Estimated delivery in 3–7 business days.</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has left the facility and is on its way to you. Estimated delivery in 3–7 business days.${!isPrepaid && codPending > 0 ? ` Please keep <strong style="color:#f0f0f0;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
     </div>
 
     ${awb ? `
@@ -1972,10 +1974,13 @@ function templateInTransit({ order, awb, courier, adsStrip = '' }) {
 </body></html>`;
 }
 
-function templateOfd({ order, awb, courier, adsStrip = '' }) {
-  const addr  = order.shipping_address;
-  const items = order.line_items || [];
-  const total = parseFloat(order.total_price || 0);
+function templateOfd({ order, awb, courier, meta = {}, adsStrip = '' }) {
+  const addr        = order.shipping_address;
+  const items       = order.line_items || [];
+  const total       = parseFloat(order.total_price || 0);
+  const isPrepaid   = (meta.payment_type || order.financial_status) === 'prepaid' || order.financial_status === 'paid';
+  const advancePaid = parseFloat(meta.advance_paid || 0);
+  const codPending  = isPrepaid ? 0 : Math.max(0, parseFloat((total - advancePaid).toFixed(2)));
   const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
 
@@ -2001,8 +2006,9 @@ function templateOfd({ order, awb, courier, adsStrip = '' }) {
         <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
       </td>
       <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">${isPrepaid ? 'Order Total' : 'To Pay on Delivery'}</div>
+        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
+        ${isPrepaid ? '<div style="font-size:10px;color:#10b981;margin-top:3px;font-weight:600">✓ Fully Paid</div>' : advancePaid > 0 ? `<div style="font-size:10px;color:#f59e0b;margin-top:3px;">Advance paid: &#8377;${advancePaid.toFixed(2)}</div>` : ''}
       </td>
     </tr>
   </table>
@@ -2013,7 +2019,7 @@ function templateOfd({ order, awb, courier, adsStrip = '' }) {
     <!-- Greeting -->
     <div style="margin-bottom:24px;">
       <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is out for delivery. Our delivery partner is on the way — keep your phone nearby!</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is out for delivery. Our delivery partner is on the way — keep your phone nearby!${!isPrepaid && codPending > 0 ? ` Please keep <strong style="color:#f0f0f0;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
     </div>
 
     <!-- Delivery banner -->
@@ -2567,11 +2573,11 @@ async function fireStageEmails(shopifyId, newStage) {
     }
 
     if (newStage === 'transit') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, adsStrip }), shopifyId, trigger: 'transit' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, meta, adsStrip }), shopifyId, trigger: 'transit' });
     }
 
     if (newStage === 'ofd') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Get Ready to Drip Hard Today 🛵 — ${order.name} is Out for Delivery!`, html: templateOfd({ order, awb: meta.awb, courier: meta.courier, adsStrip }), shopifyId, trigger: 'ofd' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Get Ready to Drip Hard Today 🛵 — ${order.name} is Out for Delivery!`, html: templateOfd({ order, awb: meta.awb, courier: meta.courier, meta, adsStrip }), shopifyId, trigger: 'ofd' });
     }
 
     if (newStage === 'delivered') {
@@ -3657,6 +3663,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     const vStages = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, penalty_triggered: 1, warning_sent: 1, _id: 0 } }).toArray();
     const vStageMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
     // Confirmed penalties for this vendor
+    // CC inventory for this vendor only
+    const vCCInv = await mdb.collection('cc_inventory').find({ vendor_name: req.vendor, quantity: { $gt: 0 } }, { projection: { variant_id: 1, product_title: 1, variant_title: 1, quantity: 1, _id: 0 } }).toArray();
+    const vCCInvMap = Object.fromEntries(vCCInv.map(i => [i.variant_id, i]));
+
     const vConfirmedPenalties = await mdb.collection('order_penalties').find({ vendor_name: req.vendor, status: 'confirmed' }, { projection: { shopify_id: 1, penalty_amount: 1, _id: 0 } }).toArray();
     const vConfirmedPenaltyMap = {}; // { shopify_id: totalAmount }
     vConfirmedPenalties.forEach(p => { vConfirmedPenaltyMap[p.shopify_id] = (vConfirmedPenaltyMap[p.shopify_id] || 0) + (p.penalty_amount || 0); });
@@ -3720,7 +3730,6 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           penaltyTriggered: vStageMap[String(o.id)]?.penalty_triggered || 0,
           warningSent:      vStageMap[String(o.id)]?.warning_sent || 0,
           shopifyFulfilled:    !meta.awb && (o.fulfillments||[]).length > 0,
-          superHold:           !!meta.super_hold,
           confirmedPenalty:    vConfirmedPenaltyMap[String(o.id)] || 0,
           myItems: myItems.map(li => ({
             id:        li.id,
@@ -3755,6 +3764,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             country: o.shipping_address.country  || "",
             phone:   o.shipping_address.phone    || "",
           } : null,
+          ccStock: (()=>{
+            const matches = myItems.map(li => vCCInvMap[String(li.variant_id)]).filter(Boolean);
+            return matches.length ? matches : null;
+          })(),
         };
       });
 
@@ -4428,6 +4441,10 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
     const vtMap  = {}; // { shopify_id: { vendor_name: { awb, courier, tracking_url } } }
     const vpMap  = {}; // { shopify_id: { vendor_name: { stageStartedAt, penaltyTriggered, warningSent } } }
     // Confirmed penalties per order: { shopify_id: { vendor_name: totalAmount } }
+    // CC inventory variant lookup for badge tagging
+    const ccInvItems = await mdb.collection('cc_inventory').find({ quantity: { $gt: 0 } }, { projection: { variant_id: 1, product_title: 1, variant_title: 1, vendor_name: 1, quantity: 1, _id: 0 } }).toArray();
+    const ccInvMap = Object.fromEntries(ccInvItems.map(i => [i.variant_id, i]));
+
     const confirmedPenaltyDocs = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { shopify_id: 1, vendor_name: 1, penalty_amount: 1, _id: 0 } }).toArray();
     const confirmedPenaltyMap = {}; // { shopify_id: { vendor_name: amount } }
     confirmedPenaltyDocs.forEach(p => {
@@ -4518,7 +4535,6 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         trackingUrl:    meta.tracking_url || (vendors.length === 1 ? (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "" : ""),
         deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
-        superHold:      !!meta.super_hold,
         tags:           o.tags || "",
         lineItems:      (o.line_items || []).map(li => ({
           title: li.title, vendor: li.vendor, qty: li.quantity,
@@ -4526,6 +4542,10 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
           variant: li.variant_title || '', product_id: li.product_id || null,
         })),
         shippingAddress: o.shipping_address || null,
+        ccStock: (()=>{
+          const matches = (o.line_items||[]).map(li => ccInvMap[String(li.variant_id)]).filter(Boolean);
+          return matches.length ? matches : null;
+        })(),
       };
     });
 
@@ -4573,32 +4593,6 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
 
 // ── POST /admin/orders/:id/super-hold ────────────────────────────────────
 // Mark or release super hold on an order. Admin-only, bypasses all guards.
-app.post("/admin/orders/:id/super-hold", adminAuth, async (req, res) => {
-  const { id } = req.params;
-  const { enable } = req.body || {}; // true = mark super hold, false = release
-  const now = new Date().toISOString();
-  const nowMs = Date.now();
-  if (enable) {
-    // Mark super hold: set flag + stage=hold on meta + all vendors
-    await OM.upsert(id, { super_hold: true, stage: 'hold', updated_at: now });
-    try {
-      const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
-      const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
-      for (const vendor of vendors) {
-        const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage_started_at: 1, _id: 0 } });
-        await OVS.upsert(id, vendor, { stage: 'hold', updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
-      }
-    } catch(e) { console.error('super-hold vendor sync error:', e.message); }
-    auditLog("admin", "super_hold_set", id, {});
-    res.json({ success: true, super_hold: true });
-  } else {
-    // Release super hold: clear flag. Stage stays as-is — admin should set stage separately or re-sync tags.
-    await OM.upsert(id, { super_hold: false, updated_at: now });
-    auditLog("admin", "super_hold_released", id, {});
-    res.json({ success: true, super_hold: false });
-  }
-});
-
 // ── POST /admin/orders/bulk-update ────────────────────────────────────────
 // Bulk set stage + add/remove Shopify tags for multiple orders
 app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
@@ -5491,21 +5485,15 @@ app.put("/admin/tag-mappings/:id/priority", adminAuth, async (req, res) => {
 });
 
 app.post("/admin/tag-mappings", adminAuth, async (req, res) => {
-  const { shopify_tag, stage, priority = 99, super_hold_power = false } = req.body || {};
+  const { shopify_tag, stage, priority = 99 } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
   const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
   if (!VALID_STAGES.includes(stage)) return res.status(400).json({ error: `Invalid stage '${stage}'. Valid: ${VALID_STAGES.join(", ")}` });
   const existing = await mdb.collection('tag_mappings').findOne({ shopify_tag: { $regex: new RegExp(`^${shopify_tag.trim()}$`, 'i') } });
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
   const id = await nextId('tag_mappings');
-  await mdb.collection('tag_mappings').insertOne({ id, shopify_tag: shopify_tag.trim(), stage, priority: Number(priority), super_hold_power: !!super_hold_power, created_at: new Date().toISOString() });
+  await mdb.collection('tag_mappings').insertOne({ id, shopify_tag: shopify_tag.trim(), stage, priority: Number(priority), created_at: new Date().toISOString() });
   res.json({ success: true, id });
-});
-
-app.put("/admin/tag-mappings/:id/super-hold-power", adminAuth, async (req, res) => {
-  const { enabled } = req.body || {};
-  await mdb.collection('tag_mappings').updateOne({ id: parseInt(req.params.id) }, { $set: { super_hold_power: !!enabled } });
-  res.json({ success: true });
 });
 
 app.delete("/admin/tag-mappings/:id", adminAuth, async (req, res) => {
@@ -5651,8 +5639,8 @@ function buildDemoTemplates(to, adsStrip = '') {
     confirmed_vendor:   { subject: `Order Confirmed: ${demoOrder.name} — Dispatch Now`, html: templateOrderConfirmedVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
     partial_customer:   { subject: `Your Advance is Confirmed — ${demoOrder.name} 🎉`, html: templatePartialAdvanceCustomer({ order: demoOrder, meta: demoMeta, adsStrip }) },
     partial_vendor:     { subject: `[TEST] Advance Collected — Updated COD for ${demoOrder.name}`, html: templatePartialAdvanceVendor({ order: demoOrder, vendorName: 'Demo Vendor', meta: demoMeta }) },
-    transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery', adsStrip }) },
-    ofd:        { subject: `[TEST] Get Ready to Drip Hard Today 🛵 — ${demoOrder.name} is Out for Delivery!`, html: templateOfd({ order: demoOrder, awb: '1234567890', courier: 'Delhivery', adsStrip }) },
+    transit:    { subject: `[TEST] Order Shipped: ${demoOrder.name} 🚚`, html: templateInTransit({ order: demoOrder, awb: '1234567890', courier: 'Delhivery', meta: demoMeta, adsStrip }) },
+    ofd:        { subject: `[TEST] Get Ready to Drip Hard Today 🛵 — ${demoOrder.name} is Out for Delivery!`, html: templateOfd({ order: demoOrder, awb: '1234567890', courier: 'Delhivery', meta: demoMeta, adsStrip }) },
     delivered_customer: { subject: `[TEST] Order Delivered: ${demoOrder.name} 🎉`, html: templateDelivered({ order: demoOrder, forRole: 'customer', adsStrip }) },
     delivered_vendor:   { subject: `[TEST] Order Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'vendor' }) },
     delivered_admin:    { subject: `[TEST] Delivered: ${demoOrder.name}`, html: templateDelivered({ order: demoOrder, forRole: 'admin' }) },
@@ -8668,12 +8656,23 @@ async function buildOrderPayload(order) {
     { projection: { _id: 0, request_id: 1, type: 1, status: 1, reason: 1, created_at: 1, vendor_name: 1, items: 1, admin_note: 1, reverse_shipment: 1, forward_shipment: 1 } }
   ).sort({ created_at: -1 }).toArray();
 
+  // Check CC inventory for any line item variants
+  const variantIds = items.map(i => String(i.variant_id)).filter(Boolean);
+  let ccStockItems = [];
+  if (variantIds.length) {
+    ccStockItems = await mdb.collection('cc_inventory').find(
+      { variant_id: { $in: variantIds }, quantity: { $gt: 0 } },
+      { projection: { variant_id: 1, product_title: 1, variant_title: 1, quantity: 1, vendor_name: 1, _id: 0 } }
+    ).toArray();
+  }
+
   return {
     shopify_order_id: order.id, order_name: order.name, customer_name: customerName,
     customer_email: order.email || '', customer_phone: order.shipping_address?.phone || order.billing_address?.phone || order.phone || '',
     stage, financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
     created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames,
     vendor_shipments: vendorShipments, return_configs: returnConfigs, return_requests: returnRequests,
+    cc_stock: ccStockItems,
   };
 }
 
@@ -9032,6 +9031,60 @@ app.get("/track/rr-shipment-status", async (req, res) => {
 });
 
 // ── Admin: update return request status / notes ───────────────────────────
+// ── POST /admin/return-requests/:id/receive-at-cc ────────────────────────
+app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res) => {
+  try {
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: "Request not found." });
+    if (rr.received_at_cc) return res.status(400).json({ error: "Already marked as received at CC." });
+
+    const items = rr.items || [];
+    if (!items.length) return res.status(400).json({ error: "No items found on this request." });
+
+    const now = new Date().toISOString();
+    const added = [];
+
+    for (const item of items) {
+      const variantId = String(item.variant_id || '');
+      if (!variantId) continue;
+      const qty = parseInt(item.qty || item.quantity || 1);
+
+      const existing = await mdb.collection('cc_inventory').findOne({ variant_id: variantId });
+      if (existing) {
+        await mdb.collection('cc_inventory').updateOne(
+          { variant_id: variantId },
+          { $inc: { quantity: qty }, $set: { updated_at: now, notes: `Last added: RR ${rr.request_id}` } }
+        );
+      } else {
+        const id = await nextId('cc_inventory');
+        await mdb.collection('cc_inventory').insertOne({
+          id, variant_id: variantId,
+          product_id: String(item.product_id || ''),
+          product_title: item.title || item.product_title || '',
+          variant_title: item.variant_title || item.variant || '',
+          sku: item.sku || '',
+          vendor_name: rr.vendor_name || '',
+          quantity: qty,
+          notes: `From RR ${rr.request_id}`,
+          added_by: 'rr',
+          rr_id: rr.request_id,
+          created_at: now, updated_at: now,
+        });
+      }
+      added.push({ variant_id: variantId, qty });
+    }
+
+    // Mark RR as received
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id },
+      { $set: { received_at_cc: true, received_at_cc_at: now, updated_at: now } }
+    );
+
+    auditLog("admin", "rr_received_at_cc", req.params.id, { added });
+    res.json({ success: true, added });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
   try {
     const { status, admin_note } = req.body;
@@ -9443,6 +9496,114 @@ app.put("/vendor/return-config", vendorAuth, async (req, res) => {
       { upsert: true }
     );
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// CC INVENTORY
+// ══════════════════════════════════════════════════════════════════════════
+
+// GET product/variant search for CC inventory add form
+app.get("/admin/products/search", adminAuth, async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    const data = await shopifyREST(`/products.json?title=${encodeURIComponent(q)}&limit=5&fields=id,title,vendor,variants`).catch(()=>null);
+    const products = data?.products || [];
+    const variants = [];
+    for (const p of products) {
+      for (const v of (p.variants || [])) {
+        variants.push({
+          product_id: String(p.id), product_title: p.title,
+          variant_id: String(v.id), variant_title: v.title,
+          sku: v.sku || '', vendor: p.vendor || '',
+        });
+      }
+    }
+    res.json({ variants });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET CC inventory alerts (new orders matching CC stock)
+app.get("/admin/cc-inventory/alerts", adminAuth, async (req, res) => {
+  try {
+    const alerts = await mdb.collection('cc_inventory_alerts').find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(20).toArray();
+    res.json({ alerts });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET all CC inventory (admin)
+app.get("/admin/cc-inventory", adminAuth, async (req, res) => {
+  try {
+    const items = await mdb.collection('cc_inventory').find({}, { projection: { _id: 0 } }).sort({ vendor_name: 1, product_title: 1 }).toArray();
+    res.json({ items });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET vendor's own CC inventory
+app.get("/vendor/cc-inventory", vendorAuth, async (req, res) => {
+  try {
+    const items = await mdb.collection('cc_inventory').find({ vendor_name: req.vendor }, { projection: { _id: 0 } }).sort({ product_title: 1 }).toArray();
+    res.json({ items });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST add/upsert CC inventory item
+app.post("/admin/cc-inventory", adminAuth, async (req, res) => {
+  try {
+    const { variant_id, product_id, product_title, variant_title, sku, vendor_name, quantity, notes } = req.body || {};
+    if (!variant_id || !vendor_name || quantity == null) return res.status(400).json({ error: "variant_id, vendor_name, quantity required." });
+    const existing = await mdb.collection('cc_inventory').findOne({ variant_id: String(variant_id) });
+    if (existing) {
+      await mdb.collection('cc_inventory').updateOne(
+        { variant_id: String(variant_id) },
+        { $set: { quantity: parseInt(quantity), notes: notes || '', updated_at: new Date().toISOString() } }
+      );
+    } else {
+      const id = await nextId('cc_inventory');
+      await mdb.collection('cc_inventory').insertOne({
+        id, variant_id: String(variant_id), product_id: String(product_id || ''),
+        product_title: product_title || '', variant_title: variant_title || '',
+        sku: sku || '', vendor_name, quantity: parseInt(quantity),
+        notes: notes || '', added_by: 'manual', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      });
+    }
+    auditLog("admin", "cc_inventory_upsert", String(variant_id), { vendor_name, quantity });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT update quantity/notes
+app.put("/admin/cc-inventory/:variantId", adminAuth, async (req, res) => {
+  try {
+    const { quantity, notes } = req.body || {};
+    await mdb.collection('cc_inventory').updateOne(
+      { variant_id: req.params.variantId },
+      { $set: { quantity: parseInt(quantity), notes: notes || '', updated_at: new Date().toISOString() } }
+    );
+    auditLog("admin", "cc_inventory_update", req.params.variantId, { quantity });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE CC inventory item
+app.delete("/admin/cc-inventory/:variantId", adminAuth, async (req, res) => {
+  try {
+    await mdb.collection('cc_inventory').deleteOne({ variant_id: req.params.variantId });
+    auditLog("admin", "cc_inventory_delete", req.params.variantId, {});
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET check if variant_ids have CC stock — used by order list
+app.post("/admin/cc-inventory/check", adminAuth, async (req, res) => {
+  try {
+    const { variant_ids } = req.body || {};
+    if (!Array.isArray(variant_ids) || !variant_ids.length) return res.json({ matches: [] });
+    const items = await mdb.collection('cc_inventory').find(
+      { variant_id: { $in: variant_ids.map(String) }, quantity: { $gt: 0 } },
+      { projection: { variant_id: 1, product_title: 1, variant_title: 1, quantity: 1, vendor_name: 1, _id: 0 } }
+    ).toArray();
+    res.json({ matches: items });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

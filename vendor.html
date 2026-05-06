@@ -966,6 +966,7 @@
     const [delivStatus,  setDelivStatus]  = useState(order.deliveryStatus || '');
     const [trackHistory, setTrackHistory] = useState([]);
     const [trackTag,     setTrackTag]     = useState('');
+    const [refreshingStatus, setRefreshingStatus] = useState(false);
     const [saving,           setSaving]         = useState(false);
     const [fulfilling,       setFulfilling]     = useState(false);
     const [markingDelivered, setMarkingDelivered] = useState(false);
@@ -1139,21 +1140,27 @@
                 <div className="detail-row"><span className="dr-label">Payment</span>     <span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
                 {order.awb && <div className="detail-row"><span className="dr-label">AWB</span><span className="dr-val" style={{color:'var(--teal)',fontFamily:'monospace'}}>{order.awb}</span></div>}
                 {order.courier && <div className="detail-row"><span className="dr-label">Courier</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.courier}</span></div>}
-                {(order.awb || delivStatus) && <div className="detail-row">
+                <div className="detail-row">
                   <span className="dr-label">Delivery Status</span>
                   <span style={{display:'flex',alignItems:'center',gap:6}}>
                     <span className="dr-val" style={{color: delivStatus?'var(--yellow)':'var(--text-muted)',fontSize:11}}>{delivStatus||'—'}</span>
                     {trackTag && <span style={{fontSize:10,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 8px'}}>{trackTag}</span>}
-                    <button style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}
+                    <button style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:refreshingStatus?'var(--teal)':'var(--text-muted)',cursor:'pointer'}}
+                      disabled={refreshingStatus}
                       onClick={async()=>{
-                        const r=await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`,{headers:{Authorization:`Bearer ${token}`}});
-                        const d=await r.json();
-                        if(d.status) setDelivStatus(d.status);
-                        if(d.history?.length) setTrackHistory(d.history);
-                        if(d.tag) setTrackTag(d.tag);
-                      }}>↻ Refresh</button>
+                        setRefreshingStatus(true);
+                        try {
+                          const r=await fetch(`${API}/vendor/orders/${order.shopifyId}/delivery-status`,{headers:{Authorization:`Bearer ${token}`}});
+                          const d=await r.json();
+                          if(d.status) setDelivStatus(d.status);
+                          else if(d.message) setDelivStatus(d.message);
+                          if(d.history?.length) setTrackHistory(d.history);
+                          if(d.tag) setTrackTag(d.tag);
+                        } catch(e){ setDelivStatus('Error: '+e.message); }
+                        setRefreshingStatus(false);
+                      }}>{refreshingStatus?'checking…':'↻ Refresh'}</button>
                   </span>
-                </div>}
+                </div>
                 <div className="detail-row"><span className="dr-label">Your Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
                 {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CrosCrow)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
                 {order.advancePaid>0 && <div className="detail-row"><span className="dr-label">Advance / Partial Paid</span><span className="dr-val" style={{color:'var(--green)'}}>− {fmtCur(order.advancePaid, order.currency)}</span></div>}
@@ -1646,8 +1653,9 @@
                     <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
                     <td>
                       <div style={{display:'flex',alignItems:'center',gap:2}}>
-                        <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>{o.superHold&&<SuperHoldBadge/>}
+                        <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>
                         <PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/>
+                        {o.ccStock&&<span style={{fontSize:9,padding:'2px 6px',borderRadius:4,background:'rgba(251,191,36,0.15)',border:'1px solid rgba(251,191,36,0.5)',color:'#fbbf24',fontWeight:700}}>🏬 CC Stock</span>}
                       </div>
                     </td>
                     <td className="td-muted">{fmtDate(o.date)}</td>
@@ -2248,6 +2256,57 @@
   /* ══════════════════════════════════
      VENDOR RETURNS VIEW
   ══════════════════════════════════ */
+  function RRShipmentStatus({ awb, courier, direction, requestId, trackingStatus }) {
+    const [status,     setStatus]     = useState(trackingStatus || '');
+    const [history,    setHistory]    = useState([]);
+    const [refreshing, setRefreshing] = useState(false);
+    const [msg,        setMsg]        = useState('');
+    const color = direction === 'reverse' ? 'var(--blue)' : 'var(--green)';
+
+    useEffect(() => { if (awb) doRefresh(); }, [awb]);
+
+    const doRefresh = async () => {
+      setRefreshing(true); setMsg('');
+      try {
+        const params = new URLSearchParams({ awb, request_id: requestId||'', direction: direction||'' });
+        const r = await fetch(`${API}/track/rr-shipment-status?${params}`);
+        const d = await r.json();
+        if (d.status) setStatus(d.status);
+        if (d.history?.length) setHistory(d.history);
+        if (d.message) setMsg(d.message);
+      } catch { setMsg('Could not fetch.'); }
+      setRefreshing(false);
+    };
+
+    return (
+      <div style={{marginTop:8,background:'var(--bg)',border:`1px solid ${color}44`,borderRadius:7,padding:'8px 12px'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:10,fontWeight:700,color,textTransform:'uppercase',letterSpacing:1}}>{direction==='reverse'?'↩ Return Tracking':'→ Forward Tracking'}</span>
+            <span style={{fontSize:10,color:'var(--text-muted)',fontFamily:'monospace'}}>{awb}</span>
+            {courier && <span style={{fontSize:10,color:'var(--text-muted)'}}>{courier}</span>}
+          </div>
+          <button onClick={doRefresh} disabled={refreshing}
+            style={{background:'transparent',border:`1px solid ${color}44`,borderRadius:5,color,cursor:'pointer',fontSize:10,padding:'2px 8px'}}>
+            {refreshing?'…':'↻'}
+          </button>
+        </div>
+        {status && <div style={{fontSize:12,color,fontWeight:600,marginBottom:4}}>{status}</div>}
+        {msg && <div style={{fontSize:10,color:'var(--text-muted)'}}>{msg}</div>}
+        {history.length > 0 && (
+          <div style={{marginTop:6,borderTop:`1px solid ${color}22`,paddingTop:6,display:'flex',flexDirection:'column',gap:3}}>
+            {history.slice().reverse().slice(0,4).map((h,i)=>(
+              <div key={i} style={{fontSize:10,display:'flex',gap:10}}>
+                <span style={{color:'var(--text-muted)',flexShrink:0,minWidth:90}}>{h.ActionDate||''}</span>
+                <span style={{color:'var(--text)'}}>{h.ActionDescription||''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function RRShipmentPanel({ token, rr, onUpdated }) {
     const [partners,   setPartners]   = useState([]);
     const [partner,    setPartner]    = useState('');
@@ -2299,19 +2358,21 @@
         {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:10,fontSize:11}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
 
         {(revShip||fwdShip) && (
-          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:12}}>
             {revShip && (
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--blue)',borderRadius:8,padding:'8px 14px',fontSize:11}}>
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--blue)',borderRadius:8,padding:'10px 14px',fontSize:11}}>
                 <div style={{color:'var(--blue)',fontWeight:700,marginBottom:3}}>↩ Reverse Pickup</div>
                 <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</div>
                 <div style={{color:'var(--text-muted)',marginTop:2}}>{revShip.courier} · {revShip.created_at?.split('T')[0]}</div>
+                <RRShipmentStatus awb={revShip.awb} courier={revShip.courier} direction="reverse" requestId={rr.request_id} trackingStatus={revShip.tracking_status}/>
               </div>
             )}
             {fwdShip && (
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--green)',borderRadius:8,padding:'8px 14px',fontSize:11}}>
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--green)',borderRadius:8,padding:'10px 14px',fontSize:11}}>
                 <div style={{color:'var(--green)',fontWeight:700,marginBottom:3}}>→ Forward Dispatch</div>
                 <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</div>
                 <div style={{color:'var(--text-muted)',marginTop:2}}>{fwdShip.courier} · {fwdShip.created_at?.split('T')[0]}</div>
+                <RRShipmentStatus awb={fwdShip.awb} courier={fwdShip.courier} direction="forward" requestId={rr.request_id} trackingStatus={fwdShip.tracking_status}/>
               </div>
             )}
           </div>
@@ -3265,10 +3326,28 @@
       setLoginLoad(false);
     };
 
-    const logout = async () => {
+    const logout = useCallback(async () => {
       if(auth) await fetch(`${API}/vendor/logout`,{method:'POST',headers:{Authorization:`Bearer ${auth.token}`}}).catch(()=>{});
       ls.del('vendor_auth'); setAuth(null); setOrders([]); setStats(null);
-    };
+    }, [auth]);
+
+    // Auto-logout on 401 globally (stale token after server restart)
+    useEffect(()=>{
+      if(!auth) return;
+      const orig = window._origFetchV || window.fetch;
+      window._origFetchV = orig;
+      window.fetch = async (...args) => {
+        const r = await orig(...args);
+        if (r.status === 401) {
+          const url = typeof args[0]==='string' ? args[0] : args[0]?.url || '';
+          if (url.includes(API) && !url.includes('/login')) {
+            ls.del('vendor_auth'); setAuth(null); setOrders([]); setStats(null);
+          }
+        }
+        return r;
+      };
+      return () => { window.fetch = orig; };
+    }, [auth]);
 
     /* fetch data */
     const fetchData = useCallback(async (p) => {
