@@ -738,6 +738,20 @@
     { name:'Other',            url: awb => '' },
   ];
 
+  function trackingUrlFromCourier(courier='', awb='') {
+    if (!awb) return '';
+    const c = courier.toLowerCase();
+    if (c.includes('delhivery'))  return `https://www.delhivery.com/track/package/${awb}`;
+    if (c.includes('bluedart'))   return `https://www.bluedart.com/tracking?trackNo=${awb}`;
+    if (c.includes('dtdc'))       return `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}`;
+    if (c.includes('ecom'))       return `https://ecomexpress.in/tracking/?awb_field=${awb}`;
+    if (c.includes('xpressbee'))  return `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}`;
+    if (c.includes('shadowfax'))  return `https://track.shadowfax.in/?awb=${awb}`;
+    if (c.includes('ekart'))      return `https://ekartlogistics.com/track?trackingId=${awb}`;
+    if (c.includes('fedex'))      return `https://www.fedex.com/fedextrack/?trknbr=${awb}`;
+    return '';
+  }
+
   /* ── Badge ── */
   const SLABEL = { fulfilled:'FULFILLED', pending:'PENDING', unfulfilled:'PENDING', partial:'PARTIAL', cancelled:'CANCELLED', refunded:'REFUNDED' };
   function Badge({ status='pending' }) {
@@ -1937,16 +1951,102 @@
     const [products, setProducts] = useState([]);
     const [loading,  setLoading]  = useState(true);
     const [search,   setSearch]   = useState('');
+    // editing: { productId_variantId: { qty, saving, trackSaving } }
+    const [editing,  setEditing]  = useState({});
+    const [msg,      setMsg]      = useState(null);
 
-    useEffect(()=>{
+    const load = () => {
+      setLoading(true);
       fetch(`${API}/vendor/products`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setProducts(d.products||[])).catch(()=>{}).finally(()=>setLoading(false));
-    },[token]);
+    };
+    useEffect(load,[token]);
 
     const visible = search ? products.filter(p=>p.title.toLowerCase().includes(search.toLowerCase())) : products;
 
+    // product-level bulk actions: { productId: { bulkTracking, bulkOos } }
+    const [bulkLoading, setBulkLoading] = useState({});
+
+    const bulkTracking = async (pid, tracked) => {
+      setBulkLoading(b=>({...b,[`${pid}_track`]:true}));
+      try {
+        const r = await fetch(`${API}/vendor/products/${pid}/bulk-tracking`,{
+          method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ tracked }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`Tracking ${tracked?'enabled':'disabled'} for all variants (${d.updated} updated)` });
+        load();
+      } catch(e){ setMsg({ type:'error', text: e.message }); }
+      setBulkLoading(b=>({...b,[`${pid}_track`]:false}));
+    };
+
+    const markAllOos = async (pid, title) => {
+      if (!window.confirm(`Mark ALL variants of "${title}" as out of stock (qty = 0)?`)) return;
+      setBulkLoading(b=>({...b,[`${pid}_oos`]:true}));
+      try {
+        const r = await fetch(`${API}/vendor/products/${pid}/mark-all-out-of-stock`,{
+          method:'PUT', headers:{Authorization:`Bearer ${token}`},
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`All ${d.updated} tracked variants set to out of stock. Admin notified.` });
+        load();
+      } catch(e){ setMsg({ type:'error', text: e.message }); }
+      setBulkLoading(b=>({...b,[`${pid}_oos`]:false}));
+    };
+
+    const startEdit = (pid, vid, currentQty) => {
+      setEditing(e=>({...e,[`${pid}_${vid}`]:{ qty: String(currentQty), saving:false, trackSaving:false }}));
+    };
+    const cancelEdit = (pid, vid) => {
+      setEditing(e=>{ const n={...e}; delete n[`${pid}_${vid}`]; return n; });
+    };
+
+    const saveQty = async (pid, vid) => {
+      const key = `${pid}_${vid}`;
+      const qty = parseInt(editing[key]?.qty);
+      if (isNaN(qty) || qty < 0) return;
+      setEditing(e=>({...e,[key]:{...e[key],saving:true}}));
+      try {
+        const r = await fetch(`${API}/vendor/products/${pid}/variants/${vid}/inventory`,{
+          method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ quantity: qty }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`Stock updated to ${qty}` });
+        cancelEdit(pid, vid);
+        load();
+      } catch(e){ setMsg({ type:'error', text: e.message }); setEditing(ex=>({...ex,[key]:{...ex[key],saving:false}})); }
+    };
+
+    const toggleTracking = async (pid, vid, currentTracked) => {
+      const key = `${pid}_${vid}`;
+      setEditing(e=>({...e,[key]:{...(e[key]||{}),trackSaving:true}}));
+      try {
+        const r = await fetch(`${API}/vendor/products/${pid}/variants/${vid}/tracking`,{
+          method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ tracked: !currentTracked }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`Inventory tracking ${!currentTracked?'enabled':'disabled'}` });
+        load();
+      } catch(e){ setMsg({ type:'error', text: e.message }); }
+      setEditing(e=>{ const n={...e}; if(n[key]) delete n[key].trackSaving; return n; });
+    };
+
     return (
       <div className="page">
+        {msg && <div style={{marginBottom:12,padding:'10px 14px',borderRadius:7,fontSize:12,
+          background: msg.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',
+          color: msg.type==='success'?'#10b981':'#ef4444',
+          border:`1px solid ${msg.type==='success'?'rgba(16,185,129,0.3)':'rgba(239,68,68,0.3)'}`}}>
+          {msg.text} <span style={{float:'right',cursor:'pointer',opacity:0.6}} onClick={()=>setMsg(null)}>✕</span>
+        </div>}
+
         <div className="filters" style={{marginBottom:16}}>
           <div className="search-wrap">
             <span className="search-ico">⌕</span>
@@ -1966,25 +2066,93 @@
           <div className="empty"><div className="empty-icon">🏷️</div><div className="empty-title">No products found</div><div className="empty-sub">Products for vendor "{vendorName}" will appear here.</div></div>
         ) : (
           visible.map(p=>(
-            <div key={p.id} className="product-card">
+            <div key={p.id} className="product-card" style={{alignItems:'flex-start'}}>
               {p.image ? <img src={p.image} alt={p.title} className="product-img"/> : <div className="product-img-placeholder">🏷️</div>}
-              <div className="product-info">
+              <div className="product-info" style={{flex:1}}>
                 <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
                   <div className="product-title">{p.title}</div>
                   <span className={`p-status p-${p.status}`}>{p.status?.toUpperCase()}</span>
                 </div>
                 {p.type && <div className="product-type">{p.type}</div>}
-                <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                  {p.variants.map(v=>(
-                    <div key={v.id} className="variant-row">
-                      <span style={{color:'var(--text-dim)'}}>{v.title!=='Default Title'?v.title:'Standard'}</span>
-                      {v.sku && <span>SKU: {v.sku}</span>}
-                      <span>₹{v.price}</span>
-                      <span className={v.inventory===0?'inv-zero':v.inventory<5?'inv-low':'inv-ok'}>
-                        {v.inventory===0?'Out of stock':v.inventory<5?`Low: ${v.inventory} left`:`Stock: ${v.inventory}`}
-                      </span>
-                    </div>
-                  ))}
+
+                {/* Product-level bulk actions */}
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:8,marginBottom:4}}>
+                  {(()=>{
+                    const allTracked = p.variants.every(v=>v.tracked);
+                    const noneTracked = p.variants.every(v=>!v.tracked);
+                    return (<>
+                      <button onClick={()=>bulkTracking(p.id, !allTracked)}
+                        disabled={!!bulkLoading[`${p.id}_track`]}
+                        style={{fontSize:10,padding:'3px 9px',borderRadius:4,border:'1px solid var(--indigo)',background:'rgba(99,102,241,0.1)',color:'var(--indigo)',cursor:'pointer',fontWeight:600}}>
+                        {bulkLoading[`${p.id}_track`] ? '…' : allTracked ? '○ Disable Tracking All' : noneTracked ? '📦 Enable Tracking All' : '📦 Toggle Tracking All'}
+                      </button>
+                      {p.variants.some(v=>v.tracked) && (
+                        <button onClick={()=>markAllOos(p.id, p.title)}
+                          disabled={!!bulkLoading[`${p.id}_oos`]}
+                          style={{fontSize:10,padding:'3px 9px',borderRadius:4,border:'1px solid var(--red)',background:'rgba(239,68,68,0.08)',color:'var(--red)',cursor:'pointer',fontWeight:600}}>
+                          {bulkLoading[`${p.id}_oos`] ? '…' : '✕ Mark All Out of Stock'}
+                        </button>
+                      )}
+                    </>);
+                  })()}
+                </div>
+
+                <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:6}}>
+                  {p.variants.map(v=>{
+                    const key = `${p.id}_${v.id}`;
+                    const ed  = editing[key];
+                    return (
+                      <div key={v.id} style={{background:'var(--bg-card2)',borderRadius:7,padding:'8px 12px',border:'1px solid var(--border)'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                          <span style={{color:'var(--text)',fontWeight:600,minWidth:80}}>{v.title!=='Default Title'?v.title:'Standard'}</span>
+                          {v.sku && <span style={{fontSize:10,color:'var(--text-muted)'}}>SKU: {v.sku}</span>}
+                          <span style={{fontSize:11,color:'var(--text-muted)'}}>₹{v.price}</span>
+
+                          {/* Tracking toggle */}
+                          <button onClick={()=>toggleTracking(p.id, v.id, v.tracked)}
+                            disabled={editing[key]?.trackSaving}
+                            style={{fontSize:10,padding:'2px 8px',borderRadius:4,border:'none',cursor:'pointer',fontWeight:600,
+                              background: v.tracked ? 'rgba(99,102,241,0.15)' : 'var(--bg-card)',
+                              color: v.tracked ? 'var(--indigo)' : 'var(--text-muted)'}}>
+                            {editing[key]?.trackSaving ? '…' : v.tracked ? '📦 Tracked' : '○ Not Tracked'}
+                          </button>
+
+                          {/* Stock display + edit */}
+                          {v.tracked ? (
+                            ed ? (
+                              <div style={{display:'flex',alignItems:'center',gap:4}}>
+                                <input type="number" min="0" value={ed.qty}
+                                  onChange={e=>setEditing(ex=>({...ex,[key]:{...ex[key],qty:e.target.value}}))}
+                                  onKeyDown={e=>e.key==='Enter'&&saveQty(p.id,v.id)}
+                                  style={{width:60,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:4,color:'var(--text)',padding:'3px 6px',fontSize:12,outline:'none'}}
+                                  autoFocus/>
+                                <button onClick={()=>saveQty(p.id,v.id)} disabled={ed.saving}
+                                  style={{padding:'3px 8px',borderRadius:4,border:'none',background:'var(--indigo)',color:'#fff',cursor:'pointer',fontSize:11}}>
+                                  {ed.saving?'…':'✓'}
+                                </button>
+                                <button onClick={()=>cancelEdit(p.id,v.id)}
+                                  style={{padding:'3px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer',fontSize:11}}>
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <span className={v.inventory===0?'inv-zero':v.inventory<5?'inv-low':'inv-ok'}>
+                                  {v.inventory===0?'Out of stock':v.inventory<5?`Low: ${v.inventory}`:v.inventory}
+                                </span>
+                                <button onClick={()=>startEdit(p.id,v.id,v.inventory)}
+                                  style={{fontSize:10,padding:'2px 7px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}>
+                                  ✎ Edit
+                                </button>
+                              </div>
+                            )
+                          ) : (
+                            <span style={{fontSize:11,color:'var(--text-muted)',fontStyle:'italic'}}>Tracking off — always available</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -2263,8 +2431,6 @@
     const [msg,        setMsg]        = useState('');
     const color = direction === 'reverse' ? 'var(--blue)' : 'var(--green)';
 
-    useEffect(() => { if (awb) doRefresh(); }, [awb]);
-
     const doRefresh = async () => {
       setRefreshing(true); setMsg('');
       try {
@@ -2277,6 +2443,8 @@
       } catch { setMsg('Could not fetch.'); }
       setRefreshing(false);
     };
+
+    useEffect(() => { if (awb) doRefresh(); }, [awb]);
 
     return (
       <div style={{marginTop:8,background:'var(--bg)',border:`1px solid ${color}44`,borderRadius:7,padding:'8px 12px'}}>
@@ -2359,22 +2527,21 @@
 
         {(revShip||fwdShip) && (
           <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:12}}>
-            {revShip && (
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--blue)',borderRadius:8,padding:'10px 14px',fontSize:11}}>
-                <div style={{color:'var(--blue)',fontWeight:700,marginBottom:3}}>↩ Reverse Pickup</div>
-                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</div>
-                <div style={{color:'var(--text-muted)',marginTop:2}}>{revShip.courier} · {revShip.created_at?.split('T')[0]}</div>
-                <RRShipmentStatus awb={revShip.awb} courier={revShip.courier} direction="reverse" requestId={rr.request_id} trackingStatus={revShip.tracking_status}/>
+            {[revShip&&{ship:revShip,dir:'reverse',color:'var(--blue)',label:'↩ Reverse Pickup'},
+               fwdShip&&{ship:fwdShip,dir:'forward',color:'var(--green)',label:'→ Forward Dispatch'}
+              ].filter(Boolean).map(({ship,dir,color,label})=>(
+              <div key={dir} style={{background:'var(--bg-card2)',border:`1px solid ${color}`,borderRadius:8,padding:'10px 14px',fontSize:11}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:3}}>
+                  <div>
+                    <div style={{color,fontWeight:700,marginBottom:3}}>{label}</div>
+                    <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{ship.awb}</div>
+                    <div style={{color:'var(--text-muted)',marginTop:2}}>{ship.courier} · {ship.created_at?.split('T')[0]}</div>
+                  </div>
+                  {(()=>{ const url = ship.tracking_url || trackingUrlFromCourier(ship.courier||'', ship.awb||''); return url ? <a href={url} target="_blank" rel="noreferrer" style={{fontSize:10,padding:'4px 10px',borderRadius:4,border:`1px solid ${color}`,color,background:'transparent',textDecoration:'none',fontFamily:'IBM Plex Mono,monospace',fontWeight:600,flexShrink:0}}>🔗 Track →</a> : null; })()}
+                </div>
+                <RRShipmentStatus awb={ship.awb} courier={ship.courier} direction={dir} requestId={rr.request_id} trackingStatus={ship.tracking_status}/>
               </div>
-            )}
-            {fwdShip && (
-              <div style={{background:'var(--bg-card2)',border:'1px solid var(--green)',borderRadius:8,padding:'10px 14px',fontSize:11}}>
-                <div style={{color:'var(--green)',fontWeight:700,marginBottom:3}}>→ Forward Dispatch</div>
-                <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</div>
-                <div style={{color:'var(--text-muted)',marginTop:2}}>{fwdShip.courier} · {fwdShip.created_at?.split('T')[0]}</div>
-                <RRShipmentStatus awb={fwdShip.awb} courier={fwdShip.courier} direction="forward" requestId={rr.request_id} trackingStatus={fwdShip.tracking_status}/>
-              </div>
-            )}
+            ))}
           </div>
         )}
 

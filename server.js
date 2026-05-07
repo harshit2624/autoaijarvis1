@@ -22,6 +22,7 @@ const nodemailer = require("nodemailer");
 const multer     = require("multer");
 const { MongoClient } = require("mongodb");
 const { google }     = require("googleapis");
+const Razorpay       = require("razorpay");
 require("dotenv").config();
 
 // ── Multer — ads image uploads ─────────────────────────────────────────────
@@ -3852,14 +3853,163 @@ app.get("/vendor/products", vendorAuth, async (req, res) => {
       image:   p.image?.src || null,
       type:    p.product_type || "",
       variants: (p.variants || []).map(v => ({
-        id:        v.id,
-        title:     v.title,
-        sku:       v.sku || "",
-        price:     parseFloat(v.price || 0),
-        inventory: v.inventory_quantity ?? "—",
+        id:               v.id,
+        title:            v.title,
+        sku:              v.sku || "",
+        price:            parseFloat(v.price || 0),
+        inventory:        v.inventory_quantity ?? 0,
+        inventory_item_id: v.inventory_item_id,
+        tracked:          v.inventory_management === 'shopify',
       })),
     }));
     res.json({ products });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PUT /vendor/products/:productId/bulk-tracking ────────────────────────
+app.put("/vendor/products/:productId/bulk-tracking", vendorAuth, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { tracked } = req.body || {};
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,vendor,variants`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+    const token = await getAccessToken();
+    const variants = pd.product?.variants || [];
+    for (const v of variants) {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${v.id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variant: { id: v.id, inventory_management: tracked ? 'shopify' : null } }),
+      });
+    }
+    auditLog("vendor", "bulk_tracking_toggle", String(productId), { vendor: req.vendor, tracked, count: variants.length });
+    res.json({ success: true, updated: variants.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PUT /vendor/products/:productId/mark-all-out-of-stock ─────────────────
+app.put("/vendor/products/:productId/mark-all-out-of-stock", vendorAuth, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,title,vendor,variants`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+    const token = await getAccessToken();
+    const locData = await shopifyREST('/locations.json');
+    const locationId = locData.locations?.[0]?.id;
+    if (!locationId) return res.status(500).json({ error: "No location found." });
+    const variants = (pd.product?.variants || []).filter(v => v.inventory_management === 'shopify');
+    for (const v of variants) {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location_id: locationId, inventory_item_id: v.inventory_item_id, available: 0 }),
+      });
+    }
+    // Email admin
+    try {
+      const cfg = await getSmtpConfig();
+      if (cfg?.host && cfg?.adminEmail) {
+        await sendEmail({
+          to: cfg.adminEmail,
+          subject: `⚠ ${req.vendor} marked "${pd.product.title}" as Out of Stock`,
+          html: `<div style="font-family:Arial,sans-serif;padding:20px;max-width:500px">
+            <h3 style="color:#ef4444">⚠ Out of Stock Alert</h3>
+            <p><strong>${req.vendor}</strong> has marked all variants of <strong>${pd.product.title}</strong> as out of stock (qty = 0).</p>
+            <p style="color:#888;font-size:12px">${variants.length} variant(s) updated · ${new Date().toLocaleString('en-IN')}</p>
+          </div>`,
+          shopifyId: String(productId), trigger: 'vendor_oos',
+        });
+      }
+    } catch {}
+    auditLog("vendor", "mark_all_oos", String(productId), { vendor: req.vendor, variants: variants.length });
+    res.json({ success: true, updated: variants.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PUT /vendor/products/:productId/variants/:variantId/inventory ─────────
+app.put("/vendor/products/:productId/variants/:variantId/inventory", vendorAuth, async (req, res) => {
+  try {
+    const { productId, variantId } = req.params;
+    const { quantity } = req.body || {};
+    if (quantity == null) return res.status(400).json({ error: "quantity required." });
+
+    // Verify this product belongs to this vendor
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,vendor,variants`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+
+    const variant = (pd.product?.variants || []).find(v => String(v.id) === String(variantId));
+    if (!variant) return res.status(404).json({ error: "Variant not found." });
+
+    const invItemId = variant.inventory_item_id;
+    const token = await getAccessToken();
+
+    // Get location ID
+    const locData = await shopifyREST('/locations.json');
+    const locationId = locData.locations?.[0]?.id;
+    if (!locationId) return res.status(500).json({ error: "No location found." });
+
+    // Set inventory level
+    const setRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location_id: locationId, inventory_item_id: invItemId, available: parseInt(quantity) }),
+    });
+    const setData = await setRes.json();
+    if (!setRes.ok) return res.status(400).json({ error: setData.errors || 'Failed to set inventory.' });
+
+    auditLog("vendor", "inventory_set", String(variantId), { vendor: req.vendor, quantity, productId });
+
+    // Notify admin of stock update
+    try {
+      const cfg = await getSmtpConfig();
+      if (cfg?.host && cfg?.adminEmail) {
+        const variantTitle = variant.title !== 'Default Title' ? ` — ${variant.title}` : '';
+        await sendEmail({
+          to: cfg.adminEmail,
+          subject: `📦 ${req.vendor} updated stock: ${pd.product?.title || productId}${variantTitle} → ${quantity}`,
+          html: `<div style="font-family:Arial,sans-serif;padding:20px;max-width:500px">
+            <h3 style="color:#6366f1">📦 Inventory Update</h3>
+            <p><strong>${req.vendor}</strong> updated stock for:</p>
+            <p style="font-size:15px"><strong>${pd.product?.title || productId}${variantTitle}</strong></p>
+            <p style="font-size:18px;font-weight:bold;color:${parseInt(quantity)===0?'#ef4444':parseInt(quantity)<5?'#f59e0b':'#10b981'}">New qty: ${quantity}</p>
+            ${variant.sku ? `<p style="color:#888;font-size:12px">SKU: ${variant.sku}</p>` : ''}
+            <p style="color:#888;font-size:12px">${new Date().toLocaleString('en-IN')}</p>
+          </div>`,
+          shopifyId: String(productId), trigger: 'vendor_stock_update',
+        });
+      }
+    } catch {}
+
+    res.json({ success: true, available: setData.inventory_level?.available ?? parseInt(quantity) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PUT /vendor/products/:productId/variants/:variantId/tracking ──────────
+app.put("/vendor/products/:productId/variants/:variantId/tracking", vendorAuth, async (req, res) => {
+  try {
+    const { productId, variantId } = req.params;
+    const { tracked } = req.body || {};
+
+    // Verify ownership
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,vendor,variants`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+
+    const token = await getAccessToken();
+    // Update variant inventory_management
+    const upd = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${variantId}.json`, {
+      method: 'PUT',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ variant: { id: variantId, inventory_management: tracked ? 'shopify' : null } }),
+    });
+    const updData = await upd.json();
+    if (!upd.ok) return res.status(400).json({ error: updData.errors || 'Failed to update tracking.' });
+
+    auditLog("vendor", "inventory_tracking_toggle", String(variantId), { vendor: req.vendor, tracked });
+    res.json({ success: true, tracked: updData.variant?.inventory_management === 'shopify' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -7164,6 +7314,57 @@ app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
 // GOOGLE CONTACTS INTEGRATION
 // ══════════════════════════════════════════════════════════════════════════
 
+// ── Razorpay ──────────────────────────────────────────────────────────────
+function getRzp() {
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET)
+    throw new Error("Razorpay keys not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to .env");
+  return new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+}
+
+// GET /track/rr-fee — get RR fee for a vendor (public, needed before auth)
+app.get("/track/rr-fee", async (req, res) => {
+  try {
+    const { vendor_name } = req.query;
+    const cfg = vendor_name
+      ? await mdb.collection('vendor_return_config').findOne({ vendor_name }, { projection: { rr_fee: 1, _id: 0 } })
+      : null;
+    res.json({ fee: cfg?.rr_fee ?? 199 });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /track/razorpay-order — create Razorpay order for RR fee
+app.post("/track/razorpay-order", async (req, res) => {
+  try {
+    const { vendor_name, order_name, customer_name } = req.body || {};
+    if (!process.env.RAZORPAY_KEY_ID) return res.status(400).json({ error: "Razorpay not configured." });
+    const cfg = vendor_name
+      ? await mdb.collection('vendor_return_config').findOne({ vendor_name }, { projection: { rr_fee: 1, _id: 0 } })
+      : null;
+    const fee = cfg?.rr_fee ?? 199;
+    const order = await getRzp().orders.create({
+      amount: fee * 100, // paise
+      currency: 'INR',
+      receipt: `rr_${order_name}_${Date.now()}`.slice(0, 40),
+      notes: { order_name: order_name || '', vendor: vendor_name || '', customer: customer_name || '' },
+    });
+    res.json({ order_id: order.id, amount: fee, key: process.env.RAZORPAY_KEY_ID });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /track/razorpay-verify — verify payment signature after checkout
+app.post("/track/razorpay-verify", async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+    if (expectedSig !== razorpay_signature)
+      return res.status(400).json({ error: "Payment verification failed." });
+    res.json({ verified: true, payment_id: razorpay_payment_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI  = `${process.env.SERVER_URL || 'http://localhost:3001'}/admin/google/callback`;
@@ -7189,11 +7390,27 @@ async function getAuthedPeopleClient() {
   if (!tokens) throw new Error("Google Contacts not connected. Go to Admin Settings → Integrations to connect.");
   const auth = getGoogleOAuth2Client();
   auth.setCredentials(tokens);
-  // Auto-refresh if expired
+
+  // Proactively refresh if access token is expired or expiring within 2 minutes
+  if (tokens.expiry_date && Date.now() > tokens.expiry_date - 120000) {
+    try {
+      const { credentials } = await auth.refreshAccessToken();
+      const merged = { ...tokens, ...credentials };
+      await saveGoogleTokens(merged);
+      auth.setCredentials(merged);
+      console.log('📒 Google token refreshed, new expiry:', new Date(merged.expiry_date).toISOString());
+    } catch (refreshErr) {
+      throw new Error(`Google token refresh failed (${refreshErr.message}). Please reconnect Google Contacts in Admin Settings → Integrations.`);
+    }
+  }
+
+  // Also save any new tokens emitted during the session
   auth.on('tokens', async (newTokens) => {
-    const merged = { ...tokens, ...newTokens };
+    const current = await getGoogleTokens();
+    const merged = { ...(current || tokens), ...newTokens };
     await saveGoogleTokens(merged);
   });
+
   return google.people({ version: 'v1', auth });
 }
 
@@ -7296,21 +7513,26 @@ app.delete("/admin/google/disconnect", adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /admin/google/sync — manual bulk sync all customers to Google Contacts
+// POST /admin/google/sync — manual bulk sync customers to Google Contacts
+// body: { days: 7 } for last N days, or omit for all time
 app.post("/admin/google/sync", adminAuth, async (req, res) => {
   try {
-    const orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-    let synced = 0, errors = 0;
+    const days = parseInt(req.body?.days) || null;
+    const from = days
+      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      : "2020-01-01T00:00:00Z";
+    const orders = await fetchAllOrders("any", from);
+    let synced = 0, errors = 0, skipped = 0;
     for (const o of orders) {
       const phone = o.shipping_address?.phone || o.billing_address?.phone || o.phone || "";
       const name  = o.shipping_address ? `${o.shipping_address.first_name || ""} ${o.shipping_address.last_name || ""}`.trim() : (o.customer?.first_name || "Customer");
-      if (!phone) continue;
+      if (!phone) { skipped++; continue; }
       try {
         await upsertGoogleContact({ name, phone, orderName: o.name });
         synced++;
       } catch (e) { errors++; console.error(`Google sync error for ${o.name}:`, e.message); }
     }
-    res.json({ ok: true, synced, errors });
+    res.json({ ok: true, synced, errors, skipped, total: orders.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -8622,7 +8844,7 @@ async function buildOrderPayload(order) {
   const returnConfigs = {};
   for (const v of vendorNames) {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
-    returnConfigs[v] = { exchange_enabled: true, return_enabled: cfg.return_enabled === true, return_window_days: cfg.return_window_days || 7, return_address: cfg.return_address || null };
+    returnConfigs[v] = { exchange_enabled: true, return_enabled: cfg.return_enabled === true, return_window_days: cfg.return_window_days || 7, return_address: cfg.return_address || null, rr_fee: cfg.rr_fee ?? 199 };
   }
   const items = (order.line_items || []).map(li => ({
     line_item_id: li.id, product_id: li.product_id, variant_id: li.variant_id,
@@ -8891,7 +9113,7 @@ app.get("/vendor/product-images", vendorAuth, async (req, res) => {
 // ── Public: submit return/exchange request ────────────────────────────────
 app.post("/track/request", async (req, res) => {
   try {
-    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name } = req.body;
+    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name, payment_id, razorpay_order_id } = req.body;
 
     if (!shopify_order_id || !type || !items?.length || !reason) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -8920,6 +9142,9 @@ app.post("/track/request", async (req, res) => {
       created_at: now.toISOString(),
       admin_note: '',
       vendor_note: '',
+      payment_id: payment_id || null,
+      razorpay_order_id: razorpay_order_id || null,
+      fee_paid: payment_id ? true : false,
     };
 
     await mdb.collection('return_requests').insertOne(doc);
@@ -9434,17 +9659,17 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
 app.get("/admin/vendors/:name/return-config", adminAuth, async (req, res) => {
   try {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: req.params.name }, { projection: { _id: 0 } }) || {};
-    res.json({ config: { exchange_enabled: true, return_enabled: false, return_window_days: 7, return_address: {}, ...cfg } });
+    res.json({ config: { exchange_enabled: true, return_enabled: false, return_window_days: 7, return_address: {}, rr_fee: 199, ...cfg } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Admin: save vendor return config ─────────────────────────────────────
 app.put("/admin/vendors/:name/return-config", adminAuth, async (req, res) => {
   try {
-    const { return_enabled, return_window_days, return_address } = req.body;
+    const { return_enabled, return_window_days, return_address, rr_fee } = req.body;
     await mdb.collection('vendor_return_config').updateOne(
       { vendor_name: req.params.name },
-      { $set: { vendor_name: req.params.name, exchange_enabled: true, return_enabled: !!return_enabled, return_window_days: parseInt(return_window_days) || 7, return_address: return_address || {}, updated_at: new Date().toISOString() } },
+      { $set: { vendor_name: req.params.name, exchange_enabled: true, return_enabled: !!return_enabled, return_window_days: parseInt(return_window_days) || 7, return_address: return_address || {}, rr_fee: parseFloat(rr_fee) || 199, updated_at: new Date().toISOString() } },
       { upsert: true }
     );
     res.json({ success: true });
@@ -9482,7 +9707,7 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
 app.get("/vendor/return-config", vendorAuth, async (req, res) => {
   try {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } }) || {};
-    res.json({ config: { exchange_enabled: true, return_enabled: false, return_window_days: 7, return_address: {}, ...cfg } });
+    res.json({ config: { exchange_enabled: true, return_enabled: false, return_window_days: 7, return_address: {}, rr_fee: 199, ...cfg } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -2715,8 +2715,6 @@
     const [msg,        setMsg]        = useState('');
     const color = direction === 'reverse' ? 'var(--cyan)' : 'var(--green)';
 
-    useEffect(() => { if (awb) doRefresh(); }, [awb]);
-
     const doRefresh = async () => {
       setRefreshing(true); setMsg('');
       try {
@@ -2729,6 +2727,8 @@
       } catch { setMsg('Could not fetch.'); }
       setRefreshing(false);
     };
+
+    useEffect(() => { if (awb) doRefresh(); }, [awb]);
 
     return (
       <div style={{marginTop:8,background:'var(--bg)',border:`1px solid ${color}44`,borderRadius:7,padding:'8px 12px'}}>
@@ -2850,17 +2850,20 @@
                     <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{ship.awb}</div>
                     <div style={{color:'var(--text-muted)',marginTop:2}}>{ship.courier} · {ship.created_at?.split('T')[0]}</div>
                   </div>
-                  <button
-                    onClick={async()=>{
-                      if(!window.confirm(`Remove this ${dir} shipment (AWB: ${ship.awb})? You can then recreate or re-enter a new one.`)) return;
-                      setMsg(null);
-                      const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/shipment/${dir}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
-                      if(r.ok){ setMsg({type:'success',text:`${dir} shipment removed.`}); onUpdated&&onUpdated(); }
-                      else setMsg({type:'error',text:'Remove failed.'});
-                    }}
-                    style={{background:'var(--red-bg)',border:'1px solid var(--red)',color:'var(--red)',borderRadius:4,padding:'2px 7px',fontSize:10,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',flexShrink:0}}>
-                    ✕ Remove
-                  </button>
+                  <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+                    {(()=>{ const url = ship.tracking_url || trackingUrlFromCourier(ship.courier||'', ship.awb||''); return url ? <a href={url} target="_blank" rel="noreferrer" style={{fontSize:10,padding:'2px 9px',borderRadius:4,border:`1px solid ${color}`,color,background:'transparent',textDecoration:'none',fontFamily:'IBM Plex Mono,monospace',fontWeight:600,cursor:'pointer'}}>🔗 Track →</a> : null; })()}
+                    <button
+                      onClick={async()=>{
+                        if(!window.confirm(`Remove this ${dir} shipment (AWB: ${ship.awb})? You can then recreate or re-enter a new one.`)) return;
+                        setMsg(null);
+                        const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/shipment/${dir}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                        if(r.ok){ setMsg({type:'success',text:`${dir} shipment removed.`}); onUpdated&&onUpdated(); }
+                        else setMsg({type:'error',text:'Remove failed.'});
+                      }}
+                      style={{background:'var(--red-bg)',border:'1px solid var(--red)',color:'var(--red)',borderRadius:4,padding:'2px 7px',fontSize:10,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace'}}>
+                      ✕ Remove
+                    </button>
+                  </div>
                 </div>
                 <RRShipmentStatus awb={ship.awb} courier={ship.courier} direction={dir} requestId={rr.request_id} trackingStatus={ship.tracking_status}/>
               </div>
@@ -2983,7 +2986,7 @@
     };
     useEffect(load, [tab]);
     useEffect(()=>{
-      fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setVendors(d.vendors||[])).catch(()=>{});
+      fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setVendors((d.vendors||[]).map(v=>typeof v==='string'?v:v.name).filter(Boolean))).catch(()=>{});
     },[]);
 
     const receiveAtCC = async (id) => {
@@ -3051,7 +3054,7 @@
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead>
                     <tr style={{borderBottom:'1px solid var(--border)'}}>
-                      {['Request ID','Order','Customer','Type','Items','Vendor','Status','Date','Actions'].map(h=>(
+                      {['Request ID','Order','Customer','Type','Items','Vendor','Status','Fee','Date','Actions'].map(h=>(
                         <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:10,letterSpacing:1,color:'var(--text-muted)',textTransform:'uppercase',whiteSpace:'nowrap'}}>{h}</th>
                       ))}
                     </tr>
@@ -3069,6 +3072,11 @@
                             <td style={{padding:'8px 10px',color:'var(--text-dim)'}}>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</td>
                             <td style={{padding:'8px 10px',color:'var(--text-dim)',whiteSpace:'nowrap'}}>{rq.vendor_name||'—'}</td>
                             <td style={{padding:'8px 10px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${STATUS_COLOR[rq.status]||'var(--border)'}`,color:STATUS_COLOR[rq.status]||'var(--text)',borderRadius:99,padding:'2px 9px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.status}</span></td>
+                            <td style={{padding:'8px 10px'}}>
+                              {rq.fee_paid
+                                ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.3)',color:'#10b981',fontWeight:600}}>💳 Paid</span>
+                                : <span style={{fontSize:10,color:'var(--text-muted)'}}>—</span>}
+                            </td>
                             <td style={{padding:'8px 10px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{rq.created_at?.split('T')[0]}</td>
                             <td style={{padding:'8px 10px'}} onClick={e=>e.stopPropagation()}>
                               <div style={{display:'flex',gap:4}}>
@@ -3151,7 +3159,7 @@
 
   function VendorReturnConfigPanel({ token, vendors, onClose }) {
     const [selectedVendor, setSelectedVendor] = useState(vendors[0]||'');
-    const EMPTY = { exchange_enabled:true, return_enabled:true, return_window_days:7, return_address:{name:'',address1:'',city:'',state:'',pincode:'',phone:''} };
+    const EMPTY = { exchange_enabled:true, return_enabled:true, return_window_days:7, rr_fee:199, return_address:{name:'',address1:'',city:'',state:'',pincode:'',phone:''} };
     const [cfg,     setCfg]    = useState(EMPTY);
     const [loading, setLoading]= useState(false);
     const [saving,  setSaving] = useState(false);
@@ -3219,6 +3227,12 @@
                   <span style={{fontSize:12,color:'var(--text)'}}>Window</span>
                   <input type="number" min={1} max={90} style={{width:60,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.return_window_days} onChange={e=>setCfg(p=>({...p,return_window_days:parseInt(e.target.value)||7}))}/>
                   <span style={{fontSize:11,color:'var(--text-muted)'}}>days</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:12,color:'var(--text)'}}>💳 RR Fee</span>
+                  <span style={{fontSize:12,color:'var(--text-muted)'}}>₹</span>
+                  <input type="number" min={0} style={{width:70,background:'var(--bg-card2)',border:'1px solid var(--indigo)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.rr_fee??199} onChange={e=>setCfg(p=>({...p,rr_fee:parseFloat(e.target.value)||0}))}/>
+                  <span style={{fontSize:10,color:'var(--text-muted)'}}>upfront (Razorpay)</span>
                 </div>
               </div>
               <div style={{fontSize:10,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>Return Address</div>
@@ -7109,6 +7123,7 @@
   function GoogleContacts({ token }) {
     const [connected, setConnected] = useState(null);
     const [syncing,   setSyncing]   = useState(false);
+    const [syncMode,  setSyncMode]  = useState('');
     const [msg,       setMsg]       = useState(null);
 
     useEffect(() => {
@@ -7134,15 +7149,20 @@
       setConnected(false); setMsg({ type:'success', text:'Disconnected.' });
     };
 
-    const bulkSync = async () => {
-      setSyncing(true); setMsg(null);
+    const doSync = async (days) => {
+      setSyncing(true); setSyncMode(days ? `${days}d` : 'all'); setMsg(null);
       try {
-        const r = await fetch(`${API}/admin/google/sync`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const body = days ? JSON.stringify({ days }) : '{}';
+        const r = await fetch(`${API}/admin/google/sync`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+          body,
+        });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
-        setMsg({ type:'success', text:`Synced ${d.synced} customers to Google Contacts. ${d.errors ? d.errors+' errors.' : ''}` });
+        setMsg({ type:'success', text:`✓ Synced ${d.synced} contact${d.synced!==1?'s':''} from ${d.total} orders${d.skipped?` (${d.skipped} skipped — no phone)`:''}. ${d.errors?d.errors+' errors.':''}` });
       } catch(e) { setMsg({ type:'error', text: e.message }); }
-      setSyncing(false);
+      setSyncing(false); setSyncMode('');
     };
 
     return (
@@ -7178,14 +7198,21 @@
               • Use Bulk Sync to import all existing customers at once
             </div>
 
-            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
               {!connected
                 ? <button className="btn btn-primary" onClick={connect}>🔗 Connect Google Account</button>
                 : <>
-                    <button className="btn btn-primary" onClick={bulkSync} disabled={syncing}>
-                      {syncing ? '⏳ Syncing…' : '🔄 Bulk Sync All Customers'}
+                    <button className="btn btn-primary" onClick={()=>doSync(7)} disabled={syncing}
+                      style={{background:'#10b981',borderColor:'#10b981'}}>
+                      {syncing && syncMode==='7d' ? <><span className="spin">↻</span> Syncing…</> : '📒 Sync Last 7 Days'}
                     </button>
-                    <button className="btn btn-ghost btn-sm" onClick={disconnect} style={{color:'var(--red)',borderColor:'var(--red)'}}>Disconnect</button>
+                    <button className="btn btn-ghost" onClick={()=>doSync(30)} disabled={syncing}>
+                      {syncing && syncMode==='30d' ? <><span className="spin">↻</span> Syncing…</> : '🗓 Last 30 Days'}
+                    </button>
+                    <button className="btn btn-ghost" onClick={()=>doSync(null)} disabled={syncing}>
+                      {syncing && syncMode==='all' ? <><span className="spin">↻</span> Syncing…</> : '🔄 All Time'}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={disconnect} style={{color:'var(--red)',borderColor:'var(--red)',marginLeft:'auto'}}>Disconnect</button>
                   </>
               }
             </div>

@@ -8,6 +8,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -484,16 +485,34 @@
     );
   }
 
-  function RequestForm({ order, type, onSuccess, onCancel }) {
+  function RequestForm({ order, type, onSuccess, onCancel, onSwitchToExchange }) {
     const [selectedItems, setSelectedItems] = useState({}); // line_item_id → {checked,qty,exchangeVariantId,exchangeSizeLabel}
     const [variantCache, setVariantCache] = useState({});
     const [loadingVariants, setLoadingVariants] = useState({});
     const [reason, setReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
+    const [paymentDone, setPaymentDone] = useState(null);
+
+    const checkedItems = (order.items || []).filter(it => selectedItems[it.line_item_id]?.checked);
+
+    // Active vendor = vendor of currently selected items (first checked item wins)
+    const activeVendor = checkedItems[0]?.vendor || '';
+
+    // Fee and config based on active vendor (falls back to first item's vendor if nothing checked yet)
+    const defaultVendor = (order.items||[])[0]?.vendor || '';
+    const displayVendor = activeVendor || defaultVendor;
+    const vendorCfg = order.return_configs?.[displayVendor] || {};
+    const fee = vendorCfg.rr_fee ?? 199;
+
+    // Is return/exchange enabled for the active vendor?
+    const returnEnabled  = vendorCfg.return_enabled !== false;
+    const exchangeEnabled = vendorCfg.exchange_enabled !== false;
 
     // Fetch variants when item is checked (exchange only)
     const handleCheck = useCallback(async (item, checked) => {
+      // Block cross-vendor selection
+      if (checked && activeVendor && item.vendor && item.vendor !== activeVendor) return;
       setSelectedItems(prev => ({
         ...prev,
         [item.line_item_id]: checked
@@ -509,14 +528,92 @@
         } catch {}
         setLoadingVariants(p => ({ ...p, [item.product_id]: false }));
       }
-    }, [type, variantCache]);
+    }, [type, variantCache, activeVendor]);
 
     const handleQtyChange = (id, qty) => setSelectedItems(p => ({ ...p, [id]: { ...p[id], qty } }));
     const handleVariantChange = (productId, lineItemId, variantId, sizeLabel) => {
       setSelectedItems(p => ({ ...p, [lineItemId]: { ...p[lineItemId], exchangeVariantId: variantId, exchangeSizeLabel: sizeLabel } }));
     };
 
-    const checkedItems = (order.items || []).filter(it => selectedItems[it.line_item_id]?.checked);
+    const buildItems = () => checkedItems.map(it => {
+      const sel = selectedItems[it.line_item_id];
+      return {
+        line_item_id: it.line_item_id, variant_id: it.variant_id,
+        product_id: it.product_id, title: it.title,
+        variant_title: it.variant_title, qty: sel.qty, price: it.price,
+        exchange_variant_id: sel.exchangeVariantId || null,
+        exchange_size_label: sel.exchangeSizeLabel || null,
+      };
+    });
+
+    const doSubmitRequest = async (paymentId, rzpOrderId) => {
+      const vendorName = checkedItems[0]?.vendor || '';
+      const r = await fetch(`${API}/track/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopify_order_id: order.shopify_order_id,
+          order_name: order.order_name,
+          customer_email: order.customer_email,
+          customer_name: order.customer_name,
+          customer_phone: order.customer_phone,
+          type, items: buildItems(), reason: reason.trim(), vendor_name: vendorName,
+          payment_id: paymentId, razorpay_order_id: rzpOrderId,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      return d.request_id;
+    };
+
+    const openRazorpay = async () => {
+      setError(null);
+      const vendorName = checkedItems[0]?.vendor || '';
+      // Create Razorpay order
+      const orderRes = await fetch(`${API}/track/razorpay-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendor_name: vendorName, order_name: order.order_name, customer_name: order.customer_name }),
+      });
+      const orderData = await orderRes.json();
+      if (!orderRes.ok) throw new Error(orderData.error || 'Could not create payment.');
+
+      return new Promise((resolve, reject) => {
+        const rzp = new window.Razorpay({
+          key: orderData.key,
+          amount: orderData.amount * 100,
+          currency: 'INR',
+          name: 'CrosCrow',
+          description: `${type === 'exchange' ? 'Exchange' : 'Return'} Request Fee — ${order.order_name}`,
+          order_id: orderData.order_id,
+          prefill: {
+            name: order.customer_name || '',
+            email: order.customer_email || '',
+            contact: order.customer_phone || '',
+          },
+          theme: { color: '#6366f1' },
+          handler: async (response) => {
+            try {
+              // Verify payment
+              const vr = await fetch(`${API}/track/razorpay-verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
+                }),
+              });
+              const vd = await vr.json();
+              if (!vr.ok || !vd.verified) throw new Error('Payment verification failed.');
+              resolve({ payment_id: response.razorpay_payment_id, rzp_order_id: response.razorpay_order_id });
+            } catch(e) { reject(e); }
+          },
+          modal: { ondismiss: () => reject(new Error('Payment cancelled.')) },
+        });
+        rzp.open();
+      });
+    };
 
     const submit = async () => {
       if (!checkedItems.length) { setError('Please select at least one item.'); return; }
@@ -527,39 +624,15 @@
       }
 
       setSubmitting(true); setError(null);
-      const vendorName = checkedItems[0]?.vendor || '';
-      const items = checkedItems.map(it => {
-        const sel = selectedItems[it.line_item_id];
-        return {
-          line_item_id: it.line_item_id,
-          variant_id: it.variant_id,
-          title: it.title,
-          variant_title: it.variant_title,
-          qty: sel.qty,
-          price: it.price,
-          exchange_variant_id: sel.exchangeVariantId || null,
-          exchange_size_label: sel.exchangeSizeLabel || null,
-        };
-      });
       try {
-        const r = await fetch(`${API}/track/request`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            shopify_order_id: order.shopify_order_id,
-            order_name: order.order_name,
-            customer_email: order.customer_email,
-            customer_name: order.customer_name,
-            customer_phone: order.customer_phone,
-            type,
-            items,
-            reason: reason.trim(),
-            vendor_name: vendorName,
-          }),
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error);
-        onSuccess(d.request_id);
+        let payment_id = null, rzp_order_id = null;
+        if (fee > 0) {
+          const result = await openRazorpay();
+          payment_id = result.payment_id;
+          rzp_order_id = result.rzp_order_id;
+        }
+        const request_id = await doSubmitRequest(payment_id, rzp_order_id);
+        onSuccess(request_id);
       } catch(e) { setError(e.message); }
       setSubmitting(false);
     };
@@ -574,21 +647,31 @@
         {error && <div className="alert alert-error">⚠ {error}</div>}
 
         <span className="form-section-label">Select items</span>
-        {(order.items || []).map(item => (
-          <ItemCheckRow
-            key={item.line_item_id}
-            item={item}
-            checked={!!selectedItems[item.line_item_id]?.checked}
-            onCheck={checked => handleCheck(item, checked)}
-            qty={selectedItems[item.line_item_id]?.qty || 1}
-            onQtyChange={qty => handleQtyChange(item.line_item_id, qty)}
-            showVariants={type === 'exchange'}
-            variants={variantCache[item.product_id] || []}
-            loadingVariants={!!loadingVariants[item.product_id]}
-            exchangeVariantId={selectedItems[item.line_item_id]?.exchangeVariantId}
-            onVariantChange={(varId, sizeLabel) => handleVariantChange(item.product_id, item.line_item_id, varId, sizeLabel)}
-          />
-        ))}
+        {activeVendor && (
+          <div style={{fontSize:11,color:'#a5b4fc',background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:6,padding:'6px 10px',marginBottom:8}}>
+            🏪 Showing items from <strong>{activeVendor}</strong> — one vendor per request
+          </div>
+        )}
+        {(order.items || []).map(item => {
+          const isLocked = activeVendor && item.vendor && item.vendor !== activeVendor;
+          return (
+            <div key={item.line_item_id} style={{opacity: isLocked ? 0.4 : 1, pointerEvents: isLocked ? 'none' : 'auto', position:'relative'}}>
+              {isLocked && <div style={{position:'absolute',top:8,right:8,fontSize:10,color:'#888',zIndex:1}}>Different vendor</div>}
+              <ItemCheckRow
+                item={item}
+                checked={!!selectedItems[item.line_item_id]?.checked}
+                onCheck={checked => handleCheck(item, checked)}
+                qty={selectedItems[item.line_item_id]?.qty || 1}
+                onQtyChange={qty => handleQtyChange(item.line_item_id, qty)}
+                showVariants={type === 'exchange'}
+                variants={variantCache[item.product_id] || []}
+                loadingVariants={!!loadingVariants[item.product_id]}
+                exchangeVariantId={selectedItems[item.line_item_id]?.exchangeVariantId}
+                onVariantChange={(varId, sizeLabel) => handleVariantChange(item.product_id, item.line_item_id, varId, sizeLabel)}
+              />
+            </div>
+          );
+        })}
 
         <div style={{marginTop:16,marginBottom:16}}>
           <span className="form-section-label">Reason <span style={{color:'var(--red)'}}>*</span></span>
@@ -600,9 +683,39 @@
           />
         </div>
 
+        {/* Eligibility warning */}
+        {activeVendor && type === 'return' && !returnEnabled && (
+          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:8,padding:'12px 14px',marginBottom:14,fontSize:12,color:'#f87171',lineHeight:1.6}}>
+            ⚠ Returns are not available for <strong>{activeVendor}</strong>'s products.
+            {exchangeEnabled && onSwitchToExchange && (
+              <span> You can still request an <span
+                style={{color:'#a5b4fc',fontWeight:700,cursor:'pointer',textDecoration:'underline'}}
+                onClick={onSwitchToExchange}>Exchange</span> instead.</span>
+            )}
+          </div>
+        )}
+
+        {/* Fee notice */}
+        <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:8,padding:'12px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:20}}>💳</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:'#a5b4fc'}}>
+              {fee === null ? '⟳ Loading fee…' : fee === 0 ? 'Free — No Fee' : `₹${fee} Processing Fee`}
+            </div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+              {fee === 0 ? 'This request can be submitted for free.' : 'A one-time fee is charged to process your ' + type + ' request. Payment via Razorpay (UPI, Card, Net Banking).'}
+            </div>
+          </div>
+        </div>
+
         <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-          <button className="btn btn-green" onClick={submit} disabled={submitting}>
-            {submitting ? <><span className="spin">↻</span> Submitting…</> : `Submit ${type === 'exchange' ? 'Exchange' : 'Return'} Request`}
+          <button className="btn btn-green" onClick={submit} disabled={submitting || fee === null}
+            style={{display:'flex',alignItems:'center',gap:8}}>
+            {submitting
+              ? <><span className="spin">↻</span> Processing…</>
+              : fee === 0
+                ? `Submit ${type === 'exchange' ? 'Exchange' : 'Return'}`
+                : <><span>💳</span> Pay ₹{fee} & Submit {type === 'exchange' ? 'Exchange' : 'Return'}</>}
           </button>
           <button className="btn" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-muted)'}} onClick={onCancel} disabled={submitting}>
             Cancel
@@ -787,10 +900,10 @@
     };
 
     const returnCfg = order ? (() => {
-      // Collect return config across all vendors — if ANY vendor disables returns, show disabled
+      // Show return button if ANY vendor in the order accepts returns
       const cfgs = Object.values(order.return_configs || {});
       if (!cfgs.length) return { return_enabled: true };
-      return { return_enabled: cfgs.every(c => c.return_enabled !== false) };
+      return { return_enabled: cfgs.some(c => c.return_enabled !== false) };
     })() : null;
 
     return (
@@ -984,7 +1097,7 @@
                       <div className="tile tile-disabled tile-return-disabled" title="Returns not accepted">
                         <div className="tile-icon">↩</div>
                         <div className="tile-label" style={{color:'var(--red)'}}>Return</div>
-                        <div className="tile-desc" style={{color:'var(--red)'}}>Returns not accepted by this vendor</div>
+                        <div className="tile-desc" style={{color:'var(--red)'}}>Returns not accepted for any items in this order</div>
                       </div>
                     )}
                   </div>
@@ -999,6 +1112,7 @@
                 type={activeForm}
                 onSuccess={handleSuccess}
                 onCancel={() => setActiveForm(null)}
+                onSwitchToExchange={() => setActiveForm('exchange')}
               />
             )}
           </>
