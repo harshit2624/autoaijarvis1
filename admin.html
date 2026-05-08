@@ -5194,6 +5194,17 @@
       loadMappings();
     };
 
+    const [syncingProduct, setSyncingProduct] = useState({});
+    const syncProduct = async (productId) => {
+      setSyncingProduct(p=>({...p,[productId]:true})); setMsg('');
+      const r = await fetch('/admin/vendor-sync/sync-inventory', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+        body: JSON.stringify({ vendor_name: selected, vendor_product_id: String(productId) }) });
+      const d = await r.json();
+      setSyncingProduct(p=>({...p,[productId]:false}));
+      setMsg(d.success ? `✅ Synced ${d.synced} variant${d.synced!==1?'s':''}` : `❌ ${d.error}`);
+      loadVendorProducts(selected);
+    };
+
     const unmapVariant = async (id) => {
       await fetch(`/admin/vendor-sync/map/${id}`, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
       loadMappings(); loadVendorProducts(selected);
@@ -5368,9 +5379,10 @@
                             {/* Variants */}
                             <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:10}}>
                               {p.variants.map(v=>(
-                                <div key={v.id} style={{fontSize:11,padding:'3px 8px',borderRadius:6,background:v.mapped?'var(--green-dim)':'var(--bg-hover)',border:`1px solid ${v.mapped?'#1a4731':'var(--border)'}`,color:v.mapped?'var(--green)':'var(--text-muted)',display:'flex',alignItems:'center',gap:5}}>
+                                <div key={v.id} style={{fontSize:11,padding:'4px 8px',borderRadius:6,background:v.mapped?'var(--green-dim)':'var(--bg-hover)',border:`1px solid ${v.mapped?'#1a4731':'var(--border)'}`,color:v.mapped?'var(--green)':'var(--text-muted)',display:'flex',alignItems:'center',gap:5}}>
                                   {v.title!=='Default Title'&&<span>{v.title}</span>}
                                   <span style={{color:'var(--text)'}}>₹{parseFloat(v.price).toFixed(0)}</span>
+                                  <span style={{color:'var(--cyan)',fontWeight:700}}>· {v.inventory_quantity??'—'} in stock</span>
                                   {v.mapped ? <span>✓</span> : (
                                     <button onClick={()=>{ setMapModal({vendorProduct:p,vendorVariant:v}); setCcSearch(''); setCcProducts([]); }}
                                       style={{fontSize:9,padding:'1px 5px',borderRadius:4,border:'1px solid var(--indigo)',background:'transparent',color:'var(--indigo)',cursor:'pointer'}}>Map</button>
@@ -5379,10 +5391,17 @@
                               ))}
                             </div>
                           </div>
-                          <button className="btn btn-sm btn-indigo" onClick={()=>importProduct(p)} disabled={importing[p.id]||allMapped}
-                            style={{flexShrink:0}}>
-                            {importing[p.id]?'Importing…':allMapped?'Imported':'↓ Import All'}
-                          </button>
+                          <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0}}>
+                            <button className="btn btn-sm btn-indigo" onClick={()=>importProduct(p)} disabled={importing[p.id]||allMapped}>
+                              {importing[p.id]?'Importing…':allMapped?'Imported':'↓ Import All'}
+                            </button>
+                            {allMapped && (
+                              <button className="btn btn-sm btn-ghost" onClick={()=>syncProduct(p.id)} disabled={syncingProduct[p.id]}
+                                style={{borderColor:'var(--cyan)',color:'var(--cyan)'}}>
+                                {syncingProduct[p.id]?'Syncing…':'↻ Sync Stock'}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

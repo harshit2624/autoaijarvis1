@@ -7333,10 +7333,9 @@ app.get("/admin/vendor-sync/mappings", adminAuth, async (req, res) => {
 
 // ── Admin: sync inventory for all mapped variants ─────────────────────────
 app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
-  const { vendor_name } = req.body || {};
-  // Fetch mappings + connections from MongoDB
+  const { vendor_name, vendor_product_id } = req.body || {};
   const allMappings = await VPM.all(vendor_name);
-  const mappings = allMappings.filter(m => m.sync_inventory);
+  const mappings = allMappings.filter(m => m.sync_inventory && (!vendor_product_id || String(m.vendor_product_id) === String(vendor_product_id)));
 
   let synced = 0, errors = [];
   const byVendor = {};
