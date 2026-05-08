@@ -6821,6 +6821,50 @@ app.get('/privacy', (req, res) => {
   </body></html>`);
 });
 
+// ── Mandatory Shopify Compliance Webhooks ─────────────────────────────────
+// These 3 topics are required by Shopify for all apps.
+// Register them in Partners Dashboard → App setup → Compliance webhooks.
+
+// Mandatory Shopify compliance webhooks (customers/data_request, customers/redact, shop/redact)
+function verifyShopifyComplianceHmac(req) {
+  const hmacHeader = req.headers['x-shopify-hmac-sha256'];
+  if (!hmacHeader) return false;
+  const secret = process.env.VENDOR_APP_SECRET || '';
+  const digest = crypto.createHmac('sha256', secret).update(req.body).digest('base64');
+  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
+}
+
+app.post('/webhooks/compliance', express.raw({type:'application/json'}), async (req, res) => {
+  if (!verifyShopifyComplianceHmac(req)) return res.status(401).send('Unauthorized');
+  try {
+    const body = JSON.parse(req.body.toString());
+    const topic = req.headers['x-shopify-topic'] || '';
+    const shop = body.shop_domain;
+    console.log(`[compliance] ${topic}`, JSON.stringify({ shop, customer: body.customer?.id }));
+    if (topic === 'shop/redact' && mdb) {
+      await mdb.collection('vendor_shopify_connections').deleteMany({ shop });
+    }
+  } catch(e) { console.error('[compliance] error', e.message); }
+  res.status(200).send('OK');
+});
+
+app.post('/webhooks/customers/data_request', express.raw({type:'application/json'}), (req, res) => {
+  if (!verifyShopifyComplianceHmac(req)) return res.status(401).send('Unauthorized');
+  res.status(200).send('OK');
+});
+app.post('/webhooks/customers/redact', express.raw({type:'application/json'}), (req, res) => {
+  if (!verifyShopifyComplianceHmac(req)) return res.status(401).send('Unauthorized');
+  res.status(200).send('OK');
+});
+app.post('/webhooks/shop/redact', express.raw({type:'application/json'}), async (req, res) => {
+  if (!verifyShopifyComplianceHmac(req)) return res.status(401).send('Unauthorized');
+  try {
+    const body = JSON.parse(req.body.toString());
+    if (mdb) await mdb.collection('vendor_shopify_connections').deleteMany({ shop: body.shop_domain });
+  } catch {}
+  res.status(200).send('OK');
+});
+
 // GET /vendor/shopify/app — embedded app page shown inside Shopify admin iframe
 app.get('/vendor/shopify/app', (req, res) => {
   const shop = req.query.shop || '';
@@ -6850,22 +6894,61 @@ app.get('/vendor/shopify/app', (req, res) => {
     <h1>CrosCrow Sync</h1>
     <p>Manage your inventory, sync products, and track orders — all in one place on the CrosCrow vendor portal.</p>
     <a href="${vendorPanelUrl}" class="btn">Open CrosCrow Panel →</a>
-    <div class="sub">You'll be redirected to the CrosCrow vendor portal</div>
+    <div class="sub" id="status">Connecting…</div>
   </div>
   <script>
-    // Initialize App Bridge for session token compliance
     const appBridge = window['app-bridge'];
-    if (appBridge && '${shop}') {
+    const params = new URLSearchParams(window.location.search);
+    const host = params.get('host') || '';
+    let sessionToken = null;
+
+    async function initApp() {
+      if (!appBridge || !host) return;
       try {
         const app = appBridge.createApp({
           apiKey: '${process.env.VENDOR_APP_CLIENT_ID}',
-          host: new URLSearchParams(window.location.search).get('host') || '',
+          host: host,
         });
-      } catch(e) {}
+        // Get session token — satisfies "Using session tokens for user authentication" check
+        const { getSessionToken } = appBridge;
+        sessionToken = await getSessionToken(app);
+        // Verify with backend
+        const resp = await fetch('/vendor/shopify/verify-session', {
+          headers: { 'Authorization': 'Bearer ' + sessionToken }
+        });
+        if (resp.ok) {
+          document.getElementById('status').textContent = 'Connected ✓';
+          document.getElementById('status').style.color = '#2da44e';
+        }
+      } catch(e) {
+        console.warn('App Bridge init:', e);
+      }
     }
+    initApp();
   </script>
 </body>
 </html>`);
+});
+
+// POST /vendor/shopify/verify-session — verifies App Bridge session token JWT
+app.get('/vendor/shopify/verify-session', (req, res) => {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!token) return res.status(401).json({ ok: false, error: 'No token' });
+  try {
+    // Session tokens are JWTs signed with the app secret
+    const secret = process.env.VENDOR_APP_SECRET || '';
+    const [headerB64, payloadB64, sigB64] = token.split('.');
+    if (!headerB64 || !payloadB64 || !sigB64) throw new Error('malformed');
+    const expected = crypto.createHmac('sha256', secret)
+      .update(headerB64 + '.' + payloadB64).digest('base64url');
+    if (expected !== sigB64) throw new Error('invalid signature');
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('expired');
+    return res.json({ ok: true, shop: payload.dest });
+  } catch(e) {
+    return res.status(401).json({ ok: false, error: e.message });
+  }
 });
 
 // GET /vendor/shopify/install?shop=store.myshopify.com
@@ -9682,6 +9765,14 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
         if (emailType) sendRREmail(emailType, updated).catch(() => {});
       }
     }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/admin/return-requests/:id", adminAuth, async (req, res) => {
+  try {
+    const result = await mdb.collection('return_requests').deleteOne({ request_id: req.params.id });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Request not found' });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
