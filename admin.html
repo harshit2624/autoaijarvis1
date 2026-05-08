@@ -5322,12 +5322,23 @@
                   </select>
                 </div>
               ) : (
-                <button onClick={()=>loadVendorProducts(c.vendor_name)}
-                  style={{width:'100%',textAlign:'left',background:selected===c.vendor_name?'var(--indigo-dim)':'var(--bg-card)',border:`1px solid ${selected===c.vendor_name?'var(--indigo)':'var(--border)'}`,borderRadius:8,padding:'10px 12px',cursor:'pointer',color:'var(--text)'}}>
-                  <div style={{fontWeight:600,fontSize:13}}>{c.vendor_name}</div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{c.shop_domain}</div>
-                  <div style={{fontSize:9,color:'var(--green)',marginTop:3}}>● Connected {fmtDate(c.installed_at)}</div>
-                </button>
+                <div style={{background:selected===c.vendor_name?'var(--indigo-dim)':'var(--bg-card)',border:`1px solid ${selected===c.vendor_name?'var(--indigo)':'var(--border)'}`,borderRadius:8,overflow:'hidden'}}>
+                  <button onClick={()=>loadVendorProducts(c.vendor_name)}
+                    style={{width:'100%',textAlign:'left',padding:'10px 12px',cursor:'pointer',color:'var(--text)',background:'transparent',border:'none'}}>
+                    <div style={{fontWeight:600,fontSize:13}}>{c.vendor_name}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{c.shop_domain}</div>
+                    <div style={{fontSize:9,color:'var(--green)',marginTop:3}}>● Connected {fmtDate(c.installed_at)}</div>
+                  </button>
+                  <div style={{padding:'0 8px 8px'}}>
+                    <button onClick={async()=>{
+                      const r = await fetch('/admin/vendor-sync/reregister-webhooks',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({shop_domain:c.shop_domain})});
+                      const d = await r.json();
+                      alert(d.success?'✅ Webhooks re-registered!':('❌ '+d.error));
+                    }} style={{width:'100%',fontSize:10,padding:'3px 0',borderRadius:5,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text-muted)',cursor:'pointer'}}>
+                      📡 Re-register Webhooks
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           ))}

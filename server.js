@@ -7238,6 +7238,26 @@ app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
 });
 
 // ── Admin: assign vendor name to a connected store ────────────────────────
+// Re-register webhooks for a connected vendor store
+app.post("/admin/vendor-sync/reregister-webhooks", adminAuth, async (req, res) => {
+  const { shop_domain } = req.body;
+  const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain });
+  if (!conn?.access_token) return res.status(404).json({ error: 'Store not found or no access token' });
+  try {
+    // List existing webhooks and delete them first to avoid duplicates
+    const existing = await fetch(`https://${shop_domain}/admin/api/2025-01/webhooks.json`, {
+      headers: { 'X-Shopify-Access-Token': conn.access_token }
+    }).then(r=>r.json());
+    for (const wh of (existing.webhooks || [])) {
+      await fetch(`https://${shop_domain}/admin/api/2025-01/webhooks/${wh.id}.json`, {
+        method: 'DELETE', headers: { 'X-Shopify-Access-Token': conn.access_token }
+      });
+    }
+    await registerShopifyAppWebhooks(shop_domain, conn.access_token);
+    res.json({ success: true, message: `Webhooks re-registered for ${shop_domain}` });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post("/admin/vendor-sync/assign", adminAuth, async (req, res) => {
   const { shop_domain, vendor_name } = req.body;
   if (!shop_domain || !vendor_name) return res.status(400).json({ error: 'shop_domain and vendor_name required' });
