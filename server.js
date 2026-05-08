@@ -7070,17 +7070,54 @@ app.post('/vendor/shopify/webhook/products-update', express.json({ type: '*/*' }
   res.status(200).send('ok');
   try {
     const shop = req.headers['x-shopify-shop-domain'];
-    const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
+    const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop });
     if (!conn?.vendor_name) return;
     const product = req.body;
     console.log(`📦 Product updated: ${shop} → ${product.title} (${product.id})`);
-    // Log to db for admin visibility
-    await mdb.collection('vendor_sync_log').insertOne({
-      type: 'product_update', shop, vendor_name: conn.vendor_name,
-      product_id: String(product.id), product_title: product.title,
-      variants_count: (product.variants||[]).length,
-      created_at: new Date().toISOString(),
-    });
+
+    const ccToken = await getAccessToken();
+    const locData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/locations.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
+    const ccLocationId = locData.locations?.[0]?.id;
+
+    for (const vVariant of (product.variants || [])) {
+      const mapping = await mdb.collection('vendor_product_mappings').findOne({
+        vendor_name: conn.vendor_name,
+        vendor_variant_id: String(vVariant.id),
+        sync_inventory: 1,
+      });
+      if (!mapping?.croscrow_variant_id) continue;
+
+      // Sync price
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
+      });
+
+      // Sync inventory
+      const qty = parseInt(vVariant.inventory_quantity ?? 0);
+      const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
+      const ccInvItemId = ccVarData.variant?.inventory_item_id;
+      if (ccInvItemId && ccLocationId) {
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+          method: 'POST',
+          headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+        });
+      }
+
+      // Backfill vendor_inventory_item_id
+      if (vVariant.inventory_item_id && !mapping.vendor_inventory_item_id) {
+        await mdb.collection('vendor_product_mappings').updateOne(
+          { _id: mapping._id },
+          { $set: { vendor_inventory_item_id: String(vVariant.inventory_item_id), last_synced_at: Date.now() } }
+        );
+      } else {
+        await mdb.collection('vendor_product_mappings').updateOne({ _id: mapping._id }, { $set: { last_synced_at: Date.now() } });
+      }
+
+      console.log(`✅ Product webhook synced: ${conn.vendor_name} variant ${vVariant.id} → CC ${mapping.croscrow_variant_id} qty=${qty} price=${vVariant.price}`);
+    }
   } catch(e) { console.error('products-update webhook error:', e.message); }
 });
 
