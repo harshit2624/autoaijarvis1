@@ -7138,6 +7138,7 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
       vendor_name: conn.vendor_name,
       vendor_inventory_item_id: String(inventory_item_id),
       sync_inventory: 1,
+      vendor_tracks_inventory: true,
     });
 
     // Fallback: find variant by inventory_item_id from vendor store and match by variant_id
@@ -7347,7 +7348,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
           compare_at_price: v.compare_at_price || null,
           sku: v.sku ? `${vendor_name.slice(0,4).toUpperCase()}-${v.sku}` : '',
           barcode: v.barcode || null,
-          inventory_management: sync_inventory ? 'shopify' : null,
+          inventory_management: (sync_inventory && v.inventory_management === 'shopify') ? 'shopify' : null,
           inventory_quantity: parseInt(v.inventory_quantity || 0),
           weight: v.weight,
           weight_unit: v.weight_unit || 'kg',
@@ -7372,6 +7373,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
         await VPM.upsert(vendor_name, String(vVariant.id), {
           vendor_product_id: String(vProduct.id),
           vendor_inventory_item_id: String(vVariant.inventory_item_id || ''),
+          vendor_tracks_inventory: vVariant.inventory_management === 'shopify',
           vendor_product_title: vProduct.title || '',
           vendor_variant_title: vVariant.title || '',
           vendor_image: vProduct.images?.[0]?.src || '',
@@ -7462,9 +7464,9 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
             body: JSON.stringify({ variant: { id: m.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
           });
 
-          // Sync inventory using inventory_quantity directly from variant (same as import)
+          // Sync inventory only if vendor tracks it
           const invItemId = vVariant.inventory_item_id;
-          if (invItemId) {
+          if (invItemId && vVariant.inventory_management === 'shopify') {
             const qty = parseInt(vVariant.inventory_quantity ?? 0);
 
             // Enable inventory tracking on CrosCrow variant first
