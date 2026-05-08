@@ -6903,8 +6903,9 @@ app.get('/vendor/shopify/callback', async (req, res) => {
     console.log(`✅ CrosCrow Sync installed: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
     auditLog('shopify_app', 'install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
 
-    // Redirect to success page
-    res.redirect(`https://${cleanShop}/admin/apps`);
+    // Redirect back to vendor panel with success flag
+    const vendorPanelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html?shopifyConnected=1`;
+    res.redirect(vendorPanelUrl);
   } catch(e) {
     console.error('❌ Shopify OAuth callback error:', e.message);
     res.status(500).send(`Installation failed: ${e.message}. Please try again or contact support.`);

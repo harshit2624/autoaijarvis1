@@ -3410,20 +3410,31 @@
           <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:24}}>
             <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:8}}>Connect Your Shopify Store</div>
 
-            {/* Step guide */}
-            <div style={{background:'var(--bg-hover)',borderRadius:8,padding:14,marginBottom:20,fontSize:12,color:'var(--text-muted)',lineHeight:2}}>
-              <div style={{fontWeight:700,color:'var(--text)',marginBottom:6}}>How to get your credentials:</div>
-              <div>1. Go to your Shopify Admin → <strong>Settings → Apps and sales channels</strong></div>
-              <div>2. Click <strong>Develop apps</strong> → <strong>Create an app</strong> → name it "CrosCrow Sync"</div>
-              <div>3. Click <strong>Configure Admin API scopes</strong> → enable: <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_products</code>, <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_inventory</code>, <code style={{background:'#1e293b',padding:'1px 5px',borderRadius:3}}>read_locations</code></div>
-              <div>4. Click <strong>Save</strong> → <strong>Install app</strong></div>
-              <div>5. Go to <strong>API credentials</strong> tab → copy <strong>Client ID</strong> and <strong>Client secret</strong></div>
+            {/* One-click OAuth install */}
+            <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:10,padding:20,marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:'var(--indigo)',marginBottom:6}}>⚡ Quick Install (Recommended)</div>
+              <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14,lineHeight:1.6}}>Enter your store URL and click Install — you'll be redirected to Shopify to approve in one click. No credentials needed.</div>
+              <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}}>
+                <div style={{flex:1,minWidth:200}}>
+                  <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Your Shopify Store URL</label>
+                  <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==='Enter' && shop.trim()) window.location.href=`${API}/vendor/shopify/install?shop=${encodeURIComponent(shop.trim().replace(/https?:\/\//,'').replace(/\/$/,''))}`; }}
+                    style={{width:'100%',boxSizing:'border-box'}}/>
+                </div>
+                <button className="btn btn-indigo" style={{padding:'9px 20px',fontWeight:700,flexShrink:0}}
+                  onClick={()=>{
+                    const s = shop.trim().replace(/https?:\/\//,'').replace(/\/$/,'');
+                    if (!s) { setMsg('Enter your store URL first.'); return; }
+                    window.location.href = `${API}/vendor/shopify/install?shop=${encodeURIComponent(s)}`;
+                  }}>
+                  🛍 Install App →
+                </button>
+              </div>
             </div>
 
-            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Your Shopify Store URL</label>
-            <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
-              style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
-
+            <details style={{marginBottom:16}}>
+              <summary style={{fontSize:12,color:'var(--text-muted)',cursor:'pointer',userSelect:'none'}}>Or connect manually with credentials</summary>
+              <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
             <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client ID</label>
             <input className="form-input" placeholder="bfdb172e5968adbccc1119462ce3cb57" value={clientId} onChange={e=>setClientId(e.target.value)}
               style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
@@ -3438,6 +3449,8 @@
             <div style={{marginTop:10,fontSize:11,color:'var(--text-muted)'}}>
               Read-only access only — CrosCrow cannot modify your store.
             </div>
+              </div>
+            </details>
           </div>
         )}
       </div>
