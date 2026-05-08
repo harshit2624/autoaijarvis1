@@ -5393,29 +5393,43 @@
               {/* MAPPINGS TAB */}
               {tab==='mappings' && (
                 mappings.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No variant mappings yet. Import or map products from the Products tab.</div> :
-                <div style={{background:'var(--bg-card)',borderRadius:10,overflow:'hidden'}}>
-                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                    <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
-                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Vendor Variant ID</th>
-                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>CrosCrow Product ID</th>
-                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>CrosCrow Variant ID</th>
-                      <th style={{padding:'10px 14px',textAlign:'center',color:'var(--text-muted)',fontWeight:600}}>Inv Sync</th>
-                      <th style={{padding:'10px 14px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Last Synced</th>
-                      <th style={{padding:'10px 14px'}}></th>
-                    </tr></thead>
-                    <tbody>
-                      {mappings.map(m=>(
-                        <tr key={m.id} style={{borderBottom:'1px solid var(--border)'}}>
-                          <td style={{padding:'8px 14px',fontFamily:'monospace',color:'var(--indigo)'}}>{m.vendor_variant_id}</td>
-                          <td style={{padding:'8px 14px',fontFamily:'monospace',color:'var(--text-muted)'}}>{m.croscrow_product_id}</td>
-                          <td style={{padding:'8px 14px',fontFamily:'monospace',color:'var(--text-muted)'}}>{m.croscrow_variant_id}</td>
-                          <td style={{padding:'8px 14px',textAlign:'center'}}>{m.sync_inventory?<span style={{color:'var(--green)'}}>✓</span>:<span style={{color:'var(--red)'}}>✕</span>}</td>
-                          <td style={{padding:'8px 14px',color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never'}</td>
-                          <td style={{padding:'8px 14px'}}><button className="btn btn-danger btn-sm" onClick={()=>unmapVariant(m.id)}>Unmap</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {mappings.map(m=>(
+                    <div key={m.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:12,display:'flex',gap:12,alignItems:'center'}}>
+                      {/* Vendor side */}
+                      <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
+                        {m.vendor_image
+                          ? <img src={m.vendor_image} style={{width:44,height:44,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
+                          : <div style={{width:44,height:44,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>📦</div>}
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.vendor_product_title||m.vendor_variant_id}</div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.vendor_variant_title&&m.vendor_variant_title!=='Default Title'?m.vendor_variant_title:''}</div>
+                          <div style={{fontSize:9,fontFamily:'monospace',color:'var(--indigo)',marginTop:1}}>ID: {m.vendor_variant_id}</div>
+                        </div>
+                      </div>
+                      {/* Arrow */}
+                      <div style={{fontSize:18,color:'var(--text-muted)',flexShrink:0}}>→</div>
+                      {/* CrosCrow side */}
+                      <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
+                        {m.croscrow_image
+                          ? <img src={m.croscrow_image} style={{width:44,height:44,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
+                          : <div style={{width:44,height:44,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>🛍</div>}
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.croscrow_product_title||m.croscrow_product_id}</div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.croscrow_variant_title&&m.croscrow_variant_title!=='Default Title'?m.croscrow_variant_title:''}</div>
+                          <div style={{fontSize:9,fontFamily:'monospace',color:'var(--text-muted)',marginTop:1}}>ID: {m.croscrow_variant_id}</div>
+                        </div>
+                      </div>
+                      {/* Sync status + actions */}
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6,flexShrink:0}}>
+                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
+                          {m.sync_inventory?'↻ Auto-sync':'No sync'}
+                        </span>
+                        <div style={{fontSize:10,color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never synced'}</div>
+                        <button className="btn btn-danger btn-sm" onClick={()=>unmapVariant(m.id)}>Unmap</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </>

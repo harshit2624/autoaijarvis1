@@ -7279,8 +7279,14 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
         await VPM.upsert(vendor_name, String(vVariant.id), {
           vendor_product_id: String(vProduct.id),
           vendor_inventory_item_id: String(vVariant.inventory_item_id || ''),
+          vendor_product_title: vProduct.title || '',
+          vendor_variant_title: vVariant.title || '',
+          vendor_image: vProduct.images?.[0]?.src || '',
           croscrow_product_id: String(newProduct.id),
+          croscrow_product_title: newProduct.title || '',
           croscrow_variant_id: String(ccVariant.id),
+          croscrow_variant_title: ccVariant.title || '',
+          croscrow_image: newProduct.images?.[0]?.src || '',
           sync_inventory: sync_inventory ? 1 : 0,
           last_synced_at: Date.now(),
         });
