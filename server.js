@@ -7091,35 +7091,32 @@ app.post('/vendor/shopify/webhook/inventory-update', express.json({ type: '*/*' 
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
     if (!conn?.vendor_name) return;
     const { inventory_item_id, location_id, available } = req.body;
-    console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available} @ location ${location_id}`);
-    // Store the update
-    await mdb.collection('vendor_sync_log').insertOne({
-      type: 'inventory_update', shop, vendor_name: conn.vendor_name,
-      inventory_item_id: String(inventory_item_id), location_id: String(location_id),
-      available, created_at: new Date().toISOString(),
-    });
-    // Find which variant this inventory_item belongs to and update
-    const variantData = await vendorShopifyREST(shop, conn.access_token, `/variants.json?inventory_item_ids=${inventory_item_id}&limit=1`).catch(()=>null);
-    const variant = variantData?.variants?.[0];
-    if (variant && conn.vendor_name) {
-      // Update CrosCrow inventory for this variant if mapped
-      const mapping = await mdb.collection('vendor_variant_mappings').findOne({
-        vendor_name: conn.vendor_name, vendor_variant_id: String(variant.id)
-      }, { projection: { croscrow_variant_id: 1, _id: 0 } });
-      if (mapping?.croscrow_variant_id) {
-        const token = await getAccessToken();
-        const locData = await shopifyREST('/locations.json');
-        const locationId = locData.locations?.[0]?.id;
-        const invItem = await shopifyREST(`/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`);
-        const ccInvItemId = invItem?.variant?.inventory_item_id;
-        if (locationId && ccInvItemId) {
-          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
-            method: 'POST',
-            headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ location_id: locationId, inventory_item_id: ccInvItemId, available }),
-          });
-          console.log(`✅ Synced inventory: variant ${mapping.croscrow_variant_id} → ${available}`);
-        }
+    console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available}`);
+
+    // Look up mapping directly by vendor_inventory_item_id
+    const mapping = await mdb.collection('vendor_product_mappings').findOne({
+      vendor_name: conn.vendor_name,
+      vendor_inventory_item_id: String(inventory_item_id),
+      sync_inventory: 1,
+    }, { projection: { croscrow_variant_id: 1, _id: 0 } });
+
+    if (mapping?.croscrow_variant_id) {
+      const token = await getAccessToken();
+      const locData = await shopifyREST('/locations.json');
+      const locationId = locData.locations?.[0]?.id;
+      const invItem = await shopifyREST(`/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`);
+      const ccInvItemId = invItem?.variant?.inventory_item_id;
+      if (locationId && ccInvItemId) {
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+          method: 'POST',
+          headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ location_id: locationId, inventory_item_id: ccInvItemId, available }),
+        });
+        console.log(`✅ Auto-synced inventory: ${conn.vendor_name} variant ${mapping.croscrow_variant_id} → ${available}`);
+        await mdb.collection('vendor_product_mappings').updateOne(
+          { vendor_name: conn.vendor_name, vendor_inventory_item_id: String(inventory_item_id) },
+          { $set: { last_synced_at: Date.now() } }
+        );
       }
     }
   } catch(e) { console.error('inventory-update webhook error:', e.message); }
@@ -7281,6 +7278,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
       if (ccVariant) {
         await VPM.upsert(vendor_name, String(vVariant.id), {
           vendor_product_id: String(vProduct.id),
+          vendor_inventory_item_id: String(vVariant.inventory_item_id || ''),
           croscrow_product_id: String(newProduct.id),
           croscrow_variant_id: String(ccVariant.id),
           sync_inventory: sync_inventory ? 1 : 0,
