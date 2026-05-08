@@ -180,11 +180,11 @@ const VSC = {
 
 const VPM = {
   async allForVendor(vendor_name) {
-    return mdb.collection('vendor_product_mappings').find({ vendor_name }, { projection: { _id: 0 } }).toArray();
+    return mdb.collection('vendor_product_mappings').find({ vendor_name }).toArray().then(r=>r.map(x=>({...x,id:x._id.toString(),_id:undefined})));
   },
   async all(vendor_name) {
     const q = vendor_name ? { vendor_name } : {};
-    return mdb.collection('vendor_product_mappings').find(q, { projection: { _id: 0 } }).sort({ _id: -1 }).toArray();
+    return mdb.collection('vendor_product_mappings').find(q).sort({ _id: -1 }).toArray().then(r=>r.map(x=>({...x,id:x._id.toString(),_id:undefined})));
   },
   async upsert(vendor_name, vendor_variant_id, fields) {
     const vvid = String(vendor_variant_id);
@@ -201,7 +201,8 @@ const VPM = {
     );
   },
   async delete(id) {
-    await mdb.collection('vendor_product_mappings').deleteOne({ id: parseInt(id) });
+    const { ObjectId } = require('mongodb');
+    await mdb.collection('vendor_product_mappings').deleteOne({ _id: new ObjectId(String(id)) });
   },
 };
 
