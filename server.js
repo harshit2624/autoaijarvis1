@@ -7370,20 +7370,30 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
             body: JSON.stringify({ variant: { id: m.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
           });
 
-          // Sync inventory
+          // Sync inventory using inventory_quantity directly from variant (same as import)
           const invItemId = vVariant.inventory_item_id;
-          if (invItemId && vVariant.inventory_management) {
-            const invLvl = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/inventory_levels.json?inventory_item_ids=${invItemId}&location_ids=${locationId}`);
-            const qty = invLvl.inventory_levels?.[0]?.available ?? 0;
+          if (invItemId) {
+            const qty = parseInt(vVariant.inventory_quantity ?? 0);
 
-            const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
+            // Enable inventory tracking on CrosCrow variant first
+            const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${m.croscrow_variant_id}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
             const ccInvItemId = ccVarData.variant?.inventory_item_id;
             if (ccInvItemId) {
-              await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/inventory_levels/set.json`, {
+              // Enable tracking
+              await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_items/${ccInvItemId}.json`, {
+                method: 'PUT',
+                headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inventory_item: { id: ccInvItemId, tracked: true } }),
+              });
+              // Set the quantity
+              const setRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
                 method: 'POST',
                 headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
               });
+              const setData = await setRes.json();
+              if (!setRes.ok) throw new Error(`inventory set failed: ${JSON.stringify(setData.errors)}`);
+              console.log(`✅ Synced ${vName} variant ${m.vendor_variant_id} → CC ${m.croscrow_variant_id} qty=${qty}`);
             }
           }
 
