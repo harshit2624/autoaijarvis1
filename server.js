@@ -7238,6 +7238,17 @@ app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
 });
 
 // ── Admin: assign vendor name to a connected store ────────────────────────
+// Check webhooks registered on a vendor store
+app.get("/admin/vendor-sync/check-webhooks", adminAuth, async (req, res) => {
+  const { shop_domain } = req.query;
+  const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain });
+  if (!conn?.access_token) return res.status(404).json({ error: 'Not found' });
+  const data = await fetch(`https://${shop_domain}/admin/api/2025-01/webhooks.json`, {
+    headers: { 'X-Shopify-Access-Token': conn.access_token }
+  }).then(r=>r.json());
+  res.json({ webhooks: data.webhooks || [] });
+});
+
 // Re-register webhooks for a connected vendor store
 app.post("/admin/vendor-sync/reregister-webhooks", adminAuth, async (req, res) => {
   const { shop_domain } = req.body;
