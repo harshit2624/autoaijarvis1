@@ -7123,11 +7123,12 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
 
 // POST /vendor/shopify/webhook/inventory-update — stock changed on vendor's store
 app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
+  console.log(`📡 [inventory-update] HIT — shop: ${req.headers['x-shopify-shop-domain']} body-type: ${typeof req.body} is-buffer: ${Buffer.isBuffer(req.body)}`);
   res.status(200).send('ok');
   try {
     const shop = req.headers['x-shopify-shop-domain'];
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
-    if (!conn?.vendor_name) return;
+    if (!conn?.vendor_name) { console.log(`⚠ [inventory-update] no vendor_name for shop: ${shop}`); return; }
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
     const { inventory_item_id, available } = body;
     console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available}`);
