@@ -6821,6 +6821,53 @@ app.get('/privacy', (req, res) => {
   </body></html>`);
 });
 
+// GET /vendor/shopify/app — embedded app page shown inside Shopify admin iframe
+app.get('/vendor/shopify/app', (req, res) => {
+  const shop = req.query.shop || '';
+  const vendorPanelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CrosCrow Sync</title>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f6f6f7;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+    .card{background:#fff;border-radius:12px;padding:40px 36px;max-width:480px;width:100%;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08)}
+    .logo{width:56px;height:56px;background:#111;border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:24px}
+    h1{font-size:22px;font-weight:700;color:#111;margin-bottom:8px}
+    p{font-size:14px;color:#666;line-height:1.6;margin-bottom:28px}
+    .btn{display:inline-block;background:#5c6ac4;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;border:none;transition:background 0.15s}
+    .btn:hover{background:#4959bd}
+    .sub{margin-top:16px;font-size:12px;color:#999}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🐦</div>
+    <h1>CrosCrow Sync</h1>
+    <p>Manage your inventory, sync products, and track orders — all in one place on the CrosCrow vendor portal.</p>
+    <a href="${vendorPanelUrl}" class="btn">Open CrosCrow Panel →</a>
+    <div class="sub">You'll be redirected to the CrosCrow vendor portal</div>
+  </div>
+  <script>
+    // Initialize App Bridge for session token compliance
+    const appBridge = window['app-bridge'];
+    if (appBridge && '${shop}') {
+      try {
+        const app = appBridge.createApp({
+          apiKey: '${process.env.VENDOR_APP_CLIENT_ID}',
+          host: new URLSearchParams(window.location.search).get('host') || '',
+        });
+      } catch(e) {}
+    }
+  </script>
+</body>
+</html>`);
+});
+
 // GET /vendor/shopify/install?shop=store.myshopify.com
 // Entry point — vendor clicks install link, we redirect to Shopify OAuth
 app.get('/vendor/shopify/install', (req, res) => {
