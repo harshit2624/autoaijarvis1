@@ -23,6 +23,7 @@ const multer     = require("multer");
 const { MongoClient } = require("mongodb");
 const { google }     = require("googleapis");
 const Razorpay       = require("razorpay");
+const cookieParser   = require("cookie-parser");
 require("dotenv").config();
 
 // ── Multer — ads image uploads ─────────────────────────────────────────────
@@ -278,6 +279,7 @@ function mapStatus(s) {
   return s;
 }
 
+app.use(cookieParser());
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
 
@@ -486,20 +488,27 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     await OM.upsert(sid, metaUpdate);
     if (!prev || prev.stage !== newStage) {
       fireStageEmails(sid, newStage).catch(()=>{});
-      // Sync stage into order_vendor_stage so vendor panel always matches admin view.
-      // hold/rto/cancelled force-update all vendors unconditionally.
-      // Pipeline stages (confirmed/partial) respect ADVANCED guard — don't pull back dispatched vendors.
-      const ADVANCED = ['ready','pickup','transit','delivered'];
-      const isOverride = ['hold','rto','cancelled'].includes(newStage);
-      if (['confirmed','partial','hold','rto','cancelled'].includes(newStage)) {
+      // Sync stage to order_vendor_stage for ALL stage transitions.
+      // Force-override (hold/rto/cancelled/delivered) always wins over any existing vendor stage.
+      // Forward-only stages (confirmed/partial/ready/pickup/transit) don't pull back already-advanced vendors.
+      const FORCE_STAGES   = ['hold','rto','cancelled','delivered'];
+      const FORWARD_STAGES = ['confirmed','partial','ready','pickup','transit'];
+      const ADVANCED       = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
+      const isForce = FORCE_STAGES.includes(newStage);
+      if (isForce || FORWARD_STAGES.includes(newStage)) {
         try {
           const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items`);
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
-          const nowMs = Date.now();
-          for (const vendor of vendors) {
-            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
-            if (!isOverride && existing && ADVANCED.includes(existing.stage)) continue;
-            await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
+          // Multi-vendor orders: tag mappings must NOT touch individual vendor stages.
+          // Each vendor's stage is managed independently via ShipSagar cron or manual admin override.
+          if (vendors.length > 1) { /* skip vendor stage sync */ }
+          else {
+            const nowMs = Date.now();
+            for (const vendor of vendors) {
+              const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
+              if (!isForce && existing && ADVANCED.includes(existing.stage)) continue;
+              await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
+            }
           }
         } catch(e) { console.error('applyTagMappings vendor sync error:', e.message); }
       }
@@ -3701,10 +3710,18 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           phone:        o.shipping_address?.phone ?? o.customer?.phone ?? "",
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
-          stage:        higherStage(
-            higherStage(vStageMap[String(o.id)]?.stage || 'new', meta.stage || 'new'),
-            vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null
-          ),
+          stage:        (() => {
+            const stored = vStageMap[String(o.id)]?.stage || 'new';
+            const metaStage = meta.stage || 'new';
+            const shopifyDerived = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null;
+            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+            const ordVendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+            const isSingleVendor = ordVendors.length === 1;
+            // Only suppress shopify 'ready' for single-vendor orders already past ready
+            if (shopifyDerived === 'ready' && isSingleVendor && BEYOND_READY.includes(metaStage))
+              return higherStage(stored, metaStage);
+            return higherStage(higherStage(stored, metaStage), shopifyDerived);
+          })(),
           financial:    o.financial_status ?? "—",
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
@@ -4653,14 +4670,25 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         vendors,
         vendorStages:   (() => {
             const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+            const metaStage = meta.stage || 'new';
+            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+            const metaIsBeyondReady = BEYOND_READY.includes(metaStage);
+            const isSingleVendor = vendors.length === 1;
             if (vendors.length > 1) {
+              // Multi-vendor: each vendor stage is independent, don't suppress based on overall stage
               return Object.fromEntries(vendors.map(v => {
-                const stored = vsMap[String(o.id)]?.[v] || meta.stage || 'new';
-                return [v, shopifyMap[v] ? higherStage(stored, shopifyMap[v]) : stored];
+                const stored = vsMap[String(o.id)]?.[v] || 'new';
+                const shopifyDerived = shopifyMap[v];
+                return [v, shopifyDerived ? higherStage(stored, shopifyDerived) : stored];
               }));
             } else {
+              // Single-vendor: suppress shopify 'ready' if order_meta is already past ready
               const m = { ...(vsMap[String(o.id)] || {}) };
-              for (const [v, s] of Object.entries(shopifyMap)) m[v] = higherStage(m[v], s);
+              for (const [v, s] of Object.entries(shopifyMap)) {
+                if (s === 'ready' && isSingleVendor && metaIsBeyondReady)
+                  m[v] = higherStage(m[v] || metaStage, metaStage);
+                else m[v] = higherStage(m[v], s);
+              }
               return m;
             }
           })(),
@@ -4699,9 +4727,16 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
       };
     });
 
-    if (stage && stage !== "all") orders = orders.filter(o =>
-      o.stage === stage || Object.values(o.vendorStages).includes(stage)
-    );
+    if (stage && stage !== "all") orders = orders.filter(o => {
+      if (o.stage === stage) return true;
+      const vendorStageValues = Object.values(o.vendorStages || {});
+      const isMultiVendor = vendorStageValues.length > 1;
+      if (!isMultiVendor) {
+        const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+        if (stage === 'ready' && BEYOND_READY.includes(o.stage)) return false;
+      }
+      return vendorStageValues.includes(stage);
+    });
     if (vendor) orders = orders.filter(o => o.vendors.some(v => v.toLowerCase() === vendor.toLowerCase()));
 
     res.json({ orders, total: orders.length });
@@ -5652,6 +5687,46 @@ app.delete("/admin/tag-mappings/:id", adminAuth, async (req, res) => {
 });
 
 // Sync: scan ALL orders — set payment_type from financial_status + apply tag mappings
+// ── POST /admin/repair-vendor-stages ─────────────────────────────────────
+// One-time repair: for single-vendor orders, sync order_vendor_stage.stage
+// to match order_meta.stage wherever they differ.
+app.post("/admin/repair-vendor-stages", adminAuth, async (req, res) => {
+  try {
+    const metas = await mdb.collection('order_meta').find(
+      { stage: { $exists: true, $ne: '' } },
+      { projection: { shopify_id: 1, stage: 1, _id: 0 } }
+    ).toArray();
+
+    let fixed = 0, skipped = 0, errors = 0;
+    const log = [];
+    const now = new Date().toISOString();
+
+    for (const meta of metas) {
+      try {
+        const vendorStages = await mdb.collection('order_vendor_stage')
+          .find({ shopify_id: meta.shopify_id }, { projection: { vendor_name: 1, stage: 1, stage_started_at: 1, _id: 0 } })
+          .toArray();
+
+        if (vendorStages.length !== 1) { skipped++; continue; }
+
+        const vs = vendorStages[0];
+        if (vs.stage === meta.stage) { skipped++; continue; }
+
+        await OVS.upsert(meta.shopify_id, vs.vendor_name, {
+          stage: meta.stage,
+          updated_at: now,
+          stage_started_at: vs.stage_started_at || 0,
+        });
+        log.push({ shopify_id: meta.shopify_id, vendor: vs.vendor_name, from: vs.stage, to: meta.stage });
+        fixed++;
+      } catch(e) { errors++; log.push({ shopify_id: meta.shopify_id, error: e.message }); }
+    }
+
+    auditLog("admin", "repair_vendor_stages", "bulk", { fixed, skipped, errors });
+    res.json({ success: true, fixed, skipped, errors, log });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post("/admin/tag-mappings/sync", adminAuth, async (req, res) => {
   try {
     const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
@@ -6719,6 +6794,241 @@ app.get("/vendor/shopify/status", vendorAuth, async (req, res) => {
 app.delete("/vendor/shopify/disconnect", vendorAuth, async (req, res) => {
   await VSC.delete(req.vendor);
   res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// SHOPIFY APP OAUTH — Install flow for CrosCrow Sync app
+// ══════════════════════════════════════════════════════════════════════════
+
+const SHOPIFY_APP_SCOPES = 'read_products,write_products,read_inventory,write_inventory,read_locations';
+const SHOPIFY_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/callback`;
+
+// Privacy policy page (required by Shopify)
+app.get('/privacy', (req, res) => {
+  res.send(`<!DOCTYPE html><html><head><title>CrosCrow Sync — Privacy Policy</title>
+  <style>body{font-family:Arial,sans-serif;max-width:700px;margin:60px auto;padding:0 20px;color:#333;line-height:1.7}h1{color:#111}h2{color:#444;margin-top:32px}a{color:#6366f1}</style>
+  </head><body>
+  <h1>CrosCrow Sync — Privacy Policy</h1>
+  <p>Last updated: ${new Date().toLocaleDateString('en-IN')}</p>
+  <h2>Data We Collect</h2>
+  <p>CrosCrow Sync collects your Shopify store domain, product catalog, inventory levels, and location data solely to sync inventory between your store and the CrosCrow marketplace.</p>
+  <h2>How We Use Your Data</h2>
+  <p>Your data is used exclusively to provide inventory synchronization services. We do not sell or share your data with third parties.</p>
+  <h2>Data Storage</h2>
+  <p>Access tokens and store data are stored securely on CrosCrow servers and are deleted upon app uninstallation.</p>
+  <h2>Contact</h2>
+  <p>For privacy concerns: <a href="mailto:harshitvj24@gmail.com">harshitvj24@gmail.com</a></p>
+  </body></html>`);
+});
+
+// GET /vendor/shopify/install?shop=store.myshopify.com
+// Entry point — vendor clicks install link, we redirect to Shopify OAuth
+app.get('/vendor/shopify/install', (req, res) => {
+  const shop = (req.query.shop || '').trim().replace(/https?:\/\//, '').replace(/\/$/, '');
+  if (!shop || !shop.includes('.myshopify.com')) {
+    return res.status(400).send('Missing or invalid shop parameter. Use: /vendor/shopify/install?shop=yourstore.myshopify.com');
+  }
+  const state = crypto.randomBytes(16).toString('hex');
+  // Store state in a short-lived cookie for CSRF protection
+  res.cookie('shopify_oauth_state', state, { maxAge: 600000, httpOnly: true, sameSite: 'lax' });
+  const params = new URLSearchParams({
+    client_id: process.env.VENDOR_APP_CLIENT_ID,
+    scope:     SHOPIFY_APP_SCOPES,
+    redirect_uri: SHOPIFY_REDIRECT_URI,
+    state,
+    'grant_options[]': 'per-user',
+  });
+  res.redirect(`https://${shop}/admin/oauth/authorize?${params}`);
+});
+
+// GET /vendor/shopify/callback — Shopify redirects here after vendor approves
+app.get('/vendor/shopify/callback', async (req, res) => {
+  const { shop, code, state, hmac, ...rest } = req.query;
+
+  // Verify state to prevent CSRF
+  const savedState = req.cookies?.shopify_oauth_state;
+  if (state !== savedState) {
+    return res.status(403).send('Invalid state parameter. Please try installing again.');
+  }
+
+  // Verify HMAC signature from Shopify
+  const params = Object.entries({ ...rest, shop, state, code }).sort(([a],[b]) => a.localeCompare(b));
+  const message = params.map(([k,v]) => `${k}=${v}`).join('&');
+  const expectedHmac = crypto.createHmac('sha256', process.env.VENDOR_APP_SECRET).update(message).digest('hex');
+  if (expectedHmac !== hmac) {
+    return res.status(403).send('HMAC verification failed. Please try installing again.');
+  }
+
+  const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '');
+
+  try {
+    // Exchange code for permanent access token
+    const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id:     process.env.VENDOR_APP_CLIENT_ID,
+        client_secret: process.env.VENDOR_APP_SECRET,
+        code,
+      }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error(tokenData.error_description || 'Failed to get access token');
+
+    const accessToken = tokenData.access_token;
+
+    // Find which vendor this store belongs to (match by shop_domain if reconnecting)
+    let vendorName = null;
+    const existing = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: cleanShop }, { projection: { vendor_name: 1, _id: 0 } });
+    if (existing) vendorName = existing.vendor_name;
+
+    // Save connection (vendor_name may be null until they log in and claim it)
+    await mdb.collection('vendor_shopify_connections').updateOne(
+      { shop_domain: cleanShop },
+      { $set: {
+        shop_domain:   cleanShop,
+        access_token:  accessToken,
+        scope:         tokenData.scope || SHOPIFY_APP_SCOPES,
+        installed_at:  Date.now(),
+        vendor_name:   vendorName || null,
+        sync_enabled:  1,
+        updated_at:    new Date().toISOString(),
+      }},
+      { upsert: true }
+    );
+
+    // Register webhooks on their store
+    await registerShopifyAppWebhooks(cleanShop, accessToken);
+
+    console.log(`✅ CrosCrow Sync installed: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
+    auditLog('shopify_app', 'install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
+
+    // Redirect to success page
+    res.redirect(`https://${cleanShop}/admin/apps`);
+  } catch(e) {
+    console.error('❌ Shopify OAuth callback error:', e.message);
+    res.status(500).send(`Installation failed: ${e.message}. Please try again or contact support.`);
+  }
+});
+
+// Register webhooks on vendor's store after install
+async function registerShopifyAppWebhooks(shop, accessToken) {
+  const baseUrl = process.env.SERVER_URL || 'http://localhost:3001';
+  const topics = [
+    { topic: 'products/update',          address: `${baseUrl}/vendor/shopify/webhook/products-update` },
+    { topic: 'inventory_levels/update',   address: `${baseUrl}/vendor/shopify/webhook/inventory-update` },
+    { topic: 'app/uninstalled',           address: `${baseUrl}/vendor/shopify/webhook/uninstalled` },
+  ];
+  for (const { topic, address } of topics) {
+    try {
+      await fetch(`https://${shop}/admin/api/2025-01/webhooks.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook: { topic, address, format: 'json' } }),
+      });
+      console.log(`📡 Webhook registered: ${shop} → ${topic}`);
+    } catch(e) { console.error(`Webhook registration failed (${topic}):`, e.message); }
+  }
+}
+
+// POST /vendor/shopify/webhook/products-update — product edited on vendor's store
+app.post('/vendor/shopify/webhook/products-update', express.json({ type: '*/*' }), async (req, res) => {
+  res.status(200).send('ok');
+  try {
+    const shop = req.headers['x-shopify-shop-domain'];
+    const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
+    if (!conn?.vendor_name) return;
+    const product = req.body;
+    console.log(`📦 Product updated: ${shop} → ${product.title} (${product.id})`);
+    // Log to db for admin visibility
+    await mdb.collection('vendor_sync_log').insertOne({
+      type: 'product_update', shop, vendor_name: conn.vendor_name,
+      product_id: String(product.id), product_title: product.title,
+      variants_count: (product.variants||[]).length,
+      created_at: new Date().toISOString(),
+    });
+  } catch(e) { console.error('products-update webhook error:', e.message); }
+});
+
+// POST /vendor/shopify/webhook/inventory-update — stock changed on vendor's store
+app.post('/vendor/shopify/webhook/inventory-update', express.json({ type: '*/*' }), async (req, res) => {
+  res.status(200).send('ok');
+  try {
+    const shop = req.headers['x-shopify-shop-domain'];
+    const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
+    if (!conn?.vendor_name) return;
+    const { inventory_item_id, location_id, available } = req.body;
+    console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available} @ location ${location_id}`);
+    // Store the update
+    await mdb.collection('vendor_sync_log').insertOne({
+      type: 'inventory_update', shop, vendor_name: conn.vendor_name,
+      inventory_item_id: String(inventory_item_id), location_id: String(location_id),
+      available, created_at: new Date().toISOString(),
+    });
+    // Find which variant this inventory_item belongs to and update
+    const variantData = await vendorShopifyREST(shop, conn.access_token, `/variants.json?inventory_item_ids=${inventory_item_id}&limit=1`).catch(()=>null);
+    const variant = variantData?.variants?.[0];
+    if (variant && conn.vendor_name) {
+      // Update CrosCrow inventory for this variant if mapped
+      const mapping = await mdb.collection('vendor_variant_mappings').findOne({
+        vendor_name: conn.vendor_name, vendor_variant_id: String(variant.id)
+      }, { projection: { croscrow_variant_id: 1, _id: 0 } });
+      if (mapping?.croscrow_variant_id) {
+        const token = await getAccessToken();
+        const locData = await shopifyREST('/locations.json');
+        const locationId = locData.locations?.[0]?.id;
+        const invItem = await shopifyREST(`/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`);
+        const ccInvItemId = invItem?.variant?.inventory_item_id;
+        if (locationId && ccInvItemId) {
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+            method: 'POST',
+            headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location_id: locationId, inventory_item_id: ccInvItemId, available }),
+          });
+          console.log(`✅ Synced inventory: variant ${mapping.croscrow_variant_id} → ${available}`);
+        }
+      }
+    }
+  } catch(e) { console.error('inventory-update webhook error:', e.message); }
+});
+
+// POST /vendor/shopify/webhook/uninstalled — vendor removed the app
+app.post('/vendor/shopify/webhook/uninstalled', express.json({ type: '*/*' }), async (req, res) => {
+  res.status(200).send('ok');
+  try {
+    const shop = req.headers['x-shopify-shop-domain'];
+    await mdb.collection('vendor_shopify_connections').updateOne(
+      { shop_domain: shop },
+      { $set: { access_token: null, sync_enabled: 0, uninstalled_at: new Date().toISOString() } }
+    );
+    console.log(`⚠️  CrosCrow Sync uninstalled from: ${shop}`);
+    auditLog('shopify_app', 'uninstall', shop, {});
+  } catch(e) { console.error('uninstall webhook error:', e.message); }
+});
+
+// GET /admin/shopify-app/connections — list all installs (admin)
+app.get('/admin/shopify-app/connections', adminAuth, async (req, res) => {
+  try {
+    const conns = await mdb.collection('vendor_shopify_connections').find(
+      { access_token: { $ne: null } },
+      { projection: { shop_domain: 1, vendor_name: 1, scope: 1, installed_at: 1, sync_enabled: 1, uninstalled_at: 1, _id: 0 } }
+    ).sort({ installed_at: -1 }).toArray();
+    res.json({ connections: conns });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /admin/shopify-app/connections/:shop/claim — link an install to a vendor
+app.put('/admin/shopify-app/connections/:shop/claim', adminAuth, async (req, res) => {
+  try {
+    const { vendor_name } = req.body || {};
+    if (!vendor_name) return res.status(400).json({ error: 'vendor_name required' });
+    const shop = decodeURIComponent(req.params.shop);
+    await mdb.collection('vendor_shopify_connections').updateOne(
+      { shop_domain: shop },
+      { $set: { vendor_name, updated_at: new Date().toISOString() } }
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Vendor: browse own products (so vendor can see what will be synced) ───

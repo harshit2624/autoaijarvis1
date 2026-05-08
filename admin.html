@@ -2360,8 +2360,20 @@
       setSyncing(false);
     };
 
-    const orderMatchesStage = (o, s) =>
-      s === 'all' || o.stage === s || Object.values(o.vendorStages||{}).includes(s);
+    const orderMatchesStage = (o, s) => {
+      if (s === 'all') return true;
+      if (o.stage === s) return true;
+      const vendorStageValues = Object.values(o.vendorStages||{});
+      const isMultiVendor = vendorStageValues.length > 1;
+      // For single-vendor orders: don't match 'ready' if overall stage is already past ready
+      // (prevents delivered single-vendor orders appearing in Ready to Ship)
+      if (!isMultiVendor) {
+        const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+        if (s === 'ready' && BEYOND_READY.includes(o.stage)) return false;
+      }
+      // For multi-vendor orders: always check individual vendor stages
+      return vendorStageValues.includes(s);
+    };
 
     // Period-filtered base (used for tab counts too)
     const periodOrders = useMemo(()=>{
@@ -5189,8 +5201,70 @@
 
     const fmtDate = ts => new Date(ts).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
 
+    const [repairing, setRepairing] = useState(false);
+    const [repairResult, setRepairResult] = useState(null);
+
+    const repairVendorStages = async () => {
+      if (!window.confirm('This will sync vendor stage to match order_meta stage for all single-vendor orders where they differ. Continue?')) return;
+      setRepairing(true); setRepairResult(null);
+      try {
+        const r = await fetch(`${API}/admin/repair-vendor-stages`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setRepairResult(d);
+      } catch(e) { setRepairResult({ error: e.message }); }
+      setRepairing(false);
+    };
+
     return (
-      <div style={{padding:'24px',maxWidth:1100,display:'flex',gap:24}}>
+      <div style={{padding:'24px',maxWidth:1100}}>
+        {/* Maintenance tools */}
+        <div className="card" style={{marginBottom:20,padding:16}}>
+          <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginBottom:10,letterSpacing:1,textTransform:'uppercase'}}>🔧 Maintenance</div>
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <div>
+              <div style={{fontSize:12,color:'var(--text)',fontWeight:600,marginBottom:2}}>Repair Vendor Stages</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>For single-vendor orders, sync vendor stage to match order stage where they differ.</div>
+              <button className="btn btn-indigo" onClick={repairVendorStages} disabled={repairing}>
+                {repairing ? <><span className="spin">↻</span> Repairing…</> : '🔧 Run Repair'}
+              </button>
+            </div>
+            {repairResult && (
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,padding:'8px 14px',borderRadius:7,marginBottom:8,
+                  background: repairResult.error ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)',
+                  border: `1px solid ${repairResult.error ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`,
+                  color: repairResult.error ? '#ef4444' : '#10b981'}}>
+                  {repairResult.error ? `❌ ${repairResult.error}` : `✓ Fixed ${repairResult.fixed} orders · Skipped ${repairResult.skipped} · Errors ${repairResult.errors}`}
+                </div>
+                {repairResult.log?.length > 0 && (
+                  <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:7,maxHeight:240,overflowY:'auto'}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                      <thead><tr style={{background:'var(--bg-card)'}}>
+                        <th style={{padding:'6px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Order ID</th>
+                        <th style={{padding:'6px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Vendor</th>
+                        <th style={{padding:'6px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>From</th>
+                        <th style={{padding:'6px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>→ To</th>
+                      </tr></thead>
+                      <tbody>
+                        {repairResult.log.map((r,i)=>(
+                          <tr key={i} style={{borderTop:'1px solid var(--border)',background:r.error?'rgba(239,68,68,0.05)':''}}>
+                            <td style={{padding:'5px 10px',fontFamily:'monospace',color:'var(--cyan)'}}>{r.shopify_id}</td>
+                            <td style={{padding:'5px 10px',color:'var(--text)'}}>{r.vendor||'—'}</td>
+                            <td style={{padding:'5px 10px',color:'#f59e0b'}}>{r.error?`❌ ${r.error}`:r.from}</td>
+                            <td style={{padding:'5px 10px',color:'#10b981',fontWeight:600}}>{r.to||''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{display:'flex',gap:24}}>
         {/* Left: connections list */}
         <div style={{width:240,flexShrink:0}}>
           <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:12}}>🔄 Connected Stores</div>
@@ -5348,6 +5422,7 @@
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   }
