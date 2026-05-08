@@ -6958,9 +6958,10 @@ app.get('/vendor/shopify/install', (req, res) => {
   if (!shop || !shop.includes('.myshopify.com')) {
     return res.status(400).send('Missing or invalid shop parameter. Use: /vendor/shopify/install?shop=yourstore.myshopify.com');
   }
+  const vendorName = (req.query.vendor || '').trim();
   const state = crypto.randomBytes(16).toString('hex');
-  // Store state in a short-lived cookie for CSRF protection
   res.cookie('shopify_oauth_state', state, { maxAge: 600000, httpOnly: true, sameSite: 'lax' });
+  if (vendorName) res.cookie('shopify_oauth_vendor', vendorName, { maxAge: 600000, httpOnly: true, sameSite: 'lax' });
   const params = new URLSearchParams({
     client_id: process.env.VENDOR_APP_CLIENT_ID,
     scope:     SHOPIFY_APP_SCOPES,
@@ -7007,10 +7008,11 @@ app.get('/vendor/shopify/callback', async (req, res) => {
 
     const accessToken = tokenData.access_token;
 
-    // Find which vendor this store belongs to (match by shop_domain if reconnecting)
-    let vendorName = null;
+    // Find which vendor this store belongs to
+    let vendorName = req.cookies?.shopify_oauth_vendor || null;
     const existing = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: cleanShop }, { projection: { vendor_name: 1, _id: 0 } });
-    if (existing) vendorName = existing.vendor_name;
+    if (!vendorName && existing?.vendor_name) vendorName = existing.vendor_name;
+    res.clearCookie('shopify_oauth_vendor');
 
     // Save connection (vendor_name may be null until they log in and claim it)
     await mdb.collection('vendor_shopify_connections').updateOne(
@@ -7176,6 +7178,17 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
 app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
   const rows = await VSC.all();
   res.json({ connections: rows.map(r => ({ vendor_name: r.vendor_name, shop_domain: r.shop_domain, scope: r.scope, installed_at: r.installed_at, sync_enabled: r.sync_enabled })) });
+});
+
+// ── Admin: assign vendor name to a connected store ────────────────────────
+app.post("/admin/vendor-sync/assign", adminAuth, async (req, res) => {
+  const { shop_domain, vendor_name } = req.body;
+  if (!shop_domain || !vendor_name) return res.status(400).json({ error: 'shop_domain and vendor_name required' });
+  await mdb.collection('vendor_shopify_connections').updateOne(
+    { shop_domain },
+    { $set: { vendor_name, updated_at: new Date().toISOString() } }
+  );
+  res.json({ success: true });
 });
 
 // ── Admin: browse a vendor's products ─────────────────────────────────────

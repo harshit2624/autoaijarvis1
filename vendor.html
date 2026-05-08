@@ -3321,9 +3321,15 @@
     const [prodLoad,  setProdLoad]  = useState(false);
     const [msg,       setMsg]       = useState('');
 
+    const loadProducts = () => {
+      setProdLoad(true);
+      fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${authToken}` } })
+        .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setProdLoad(false); });
+    };
+
     const loadStatus = () => {
       fetch(`${API}/vendor/shopify/status`, { headers:{ Authorization:`Bearer ${authToken}` } })
-        .then(r=>r.json()).then(setStatus);
+        .then(r=>r.json()).then(d=>{ setStatus(d); if(d.connected) loadProducts(); });
     };
     useEffect(loadStatus, []);
 
@@ -3333,7 +3339,7 @@
       if (params.get('shopifyConnected')==='1') {
         setMsg('✅ Shopify store connected successfully!');
         window.history.replaceState({}, '', window.location.pathname);
-        loadStatus();
+        loadStatus(); // will auto-load products since connected=true
       }
     }, []);
 
@@ -3355,12 +3361,6 @@
       if (!confirm('Disconnect your Shopify store? All product mappings will remain but inventory sync will stop.')) return;
       await fetch(`${API}/vendor/shopify/disconnect`, { method:'DELETE', headers:{ Authorization:`Bearer ${authToken}` } });
       setStatus({ connected: false, connection: null }); setProducts([]);
-    };
-
-    const loadProducts = () => {
-      setProdLoad(true);
-      fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${authToken}` } })
-        .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setProdLoad(false); });
     };
 
     if (!status) return <div style={{padding:40,color:'var(--text-muted)',fontSize:13}}>Loading…</div>;
@@ -3418,14 +3418,14 @@
                 <div style={{flex:1,minWidth:200}}>
                   <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Your Shopify Store URL</label>
                   <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
-                    onKeyDown={e=>{ if(e.key==='Enter' && shop.trim()) window.location.href=`${API}/vendor/shopify/install?shop=${encodeURIComponent(shop.trim().replace(/https?:\/\//,'').replace(/\/$/,''))}`; }}
+                    onKeyDown={e=>{ if(e.key==='Enter' && shop.trim()) window.location.href=`${API}/vendor/shopify/install?shop=${encodeURIComponent(shop.trim().replace(/https?:\/\//,'').replace(/\/$/,''))}&vendor=${encodeURIComponent(vendorName||'')}`; }}
                     style={{width:'100%',boxSizing:'border-box'}}/>
                 </div>
                 <button className="btn btn-indigo" style={{padding:'9px 20px',fontWeight:700,flexShrink:0}}
                   onClick={()=>{
                     const s = shop.trim().replace(/https?:\/\//,'').replace(/\/$/,'');
                     if (!s) { setMsg('Enter your store URL first.'); return; }
-                    window.location.href = `${API}/vendor/shopify/install?shop=${encodeURIComponent(s)}`;
+                    window.location.href = `${API}/vendor/shopify/install?shop=${encodeURIComponent(s)}&vendor=${encodeURIComponent(vendorName||'')}`;
                   }}>
                   🛍 Install App →
                 </button>

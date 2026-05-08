@@ -3029,6 +3029,22 @@
       setSaving(false);
     };
 
+    const deleteRequest = async (id) => {
+      if (!window.confirm(`Delete return/exchange request ${id}? This cannot be undone.`)) return;
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/return-requests/${id}`, {
+          method:'DELETE', headers:{ Authorization:`Bearer ${token}` },
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Delete failed');
+        setMsg({type:'success', text:`Request ${id} deleted.`});
+        setExpanded(null);
+        load();
+      } catch(e) { setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
     const TYPE_COLOR = { return:'var(--cyan)', exchange:'var(--green)' };
     const STATUS_COLOR = { pending:'var(--yellow)', approved:'var(--green)', rejected:'var(--red)', completed:'var(--teal)' };
     const TABS = ['all','pending','approved','rejected','completed'];
@@ -3094,6 +3110,7 @@
                               <div style={{display:'flex',gap:4}}>
                                 {rq.status==='pending'&&<><button onClick={()=>updateRequest(rq.request_id,{status:'approved'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--green)',background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>✓</button><button onClick={()=>updateRequest(rq.request_id,{status:'rejected'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>✗</button></>}
                                 {rq.status==='approved'&&<button onClick={()=>updateRequest(rq.request_id,{status:'completed'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--teal)',background:'#042f2e',color:'var(--teal)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>Done</button>}
+                                <button onClick={()=>deleteRequest(rq.request_id)} title="Delete request" style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>🗑</button>
                               </div>
                             </td>
                           </tr>
@@ -5139,7 +5156,11 @@
         .then(r=>r.json()).then(d=>{ setConnections(d.connections||[]); setLoading(false); });
     };
 
-    useEffect(loadConnections, []);
+    useEffect(()=>{
+      loadConnections();
+      fetch('/admin/vendors', { headers: { Authorization: 'Bearer '+token } })
+        .then(r=>r.json()).then(d=>{ window._vendorList = (d.vendors||[]).map(v=>typeof v==='string'?v:v.name).filter(Boolean); });
+    }, []);
 
     const loadVendorProducts = (vendor) => {
       setSelected(vendor); setProdLoading(true); setProducts([]); setMappings([]); setMsg('');
@@ -5273,12 +5294,31 @@
               No vendor stores connected yet.<br/><br/>Vendors connect from their panel → Settings → Connect Shopify.
             </div>
           ) : connections.map(c=>(
-            <button key={c.vendor_name} onClick={()=>loadVendorProducts(c.vendor_name)}
-              style={{width:'100%',textAlign:'left',background:selected===c.vendor_name?'var(--indigo-dim)':'var(--bg-card)',border:`1px solid ${selected===c.vendor_name?'var(--indigo)':'var(--border)'}`,borderRadius:8,padding:'10px 12px',marginBottom:8,cursor:'pointer',color:'var(--text)'}}>
-              <div style={{fontWeight:600,fontSize:13}}>{c.vendor_name}</div>
-              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{c.shop_domain}</div>
-              <div style={{fontSize:9,color:'var(--green)',marginTop:3}}>● Connected {fmtDate(c.installed_at)}</div>
-            </button>
+            <div key={c.shop_domain} style={{marginBottom:8}}>
+              {!c.vendor_name ? (
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--yellow)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{fontSize:10,color:'var(--yellow)',fontWeight:700,marginBottom:4}}>⚠ Unassigned</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>{c.shop_domain}</div>
+                  <select style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:5,padding:'4px 6px',color:'var(--text)',fontSize:11,marginBottom:4}}
+                    defaultValue=""
+                    onChange={async e=>{
+                      const v = e.target.value; if(!v) return;
+                      await fetch(`/admin/vendor-sync/assign`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body:JSON.stringify({ shop_domain: c.shop_domain, vendor_name: v }) });
+                      loadConnections();
+                    }}>
+                    <option value="">— assign vendor —</option>
+                    {(window._vendorList||[]).map(v=><option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <button onClick={()=>loadVendorProducts(c.vendor_name)}
+                  style={{width:'100%',textAlign:'left',background:selected===c.vendor_name?'var(--indigo-dim)':'var(--bg-card)',border:`1px solid ${selected===c.vendor_name?'var(--indigo)':'var(--border)'}`,borderRadius:8,padding:'10px 12px',cursor:'pointer',color:'var(--text)'}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{c.vendor_name}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{c.shop_domain}</div>
+                  <div style={{fontSize:9,color:'var(--green)',marginTop:3}}>● Connected {fmtDate(c.installed_at)}</div>
+                </button>
+              )}
+            </div>
           ))}
         </div>
 
