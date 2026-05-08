@@ -7091,15 +7091,35 @@ app.post('/vendor/shopify/webhook/inventory-update', express.json({ type: '*/*' 
     const shop = req.headers['x-shopify-shop-domain'];
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
     if (!conn?.vendor_name) return;
-    const { inventory_item_id, location_id, available } = req.body;
+    const { inventory_item_id, available } = req.body;
     console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available}`);
 
-    // Look up mapping directly by vendor_inventory_item_id
-    const mapping = await mdb.collection('vendor_product_mappings').findOne({
+    // Look up by vendor_inventory_item_id first, then fallback via vendor API
+    let mapping = await mdb.collection('vendor_product_mappings').findOne({
       vendor_name: conn.vendor_name,
       vendor_inventory_item_id: String(inventory_item_id),
       sync_inventory: 1,
-    }, { projection: { croscrow_variant_id: 1, _id: 0 } });
+    });
+
+    // Fallback: find variant by inventory_item_id from vendor store and match by variant_id
+    if (!mapping) {
+      const varData = await vendorShopifyREST(shop, conn.access_token, `/inventory_items/${inventory_item_id}.json`).catch(()=>null);
+      const variantId = varData?.inventory_item?.variant_id;
+      if (variantId) {
+        mapping = await mdb.collection('vendor_product_mappings').findOne({
+          vendor_name: conn.vendor_name,
+          vendor_variant_id: String(variantId),
+          sync_inventory: 1,
+        });
+        // Backfill vendor_inventory_item_id so future lookups are fast
+        if (mapping) {
+          await mdb.collection('vendor_product_mappings').updateOne(
+            { _id: mapping._id },
+            { $set: { vendor_inventory_item_id: String(inventory_item_id) } }
+          );
+        }
+      }
+    }
 
     if (mapping?.croscrow_variant_id) {
       const token = await getAccessToken();
@@ -7113,12 +7133,14 @@ app.post('/vendor/shopify/webhook/inventory-update', express.json({ type: '*/*' 
           headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
           body: JSON.stringify({ location_id: locationId, inventory_item_id: ccInvItemId, available }),
         });
-        console.log(`✅ Auto-synced inventory: ${conn.vendor_name} variant ${mapping.croscrow_variant_id} → ${available}`);
+        console.log(`✅ Auto-synced: ${conn.vendor_name} → CC variant ${mapping.croscrow_variant_id} qty=${available}`);
         await mdb.collection('vendor_product_mappings').updateOne(
-          { vendor_name: conn.vendor_name, vendor_inventory_item_id: String(inventory_item_id) },
+          { _id: mapping._id },
           { $set: { last_synced_at: Date.now() } }
         );
       }
+    } else {
+      console.log(`⚠ No mapping found for ${conn.vendor_name} inventory_item ${inventory_item_id}`);
     }
   } catch(e) { console.error('inventory-update webhook error:', e.message); }
 });
