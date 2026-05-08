@@ -7066,13 +7066,13 @@ async function registerShopifyAppWebhooks(shop, accessToken) {
 }
 
 // POST /vendor/shopify/webhook/products-update — product edited on vendor's store
-app.post('/vendor/shopify/webhook/products-update', express.json({ type: '*/*' }), async (req, res) => {
+app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
   res.status(200).send('ok');
   try {
     const shop = req.headers['x-shopify-shop-domain'];
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop });
     if (!conn?.vendor_name) return;
-    const product = req.body;
+    const product = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
     console.log(`📦 Product updated: ${shop} → ${product.title} (${product.id})`);
 
     const ccToken = await getAccessToken();
@@ -7122,13 +7122,14 @@ app.post('/vendor/shopify/webhook/products-update', express.json({ type: '*/*' }
 });
 
 // POST /vendor/shopify/webhook/inventory-update — stock changed on vendor's store
-app.post('/vendor/shopify/webhook/inventory-update', express.json({ type: '*/*' }), async (req, res) => {
+app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
   res.status(200).send('ok');
   try {
     const shop = req.headers['x-shopify-shop-domain'];
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
     if (!conn?.vendor_name) return;
-    const { inventory_item_id, available } = req.body;
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
+    const { inventory_item_id, available } = body;
     console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available}`);
 
     // Look up by vendor_inventory_item_id first, then fallback via vendor API
