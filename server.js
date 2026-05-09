@@ -7018,7 +7018,7 @@ app.get('/vendor/shopify/app', (req, res) => {
             </div>
           \`).join('')}
         </div>\` : ''}
-        <a href="\${PANEL_URL}" class="btn" target="_top">🚀 Open Full Vendor Panel</a>
+        <a href="\${PANEL_URL}" class="btn" target="_blank" rel="noopener">🚀 Open Full Vendor Panel</a>
         <div class="status" id="status">✓ Connected via Shopify</div>
       \`;
 
