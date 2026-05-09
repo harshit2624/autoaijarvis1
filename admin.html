@@ -1008,10 +1008,10 @@
                   <select className="form-select" value={stage} onChange={e=>setStage(e.target.value)}>
                     {STAGES.filter(s=>s.id!=='all').map(s=><option key={s.id} value={s.id}>{s.icon} {s.label}</option>)}
                   </select>
-                  {(order.vendors||[]).length > 0 && (
+                  {(order.vendors||[]).length > 1 && (
                     <div style={{marginTop:12,background:'#0a1520',border:'1px solid #1a3a5a',borderRadius:8,padding:12}}>
                       <div style={{fontSize:11,color:'#6fa8d0',fontWeight:700,marginBottom:10,letterSpacing:1}}>
-                        🏪 VENDOR STAGE — override for settlement sync
+                        🏪 VENDOR STAGES — set per-vendor stage independently
                       </div>
                       {(order.vendors||[]).map(v=>(
                         <React.Fragment key={v}>
