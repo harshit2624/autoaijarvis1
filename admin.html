@@ -2370,7 +2370,7 @@
       // For single-vendor orders: don't match 'ready' if overall stage is already past ready
       // (prevents delivered single-vendor orders appearing in Ready to Ship)
       if (!isMultiVendor) {
-        const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+        const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
         if (s === 'ready' && BEYOND_READY.includes(o.stage)) return false;
       }
       // For multi-vendor orders: always check individual vendor stages

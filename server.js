@@ -3715,7 +3715,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             const stored = vStageMap[String(o.id)]?.stage || 'new';
             const metaStage = meta.stage || 'new';
             const shopifyDerived = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null;
-            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
             const ordVendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
             const isSingleVendor = ordVendors.length === 1;
             // Only suppress shopify 'ready' for single-vendor orders already past ready
@@ -4672,7 +4672,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         vendorStages:   (() => {
             const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
             const metaStage = meta.stage || 'new';
-            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled'];
+            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
             const metaIsBeyondReady = BEYOND_READY.includes(metaStage);
             const isSingleVendor = vendors.length === 1;
             if (vendors.length > 1) {
