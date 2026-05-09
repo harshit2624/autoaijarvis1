@@ -6854,7 +6854,7 @@ app.delete("/vendor/shopify/disconnect", vendorAuth, async (req, res) => {
 // SHOPIFY APP OAUTH — Install flow for CrosCrow Sync app
 // ══════════════════════════════════════════════════════════════════════════
 
-const SHOPIFY_APP_SCOPES = 'read_products,write_products,read_inventory,write_inventory,read_locations';
+const SHOPIFY_APP_SCOPES = 'read_files,write_files,write_inventory,read_inventory,write_inventory_shipments,read_inventory_shipments,write_inventory_shipments_received_items,read_inventory_shipments_received_items,write_inventory_transfers,read_inventory_transfers,write_locations,read_locations,read_orders,write_orders,read_product_feeds,write_product_feeds,read_product_listings,write_product_listings,read_products,write_products,unauthenticated_read_product_pickup_locations,unauthenticated_read_product_inventory,unauthenticated_read_product_listings,unauthenticated_read_product_tags';
 const SHOPIFY_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/callback`;
 
 // Privacy policy page (required by Shopify)
