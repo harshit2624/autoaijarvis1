@@ -6923,58 +6923,56 @@ app.get('/vendor/shopify/app', (req, res) => {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CrosCrow</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${process.env.VENDOR_APP_CLIENT_ID}"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f3f5;min-height:100vh;padding:24px 16px}
-    .header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
-    .logo{height:36px;flex-shrink:0}
-    .logo img{height:36px;width:auto;display:block}
-    .header h1{font-size:20px;font-weight:700;color:#111}
-    .header p{font-size:13px;color:#666;margin-top:2px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
-    .stat{background:#fff;border-radius:10px;padding:18px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
-    .stat-val{font-size:28px;font-weight:800;line-height:1;margin-bottom:4px}
-    .stat-label{font-size:12px;color:#666;font-weight:500}
-    .btn{display:block;width:100%;background:#5c6ac4;color:#fff;text-decoration:none;padding:14px;border-radius:10px;font-size:15px;font-weight:600;text-align:center;border:none;cursor:pointer;transition:background 0.15s;margin-bottom:10px}
-    .btn:hover{background:#4959bd}
-    .btn-outline{background:#fff;color:#5c6ac4;border:2px solid #5c6ac4}
-    .btn-outline:hover{background:#f0f0ff}
-    .orders{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.08);margin-bottom:24px}
-    .orders h3{font-size:13px;font-weight:700;color:#111;margin-bottom:12px;letter-spacing:.5px;text-transform:uppercase}
-    .order-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:13px}
+    body{font-family:'IBM Plex Mono',monospace;background:#0d0f1a;color:#e2e8f0;min-height:100vh;padding:18px 16px}
+    .header{display:flex;align-items:center;gap:8px;margin-bottom:20px}
+    .logo img{height:28px;width:auto;display:block}
+    .sep{color:#4a5568;font-size:18px;font-weight:300;margin:0 2px}
+    .vname{font-size:13px;font-weight:700;color:#6366f1;letter-spacing:1px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+    .stat{background:#131929;border:1px solid #1e2a45;border-radius:10px;padding:14px 12px}
+    .stat-val{font-size:26px;font-weight:800;line-height:1;margin-bottom:3px}
+    .stat-label{font-size:10px;color:#64748b;font-weight:600;letter-spacing:.5px;text-transform:uppercase}
+    .orders{background:#131929;border:1px solid #1e2a45;border-radius:10px;padding:14px;margin-bottom:14px}
+    .orders-title{font-size:10px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+    .order-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a2540;font-size:11px}
     .order-row:last-child{border-bottom:none}
-    .badge{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
-    .b-ready{background:#fef3c7;color:#d97706}
-    .b-transit{background:#e0f2fe;color:#0284c7}
-    .b-confirmed{background:#dbeafe;color:#1d4ed8}
-    .status{font-size:12px;color:#999;text-align:center;margin-top:12px}
-    .loading{text-align:center;color:#999;font-size:13px;padding:32px}
-    .vendor-name{font-size:12px;color:#5c6ac4;font-weight:600;margin-bottom:16px}
+    .o-name{font-weight:700;color:#a5b4fc;min-width:52px}
+    .o-cust{color:#64748b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .badge{padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:.5px}
+    .b-confirmed{background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3)}
+    .b-partial{background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3)}
+    .b-ready{background:rgba(251,191,36,0.15);color:#fbbf24;border:1px solid rgba(251,191,36,0.3)}
+    .timer{font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;white-space:nowrap}
+    .timer-warn{background:rgba(239,68,68,0.2);color:#f87171}
+    .timer-ok{background:rgba(99,102,241,0.15);color:#818cf8}
+    .btn{display:block;width:100%;background:#6366f1;color:#fff;text-decoration:none;padding:12px;border-radius:9px;font-size:12px;font-weight:700;text-align:center;border:none;cursor:pointer;letter-spacing:1px;margin-bottom:8px;font-family:'IBM Plex Mono',monospace}
+    .btn:hover{background:#4f46e5}
+    .conn{font-size:10px;color:#374151;text-align:center;letter-spacing:.5px}
+    .loading{text-align:center;color:#4a5568;font-size:12px;padding:40px;letter-spacing:1px}
   </style>
 </head>
 <body>
   <div class="header">
     <div class="logo"><img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CrosCrow"/></div>
-    <div>
-      <p id="vendor-label" style="font-size:15px;font-weight:700;color:#111;margin:0">Loading…</p>
-    </div>
+    <span class="sep">/</span>
+    <span class="vname" id="vendor-label">···</span>
   </div>
 
-  <div id="content" class="loading">Connecting to Shopify…</div>
+  <div id="content" class="loading">CONNECTING ···</div>
 
   <script>
     const PANEL_URL = '${vendorPanelUrl}';
     const SERVER = '${process.env.SERVER_URL || 'http://localhost:3001'}';
 
     async function getToken() {
-      // Modern App Bridge (v3+) exposes window.shopify.idToken()
       if (window.shopify?.idToken) return await window.shopify.idToken();
-      // Fallback: legacy App Bridge
       const ab = window['app-bridge'];
       if (ab) {
-        const params = new URLSearchParams(window.location.search);
-        const host = params.get('host') || '';
+        const host = new URLSearchParams(window.location.search).get('host') || '';
         const app = ab.createApp({ apiKey: '${CLIENT_ID}', host });
         return await ab.getSessionToken(app);
       }
@@ -6984,53 +6982,66 @@ app.get('/vendor/shopify/app', (req, res) => {
     async function init() {
       try {
         const token = await getToken();
-
-        // Verify session + get vendor summary
-        const res = await fetch(SERVER + '/vendor/shopify/summary', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
-        if (!res.ok) { showError('Not connected. Please install via CrosCrow vendor panel.'); return; }
+        const res = await fetch(SERVER + '/vendor/shopify/summary', { headers: { 'Authorization': 'Bearer ' + token } });
+        if (!res.ok) { showError('Store not linked. Open vendor panel to connect.'); return; }
         const d = await res.json();
         render(d);
-      } catch(e) {
-        showError('Error: ' + e.message);
-      }
+      } catch(e) { showError(e.message); }
+    }
+
+    function penaltyBadge(o) {
+      if (o.penalty_hours_left === null) return '';
+      const h = o.penalty_hours_left;
+      const cls = o.warning ? 'timer-warn' : 'timer-ok';
+      return \`<span class="timer \${cls}">\${h}h left</span>\`;
     }
 
     function render(d) {
-      document.getElementById('vendor-label').textContent = d.vendor_name || 'Vendor';
+      document.getElementById('vendor-label').textContent = (d.vendor_name || 'VENDOR').toUpperCase();
+      const confirmedTotal = (d.confirmed || 0) + (d.partial || 0);
       document.getElementById('content').innerHTML = \`
         <div class="grid">
-          <div class="stat"><div class="stat-val" style="color:#d97706">\${d.ready}</div><div class="stat-label">Ready to Ship</div></div>
-          <div class="stat"><div class="stat-val" style="color:#0284c7">\${d.transit}</div><div class="stat-label">In Transit</div></div>
-          <div class="stat"><div class="stat-val" style="color:#1d4ed8">\${d.confirmed}</div><div class="stat-label">Confirmed</div></div>
-          <div class="stat"><div class="stat-val" style="color:#10b981">\${d.delivered_today}</div><div class="stat-label">Delivered Today</div></div>
+          <div class="stat" style="border-color:rgba(239,68,68,0.3)">
+            <div class="stat-val" style="color:#f87171">\${confirmedTotal}</div>
+            <div class="stat-label">To Fulfil</div>
+          </div>
+          <div class="stat" style="border-color:rgba(251,191,36,0.3)">
+            <div class="stat-val" style="color:#fbbf24">\${d.ready || 0}</div>
+            <div class="stat-label">Ready to Ship</div>
+          </div>
+          <div class="stat" style="border-color:rgba(6,182,212,0.3)">
+            <div class="stat-val" style="color:#22d3ee">\${d.transit || 0}</div>
+            <div class="stat-label">In Transit</div>
+          </div>
+          <div class="stat" style="border-color:rgba(16,185,129,0.3)">
+            <div class="stat-val" style="color:#10b981">\${d.delivered_today || 0}</div>
+            <div class="stat-label">Delivered Today</div>
+          </div>
         </div>
         \${d.pending_orders.length > 0 ? \`
         <div class="orders">
-          <h3>📦 Needs Attention</h3>
+          <div class="orders-title">📦 Needs Attention</div>
           \${d.pending_orders.map(o => \`
             <div class="order-row">
-              <span style="font-weight:600">\${o.name}</span>
-              <span style="color:#666;font-size:12px">\${o.customer}</span>
+              <span class="o-name">\${o.name}</span>
+              <span class="o-cust">\${o.customer}</span>
               <span class="badge b-\${o.stage}">\${o.stage.toUpperCase()}</span>
+              \${penaltyBadge(o)}
             </div>
           \`).join('')}
         </div>\` : ''}
-        <a href="\${PANEL_URL}" class="btn" target="_blank" rel="noopener">🚀 Open Full Vendor Panel</a>
-        <div class="status" id="status">✓ Connected via Shopify</div>
+        <a href="\${PANEL_URL}" class="btn" target="_blank" rel="noopener">⚡ OPEN VENDOR PANEL</a>
+        <div class="conn">✓ CONNECTED VIA SHOPIFY</div>
       \`;
-
-      // Refresh token every 50s
       setInterval(async () => { try { await getToken(); } catch(e) {} }, 50000);
     }
 
     function showError(msg) {
       document.getElementById('content').innerHTML = \`
-        <div style="background:#fff;border-radius:10px;padding:32px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
-          <div style="font-size:32px;margin-bottom:12px">⚠️</div>
-          <div style="font-size:14px;color:#666;margin-bottom:20px">\${msg}</div>
-          <a href="\${PANEL_URL}" class="btn" target="_top">Go to Vendor Panel</a>
+        <div style="background:#131929;border:1px solid #1e2a45;border-radius:10px;padding:28px;text-align:center">
+          <div style="font-size:28px;margin-bottom:10px">⚠</div>
+          <div style="font-size:11px;color:#64748b;margin-bottom:16px;line-height:1.6">\${msg}</div>
+          <a href="\${PANEL_URL}" class="btn" target="_blank" rel="noopener">OPEN VENDOR PANEL</a>
         </div>
       \`;
     }
@@ -7080,24 +7091,36 @@ app.get('/vendor/shopify/summary', async (req, res) => {
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
   const deliveredToday = vendorStages.filter(vs => vs.stage === 'delivered' && new Date(vs.updated_at) >= todayStart).length;
 
-  // Pending orders needing attention (ready + confirmed, max 8)
-  const pendingIds = vendorStages.filter(vs => ['ready','confirmed'].includes(vs.stage)).slice(0, 8).map(vs => vs.shopify_id);
+  const partial = vendorStages.filter(vs => vs.stage === 'partial').length;
+
+  // Pending orders needing attention (confirmed + partial + ready, max 10)
+  const pendingVS = vendorStages.filter(vs => ['confirmed','partial','ready'].includes(vs.stage)).slice(0, 10);
   const pendingOrders = [];
-  for (const sid of pendingIds) {
+  const nowMs = Date.now();
+  for (const vs of pendingVS) {
     try {
-      const od = await shopifyREST(`/orders/${sid}.json?fields=id,name,shipping_address`);
+      const od = await shopifyREST(`/orders/${vs.shopify_id}.json?fields=id,name,shipping_address`);
       if (od?.order) {
         const addr = od.order.shipping_address || {};
+        // Penalty timer: confirmed/partial orders get 48h timer
+        let penaltyHoursLeft = null;
+        if (['confirmed','partial'].includes(vs.stage) && vs.stage_started_at) {
+          const elapsed = nowMs - vs.stage_started_at;
+          const remaining = (48 * 3600 * 1000) - elapsed;
+          penaltyHoursLeft = Math.max(0, Math.floor(remaining / 3600000));
+        }
         pendingOrders.push({
           name: od.order.name,
-          customer: addr.first_name || addr.name || 'Customer',
-          stage: stageMap[sid] || 'new',
+          customer: (addr.first_name || '').split(' ')[0] || 'Customer',
+          stage: vs.stage,
+          penalty_hours_left: penaltyHoursLeft,
+          warning: penaltyHoursLeft !== null && penaltyHoursLeft <= 12,
         });
       }
     } catch {}
   }
 
-  res.json({ vendor_name: vendorName, ready, transit, confirmed, delivered_today: deliveredToday, pending_orders: pendingOrders });
+  res.json({ vendor_name: vendorName, ready, transit, confirmed, partial, delivered_today: deliveredToday, pending_orders: pendingOrders });
 });
 
 // GET /vendor/shopify/verify-session — verifies App Bridge session token JWT
