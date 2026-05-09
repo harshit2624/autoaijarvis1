@@ -6838,7 +6838,9 @@ app.post("/vendor/shopify/connect", vendorAuth, async (req, res) => {
 
 // ── Vendor: check own connection status ───────────────────────────────────
 app.get("/vendor/shopify/status", vendorAuth, async (req, res) => {
-  const conn = await VSC.get(req.vendor);
+  // Try exact match first, then case-insensitive
+  let conn = await VSC.get(req.vendor);
+  if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${req.vendor}$`, 'i') } }, { projection: { _id: 0 } });
   res.json({ connected: !!conn, connection: conn ? { shop_domain: conn.shop_domain, scope: conn.scope, installed_at: conn.installed_at, sync_enabled: conn.sync_enabled } : null });
 });
 
@@ -7439,7 +7441,8 @@ app.put('/admin/shopify-app/connections/:shop/claim', adminAuth, async (req, res
 
 // ── Vendor: browse own products (so vendor can see what will be synced) ───
 app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
-  const conn = await VSC.get(req.vendor);
+  let conn = await VSC.get(req.vendor);
+  if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${req.vendor}$`, 'i') } }, { projection: { _id: 0 } });
   if (!conn) return res.status(404).json({ error: "Shopify store not connected." });
   try {
     const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');

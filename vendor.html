@@ -3427,7 +3427,11 @@
     const loadProducts = () => {
       setProdLoad(true);
       fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${authToken}` } })
-        .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setProdLoad(false); });
+        .then(r=>r.json()).then(d=>{
+          if (d.error) setMsg('❌ '+d.error);
+          setProducts(d.products||[]);
+          setProdLoad(false);
+        }).catch(e=>{ setMsg('❌ '+e.message); setProdLoad(false); });
     };
 
     const requestUpload = async (p) => {
@@ -3528,7 +3532,7 @@
                 })}
               </div>
             )}
-            {!prodLoad && products.length===0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>Click "Load Products" to preview what admin can sync.</div>}
+            {!prodLoad && products.length===0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading your Shopify products…</div>}
           </>
         ) : (
           <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:24}}>
