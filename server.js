@@ -6928,8 +6928,8 @@ app.get('/vendor/shopify/app', (req, res) => {
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f3f5;min-height:100vh;padding:24px 16px}
     .header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
-    .logo{width:40px;height:40px;border-radius:10px;overflow:hidden;flex-shrink:0}
-    .logo img{width:100%;height:100%;object-fit:cover}
+    .logo{height:36px;flex-shrink:0}
+    .logo img{height:36px;width:auto;display:block}
     .header h1{font-size:20px;font-weight:700;color:#111}
     .header p{font-size:13px;color:#666;margin-top:2px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
@@ -6957,8 +6957,7 @@ app.get('/vendor/shopify/app', (req, res) => {
   <div class="header">
     <div class="logo"><img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CrosCrow"/></div>
     <div>
-      <h1>CrosCrow</h1>
-      <p id="vendor-label">Loading…</p>
+      <p id="vendor-label" style="font-size:15px;font-weight:700;color:#111;margin:0">Loading…</p>
     </div>
   </div>
 
