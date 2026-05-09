@@ -6957,7 +6957,7 @@ app.get('/vendor/shopify/app', (req, res) => {
 </head>
 <body>
   <div class="header">
-    <div class="logo"><img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CrosCrow"/></div>
+    <div class="logo"><img src="https://i.ibb.co/b5Hhd9zD/Untitled-design-36.png" alt="CrosCrow"/></div>
     <span class="sep">/</span>
     <span class="vname" id="vendor-label">···</span>
   </div>
@@ -6990,10 +6990,13 @@ app.get('/vendor/shopify/app', (req, res) => {
     }
 
     function penaltyBadge(o) {
-      if (o.penalty_hours_left === null) return '';
+      if (o.penalty_hours_left === null) return '<span style="font-size:10px;color:#4a5568">No timer</span>';
       const h = o.penalty_hours_left;
-      const cls = o.warning ? 'timer-warn' : 'timer-ok';
-      return \`<span class="timer \${cls}">\${h}h left</span>\`;
+      if (h === 0) return '<span class="timer timer-warn">⚠ OVERDUE</span>';
+      const label = h < 24 ? h + 'h left' : Math.floor(h/24) + 'd ' + (h%24) + 'h left';
+      const cls = h <= 6 ? 'timer-warn' : h <= 24 ? 'timer-warn' : 'timer-ok';
+      const icon = h <= 24 ? '⚠ ' : '⏱ ';
+      return \`<span class="timer \${cls}">\${icon}\${label}</span>\`;
     }
 
     function render(d) {
@@ -7020,13 +7023,21 @@ app.get('/vendor/shopify/app', (req, res) => {
         </div>
         \${d.pending_orders.length > 0 ? \`
         <div class="orders">
-          <div class="orders-title">📦 Needs Attention</div>
+          <div class="orders-title">⏱ Pending Fulfilment</div>
           \${d.pending_orders.map(o => \`
             <div class="order-row">
-              <span class="o-name">\${o.name}</span>
-              <span class="o-cust">\${o.customer}</span>
-              <span class="badge b-\${o.stage}">\${o.stage.toUpperCase()}</span>
-              \${penaltyBadge(o)}
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                  <span class="o-name">\${o.name}</span>
+                  <span class="badge b-\${o.stage}">\${o.stage.toUpperCase()}</span>
+                  <span style="font-size:10px;padding:1px 6px;border-radius:99px;font-weight:700;\${o.payment_mode==='COD'?'background:rgba(251,191,36,0.15);color:#fbbf24;border:1px solid rgba(251,191,36,0.3)':'background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.3)'}">\${o.payment_mode}</span>
+                  <span style="font-size:10px;color:#94a3b8;font-weight:600">₹\${o.amount}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span style="font-size:10px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">\${o.product}</span>
+                  \${penaltyBadge(o)}
+                </div>
+              </div>
             </div>
           \`).join('')}
         </div>\` : ''}
@@ -7093,28 +7104,34 @@ app.get('/vendor/shopify/summary', async (req, res) => {
 
   const partial = vendorStages.filter(vs => vs.stage === 'partial').length;
 
-  // Pending orders needing attention (confirmed + partial + ready, max 10)
-  const pendingVS = vendorStages.filter(vs => ['confirmed','partial','ready'].includes(vs.stage)).slice(0, 10);
+  // Only confirmed/partial orders with penalty timer
+  const pendingVS = vendorStages.filter(vs => ['confirmed','partial'].includes(vs.stage)).slice(0, 10);
   const pendingOrders = [];
   const nowMs = Date.now();
   for (const vs of pendingVS) {
     try {
-      const od = await shopifyREST(`/orders/${vs.shopify_id}.json?fields=id,name,shipping_address`);
+      const od = await shopifyREST(`/orders/${vs.shopify_id}.json?fields=id,name,shipping_address,line_items,total_price,payment_gateway,financial_status`);
       if (od?.order) {
         const addr = od.order.shipping_address || {};
-        // Penalty timer: confirmed/partial orders get 48h timer
         let penaltyHoursLeft = null;
-        if (['confirmed','partial'].includes(vs.stage) && vs.stage_started_at) {
+        if (vs.stage_started_at) {
           const elapsed = nowMs - vs.stage_started_at;
           const remaining = (48 * 3600 * 1000) - elapsed;
           penaltyHoursLeft = Math.max(0, Math.floor(remaining / 3600000));
         }
+        // Get vendor's items only
+        const items = (od.order.line_items || []).filter(li => li.vendor === vendorName);
+        const productTitle = items.length > 0 ? items[0].title + (items.length > 1 ? ` +${items.length-1}` : '') : 'N/A';
+        const isCod = od.order.payment_gateway === 'Cash on Delivery' || (od.order.financial_status === 'pending' && od.order.payment_gateway !== 'razorpay');
         pendingOrders.push({
           name: od.order.name,
           customer: (addr.first_name || '').split(' ')[0] || 'Customer',
           stage: vs.stage,
+          product: productTitle,
+          amount: parseFloat(od.order.total_price || 0).toFixed(0),
+          payment_mode: isCod ? 'COD' : 'Prepaid',
           penalty_hours_left: penaltyHoursLeft,
-          warning: penaltyHoursLeft !== null && penaltyHoursLeft <= 12,
+          warning: penaltyHoursLeft !== null && penaltyHoursLeft <= 24,
         });
       }
     } catch {}
