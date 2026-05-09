@@ -7176,13 +7176,19 @@ app.get('/vendor/shopify/install', (req, res) => {
   }
   const vendorName = (req.query.vendor || '').trim();
   const state = crypto.randomBytes(16).toString('hex');
+  // PKCE: generate code_verifier and code_challenge
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
   res.cookie('shopify_oauth_state', state, { maxAge: 600000, httpOnly: true, sameSite: 'lax' });
+  res.cookie('shopify_code_verifier', codeVerifier, { maxAge: 600000, httpOnly: true, sameSite: 'lax' });
   if (vendorName) res.cookie('shopify_oauth_vendor', vendorName, { maxAge: 600000, httpOnly: true, sameSite: 'lax' });
   const params = new URLSearchParams({
-    client_id: process.env.VENDOR_APP_CLIENT_ID,
-    scope:     SHOPIFY_APP_SCOPES,
-    redirect_uri: SHOPIFY_REDIRECT_URI,
+    client_id:             process.env.VENDOR_APP_CLIENT_ID,
+    scope:                 SHOPIFY_APP_SCOPES,
+    redirect_uri:          SHOPIFY_REDIRECT_URI,
     state,
+    code_challenge:        codeChallenge,
+    code_challenge_method: 'S256',
   });
   res.redirect(`https://${shop}/admin/oauth/authorize?${params}`);
 });
@@ -7209,6 +7215,8 @@ app.get('/vendor/shopify/callback', async (req, res) => {
 
   try {
     // Exchange code for permanent access token
+    const codeVerifier = req.cookies?.shopify_code_verifier || '';
+    res.clearCookie('shopify_code_verifier');
     const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -7216,6 +7224,7 @@ app.get('/vendor/shopify/callback', async (req, res) => {
         client_id:     process.env.VENDOR_APP_CLIENT_ID,
         client_secret: process.env.VENDOR_APP_SECRET,
         code,
+        ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
       }),
     });
     const tokenData = await tokenRes.json();
