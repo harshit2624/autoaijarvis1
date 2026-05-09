@@ -4751,7 +4751,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
 app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   const now = new Date().toISOString();
@@ -4874,7 +4874,7 @@ app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
 app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
   const { id } = req.params;
   const { vendor_name, stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
   if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
