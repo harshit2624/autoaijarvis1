@@ -7183,7 +7183,6 @@ app.get('/vendor/shopify/install', (req, res) => {
     scope:     SHOPIFY_APP_SCOPES,
     redirect_uri: SHOPIFY_REDIRECT_URI,
     state,
-    'grant_options[]': 'per-user',
   });
   res.redirect(`https://${shop}/admin/oauth/authorize?${params}`);
 });
