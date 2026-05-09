@@ -6157,6 +6157,16 @@ app.delete("/vendor/shipping/partners/:partner", vendorAuth, async (req, res) =>
   res.json({ success: true });
 });
 
+// Helper: parse Delhivery rate API response into [{mode, charge, estimated_days}]
+function parseDelhiveryRates(d) {
+  const items = Array.isArray(d) ? d : (d?.charges || d?.data || []);
+  return items.map(item => ({
+    mode: item.charge_type || item.product_type || item.shipment_type || 'Standard',
+    charge: parseFloat(item.total_amount || item.freight_charge || item.rate || 0).toFixed(0),
+    estimated_days: item.etd || item.tat || null,
+  })).filter(x => parseFloat(x.charge) > 0);
+}
+
 // POST /vendor/orders/:shopifyId/rate-check — check shipping rates for an order
 app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) => {
   try {
@@ -6177,7 +6187,7 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
       const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(chargeable*1000)}&pt=Pre-paid&cod=0`;
       const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
       const d = await r.json();
-      const rates = (d||[]).map(item => ({ mode: item.charge_type||item.product_type||'Standard', charge: item.total_amount||item.freight_charge||0, estimated_days: item.etd||item.tat||null })).filter(x=>x.charge>0);
+      const rates = parseDelhiveryRates(d);
       return res.json({ rates, chargeable_weight: chargeable });
     }
     res.json({ rates: [], message: 'Rate check only available for Delhivery' });
@@ -6307,7 +6317,6 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           shipment_width:  String(breadth),
           shipment_height: String(height),
           weight:          String(weight),
-          shipment_type:   (req.body?.shipMode||'Surface') === 'Express' ? 2 : 1,
           seller_name:   creds.company_name || req.vendor,
           seller_add:    creds.return_address || "",
           seller_city:   creds.return_city   || "",
@@ -10182,11 +10191,7 @@ app.post("/admin/return-requests/:id/rate-check", adminAuth, async (req, res) =>
       const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(chargeable*1000)}&pt=Pre-paid&cod=0`;
       const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
       const d = await r.json();
-      const rates = (d||[]).map(item => ({
-        mode: item.charge_type || item.product_type || 'Standard',
-        charge: item.total_amount || item.freight_charge || 0,
-        estimated_days: item.etd || item.tat || null,
-      })).filter(x => x.charge > 0);
+      const rates = parseDelhiveryRates(d);
       return res.json({ rates, chargeable_weight: chargeable });
     }
     res.json({ rates: [], message: 'Rate check only available for Delhivery' });
@@ -10257,7 +10262,7 @@ app.post("/vendor/return-requests/:id/rate-check", vendorAuth, async (req, res) 
       const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(chargeable*1000)}&pt=Pre-paid&cod=0`;
       const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
       const d = await r.json();
-      const rates = (d||[]).map(item => ({ mode: item.charge_type||item.product_type||'Standard', charge: item.total_amount||item.freight_charge||0, estimated_days: item.etd||item.tat||null })).filter(x=>x.charge>0);
+      const rates = parseDelhiveryRates(d);
       return res.json({ rates, chargeable_weight: chargeable });
     }
     res.json({ rates: [], message: 'Rate check only available for Delhivery' });
