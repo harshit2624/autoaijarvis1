@@ -6157,10 +6157,37 @@ app.delete("/vendor/shipping/partners/:partner", vendorAuth, async (req, res) =>
   res.json({ success: true });
 });
 
+// POST /vendor/orders/:shopifyId/rate-check — check shipping rates for an order
+app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) => {
+  try {
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });
+    if (!row) return res.status(404).json({ error: 'Partner not connected' });
+    const creds = JSON.parse(row.credentials);
+
+    // Get dest pincode from order
+    const orderData = await shopifyREST(`/orders/${req.params.shopifyId}.json?fields=shipping_address`);
+    const destPin = orderData?.order?.shipping_address?.zip || '';
+    const originPin = creds.return_pincode || creds.pickup_pincode || '';
+
+    if (partner === 'delhivery') {
+      const md = parseFloat(weight) || 0.5;
+      const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
+      const chargeable = Math.max(md, vol).toFixed(2);
+      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(chargeable*1000)}&pt=Pre-paid&cod=0`;
+      const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
+      const d = await r.json();
+      const rates = (d||[]).map(item => ({ mode: item.charge_type||item.product_type||'Standard', charge: item.total_amount||item.freight_charge||0, estimated_days: item.etd||item.tat||null })).filter(x=>x.charge>0);
+      return res.json({ rates, chargeable_weight: chargeable });
+    }
+    res.json({ rates: [], message: 'Rate check only available for Delhivery' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /vendor/orders/:shopifyId/create-shipment — create shipment via connected partner
 app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, res) => {
   try {
-    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface' } = req.body || {};
     if (!partner) return res.status(400).json({ error: "partner required" });
 
     const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });

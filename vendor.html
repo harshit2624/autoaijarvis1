@@ -992,6 +992,9 @@
     const [shipLength,   setShipLength]  = useState('');
     const [shipBreadth,  setShipBreadth] = useState('');
     const [shipHeight,   setShipHeight]  = useState('');
+    const [shipMode,     setShipMode]    = useState('Surface');
+    const [shipRateInfo, setShipRateInfo]= useState(null);
+    const [shipRateLoad, setShipRateLoad]= useState(false);
     const [boxPresets,   setBoxPresets]  = useState([]);
     const [creatingShip, setCreatingShip]= useState(false);
     const [noteThread,   setNoteThread]  = useState([]);
@@ -1048,6 +1051,20 @@
       loadNotes();
     }, [token]);
 
+    const checkShipRate = async () => {
+      if (!shipPartner) return;
+      setShipRateLoad(true); setShipRateInfo(null);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/rate-check`, {
+          method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ partner: shipPartner, weight: parseFloat(shipWeight)||0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8 }),
+        });
+        const d = await r.json();
+        setShipRateInfo(d);
+      } catch(e) { setShipRateInfo({error:e.message}); }
+      setShipRateLoad(false);
+    };
+
     const createShipment = async () => {
       if (!shipPartner) return;
       setCreatingShip(true); setMsg(null);
@@ -1055,7 +1072,7 @@
         const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/create-shipment`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ partner: shipPartner, weight: parseFloat(shipWeight) || 0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8 }),
+          body: JSON.stringify({ partner: shipPartner, weight: parseFloat(shipWeight) || 0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8, shipMode }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
@@ -1338,6 +1355,35 @@
                         </div>
                       </div>
                     </div>
+
+                    {shipPartner==='delhivery' && (
+                      <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+                        <div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Mode</div>
+                          <select className="form-select" value={shipMode} onChange={e=>{setShipMode(e.target.value);setShipRateInfo(null);}}>
+                            <option value="Surface">Surface</option>
+                            <option value="Express">Express</option>
+                          </select>
+                        </div>
+                        <button onClick={checkShipRate} disabled={shipRateLoad}
+                          style={{padding:'7px 12px',borderRadius:6,border:'1px solid var(--yellow)',background:'transparent',color:'var(--yellow)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:11}}>
+                          {shipRateLoad?'Checking…':'₹ Check Rate'}
+                        </button>
+                      </div>
+                    )}
+
+                    {shipRateInfo && (
+                      <div style={{padding:'8px 12px',borderRadius:7,background:shipRateInfo.error?'rgba(239,68,68,0.08)':'rgba(16,185,129,0.08)',border:`1px solid ${shipRateInfo.error?'rgba(239,68,68,0.3)':'rgba(16,185,129,0.3)'}`,fontSize:11}}>
+                        {shipRateInfo.error ? `❌ ${shipRateInfo.error}` : (
+                          <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                            {(shipRateInfo.rates||[]).map((r,i)=>(
+                              <div key={i}><span style={{color:'var(--text-muted)'}}>{r.mode}: </span><strong style={{color:'var(--green)'}}>₹{r.charge}</strong>{r.estimated_days&&<span style={{color:'var(--text-muted)',fontSize:10}}> · {r.estimated_days}d</span>}</div>
+                            ))}
+                            {shipRateInfo.rates?.length===0&&<span style={{color:'var(--text-muted)'}}>No rates available</span>}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
                       Customer address, items and COD amount will be auto-filled from this order.
