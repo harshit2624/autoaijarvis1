@@ -6280,6 +6280,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           shipment_width:  String(breadth),
           shipment_height: String(height),
           weight:          String(weight),
+          shipment_type:   (req.body?.shipMode||'Surface') === 'Express' ? 2 : 1,
           seller_name:   creds.company_name || req.vendor,
           seller_add:    creds.return_address || "",
           seller_city:   creds.return_city   || "",
@@ -9899,7 +9900,7 @@ app.delete("/admin/return-requests/:id", adminAuth, async (req, res) => {
 });
 
 // ── Shared: create reverse/forward shipment for a return/exchange request ─
-async function createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, warehouseId, warehouseName }) {
+async function createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, shipMode = 'Surface', warehouseId, warehouseName }) {
   // direction: 'reverse' = customer→vendor (pickup from customer)
   //            'forward' = vendor→customer (send exchange item out)
   const isReverse = direction === 'reverse';
@@ -10010,6 +10011,7 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
         shipment_width:  String(breadth),
         shipment_height: String(height),
         weight:          String(weight),
+        shipment_type:   shipMode === 'Express' ? 2 : 1,
         seller_name:   vendorAddr.name,
         seller_add:    vendorAddr.address1  || '',
         seller_city:   vendorAddr.city      || '',
@@ -10134,9 +10136,40 @@ app.get("/vendor/shipping/warehouses", vendorAuth, async (req, res) => {
 });
 
 // ── Admin: create shipment for return/exchange request ─────────────────────
+// Rate check for return request shipment
+app.post("/admin/return-requests/:id/rate-check", adminAuth, async (req, res) => {
+  try {
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { customer_pincode:1, _id:0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected` });
+    const creds = JSON.parse(credRow.credentials);
+
+    if (partner === 'delhivery') {
+      const destPin = rr.customer_pincode || '';
+      const originPin = creds.return_pincode || creds.pickup_pincode || '';
+      const md = parseFloat(weight) || 0.5;
+      const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
+      const chargeable = Math.max(md, vol).toFixed(2);
+      // Delhivery rate check API
+      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(chargeable*1000)}&pt=Pre-paid&cod=0`;
+      const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
+      const d = await r.json();
+      const rates = (d||[]).map(item => ({
+        mode: item.charge_type || item.product_type || 'Standard',
+        charge: item.total_amount || item.freight_charge || 0,
+        estimated_days: item.etd || item.tat || null,
+      })).filter(x => x.charge > 0);
+      return res.json({ rates, chargeable_weight: chargeable });
+    }
+    res.json({ rates: [], message: 'Rate check only available for Delhivery' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, res) => {
   try {
-    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8, warehouseId, warehouseName } = req.body || {};
+    const { direction, partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface', warehouseId, warehouseName } = req.body || {};
     if (!direction || !partner) return res.status(400).json({ error: 'direction and partner required' });
     if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
 
@@ -10165,7 +10198,7 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
       } catch {}
     }
 
-    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, warehouseId, warehouseName });
+    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, shipMode: shipMode||'Surface', warehouseId, warehouseName });
 
     // Save AWB to return_request doc
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
@@ -10211,7 +10244,7 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
       } catch {}
     }
 
-    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, warehouseId, warehouseName });
+    const result = await createRRShipment({ rr, direction, partner, creds, weight, length, breadth, height, shipMode: shipMode||'Surface', warehouseId, warehouseName });
 
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
     await mdb.collection('return_requests').updateOne(

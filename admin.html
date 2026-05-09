@@ -2781,6 +2781,9 @@
     const [length,  setLength]    = useState('15');
     const [breadth, setBreadth]   = useState('12');
     const [height,  setHeight]    = useState('8');
+    const [shipMode, setShipMode] = useState('Surface');
+    const [rateInfo, setRateInfo] = useState(null);
+    const [rateLoading, setRateLoading] = useState(false);
     const [creating, setCreating] = useState('');
     const [msg, setMsg]           = useState(null);
     // Manual AWB state
@@ -2824,13 +2827,27 @@
         .then(r=>r.json()).then(d=>{ const wh=d.warehouses||[]; setWarehouses(wh); setWarehouse(wh[0]||null); }).catch(()=>{}).finally(()=>setWhLoading(false));
     },[partner]);
 
+    const checkRates = async () => {
+      if (!partner) return;
+      setRateLoading(true); setRateInfo(null);
+      try {
+        const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/rate-check`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8 }),
+        });
+        const d = await r.json();
+        setRateInfo(d);
+      } catch(e) { setRateInfo({error:e.message}); }
+      setRateLoading(false);
+    };
+
     const createShipment = async (direction) => {
       if (!partner) { setMsg({type:'error',text:'Select a shipping partner first.'}); return; }
       setCreating(direction); setMsg(null);
       try {
         const r = await fetch(`${API}/admin/return-requests/${rr.request_id}/create-shipment`, {
           method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-          body: JSON.stringify({ direction, partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8, warehouseId: warehouse?.id||'', warehouseName: warehouse?.name||'' }),
+          body: JSON.stringify({ direction, partner, weight:parseFloat(weight)||0.5, length:parseFloat(length)||15, breadth:parseFloat(breadth)||12, height:parseFloat(height)||8, shipMode, warehouseId: warehouse?.id||'', warehouseName: warehouse?.name||'' }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
@@ -2943,10 +2960,43 @@
               {[['Weight (kg)','weight',weight,setWeight],['L (cm)','length',length,setLength],['B (cm)','breadth',breadth,setBreadth],['H (cm)','height',height,setHeight]].map(([lbl,k,val,set])=>(
                 <div key={k}>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{lbl}</div>
-                  <input type="number" value={val} onChange={e=>set(e.target.value)} style={{width:68,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}} />
+                  <input type="number" value={val} onChange={e=>{ set(e.target.value); setRateInfo(null); }} style={{width:68,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}} />
                 </div>
               ))}
+              {partner==='delhivery' && (
+                <div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Mode</div>
+                  <select value={shipMode} onChange={e=>{setShipMode(e.target.value);setRateInfo(null);}}
+                    style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                    <option value="Surface">Surface</option>
+                    <option value="Express">Express</option>
+                  </select>
+                </div>
+              )}
+              {partner==='delhivery' && (
+                <div style={{display:'flex',alignItems:'flex-end'}}>
+                  <button className="btn btn-ghost btn-sm" onClick={checkRates} disabled={rateLoading}
+                    style={{fontSize:10,borderColor:'var(--yellow)',color:'var(--yellow)'}}>
+                    {rateLoading?'Checking…':'₹ Check Rate'}
+                  </button>
+                </div>
+              )}
             </div>
+            {rateInfo && (
+              <div style={{marginBottom:10,padding:'8px 12px',borderRadius:7,background: rateInfo.error?'var(--red-bg)':'rgba(16,185,129,0.08)',border:`1px solid ${rateInfo.error?'rgba(239,68,68,0.3)':'rgba(16,185,129,0.3)'}`,fontSize:11}}>
+                {rateInfo.error ? `❌ ${rateInfo.error}` : (
+                  <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                    {(rateInfo.rates||[]).map((r,i)=>(
+                      <div key={i} style={{color:'var(--text)'}}>
+                        <span style={{color:'var(--text-muted)'}}>{r.mode}: </span>
+                        <strong style={{color:'var(--green)'}}>₹{r.charge}</strong>
+                        {r.estimated_days&&<span style={{color:'var(--text-muted)',fontSize:10}}> · {r.estimated_days}d</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {warehouse?.address && <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:10}}>📍 {warehouse.address}</div>}
 
             {/* Shipment sections */}
