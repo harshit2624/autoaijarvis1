@@ -6295,6 +6295,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
       const shipData = {
         pickup_location: { name: creds.pickup_location || "Primary" },
+        shipment_mode: shipMode === 'Express' ? 'E' : 'S',
         shipments: [{
           name:          custName,
           add:           addr.address1 || "",
