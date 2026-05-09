@@ -500,16 +500,15 @@ async function applyTagMappings(orderId, tags, financialStatus) {
         try {
           const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items`);
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
-          // Multi-vendor orders: tag mappings must NOT touch individual vendor stages.
-          // Each vendor's stage is managed independently via ShipSagar cron or manual admin override.
-          if (vendors.length > 1) { /* skip vendor stage sync */ }
-          else {
-            const nowMs = Date.now();
-            for (const vendor of vendors) {
-              const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
-              if (!isForce && existing && ADVANCED.includes(existing.stage)) continue;
-              await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: existing?.stage_started_at || nowMs, warning_sent: 0, penalty_triggered: 0 });
-            }
+          const ORDER_WIDE_STAGES = ['confirmed', 'partial']; // apply to all vendors regardless of order type
+          const nowMs = Date.now();
+          for (const vendor of vendors) {
+            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
+            // Multi-vendor: only allow confirmed/partial via tag mapping (not transit/delivered etc.)
+            if (vendors.length > 1 && !ORDER_WIDE_STAGES.includes(newStage)) continue;
+            if (!isForce && existing && ADVANCED.includes(existing.stage)) continue;
+            const newStartedAt = ORDER_WIDE_STAGES.includes(newStage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
+            await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: newStartedAt, warning_sent: 0, penalty_triggered: 0 });
           }
         } catch(e) { console.error('applyTagMappings vendor sync error:', e.message); }
       }
