@@ -3421,10 +3421,26 @@
     const [prodLoad,  setProdLoad]  = useState(false);
     const [msg,       setMsg]       = useState('');
 
+    const [requesting, setRequesting] = useState({});
+    const [reqMsg, setReqMsg] = useState({});
+
     const loadProducts = () => {
       setProdLoad(true);
       fetch(`${API}/vendor/shopify/products`, { headers:{ Authorization:`Bearer ${authToken}` } })
         .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setProdLoad(false); });
+    };
+
+    const requestUpload = async (p) => {
+      setRequesting(r=>({...r,[p.id]:true}));
+      try {
+        const r = await fetch(`${API}/vendor/shopify/request-upload`, {
+          method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${authToken}`},
+          body: JSON.stringify({ product_id: String(p.id), product_title: p.title, product_image: p.images?.[0]?.src||'', variants_count: p.variants?.length||0 }),
+        });
+        const d = await r.json();
+        setReqMsg(m=>({...m,[p.id]: d.success ? '✅ Request sent!' : ('❌ '+(d.error||'Failed'))}));
+      } catch(e) { setReqMsg(m=>({...m,[p.id]:'❌ '+e.message})); }
+      setRequesting(r=>({...r,[p.id]:false}));
     };
 
     const loadStatus = () => {
@@ -3497,8 +3513,16 @@
                       <div style={{flex:1}}>
                         <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{p.title}</div>
                         <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{p.variants?.length} variant{p.variants?.length!==1?'s':''} · {p.status}</div>
+                        {reqMsg[p.id] && <div style={{fontSize:10,marginTop:4,color:reqMsg[p.id].startsWith('✅')?'var(--green)':'var(--red)'}}>{reqMsg[p.id]}</div>}
                       </div>
-                      <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--green-dim)',color:'var(--green)'}}>Visible to admin</span>
+                      {p.mapped
+                        ? <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--green-dim)',color:'var(--green)',border:'1px solid var(--green)'}}>✓ Mapped</span>
+                        : p.pending_request || reqMsg[p.id]==='✅ Request sent!'
+                          ? <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--yellow-bg)',color:'var(--yellow)',border:'1px solid var(--yellow)'}}>⏳ Pending</span>
+                          : <button onClick={()=>requestUpload(p)} disabled={requesting[p.id]} style={{fontSize:10,padding:'4px 10px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',whiteSpace:'nowrap'}}>
+                              {requesting[p.id]?'Sending…':'📤 Request Upload'}
+                            </button>
+                      }
                     </div>
                   );
                 })}

@@ -7443,7 +7443,17 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
   if (!conn) return res.status(404).json({ error: "Shopify store not connected." });
   try {
     const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
-    res.json({ products: data.products || [] });
+    const products = data.products || [];
+    // Check which are mapped and which have pending requests
+    const mappings = await VPM.get(req.vendor);
+    const mappedProductIds = new Set(mappings.map(m => m.vendor_product_id));
+    const pendingReqs = await mdb.collection('product_upload_requests').find({ vendor_name: req.vendor, status: 'pending' }, { projection: { product_id: 1, _id: 0 } }).toArray();
+    const pendingIds = new Set(pendingReqs.map(r => r.product_id));
+    res.json({ products: products.map(p => ({
+      ...p,
+      mapped: mappedProductIds.has(String(p.id)),
+      pending_request: pendingIds.has(String(p.id)),
+    })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7451,6 +7461,38 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
 app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
   const rows = await VSC.all();
   res.json({ connections: rows.map(r => ({ vendor_name: r.vendor_name, shop_domain: r.shop_domain, scope: r.scope, installed_at: r.installed_at, sync_enabled: r.sync_enabled })) });
+});
+
+// ── Vendor: request product upload to admin store ────────────────────────
+app.post('/vendor/shopify/request-upload', vendorAuth, async (req, res) => {
+  const { product_id, product_title, product_image, variants_count } = req.body || {};
+  if (!product_id) return res.status(400).json({ error: 'product_id required' });
+  // Check if already requested
+  const existing = await mdb.collection('product_upload_requests').findOne({ vendor_name: req.vendor, product_id: String(product_id), status: 'pending' });
+  if (existing) return res.status(400).json({ error: 'Already requested — waiting for admin approval' });
+  await mdb.collection('product_upload_requests').insertOne({
+    vendor_name: req.vendor, product_id: String(product_id),
+    product_title, product_image: product_image||'', variants_count: variants_count||0,
+    status: 'pending', created_at: new Date().toISOString(),
+  });
+  res.json({ success: true });
+});
+
+// ── Admin: list all upload requests ──────────────────────────────────────
+app.get('/admin/vendor-sync/upload-requests', adminAuth, async (req, res) => {
+  const requests = await mdb.collection('product_upload_requests').find({}).sort({ created_at: -1 }).toArray();
+  res.json({ requests: requests.map(r => ({ ...r, _id: r._id.toString() })) });
+});
+
+// ── Admin: update upload request status ──────────────────────────────────
+app.put('/admin/vendor-sync/upload-requests/:id', adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const { status, action } = req.body || {};
+  await mdb.collection('product_upload_requests').updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status, action: action||null, updated_at: new Date().toISOString() } }
+  );
+  res.json({ success: true });
 });
 
 // ── Admin: assign vendor name to a connected store ────────────────────────

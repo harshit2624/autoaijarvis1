@@ -5191,7 +5191,10 @@
     const [mappings,    setMappings]    = useState([]);
     const [loading,     setLoading]     = useState(false);
     const [prodLoading, setProdLoading] = useState(false);
-    const [tab,         setTab]         = useState('products'); // products | mappings
+    const [tab,         setTab]         = useState('products'); // products | mappings | approvals
+    const [approvals,   setApprovals]   = useState([]);
+    const [approvLoad,  setApprovLoad]  = useState(false);
+    const [approvMsg,   setApprovMsg]   = useState({});
     const [importing,   setImporting]   = useState({}); // productId -> bool
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
@@ -5255,6 +5258,31 @@
       setSyncingProduct(p=>({...p,[productId]:false}));
       setMsg(d.success ? `✅ Synced ${d.synced} variant${d.synced!==1?'s':''}` : `❌ ${d.error}`);
       loadVendorProducts(selected);
+    };
+
+    const loadApprovals = () => {
+      setApprovLoad(true);
+      fetch(`/admin/vendor-sync/upload-requests`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{ setApprovals(d.requests||[]); setApprovLoad(false); });
+    };
+
+    const handleApproval = async (reqId, action, vendorName, productId) => {
+      setApprovMsg(m=>({...m,[reqId]:'loading'}));
+      try {
+        if (action === 'import') {
+          // Import as new product
+          const r = await fetch('/admin/vendor-sync/import', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+            body: JSON.stringify({ vendor_name: vendorName, vendor_product_id: productId, sync_inventory: true }) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error);
+          await fetch(`/admin/vendor-sync/upload-requests/${reqId}`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ status:'approved', action:'imported' }) });
+          setApprovMsg(m=>({...m,[reqId]:'✅ Imported!'}));
+        } else if (action === 'reject') {
+          await fetch(`/admin/vendor-sync/upload-requests/${reqId}`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ status:'rejected' }) });
+          setApprovMsg(m=>({...m,[reqId]:'Rejected'}));
+        }
+        loadApprovals();
+      } catch(e) { setApprovMsg(m=>({...m,[reqId]:'❌ '+e.message})); }
     };
 
     const unmapVariant = async (id) => {
@@ -5411,6 +5439,7 @@
                 <div style={{display:'flex',gap:8}}>
                   <button className={`btn btn-sm ${tab==='products'?'btn-primary':'btn-ghost'}`} onClick={()=>setTab('products')}>Products</button>
                   <button className={`btn btn-sm ${tab==='mappings'?'btn-primary':'btn-ghost'}`} onClick={()=>{ setTab('mappings'); loadMappings(); }}>Mappings ({mappings.length})</button>
+                  <button className={`btn btn-sm ${tab==='approvals'?'btn-primary':'btn-ghost'}`} onClick={()=>{ setTab('approvals'); loadApprovals(); }} style={{borderColor:'var(--yellow)',color:tab==='approvals'?'#fff':'var(--yellow)'}}>📤 Approvals {approvals.filter(a=>a.status==='pending').length>0?`(${approvals.filter(a=>a.status==='pending').length})`:''}</button>
                   <button className="btn btn-sm btn-ghost" onClick={syncInventory} disabled={syncing} title="Sync price & inventory from vendor store to CrosCrow for all mapped variants">
                     {syncing?'Syncing…':'↻ Sync Price & Stock'}
                   </button>
@@ -5473,6 +5502,54 @@
               )}
 
               {/* MAPPINGS TAB */}
+              {tab==='approvals' && (
+                approvLoad ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>Loading…</div> :
+                approvals.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No upload requests yet.</div> :
+                <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                  {approvals.map(req=>(
+                    <div key={req._id} style={{background:'var(--bg-card)',border:`1px solid ${req.status==='pending'?'var(--yellow)':req.status==='approved'?'var(--green)':'var(--border)'}`,borderRadius:10,padding:14,display:'flex',gap:12,alignItems:'center'}}>
+                      {req.product_image && <img src={req.product_image} style={{width:52,height:52,objectFit:'cover',borderRadius:7,flexShrink:0}} alt=""/>}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:3}}>{req.product_title}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
+                          <span style={{color:'var(--indigo)',fontWeight:600}}>{req.vendor_name}</span>
+                          {' · '}{req.variants_count} variant{req.variants_count!==1?'s':''}
+                          {' · '}{new Date(req.created_at).toLocaleDateString('en-IN')}
+                        </div>
+                        {approvMsg[req._id] && approvMsg[req._id]!=='loading' && (
+                          <div style={{fontSize:11,color:approvMsg[req._id].startsWith('✅')?'var(--green)':'var(--red)'}}>{approvMsg[req._id]}</div>
+                        )}
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0,alignItems:'flex-end'}}>
+                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,fontWeight:700,
+                          background:req.status==='pending'?'var(--yellow-bg)':req.status==='approved'?'var(--green-dim)':'var(--bg-card2)',
+                          color:req.status==='pending'?'var(--yellow)':req.status==='approved'?'var(--green)':'var(--text-muted)',
+                          border:`1px solid ${req.status==='pending'?'var(--yellow)':req.status==='approved'?'var(--green)':'var(--border)'}`
+                        }}>{req.status.toUpperCase()}</span>
+                        {req.status==='pending' && (
+                          <div style={{display:'flex',gap:6}}>
+                            <button className="btn btn-sm btn-indigo" disabled={approvMsg[req._id]==='loading'}
+                              onClick={()=>handleApproval(req._id, 'import', req.vendor_name, req.product_id)}>
+                              ↓ Import as New
+                            </button>
+                            <button className="btn btn-sm btn-ghost" disabled={approvMsg[req._id]==='loading'}
+                              style={{borderColor:'var(--green)',color:'var(--green)'}}
+                              onClick={()=>{ setMapModal({ vendorProduct:{ id:req.product_id, title:req.product_title }, vendorVariant:{ id:req.product_id, title:'Select variant', price:0 }, uploadRequestId: req._id }); }}>
+                              🔗 Map to Existing
+                            </button>
+                            <button className="btn btn-sm btn-ghost" disabled={approvMsg[req._id]==='loading'}
+                              style={{borderColor:'var(--red)',color:'var(--red)'}}
+                              onClick={()=>handleApproval(req._id, 'reject', req.vendor_name, req.product_id)}>
+                              ✕
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {tab==='mappings' && (
                 mappings.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No variant mappings yet. Import or map products from the Products tab.</div> :
                 <div style={{display:'flex',flexDirection:'column',gap:8}}>
