@@ -6923,12 +6923,13 @@ app.get('/vendor/shopify/app', (req, res) => {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CrosCrow</title>
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${process.env.VENDOR_APP_CLIENT_ID}"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f3f5;min-height:100vh;padding:24px 16px}
     .header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
-    .logo{width:40px;height:40px;background:#111;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+    .logo{width:40px;height:40px;border-radius:10px;overflow:hidden;flex-shrink:0}
+    .logo img{width:100%;height:100%;object-fit:cover}
     .header h1{font-size:20px;font-weight:700;color:#111}
     .header p{font-size:13px;color:#666;margin-top:2px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
@@ -6954,7 +6955,7 @@ app.get('/vendor/shopify/app', (req, res) => {
 </head>
 <body>
   <div class="header">
-    <div class="logo">🐦</div>
+    <div class="logo"><img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CrosCrow"/></div>
     <div>
       <h1>CrosCrow</h1>
       <p id="vendor-label">Loading…</p>
@@ -6966,16 +6967,24 @@ app.get('/vendor/shopify/app', (req, res) => {
   <script>
     const PANEL_URL = '${vendorPanelUrl}';
     const SERVER = '${process.env.SERVER_URL || 'http://localhost:3001'}';
-    const params = new URLSearchParams(window.location.search);
-    const host = params.get('host') || '';
-    const appBridge = window['app-bridge'];
+
+    async function getToken() {
+      // Modern App Bridge (v3+) exposes window.shopify.idToken()
+      if (window.shopify?.idToken) return await window.shopify.idToken();
+      // Fallback: legacy App Bridge
+      const ab = window['app-bridge'];
+      if (ab) {
+        const params = new URLSearchParams(window.location.search);
+        const host = params.get('host') || '';
+        const app = ab.createApp({ apiKey: '${CLIENT_ID}', host });
+        return await ab.getSessionToken(app);
+      }
+      throw new Error('App Bridge not available');
+    }
 
     async function init() {
-      if (!appBridge || !host) { showError('App Bridge not available.'); return; }
       try {
-        const app = appBridge.createApp({ apiKey: '${CLIENT_ID}', host });
-        const { getSessionToken } = appBridge;
-        const token = await getSessionToken(app);
+        const token = await getToken();
 
         // Verify session + get vendor summary
         const res = await fetch(SERVER + '/vendor/shopify/summary', {
@@ -6983,13 +6992,13 @@ app.get('/vendor/shopify/app', (req, res) => {
         });
         if (!res.ok) { showError('Not connected. Please install via CrosCrow vendor panel.'); return; }
         const d = await res.json();
-        render(d, token, app, getSessionToken);
+        render(d);
       } catch(e) {
         showError('Error: ' + e.message);
       }
     }
 
-    function render(d, token, app, getSessionToken) {
+    function render(d) {
       document.getElementById('vendor-label').textContent = d.vendor_name || 'Vendor';
       document.getElementById('content').innerHTML = \`
         <div class="grid">
@@ -7014,9 +7023,7 @@ app.get('/vendor/shopify/app', (req, res) => {
       \`;
 
       // Refresh token every 50s
-      setInterval(async () => {
-        try { await getSessionToken(app); } catch(e) {}
-      }, 50000);
+      setInterval(async () => { try { await getToken(); } catch(e) {} }, 50000);
     }
 
     function showError(msg) {
