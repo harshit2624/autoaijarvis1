@@ -6184,13 +6184,17 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
       const md = parseFloat(weight) || 0.5;
       const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
       const chargeable = Math.max(md, vol).toFixed(2);
-      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
-      const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
-      const text = await r.text();
-      console.log(`[rate-check] Delhivery raw response:`, text.slice(0, 500));
-      const d = JSON.parse(text);
-      const rates = parseDelhiveryRates(d);
-      return res.json({ rates, chargeable_weight: chargeable, _raw: d });
+      const baseUrl = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
+      const headers = { Authorization: `Token ${creds.api_token}` };
+      const [surfRes, exprRes] = await Promise.all([
+        fetch(`${baseUrl}&md=S`, { headers }).then(r=>r.json()).catch(()=>null),
+        fetch(`${baseUrl}&md=E`, { headers }).then(r=>r.json()).catch(()=>null),
+      ]);
+      const rates = [
+        surfRes?.[0] ? { mode: 'Surface', charge: surfRes[0].total_amount, estimated_days: surfRes[0].etd || null } : null,
+        exprRes?.[0] ? { mode: 'Express', charge: exprRes[0].total_amount, estimated_days: exprRes[0].etd || null } : null,
+      ].filter(Boolean);
+      return res.json({ rates, chargeable_weight: chargeable });
     }
     res.json({ rates: [], message: 'Rate check only available for Delhivery' });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -10192,7 +10196,7 @@ app.post("/admin/return-requests/:id/rate-check", adminAuth, async (req, res) =>
       const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
       const chargeable = Math.max(md, vol).toFixed(2);
       // Delhivery rate check API
-      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
+      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=S&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
       const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
       const d = await r.json();
       const rates = parseDelhiveryRates(d);
@@ -10263,7 +10267,7 @@ app.post("/vendor/return-requests/:id/rate-check", vendorAuth, async (req, res) 
       const md = parseFloat(weight) || 0.5;
       const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
       const chargeable = Math.max(md, vol).toFixed(2);
-      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=${chargeable}&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
+      const url = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?md=S&ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
       const r = await fetch(url, { headers: { Authorization: `Token ${creds.api_token}` } });
       const d = await r.json();
       const rates = parseDelhiveryRates(d);
