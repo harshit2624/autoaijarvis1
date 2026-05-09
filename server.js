@@ -3717,8 +3717,13 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
             const ordVendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
             const isSingleVendor = ordVendors.length === 1;
-            // Only suppress shopify 'ready' for single-vendor orders already past ready
-            if (shopifyDerived === 'ready' && isSingleVendor && BEYOND_READY.includes(metaStage))
+            // Multi-vendor: don't let order_meta stage override individual vendor stage
+            if (!isSingleVendor) {
+              if (shopifyDerived === 'ready' && BEYOND_READY.includes(stored)) return stored;
+              return shopifyDerived ? higherStage(stored, shopifyDerived) : stored;
+            }
+            // Single-vendor: suppress shopify 'ready' if already past ready
+            if (shopifyDerived === 'ready' && BEYOND_READY.includes(metaStage))
               return higherStage(stored, metaStage);
             return higherStage(higherStage(stored, metaStage), shopifyDerived);
           })(),
