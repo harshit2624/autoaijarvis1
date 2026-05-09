@@ -309,6 +309,7 @@
     .b-fulfilled   { background: var(--green-dim); color: var(--green);  } .b-fulfilled  .bdot { background: var(--green);  }
     .b-pending     { background: var(--yellow-bg); color: var(--yellow); } .b-pending    .bdot { background: var(--yellow); }
     .b-cancelled   { background: var(--red-bg);    color: var(--red);    } .b-cancelled  .bdot { background: var(--red);    }
+    .b-misc        { background: rgba(156,163,175,0.15); color: #9ca3af; } .b-misc       .bdot { background: #9ca3af;       }
     .b-partial     { background: var(--orange-bg); color: var(--orange); } .b-partial    .bdot { background: var(--orange); }
     .b-refunded    { background: var(--purple-bg); color: var(--purple); } .b-refunded   .bdot { background: var(--purple); }
 
@@ -1741,6 +1742,7 @@
     { id:'rto',       label:'RTO',                  icon:'↩' },
     { id:'hold',      label:'Hold',                 icon:'⏸' },
     { id:'cancelled', label:'Cancelled',            icon:'✕' },
+    { id:'misc',      label:'Miscellaneous',        icon:'◌' },
   ];
 
   /* ══════════════════════════════════
@@ -1795,7 +1797,7 @@
     const MobileOrderRow = ({ o }) => {
       const qty = o.myItems.reduce((s,x)=>s+x.quantity,0);
       const timeStr = new Date(o.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
-      const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa' };
+      const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa',misc:'#9ca3af' };
       const stageColor = stageColors[o.stage||'new'] || '#6366f1';
       return (
         <div onClick={()=>onOpenOrder(o)} style={{padding:'14px 16px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'flex-start',cursor:'pointer',active:{background:'var(--bg-hover)'}}}>

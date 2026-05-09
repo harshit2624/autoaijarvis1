@@ -210,6 +210,7 @@
     .b-penalty   { background: #2d0a0a;           color: #f87171;       } .b-penalty   .bdot { background: #f87171; }
     .b-hold      { background: var(--purple-bg);  color: var(--purple); } .b-hold      .bdot { background: var(--purple); }
     .b-cancelled { background: var(--red-bg);     color: var(--red);    } .b-cancelled .bdot { background: var(--red); }
+    .b-misc      { background: rgba(156,163,175,0.15); color: #9ca3af;   } .b-misc      .bdot { background: #9ca3af; }
     .b-pending   { background: var(--yellow-bg);  color: var(--yellow); } .b-pending   .bdot { background: var(--yellow); }
     .b-paid      { background: var(--green-dim);  color: var(--green);  } .b-paid      .bdot { background: var(--green); }
 
@@ -635,6 +636,7 @@
     { id:'penalty',   label:'Penalty',        color:'red',    icon:'⚠' },
     { id:'hold',      label:'Hold',           color:'purple', icon:'⏸' },
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
+    { id:'misc',      label:'Miscellaneous',  color:'gray',   icon:'◌' },
   ];
 
   function trackingUrlFromCourier(courier='', awb='') {
@@ -2429,7 +2431,7 @@
       return groups;
     };
 
-    const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa' };
+    const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa',misc:'#9ca3af' };
 
     const MobileOrderRow = ({ o }) => {
       const timeStr = new Date(o.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
@@ -2611,7 +2613,7 @@
             <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)',whiteSpace:'nowrap'}}>{selected.size} selected</span>
             <select className="form-select" style={{fontSize:11,padding:'5px 8px',flex:'0 0 140px'}} value={bulkStage} onChange={e=>setBulkStage(e.target.value)}>
               <option value="">Set stage…</option>
-              {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled'].map(s=><option key={s} value={s}>{s}</option>)}
+              {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled','misc'].map(s=><option key={s} value={s}>{s==='misc'?'Miscellaneous':s}</option>)}
             </select>
             {!isMobile && <>
               <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 130px',minWidth:100}} placeholder="Add tags" value={bulkAddTag} onChange={e=>setBulkAddTag(e.target.value)}/>

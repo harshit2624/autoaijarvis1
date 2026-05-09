@@ -317,7 +317,7 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
-const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
 const TERMINAL_STAGES = ['rto','cancelled']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
   const aTerm = TERMINAL_STAGES.includes(a);
@@ -4788,7 +4788,7 @@ app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
   if (!stage && add_tags.length === 0 && remove_tags.length === 0)
     return res.status(400).json({ error: "Specify stage or tags to add/remove." });
 
-  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
   if (stage && !VALID_STAGES.includes(stage))
     return res.status(400).json({ error: "Invalid stage." });
 
@@ -5673,7 +5673,7 @@ app.put("/admin/tag-mappings/:id/priority", adminAuth, async (req, res) => {
 app.post("/admin/tag-mappings", adminAuth, async (req, res) => {
   const { shopify_tag, stage, priority = 99 } = req.body || {};
   if (!shopify_tag || !stage) return res.status(400).json({ error: "shopify_tag and stage required." });
-  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
   if (!VALID_STAGES.includes(stage)) return res.status(400).json({ error: `Invalid stage '${stage}'. Valid: ${VALID_STAGES.join(", ")}` });
   const existing = await mdb.collection('tag_mappings').findOne({ shopify_tag: { $regex: new RegExp(`^${shopify_tag.trim()}$`, 'i') } });
   if (existing) return res.status(400).json({ error: "A mapping for this tag already exists." });
