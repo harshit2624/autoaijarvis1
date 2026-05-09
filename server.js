@@ -6913,72 +6913,188 @@ app.post('/webhooks/shop/redact', express.raw({type:'application/json'}), async 
   res.status(200).send('OK');
 });
 
-// GET /vendor/shopify/app — embedded app page shown inside Shopify admin iframe
+// GET /vendor/shopify/app — embedded app dashboard inside Shopify admin
 app.get('/vendor/shopify/app', (req, res) => {
-  const shop = req.query.shop || '';
   const vendorPanelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+  const CLIENT_ID = process.env.VENDOR_APP_CLIENT_ID || '';
   res.send(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>CrosCrow Sync</title>
+  <title>CrosCrow</title>
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f6f6f7;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-    .card{background:#fff;border-radius:12px;padding:40px 36px;max-width:480px;width:100%;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08)}
-    .logo{width:56px;height:56px;background:#111;border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:24px}
-    h1{font-size:22px;font-weight:700;color:#111;margin-bottom:8px}
-    p{font-size:14px;color:#666;line-height:1.6;margin-bottom:28px}
-    .btn{display:inline-block;background:#5c6ac4;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;border:none;transition:background 0.15s}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f3f5;min-height:100vh;padding:24px 16px}
+    .header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+    .logo{width:40px;height:40px;background:#111;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+    .header h1{font-size:20px;font-weight:700;color:#111}
+    .header p{font-size:13px;color:#666;margin-top:2px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+    .stat{background:#fff;border-radius:10px;padding:18px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
+    .stat-val{font-size:28px;font-weight:800;line-height:1;margin-bottom:4px}
+    .stat-label{font-size:12px;color:#666;font-weight:500}
+    .btn{display:block;width:100%;background:#5c6ac4;color:#fff;text-decoration:none;padding:14px;border-radius:10px;font-size:15px;font-weight:600;text-align:center;border:none;cursor:pointer;transition:background 0.15s;margin-bottom:10px}
     .btn:hover{background:#4959bd}
-    .sub{margin-top:16px;font-size:12px;color:#999}
+    .btn-outline{background:#fff;color:#5c6ac4;border:2px solid #5c6ac4}
+    .btn-outline:hover{background:#f0f0ff}
+    .orders{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.08);margin-bottom:24px}
+    .orders h3{font-size:13px;font-weight:700;color:#111;margin-bottom:12px;letter-spacing:.5px;text-transform:uppercase}
+    .order-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:13px}
+    .order-row:last-child{border-bottom:none}
+    .badge{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+    .b-ready{background:#fef3c7;color:#d97706}
+    .b-transit{background:#e0f2fe;color:#0284c7}
+    .b-confirmed{background:#dbeafe;color:#1d4ed8}
+    .status{font-size:12px;color:#999;text-align:center;margin-top:12px}
+    .loading{text-align:center;color:#999;font-size:13px;padding:32px}
+    .vendor-name{font-size:12px;color:#5c6ac4;font-weight:600;margin-bottom:16px}
   </style>
 </head>
 <body>
-  <div class="card">
+  <div class="header">
     <div class="logo">🐦</div>
-    <h1>CrosCrow Sync</h1>
-    <p>Manage your inventory, sync products, and track orders — all in one place on the CrosCrow vendor portal.</p>
-    <a href="${vendorPanelUrl}" class="btn">Open CrosCrow Panel →</a>
-    <div class="sub" id="status">Connecting…</div>
+    <div>
+      <h1>CrosCrow</h1>
+      <p id="vendor-label">Loading…</p>
+    </div>
   </div>
+
+  <div id="content" class="loading">Connecting to Shopify…</div>
+
   <script>
-    const appBridge = window['app-bridge'];
+    const PANEL_URL = '${vendorPanelUrl}';
+    const SERVER = '${process.env.SERVER_URL || 'http://localhost:3001'}';
     const params = new URLSearchParams(window.location.search);
     const host = params.get('host') || '';
-    let sessionToken = null;
+    const appBridge = window['app-bridge'];
 
-    async function initApp() {
-      if (!appBridge || !host) return;
+    async function init() {
+      if (!appBridge || !host) { showError('App Bridge not available.'); return; }
       try {
-        const app = appBridge.createApp({
-          apiKey: '${process.env.VENDOR_APP_CLIENT_ID}',
-          host: host,
-        });
-        // Get session token — satisfies "Using session tokens for user authentication" check
+        const app = appBridge.createApp({ apiKey: '${CLIENT_ID}', host });
         const { getSessionToken } = appBridge;
-        sessionToken = await getSessionToken(app);
-        // Verify with backend
-        const resp = await fetch('/vendor/shopify/verify-session', {
-          headers: { 'Authorization': 'Bearer ' + sessionToken }
+        const token = await getSessionToken(app);
+
+        // Verify session + get vendor summary
+        const res = await fetch(SERVER + '/vendor/shopify/summary', {
+          headers: { 'Authorization': 'Bearer ' + token }
         });
-        if (resp.ok) {
-          document.getElementById('status').textContent = 'Connected ✓';
-          document.getElementById('status').style.color = '#2da44e';
-        }
+        if (!res.ok) { showError('Not connected. Please install via CrosCrow vendor panel.'); return; }
+        const d = await res.json();
+        render(d, token, app, getSessionToken);
       } catch(e) {
-        console.warn('App Bridge init:', e);
+        showError('Error: ' + e.message);
       }
     }
-    initApp();
+
+    function render(d, token, app, getSessionToken) {
+      document.getElementById('vendor-label').textContent = d.vendor_name || 'Vendor';
+      document.getElementById('content').innerHTML = \`
+        <div class="grid">
+          <div class="stat"><div class="stat-val" style="color:#d97706">\${d.ready}</div><div class="stat-label">Ready to Ship</div></div>
+          <div class="stat"><div class="stat-val" style="color:#0284c7">\${d.transit}</div><div class="stat-label">In Transit</div></div>
+          <div class="stat"><div class="stat-val" style="color:#1d4ed8">\${d.confirmed}</div><div class="stat-label">Confirmed</div></div>
+          <div class="stat"><div class="stat-val" style="color:#10b981">\${d.delivered_today}</div><div class="stat-label">Delivered Today</div></div>
+        </div>
+        \${d.pending_orders.length > 0 ? \`
+        <div class="orders">
+          <h3>📦 Needs Attention</h3>
+          \${d.pending_orders.map(o => \`
+            <div class="order-row">
+              <span style="font-weight:600">\${o.name}</span>
+              <span style="color:#666;font-size:12px">\${o.customer}</span>
+              <span class="badge b-\${o.stage}">\${o.stage.toUpperCase()}</span>
+            </div>
+          \`).join('')}
+        </div>\` : ''}
+        <a href="\${PANEL_URL}" class="btn" target="_top">🚀 Open Full Vendor Panel</a>
+        <div class="status" id="status">✓ Connected via Shopify</div>
+      \`;
+
+      // Refresh token every 50s
+      setInterval(async () => {
+        try { await getSessionToken(app); } catch(e) {}
+      }, 50000);
+    }
+
+    function showError(msg) {
+      document.getElementById('content').innerHTML = \`
+        <div style="background:#fff;border-radius:10px;padding:32px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+          <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+          <div style="font-size:14px;color:#666;margin-bottom:20px">\${msg}</div>
+          <a href="\${PANEL_URL}" class="btn" target="_top">Go to Vendor Panel</a>
+        </div>
+      \`;
+    }
+
+    init();
   </script>
 </body>
 </html>`);
 });
 
-// POST /vendor/shopify/verify-session — verifies App Bridge session token JWT
+// GET /vendor/shopify/summary — embedded app dashboard data (session token auth)
+app.get('/vendor/shopify/summary', async (req, res) => {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!token) return res.status(401).json({ error: 'No token' });
+
+  // Verify session token JWT
+  let shop;
+  try {
+    const secret = process.env.VENDOR_APP_SECRET || '';
+    const [h, p, s] = token.split('.');
+    if (!h || !p || !s) throw new Error('malformed');
+    const expected = crypto.createHmac('sha256', secret).update(h + '.' + p).digest('base64url');
+    if (expected !== s) throw new Error('invalid signature');
+    const payload = JSON.parse(Buffer.from(p, 'base64url').toString());
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('expired');
+    shop = (payload.dest || '').replace('https://', '');
+  } catch(e) {
+    return res.status(401).json({ error: e.message });
+  }
+
+  // Find vendor from shop domain
+  const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop });
+  if (!conn?.vendor_name) return res.status(404).json({ error: 'Store not connected to a vendor' });
+  const vendorName = conn.vendor_name;
+
+  // Get vendor order stages
+  const vendorStages = await mdb.collection('order_vendor_stage').find({ vendor_name: vendorName }).toArray();
+  const stageMap = {};
+  vendorStages.forEach(vs => { stageMap[vs.shopify_id] = vs.stage; });
+
+  const ready = vendorStages.filter(vs => vs.stage === 'ready').length;
+  const transit = vendorStages.filter(vs => vs.stage === 'transit').length;
+  const confirmed = vendorStages.filter(vs => vs.stage === 'confirmed').length;
+
+  // Delivered today
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const deliveredToday = vendorStages.filter(vs => vs.stage === 'delivered' && new Date(vs.updated_at) >= todayStart).length;
+
+  // Pending orders needing attention (ready + confirmed, max 8)
+  const pendingIds = vendorStages.filter(vs => ['ready','confirmed'].includes(vs.stage)).slice(0, 8).map(vs => vs.shopify_id);
+  const pendingOrders = [];
+  for (const sid of pendingIds) {
+    try {
+      const od = await shopifyREST(`/orders/${sid}.json?fields=id,name,shipping_address`);
+      if (od?.order) {
+        const addr = od.order.shipping_address || {};
+        pendingOrders.push({
+          name: od.order.name,
+          customer: addr.first_name || addr.name || 'Customer',
+          stage: stageMap[sid] || 'new',
+        });
+      }
+    } catch {}
+  }
+
+  res.json({ vendor_name: vendorName, ready, transit, confirmed, delivered_today: deliveredToday, pending_orders: pendingOrders });
+});
+
+// GET /vendor/shopify/verify-session — verifies App Bridge session token JWT
 app.get('/vendor/shopify/verify-session', (req, res) => {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
