@@ -6324,7 +6324,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           shipment_width:  String(breadth),
           shipment_height: String(height),
           weight:          String(weight),
-          shipment_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
+          md:   shipMode === 'Express' ? 'E' : 'S',
           seller_name:   creds.company_name || req.vendor,
           seller_add:    creds.return_address || "",
           seller_city:   creds.return_city   || "",
