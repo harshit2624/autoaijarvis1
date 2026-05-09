@@ -6286,6 +6286,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       }
 
     } else if (partner === "delhivery") {
+      console.log(`[delhivery-create] shipMode=${shipMode}`);
       const totalQty = items.reduce((s, li) => s + (li.quantity || 1), 0);
       const custName = `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || "Customer";
       // Delhivery order date must be YYYY-MM-DD HH:MM:SS (no T, no Z)
@@ -6323,7 +6324,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           shipment_width:  String(breadth),
           shipment_height: String(height),
           weight:          String(weight),
-          shipment_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
+          shipment_mode:   shipMode === 'Express' ? 'E' : 'S',
           seller_name:   creds.company_name || req.vendor,
           seller_add:    creds.return_address || "",
           seller_city:   creds.return_city   || "",
