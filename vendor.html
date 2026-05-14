@@ -2631,8 +2631,37 @@
           </div>
         )}
 
+        {/* Manual AWB entry — always visible */}
+        <div style={{marginBottom:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
+          <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>✏ Enter AWB Manually</div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-end'}}>
+            <div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Direction</div>
+              <select value={manualDir} onChange={e=>setManualDir(e.target.value)}
+                style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                <option value="reverse">↩ Reverse</option>
+                {isExchange && <option value="forward">→ Forward</option>}
+              </select>
+            </div>
+            <div style={{flex:1,minWidth:110}}>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
+              <input value={manualCourier} onChange={e=>setManualCourier(e.target.value)} placeholder="Delhivery…"
+                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
+            </div>
+            <div style={{flex:2,minWidth:130}}>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking No</div>
+              <input value={manualAwb} onChange={e=>setManualAwb(e.target.value)} placeholder="Enter AWB number"
+                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
+            </div>
+            <button onClick={saveManualAwb} disabled={savingManual||!manualAwb.trim()}
+              style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:11,fontWeight:700}}>
+              {savingManual?'Saving…':'Save AWB'}
+            </button>
+          </div>
+        </div>
+
         {partners.length === 0 ? (
-          <div style={{fontSize:11,color:'var(--text-muted)'}}>No shipping partners connected. Go to Shipping Settings in your profile.</div>
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>No shipping partners connected. Go to Shipping Settings to auto-create shipments.</div>
         ) : (
           <>
             <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end',marginBottom:10}}>
@@ -2718,34 +2747,6 @@
               )}
             </div>
 
-            {/* Manual AWB entry */}
-            <div style={{marginTop:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
-              <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>✏ Enter AWB Manually</div>
-              <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-end'}}>
-                <div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Direction</div>
-                  <select value={manualDir} onChange={e=>setManualDir(e.target.value)}
-                    style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
-                    <option value="reverse">↩ Reverse</option>
-                    {isExchange && <option value="forward">→ Forward</option>}
-                  </select>
-                </div>
-                <div style={{flex:1,minWidth:120}}>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
-                  <input value={manualCourier} onChange={e=>setManualCourier(e.target.value)} placeholder="Delhivery, DTDC…"
-                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
-                </div>
-                <div style={{flex:2,minWidth:140}}>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking No</div>
-                  <input value={manualAwb} onChange={e=>setManualAwb(e.target.value)} placeholder="Enter AWB number"
-                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
-                </div>
-                <button onClick={saveManualAwb} disabled={savingManual||!manualAwb.trim()}
-                  style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:11,fontWeight:700}}>
-                  {savingManual?'Saving…':'Save AWB'}
-                </button>
-              </div>
-            </div>
           </>
         )}
       </div>
