@@ -5400,6 +5400,8 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       acc.totalSettled += v.totalSettled;
       acc.pendingSettlement += v.pendingSettlement;
       acc.pendingPenalty += v.pendingPenalty;
+      acc.prepaidCollected += v.prepaidCollected;
+      acc.codCommission += v.codCommission;
       return acc;
     }, { totalOrders: 0, gross: 0, prepaidDiscount: 0, commissionableSale: 0, commission: 0, gst: 0, advance: 0, shipping: 0, netPayable: 0, totalSettled: 0, pendingSettlement: 0, prepaidCollected: 0, codCommission: 0, pendingPenalty: 0 });
 
