@@ -2538,6 +2538,10 @@
     const [rateLoading, setRateLoading] = useState(false);
     const [creating, setCreating] = useState('');
     const [msg, setMsg]           = useState(null);
+    const [manualDir,     setManualDir]     = useState('reverse');
+    const [manualCourier, setManualCourier] = useState('');
+    const [manualAwb,     setManualAwb]     = useState('');
+    const [savingManual,  setSavingManual]  = useState(false);
 
     useEffect(()=>{
       fetch(`${API}/vendor/shipping/partners`, { headers:{ Authorization:`Bearer ${token}` } })
@@ -2550,6 +2554,23 @@
       fetch(`${API}/vendor/shipping/warehouses?partner=${partner}`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>{ const wh=d.warehouses||[]; setWarehouses(wh); setWarehouse(wh[0]||null); }).catch(()=>{}).finally(()=>setWhLoading(false));
     },[partner]);
+
+    const saveManualAwb = async () => {
+      if (!manualAwb.trim()) return;
+      setSavingManual(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/return-requests/${rr.request_id}/awb`, {
+          method:'PUT', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ direction: manualDir, awb: manualAwb.trim(), courier: manualCourier }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({type:'success', text:`AWB saved for ${manualDir} shipment`});
+        setManualAwb(''); setManualCourier('');
+        onUpdated && onUpdated();
+      } catch(e) { setMsg({type:'error', text:e.message}); }
+      setSavingManual(false);
+    };
 
     const checkRates = async () => {
       if (!partner) return;
@@ -2695,6 +2716,35 @@
                   }
                 </div>
               )}
+            </div>
+
+            {/* Manual AWB entry */}
+            <div style={{marginTop:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px'}}>
+              <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>✏ Enter AWB Manually</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-end'}}>
+                <div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Direction</div>
+                  <select value={manualDir} onChange={e=>setManualDir(e.target.value)}
+                    style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                    <option value="reverse">↩ Reverse</option>
+                    {isExchange && <option value="forward">→ Forward</option>}
+                  </select>
+                </div>
+                <div style={{flex:1,minWidth:120}}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
+                  <input value={manualCourier} onChange={e=>setManualCourier(e.target.value)} placeholder="Delhivery, DTDC…"
+                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
+                </div>
+                <div style={{flex:2,minWidth:140}}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking No</div>
+                  <input value={manualAwb} onChange={e=>setManualAwb(e.target.value)} placeholder="Enter AWB number"
+                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
+                </div>
+                <button onClick={saveManualAwb} disabled={savingManual||!manualAwb.trim()}
+                  style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:11,fontWeight:700}}>
+                  {savingManual?'Saving…':'Save AWB'}
+                </button>
+              </div>
             </div>
           </>
         )}

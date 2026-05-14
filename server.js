@@ -10478,6 +10478,20 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
 });
 
 // ── Vendor: create shipment for return/exchange request ────────────────────
+// PUT /vendor/return-requests/:id/awb — manually enter AWB for reverse/forward shipment
+app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
+  const { direction, awb, courier } = req.body || {};
+  if (!direction || !awb) return res.status(400).json({ error: 'direction and awb required' });
+  const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: req.vendor }, { projection: { _id: 0 } });
+  if (!rr) return res.status(404).json({ error: 'Request not found' });
+  const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
+  await mdb.collection('return_requests').updateOne(
+    { request_id: req.params.id },
+    { $set: { [field]: { awb: awb.trim(), courier: courier||'', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+  );
+  res.json({ success: true });
+});
+
 app.post("/vendor/return-requests/:id/rate-check", vendorAuth, async (req, res) => {
   try {
     const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
