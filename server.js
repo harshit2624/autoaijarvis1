@@ -4119,6 +4119,9 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
       });
     }
 
+    // Push to ShipSagar for tracking
+    shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: order.name || shopifyId, customerName: ((order.shipping_address?.first_name||'') + ' ' + (order.shipping_address?.last_name||'')).trim(), email: order.email || '', mobileNo: (order.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
+
     console.log(`📦 Vendor fulfill: order ${order.name}, vendor: ${vendorName}, AWB: ${awb}`);
     res.json({ success: true, fulfillment: fData.fulfillment });
   } catch (err) {
