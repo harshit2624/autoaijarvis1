@@ -9172,6 +9172,36 @@ async function shipsagarTrackingCron() {
           runLog.updated++;
           runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc, tag });
           console.log(`  ✓ ${rec.shopify_id} ${rec.awb}: ${rec.stage}→${newStage} "${desc}" ${tag||''}`);
+
+          // Send vendor + admin OFD notification email
+          if (newStage === 'ofd') {
+            (async () => {
+              try {
+                const cfg = await getSmtpConfig();
+                const vcfg = await VC.get(rec.vendor_name);
+                const od = await shopifyREST(`/orders/${rec.shopify_id}.json?fields=id,name,email,shipping_address,line_items`).catch(() => null);
+                const order = od?.order || {};
+                const customerName = order.shipping_address ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim() : 'Customer';
+                const orderName = order.name || rec.shopify_id;
+                const remarkLine = desc ? `<tr><td style="padding:8px 0;color:#64748b;font-size:13px">Latest Remark</td><td style="padding:8px 0;font-weight:600;color:#f59e0b;font-size:13px">${desc}</td></tr>` : '';
+                const ofdHtml = (role) => emailBase(
+                  `🛵 Order Out for Delivery — ${orderName}`,
+                  '#6366f1',
+                  `<div class="subtitle">Order <strong>${orderName}</strong> for <strong>${customerName}</strong> is out for delivery.</div>
+                  <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+                    <tr><td style="padding:8px 0;color:#64748b">Order</td><td style="padding:8px 0;font-weight:600">${orderName}</td></tr>
+                    <tr><td style="padding:8px 0;color:#64748b">Customer</td><td style="padding:8px 0">${customerName}</td></tr>
+                    <tr><td style="padding:8px 0;color:#64748b">AWB</td><td style="padding:8px 0;font-family:monospace">${rec.awb}</td></tr>
+                    <tr><td style="padding:8px 0;color:#64748b">Courier</td><td style="padding:8px 0">${rec.courier||'—'}</td></tr>
+                    ${remarkLine}
+                  </table>
+                  <p style="color:#94a3b8;font-size:12px;margin-top:16px">If the delivery couldn't be completed, please contact the customer to arrange re-delivery.</p>`
+                );
+                if (vcfg?.email) await sendEmail({ to: vcfg.email, subject: `🛵 OFD: ${orderName} is Out for Delivery`, html: ofdHtml('vendor'), shopifyId: rec.shopify_id, trigger: 'ofd_vendor' });
+                if (cfg?.adminEmail) await sendEmail({ to: cfg.adminEmail, subject: `🛵 OFD: ${orderName} — ${rec.vendor_name}`, html: ofdHtml('admin'), shopifyId: rec.shopify_id, trigger: 'ofd_admin' });
+              } catch(e) { console.error('OFD vendor/admin email error:', e.message); }
+            })();
+          }
         } else {
           runLog.skipped++;
         }
