@@ -8975,14 +8975,15 @@ async function getShipSagarCreds() {
 
 // Emoji tag for each ShipSagar tracking status
 const SS_STATUS_TAG_MAP = [
-  { match: ['successfully delivered'],                                    tag: '✅ Delivered' },
-  { match: ['rto', 'return to origin', 'return initiated'],              tag: '🔄 RTO' },
-  { match: ['lost', 'damage'],                                           tag: '⚠️ Lost/Damaged' },
-  { match: ['out for delivery', 'ofd'],                                  tag: '🛵 Out for Delivery' },  // → maps to 'ofd' stage
-  { match: ['undelivered', 'failed delivery', 'delivery attempt', 'not delivered'], tag: '❌ Delivery Attempted' },
-  { match: ['pickdone', 'pick done', 'picked up', 'pickup done'],        tag: '📦 Picked Up' },
-  { match: ['manifested', 'shipment booked', 'dispatched'],              tag: '📋 Manifested' },
-  { match: ['in transit', 'intransit', 'arrived', 'received at', 'facility', 'hub', 'sorting'], tag: '🚚 In Transit' },
+  // OFD must be before delivered — "out for delivery" contains "delivery"
+  { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery'], tag: '🛵 Out for Delivery' },
+  { match: ['undelivered', 'failed delivery', 'delivery attempt', 'not delivered', 'delivery failed', 'ndr'], tag: '❌ Delivery Attempted' },
+  { match: ['successfully delivered', 'shipment delivered', 'delivery successful', 'delivered successfully', 'delivered'], tag: '✅ Delivered' },
+  { match: ['rto', 'return to origin', 'return initiated', 'returning'],  tag: '🔄 RTO' },
+  { match: ['lost', 'damage'],                                            tag: '⚠️ Lost/Damaged' },
+  { match: ['pickdone', 'pick done', 'picked up', 'pickup done', 'shipment picked'],        tag: '📦 Picked Up' },
+  { match: ['manifested', 'shipment booked', 'dispatched', 'ready to dispatch'],            tag: '📋 Manifested' },
+  { match: ['in transit', 'intransit', 'arrived', 'received at', 'facility', 'hub', 'sorting', 'shipment in transit'], tag: '🚚 In Transit' },
   { match: ['data received', 'label created', 'softdata', 'booked'],     tag: '🏷️ Label Created' },
 ];
 
