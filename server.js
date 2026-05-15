@@ -7508,11 +7508,11 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
     console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available}`);
 
     // Look up by vendor_inventory_item_id first, then fallback via vendor API
+    const syncQ = { $in: [1, true, '1'] };
     let mapping = await mdb.collection('vendor_product_mappings').findOne({
       vendor_name: conn.vendor_name,
       vendor_inventory_item_id: String(inventory_item_id),
-      sync_inventory: 1,
-      vendor_tracks_inventory: true,
+      sync_inventory: syncQ,
     });
 
     // Fallback: find variant by inventory_item_id from vendor store and match by variant_id
@@ -7523,7 +7523,7 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
         mapping = await mdb.collection('vendor_product_mappings').findOne({
           vendor_name: conn.vendor_name,
           vendor_variant_id: String(variantId),
-          sync_inventory: 1,
+          sync_inventory: syncQ,
         });
         // Backfill vendor_inventory_item_id so future lookups are fast
         if (mapping) {
@@ -7606,9 +7606,20 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
   try {
     const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
     const products = data.products || [];
-    // Check which are mapped and which have pending requests
-    const mappings = await VPM.get(req.vendor);
+    const liveProductIds = new Set(products.map(p => String(p.id)));
+
+    // Check which are mapped and which have pending/approved requests
+    const mappings = await VPM.all(req.vendor);
     const mappedProductIds = new Set(mappings.map(m => m.vendor_product_id));
+
+    // Clean up stale VPM entries for products no longer in vendor's Shopify store
+    const staleVpids = [...mappedProductIds].filter(vpid => !liveProductIds.has(vpid));
+    if (staleVpids.length) {
+      await mdb.collection('vendor_product_mappings').deleteMany({ vendor_name: req.vendor, vendor_product_id: { $in: staleVpids } });
+      await mdb.collection('product_upload_requests').deleteMany({ vendor_name: req.vendor, product_id: { $in: staleVpids } });
+      staleVpids.forEach(id => mappedProductIds.delete(id));
+    }
+
     const pendingReqs = await mdb.collection('product_upload_requests').find({ vendor_name: req.vendor, status: 'pending' }, { projection: { product_id: 1, _id: 0 } }).toArray();
     const pendingIds = new Set(pendingReqs.map(r => r.product_id));
     res.json({ products: products.map(p => ({
@@ -7832,7 +7843,17 @@ app.post("/admin/vendor-sync/map", adminAuth, async (req, res) => {
 
 // ── Admin: unmap a variant ────────────────────────────────────────────────
 app.delete("/admin/vendor-sync/map/:id", adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  // Find the mapping first so we know vendor + product
+  const mapping = await mdb.collection('vendor_product_mappings').findOne({ _id: new ObjectId(String(req.params.id)) });
   await VPM.delete(req.params.id);
+  // If no more mappings for this product, clean up the upload request too
+  if (mapping) {
+    const remaining = await mdb.collection('vendor_product_mappings').countDocuments({ vendor_name: mapping.vendor_name, vendor_product_id: mapping.vendor_product_id });
+    if (remaining === 0) {
+      await mdb.collection('product_upload_requests').deleteMany({ vendor_name: mapping.vendor_name, product_id: String(mapping.vendor_product_id) });
+    }
+  }
   res.json({ success: true });
 });
 
@@ -7919,12 +7940,116 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
 });
 
 // ── Admin: search CrosCrow products (for mapping UI) ─────────────────────
+// ── Admin: smart batch map vendor variants → CC variants (with optional create) ─
+app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
+  const { vendor_name, vendor_product_id, croscrow_product_id, mappings, upload_request_id } = req.body || {};
+  if (!vendor_name || !vendor_product_id || !croscrow_product_id || !Array.isArray(mappings)) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  const { ObjectId } = require('mongodb');
+  const results = [];
+
+  // Fetch vendor product once to get inventory_item_ids, images etc.
+  let conn = await VSC.get(vendor_name);
+  if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${vendor_name}$`, 'i') } }, { projection: { _id: 0 } });
+  let vProductData = null;
+  if (conn) {
+    try { vProductData = (await vendorShopifyREST(conn.shop_domain, conn.access_token, `/products/${vendor_product_id}.json?fields=id,title,variants,images`)).product; } catch {}
+  }
+  const vendorVariantMap = {}; // vendor_variant_id → variant object
+  (vProductData?.variants || []).forEach(v => { vendorVariantMap[String(v.id)] = v; });
+  const vendorImage = vProductData?.images?.[0]?.src || '';
+  const vendorProductTitle = vProductData?.title || '';
+
+  // Fetch CC product once for image
+  let ccProductData = null;
+  try { ccProductData = (await shopifyREST(`/products/${croscrow_product_id}.json?fields=id,title,images,variants`)).product; } catch {}
+  const ccImage = ccProductData?.images?.[0]?.src || '';
+  const ccProductTitle = ccProductData?.title || '';
+
+  for (const m of mappings) {
+    if (m.action === 'skip') { results.push({ vendor_variant_id: m.vendor_variant_id, action: 'skip' }); continue; }
+    try {
+      let ccVariantId = m.croscrow_variant_id;
+      let ccVariantTitle = m.croscrow_variant_title || '';
+      if (m.action === 'create') {
+        const created = await croscrowShopifyWrite(`/products/${croscrow_product_id}/variants.json`, 'POST', {
+          variant: { option1: m.variant_title, price: String(m.variant_price || '0'), inventory_management: 'shopify' }
+        });
+        ccVariantId = created.variant?.id;
+        ccVariantTitle = m.variant_title || '';
+      }
+      if (!ccVariantId) { results.push({ vendor_variant_id: m.vendor_variant_id, action: 'error', error: 'No CC variant ID' }); continue; }
+
+      const vVariant = vendorVariantMap[String(m.vendor_variant_id)] || {};
+      await VPM.upsert(vendor_name, String(m.vendor_variant_id), {
+        vendor_product_id: String(vendor_product_id),
+        vendor_product_title: vendorProductTitle,
+        vendor_variant_title: m.vendor_variant_title || vVariant.title || '',
+        vendor_image: vendorImage,
+        vendor_inventory_item_id: String(vVariant.inventory_item_id || ''),
+        vendor_tracks_inventory: vVariant.inventory_management === 'shopify',
+        croscrow_product_id: String(croscrow_product_id),
+        croscrow_product_title: m.croscrow_product_title || ccProductTitle,
+        croscrow_variant_id: String(ccVariantId),
+        croscrow_variant_title: ccVariantTitle || m.croscrow_variant_title || '',
+        croscrow_image: ccImage,
+        sync_inventory: 1,
+        last_synced_at: Date.now(),
+      });
+      results.push({ vendor_variant_id: m.vendor_variant_id, cc_variant_id: ccVariantId, action: m.action });
+    } catch(e) { results.push({ vendor_variant_id: m.vendor_variant_id, action: 'error', error: e.message }); }
+  }
+
+  if (upload_request_id) {
+    try {
+      await mdb.collection('product_upload_requests').updateOne(
+        { _id: new ObjectId(String(upload_request_id)) },
+        { $set: { status: 'approved', action: 'smart_mapped', updated_at: new Date().toISOString() } }
+      );
+    } catch {}
+  }
+
+  const errors = results.filter(r => r.action === 'error');
+  res.json({ success: true, mapped: results.filter(r => r.action !== 'skip' && r.action !== 'error').length, skipped: results.filter(r => r.action === 'skip').length, errors });
+});
+
+// ── Admin: fetch variants of a specific vendor product (for approval map flow) ─
+app.get("/admin/vendor-sync/vendor-product-variants", adminAuth, async (req, res) => {
+  const { vendor_name, product_id } = req.query;
+  if (!vendor_name || !product_id) return res.status(400).json({ error: 'vendor_name and product_id required' });
+  let conn = await VSC.get(vendor_name);
+  if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${vendor_name}$`, 'i') } }, { projection: { _id: 0 } });
+  if (!conn) return res.status(404).json({ error: 'Vendor store not connected' });
+  try {
+    const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/products/${product_id}.json?fields=id,title,variants,images`);
+    const product = data.product || {};
+    res.json({ variants: (product.variants || []).map(v => ({ id: v.id, title: v.title, price: v.price, sku: v.sku })) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
   const { q } = req.query;
   try {
-    const path = q ? `/products.json?q=${encodeURIComponent(q)}&limit=20&fields=id,title,variants` : '/products.json?limit=20&fields=id,title,variants';
-    const data = await shopifyREST(path);
-    res.json({ products: data.products || [] });
+    const fields = 'id,title,variants,images,status';
+    let products = [];
+    if (q && q.trim()) {
+      // Search by title (more reliable than ?q= which is full-text)
+      const byTitle = await shopifyREST(`/products.json?title=${encodeURIComponent(q.trim())}&limit=20&fields=${fields}`);
+      products = byTitle.products || [];
+      // If few results, also try vendor search and merge
+      if (products.length < 5) {
+        try {
+          const byVendor = await shopifyREST(`/products.json?vendor=${encodeURIComponent(q.trim())}&limit=10&fields=${fields}`);
+          const seen = new Set(products.map(p => p.id));
+          (byVendor.products || []).forEach(p => { if (!seen.has(p.id)) { products.push(p); seen.add(p.id); } });
+        } catch {}
+      }
+    } else {
+      const data = await shopifyREST(`/products.json?limit=20&fields=${fields}`);
+      products = data.products || [];
+    }
+    res.json({ products });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

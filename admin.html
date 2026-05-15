@@ -5211,11 +5211,16 @@
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
     // Map modal
-    const [mapModal,    setMapModal]    = useState(null); // {vendorProduct, vendorVariant}
+    const [mapModal,    setMapModal]    = useState(null); // {vendorProduct, vendorVariant, uploadRequestId?}
     const [ccSearch,    setCcSearch]    = useState('');
     const [ccProducts,  setCcProducts]  = useState([]);
     const [ccSearching, setCcSearching] = useState(false);
     const [mapSaving,   setMapSaving]   = useState(false);
+    // Smart map flow state
+    const [smartMap, setSmartMap] = useState(null);
+    // { step:'loading'|'search_cc'|'review', req, vendorVariants, ccProduct, matches, saving, saveMsg }
+    // match: { vendorVariant, ccVariant|null, autoMatched, action:'map'|'create'|'skip', overrideCcVariantId }
+
 
     const loadConnections = () => {
       setLoading(true);
@@ -5313,12 +5318,19 @@
 
     useEffect(()=>{ if (ccSearch.length > 1) { const t = setTimeout(()=>searchCcProducts(ccSearch), 400); return ()=>clearTimeout(t); } }, [ccSearch]);
     useEffect(()=>{ if (mapModal) { setCcSearch(''); setCcProducts([]); searchCcProducts(''); } }, [mapModal]);
+    useEffect(()=>{ if (smartMap?.step==='search_cc') { setCcSearch(''); setCcProducts([]); searchCcProducts(''); } }, [smartMap?.step]);
 
     const saveMapping = async (ccProduct, ccVariant) => {
       if (!mapModal) return;
       setMapSaving(true);
+      const vendorName = mapModal.vendorName || selected;
       await fetch('/admin/vendor-sync/map', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
-        body: JSON.stringify({ vendor_name: selected, vendor_product_id: String(mapModal.vendorProduct.id), vendor_variant_id: String(mapModal.vendorVariant.id), croscrow_product_id: String(ccProduct.id), croscrow_variant_id: String(ccVariant.id), sync_inventory: true }) });
+        body: JSON.stringify({ vendor_name: vendorName, vendor_product_id: String(mapModal.vendorProduct.id), vendor_variant_id: String(mapModal.vendorVariant.id), croscrow_product_id: String(ccProduct.id), croscrow_variant_id: String(ccVariant.id), sync_inventory: true }) });
+      // If came from an approval request, mark it as approved
+      if (mapModal.uploadRequestId) {
+        await fetch(`/admin/vendor-sync/upload-requests/${mapModal.uploadRequestId}`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({ status:'approved', action:'mapped' }) });
+        loadApprovals();
+      }
       setMapSaving(false); setMapModal(null); setCcSearch(''); setCcProducts([]);
       loadVendorProducts(selected);
     };
@@ -5546,8 +5558,15 @@
                             </button>
                             <button className="btn btn-sm btn-ghost" disabled={approvMsg[req._id]==='loading'}
                               style={{borderColor:'var(--green)',color:'var(--green)'}}
-                              onClick={()=>{ setMapModal({ vendorProduct:{ id:req.product_id, title:req.product_title }, vendorVariant:{ id:req.product_id, title:'Select variant', price:0 }, uploadRequestId: req._id }); }}>
-                              🔗 Map to Existing
+                              onClick={async ()=>{
+                                setSmartMap({ step:'loading', req, vendorVariants:[], ccProduct:null, matches:[], saving:false, saveMsg:'' });
+                                try {
+                                  const r2 = await fetch(`/admin/vendor-sync/vendor-product-variants?vendor_name=${encodeURIComponent(req.vendor_name)}&product_id=${req.product_id}`, { headers:{ Authorization:'Bearer '+token } });
+                                  const d2 = await r2.json();
+                                  setSmartMap(s=>({...s, step:'search_cc', vendorVariants: d2.variants||[] }));
+                                } catch(e) { setSmartMap(s=>({...s, step:'error', error:e.message})); }
+                              }}>
+                              🔗 Smart Map
                             </button>
                             <button className="btn btn-sm btn-ghost" disabled={approvMsg[req._id]==='loading'}
                               style={{borderColor:'var(--red)',color:'var(--red)'}}
@@ -5607,6 +5626,149 @@
           )}
         </div>
 
+        {/* Smart Map Modal */}
+        {smartMap && (() => {
+          const normVariant = s => (s||'').toLowerCase().trim().replace(/\s+/g,'');
+          const SIZE_ALIASES = { xs:['xsmall','extrasmall'],s:['small'],m:['medium'],l:['large'],xl:['xlarge','extralarge'],xxl:['xxlarge','2xl','doublexl'],xxxl:['xxxlarge','3xl','triplexl'] };
+          const matchNorm = (a, b) => {
+            const na = normVariant(a), nb = normVariant(b);
+            if (na === nb) return true;
+            for (const [key, aliases] of Object.entries(SIZE_ALIASES)) {
+              const setA = new Set([key,...aliases]), setB = new Set([key,...aliases]);
+              if ((setA.has(na)||setA.has(nb)) && (setA.has(na)&&setA.has(nb))) return true;
+              if (setA.has(na) && setA.has(nb)) return true;
+            }
+            return false;
+          };
+          const autoMatch = (vendorVariants, ccVariants) => vendorVariants.map(vv => {
+            const cc = ccVariants.find(cv => matchNorm(vv.title, cv.title));
+            return { vendorVariant:vv, ccVariant:cc||null, autoMatched:!!cc, action:cc?'map':'create', overrideCcVariantId:cc?String(cc.id):'' };
+          });
+          const selectCcProduct = async (cp) => {
+            const matches = autoMatch(smartMap.vendorVariants, cp.variants||[]);
+            setSmartMap(s=>({...s, step:'review', ccProduct:cp, matches }));
+          };
+          const confirmSave = async () => {
+            setSmartMap(s=>({...s, saving:true, saveMsg:''}));
+            const mappings = smartMap.matches.map(m => ({
+              vendor_variant_id: String(m.vendorVariant.id),
+              vendor_variant_title: m.vendorVariant.title,
+              action: m.action,
+              croscrow_variant_id: m.action==='map' ? (m.overrideCcVariantId || (m.ccVariant ? String(m.ccVariant.id) : '')) : '',
+              croscrow_variant_title: m.action==='map' ? (smartMap.ccProduct.variants||[]).find(v=>String(v.id)===(m.overrideCcVariantId||(m.ccVariant?String(m.ccVariant.id):''))  )?.title||'' : m.vendorVariant.title,
+              croscrow_product_title: smartMap.ccProduct.title,
+              variant_title: m.vendorVariant.title,
+              variant_price: m.vendorVariant.price,
+            }));
+            try {
+              const r = await fetch('/admin/vendor-sync/smart-map', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+                body: JSON.stringify({ vendor_name: smartMap.req.vendor_name, vendor_product_id: String(smartMap.req.product_id), croscrow_product_id: String(smartMap.ccProduct.id), mappings, upload_request_id: String(smartMap.req._id) }) });
+              const d = await r.json();
+              if (!r.ok) throw new Error(d.error);
+              setSmartMap(s=>({...s, saving:false, saveMsg:`✅ ${d.mapped} mapped${d.skipped?`, ${d.skipped} skipped`:''}${d.errors?.length?`, ${d.errors.length} errors`:''}`}));
+              loadApprovals(); loadVendorProducts(selected);
+              setTimeout(()=>setSmartMap(null), 1800);
+            } catch(e) { setSmartMap(s=>({...s, saving:false, saveMsg:'❌ '+e.message})); }
+          };
+
+          return (
+            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.75)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <div style={{background:'var(--bg-card)',borderRadius:14,padding:28,width:600,maxWidth:'95vw',maxHeight:'85vh',overflowY:'auto'}}>
+                <h3 style={{margin:'0 0 4px',color:'var(--text)',fontSize:15}}>🤖 Smart Map — {smartMap.req.product_title}</h3>
+
+                {smartMap.step==='loading' && <div style={{color:'var(--text-muted)',padding:20}}>Loading vendor variants…</div>}
+                {smartMap.step==='error' && <div style={{color:'var(--red)',padding:20}}>❌ {smartMap.error}</div>}
+
+                {smartMap.step==='search_cc' && (<>
+                  <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14}}>
+                    Found <strong>{smartMap.vendorVariants.length}</strong> vendor variants. Search the CrosCrow product to map to:
+                  </div>
+                  <div style={{display:'flex',gap:8,marginBottom:10}}>
+                    <input className="form-input" placeholder="Search CrosCrow products…" value={ccSearch} onChange={e=>setCcSearch(e.target.value)}
+                      onKeyDown={e=>e.key==='Enter'&&ccSearch.trim().length>1&&searchCcProducts(ccSearch.trim())} style={{flex:1}}/>
+                    <button className="btn btn-sm btn-primary" onClick={()=>ccSearch.trim().length>1&&searchCcProducts(ccSearch.trim())} disabled={ccSearching}>{ccSearching?'…':'Search'}</button>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:380,overflowY:'auto'}}>
+                    {ccProducts.map(cp=>{
+                      const img=cp.images?.[0]?.src;
+                      return (
+                        <div key={cp.id} onClick={()=>selectCcProduct(cp)} style={{display:'flex',gap:10,alignItems:'center',padding:'10px 12px',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg-hover)',cursor:'pointer'}}>
+                          {img?<img src={img} style={{width:40,height:40,objectFit:'cover',borderRadius:5,border:'1px solid var(--border)',flexShrink:0}} alt=""/>:<div style={{width:40,height:40,borderRadius:5,background:'var(--bg-card2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>🛍</div>}
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontWeight:600,fontSize:12,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cp.title}</div>
+                            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{cp.variants?.length} variants</div>
+                          </div>
+                          <span style={{fontSize:11,color:'var(--indigo)',fontWeight:600}}>Select →</span>
+                        </div>
+                      );
+                    })}
+                    {ccProducts.length===0&&!ccSearching&&<div style={{fontSize:12,color:'var(--text-muted)',padding:12}}>{ccSearch.length>1?'No products found.':'Type to search CC products.'}</div>}
+                  </div>
+                </>)}
+
+                {smartMap.step==='review' && (<>
+                  <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14}}>
+                    CC Product: <strong style={{color:'var(--text)'}}>{smartMap.ccProduct.title}</strong>
+                    <button onClick={()=>setSmartMap(s=>({...s,step:'search_cc'}))} style={{marginLeft:8,fontSize:10,color:'var(--indigo)',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}}>Change</button>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+                    {smartMap.matches.map((m,i)=>{
+                      const ccVars = smartMap.ccProduct.variants||[];
+                      return (
+                        <div key={m.vendorVariant.id} style={{background:'var(--bg-hover)',borderRadius:8,padding:'10px 12px',border:`1px solid ${m.autoMatched?'rgba(74,222,128,0.3)':m.action==='create'?'rgba(251,191,36,0.3)':'var(--border)'}`}}>
+                          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                            {/* Vendor side */}
+                            <div style={{minWidth:100}}>
+                              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:2}}>VENDOR</div>
+                              <div style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>{m.vendorVariant.title==='Default Title'?'Default':m.vendorVariant.title}</div>
+                              <div style={{fontSize:11,color:'var(--text-muted)'}}>₹{parseFloat(m.vendorVariant.price||0).toFixed(0)}</div>
+                            </div>
+                            <span style={{fontSize:16,color:'var(--text-muted)'}}>→</span>
+                            {/* CC side */}
+                            <div style={{flex:1,minWidth:140}}>
+                              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:2}}>CROSCROW</div>
+                              {m.action==='skip' ? (
+                                <span style={{fontSize:11,color:'var(--text-muted)'}}>— Skipped</span>
+                              ) : m.action==='create' ? (
+                                <span style={{fontSize:11,color:'#fbbf24',fontWeight:600}}>✦ Create new variant "{m.vendorVariant.title==='Default Title'?'Default':m.vendorVariant.title}"</span>
+                              ) : (
+                                <select value={m.overrideCcVariantId||(m.ccVariant?String(m.ccVariant.id):'')}
+                                  onChange={e=>setSmartMap(s=>({...s,matches:s.matches.map((x,j)=>j===i?{...x,overrideCcVariantId:e.target.value,action:'map'}:x)}))}
+                                  style={{fontSize:12,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:5,color:'var(--text)',padding:'3px 6px',width:'100%'}}>
+                                  {ccVars.map(cv=><option key={cv.id} value={String(cv.id)}>{cv.title==='Default Title'?'Default':cv.title} — ₹{parseFloat(cv.price).toFixed(0)}</option>)}
+                                </select>
+                              )}
+                              {m.autoMatched&&m.action==='map'&&<div style={{fontSize:9,color:'#4ade80',marginTop:2}}>✅ Auto-matched</div>}
+                            </div>
+                            {/* Action toggle */}
+                            <div style={{display:'flex',flexDirection:'column',gap:3,flexShrink:0}}>
+                              {['map','create','skip'].map(a=>(
+                                <button key={a} onClick={()=>setSmartMap(s=>({...s,matches:s.matches.map((x,j)=>j===i?{...x,action:a,overrideCcVariantId:a==='map'?(x.ccVariant?String(x.ccVariant.id):''):x.overrideCcVariantId}:x)}))}
+                                  style={{fontSize:9,padding:'2px 7px',borderRadius:4,border:`1px solid ${m.action===a?'var(--indigo)':'var(--border)'}`,background:m.action===a?'var(--indigo-dim)':'transparent',color:m.action===a?'var(--indigo)':'var(--text-muted)',cursor:'pointer',fontFamily:'inherit'}}>
+                                  {a==='map'?'Map':a==='create'?'Create':' Skip'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {smartMap.saveMsg && <div style={{marginBottom:10,fontSize:12,color:smartMap.saveMsg.startsWith('✅')?'var(--green)':'var(--red)'}}>{smartMap.saveMsg}</div>}
+                  <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                    <button className="btn btn-ghost" onClick={()=>setSmartMap(null)} disabled={smartMap.saving}>Cancel</button>
+                    <button className="btn btn-primary" onClick={confirmSave} disabled={smartMap.saving}>
+                      {smartMap.saving?'Saving…':`✓ Confirm & Save ${smartMap.matches.filter(m=>m.action!=='skip').length} Mappings`}
+                    </button>
+                  </div>
+                </>)}
+
+                {!['review'].includes(smartMap.step) && <div style={{marginTop:16,textAlign:'right'}}><button className="btn btn-ghost" onClick={()=>setSmartMap(null)}>Cancel</button></div>}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Map Modal */}
         {mapModal && (
           <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -5625,20 +5787,29 @@
                 </button>
               </div>
               {ccSearching && <div style={{color:'var(--text-muted)',fontSize:12,marginBottom:8}}>Searching…</div>}
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                {ccProducts.map(cp=>(
-                  <div key={cp.id} style={{background:'var(--bg-hover)',borderRadius:8,padding:12}}>
-                    <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{cp.title}</div>
-                    <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                      {(cp.variants||[]).map(cv=>(
-                        <button key={cv.id} onClick={()=>saveMapping(cp,cv)} disabled={mapSaving}
-                          style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontWeight:600}}>
-                          {cv.title!=='Default Title'?cv.title:'Default'} — ₹{parseFloat(cv.price).toFixed(0)}
-                        </button>
-                      ))}
+              <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:420,overflowY:'auto'}}>
+                {ccProducts.map(cp=>{
+                  const img = cp.images?.[0]?.src;
+                  return (
+                    <div key={cp.id} style={{background:'var(--bg-hover)',borderRadius:8,padding:10,display:'flex',gap:10,alignItems:'flex-start'}}>
+                      {img
+                        ? <img src={img} alt="" style={{width:48,height:48,objectFit:'cover',borderRadius:6,flexShrink:0,border:'1px solid var(--border)'}}/>
+                        : <div style={{width:48,height:48,borderRadius:6,background:'var(--bg-card2)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,border:'1px solid var(--border)'}}>🛍</div>
+                      }
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:12,marginBottom:6,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cp.title}</div>
+                        <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                          {(cp.variants||[]).map(cv=>(
+                            <button key={cv.id} onClick={()=>saveMapping(cp,cv)} disabled={mapSaving}
+                              style={{fontSize:11,padding:'3px 9px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',fontWeight:600}}>
+                              {cv.title!=='Default Title'?cv.title:'Default'} — ₹{parseFloat(cv.price).toFixed(0)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {ccProducts.length===0 && !ccSearching && <div style={{fontSize:12,color:'var(--text-muted)'}}>
                   {ccSearch.length>1 ? 'No products found. Try a different keyword.' : 'Showing top 20 products. Type to search.'}
                 </div>}
