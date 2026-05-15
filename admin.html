@@ -5207,6 +5207,7 @@
     const [approvals,   setApprovals]   = useState([]);
     const [approvLoad,  setApprovLoad]  = useState(false);
     const [approvMsg,   setApprovMsg]   = useState({});
+    const [showAllApprovals, setShowAllApprovals] = useState(true);
     const [importing,   setImporting]   = useState({}); // productId -> bool
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
@@ -5230,6 +5231,7 @@
 
     useEffect(()=>{
       loadConnections();
+      loadApprovals();
       fetch('/admin/vendors', { headers: { Authorization: 'Bearer '+token } })
         .then(r=>r.json()).then(d=>{ window._vendorList = (d.vendors||[]).map(v=>typeof v==='string'?v:v.name).filter(Boolean); });
     }, []);
@@ -5399,6 +5401,83 @@
             )}
           </div>
         </div>
+
+        {/* Global Approvals — all pending requests regardless of vendor */}
+        {(() => {
+          const pending = approvals.filter(a=>a.status==='pending');
+          const typeColor = t => t==='removal'?'var(--red)':t==='mapping'?'var(--green)':'var(--indigo)';
+          const typeBg = t => t==='removal'?'var(--red-bg)':t==='mapping'?'var(--green-dim)':'var(--indigo-dim)';
+          const typeLabel = t => t==='removal'?'🗑 Removal':t==='mapping'?'🔗 Map Request':'📤 Upload';
+          return (
+            <div style={{marginBottom:24,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',borderBottom: showAllApprovals&&approvals.length?'1px solid var(--border)':'none'}}
+                onClick={()=>setShowAllApprovals(s=>!s)}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>📤 All Product Requests</span>
+                  {pending.length>0 && <span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'rgba(245,158,11,0.15)',color:'#f59e0b',fontWeight:700,border:'1px solid rgba(245,158,11,0.3)'}}>{pending.length} pending</span>}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();loadApprovals();}} disabled={approvLoad}>{approvLoad?'…':'↻'}</button>
+                  <span style={{color:'var(--text-muted)',fontSize:12}}>{showAllApprovals?'▲':'▼'}</span>
+                </div>
+              </div>
+              {showAllApprovals && (
+                approvLoad ? <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>Loading…</div> :
+                approvals.length===0 ? <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>No requests yet.</div> :
+                <div style={{display:'flex',flexDirection:'column',gap:0}}>
+                  {approvals.map(req=>(
+                    <div key={req._id} style={{display:'flex',gap:10,alignItems:'center',padding:'10px 16px',borderBottom:'1px solid var(--border)',background:req.status==='pending'?'transparent':'var(--bg-hover)'}}>
+                      {req.product_image && <img src={req.product_image} style={{width:36,height:36,objectFit:'cover',borderRadius:5,flexShrink:0,border:'1px solid var(--border)'}} alt=""/>}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{req.product_title||req.cc_product_id||req.product_id}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                          <span style={{color:'var(--indigo)',fontWeight:600}}>{req.vendor_name}</span>
+                          {' · '}{new Date(req.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
+                        </div>
+                        {req.note && <div style={{fontSize:10,color:'#fbbf24',marginTop:2}}>📝 {req.note}</div>}
+                      </div>
+                      <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:typeBg(req.request_type),color:typeColor(req.request_type),border:`1px solid ${typeColor(req.request_type)}`,fontWeight:700,flexShrink:0}}>{typeLabel(req.request_type)}</span>
+                      <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,fontWeight:700,flexShrink:0,
+                        background:req.status==='pending'?'rgba(245,158,11,0.1)':req.status==='approved'?'var(--green-dim)':'var(--bg-card2)',
+                        color:req.status==='pending'?'#f59e0b':req.status==='approved'?'var(--green)':'var(--text-muted)',
+                        border:`1px solid ${req.status==='pending'?'rgba(245,158,11,0.3)':req.status==='approved'?'var(--green)':'var(--border)'}`
+                      }}>{req.status.toUpperCase()}</span>
+                      {req.status==='pending' && (
+                        <div style={{display:'flex',gap:4,flexShrink:0}}>
+                          {req.request_type==='removal' ? (
+                            <button className="btn btn-danger btn-sm" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
+                              onClick={()=>handleApproval(req._id,'reject',req.vendor_name,req.product_id)}>
+                              ✓ Ack
+                            </button>
+                          ) : req.request_type==='mapping' ? (
+                            <button className="btn btn-sm btn-ghost" style={{fontSize:10,borderColor:'var(--green)',color:'var(--green)'}} disabled={approvMsg[req._id]==='loading'}
+                              onClick={async()=>{
+                                setSmartMap({ step:'loading', req, vendorVariants:[], ccProduct:null, matches:[], saving:false, saveMsg:'' });
+                                try {
+                                  const r2 = await fetch(`/admin/vendor-sync/vendor-product-variants?vendor_name=${encodeURIComponent(req.vendor_name)}&product_id=${req.product_id}`, { headers:{ Authorization:'Bearer '+token } });
+                                  const d2 = await r2.json();
+                                  setSmartMap(s=>({...s, step:'search_cc', vendorVariants: d2.variants||[] }));
+                                } catch(e) { setSmartMap(s=>({...s, step:'error', error:e.message})); }
+                              }}>
+                              🔗 Smart Map
+                            </button>
+                          ) : (
+                            <button className="btn btn-sm btn-indigo" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
+                              onClick={()=>handleApproval(req._id,'import',req.vendor_name,req.product_id)}>
+                              ↓ Import
+                            </button>
+                          )}
+                          <button className="btn btn-sm btn-ghost" style={{fontSize:10,borderColor:'var(--red)',color:'var(--red)'}} disabled={approvMsg[req._id]==='loading'}
+                            onClick={()=>handleApproval(req._id,'reject',req.vendor_name,req.product_id)}>✕</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <div style={{display:'flex',gap:24}}>
         {/* Left: connections list */}
