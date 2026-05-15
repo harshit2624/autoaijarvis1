@@ -7492,6 +7492,21 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
 
       console.log(`✅ Product webhook synced: ${conn.vendor_name} variant ${vVariant.id} → CC ${mapping.croscrow_variant_id} qty=${qty} price=${vVariant.price}`);
     }
+
+    // Sync images to CC product (if any variant is mapped)
+    const anyMapping = await mdb.collection('vendor_product_mappings').findOne({
+      vendor_name: conn.vendor_name,
+      vendor_product_id: String(product.id),
+    });
+    if (anyMapping?.croscrow_product_id && (product.images || []).length > 0) {
+      const images = (product.images || []).map(img => ({ src: img.src, alt: img.alt || '' }));
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${anyMapping.croscrow_product_id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product: { id: anyMapping.croscrow_product_id, images } }),
+      });
+      console.log(`🖼️  Images synced: ${conn.vendor_name} → CC product ${anyMapping.croscrow_product_id} (${images.length} images)`);
+    }
   } catch(e) { console.error('products-update webhook error:', e.message); }
 });
 
