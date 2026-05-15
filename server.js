@@ -8976,7 +8976,7 @@ async function getShipSagarCreds() {
 // Emoji tag for each ShipSagar tracking status
 const SS_STATUS_TAG_MAP = [
   // OFD must be before delivered — "out for delivery" contains "delivery"
-  { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery', 'prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled', 'ndr'], tag: '🛵 Out for Delivery' },
+  { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery', 'prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled', 'ndr', 'held at location', 'shipment held', 'undelivered shipment held'], tag: '🛵 Out for Delivery' },
   { match: ['undelivered', 'failed delivery', 'not delivered', 'delivery failed'], tag: '❌ Delivery Attempted' },
   { match: ['successfully delivered', 'shipment delivered', 'delivery successful', 'delivered successfully', 'delivered'], tag: '✅ Delivered' },
   { match: ['rto', 'return to origin', 'return initiated', 'returning'],  tag: '🔄 RTO' },
@@ -8999,26 +8999,32 @@ function shipsagarDescToTag(desc) {
   return null;
 }
 
+// Statuses that are OFD-stage but also had a delivery attempt — get both tags
+const OFD_WITH_ATTEMPT_KEYWORDS = ['prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'ndr', 'held at location', 'shipment held', 'delivery rescheduled'];
+
 async function applyShipSagarTag(shopifyId, desc) {
   const newTag = shipsagarDescToTag(desc);
   if (!newTag) return;
   try {
     const shopifyToken = await getAccessToken();
-    // Fetch current tags
     const od = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}.json?fields=id,tags`, {
       headers: { 'X-Shopify-Access-Token': shopifyToken },
     }).then(r => r.json());
     const currentTags = (od.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-    // Remove old tracking tags, add new one
+    // Remove old tracking tags
     const cleaned = currentTags.filter(t => !SS_ALL_TRACKING_TAGS.includes(t));
     if (!cleaned.includes(newTag)) cleaned.push(newTag);
+    // For OFD statuses that also had a delivery attempt, add both tags
+    const s = desc.toLowerCase();
+    const isAttemptedOfd = newTag === '🛵 Out for Delivery' && OFD_WITH_ATTEMPT_KEYWORDS.some(k => s.includes(k));
+    if (isAttemptedOfd && !cleaned.includes('❌ Delivery Attempted')) cleaned.push('❌ Delivery Attempted');
     const tagStr = cleaned.join(', ');
     await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopifyId}.json`, {
       method: 'PUT',
       headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
       body: JSON.stringify({ order: { id: shopifyId, tags: tagStr } }),
     });
-    console.log(`🏷️  ShipSagar tag updated: order ${shopifyId} → "${newTag}"`);
+    console.log(`🏷️  ShipSagar tag updated: order ${shopifyId} → "${newTag}"${isAttemptedOfd?' + ❌ Delivery Attempted':''}`);
   } catch(e) { console.error('ShipSagar tag error:', e.message); }
 }
 
@@ -9029,7 +9035,7 @@ function shipsagarStatusToStage(desc) {
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated')) return 'rto';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
-  if (s.includes('out for delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('ndr')) return 'ofd';
+  if (s.includes('out for delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held')) return 'ofd';
   if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed')) return 'transit';
   if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting')) return 'transit';
   if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received')) return 'pickup';
