@@ -7493,12 +7493,12 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       console.log(`✅ Product webhook synced: ${conn.vendor_name} variant ${vVariant.id} → CC ${mapping.croscrow_variant_id} qty=${qty} price=${vVariant.price}`);
     }
 
-    // Sync images to CC product (if any variant is mapped)
+    // Sync images to CC product (if any variant is mapped and sync_images not disabled)
     const anyMapping = await mdb.collection('vendor_product_mappings').findOne({
       vendor_name: conn.vendor_name,
       vendor_product_id: String(product.id),
     });
-    if (anyMapping?.croscrow_product_id && (product.images || []).length > 0) {
+    if (anyMapping?.croscrow_product_id && anyMapping.sync_images !== false && (product.images || []).length > 0) {
       const images = (product.images || []).map(img => ({ src: img.src, alt: img.alt || '' }));
       await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${anyMapping.croscrow_product_id}.json`, {
         method: 'PUT',
@@ -7875,6 +7875,20 @@ app.post("/admin/vendor-sync/map", adminAuth, async (req, res) => {
 });
 
 // ── Admin: unmap a variant ────────────────────────────────────────────────
+// Toggle image sync for all variants of a product
+app.put("/admin/vendor-sync/map/:id/image-sync", adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const mapping = await mdb.collection('vendor_product_mappings').findOne({ _id: new ObjectId(String(req.params.id)) });
+  if (!mapping) return res.status(404).json({ error: 'Not found' });
+  const newVal = req.body.sync_images === false ? false : true;
+  // Apply to all variants of this product
+  await mdb.collection('vendor_product_mappings').updateMany(
+    { vendor_name: mapping.vendor_name, vendor_product_id: mapping.vendor_product_id },
+    { $set: { sync_images: newVal } }
+  );
+  res.json({ success: true, sync_images: newVal });
+});
+
 app.delete("/admin/vendor-sync/map/:id", adminAuth, async (req, res) => {
   const { ObjectId } = require('mongodb');
   // Find the mapping first so we know vendor + product

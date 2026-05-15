@@ -5588,8 +5588,15 @@
 
               {tab==='mappings' && (
                 mappings.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No variant mappings yet. Import or map products from the Products tab.</div> :
-                <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  {mappings.map(m=>(
+                (() => {
+                  // Group by vendor_product_id to show image sync toggle once per product
+                  const seenProducts = new Set();
+                  return (
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {mappings.map(m=>{
+                    const isFirstVariant = !seenProducts.has(m.vendor_product_id);
+                    if (isFirstVariant) seenProducts.add(m.vendor_product_id);
+                    return (
                     <div key={m.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:12,display:'flex',gap:12,alignItems:'center'}}>
                       {/* Vendor side */}
                       <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
@@ -5620,12 +5627,24 @@
                         <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
                           {m.sync_inventory?'↻ Auto-sync':'No sync'}
                         </span>
+                        {isFirstVariant && (
+                          <button onClick={async()=>{
+                            const newVal = m.sync_images === false ? true : false;
+                            await fetch(`/admin/vendor-sync/map/${m.id}/image-sync`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify({sync_images:newVal}) });
+                            loadMappings();
+                          }} style={{fontSize:9,padding:'2px 8px',borderRadius:10,cursor:'pointer',border:`1px solid ${m.sync_images===false?'var(--border)':'rgba(99,102,241,0.4)'}`,background:m.sync_images===false?'var(--bg-card2)':'rgba(99,102,241,0.1)',color:m.sync_images===false?'var(--text-muted)':'#a5b4fc'}}>
+                            {m.sync_images===false?'🖼 Image sync off':'🖼 Image sync on'}
+                          </button>
+                        )}
                         <div style={{fontSize:10,color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never synced'}</div>
                         <button className="btn btn-danger btn-sm" onClick={()=>unmapVariant(m.id)}>Unmap</button>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    );
+                  })}
+                  </div>
+                  );
+                })()
               )}
             </>
           )}
