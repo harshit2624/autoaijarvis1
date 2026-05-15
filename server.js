@@ -7322,14 +7322,11 @@ app.post('/vendor/shopify/manual-install', async (req, res) => {
   const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '').trim();
   if (!cleanShop.includes('.myshopify.com')) return res.status(400).json({ error: 'Invalid shop URL. Use yourstore.myshopify.com' });
 
-  // Resolve vendor name from their panel auth token
+  // Resolve vendor name from their panel session token
   let vendorName = null;
   if (vendor_token) {
-    try {
-      const VENDOR_SECRET = process.env.VENDOR_JWT_SECRET || 'vendor_secret_change_me';
-      const payload = JSON.parse(Buffer.from(vendor_token.split('.')[1], 'base64url').toString());
-      vendorName = payload.vendor || null;
-    } catch {}
+    const session = vendorSessions.get(vendor_token);
+    if (session && Date.now() <= session.expiresAt) vendorName = session.vendorName;
   }
 
   const state = crypto.randomBytes(16).toString('hex');
