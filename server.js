@@ -8977,7 +8977,7 @@ async function getShipSagarCreds() {
 const SS_STATUS_TAG_MAP = [
   // OFD must be before delivered — "out for delivery" contains "delivery"
   { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery'], tag: '🛵 Out for Delivery' },
-  { match: ['undelivered', 'failed delivery', 'delivery attempt', 'not delivered', 'delivery failed', 'ndr'], tag: '❌ Delivery Attempted' },
+  { match: ['undelivered', 'failed delivery', 'delivery attempt', 'not delivered', 'delivery failed', 'ndr', 'prohibited area', 'premises closed', 'entry restricted', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled'], tag: '❌ Delivery Attempted' },
   { match: ['successfully delivered', 'shipment delivered', 'delivery successful', 'delivered successfully', 'delivered'], tag: '✅ Delivered' },
   { match: ['rto', 'return to origin', 'return initiated', 'returning'],  tag: '🔄 RTO' },
   { match: ['lost', 'damage'],                                            tag: '⚠️ Lost/Damaged' },
@@ -9030,7 +9030,7 @@ function shipsagarStatusToStage(desc) {
   if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated')) return 'rto';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
   if (s.includes('out for delivery') || s.includes('ofd'))      return 'ofd';
-  if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('delivery attempt')) return 'transit';
+  if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('delivery attempt') || s.includes('prohibited area') || s.includes('premises closed') || s.includes('entry restricted') || s.includes('not delivered') || s.includes('delivery failed') || s.includes('ndr')) return 'transit';
   if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting')) return 'transit';
   if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received')) return 'pickup';
   return null;
