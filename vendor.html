@@ -1995,7 +1995,7 @@
   /* ══════════════════════════════════
      PRODUCTS VIEW
   ══════════════════════════════════ */
-  function Products({ token, vendorName }) {
+  function Products({ token, vendorName, onGoToShopifySync }) {
     const [products, setProducts] = useState([]);
     const [loading,  setLoading]  = useState(true);
     const [search,   setSearch]   = useState('');
@@ -2009,6 +2009,7 @@
         .then(r=>r.json()).then(d=>setProducts(d.products||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
     useEffect(load,[token]);
+    useEffect(()=>{ loadShopifyProducts(); },[token]);
 
     const loadShopifyProducts = () => {
       setShopifyLoad(true);
@@ -2270,8 +2271,26 @@
           )}
 
           {shopifyLoaded && !shopifyConnected && (
-            <div style={{background:'rgba(239,68,68,0.07)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:'12px 14px',fontSize:12,color:'#f87171'}}>
-              No Shopify store connected. Go to <strong>Shopify Sync</strong> to connect your store.
+            <div style={{background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:10,padding:'16px 18px'}}>
+              <div style={{display:'flex',gap:12,alignItems:'flex-start',marginBottom:12}}>
+                <span style={{fontSize:24,flexShrink:0}}>⚠️</span>
+                <div>
+                  <div style={{fontWeight:700,color:'#f87171',fontSize:13,marginBottom:6}}>Your Shopify store is not connected</div>
+                  <div style={{fontSize:12,color:'#fca5a5',lineHeight:1.7}}>
+                    Without live inventory sync, CrosCrow has no way of knowing when your products go out of stock.
+                    This means <strong style={{color:'#f87171'}}>orders can be placed for items you can't fulfil</strong> — leading to cancellations,
+                    customer complaints, and damage to your brand's reputation on our platform.
+                  </div>
+                  <div style={{fontSize:12,color:'#fca5a5',marginTop:8,lineHeight:1.7}}>
+                    Connecting your store takes under 2 minutes and gives you real-time inventory sync,
+                    automatic stock updates, and peace of mind that you'll never oversell again.
+                  </div>
+                </div>
+              </div>
+              <button onClick={onGoToShopifySync}
+                style={{fontSize:12,padding:'8px 18px',borderRadius:7,border:'none',background:'#ef4444',color:'#fff',cursor:'pointer',fontWeight:700,fontFamily:'inherit'}}>
+                🔄 Connect Shopify Store Now →
+              </button>
             </div>
           )}
 
@@ -4118,7 +4137,7 @@
           )}
           {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
           {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
-          {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName}/>}
+          {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName} onGoToShopifySync={()=>setView('shopifysync')}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
           {view==='settlements' && <Settlements       token={auth.token} stats={stats}/>}
           {view==='wallet'      && <Wallet            token={auth.token}/>}
