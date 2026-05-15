@@ -1388,6 +1388,64 @@ function templateRRReminder24Vendor({ req: rr }) {
   return emailBase(`⏰ Action Needed: Approved ${typeLabel} Not Yet Fulfilled — ${rr.request_id}`, '#f59e0b', body);
 }
 
+// ── Product Request Email Helper ──────────────────────────────────────────
+function productRequestEmailHtml({ title, accentColor, heading, rows, image, note, footerNote }) {
+  const imgHtml = image ? `<div style="margin-bottom:20px;"><img src="${image}" style="max-width:140px;max-height:140px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb;" alt="${heading}"></div>` : '';
+  const rowsHtml = rows.map(([label, val]) => `<tr><td style="padding:7px 0;color:#6b7280;font-size:13px;border-bottom:1px solid #f1f5f9;width:40%">${label}</td><td style="padding:7px 0;font-size:13px;font-weight:600;color:#1a2a3a;border-bottom:1px solid #f1f5f9">${val}</td></tr>`).join('');
+  const noteHtml = note ? `<div style="margin-top:16px;padding:10px 14px;background:#fffbeb;border-radius:7px;border-left:3px solid #f59e0b;font-size:12px;color:#92400e;">📝 <strong>Note:</strong> ${note}</div>` : '';
+  const footerHtml = footerNote ? `<p style="color:#9ca3af;font-size:11px;margin-top:20px;">${footerNote}</p>` : '';
+  return emailBase(heading, accentColor, `${imgHtml}<table style="width:100%;border-collapse:collapse;margin-bottom:4px;">${rowsHtml}</table>${noteHtml}${footerHtml}`);
+}
+
+async function sendProductRequestEmail({ type, vendorName, productTitle, productImage, note, extraRows = [] }) {
+  try {
+    const cfg = await getSmtpConfig();
+    if (!cfg?.adminEmail) return;
+    const vcfg = await VC.get(vendorName);
+    const TYPE_MAP = {
+      upload:  { label:'New Upload Request',   accent:'#6366f1', emoji:'📤' },
+      mapping: { label:'Mapping Request',       accent:'#10b981', emoji:'🔗' },
+      removal: { label:'Product Removal Request', accent:'#ef4444', emoji:'🗑' },
+      imported:{ label:'Product Imported',      accent:'#10b981', emoji:'✅' },
+      mapped:  { label:'Product Mapped',        accent:'#6366f1', emoji:'🔗' },
+      rejected:{ label:'Request Rejected',      accent:'#ef4444', emoji:'✗' },
+      updated: { label:'Product Updated on CrosCrow', accent:'#6366f1', emoji:'🔄' },
+    };
+    const t = TYPE_MAP[type] || { label: type, accent:'#6366f1', emoji:'📦' };
+    const heading = `${t.emoji} ${t.label}`;
+    const rows = [
+      ['Vendor', vendorName],
+      ['Product', productTitle || '—'],
+      ...extraRows,
+    ];
+    const adminHtml = productRequestEmailHtml({ title: heading, accentColor: t.accent, heading, rows, image: productImage, note, footerNote: 'Manage all product requests in Admin → Vendor Sync.' });
+    await sendEmail({ to: cfg.adminEmail, subject: `${t.emoji} ${t.label} — ${productTitle} (${vendorName})`, html: adminHtml });
+
+    // Vendor email for actions that affect them
+    if (vcfg?.email && ['imported','mapped','rejected','updated'].includes(type)) {
+      const vendorMsg = {
+        imported: 'Your product has been imported to CrosCrow store and is now live.',
+        mapped:   'Your product has been mapped to an existing CrosCrow product. Inventory sync is now active.',
+        rejected: 'Your product request has been reviewed and was not approved at this time. Please contact CrosCrow for more details.',
+        updated:  'Your product changes have been synced to the CrosCrow store.',
+      };
+      const vendorHtml = productRequestEmailHtml({ title: heading, accentColor: t.accent, heading, rows: [['Product', productTitle||'—'], ...extraRows], image: productImage, note: vendorMsg[type], footerNote: 'View your products in the Vendor Panel → My Products.' });
+      await sendEmail({ to: vcfg.email, subject: `${t.emoji} ${t.label} — ${productTitle}`, html: vendorHtml });
+    }
+
+    // Vendor confirmation email when they submit a request
+    if (vcfg?.email && ['upload','mapping','removal'].includes(type)) {
+      const confirmMsg = {
+        upload:  'Your request to add a new product to CrosCrow has been received. Admin will review and import it shortly.',
+        mapping: 'Your mapping request has been received. Admin will link your product to the appropriate CrosCrow listing.',
+        removal: 'Your removal request has been received. Admin will review and process it.',
+      };
+      const vendorHtml = productRequestEmailHtml({ title: `${t.emoji} Request Received`, accentColor: t.accent, heading: `${t.emoji} Request Received`, rows: [['Product', productTitle||'—'], ...extraRows], image: productImage, note: confirmMsg[type], footerNote: 'You can track your request status in Vendor Panel → My Products.' });
+      await sendEmail({ to: vcfg.email, subject: `${t.emoji} Request Received — ${productTitle}`, html: vendorHtml });
+    }
+  } catch(e) { console.error('sendProductRequestEmail error:', e.message); }
+}
+
 // ── Return/Exchange Email Helper ──────────────────────────────────────────
 
 async function sendRREmail(type, rr) {
@@ -3957,6 +4015,7 @@ app.post("/vendor/products/:productId/request-removal", vendorAuth, async (req, 
     status: 'pending',
     created_at: new Date().toISOString(),
   });
+  sendProductRequestEmail({ type:'removal', vendorName:req.vendor, productTitle:cc_product_title, productImage:cc_product_image, note }).catch(()=>{});
   res.json({ success: true });
 });
 
@@ -3969,7 +4028,7 @@ app.post("/vendor/products/:productId/request-mapping", vendorAuth, async (req, 
   await mdb.collection('product_upload_requests').insertOne({
     vendor_name: req.vendor,
     cc_product_id,
-    product_id: cc_product_id, // for compatibility with admin approvals
+    product_id: cc_product_id,
     product_title: cc_product_title || '',
     product_image: cc_product_image || '',
     request_type: 'mapping',
@@ -3978,6 +4037,7 @@ app.post("/vendor/products/:productId/request-mapping", vendorAuth, async (req, 
     status: 'pending',
     created_at: new Date().toISOString(),
   });
+  sendProductRequestEmail({ type:'mapping', vendorName:req.vendor, productTitle:cc_product_title, productImage:cc_product_image, note }).catch(()=>{});
   res.json({ success: true });
 });
 
@@ -7559,6 +7619,15 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       });
       console.log(`🖼️  Images synced: ${conn.vendor_name} → CC product ${anyMapping.croscrow_product_id} (${images.length} images)`);
     }
+    // Send product update email (throttled — only if not sent in last 10min for this product)
+    if (anyMapping) {
+      const throttleKey = `product_update_email_${conn.vendor_name}_${product.id}`;
+      const lastSent = global[throttleKey] || 0;
+      if (Date.now() - lastSent > 10 * 60 * 1000) {
+        global[throttleKey] = Date.now();
+        sendProductRequestEmail({ type:'updated', vendorName:conn.vendor_name, productTitle:product.title, productImage:product.images?.[0]?.src||'', extraRows:[['Changes', 'Price, inventory & images synced to CrosCrow']] }).catch(()=>{});
+      }
+    }
   } catch(e) { console.error('products-update webhook error:', e.message); }
 });
 
@@ -7726,13 +7795,15 @@ app.post('/vendor/shopify/request-upload', vendorAuth, async (req, res) => {
   if (!product_id) return res.status(400).json({ error: 'product_id required' });
   const existing = await mdb.collection('product_upload_requests').findOne({ vendor_name: req.vendor, product_id: String(product_id), status: 'pending' });
   if (existing) return res.status(400).json({ error: 'Already requested — waiting for admin approval' });
+  const reqType = request_type || 'upload';
   await mdb.collection('product_upload_requests').insertOne({
     vendor_name: req.vendor, product_id: String(product_id),
     product_title, product_image: product_image||'', variants_count: variants_count||0,
-    request_type: request_type || 'upload', // 'upload' | 'mapping'
+    request_type: reqType,
     note: note || '',
     status: 'pending', created_at: new Date().toISOString(),
   });
+  sendProductRequestEmail({ type: reqType, vendorName: req.vendor, productTitle: product_title, productImage: product_image, note, extraRows: variants_count ? [['Variants', variants_count]] : [] }).catch(()=>{});
   res.json({ success: true });
 });
 
@@ -7746,10 +7817,14 @@ app.get('/admin/vendor-sync/upload-requests', adminAuth, async (req, res) => {
 app.put('/admin/vendor-sync/upload-requests/:id', adminAuth, async (req, res) => {
   const { ObjectId } = require('mongodb');
   const { status, action } = req.body || {};
+  const existing = await mdb.collection('product_upload_requests').findOne({ _id: new ObjectId(req.params.id) });
   await mdb.collection('product_upload_requests').updateOne(
     { _id: new ObjectId(req.params.id) },
     { $set: { status, action: action||null, updated_at: new Date().toISOString() } }
   );
+  if (existing && status === 'rejected') {
+    sendProductRequestEmail({ type:'rejected', vendorName:existing.vendor_name, productTitle:existing.product_title, productImage:existing.product_image }).catch(()=>{});
+  }
   res.json({ success: true });
 });
 
@@ -7902,6 +7977,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
     }
 
     auditLog("admin", "vendor_product_imported", String(newProduct.id), { vendor_name, vendor_product_id, croscrow_product_id: newProduct.id });
+    sendProductRequestEmail({ type:'imported', vendorName:vendor_name, productTitle:newProduct.title, productImage:newProduct.images?.[0]?.src||vProduct.images?.[0]?.src||'', extraRows:[['CC Product ID', String(newProduct.id)],['Variants', vProduct.variants.length]] }).catch(()=>{});
     res.json({ success: true, croscrow_product_id: newProduct.id, croscrow_product_title: newProduct.title, status: 'active', variants_mapped: vProduct.variants.length });
   } catch (e) {
     console.error("Import error:", e.message);
@@ -8110,7 +8186,9 @@ app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
   }
 
   const errors = results.filter(r => r.action === 'error');
-  res.json({ success: true, mapped: results.filter(r => r.action !== 'skip' && r.action !== 'error').length, skipped: results.filter(r => r.action === 'skip').length, errors });
+  const mappedCount = results.filter(r => r.action !== 'skip' && r.action !== 'error').length;
+  sendProductRequestEmail({ type:'mapped', vendorName:vendor_name, productTitle:ccProductTitle, productImage:ccImage, extraRows:[['Variants Mapped', mappedCount],['Created New', results.filter(r=>r.action==='create').length]] }).catch(()=>{});
+  res.json({ success: true, mapped: mappedCount, skipped: results.filter(r => r.action === 'skip').length, errors });
 });
 
 // ── Admin: fetch variants of a specific vendor product (for approval map flow) ─
