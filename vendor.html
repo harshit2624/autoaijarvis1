@@ -2808,10 +2808,24 @@
                 {isExchange && <option value="forward">→ Forward</option>}
               </select>
             </div>
-            <div style={{flex:1,minWidth:110}}>
+            <div style={{flex:1,minWidth:130}}>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
-              <input value={manualCourier} onChange={e=>setManualCourier(e.target.value)} placeholder="Delhivery…"
-                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}/>
+              <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)}
+                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:manualCourier?'var(--text)':'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                <option value="">Select courier…</option>
+                <option value="Delhivery">Delhivery</option>
+                <option value="BlueDart">BlueDart</option>
+                <option value="XpressBees">XpressBees</option>
+                <option value="Ecom Express">Ecom Express</option>
+                <option value="DTDC">DTDC</option>
+                <option value="Shadowfax">Shadowfax</option>
+                <option value="Ekart">Ekart</option>
+                <option value="FedEx">FedEx</option>
+                <option value="India Post">India Post</option>
+                <option value="DHL">DHL</option>
+                <option value="Shiprocket">Shiprocket</option>
+                <option value="Other">Other</option>
+              </select>
             </div>
             <div style={{flex:2,minWidth:130}}>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking No</div>
