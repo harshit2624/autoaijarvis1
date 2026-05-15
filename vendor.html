@@ -2014,6 +2014,7 @@
 
     // product-level bulk actions: { productId: { bulkTracking, bulkOos } }
     const [bulkLoading, setBulkLoading] = useState({});
+    const [reqMapping, setReqMapping] = useState({}); // productId → 'loading'|'done'|'error'
 
     const bulkTracking = async (pid, tracked) => {
       setBulkLoading(b=>({...b,[`${pid}_track`]:true}));
@@ -2117,9 +2118,28 @@
             <div key={p.id} className="product-card" style={{alignItems:'flex-start'}}>
               {p.image ? <img src={p.image} alt={p.title} className="product-img"/> : <div className="product-img-placeholder">🏷️</div>}
               <div className="product-info" style={{flex:1}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
                   <div className="product-title">{p.title}</div>
                   <span className={`p-status p-${p.status}`}>{p.status?.toUpperCase()}</span>
+                  {p.mapped
+                    ? <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:'rgba(74,222,128,0.1)',color:'var(--green)',border:'1px solid var(--green)',fontWeight:700}}>✓ MAPPED</span>
+                    : p.pending_mapping_request || reqMapping[p.id]==='done'
+                      ? <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:'rgba(251,191,36,0.1)',color:'var(--yellow)',border:'1px solid var(--yellow)',fontWeight:700}}>⏳ MAPPING REQUESTED</span>
+                      : <button onClick={async()=>{
+                          setReqMapping(r=>({...r,[p.id]:'loading'}));
+                          try {
+                            const res = await fetch(`${API}/vendor/products/${p.id}/request-mapping`,{
+                              method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+                              body: JSON.stringify({ cc_product_title: p.title, cc_product_image: p.image||'' }),
+                            });
+                            const d = await res.json();
+                            setReqMapping(r=>({...r,[p.id]: d.success?'done':'error'}));
+                          } catch { setReqMapping(r=>({...r,[p.id]:'error'})); }
+                        }} disabled={reqMapping[p.id]==='loading'}
+                        style={{fontSize:9,padding:'2px 8px',borderRadius:99,border:'1px solid rgba(99,102,241,0.5)',background:'rgba(99,102,241,0.08)',color:'var(--indigo)',cursor:'pointer',fontWeight:700}}>
+                        {reqMapping[p.id]==='loading'?'…':'🔗 Request Mapping'}
+                      </button>
+                  }
                 </div>
                 {p.type && <div className="product-type">{p.type}</div>}
 
