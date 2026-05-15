@@ -7620,12 +7620,29 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
       staleVpids.forEach(id => mappedProductIds.delete(id));
     }
 
-    const pendingReqs = await mdb.collection('product_upload_requests').find({ vendor_name: req.vendor, status: 'pending' }, { projection: { product_id: 1, _id: 0 } }).toArray();
-    const pendingIds = new Set(pendingReqs.map(r => r.product_id));
+    // Group mapping details by vendor_product_id
+    const mappingDetails = {}; // { vendor_product_id: { cc_product_title, cc_image, variants: [{vendor_title, cc_title, last_synced_at}] } }
+    for (const m of mappings) {
+      if (!mappingDetails[m.vendor_product_id]) {
+        mappingDetails[m.vendor_product_id] = { cc_product_title: m.croscrow_product_title || '', cc_image: m.croscrow_image || '', variants: [] };
+      }
+      mappingDetails[m.vendor_product_id].variants.push({
+        vendor_title: m.vendor_variant_title || 'Default',
+        cc_title: m.croscrow_variant_title || 'Default',
+        last_synced_at: m.last_synced_at || null,
+        sync_inventory: !!m.sync_inventory,
+      });
+    }
+
+    const allReqs = await mdb.collection('product_upload_requests').find({ vendor_name: req.vendor }, { projection: { product_id: 1, status: 1, request_type: 1, _id: 0 } }).toArray();
+    const reqMap = {}; // product_id → { status, request_type }
+    allReqs.forEach(r => { reqMap[r.product_id] = { status: r.status, request_type: r.request_type || 'upload' }; });
+
     res.json({ products: products.map(p => ({
       ...p,
       mapped: mappedProductIds.has(String(p.id)),
-      pending_request: pendingIds.has(String(p.id)),
+      mapping: mappingDetails[String(p.id)] || null,
+      request: reqMap[String(p.id)] || null,
     })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7638,14 +7655,15 @@ app.get("/admin/vendor-sync/connections", adminAuth, async (req, res) => {
 
 // ── Vendor: request product upload to admin store ────────────────────────
 app.post('/vendor/shopify/request-upload', vendorAuth, async (req, res) => {
-  const { product_id, product_title, product_image, variants_count } = req.body || {};
+  const { product_id, product_title, product_image, variants_count, request_type, note } = req.body || {};
   if (!product_id) return res.status(400).json({ error: 'product_id required' });
-  // Check if already requested
   const existing = await mdb.collection('product_upload_requests').findOne({ vendor_name: req.vendor, product_id: String(product_id), status: 'pending' });
   if (existing) return res.status(400).json({ error: 'Already requested — waiting for admin approval' });
   await mdb.collection('product_upload_requests').insertOne({
     vendor_name: req.vendor, product_id: String(product_id),
     product_title, product_image: product_image||'', variants_count: variants_count||0,
+    request_type: request_type || 'upload', // 'upload' | 'mapping'
+    note: note || '',
     status: 'pending', created_at: new Date().toISOString(),
   });
   res.json({ success: true });

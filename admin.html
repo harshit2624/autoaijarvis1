@@ -5534,12 +5534,17 @@
                     <div key={req._id} style={{background:'var(--bg-card)',border:`1px solid ${req.status==='pending'?'var(--yellow)':req.status==='approved'?'var(--green)':'var(--border)'}`,borderRadius:10,padding:14,display:'flex',gap:12,alignItems:'center'}}>
                       {req.product_image && <img src={req.product_image} style={{width:52,height:52,objectFit:'cover',borderRadius:7,flexShrink:0}} alt=""/>}
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:3}}>{req.product_title}</div>
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3,flexWrap:'wrap'}}>
+                          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{req.product_title}</span>
+                          {req.request_type==='mapping' && <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:'rgba(74,222,128,0.1)',color:'var(--green)',border:'1px solid var(--green)',fontWeight:700}}>🔗 MAP TO EXISTING</span>}
+                          {(!req.request_type||req.request_type==='upload') && <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:'rgba(99,102,241,0.1)',color:'var(--indigo)',border:'1px solid var(--indigo)',fontWeight:700}}>📤 NEW UPLOAD</span>}
+                        </div>
                         <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
                           <span style={{color:'var(--indigo)',fontWeight:600}}>{req.vendor_name}</span>
                           {' · '}{req.variants_count} variant{req.variants_count!==1?'s':''}
                           {' · '}{new Date(req.created_at).toLocaleDateString('en-IN')}
                         </div>
+                        {req.note && <div style={{fontSize:11,color:'#fbbf24',background:'rgba(251,191,36,0.07)',border:'1px solid rgba(251,191,36,0.2)',borderRadius:5,padding:'4px 8px',marginBottom:4}}>📝 {req.note}</div>}
                         {approvMsg[req._id] && approvMsg[req._id]!=='loading' && (
                           <div style={{fontSize:11,color:approvMsg[req._id].startsWith('✅')?'var(--green)':'var(--red)'}}>{approvMsg[req._id]}</div>
                         )}
