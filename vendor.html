@@ -2010,11 +2010,26 @@
     };
     useEffect(load,[token]);
 
+    const loadShopifyProducts = () => {
+      setShopifyLoad(true);
+      fetch(`${API}/vendor/shopify/status`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{
+          setShopifyConnected(!!d.connected);
+          if (!d.connected) { setShopifyLoad(false); setShopifyLoaded(true); return; }
+          return fetch(`${API}/vendor/shopify/products`,{headers:{Authorization:`Bearer ${token}`}})
+            .then(r=>r.json()).then(d2=>{ setShopifyProducts(d2.products||[]); setShopifyLoaded(true); setShopifyLoad(false); });
+        }).catch(()=>setShopifyLoad(false));
+    };
+
     const visible = search ? products.filter(p=>p.title.toLowerCase().includes(search.toLowerCase())) : products;
 
     // product-level bulk actions: { productId: { bulkTracking, bulkOos } }
     const [bulkLoading, setBulkLoading] = useState({});
     const [reqMapping, setReqMapping] = useState({}); // productId → 'loading'|'done'|'error'
+    const [shopifyProducts, setShopifyProducts] = useState([]);
+    const [shopifyLoad, setShopifyLoad] = useState(false);
+    const [shopifyLoaded, setShopifyLoaded] = useState(false);
+    const [shopifyConnected, setShopifyConnected] = useState(false);
 
     const bulkTracking = async (pid, tracked) => {
       setBulkLoading(b=>({...b,[`${pid}_track`]:true}));
@@ -2226,6 +2241,96 @@
             </div>
           ))
         )}
+
+        {/* ── My Shopify Store Products ─────────────────────────── */}
+        <div style={{marginTop:32,borderTop:'1px solid var(--border)',paddingTop:24}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>🛍 My Shopify Store Products</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Products from your connected Shopify store and their mapping status on CrosCrow.</div>
+            </div>
+            {!shopifyLoaded
+              ? <button className="btn btn-ghost btn-sm" onClick={loadShopifyProducts} disabled={shopifyLoad}>
+                  {shopifyLoad ? '↻ Loading…' : '↻ Load'}
+                </button>
+              : <button className="btn btn-ghost btn-sm" onClick={loadShopifyProducts} disabled={shopifyLoad}>
+                  {shopifyLoad ? '↻ Loading…' : '↻ Refresh'}
+                </button>
+            }
+          </div>
+
+          {!shopifyLoaded && !shopifyLoad && (
+            <div style={{textAlign:'center',padding:'20px 0',color:'var(--text-muted)',fontSize:12}}>
+              Click Load to fetch your Shopify store products.
+            </div>
+          )}
+
+          {shopifyLoad && (
+            <div style={{color:'var(--text-muted)',fontSize:12,padding:'12px 0'}}>Loading your Shopify products…</div>
+          )}
+
+          {shopifyLoaded && !shopifyConnected && (
+            <div style={{background:'rgba(239,68,68,0.07)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:'12px 14px',fontSize:12,color:'#f87171'}}>
+              No Shopify store connected. Go to <strong>Shopify Sync</strong> to connect your store.
+            </div>
+          )}
+
+          {shopifyLoaded && shopifyConnected && shopifyProducts.length === 0 && (
+            <div style={{color:'var(--text-muted)',fontSize:12}}>No products found in your Shopify store.</div>
+          )}
+
+          {shopifyLoaded && shopifyConnected && shopifyProducts.length > 0 && (
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {shopifyProducts.map(p=>{
+                const img = p.images?.[0]?.src;
+                return (
+                  <div key={p.id} style={{background:'var(--bg-card)',border:`1px solid ${p.mapped?'rgba(74,222,128,0.2)':p.request?.status==='pending'?'rgba(251,191,36,0.2)':'var(--border)'}`,borderRadius:8,padding:'10px 12px',display:'flex',gap:10,alignItems:'center'}}>
+                    {img
+                      ? <img src={img} style={{width:44,height:44,objectFit:'cover',borderRadius:6,flexShrink:0,border:'1px solid var(--border)'}} alt=""/>
+                      : <div style={{width:44,height:44,borderRadius:6,background:'var(--bg-card2)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>🛍</div>
+                    }
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.title}</div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{p.variants?.length} variant{p.variants?.length!==1?'s':''}</div>
+                      {p.mapping?.cc_product_title && <div style={{fontSize:10,color:'#a5b4fc',marginTop:2}}>→ {p.mapping.cc_product_title}</div>}
+                    </div>
+                    <div style={{flexShrink:0}}>
+                      {p.mapped
+                        ? <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--green-dim)',color:'var(--green)',border:'1px solid var(--green)',whiteSpace:'nowrap'}}>✓ Mapped</span>
+                        : p.request?.status==='pending'
+                          ? <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--yellow-bg)',color:'var(--yellow)',border:'1px solid var(--yellow)',whiteSpace:'nowrap'}}>⏳ {p.request.request_type==='mapping'?'Mapping Req':'Upload Req'}</span>
+                          : p.request?.status==='rejected'
+                            ? <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'var(--red-bg)',color:'var(--red)',border:'1px solid var(--red)',whiteSpace:'nowrap'}}>✗ Rejected</span>
+                            : <div style={{display:'flex',gap:6}}>
+                                <button onClick={async()=>{
+                                  const r = await fetch(`${API}/vendor/shopify/request-upload`,{
+                                    method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+                                    body:JSON.stringify({product_id:String(p.id),product_title:p.title,product_image:img||'',variants_count:p.variants?.length||0,request_type:'upload'})
+                                  });
+                                  const d = await r.json();
+                                  if(d.success||d.error) loadShopifyProducts();
+                                }} style={{fontSize:10,padding:'3px 8px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo-dim)',color:'var(--indigo)',cursor:'pointer',whiteSpace:'nowrap'}}>
+                                  📤 Upload
+                                </button>
+                                <button onClick={async()=>{
+                                  const r = await fetch(`${API}/vendor/shopify/request-upload`,{
+                                    method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+                                    body:JSON.stringify({product_id:String(p.id),product_title:p.title,product_image:img||'',variants_count:p.variants?.length||0,request_type:'mapping'})
+                                  });
+                                  const d = await r.json();
+                                  if(d.success||d.error) loadShopifyProducts();
+                                }} style={{fontSize:10,padding:'3px 8px',borderRadius:6,border:'1px solid var(--green)',background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',whiteSpace:'nowrap'}}>
+                                  🔗 Map
+                                </button>
+                              </div>
+                      }
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
