@@ -9943,16 +9943,42 @@ app.get("/vendor/product-images", vendorAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Public: validate admin code (fee waiver or force enable) ──────────────
+app.post("/track/validate-admin-code", async (req, res) => {
+  const { code } = req.body || {};
+  if (!code) return res.json({ valid: false, type: null });
+  const feeWaiverCode = process.env.RR_FEE_WAIVER_CODE || '';
+  const forceEnableCode = process.env.RR_FORCE_ENABLE_CODE || '';
+  if (code.trim() === feeWaiverCode) return res.json({ valid: true, type: 'fee_waiver' });
+  if (code.trim() === forceEnableCode) return res.json({ valid: true, type: 'force_enable' });
+  return res.json({ valid: false, type: null });
+});
+
 // ── Public: submit return/exchange request ────────────────────────────────
 app.post("/track/request", async (req, res) => {
   try {
-    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name, payment_id, razorpay_order_id } = req.body;
+    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name, payment_id, razorpay_order_id, admin_code } = req.body;
 
     if (!shopify_order_id || !type || !items?.length || !reason) {
       return res.status(400).json({ error: "Missing required fields" });
     }
     if (!['return', 'exchange'].includes(type)) {
       return res.status(400).json({ error: "type must be 'return' or 'exchange'" });
+    }
+
+    const feeWaiverCode = process.env.RR_FEE_WAIVER_CODE || '';
+    const forceEnableCode = process.env.RR_FORCE_ENABLE_CODE || '';
+    const isFeeWaived = admin_code && feeWaiverCode && admin_code.trim() === feeWaiverCode;
+    const isForceEnabled = admin_code && forceEnableCode && admin_code.trim() === forceEnableCode;
+
+    // If payment is expected (no waiver) and no payment provided, verify fee
+    if (!isFeeWaived && !isForceEnabled && !payment_id) {
+      // Check if vendor actually charges a fee
+      const vendorCfgDoc = await mdb.collection('return_configs').findOne({ vendor_name });
+      const fee = vendorCfgDoc?.rr_fee ?? 199;
+      if (fee > 0) {
+        return res.status(400).json({ error: "Payment required for this request" });
+      }
     }
 
     const now = new Date();
@@ -9977,7 +10003,9 @@ app.post("/track/request", async (req, res) => {
       vendor_note: '',
       payment_id: payment_id || null,
       razorpay_order_id: razorpay_order_id || null,
-      fee_paid: payment_id ? true : false,
+      fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
+      ...(isFeeWaived && { fee_waived_by_admin: true }),
+      ...(isForceEnabled && { force_enabled_by_admin: true }),
     };
 
     await mdb.collection('return_requests').insertOne(doc);

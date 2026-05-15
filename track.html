@@ -493,6 +493,9 @@
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [paymentDone, setPaymentDone] = useState(null);
+    const [adminCode, setAdminCode] = useState('');
+    const [adminCodeResult, setAdminCodeResult] = useState(null); // null | {valid,type}
+    const [checkingCode, setCheckingCode] = useState(false);
 
     const checkedItems = (order.items || []).filter(it => selectedItems[it.line_item_id]?.checked);
 
@@ -503,11 +506,29 @@
     const defaultVendor = (order.items||[])[0]?.vendor || '';
     const displayVendor = activeVendor || defaultVendor;
     const vendorCfg = order.return_configs?.[displayVendor] || {};
-    const fee = vendorCfg.rr_fee ?? 199;
+    const baseFee = vendorCfg.rr_fee ?? 199;
+
+    // Admin code overrides
+    const isFeeWaived = adminCodeResult?.valid && adminCodeResult?.type === 'fee_waiver';
+    const fee = isFeeWaived ? 0 : baseFee;
 
     // Is return/exchange enabled for the active vendor?
     const returnEnabled  = vendorCfg.return_enabled !== false;
     const exchangeEnabled = vendorCfg.exchange_enabled !== false;
+
+    const checkAdminCode = async () => {
+      if (!adminCode.trim()) return;
+      setCheckingCode(true);
+      try {
+        const r = await fetch(`${API}/track/validate-admin-code`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ code: adminCode.trim() }),
+        });
+        const d = await r.json();
+        setAdminCodeResult(d);
+      } catch { setAdminCodeResult({ valid: false, type: null }); }
+      setCheckingCode(false);
+    };
 
     // Fetch variants when item is checked (exchange only)
     const handleCheck = useCallback(async (item, checked) => {
@@ -559,6 +580,7 @@
           customer_phone: order.customer_phone,
           type, items: buildItems(), reason: reason.trim(), vendor_name: vendorName,
           payment_id: paymentId, razorpay_order_id: rzpOrderId,
+          ...(adminCodeResult?.valid && { admin_code: adminCode.trim() }),
         }),
       });
       const d = await r.json();
@@ -695,12 +717,43 @@
           </div>
         )}
 
+        {/* Admin code input */}
+        <details style={{marginBottom:12}}>
+          <summary style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:6}}>
+            <span>🔑</span> Have an admin code?
+          </summary>
+          <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <input
+              type="text"
+              placeholder="Enter admin code…"
+              value={adminCode}
+              onChange={e => { setAdminCode(e.target.value); setAdminCodeResult(null); }}
+              style={{flex:1,minWidth:160,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'7px 10px',color:'var(--text)',fontSize:13,fontFamily:'inherit'}}
+            />
+            <button
+              className="btn"
+              onClick={checkAdminCode}
+              disabled={checkingCode || !adminCode.trim()}
+              style={{fontSize:12,padding:'7px 14px',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.4)',color:'#a5b4fc'}}>
+              {checkingCode ? '…' : 'Apply'}
+            </button>
+          </div>
+          {adminCodeResult && (
+            <div style={{marginTop:6,fontSize:12,fontWeight:600,
+              color: adminCodeResult.valid && adminCodeResult.type === 'fee_waiver' ? '#4ade80' : '#f87171'}}>
+              {adminCodeResult.valid && adminCodeResult.type === 'fee_waiver'
+                ? '✓ Fee waiver applied — no payment required'
+                : '✗ Invalid code'}
+            </div>
+          )}
+        </details>
+
         {/* Fee notice */}
-        <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:8,padding:'12px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
-          <span style={{fontSize:20}}>💳</span>
+        <div style={{background: isFeeWaived ? 'rgba(74,222,128,0.08)' : 'rgba(99,102,241,0.08)', border: `1px solid ${isFeeWaived ? 'rgba(74,222,128,0.3)' : 'rgba(99,102,241,0.25)'}`,borderRadius:8,padding:'12px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:20}}>{isFeeWaived ? '✓' : '💳'}</span>
           <div>
-            <div style={{fontSize:13,fontWeight:700,color:'#a5b4fc'}}>
-              {fee === null ? '⟳ Loading fee…' : fee === 0 ? 'Free — No Fee' : `₹${fee} Processing Fee`}
+            <div style={{fontSize:13,fontWeight:700,color: isFeeWaived ? '#4ade80' : '#a5b4fc'}}>
+              {fee === null ? '⟳ Loading fee…' : fee === 0 ? (isFeeWaived ? 'Fee Waived by Admin' : 'Free — No Fee') : `₹${fee} Processing Fee`}
             </div>
             <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
               {fee === 0 ? 'This request can be submitted for free.' : 'A one-time fee is charged to process your ' + type + ' request. Payment via Razorpay (UPI, Card, Net Banking).'}
@@ -833,6 +886,54 @@
     );
   }
 
+  function AdminCodeField({ onForceEnable, forceEnabled }) {
+    const [code, setCode] = useState('');
+    const [checking, setChecking] = useState(false);
+    const [result, setResult] = useState(null);
+
+    const apply = async () => {
+      if (!code.trim()) return;
+      setChecking(true);
+      try {
+        const r = await fetch(`${API}/track/validate-admin-code`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ code: code.trim() }),
+        });
+        const d = await r.json();
+        setResult(d);
+        if (d.valid && d.type === 'force_enable') onForceEnable(true);
+      } catch { setResult({ valid: false }); }
+      setChecking(false);
+    };
+
+    if (forceEnabled) return (
+      <div style={{fontSize:11,color:'#4ade80',marginBottom:8,fontWeight:600}}>🔓 Admin access active — return enabled for all orders</div>
+    );
+
+    return (
+      <details style={{marginBottom:8}}>
+        <summary style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:5}}>
+          🔑 Have an admin code?
+        </summary>
+        <div style={{marginTop:6,display:'flex',gap:6,alignItems:'center'}}>
+          <input type="text" placeholder="Admin code…" value={code}
+            onChange={e=>{setCode(e.target.value);setResult(null);}}
+            onKeyDown={e=>e.key==='Enter'&&apply()}
+            style={{flex:1,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+          <button className="btn" onClick={apply} disabled={checking||!code.trim()}
+            style={{fontSize:11,padding:'6px 12px',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.4)',color:'#a5b4fc'}}>
+            {checking?'…':'Apply'}
+          </button>
+        </div>
+        {result && (
+          <div style={{marginTop:4,fontSize:11,fontWeight:600,color: result.valid && result.type==='force_enable' ? '#4ade80' : '#f87171'}}>
+            {result.valid && result.type==='force_enable' ? '✓ Access granted — return enabled' : result.valid ? '✗ Code not valid for this action' : '✗ Invalid code'}
+          </div>
+        )}
+      </details>
+    );
+  }
+
   function App() {
     const [orderNum, setOrderNum]   = useState('');
     const [contact,  setContact]    = useState(''); // email or phone
@@ -841,6 +942,7 @@
     const [order,    setOrder]      = useState(null);
     const [activeForm,  setActiveForm]  = useState(null);
     const [confirmed,   setConfirmed]   = useState(null);
+    const [forceReturnEnabled, setForceReturnEnabled] = useState(false);
 
     // "Find my orders" mode
     const [findMode,    setFindMode]    = useState(false);
@@ -900,6 +1002,7 @@
     };
 
     const returnCfg = order ? (() => {
+      if (forceReturnEnabled) return { return_enabled: true };
       // Show return button if ANY vendor in the order accepts returns
       const cfgs = Object.values(order.return_configs || {});
       if (!cfgs.length) return { return_enabled: true };
@@ -955,9 +1058,11 @@
                 <div className="search-field">
                   <label className="field-label">Email or Mobile</label>
                   <input className="field-input" placeholder="you@example.com or 98765 43210"
-                    value={contact} onChange={e=>setContact(e.target.value)} onKeyDown={e=>e.key==='Enter'&&lookup()}/>
+                    value={contact} onChange={e=>{setContact(e.target.value);setForceReturnEnabled(false);}}
+                    onKeyDown={e=>e.key==='Enter'&&lookup()}/>
                 </div>
               </div>
+              <AdminCodeField onForceEnable={setForceReturnEnabled} forceEnabled={forceReturnEnabled}/>
               {error && <div className="alert alert-error" style={{marginTop:10,marginBottom:0}}>⚠ {error}</div>}
               <button className="btn btn-green btn-full" onClick={lookup} disabled={loading}>
                 {loading ? <><span className="spin">↻</span> Searching…</> : '🔍 Track Order'}
