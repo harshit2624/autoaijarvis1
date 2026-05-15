@@ -2027,6 +2027,7 @@
     // product-level bulk actions: { productId: { bulkTracking, bulkOos } }
     const [bulkLoading, setBulkLoading] = useState({});
     const [reqMapping, setReqMapping] = useState({}); // productId → 'loading'|'done'|'error'
+    const [reqRemoval, setReqRemoval] = useState({}); // productId → 'loading'|'done'|'error'
     const [shopifyProducts, setShopifyProducts] = useState([]);
     const [shopifyLoad, setShopifyLoad] = useState(false);
     const [shopifyLoaded, setShopifyLoaded] = useState(false);
@@ -2155,6 +2156,26 @@
                         style={{fontSize:9,padding:'2px 8px',borderRadius:99,border:'1px solid rgba(99,102,241,0.5)',background:'rgba(99,102,241,0.08)',color:'var(--indigo)',cursor:'pointer',fontWeight:700}}>
                         {reqMapping[p.id]==='loading'?'…':'🔗 Request Mapping'}
                       </button>
+                  }
+                  {/* Removal request */}
+                  {p.pending_removal_request || reqRemoval[p.id]==='done'
+                    ? <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:'rgba(239,68,68,0.1)',color:'var(--red)',border:'1px solid var(--red)',fontWeight:700}}>⏳ REMOVAL REQUESTED</span>
+                    : <button onClick={async()=>{
+                        if (!window.confirm(`Request removal of "${p.title}" from CrosCrow store? Admin will review before deleting.`)) return;
+                        setReqRemoval(r=>({...r,[p.id]:'loading'}));
+                        try {
+                          const res = await fetch(`${API}/vendor/products/${p.id}/request-removal`,{
+                            method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+                            body: JSON.stringify({ cc_product_title: p.title, cc_product_image: p.image||'' }),
+                          });
+                          const d = await res.json();
+                          setReqRemoval(r=>({...r,[p.id]: d.success?'done':'error'}));
+                          if (d.error) setMsg({type:'error',text:d.error});
+                        } catch { setReqRemoval(r=>({...r,[p.id]:'error'})); }
+                      }} disabled={reqRemoval[p.id]==='loading'}
+                      style={{fontSize:9,padding:'2px 8px',borderRadius:99,border:'1px solid rgba(239,68,68,0.4)',background:'rgba(239,68,68,0.06)',color:'var(--red)',cursor:'pointer',fontWeight:700}}>
+                      {reqRemoval[p.id]==='loading'?'…':'🗑 Request Removal'}
+                    </button>
                   }
                 </div>
                 {p.type && <div className="product-type">{p.type}</div>}

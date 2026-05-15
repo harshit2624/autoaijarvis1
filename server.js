@@ -3913,8 +3913,9 @@ app.get("/vendor/products", vendorAuth, async (req, res) => {
     const mappings = await mdb.collection('vendor_product_mappings').find({ vendor_name: req.vendor }, { projection: { croscrow_product_id: 1, _id: 0 } }).toArray();
     const mappedCcProductIds = new Set(mappings.map(m => String(m.croscrow_product_id)));
     // Get pending upload requests by CC product — vendor can request mapping from My Products page
-    const pendingReqs = await mdb.collection('product_upload_requests').find({ vendor_name: req.vendor, status: 'pending', cc_product_id: { $exists: true } }, { projection: { cc_product_id: 1, _id: 0 } }).toArray();
+    const pendingReqs = await mdb.collection('product_upload_requests').find({ vendor_name: req.vendor, status: 'pending', cc_product_id: { $exists: true } }, { projection: { cc_product_id: 1, request_type: 1, _id: 0 } }).toArray();
     const pendingCcIds = new Set(pendingReqs.map(r => String(r.cc_product_id)));
+    const removalCcIds = new Set(pendingReqs.filter(r => r.request_type === 'removal').map(r => String(r.cc_product_id)));
     const products = (data.products || []).map(p => ({
       id:      p.id,
       title:   p.title,
@@ -3922,7 +3923,8 @@ app.get("/vendor/products", vendorAuth, async (req, res) => {
       image:   p.image?.src || null,
       type:    p.product_type || "",
       mapped:  mappedCcProductIds.has(String(p.id)),
-      pending_mapping_request: pendingCcIds.has(String(p.id)),
+      pending_mapping_request: pendingCcIds.has(String(p.id)) && !removalCcIds.has(String(p.id)),
+      pending_removal_request: removalCcIds.has(String(p.id)),
       variants: (p.variants || []).map(v => ({
         id:               v.id,
         title:            v.title,
@@ -3935,6 +3937,27 @@ app.get("/vendor/products", vendorAuth, async (req, res) => {
     }));
     res.json({ products });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /vendor/products/:productId/request-removal — vendor requests CC product removal ─
+app.post("/vendor/products/:productId/request-removal", vendorAuth, async (req, res) => {
+  const cc_product_id = String(req.params.productId);
+  const { cc_product_title, cc_product_image, note } = req.body || {};
+  const existing = await mdb.collection('product_upload_requests').findOne({ vendor_name: req.vendor, cc_product_id, request_type: 'removal', status: 'pending' });
+  if (existing) return res.status(400).json({ error: 'Removal already requested' });
+  await mdb.collection('product_upload_requests').insertOne({
+    vendor_name: req.vendor,
+    cc_product_id,
+    product_id: cc_product_id,
+    product_title: cc_product_title || '',
+    product_image: cc_product_image || '',
+    request_type: 'removal',
+    request_source: 'my_products',
+    note: note || '',
+    status: 'pending',
+    created_at: new Date().toISOString(),
+  });
+  res.json({ success: true });
 });
 
 // ── POST /vendor/products/:productId/request-mapping — from My Products page ─
