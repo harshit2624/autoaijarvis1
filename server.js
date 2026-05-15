@@ -38,6 +38,21 @@ const adsStorage = multer.diskStorage({
 });
 const adsUpload = multer({ storage: adsStorage, limits: { fileSize: 5 * 1024 * 1024 } });
 
+// ── Multer — return/exchange request images ────────────────────────────────
+const rrUploadDir = path.join(__dirname, 'rr-uploads');
+if (!fs.existsSync(rrUploadDir)) fs.mkdirSync(rrUploadDir, { recursive: true });
+const rrStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, rrUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `rr_${Date.now()}_${Math.random().toString(36).slice(2,7)}${ext}`);
+  },
+});
+const rrUpload = multer({ storage: rrStorage, limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
+  cb(null, true);
+}});
+
 // ── MongoDB connection ─────────────────────────────────────────────────────
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sicos2725:Harshit4321@cluster27.i8cmlu4.mongodb.net/jarvis?appName=Cluster27";
 let mdb = null; // MongoDB database handle — null until connected
@@ -243,8 +258,33 @@ const OP = {
   async all(status) {
     const q = status && status !== 'all' ? { status } : {};
     const penalties = await mdb.collection('order_penalties').find(q, { projection: { _id: 0 } }).sort({ triggered_at: -1 }).toArray();
-    // Attach delay remarks for each penalty so admin can review before confirming
     await Promise.all(penalties.map(async p => {
+      // Fill missing order_name — try order_meta first, then Shopify API
+      if (!p.order_name) {
+        const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(p.shopify_id) }, { projection: { order_name: 1 } });
+        if (meta?.order_name) {
+          p.order_name = meta.order_name;
+        } else {
+          try {
+            const od = await shopifyREST(`/orders/${p.shopify_id}.json?fields=id,name`);
+            if (od?.order?.name) {
+              p.order_name = od.order.name;
+              // Backfill so future calls are instant
+              await mdb.collection('order_penalties').updateMany(
+                { shopify_id: String(p.shopify_id), order_name: '' },
+                { $set: { order_name: od.order.name } }
+              );
+            }
+          } catch {}
+        }
+      }
+      // Attach vendor stage for this penalty's vendor
+      const ovs = await mdb.collection('order_vendor_stage').findOne(
+        { shopify_id: String(p.shopify_id), vendor_name: p.vendor_name },
+        { projection: { stage: 1, _id: 0 } }
+      );
+      p.current_stage = ovs?.stage || null;
+      // Attach delay remarks
       const remarks = await mdb.collection('delay_remarks').find(
         { shopify_id: String(p.shopify_id), vendor_name: p.vendor_name },
         { projection: { _id: 0 } }
@@ -283,6 +323,7 @@ function mapStatus(s) {
 app.use(cookieParser());
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
+app.use('/rr-uploads', express.static(rrUploadDir));
 
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
@@ -7273,6 +7314,114 @@ app.get('/vendor/shopify/callback', async (req, res) => {
   }
 });
 
+// ── Manual OAuth install — vendor uses their own dev app credentials ─────────
+// POST /vendor/shopify/manual-install
+app.post('/vendor/shopify/manual-install', async (req, res) => {
+  const { shop, client_id, client_secret, vendor_token } = req.body || {};
+  if (!shop || !client_id || !client_secret) return res.status(400).json({ error: 'shop, client_id and client_secret required.' });
+  const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '').trim();
+  if (!cleanShop.includes('.myshopify.com')) return res.status(400).json({ error: 'Invalid shop URL. Use yourstore.myshopify.com' });
+
+  // Resolve vendor name from their panel auth token
+  let vendorName = null;
+  if (vendor_token) {
+    try {
+      const VENDOR_SECRET = process.env.VENDOR_JWT_SECRET || 'vendor_secret_change_me';
+      const payload = JSON.parse(Buffer.from(vendor_token.split('.')[1], 'base64url').toString());
+      vendorName = payload.vendor || null;
+    } catch {}
+  }
+
+  const state = crypto.randomBytes(16).toString('hex');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+  // Store credentials temporarily keyed by state
+  await mdb.collection('vendor_manual_oauth_sessions').insertOne({
+    state,
+    shop_domain: cleanShop,
+    client_id: client_id.trim(),
+    client_secret: client_secret.trim(),
+    code_verifier: codeVerifier,
+    vendor_name: vendorName,
+    created_at: new Date(),
+  });
+  // TTL cleanup — expire after 10 min
+  mdb.collection('vendor_manual_oauth_sessions').createIndex({ created_at: 1 }, { expireAfterSeconds: 600 }).catch(() => {});
+
+  const MANUAL_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/manual-callback`;
+  const params = new URLSearchParams({
+    client_id,
+    scope: SHOPIFY_APP_SCOPES,
+    redirect_uri: MANUAL_REDIRECT_URI,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+
+  res.json({ redirect_url: `https://${cleanShop}/admin/oauth/authorize?${params}` });
+});
+
+// GET /vendor/shopify/manual-callback — Shopify redirects here after vendor approves
+app.get('/vendor/shopify/manual-callback', async (req, res) => {
+  const { shop, code, state } = req.query;
+  if (!state || !code || !shop) return res.status(400).send('Missing required parameters.');
+
+  const session = await mdb.collection('vendor_manual_oauth_sessions').findOne({ state });
+  if (!session) return res.status(403).send('Session expired or invalid state. Please try connecting again.');
+
+  const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '');
+
+  try {
+    const MANUAL_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/manual-callback`;
+    const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id:     session.client_id,
+        client_secret: session.client_secret,
+        code,
+        ...(session.code_verifier ? { code_verifier: session.code_verifier } : {}),
+      }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error(tokenData.error_description || tokenData.error || 'Failed to get access token');
+
+    const accessToken = tokenData.access_token;
+    const vendorName = session.vendor_name || null;
+
+    // Save to vendor_shopify_connections (same collection as Quick Install)
+    await mdb.collection('vendor_shopify_connections').updateOne(
+      { shop_domain: cleanShop },
+      { $set: {
+        shop_domain:  cleanShop,
+        access_token: accessToken,
+        scope:        tokenData.scope || SHOPIFY_APP_SCOPES,
+        installed_at: Date.now(),
+        vendor_name:  vendorName,
+        sync_enabled: 1,
+        updated_at:   new Date().toISOString(),
+        connection_type: 'manual_oauth',
+      }},
+      { upsert: true }
+    );
+
+    // Register webhooks on their store
+    await registerShopifyAppWebhooks(cleanShop, accessToken);
+
+    // Clean up session
+    await mdb.collection('vendor_manual_oauth_sessions').deleteOne({ state });
+
+    console.log(`✅ Manual OAuth connected: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
+    auditLog('shopify_app', 'manual_install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
+
+    res.redirect(`${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html?shopifyConnected=1`);
+  } catch(e) {
+    console.error('❌ Manual OAuth callback error:', e.message);
+    res.status(500).send(`Connection failed: ${e.message}. Please try again.`);
+  }
+});
+
 // Register webhooks on vendor's store after install
 async function registerShopifyAppWebhooks(shop, accessToken) {
   const baseUrl = process.env.SERVER_URL || 'http://localhost:3001';
@@ -9943,6 +10092,16 @@ app.get("/vendor/product-images", vendorAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Public: upload images for return/exchange request ─────────────────────
+app.post("/track/upload-images", rrUpload.array('images', 5), (req, res) => {
+  try {
+    const urls = (req.files || []).map(f => `/rr-uploads/${f.filename}`);
+    res.json({ urls });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Public: validate admin code (fee waiver or force enable) ──────────────
 app.post("/track/validate-admin-code", async (req, res) => {
   const { code } = req.body || {};
@@ -9957,7 +10116,7 @@ app.post("/track/validate-admin-code", async (req, res) => {
 // ── Public: submit return/exchange request ────────────────────────────────
 app.post("/track/request", async (req, res) => {
   try {
-    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name, payment_id, razorpay_order_id, admin_code } = req.body;
+    const { shopify_order_id, order_name, customer_email, customer_name, customer_phone, type, items, reason, vendor_name, payment_id, razorpay_order_id, admin_code, image_urls } = req.body;
 
     if (!shopify_order_id || !type || !items?.length || !reason) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -10004,6 +10163,7 @@ app.post("/track/request", async (req, res) => {
       payment_id: payment_id || null,
       razorpay_order_id: razorpay_order_id || null,
       fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
+      image_urls: Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && u.startsWith('/rr-uploads/')) : [],
       ...(isFeeWaived && { fee_waived_by_admin: true }),
       ...(isForceEnabled && { force_enabled_by_admin: true }),
     };

@@ -2838,6 +2838,18 @@
                             <tr><td colSpan={8} style={{padding:'0 0 0 0',background:'var(--bg-hover)'}}>
                               <div style={{padding:'14px 16px'}}>
                                 <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>Reason: <span style={{color:'var(--text)'}}>{rq.reason}</span></div>
+                                {(rq.image_urls||[]).length > 0 && (
+                                  <div style={{marginBottom:10}}>
+                                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:5}}>Photos:</div>
+                                    <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                                      {(rq.image_urls||[]).map((u,i)=>(
+                                        <a key={i} href={u} target="_blank" rel="noreferrer">
+                                          <img src={u} alt={`Photo ${i+1}`} style={{width:64,height:64,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)',cursor:'pointer'}}/>
+                                        </a>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                                 <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Items:</div>
                                 <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>
                                   {(rq.items||[]).map((it,i)=>(
@@ -3517,15 +3529,20 @@
     const connect = async () => {
       if (!shop.trim() || !clientId.trim() || !secret.trim()) { setMsg('Fill in all three fields.'); return; }
       setConnecting(true); setMsg('');
-      const r = await fetch(`${API}/vendor/shopify/connect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization:`Bearer ${authToken}` },
-        body: JSON.stringify({ shop: shop.trim(), client_id: clientId.trim(), client_secret: secret.trim() })
-      });
-      const d = await r.json();
-      setConnecting(false);
-      if (d.success) { setMsg('✅ Store connected!'); setShop(''); setClientId(''); setSecret(''); loadStatus(); }
-      else setMsg(d.error || 'Connection failed.');
+      try {
+        const r = await fetch(`${API}/vendor/shopify/manual-install`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shop: shop.trim(), client_id: clientId.trim(), client_secret: secret.trim(), vendor_token: authToken })
+        });
+        const d = await r.json();
+        if (d.redirect_url) {
+          window.location.href = d.redirect_url;
+        } else {
+          setMsg(d.error || 'Connection failed.');
+          setConnecting(false);
+        }
+      } catch(e) { setMsg(e.message); setConnecting(false); }
     };
 
     const disconnect = async () => {
@@ -3612,22 +3629,34 @@
             </div>
 
             <details style={{marginBottom:16}}>
-              <summary style={{fontSize:12,color:'var(--text-muted)',cursor:'pointer',userSelect:'none'}}>Or connect manually with credentials</summary>
+              <summary style={{fontSize:12,color:'var(--text-muted)',cursor:'pointer',userSelect:'none'}}>Or connect using your own Shopify Dev App</summary>
               <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
-            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client ID</label>
-            <input className="form-input" placeholder="bfdb172e5968adbccc1119462ce3cb57" value={clientId} onChange={e=>setClientId(e.target.value)}
-              style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+                <div style={{background:'rgba(245,158,11,0.07)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:11,color:'#fbbf24',lineHeight:1.7}}>
+                  <strong>Setup steps:</strong><br/>
+                  1. Go to <strong>Shopify Partners</strong> → Apps → Create app (or use existing Dev App)<br/>
+                  2. In your app settings, add this <strong>Redirect URL</strong>:<br/>
+                  <code style={{background:'rgba(0,0,0,0.3)',padding:'2px 6px',borderRadius:4,fontSize:10,display:'inline-block',marginTop:4,wordBreak:'break-all'}}>https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback</code><br/>
+                  3. Copy your <strong>Client ID</strong> and <strong>Client Secret</strong> from the app and paste below
+                </div>
 
-            <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client Secret</label>
-            <input className="form-input" type="password" placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxx" value={secret} onChange={e=>setSecret(e.target.value)}
-              style={{width:'100%',boxSizing:'border-box',marginBottom:16}}/>
+                <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Your Store URL</label>
+                <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
+                  style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
 
-            <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%'}}>
-              {connecting ? 'Verifying & Connecting…' : '🔗 Connect Shopify Store'}
-            </button>
-            <div style={{marginTop:10,fontSize:11,color:'var(--text-muted)'}}>
-              Read-only access only — CrosCrow cannot modify your store.
-            </div>
+                <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client ID</label>
+                <input className="form-input" placeholder="bfdb172e5968adbccc1119462ce3cb57" value={clientId} onChange={e=>setClientId(e.target.value)}
+                  style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+
+                <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client Secret</label>
+                <input className="form-input" type="password" placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxx" value={secret} onChange={e=>setSecret(e.target.value)}
+                  style={{width:'100%',boxSizing:'border-box',marginBottom:16}}/>
+
+                <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%'}}>
+                  {connecting ? '↻ Redirecting to Shopify…' : '🔗 Connect via Dev App →'}
+                </button>
+                <div style={{marginTop:8,fontSize:11,color:'var(--text-muted)'}}>
+                  You'll be redirected to Shopify to approve — then returned here automatically.
+                </div>
               </div>
             </details>
           </div>
