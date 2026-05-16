@@ -1684,10 +1684,31 @@
         {/* Summary row — small stat cards */}
         <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
           <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(a&&a.summary?a.summary.period.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
-          <StatCard color="cyan"   icon="₹" label="Total Revenue (All Time)"    value={aLoading?'…':fmtCur(at.revenue||0)} sub={'all '+((at.orders||0).toLocaleString())+' orders'}/>
-          <StatCard color="yellow" icon="⬡" label="Pending Commission"          value={aLoading?'…':fmtCur(at.pendingCommission||0)} sub="unsettled"/>
+          <StatCard color="cyan"   icon="₹" label={'Revenue ('+periodLabel+')'}  value={aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0)} sub={'all time: '+fmtCur(at.revenue||0)}/>
           <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
           <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
+
+          {/* Commission breakdown card */}
+          {!aLoading && at.totalCommission !== undefined && (
+            <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
+              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>💰 Commission Breakdown</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
+                {[
+                  { label:'Total Sales Commission', comm: at.totalCommission, gst: at.totalCommissionGst, color:'#a5b4fc', icon:'📊' },
+                  { label:'Delivered Commission',   comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
+                  { label:'In-Transit Commission',  comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'🚚' },
+                  { label:'Pending (Unsettled)',     comm: at.pendingCommission, gst: at.pendingCommissionGst, color:'#fbbf24', icon:'⏳' },
+                  { label:'Missed (RTO)',            comm: at.missedCommission, gst: at.missedCommissionGst, color:'#f87171', icon:'↩' },
+                ].map(({label, comm, gst, color, icon})=>(
+                  <div key={label} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:`3px solid ${color}`}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>{icon} {label}</div>
+                    <div style={{fontSize:16,fontWeight:800,color}}>{fmtCur(comm||0)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>+ GST {fmtCur(gst||0)} = <span style={{color:'var(--text)',fontWeight:600}}>{fmtCur((comm||0)+(gst||0))}</span></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Big breakdown cards — always 3 equal columns */}

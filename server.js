@@ -4683,13 +4683,57 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       if (stageCounts[s] !== undefined) stageCounts[s]++;
     });
 
-    // ── All-time totals (always show regardless of period)
-    const pendDocs = await mdb.collection('settlements').find({ status: 'pending' }, { projection: { commission: 1, gst_amount: 1, _id: 0 } }).toArray();
-    const pendRow = { t: pendDocs.reduce((s, d) => s + (d.commission || 0) + (d.gst_amount || 0), 0) };
+    // ── All-time totals + commission breakdown
+    const allSettlements = await mdb.collection('settlements').find({}, { projection: { commission: 1, gst_amount: 1, status: 1, vendor_name: 1, shopify_id: 1, _id: 0 } }).toArray();
+    const r2 = v => parseFloat((v||0).toFixed(2));
+
+    // Commission on all orders (total sales)
+    const totalCommission   = r2(allSettlements.reduce((s,d)=>s+(d.commission||0),0));
+    const totalCommGst      = r2(allSettlements.reduce((s,d)=>s+(d.gst_amount||0),0));
+
+    // Commission on delivered orders
+    const deliveredIds = new Set();
+    ordersMain.forEach(o => { const m=metaMap[String(o.id)]; if(m?.stage==='delivered') deliveredIds.add(String(o.id)); });
+    // Use all raw for delivered commission (all-time)
+    raw.forEach(o => { const m=metaMap[String(o.id)]; if(m?.stage==='delivered') deliveredIds.add(String(o.id)); });
+    const deliveredSettl    = allSettlements.filter(d=>deliveredIds.has(String(d.shopify_id)));
+    const deliveredComm     = r2(deliveredSettl.reduce((s,d)=>s+(d.commission||0),0));
+    const deliveredCommGst  = r2(deliveredSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+
+    // Pending commission (unsettled)
+    const pendSettl         = allSettlements.filter(d=>d.status==='pending');
+    const pendingComm       = r2(pendSettl.reduce((s,d)=>s+(d.commission||0),0));
+    const pendingCommGst    = r2(pendSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+
+    // In-transit commission (orders in transit/ofd/pickup stage)
+    const transitStages     = new Set(['transit','ofd','pickup']);
+    const transitIds        = new Set();
+    raw.forEach(o => { const m=metaMap[String(o.id)]; if(m && transitStages.has(m.stage)) transitIds.add(String(o.id)); });
+    const transitSettl      = allSettlements.filter(d=>transitIds.has(String(d.shopify_id)));
+    const transitComm       = r2(transitSettl.reduce((s,d)=>s+(d.commission||0),0));
+    const transitCommGst    = r2(transitSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+
+    // Missed commission (RTO orders — commission lost)
+    const rtoIds            = new Set();
+    raw.forEach(o => { const m=metaMap[String(o.id)]; if(m?.stage==='rto') rtoIds.add(String(o.id)); });
+    const rtoSettl          = allSettlements.filter(d=>rtoIds.has(String(d.shopify_id)));
+    const missedComm        = r2(rtoSettl.reduce((s,d)=>s+(d.commission||0),0));
+    const missedCommGst     = r2(rtoSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+
     const allTimeTotals = {
       orders:  raw.length,
       revenue: rev(raw),
-      pendingCommission: parseFloat((pendRow?.t || 0).toFixed(2)),
+      periodRevenue: revMain,
+      pendingCommission:    pendingComm,
+      pendingCommissionGst: pendingCommGst,
+      totalCommission,
+      totalCommissionGst:   totalCommGst,
+      deliveredCommission:  deliveredComm,
+      deliveredCommissionGst: deliveredCommGst,
+      transitCommission:    transitComm,
+      transitCommissionGst: transitCommGst,
+      missedCommission:     missedComm,
+      missedCommissionGst:  missedCommGst,
     };
 
     // ── Vendor fulfillment leaderboard (all time, sorted by most pending)
