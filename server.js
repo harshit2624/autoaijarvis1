@@ -4776,24 +4776,30 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       prepaidCollected:       r2c(commBuckets.prepaid.amt),
     };
 
-    // ── Vendor fulfillment leaderboard (all time, sorted by most pending)
-    const allVSForLb = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, stage_started_at: 1, _id: 0 } }).toArray();
-    const vsMapLb = {};
-    allVSForLb.forEach(r => { if (!vsMapLb[r.shopify_id]) vsMapLb[r.shopify_id] = {}; vsMapLb[r.shopify_id][r.vendor_name] = r; });
+    // ── Vendor fulfillment leaderboard (period-filtered, sorted by most pending)
+    const vsMapLb = ovsStageMap; // reuse already-fetched OVS map
     const vfMap = {};
     const nowMs = Date.now();
-    raw.forEach(o => {
+    const DISPATCHED_STAGES = new Set(['ready','pickup','transit','ofd','delivered','rto']);
+    const ACTIVE_STAGES = new Set(['confirmed','partial','ready','pickup','transit','ofd','delivered','rto']);
+
+    ordersMain.forEach(o => {
       const sid = String(o.id);
       const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
       vendors.forEach(v => {
         const vs = vsMapLb[sid]?.[v];
         const stage = vs?.stage || metaMap[sid]?.stage || 'new';
-        if (!['confirmed','partial','ready','pickup','transit','delivered','rto'].includes(stage)) return;
-        if (!vfMap[v]) vfMap[v] = { confirmed: 0, dispatched: 0, pending: 0, pendingOld48: 0 };
+        if (!ACTIVE_STAGES.has(stage)) return;
+        // Vendor revenue share = line items belonging to this vendor
+        const vendorRev = (o.line_items||[]).filter(li=>li.vendor===v).reduce((s,li)=>s+parseFloat(li.price||0)*(li.quantity||1),0);
+        if (!vfMap[v]) vfMap[v] = { confirmed:0, dispatched:0, pending:0, pendingOld48:0, dispatchedRev:0, pendingRev:0 };
         vfMap[v].confirmed++;
-        if (['ready','pickup','transit','delivered','rto'].includes(stage) || vs?.awb) vfMap[v].dispatched++;
-        else if (['confirmed','partial'].includes(stage)) {
+        if (DISPATCHED_STAGES.has(stage)) {
+          vfMap[v].dispatched++;
+          vfMap[v].dispatchedRev += vendorRev;
+        } else if (['confirmed','partial'].includes(stage)) {
           vfMap[v].pending++;
+          vfMap[v].pendingRev += vendorRev;
           const hrs = vs?.stage_started_at ? (nowMs - vs.stage_started_at) / 3600000 : 0;
           if (hrs > 48) vfMap[v].pendingOld48++;
         }
@@ -4803,11 +4809,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       .filter(([, d]) => d.confirmed >= 3)
       .map(([vendor, d]) => ({
         vendor,
-        confirmed: d.confirmed,
-        dispatched: d.dispatched,
-        pending: d.pending,
+        confirmed:    d.confirmed,
+        dispatched:   d.dispatched,
+        pending:      d.pending,
         pendingOld48: d.pendingOld48,
-        dispatchRate: d.confirmed > 0 ? Math.round(d.dispatched / d.confirmed * 100) : 0,
+        dispatchedRev: parseFloat(d.dispatchedRev.toFixed(2)),
+        pendingRev:    parseFloat(d.pendingRev.toFixed(2)),
+        dispatchRate:  d.confirmed > 0 ? Math.round(d.dispatched / d.confirmed * 100) : 0,
       }))
       .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate)
       .slice(0, 15);

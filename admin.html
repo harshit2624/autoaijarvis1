@@ -2223,7 +2223,7 @@
 
           ) : aTab==='vendors' ? (
             <div style={{padding:16}}>
-              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>All-time vendor fulfillment · sorted by most pending orders · min 3 orders</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Vendor fulfillment · {periodLabel} · sorted by most pending · min 3 orders</div>
               {!(a.vendorLeaderboard||[]).length ? (
                 <div style={{color:'var(--text-muted)',fontSize:12}}>No vendor data yet.</div>
               ) : (
