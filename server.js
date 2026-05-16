@@ -4695,8 +4695,23 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const getRate   = vendor => (vProfMap[vendor]?.commission_pct ?? vCfgMap[vendor]?.commission_pct ?? 20) / 100;
 
     // Classify orders by stage
-    const TRANSIT_STAGES = new Set(['ready','pickup','transit','ofd']);
-    const commBuckets = { total: {c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0} };
+    const TRANSIT_STAGES   = new Set(['ready','pickup','transit','ofd']);
+    const STAGE_ORDER_COMM = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+    const commBuckets = { total:{c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0} };
+
+    // Build vendor-stage map from order_vendor_stage (this is what admin panel uses)
+    const ovsAll = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, _id:0 } }).toArray();
+    const ovsMap = {}; // { shopify_id: { vendor_name: stage } }
+    ovsAll.forEach(r => { if (!ovsMap[r.shopify_id]) ovsMap[r.shopify_id] = {}; ovsMap[r.shopify_id][r.vendor_name] = r.stage; });
+
+    // Effective order stage = highest stage across all vendors (or order_meta fallback)
+    const effectiveStage = (sid, vendors) => {
+      const vendorStages = vendors.map(v => ovsMap[sid]?.[v]).filter(Boolean);
+      if (!vendorStages.length) return metaMap[sid]?.stage || 'new';
+      return vendorStages.reduce((best, s) => {
+        return STAGE_ORDER_COMM.indexOf(s) > STAGE_ORDER_COMM.indexOf(best) ? s : best;
+      }, vendorStages[0]);
+    };
 
     const calcOrderComm = (o) => {
       const payType = (o.financial_status === 'paid') ? 'prepaid' : 'cod';
@@ -4712,24 +4727,16 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       return { c: r2c(c), g: r2c(g) };
     };
 
-    // Total, delivered, pending, rto — use period-filtered orders
     for (const o of ordersMain) {
-      const sid   = String(o.id);
-      const stage = metaMap[sid]?.stage || 'new';
+      const sid     = String(o.id);
+      const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const stage   = effectiveStage(sid, vendors);
       const { c, g } = calcOrderComm(o);
       commBuckets.total.c += c; commBuckets.total.g += g;
       if (stage === 'delivered')                        { commBuckets.delivered.c += c; commBuckets.delivered.g += g; }
+      else if (TRANSIT_STAGES.has(stage))               { commBuckets.transit.c   += c; commBuckets.transit.g   += g; }
       else if (['confirmed','partial'].includes(stage)) { commBuckets.pending.c   += c; commBuckets.pending.g   += g; }
       else if (stage === 'rto')                         { commBuckets.rto.c       += c; commBuckets.rto.g       += g; }
-    }
-
-    // Pipeline — period-filtered orders currently in transit stages
-    for (const o of ordersMain) {
-      const sid   = String(o.id);
-      const stage = metaMap[sid]?.stage || 'new';
-      if (!TRANSIT_STAGES.has(stage)) continue;
-      const { c, g } = calcOrderComm(o);
-      commBuckets.transit.c += c; commBuckets.transit.g += g;
     }
 
     const allTimeTotals = {
