@@ -4723,8 +4723,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       else if (stage === 'rto')                         { commBuckets.rto.c       += c; commBuckets.rto.g       += g; }
     }
 
-    // Pipeline — use ALL current orders in those stages (orders take weeks to ship, not period-bound)
-    for (const o of raw) {
+    // Pipeline — period-filtered orders currently in transit stages
+    for (const o of ordersMain) {
       const sid   = String(o.id);
       const stage = metaMap[sid]?.stage || 'new';
       if (!TRANSIT_STAGES.has(stage)) continue;
