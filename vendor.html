@@ -3894,7 +3894,7 @@
 
             {/* One-click OAuth install */}
             <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:10,padding:20,marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:'var(--indigo)',marginBottom:6}}>⚡ Quick Install (Recommended)</div>
+              <div style={{fontSize:13,fontWeight:700,color:'var(--indigo)',marginBottom:6}}>⚡ Quick Install <span style={{color:'#f59e0b',fontWeight:700}}>(Coming Soon)</span></div>
               <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14,lineHeight:1.6}}>Enter your store URL and click Install — you'll be redirected to Shopify to approve in one click. No credentials needed.</div>
               <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}}>
                 <div style={{flex:1,minWidth:200}}>
@@ -3914,37 +3914,80 @@
               </div>
             </div>
 
-            <details style={{marginBottom:16}}>
-              <summary style={{fontSize:12,color:'var(--text-muted)',cursor:'pointer',userSelect:'none'}}>Or connect using your own Shopify Dev App</summary>
-              <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
-                <div style={{background:'rgba(245,158,11,0.07)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:11,color:'#fbbf24',lineHeight:1.7}}>
-                  <strong>Setup steps:</strong><br/>
-                  1. Go to <strong>Shopify Partners</strong> → Apps → Create app (or use existing Dev App)<br/>
-                  2. In your app settings, add this <strong>Redirect URL</strong>:<br/>
-                  <code style={{background:'rgba(0,0,0,0.3)',padding:'2px 6px',borderRadius:4,fontSize:10,display:'inline-block',marginTop:4,wordBreak:'break-all'}}>https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback</code><br/>
-                  3. Copy your <strong>Client ID</strong> and <strong>Client Secret</strong> from the app and paste below
+            <div style={{marginTop:4,borderTop:'1px solid var(--border)',paddingTop:18}}>
+              <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:2}}>Manual Integration <span style={{fontSize:15,fontWeight:800,color:'#10b981',marginLeft:6}}>⚡ Just 2–3 min</span></div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Create a custom app on your Shopify store and paste the credentials below.</div>
+
+              {[
+                { n:1, label:'Create a custom app', body: <span>Shopify Admin → <strong>Settings</strong> → <strong>Apps and sales channels</strong> → <strong>Develop apps</strong> → <strong>Create an app</strong></span> },
+                { n:2, label:'Enable scopes', body: (
+                  <span>
+                    Open the app → <strong>Configuration</strong> → <strong>Scopes</strong><br/>
+                    <span style={{display:'inline-block',marginTop:6,background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px',lineHeight:2}}>
+                      <span style={{fontSize:10,color:'#10b981',fontWeight:700}}>💡 Use the search box — search each word &amp; select all:</span><br/>
+                      {['product','inventory','location','file'].map(k=>(
+                        <span key={k} style={{marginRight:10}}>
+                          <code style={{background:'rgba(0,0,0,0.25)',padding:'1px 6px',borderRadius:4,fontSize:10,color:'#a5f3fc'}}>{k}</code>
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}> → select all</span>
+                        </span>
+                      ))}
+                    </span>
+                    <details style={{marginTop:8}}>
+                      <summary style={{fontSize:10,color:'var(--text-muted)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:4}}>
+                        <span style={{fontSize:10}}>▸</span> View all required scopes
+                      </summary>
+                      <div style={{marginTop:8,display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px 12px'}}>
+                        {[
+                          {label:'Products',color:'var(--indigo)',scopes:['read_products','write_products','read_product_listings','write_product_listings','read_product_feeds','write_product_feeds','unauthenticated_read_product_listings','unauthenticated_read_product_tags']},
+                          {label:'Inventory',color:'#10b981',scopes:['read_inventory','write_inventory','read_inventory_shipments','write_inventory_shipments','write_inventory_shipments_received_items','read_inventory_shipments_received_items','read_inventory_transfers','write_inventory_transfers','unauthenticated_read_product_inventory','unauthenticated_read_product_pickup_locations']},
+                          {label:'Files',color:'#f59e0b',scopes:['read_files','write_files']},
+                          {label:'Locations',color:'#8b5cf6',scopes:['read_locations','write_locations']},
+                        ].map(({label,color,scopes})=>(
+                          <div key={label} style={{background:'rgba(255,255,255,0.03)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px'}}>
+                            <div style={{fontSize:10,fontWeight:700,color,marginBottom:4}}>{label}</div>
+                            {scopes.map(s=><div key={s} style={{fontFamily:'monospace',fontSize:9,color:'var(--text-muted)',lineHeight:1.9}}>{s}</div>)}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </span>
+                )},
+                { n:3, label:'Add Redirect URL', body: (
+                  <span>
+                    Still in <strong>Configuration</strong> → <strong>Allowed redirection URL(s)</strong> → add:<br/>
+                    <code style={{display:'inline-block',marginTop:4,background:'rgba(0,0,0,0.25)',border:'1px solid var(--border)',padding:'4px 10px',borderRadius:5,fontSize:10,color:'#a5f3fc',wordBreak:'break-all'}}>https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback</code>
+                    <br/><span style={{fontSize:10,color:'var(--text-muted)'}}>Save before continuing.</span>
+                  </span>
+                )},
+              ].map(({n,label,body})=>(
+                <div key={n} style={{display:'flex',gap:12,marginBottom:14}}>
+                  <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(99,102,241,0.15)',color:'var(--indigo)',fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>{n}</div>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginBottom:3}}>{label}</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.7}}>{body}</div>
+                  </div>
                 </div>
+              ))}
 
-                <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Your Store URL</label>
-                <input className="form-input" placeholder="yourstore.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
-                  style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
-
-                <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client ID</label>
-                <input className="form-input" placeholder="bfdb172e5968adbccc1119462ce3cb57" value={clientId} onChange={e=>setClientId(e.target.value)}
-                  style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
-
-                <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:6}}>Client Secret</label>
-                <input className="form-input" type="password" placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxx" value={secret} onChange={e=>setSecret(e.target.value)}
-                  style={{width:'100%',boxSizing:'border-box',marginBottom:16}}/>
-
-                <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%'}}>
-                  {connecting ? '↻ Redirecting to Shopify…' : '🔗 Connect via Dev App →'}
-                </button>
-                <div style={{marginTop:8,fontSize:11,color:'var(--text-muted)'}}>
-                  You'll be redirected to Shopify to approve — then returned here automatically.
+              {/* Step 4 — credentials */}
+              <div style={{display:'flex',gap:12,marginBottom:14}}>
+                <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(99,102,241,0.15)',color:'var(--indigo)',fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>4</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginBottom:8}}>Enter credentials &amp; connect</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Go to <strong>API credentials</strong> in your app and copy the Client ID &amp; Secret.</div>
+                  <input className="form-input" placeholder="Your Shopify domain — e.g. croscrow.myshopify.com" value={shop} onChange={e=>setShop(e.target.value)}
+                    style={{width:'100%',boxSizing:'border-box',marginBottom:8}}/>
+                  <input className="form-input" placeholder="Client ID" value={clientId} onChange={e=>setClientId(e.target.value)}
+                    style={{width:'100%',boxSizing:'border-box',marginBottom:8}}/>
+                  <input className="form-input" type="password" placeholder="Client Secret" value={secret} onChange={e=>setSecret(e.target.value)}
+                    style={{width:'100%',boxSizing:'border-box',marginBottom:12}}/>
+                  <button className="btn btn-green" onClick={connect} disabled={connecting} style={{width:'100%',fontWeight:700}}>
+                    {connecting ? '↻ Redirecting to Shopify…' : '🔗 Connect'}
+                  </button>
+                  <div style={{marginTop:7,fontSize:11,color:'var(--text-muted)'}}>You'll be redirected to Shopify — click <strong>Install</strong> and you're done. Use the browser where Shopify is already logged in.</div>
                 </div>
               </div>
-            </details>
+            </div>
           </div>
         )}
       </div>

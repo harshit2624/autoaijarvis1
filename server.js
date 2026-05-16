@@ -4777,7 +4777,9 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     };
 
     // ── Vendor fulfillment leaderboard (period-filtered, sorted by most pending)
-    const vsMapLb = ovsStageMap; // reuse already-fetched OVS map
+    // allVS has full records (stage + awb); build a proper nested map for leaderboard lookups
+    const vsMapLb = {};
+    allVS.forEach(r => { if (!vsMapLb[r.shopify_id]) vsMapLb[r.shopify_id] = {}; vsMapLb[r.shopify_id][r.vendor_name] = r; });
     const vfMap = {};
     const nowMs = Date.now();
     const DISPATCHED_STAGES = new Set(['ready','pickup','transit','ofd','delivered','rto']);
@@ -4794,7 +4796,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         const vendorRev = (o.line_items||[]).filter(li=>li.vendor===v).reduce((s,li)=>s+parseFloat(li.price||0)*(li.quantity||1),0);
         if (!vfMap[v]) vfMap[v] = { confirmed:0, dispatched:0, pending:0, pendingOld48:0, dispatchedRev:0, pendingRev:0 };
         vfMap[v].confirmed++;
-        if (DISPATCHED_STAGES.has(stage)) {
+        if (DISPATCHED_STAGES.has(stage) || vs?.awb) {
           vfMap[v].dispatched++;
           vfMap[v].dispatchedRev += vendorRev;
         } else if (['confirmed','partial'].includes(stage)) {
