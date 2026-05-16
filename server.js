@@ -1409,7 +1409,7 @@ async function sendProductRequestEmail({ type, vendorName, productTitle, product
       imported:{ label:'Product Imported',      accent:'#10b981', emoji:'✅' },
       mapped:  { label:'Product Mapped',        accent:'#6366f1', emoji:'🔗' },
       rejected:{ label:'Request Rejected',      accent:'#ef4444', emoji:'✗' },
-      updated: { label:'Product Updated on CrosCrow', accent:'#6366f1', emoji:'🔄' },
+      updated: { label:'Product Out of Stock Alert', accent:'#ef4444', emoji:'⚠️' },
     };
     const t = TYPE_MAP[type] || { label: type, accent:'#6366f1', emoji:'📦' };
     const heading = `${t.emoji} ${t.label}`;
@@ -7619,13 +7619,17 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       });
       console.log(`🖼️  Images synced: ${conn.vendor_name} → CC product ${anyMapping.croscrow_product_id} (${images.length} images)`);
     }
-    // Send product update email (throttled — only if not sent in last 10min for this product)
+    // Send out-of-stock alert email only when a mapped variant hits 0
     if (anyMapping) {
-      const throttleKey = `product_update_email_${conn.vendor_name}_${product.id}`;
-      const lastSent = global[throttleKey] || 0;
-      if (Date.now() - lastSent > 10 * 60 * 1000) {
-        global[throttleKey] = Date.now();
-        sendProductRequestEmail({ type:'updated', vendorName:conn.vendor_name, productTitle:product.title, productImage:product.images?.[0]?.src||'', extraRows:[['Changes', 'Price, inventory & images synced to CrosCrow']] }).catch(()=>{});
+      const oosVariants = (product.variants||[]).filter(v => (v.inventory_quantity ?? 0) === 0 && v.inventory_management === 'shopify');
+      if (oosVariants.length > 0) {
+        const throttleKey = `oos_email_${conn.vendor_name}_${product.id}`;
+        const lastSent = global[throttleKey] || 0;
+        if (Date.now() - lastSent > 60 * 60 * 1000) { // max once per hour per product
+          global[throttleKey] = Date.now();
+          const oosLabels = oosVariants.map(v => v.title === 'Default Title' ? 'Default' : v.title).join(', ');
+          sendProductRequestEmail({ type:'updated', vendorName:conn.vendor_name, productTitle:product.title, productImage:product.images?.[0]?.src||'', extraRows:[['⚠ Out of Stock', oosLabels],['Action', 'Update stock or disable listing to avoid overselling']] }).catch(()=>{});
+        }
       }
     }
   } catch(e) { console.error('products-update webhook error:', e.message); }
