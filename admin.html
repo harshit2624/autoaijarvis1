@@ -1699,6 +1699,7 @@
                   { label:'In Pipeline (Ready/Pickup/Transit/OFD)', comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'🚚' },
                   { label:'Pending (Confirmed/Partial)',               comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'⏳' },
                   { label:'Missed (RTO)',                              comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'↩' },
+                  { label:'Cancelled/Hold/Other',                     comm: at.otherCommission,     gst: at.otherCommissionGst,     color:'#94a3b8', icon:'✕' },
                 ].map(({label, comm, gst, color, icon})=>(
                   <div key={label} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:`3px solid ${color}`}}>
                     <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>{icon} {label}</div>

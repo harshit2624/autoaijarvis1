@@ -4697,7 +4697,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     // Classify orders by stage
     const TRANSIT_STAGES   = new Set(['ready','pickup','transit','ofd']);
     const STAGE_ORDER_COMM = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
-    const commBuckets = { total:{c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0} };
+    const commBuckets = { total:{c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0}, other:{c:0,g:0} };
 
     // Build vendor-stage map from order_vendor_stage (this is what admin panel uses)
     const ovsAll = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, _id:0 } }).toArray();
@@ -4737,6 +4737,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       else if (TRANSIT_STAGES.has(stage))               { commBuckets.transit.c   += c; commBuckets.transit.g   += g; }
       else if (['confirmed','partial'].includes(stage)) { commBuckets.pending.c   += c; commBuckets.pending.g   += g; }
       else if (stage === 'rto')                         { commBuckets.rto.c       += c; commBuckets.rto.g       += g; }
+      else                                              { commBuckets.other.c     += c; commBuckets.other.g     += g; }
     }
 
     const allTimeTotals = {
@@ -4753,6 +4754,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       pendingCommissionGst:   r2c(commBuckets.pending.g),
       missedCommission:       r2c(commBuckets.rto.c),
       missedCommissionGst:    r2c(commBuckets.rto.g),
+      otherCommission:        r2c(commBuckets.other.c),
+      otherCommissionGst:     r2c(commBuckets.other.g),
     };
 
     // ── Vendor fulfillment leaderboard (all time, sorted by most pending)
