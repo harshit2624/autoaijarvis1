@@ -4283,6 +4283,55 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
   }
 });
 
+// ── DELETE /vendor/orders/:shopifyId/fulfillment/:fulfillmentId ──────────
+// Cancel (unfulfill) a specific fulfillment on the merchant Shopify store
+app.delete("/vendor/orders/:shopifyId/fulfillment/:fulfillmentId", vendorAuth, async (req, res) => {
+  try {
+    const { shopifyId, fulfillmentId } = req.params;
+    const vName = req.vendor.toLowerCase();
+
+    // Verify this fulfillment belongs to this vendor's line items
+    const token = await getAccessToken();
+    const base = `https://${SHOP}.myshopify.com/admin/api/2025-01`;
+    const headers = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
+
+    const orderRes = await fetch(`${base}/orders/${shopifyId}.json?fields=id,fulfillments,line_items`, { headers });
+    if (!orderRes.ok) return res.status(404).json({ error: 'Order not found' });
+    const { order } = await orderRes.json();
+
+    const fulfillment = (order.fulfillments || []).find(f => String(f.id) === String(fulfillmentId));
+    if (!fulfillment) return res.status(404).json({ error: 'Fulfillment not found on this order' });
+
+    // Ensure at least one fulfilled line item belongs to this vendor
+    const vendorLineIds = new Set(
+      (order.line_items || []).filter(li => (li.vendor||'').toLowerCase() === vName).map(li => li.id)
+    );
+    const belongsToVendor = (fulfillment.line_items || []).some(fli => vendorLineIds.has(fli.id));
+    if (!belongsToVendor) return res.status(403).json({ error: 'This fulfillment does not belong to your products' });
+
+    if (fulfillment.status === 'cancelled') return res.status(400).json({ error: 'Fulfillment is already cancelled' });
+
+    // Cancel the fulfillment on Shopify
+    const cancelRes = await fetch(`${base}/fulfillments/${fulfillmentId}/cancel.json`, { method: 'POST', headers, body: '{}' });
+    if (!cancelRes.ok) {
+      const txt = await cancelRes.text();
+      return res.status(cancelRes.status).json({ error: `Shopify error: ${txt}` });
+    }
+
+    // Clear AWB/stage in our DB so vendor can re-submit
+    await mdb.collection('order_vendor_stage').updateOne(
+      { shopify_id: String(shopifyId), vendor_name: req.vendor },
+      { $unset: { awb: '', awb_courier: '' }, $set: { stage: 'confirmed', stage_started_at: Date.now() } }
+    );
+
+    auditLog('vendor', 'fulfillment_cancelled', shopifyId, { vendor: req.vendor, fulfillmentId });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ cancel fulfillment:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── POST /vendor/orders/:shopifyId/tag ────────────────────────────────────
 // ── GET /vendor/orders/:shopifyId/delivery-status ────────────────────────
 app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res) => {

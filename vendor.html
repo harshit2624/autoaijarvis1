@@ -1145,6 +1145,23 @@
       setMarkingDelivered(false);
     };
 
+    const [cancellingFulfillment, setCancellingFulfillment] = useState(null); // fulfillment id being cancelled
+
+    const cancelFulfillment = async (fulfillmentId) => {
+      if (!window.confirm('Cancel this shipment? This will remove the fulfillment from Shopify so you can create a new one.')) return;
+      setCancellingFulfillment(fulfillmentId); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/fulfillment/${fulfillmentId}`, {
+          method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type: 'success', text: '✓ Shipment cancelled. You can now create a new one.' });
+        onUpdated();
+      } catch(e) { setMsg({ type: 'error', text: e.message }); }
+      setCancellingFulfillment(null);
+    };
+
     const alreadyFulfilled = order.status === 'fulfilled';
     const alreadyDelivered = order.stage === 'delivered';
 
@@ -1292,7 +1309,20 @@
                         <div className="fh-awb">AWB: {f.awb||'—'}</div>
                         {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="fh-link">Track shipment →</a>}
                       </div>
-                      <div className="fh-date">{fmtDate(f.date)}</div>
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
+                        <div className="fh-date">{fmtDate(f.date)}</div>
+                        {f.status !== 'cancelled' && (
+                          <button
+                            onClick={()=>cancelFulfillment(f.id)}
+                            disabled={cancellingFulfillment === f.id}
+                            style={{fontSize:10,padding:'3px 8px',borderRadius:5,border:'1px solid #ef444466',background:'rgba(239,68,68,0.08)',color:'#f87171',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
+                            {cancellingFulfillment === f.id ? '…' : '✕ Cancel Shipment'}
+                          </button>
+                        )}
+                        {f.status === 'cancelled' && (
+                          <span style={{fontSize:10,color:'var(--text-muted)',fontStyle:'italic'}}>Cancelled</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
