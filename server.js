@@ -4683,57 +4683,65 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       if (stageCounts[s] !== undefined) stageCounts[s]++;
     });
 
-    // ── All-time totals + commission breakdown
-    const allSettlements = await mdb.collection('settlements').find({}, { projection: { commission: 1, gst_amount: 1, status: 1, vendor_name: 1, shopify_id: 1, _id: 0 } }).toArray();
-    const r2 = v => parseFloat((v||0).toFixed(2));
+    // ── All-time commission breakdown — calculated directly from orders × vendor rates
+    const r2c = v => parseFloat((v||0).toFixed(2));
+    const GST = 0.18;
 
-    // Commission on all orders (total sales)
-    const totalCommission   = r2(allSettlements.reduce((s,d)=>s+(d.commission||0),0));
-    const totalCommGst      = r2(allSettlements.reduce((s,d)=>s+(d.gst_amount||0),0));
+    // Load vendor commission rates
+    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name:1, commission_pct:1, _id:0 } }).toArray();
+    const vConfigs  = await mdb.collection('vendor_config').find({}, { projection: { vendor_name:1, commission_pct:1, _id:0 } }).toArray();
+    const vProfMap  = Object.fromEntries(vProfiles.map(v=>[v.vendor_name, v]));
+    const vCfgMap   = Object.fromEntries(vConfigs.map(v=>[v.vendor_name, v]));
+    const getRate   = vendor => (vProfMap[vendor]?.commission_pct ?? vCfgMap[vendor]?.commission_pct ?? 20) / 100;
 
-    // Commission on delivered orders
-    const deliveredIds = new Set();
-    ordersMain.forEach(o => { const m=metaMap[String(o.id)]; if(m?.stage==='delivered') deliveredIds.add(String(o.id)); });
-    // Use all raw for delivered commission (all-time)
-    raw.forEach(o => { const m=metaMap[String(o.id)]; if(m?.stage==='delivered') deliveredIds.add(String(o.id)); });
-    const deliveredSettl    = allSettlements.filter(d=>deliveredIds.has(String(d.shopify_id)));
-    const deliveredComm     = r2(deliveredSettl.reduce((s,d)=>s+(d.commission||0),0));
-    const deliveredCommGst  = r2(deliveredSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+    // Classify orders by stage
+    const TRANSIT_STAGES = new Set(['transit','ofd','pickup']);
+    const commBuckets = { total: {c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0} };
 
-    // Pending commission (unsettled)
-    const pendSettl         = allSettlements.filter(d=>d.status==='pending');
-    const pendingComm       = r2(pendSettl.reduce((s,d)=>s+(d.commission||0),0));
-    const pendingCommGst    = r2(pendSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+    for (const o of raw) {
+      const sid   = String(o.id);
+      const stage = metaMap[sid]?.stage || 'new';
+      const payType = (o.financial_status === 'paid') ? 'prepaid' : 'cod';
+      const PREPAID_DISC = payType === 'prepaid' ? 0.10 : 0;
 
-    // In-transit commission (orders in transit/ofd/pickup stage)
-    const transitStages     = new Set(['transit','ofd','pickup']);
-    const transitIds        = new Set();
-    raw.forEach(o => { const m=metaMap[String(o.id)]; if(m && transitStages.has(m.stage)) transitIds.add(String(o.id)); });
-    const transitSettl      = allSettlements.filter(d=>transitIds.has(String(d.shopify_id)));
-    const transitComm       = r2(transitSettl.reduce((s,d)=>s+(d.commission||0),0));
-    const transitCommGst    = r2(transitSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+      let orderComm = 0, orderGst = 0;
+      for (const li of (o.line_items || [])) {
+        const vendor = li.vendor;
+        if (!vendor) continue;
+        const rate  = getRate(vendor);
+        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const base  = parseFloat((itemRev * (1 - PREPAID_DISC)).toFixed(2));
+        const comm  = parseFloat((base * rate).toFixed(2));
+        const gst   = parseFloat((comm * GST).toFixed(2));
+        orderComm += comm;
+        orderGst  += gst;
+      }
+      orderComm = r2c(orderComm);
+      orderGst  = r2c(orderGst);
 
-    // Missed commission (RTO orders — commission lost)
-    const rtoIds            = new Set();
-    raw.forEach(o => { const m=metaMap[String(o.id)]; if(m?.stage==='rto') rtoIds.add(String(o.id)); });
-    const rtoSettl          = allSettlements.filter(d=>rtoIds.has(String(d.shopify_id)));
-    const missedComm        = r2(rtoSettl.reduce((s,d)=>s+(d.commission||0),0));
-    const missedCommGst     = r2(rtoSettl.reduce((s,d)=>s+(d.gst_amount||0),0));
+      commBuckets.total.c += orderComm;
+      commBuckets.total.g += orderGst;
+
+      if (stage === 'delivered') { commBuckets.delivered.c += orderComm; commBuckets.delivered.g += orderGst; }
+      else if (TRANSIT_STAGES.has(stage)) { commBuckets.transit.c += orderComm; commBuckets.transit.g += orderGst; }
+      else if (['confirmed','partial','ready'].includes(stage)) { commBuckets.pending.c += orderComm; commBuckets.pending.g += orderGst; }
+      else if (stage === 'rto') { commBuckets.rto.c += orderComm; commBuckets.rto.g += orderGst; }
+    }
 
     const allTimeTotals = {
       orders:  raw.length,
       revenue: rev(raw),
       periodRevenue: revMain,
-      pendingCommission:    pendingComm,
-      pendingCommissionGst: pendingCommGst,
-      totalCommission,
-      totalCommissionGst:   totalCommGst,
-      deliveredCommission:  deliveredComm,
-      deliveredCommissionGst: deliveredCommGst,
-      transitCommission:    transitComm,
-      transitCommissionGst: transitCommGst,
-      missedCommission:     missedComm,
-      missedCommissionGst:  missedCommGst,
+      totalCommission:        r2c(commBuckets.total.c),
+      totalCommissionGst:     r2c(commBuckets.total.g),
+      deliveredCommission:    r2c(commBuckets.delivered.c),
+      deliveredCommissionGst: r2c(commBuckets.delivered.g),
+      transitCommission:      r2c(commBuckets.transit.c),
+      transitCommissionGst:   r2c(commBuckets.transit.g),
+      pendingCommission:      r2c(commBuckets.pending.c),
+      pendingCommissionGst:   r2c(commBuckets.pending.g),
+      missedCommission:       r2c(commBuckets.rto.c),
+      missedCommissionGst:    r2c(commBuckets.rto.g),
     };
 
     // ── Vendor fulfillment leaderboard (all time, sorted by most pending)
