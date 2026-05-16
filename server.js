@@ -321,6 +321,18 @@ function mapStatus(s) {
 }
 
 app.use(cookieParser());
+
+// ── Redirect render URL → custom domain ───────────────────────────────────
+const RENDER_HOST    = 'autoaijarvis1.onrender.com';
+const CUSTOM_DOMAIN  = 'dashboard.croscrow.com';
+const REDIRECT_SKIP  = ['/webhooks', '/health', '/vendor/shopify/callback', '/vendor/shopify/manual-callback', '/vendor/shopify/install'];
+app.use((req, res, next) => {
+  if (req.hostname === RENDER_HOST && !REDIRECT_SKIP.some(p => req.path.startsWith(p))) {
+    return res.redirect(301, `https://${CUSTOM_DOMAIN}${req.originalUrl}`);
+  }
+  next();
+});
+
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
 app.use('/rr-uploads', express.static(rrUploadDir));
