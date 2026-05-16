@@ -1696,7 +1696,7 @@
                 {[
                   { label:'Total Commission',                          comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'📊' },
                   { label:'Delivered',                                 comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
-                  { label:'In Pipeline (Ready/Pickup/Transit/OFD)',    comm: at.transitCommission,   gst: at.transitCommissionGst,   color:'#60a5fa', icon:'🚚' },
+                  { label:'In Pipeline · All Active (Ready/Pickup/Transit/OFD)', comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'🚚' },
                   { label:'Pending (Confirmed/Partial)',               comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'⏳' },
                   { label:'Missed (RTO)',                              comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'↩' },
                 ].map(({label, comm, gst, color, icon})=>(

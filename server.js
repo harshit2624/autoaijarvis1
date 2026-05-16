@@ -4698,35 +4698,38 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const TRANSIT_STAGES = new Set(['ready','pickup','transit','ofd']);
     const commBuckets = { total: {c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0} };
 
-    // Use period-filtered orders for commission breakdown
+    const calcOrderComm = (o) => {
+      const payType = (o.financial_status === 'paid') ? 'prepaid' : 'cod';
+      const PREPAID_DISC = payType === 'prepaid' ? 0.10 : 0;
+      let c = 0, g = 0;
+      for (const li of (o.line_items || [])) {
+        if (!li.vendor) continue;
+        const rate = getRate(li.vendor);
+        const base = parseFloat((parseFloat(li.price||0) * (li.quantity||1) * (1 - PREPAID_DISC)).toFixed(2));
+        c += parseFloat((base * rate).toFixed(2));
+        g += parseFloat((base * rate * GST).toFixed(2));
+      }
+      return { c: r2c(c), g: r2c(g) };
+    };
+
+    // Total, delivered, pending, rto — use period-filtered orders
     for (const o of ordersMain) {
       const sid   = String(o.id);
       const stage = metaMap[sid]?.stage || 'new';
-      const payType = (o.financial_status === 'paid') ? 'prepaid' : 'cod';
-      const PREPAID_DISC = payType === 'prepaid' ? 0.10 : 0;
+      const { c, g } = calcOrderComm(o);
+      commBuckets.total.c += c; commBuckets.total.g += g;
+      if (stage === 'delivered')                        { commBuckets.delivered.c += c; commBuckets.delivered.g += g; }
+      else if (['confirmed','partial'].includes(stage)) { commBuckets.pending.c   += c; commBuckets.pending.g   += g; }
+      else if (stage === 'rto')                         { commBuckets.rto.c       += c; commBuckets.rto.g       += g; }
+    }
 
-      let orderComm = 0, orderGst = 0;
-      for (const li of (o.line_items || [])) {
-        const vendor = li.vendor;
-        if (!vendor) continue;
-        const rate  = getRate(vendor);
-        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
-        const base  = parseFloat((itemRev * (1 - PREPAID_DISC)).toFixed(2));
-        const comm  = parseFloat((base * rate).toFixed(2));
-        const gst   = parseFloat((comm * GST).toFixed(2));
-        orderComm += comm;
-        orderGst  += gst;
-      }
-      orderComm = r2c(orderComm);
-      orderGst  = r2c(orderGst);
-
-      commBuckets.total.c += orderComm;
-      commBuckets.total.g += orderGst;
-
-      if (stage === 'delivered')              { commBuckets.delivered.c += orderComm; commBuckets.delivered.g += orderGst; }
-      else if (TRANSIT_STAGES.has(stage))     { commBuckets.transit.c  += orderComm; commBuckets.transit.g  += orderGst; }
-      else if (['confirmed','partial'].includes(stage)) { commBuckets.pending.c += orderComm; commBuckets.pending.g += orderGst; }
-      else if (stage === 'rto')               { commBuckets.rto.c      += orderComm; commBuckets.rto.g      += orderGst; }
+    // Pipeline — use ALL current orders in those stages (orders take weeks to ship, not period-bound)
+    for (const o of raw) {
+      const sid   = String(o.id);
+      const stage = metaMap[sid]?.stage || 'new';
+      if (!TRANSIT_STAGES.has(stage)) continue;
+      const { c, g } = calcOrderComm(o);
+      commBuckets.transit.c += c; commBuckets.transit.g += g;
     }
 
     const allTimeTotals = {
