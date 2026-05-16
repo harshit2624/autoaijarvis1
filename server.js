@@ -4695,10 +4695,11 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const getRate   = vendor => (vProfMap[vendor]?.commission_pct ?? vCfgMap[vendor]?.commission_pct ?? 20) / 100;
 
     // Classify orders by stage
-    const TRANSIT_STAGES = new Set(['transit','ofd','pickup']);
+    const TRANSIT_STAGES = new Set(['ready','pickup','transit','ofd']);
     const commBuckets = { total: {c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0} };
 
-    for (const o of raw) {
+    // Use period-filtered orders for commission breakdown
+    for (const o of ordersMain) {
       const sid   = String(o.id);
       const stage = metaMap[sid]?.stage || 'new';
       const payType = (o.financial_status === 'paid') ? 'prepaid' : 'cod';
@@ -4722,10 +4723,10 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       commBuckets.total.c += orderComm;
       commBuckets.total.g += orderGst;
 
-      if (stage === 'delivered') { commBuckets.delivered.c += orderComm; commBuckets.delivered.g += orderGst; }
-      else if (TRANSIT_STAGES.has(stage)) { commBuckets.transit.c += orderComm; commBuckets.transit.g += orderGst; }
-      else if (['confirmed','partial','ready'].includes(stage)) { commBuckets.pending.c += orderComm; commBuckets.pending.g += orderGst; }
-      else if (stage === 'rto') { commBuckets.rto.c += orderComm; commBuckets.rto.g += orderGst; }
+      if (stage === 'delivered')              { commBuckets.delivered.c += orderComm; commBuckets.delivered.g += orderGst; }
+      else if (TRANSIT_STAGES.has(stage))     { commBuckets.transit.c  += orderComm; commBuckets.transit.g  += orderGst; }
+      else if (['confirmed','partial'].includes(stage)) { commBuckets.pending.c += orderComm; commBuckets.pending.g += orderGst; }
+      else if (stage === 'rto')               { commBuckets.rto.c      += orderComm; commBuckets.rto.g      += orderGst; }
     }
 
     const allTimeTotals = {
