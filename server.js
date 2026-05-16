@@ -4676,11 +4676,25 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const topCities = Object.entries(cityMap).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([city,count])=>({city,count}));
 
     // ── Stage counts for selected period
-    const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","penalty"];
+    const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","penalty"];
     const stageCounts = Object.fromEntries(STAGE_LIST.map(s=>[s,0]));
+    // Build ovs map for stage counts (same as commission uses)
+    const ovsForStage = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, _id:0 } }).toArray();
+    const ovsStageMap = {};
+    ovsForStage.forEach(r => { if (!ovsStageMap[r.shopify_id]) ovsStageMap[r.shopify_id] = {}; ovsStageMap[r.shopify_id][r.vendor_name] = r.stage; });
+    const SO_STAGECOUNT = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
     ordersMain.forEach(o => {
-      const s = (metaMap[String(o.id)] || {}).stage || 'new';
+      const sid = String(o.id);
+      const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      let s;
+      if (vendors.length > 0 && ovsStageMap[sid]) {
+        const vstages = vendors.map(v=>ovsStageMap[sid]?.[v]).filter(Boolean);
+        s = vstages.length ? vstages.reduce((best,st)=>SO_STAGECOUNT.indexOf(st)>SO_STAGECOUNT.indexOf(best)?st:best, vstages[0]) : (metaMap[sid]?.stage||'new');
+      } else {
+        s = metaMap[sid]?.stage || 'new';
+      }
       if (stageCounts[s] !== undefined) stageCounts[s]++;
+      else stageCounts['new']++;
     });
 
     // ── All-time commission breakdown — calculated directly from orders × vendor rates
@@ -4699,10 +4713,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const STAGE_ORDER_COMM = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
     const commBuckets = { total:{c:0,g:0}, delivered:{c:0,g:0}, transit:{c:0,g:0}, pending:{c:0,g:0}, rto:{c:0,g:0}, other:{c:0,g:0}, prepaid:{amt:0} };
 
-    // Build vendor-stage map from order_vendor_stage (this is what admin panel uses)
-    const ovsAll = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, _id:0 } }).toArray();
-    const ovsMap = {}; // { shopify_id: { vendor_name: stage } }
-    ovsAll.forEach(r => { if (!ovsMap[r.shopify_id]) ovsMap[r.shopify_id] = {}; ovsMap[r.shopify_id][r.vendor_name] = r.stage; });
+    // Reuse ovsForStage already fetched above
+    const ovsMap = ovsStageMap;
 
     // Effective order stage = highest stage across all vendors (or order_meta fallback)
     const effectiveStage = (sid, vendors) => {
