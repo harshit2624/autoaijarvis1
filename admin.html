@@ -1694,12 +1694,12 @@
               <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>💰 Commission Breakdown · {periodLabel}</div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
                 {[
-                  { label:'Total Commission',                          comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'📊' },
-                  { label:'Delivered',                                 comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
+                  { label:'Total Commission',                    comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'📊' },
+                  { label:'Delivered',                           comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
                   { label:'In Pipeline (Ready/Pickup/Transit/OFD)', comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'🚚' },
-                  { label:'Pending (Confirmed/Partial)',               comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'⏳' },
-                  { label:'Missed (RTO)',                              comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'↩' },
-                  { label:'Cancelled/Hold/Other',                     comm: at.otherCommission,     gst: at.otherCommissionGst,     color:'#94a3b8', icon:'✕' },
+                  { label:'Pending (Confirmed/Partial)',         comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'⏳' },
+                  { label:'Missed (RTO)',                        comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'↩' },
+                  { label:'Cancelled/Hold/Other',                comm: at.otherCommission,     gst: at.otherCommissionGst,     color:'#94a3b8', icon:'✕' },
                 ].map(({label, comm, gst, color, icon})=>(
                   <div key={label} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:`3px solid ${color}`}}>
                     <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>{icon} {label}</div>
@@ -1707,6 +1707,12 @@
                     <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>+ GST {fmtCur(gst||0)} = <span style={{color:'var(--text)',fontWeight:600}}>{fmtCur((comm||0)+(gst||0))}</span></div>
                   </div>
                 ))}
+                {/* Prepaid collected — no GST breakdown */}
+                <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #34d399'}}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>💳 Prepaid Collected</div>
+                  <div style={{fontSize:16,fontWeight:800,color:'#34d399'}}>{fmtCur(at.prepaidCollected||0)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>orders paid online in period</div>
+                </div>
               </div>
             </div>
           )}
