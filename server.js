@@ -53,6 +53,22 @@ const rrUpload = multer({ storage: rrStorage, limits: { fileSize: 8 * 1024 * 102
   cb(null, true);
 }});
 
+// ── Vendor onboarding uploads ─────────────────────────────────────────────
+const onboardUploadDir = path.join(__dirname, 'onboard-uploads');
+if (!fs.existsSync(onboardUploadDir)) fs.mkdirSync(onboardUploadDir, { recursive: true });
+const onboardStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, onboardUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.pdf';
+    cb(null, `gst_${Date.now()}_${Math.random().toString(36).slice(2,7)}${ext}`);
+  },
+});
+const onboardUpload = multer({ storage: onboardStorage, limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  const ok = ['image/png','image/jpeg','application/pdf'].includes(file.mimetype);
+  if (!ok) return cb(new Error('Only PNG, JPG or PDF allowed'));
+  cb(null, true);
+}});
+
 // ── MongoDB connection ─────────────────────────────────────────────────────
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sicos2725:Harshit4321@cluster27.i8cmlu4.mongodb.net/jarvis?appName=Cluster27";
 let mdb = null; // MongoDB database handle — null until connected
@@ -336,6 +352,7 @@ app.use((req, res, next) => {
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
 app.use('/rr-uploads', express.static(rrUploadDir));
+app.use('/onboard-uploads', express.static(onboardUploadDir));
 
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
@@ -1456,6 +1473,45 @@ async function sendProductRequestEmail({ type, vendorName, productTitle, product
       await sendEmail({ to: vcfg.email, subject: `${t.emoji} Request Received — ${productTitle}`, html: vendorHtml });
     }
   } catch(e) { console.error('sendProductRequestEmail error:', e.message); }
+}
+
+// ── Vendor Shopify Connect Email ──────────────────────────────────────────
+async function sendShopifyConnectedEmails(vendorName, shopDomain, method) {
+  try {
+    const cfg = await getSmtpConfig();
+    if (!cfg) return;
+    const adminEmail = 'harshitvj24@gmail.com';
+    const methodLabel = method === 'manual_oauth' ? 'Manual Integration' : 'Quick Install';
+    const vendorProfile = vendorName
+      ? await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { email: 1, _id: 0 } })
+      : null;
+    const vendorEmail = vendorProfile?.email || null;
+
+    const vendorHtml = emailBase('Shopify Store Connected ✓', '#10b981', `
+      <div class="subtitle">Your Shopify store has been successfully connected to CrosCrow.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Store</span><span class="info-val"><strong>${shopDomain}</strong></span></div>
+        <div class="info-row"><span class="info-label">Method</span><span class="info-val">${methodLabel}</span></div>
+        ${vendorName ? `<div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendorName}</span></div>` : ''}
+      </div>
+      <p style="font-size:13px;color:#6b7280;line-height:1.7">CrosCrow admin can now sync your products and inventory. If you did not perform this action, please contact support immediately.</p>
+    `);
+
+    const adminHtml = emailBase('New Shopify Store Connected', '#6366f1', `
+      <div class="subtitle">A vendor has connected their Shopify store to CrosCrow.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Store</span><span class="info-val"><strong>${shopDomain}</strong></span></div>
+        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendorName || 'Unclaimed'}</span></div>
+        <div class="info-row"><span class="info-label">Method</span><span class="info-val">${methodLabel}</span></div>
+        <div class="info-row"><span class="info-label">Time</span><span class="info-val">${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span></div>
+      </div>
+    `);
+
+    if (vendorEmail) {
+      await sendEmail({ to: vendorEmail, subject: '✅ Your Shopify Store is Connected to CrosCrow', html: vendorHtml, shopifyId: '', trigger: 'shopify_connected_vendor' });
+    }
+    await sendEmail({ to: adminEmail, subject: `🔗 New Shopify Store Connected — ${shopDomain}`, html: adminHtml, shopifyId: '', trigger: 'shopify_connected_admin' });
+  } catch(e) { console.error('Shopify connect email error:', e.message); }
 }
 
 // ── Return/Exchange Email Helper ──────────────────────────────────────────
@@ -3602,7 +3658,7 @@ function hashPassword(plain) {
 }
 
 function generateUsername(vendorName) {
-  const base = vendorName.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 14);
+  const base = vendorName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10).toUpperCase();
   const num  = String(Math.floor(Math.random() * 90) + 10); // 10–99
   return base + num;
 }
@@ -3657,7 +3713,7 @@ app.post("/vendor/login", async (req, res) => {
       const token = crypto.randomBytes(32).toString("hex");
       vendorSessions.set(token, { vendorName: credDoc.vendor_name, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
       console.log(`🔓  Vendor login (creds): ${credDoc.vendor_name}`);
-      return res.json({ token, vendorName: credDoc.vendor_name, mustChangePassword: !!credDoc.must_change_password });
+      return res.json({ token, vendorName: credDoc.vendor_name, username: credDoc.username, mustChangePassword: !!credDoc.must_change_password });
     }
 
     // Legacy fallback: brand name login with global password
@@ -7571,6 +7627,7 @@ app.get('/vendor/shopify/callback', async (req, res) => {
 
     console.log(`✅ CrosCrow Sync installed: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
     auditLog('shopify_app', 'install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
+    sendShopifyConnectedEmails(vendorName, cleanShop, 'quick_install');
 
     // Redirect back to vendor panel with success flag
     const vendorPanelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html?shopifyConnected=1`;
@@ -7678,6 +7735,7 @@ app.get('/vendor/shopify/manual-callback', async (req, res) => {
 
     console.log(`✅ Manual OAuth connected: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
     auditLog('shopify_app', 'manual_install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
+    sendShopifyConnectedEmails(vendorName, cleanShop, 'manual_oauth');
 
     res.redirect(`${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html?shopifyConnected=1`);
   } catch(e) {
@@ -10197,6 +10255,34 @@ function templateRRCompletedCustomer({ req }) {
   return emailBase(`${req.type === 'exchange' ? 'Exchange Complete ✓' : 'Return Received ✓'} — ${req.request_id}`, '#10b981', body);
 }
 
+// Customer: reverse shipment created (pickup coming)
+function templateRRReverseShipmentCustomer({ req, awb, courier }) {
+  const body = `
+    <div class="subtitle">A pickup has been arranged for your ${req.type} request. Please keep your parcel ready!</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <div class="info-box">
+      ${awb ? `<div class="info-row"><span class="info-label">AWB / Tracking</span><span class="info-val"><strong>${awb}</strong></span></div>` : ''}
+      ${courier ? `<div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier}</span></div>` : ''}
+    </div>
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our pickup partner will collect the item from your address. Please ensure it is <strong>securely packed and sealed</strong> before the pickup agent arrives. You'll receive tracking updates via this email.</p>`;
+  return emailBase(`Pickup Scheduled — Keep Your Parcel Ready! — ${req.request_id}`, '#6366f1', body);
+}
+
+// Customer: forward shipment created (exchange on its way)
+function templateRRForwardShipmentCustomer({ req, awb, courier }) {
+  const body = `
+    <div class="subtitle">Great news! Your exchanged item is on its way to you. 🎉</div>
+    ${rrInfoBox(req)}
+    ${rrItemsHtml(req.items, req.type)}
+    <div class="info-box">
+      ${awb ? `<div class="info-row"><span class="info-label">AWB / Tracking</span><span class="info-val"><strong>${awb}</strong></span></div>` : ''}
+      ${courier ? `<div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier}</span></div>` : ''}
+    </div>
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Your exchanged item has been dispatched and will be delivered to your address shortly. You can use the tracking number above to track your shipment.</p>`;
+  return emailBase(`Your Exchanged Item is On Its Way! 🚚 — ${req.request_id}`, '#10b981', body);
+}
+
 // Admin: 24hr reminder — still pending
 function templateRRReminder24Admin({ req }) {
   const hrs = Math.round((Date.now() - new Date(req.created_at).getTime()) / 3600000);
@@ -10704,6 +10790,20 @@ app.delete("/admin/return-requests/:id/shipment/:direction", adminAuth, async (r
 });
 
 // ── Admin: manually set AWB on a return request shipment ─────────────────
+async function sendRRShipmentEmail(rr, direction, awb, courier) {
+  try {
+    const cfg = await getSmtpConfig();
+    if (!cfg || !rr.customer_email) return;
+    const template = direction === 'reverse'
+      ? templateRRReverseShipmentCustomer({ req: rr, awb, courier })
+      : templateRRForwardShipmentCustomer({ req: rr, awb, courier });
+    const subject = direction === 'reverse'
+      ? `Pickup Scheduled — Keep Your Parcel Ready! — ${rr.request_id}`
+      : `Your Exchanged Item is On Its Way! 🚚 — ${rr.request_id}`;
+    await sendEmail({ to: rr.customer_email, subject, html: template, shopifyId: rr.shopify_order_id, trigger: `rr_${direction}_shipment` });
+  } catch(e) { console.error('RR shipment email error:', e.message); }
+}
+
 app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
   try {
     const { direction, awb, courier } = req.body || {};
@@ -10714,12 +10814,13 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
       { request_id: req.params.id },
       { $set: { [field]: { awb: awb.trim(), courier: courier || '', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
-    // Push to ShipSagar for tracking
+    // Push to ShipSagar for tracking + send customer email
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
     if (rr) {
       const soData = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null);
       const so = soData?.order || {};
       shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: so.name || rr.request_id, customerName: rr.customer_name || '', email: rr.customer_email || so.email || '', mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) }).catch(() => {});
+      sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -10769,6 +10870,228 @@ app.get("/track/rr-shipment-status", async (req, res) => {
     } catch(e) { console.error('RR ShipSagar push error:', e.message); }
     return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// VENDOR ONBOARDING
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /onboard/submit — public, anyone can submit an application
+app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, res) => {
+  try {
+    const { contact_name, brand_name, email, phone, website, address, city, state, pincode, gst_no, about } = req.body || {};
+    if (!contact_name?.trim() || !brand_name?.trim() || !email?.trim() || !phone?.trim() || !address?.trim())
+      return res.status(400).json({ error: 'contact_name, brand_name, email, phone and address are required.' });
+
+    const existing = await mdb.collection('vendor_onboards').findOne({ email: email.toLowerCase().trim(), status: { $in: ['pending','approved'] } });
+    if (existing) return res.status(409).json({ error: 'An application with this email is already pending or approved.' });
+
+    const doc = {
+      contact_name: contact_name.trim(),
+      brand_name:   brand_name.trim(),
+      email:        email.toLowerCase().trim(),
+      phone:        phone.trim(),
+      website:      website?.trim() || '',
+      address:      address.trim(),
+      city:         city?.trim() || '',
+      state:        state?.trim() || '',
+      pincode:      pincode?.trim() || '',
+      gst_no:       gst_no?.trim().toUpperCase() || '',
+      about:        about?.trim() || '',
+      gst_document: req.file ? `/onboard-uploads/${req.file.filename}` : null,
+      status:       'pending',
+      submitted_at: new Date().toISOString(),
+    };
+
+    await mdb.collection('vendor_onboards').insertOne(doc);
+    auditLog('public', 'vendor_onboard_submit', '', { email: doc.email, brand: doc.brand_name });
+
+    // Notify admin
+    const cfg = await getSmtpConfig();
+    if (cfg) {
+      const adminEmail = 'harshitvj24@gmail.com';
+      const html = emailBase('🚨 New Vendor Application', '#6366f1', `
+        <div class="subtitle">A new vendor has applied to join CrosCrow. Review and approve their application in Admin → Onboarding.</div>
+        <div class="info-box">
+          <div class="info-row"><span class="info-label">Name</span><span class="info-val"><strong>${doc.contact_name}</strong></span></div>
+          <div class="info-row"><span class="info-label">Brand</span><span class="info-val"><strong>${doc.brand_name}</strong></span></div>
+          <div class="info-row"><span class="info-label">Email</span><span class="info-val">${doc.email}</span></div>
+          <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${doc.phone}</span></div>
+          ${doc.website ? `<div class="info-row"><span class="info-label">Website</span><span class="info-val"><a href="${doc.website}" style="color:#6366f1">${doc.website}</a></span></div>` : ''}
+          <div class="info-row"><span class="info-label">Address</span><span class="info-val">${[doc.address,doc.city,doc.state,doc.pincode].filter(Boolean).join(', ')}</span></div>
+          ${doc.gst_no ? `<div class="info-row"><span class="info-label">GST No</span><span class="info-val" style="font-family:monospace">${doc.gst_no}</span></div>` : ''}
+          ${doc.about ? `<div class="info-row"><span class="info-label">About</span><span class="info-val">${doc.about}</span></div>` : ''}
+        </div>
+        ${doc.gst_document ? `<p style="font-size:12px;color:#6b7280;margin-top:8px">GST document attached — view in Admin panel.</p>` : ''}
+      `);
+      await sendEmail({ to: adminEmail, subject: `🚨 New Vendor Application — ${doc.brand_name} (${doc.email})`, html, shopifyId: '', trigger: 'vendor_onboard' });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ /onboard/submit:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/onboards — list all applications
+app.get('/admin/onboards', adminAuth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const q = status ? { status } : {};
+    const docs = await mdb.collection('vendor_onboards').find(q, { projection: { _id: 0 } }).sort({ submitted_at: -1 }).toArray();
+    res.json({ onboards: docs });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /admin/onboards/:email/approve — approve and create vendor account
+app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
+  try {
+    const { commission_pct = 20, vendor_name_override } = req.body || {};
+    const email = decodeURIComponent(req.params.email);
+    const ob = await mdb.collection('vendor_onboards').findOne({ email, status: 'pending' });
+    if (!ob) return res.status(404).json({ error: 'No pending application found for this email' });
+
+    const vendorName = (vendor_name_override && vendor_name_override.trim()) ? vendor_name_override.trim() : ob.brand_name;
+
+    // Create vendor_config entry
+    await mdb.collection('vendor_config').updateOne(
+      { vendor_name: vendorName },
+      { $set: { vendor_name: vendorName, commission_pct: parseFloat(commission_pct), email: ob.email, phone: ob.phone, created_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+
+    // Generate credentials
+    let username, tries = 0;
+    do {
+      username = generateUsername(vendorName);
+      const clash = await mdb.collection('vendor_profiles').findOne({ username }, { projection: { _id: 1 } });
+      if (!clash) break;
+      tries++;
+    } while (tries < 10);
+
+    const password = DEFAULT_VENDOR_PASS;
+    await mdb.collection('vendor_profiles').updateOne(
+      { vendor_name: vendorName },
+      { $set: { vendor_name: vendorName, username, password_hash: hashPassword(password), email: ob.email, must_change_password: true, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+
+    // Mark onboard as approved
+    await mdb.collection('vendor_onboards').updateOne(
+      { email, status: 'pending' },
+      { $set: { status: 'approved', approved_at: new Date().toISOString(), vendor_name: vendorName, commission_pct: parseFloat(commission_pct) } }
+    );
+
+    auditLog('admin', 'vendor_onboard_approve', '', { email, brand: vendorName, commission_pct });
+
+    // Create a draft placeholder product on merchant Shopify so the vendor name
+    // appears in the product vendor dropdown and the vendor can see products/orders
+    let placeholderProductId = null;
+    try {
+      const token = await getAccessToken();
+      const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product: {
+            title: `[${vendorName}] — Placeholder`,
+            vendor: vendorName,
+            status: 'draft',
+            body_html: `Auto-created placeholder for vendor <strong>${vendorName}</strong>. You can delete this once the vendor's real products are added.`,
+            tags: 'vendor-placeholder,croscrow-auto',
+            variants: [{ price: '0.00', inventory_management: null }],
+          }
+        }),
+      });
+      if (prodRes.ok) {
+        const pd = await prodRes.json();
+        placeholderProductId = pd.product?.id || null;
+        console.log(`📦 Created placeholder product for vendor "${vendorName}" (ID: ${placeholderProductId})`);
+      }
+    } catch(e) { console.error('Placeholder product creation failed:', e.message); }
+
+    // Email vendor their credentials
+    const cfg = await getSmtpConfig();
+    if (cfg) {
+      const panelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+      const html = emailBase('🎉 Welcome to CrosCrow — You\'re Approved!', '#10b981', `
+        <div class="subtitle">Congratulations! Your vendor application has been approved. Here are your login credentials.</div>
+        <div class="info-box">
+          <div class="info-row"><span class="info-label">Panel URL</span><span class="info-val"><a href="${panelUrl}" style="color:#6366f1">${panelUrl}</a></span></div>
+          <div class="info-row"><span class="info-label">Username</span><span class="info-val" style="font-family:monospace;font-weight:700">${username}</span></div>
+          <div class="info-row"><span class="info-label">Password</span><span class="info-val" style="font-family:monospace;font-weight:700">${password}</span></div>
+        </div>
+        <p style="font-size:13px;color:#6b7280;line-height:1.7;margin-top:12px">Please log in and change your password on first login. If you have any questions, reply to this email.</p>
+        <div style="text-align:center;margin-top:20px"><a href="${panelUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px">Login to Vendor Panel →</a></div>
+      `);
+      await sendEmail({ to: ob.email, subject: '🎉 You\'re Approved — CrosCrow Vendor Access', html, shopifyId: '', trigger: 'vendor_approved' });
+    }
+
+    if (placeholderProductId) {
+      await mdb.collection('vendor_onboards').updateOne({ email }, { $set: { placeholder_product_id: String(placeholderProductId) } });
+    }
+
+    res.json({ success: true, username, vendor_name: vendorName, placeholder_product_id: placeholderProductId });
+  } catch (err) {
+    console.error('❌ approve onboard:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/onboards/:email/reject — reject application
+app.post('/admin/onboards/:email/reject', adminAuth, async (req, res) => {
+  try {
+    const { reason = '' } = req.body || {};
+    const email = decodeURIComponent(req.params.email);
+    const ob = await mdb.collection('vendor_onboards').findOne({ email, status: 'pending' });
+    if (!ob) return res.status(404).json({ error: 'No pending application found for this email' });
+
+    await mdb.collection('vendor_onboards').updateOne(
+      { email, status: 'pending' },
+      { $set: { status: 'rejected', rejected_at: new Date().toISOString(), reject_reason: reason } }
+    );
+
+    const cfg = await getSmtpConfig();
+    if (cfg && reason) {
+      const html = emailBase('Update on Your CrosCrow Application', '#ef4444', `
+        <div class="subtitle">Thank you for applying to CrosCrow. After review, we're unable to approve your application at this time.</div>
+        ${reason ? `<div class="info-box"><div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div></div>` : ''}
+        <p style="font-size:13px;color:#6b7280;margin-top:12px">If you believe this is an error or would like to re-apply, please contact us.</p>
+      `);
+      await sendEmail({ to: ob.email, subject: 'Update on Your CrosCrow Vendor Application', html, shopifyId: '', trigger: 'vendor_rejected' });
+    }
+
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /admin/onboards/:email/vendor-account — remove panel access only, keep products
+app.delete('/admin/onboards/:email/vendor-account', adminAuth, async (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email);
+    const ob = await mdb.collection('vendor_onboards').findOne({ email }, { projection: { vendor_name: 1, status: 1, _id: 0 } });
+    if (!ob) return res.status(404).json({ error: 'Application not found' });
+    if (ob.status !== 'approved') return res.status(400).json({ error: 'Only approved vendors can have their account removed this way' });
+
+    const vendorName = ob.vendor_name;
+
+    // Remove panel credentials and config — does NOT touch Shopify products or order data
+    await mdb.collection('vendor_profiles').deleteOne({ vendor_name: vendorName });
+    await mdb.collection('vendor_config').deleteOne({ vendor_name: vendorName });
+
+    // Set status to account_removed — keeps the record for history but allows re-submission
+    await mdb.collection('vendor_onboards').updateOne(
+      { email },
+      { $set: { status: 'account_removed', account_removed_at: new Date().toISOString() }, $unset: { approved_at: '', vendor_name: '', commission_pct: '' } }
+    );
+
+    auditLog('admin', 'vendor_account_removed', '', { email, vendor_name: vendorName });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ remove vendor account:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Admin: update return request status / notes ───────────────────────────
@@ -11155,6 +11478,7 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
       { request_id: req.params.id },
       { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
+    sendRRShipmentEmail(rr, direction, result.awb, result.courier);
     res.json({ success: true, awb: result.awb, courier: result.courier });
   } catch (err) {
     console.error('❌ admin create-shipment RR:', err.message);
@@ -11174,6 +11498,7 @@ app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
     { request_id: req.params.id },
     { $set: { [field]: { awb: awb.trim(), courier: courier||'', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
   );
+  sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
   res.json({ success: true });
 });
 
@@ -11238,6 +11563,7 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
       { request_id: req.params.id, vendor_name: req.vendor },
       { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
+    sendRRShipmentEmail(rr, direction, result.awb, result.courier);
     res.json({ success: true, awb: result.awb, courier: result.courier });
   } catch (err) {
     console.error('❌ vendor create-shipment RR:', err.message);

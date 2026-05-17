@@ -1312,12 +1312,15 @@
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
                         <div className="fh-date">{fmtDate(f.date)}</div>
                         {f.status !== 'cancelled' && (
-                          <button
-                            onClick={()=>cancelFulfillment(f.id)}
-                            disabled={cancellingFulfillment === f.id}
-                            style={{fontSize:10,padding:'3px 8px',borderRadius:5,border:'1px solid #ef444466',background:'rgba(239,68,68,0.08)',color:'#f87171',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
-                            {cancellingFulfillment === f.id ? '…' : '✕ Cancel Shipment'}
-                          </button>
+                          <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:2}}>
+                            <button
+                              onClick={()=>cancelFulfillment(f.id)}
+                              disabled={cancellingFulfillment === f.id}
+                              style={{fontSize:10,padding:'3px 8px',borderRadius:5,border:'1px solid #ef444466',background:'rgba(239,68,68,0.08)',color:'#f87171',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
+                              {cancellingFulfillment === f.id ? '…' : '✕ Cancel Shipment'}
+                            </button>
+                            <span style={{fontSize:9,color:'var(--text-muted)',fontStyle:'italic'}}>pickup cancelled / need new AWB?</span>
+                          </div>
                         )}
                         {f.status === 'cancelled' && (
                           <span style={{fontSize:10,color:'var(--text-muted)',fontStyle:'italic'}}>Cancelled</span>
@@ -1697,11 +1700,17 @@
   /* ══════════════════════════════════
      DASHBOARD VIEW
   ══════════════════════════════════ */
-  function Dashboard({ stats, orders, loading, onOpenOrder, period, onPeriodChange }) {
+  function Dashboard({ stats, orders, loading, onOpenOrder, period, onPeriodChange, vendorName }) {
     const recent = orders.slice(0,8);
     const periodSub = period ? period.label : 'All Time';
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
     return (
       <div className="page">
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:18,fontWeight:800,color:'var(--text)',letterSpacing:-0.3}}>{greeting}, <span style={{color:'var(--green)'}}>{vendorName}</span> 👋</div>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Here's your store overview</div>
+        </div>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
           <div style={{fontSize:11,color:'var(--text-muted)'}}>Showing data for <strong style={{color:'var(--text)'}}>{periodSub}</strong></div>
           {onPeriodChange && <PeriodPicker period={period} onChange={onPeriodChange} align="right"/>}
@@ -4197,7 +4206,8 @@
             </div>
           </div>
           <div className="sidebar-vendor">
-            Logged in as<strong>{auth.vendorName}</strong>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text)',lineHeight:1.3}}>{auth.vendorName}</div>
+            {auth.username && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>@{auth.username}</div>}
           </div>
           <nav className="nav">
             {sections.map(sec=>(
@@ -4242,7 +4252,7 @@
               <button className="btn btn-sm" style={{background:'#f59e0b',color:'#000',fontWeight:700,whiteSpace:'nowrap'}} onClick={()=>setView('profile')}>Change Now →</button>
             </div>
           )}
-          {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
+          {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}} vendorName={auth.vendorName}/>}
           {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName} onGoToShopifySync={()=>setView('shopifysync')}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}

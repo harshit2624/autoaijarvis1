@@ -124,19 +124,43 @@
       .sidebar.mobile-open { transform:translateX(0); }
       .sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:999; backdrop-filter:blur(2px); }
       .sidebar-overlay.visible { display:block; }
-      .content { width:100%; }
+      .content { width:100%; padding-bottom:66px; }
       .topbar { padding:0 12px; }
       .topbar-title { font-size:12px; letter-spacing:1px; }
-      .hamburger { display:flex; align-items:center; justify-content:center; width:36px; height:36px; border:1px solid var(--border); border-radius:7px; background:none; cursor:pointer; color:var(--text); font-size:18px; margin-right:6px; flex-shrink:0; }
-      .page { padding:12px 10px 24px; }
+      .hamburger { display:none !important; }
+      .page { padding:12px 10px 20px; }
       .stats-grid { grid-template-columns:repeat(2,1fr) !important; gap:8px; }
       .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+      /* Commission tiles — 2 col on mobile */
+      .comm-grid { grid-template-columns:repeat(2,1fr) !important; }
+      /* Big 3-col cards — stack on mobile */
+      .big-cards-grid { grid-template-columns:1fr !important; }
+      /* Calendar — single month on mobile */
+      .cal-two-months .cal-month-2 { display:none; }
+      /* Bottom nav */
+      .mobile-bottom-nav { display:flex; }
     }
     @media(min-width:769px){
       .hamburger { display:none; }
       .sidebar-overlay { display:none !important; }
       .sidebar { transform:none !important; position:sticky; }
+      .mobile-bottom-nav { display:none !important; }
     }
+    /* Mobile bottom nav */
+    .mobile-bottom-nav {
+      position:fixed; bottom:0; left:0; right:0; z-index:200;
+      background:var(--bg-card); border-top:1px solid var(--border);
+      height:56px; align-items:stretch; justify-content:space-around;
+      padding:0 4px; padding-bottom:env(safe-area-inset-bottom,0px);
+    }
+    .mbn-item {
+      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      gap:2px; border:none; background:none; cursor:pointer; padding:6px 2px;
+      color:var(--text-muted); font-family:'IBM Plex Mono',monospace; transition:color 0.15s;
+    }
+    .mbn-item.active { color:var(--indigo); }
+    .mbn-icon { font-size:18px; line-height:1; }
+    .mbn-label { font-size:8px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; }
 
     /* ── Buttons ── */
     .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; }
@@ -468,14 +492,11 @@
 
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     return (
-      <div style={{minWidth:210}}>
-        <div style={{textAlign:'center',fontWeight:700,fontSize:12,color:'var(--text)',marginBottom:8,letterSpacing:1}}>
-          {MONTH_NAMES[month]} {year}
+      <div style={{width:'100%'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,marginBottom:4}}>
+          {DAYS.map(d=><div key={d} style={{textAlign:'center',fontSize:10,color:'var(--text-muted)',fontWeight:600,padding:'3px 0'}}>{d}</div>)}
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1,marginBottom:4}}>
-          {DAYS.map(d=><div key={d} style={{textAlign:'center',fontSize:9,color:'var(--text-muted)',fontWeight:600,padding:'2px 0'}}>{d}</div>)}
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:1}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2}}>
           {cells.map((d,i)=>{
             const iso = isoDay(d);
             const start = isStart(iso), end = isEnd(iso), range = inRange(iso);
@@ -485,7 +506,7 @@
                 onClick={()=>d && onDayClick(iso)}
                 onMouseEnter={()=>d && onDayHover(iso)}
                 style={{
-                  textAlign:'center',fontSize:11,padding:'5px 2px',borderRadius:5,cursor:d?'pointer':'default',userSelect:'none',
+                  textAlign:'center',fontSize:12,padding:'7px 2px',borderRadius:6,cursor:d?'pointer':'default',userSelect:'none',
                   background: (start||end) ? 'var(--indigo)' : range ? '#1e1b4b' : 'transparent',
                   color: (start||end) ? '#fff' : d ? 'var(--text)' : 'transparent',
                   fontWeight: (start||end||isToday) ? 700 : 400,
@@ -501,20 +522,29 @@
   }
 
   function PeriodPicker({ period, onChange, align='left' }) {
-    const [open, setOpen]       = useState(false);
-    const [view, setView]       = useState('presets'); // 'presets' | 'calendar'
+    const [open, setOpen]         = useState(false);
+    const [view, setView]         = useState('presets');
     const [calYear,  setCalYear]  = useState(new Date().getFullYear());
     const [calMonth, setCalMonth] = useState(new Date().getMonth());
     const [rangeStart, setRangeStart] = useState(null);
     const [rangeEnd,   setRangeEnd]   = useState(null);
     const [hoverDate,  setHoverDate]  = useState(null);
+    const [isMob, setIsMob]       = useState(window.innerWidth <= 768);
     const ref = useRef(null);
 
     useEffect(()=>{
-      const close = e => { if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
-      document.addEventListener('mousedown', close);
-      return () => document.removeEventListener('mousedown', close);
+      const onResize = () => setIsMob(window.innerWidth <= 768);
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
     },[]);
+
+    useEffect(()=>{
+      if (!isMob) {
+        const close = e => { if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
+      }
+    },[isMob]);
 
     const selectPreset = p => { onChange({label:p.label, from:p.from, to:p.to}); setOpen(false); };
 
@@ -535,86 +565,104 @@
     const nextMon   = calMonth===11 ? 0 : calMonth+1;
 
     const label = period ? period.label : 'All Time';
-    const sub   = period ? `${period.from}  →  ${period.to}` : '';
+    const sub   = period ? `${period.from} → ${period.to}` : '';
+
+    const pickerContent = (
+      <>
+        {/* Tab header */}
+        <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+          {['presets','calendar'].map(t=>(
+            <button key={t} onClick={()=>setView(t)} style={{
+              flex:1,padding:'10px',fontSize:11,fontWeight:600,textTransform:'uppercase',letterSpacing:1,
+              background:view===t?'var(--bg-card2)':'transparent',
+              color:view===t?'var(--indigo)':'var(--text-muted)',
+              border:'none',cursor:'pointer',fontFamily:'inherit',
+            }}>{t==='presets'?'Quick Select':'Calendar'}</button>
+          ))}
+        </div>
+
+        {view==='presets' ? (
+          <div style={{padding:8,display:'grid',gridTemplateColumns:isMob?'1fr 1fr':'1fr',gap:2}}>
+            {PERIOD_PRESETS.map(p=>(
+              <button key={p.label} onClick={()=>selectPreset(p)} style={{
+                display:'block',width:'100%',textAlign:'left',padding:'10px 14px',fontSize:12,
+                background: period && period.label===p.label ? 'var(--indigo-dim)' : 'transparent',
+                color: period && period.label===p.label ? 'var(--indigo)' : 'var(--text)',
+                border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit',
+                fontWeight: period && period.label===p.label ? 700 : 400,
+              }}>{p.label}</button>
+            ))}
+          </div>
+        ) : (
+          <div style={{padding:14}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+              <button onClick={prevMonth} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',cursor:'pointer',fontSize:16,padding:'4px 12px',lineHeight:1}}>‹</button>
+              <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][calMonth]} {calYear}</span>
+              <button onClick={nextMonth} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',cursor:'pointer',fontSize:16,padding:'4px 12px',lineHeight:1}}>›</button>
+            </div>
+            <CalendarMonth year={calYear} month={calMonth} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
+            {!isMob && (
+              <>
+                <div style={{height:1,background:'var(--border)',margin:'12px 0'}}/>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                  <div/>
+                  <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][nextMon]} {nextYear}</span>
+                  <div/>
+                </div>
+                <CalendarMonth year={nextYear} month={nextMon} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
+              </>
+            )}
+            {rangeStart && !rangeEnd && (
+              <div style={{textAlign:'center',fontSize:10,color:'var(--text-muted)',marginTop:10}}>Tap end date to complete range</div>
+            )}
+          </div>
+        )}
+      </>
+    );
 
     return (
       <div ref={ref} style={{position:'relative',display:'inline-block'}}>
         <button onClick={()=>setOpen(o=>!o)} style={{
-          display:'flex',alignItems:'center',gap:8,padding:'7px 12px',
+          display:'flex',alignItems:'center',gap:6,padding:'7px 10px',
           background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,
-          color:'var(--text)',fontSize:11,fontFamily:'inherit',cursor:'pointer',
-          transition:'border-color 0.15s', minWidth:180,
-        }}
-          onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border-hi)'}
-          onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}
-        >
+          color:'var(--text)',fontSize:11,fontFamily:'inherit',cursor:'pointer',whiteSpace:'nowrap',
+        }}>
           <span style={{fontSize:13}}>📅</span>
-          <span style={{flex:1,textAlign:'left'}}>
-            <span style={{fontWeight:700,color:'var(--text)'}}>{label}</span>
-            {sub && <span style={{display:'block',fontSize:9,color:'var(--text-muted)',marginTop:1}}>{sub}</span>}
-          </span>
+          <span style={{fontWeight:700}}>{label}</span>
           <span style={{color:'var(--text-muted)',fontSize:9}}>{open?'▲':'▼'}</span>
         </button>
 
-        {open && (
+        {/* Desktop dropdown */}
+        {open && !isMob && (
           <div style={{
-            position:'absolute', [align==='right'?'right':'left']:0, top:'calc(100% + 6px)', zIndex:999,
+            position:'absolute', [align==='right'?'right':'left']:0, top:'calc(100% + 6px)', zIndex:1000,
             background:'var(--bg-card)',border:'1px solid var(--border-hi)',borderRadius:10,
-            boxShadow:'0 8px 40px #000a',minWidth:260,overflow:'hidden',
+            boxShadow:'0 8px 40px #000a',width:260,overflow:'hidden',
           }}>
-            {/* Tab header */}
-            <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-              {['presets','calendar'].map(t=>(
-                <button key={t} onClick={()=>setView(t)} style={{
-                  flex:1,padding:'9px',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:1,
-                  background:view===t?'var(--bg-card2)':'transparent',
-                  color:view===t?'var(--indigo)':'var(--text-muted)',
-                  border:'none',cursor:'pointer',fontFamily:'inherit',
-                }}>{t==='presets'?'Quick Select':'Calendar'}</button>
-              ))}
-            </div>
-
-            {view==='presets' ? (
-              <div style={{padding:8}}>
-                {PERIOD_PRESETS.map(p=>(
-                  <button key={p.label} onClick={()=>selectPreset(p)} style={{
-                    display:'block',width:'100%',textAlign:'left',padding:'8px 12px',fontSize:12,
-                    background: period && period.label===p.label ? 'var(--indigo-dim)' : 'transparent',
-                    color: period && period.label===p.label ? 'var(--indigo)' : 'var(--text)',
-                    border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit',
-                    fontWeight: period && period.label===p.label ? 700 : 400,
-                  }}
-                    onMouseEnter={e=>{ if(!(period&&period.label===p.label)) e.currentTarget.style.background='var(--bg-hover)'; }}
-                    onMouseLeave={e=>{ e.currentTarget.style.background=period&&period.label===p.label?'var(--indigo-dim)':'transparent'; }}
-                  >{p.label}</button>
-                ))}
-              </div>
-            ) : (
-              <div style={{padding:12}}>
-                <div style={{display:'flex',gap:16}}>
-                  {/* Month 1 */}
-                  <div>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                      <button onClick={prevMonth} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 4px'}}>‹</button>
-                      <div/>
-                      <div/>
-                    </div>
-                    <CalendarMonth year={calYear} month={calMonth} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
-                  </div>
-                  {/* Month 2 */}
-                  <div>
-                    <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',marginBottom:8}}>
-                      <button onClick={nextMonth} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:14,padding:'0 4px'}}>›</button>
-                    </div>
-                    <CalendarMonth year={nextYear} month={nextMon} rangeStart={rangeStart} rangeEnd={rangeEnd} hoverDate={hoverDate} onDayClick={handleDayClick} onDayHover={setHoverDate}/>
-                  </div>
-                </div>
-                {rangeStart && !rangeEnd && (
-                  <div style={{textAlign:'center',fontSize:10,color:'var(--text-muted)',marginTop:8}}>Click end date to complete range</div>
-                )}
-              </div>
-            )}
+            {pickerContent}
           </div>
+        )}
+
+        {/* Mobile bottom sheet */}
+        {open && isMob && (
+          <>
+            <div onClick={()=>setOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:1001,backdropFilter:'blur(2px)'}}/>
+            <div style={{
+              position:'fixed',left:0,right:0,bottom:0,zIndex:1002,
+              background:'var(--bg-card)',borderTop:'1px solid var(--border-hi)',
+              borderRadius:'16px 16px 0 0',boxShadow:'0 -8px 40px #000a',
+              maxHeight:'85vh',overflowY:'auto',
+              paddingBottom:'env(safe-area-inset-bottom,12px)',
+            }}>
+              {/* Sheet handle */}
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px 0'}}>
+                <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>Select Period</span>
+                <button onClick={()=>setOpen(false)} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:18,lineHeight:1,padding:'0 4px'}}>✕</button>
+              </div>
+              <div style={{width:36,height:4,borderRadius:2,background:'var(--border)',margin:'8px auto 0'}}/>
+              {pickerContent}
+            </div>
+          </>
         )}
       </div>
     );
@@ -1673,10 +1721,9 @@
     return (
       <div className="page">
         {/* ── Global period picker ── */}
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:8}}>
-          <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:1}}>
-            Showing data for: <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
-            {ps.from && <span style={{color:'var(--text-muted)',marginLeft:6,fontSize:10}}>({ps.from} → {ps.to})</span>}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,gap:8}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
           </div>
           <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
         </div>
@@ -1692,7 +1739,7 @@
           {!aLoading && at.totalCommission !== undefined && (
             <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
               <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>💰 Commission Breakdown · {periodLabel}</div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
+              <div className="comm-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
                 {[
                   { label:'Total Commission',                    comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'📊' },
                   { label:'Delivered',                           comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
@@ -1765,7 +1812,7 @@
             };
 
             return (
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
+              <div className="big-cards-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
                 {/* ── Confirmed Orders Card with left/right breakdown ── */}
                 {(()=>{
                   const sm  = fs.stageMap || {};
@@ -3181,9 +3228,11 @@
                             <td style={{padding:'8px 10px',color:'var(--text-dim)',whiteSpace:'nowrap'}}>{rq.vendor_name||'—'}</td>
                             <td style={{padding:'8px 10px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${STATUS_COLOR[rq.status]||'var(--border)'}`,color:STATUS_COLOR[rq.status]||'var(--text)',borderRadius:99,padding:'2px 9px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.status}</span></td>
                             <td style={{padding:'8px 10px'}}>
-                              {rq.fee_paid
-                                ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.3)',color:'#10b981',fontWeight:600}}>💳 Paid</span>
-                                : <span style={{fontSize:10,color:'var(--text-muted)'}}>—</span>}
+                              {rq.fee_paid === 'waived'
+                                ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.3)',color:'#f59e0b',fontWeight:600}}>🔑 Admin Code</span>
+                                : rq.fee_paid
+                                  ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.3)',color:'#10b981',fontWeight:600}}>💳 Paid</span>
+                                  : <span style={{fontSize:10,color:'var(--text-muted)'}}>—</span>}
                             </td>
                             <td style={{padding:'8px 10px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{rq.created_at?.split('T')[0]}</td>
                             <td style={{padding:'8px 10px'}} onClick={e=>e.stopPropagation()}>
@@ -7324,6 +7373,7 @@
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
+      { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
@@ -7394,7 +7444,29 @@
           {view==='webhooks'    && <Webhooks    token={token}/>}
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
           {view==='commissionrules' && <CommissionRules  token={token}/>}
+          {view==='onboarding'     && <VendorOnboarding token={token}/>}
         </div>
+
+        {/* ── Mobile bottom navigation ── */}
+        <nav className="mobile-bottom-nav">
+          {[
+            { id:'dashboard',   icon:'◈', label:'Home'      },
+            { id:'orders',      icon:'◎', label:'Orders'    },
+            { id:'vendors',     icon:'🏪', label:'Vendors'   },
+            { id:'returns',     icon:'↩', label:'Returns'   },
+            { id:'jarvis',      icon:'⚡', label:'JARVIS'    },
+          ].map(n=>(
+            <button key={n.id} className={`mbn-item ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
+              <span className="mbn-icon">{n.icon}</span>
+              <span className="mbn-label">{n.label}</span>
+            </button>
+          ))}
+          {/* More — opens sidebar */}
+          <button className="mbn-item" onClick={()=>setSidebarOpen(o=>!o)}>
+            <span className="mbn-icon">☰</span>
+            <span className="mbn-label">More</span>
+          </button>
+        </nav>
       </div>
     );
   }
@@ -7402,6 +7474,201 @@
   /* ══════════════════════════════════════════════════════════
      WEBHOOKS PANEL
   ══════════════════════════════════ */
+  // ── Vendor Onboarding Panel ────────────────────────────────────────────
+  function VendorOnboarding({ token }) {
+    const [list,     setList]     = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [filter,   setFilter]   = useState('pending');
+    const [selected, setSelected] = useState(null);
+    const [commPct,  setCommPct]  = useState('20');
+    const [vendorNameOverride, setVendorNameOverride] = useState('');
+    const [rejectReason, setRejectReason] = useState('');
+    const [saving,   setSaving]   = useState(false);
+    const [msg,      setMsg]      = useState(null);
+
+    const load = () => {
+      setLoading(true);
+      fetch(`${API}/admin/onboards?status=${filter}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setList(d.onboards||[])).catch(()=>setList([])).finally(()=>setLoading(false));
+    };
+    useEffect(()=>{ load(); }, [filter]);
+
+    const approve = async (ob) => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/onboards/${encodeURIComponent(ob.email)}/approve`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ commission_pct: parseFloat(commPct)||20, vendor_name_override: vendorNameOverride.trim() || undefined }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`✓ Approved! Username: ${d.username} · Password: Croscrow@00 · Email sent to vendor.${d.placeholder_product_id ? ' Draft placeholder product created on Shopify — vendor name is now available in your product vendor dropdown.' : ''}` });
+        setSelected(null); load();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(false);
+    };
+
+    const reject = async (ob) => {
+      if (!window.confirm('Reject this application?')) return;
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/onboards/${encodeURIComponent(ob.email)}/reject`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ reason: rejectReason }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:'Application rejected.' });
+        setSelected(null); setRejectReason(''); load();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(false);
+    };
+
+    const STATUS_COLOR = { pending:'#f59e0b', approved:'#10b981', rejected:'#ef4444' };
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>🆕 Vendor Onboarding</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Review and approve vendor applications. Credentials are auto-generated on approval.</div>
+          </div>
+          <div style={{display:'flex',gap:6}}>
+            {['pending','approved','rejected'].map(s=>(
+              <button key={s} onClick={()=>setFilter(s)} style={{
+                padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',
+                border:`1px solid ${filter===s?STATUS_COLOR[s]:'var(--border)'}`,
+                background: filter===s ? `${STATUS_COLOR[s]}22` : 'transparent',
+                color: filter===s ? STATUS_COLOR[s] : 'var(--text-muted)',
+                textTransform:'capitalize',
+              }}>{s}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Onboard link */}
+        <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:8,padding:'10px 14px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:11,color:'var(--text-muted)'}}>Onboarding form URL — embed in Shopify or share directly:</span>
+          <code style={{fontSize:11,color:'#a5f3fc',background:'rgba(0,0,0,0.2)',padding:'3px 8px',borderRadius:4}}>{window.location.origin}/onboard.html</code>
+          <button onClick={()=>navigator.clipboard.writeText(`${window.location.origin}/onboard.html`)} style={{fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}>Copy</button>
+        </div>
+
+        {msg && <div style={{padding:'10px 14px',borderRadius:8,marginBottom:14,fontSize:12,background: msg.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',border:`1px solid ${msg.type==='success'?'rgba(16,185,129,0.3)':'rgba(239,68,68,0.3)'}`,color:msg.type==='success'?'#10b981':'#ef4444'}}>{msg.text}</div>}
+
+        {loading ? (
+          <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>Loading…</div>
+        ) : list.length === 0 ? (
+          <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>No {filter} applications.</div>
+        ) : (
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {list.map(ob=>(
+              <div key={ob.email} style={{background:'var(--bg-card)',border:`1px solid ${selected?.email===ob.email?'var(--indigo)':'var(--border)'}`,borderRadius:10,overflow:'hidden',cursor:'pointer'}} onClick={()=>{ const next=selected?.email===ob.email?null:ob; setSelected(next); if(next){ setVendorNameOverride(next.brand_name); setCommPct('20'); } }}>
+                <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+                  <div style={{width:38,height:38,borderRadius:'50%',background:'rgba(99,102,241,0.15)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,fontWeight:800,color:'var(--indigo)',flexShrink:0}}>
+                    {ob.brand_name?.[0]?.toUpperCase()||'?'}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>{ob.brand_name}</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)'}}>{ob.contact_name} · {ob.email} · {ob.phone}</div>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                    <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,fontWeight:700,background:`${STATUS_COLOR[ob.status]}22`,color:STATUS_COLOR[ob.status],textTransform:'capitalize'}}>{ob.status}</span>
+                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{ob.submitted_at?.slice(0,10)}</span>
+                    <span style={{fontSize:12,color:'var(--text-muted)'}}>{selected?.email===ob.email?'▲':'▼'}</span>
+                  </div>
+                </div>
+
+                {selected?.email===ob.email && (
+                  <div style={{borderTop:'1px solid var(--border)',padding:'16px'}} onClick={e=>e.stopPropagation()}>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:10,marginBottom:16}}>
+                      {[
+                        ['Contact Name', ob.contact_name],
+                        ['Email', ob.email],
+                        ['Phone', ob.phone],
+                        ob.website && ['Website', ob.website],
+                        ['Address', [ob.address,ob.city,ob.state,ob.pincode].filter(Boolean).join(', ')],
+                        ob.gst_no && ['GST No', ob.gst_no],
+                      ].filter(Boolean).map(([label,val])=>(
+                        <div key={label} style={{background:'var(--bg-hover)',borderRadius:6,padding:'8px 10px'}}>
+                          <div style={{fontSize:9,color:'var(--text-muted)',fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:3}}>{label}</div>
+                          <div style={{fontSize:12,color:'var(--text)',wordBreak:'break-word'}}>{val||'—'}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {ob.about && (
+                      <div style={{background:'var(--bg-hover)',borderRadius:6,padding:'8px 10px',marginBottom:12}}>
+                        <div style={{fontSize:9,color:'var(--text-muted)',fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:3}}>About</div>
+                        <div style={{fontSize:12,color:'var(--text)',lineHeight:1.6}}>{ob.about}</div>
+                      </div>
+                    )}
+
+                    {ob.gst_document && (
+                      <div style={{marginBottom:14}}>
+                        <a href={ob.gst_document} target="_blank" rel="noreferrer" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 12px',borderRadius:6,background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.25)',color:'var(--indigo)',fontSize:11,fontWeight:600,textDecoration:'none'}}>
+                          📄 View GST Document
+                        </a>
+                      </div>
+                    )}
+
+                    {ob.status === 'pending' && (
+                      <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+                        <div style={{minWidth:160}}>
+                          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>Vendor / Brand Name</div>
+                          <input value={vendorNameOverride} onChange={e=>setVendorNameOverride(e.target.value)}
+                            style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+                          <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>edit if different from submitted name</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>Commission %</div>
+                          <input type="number" min="0" max="100" step="0.5" value={commPct} onChange={e=>setCommPct(e.target.value)}
+                            style={{width:80,padding:'6px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+                        </div>
+                        <button onClick={()=>approve(ob)} disabled={saving} style={{padding:'7px 18px',borderRadius:7,border:'none',background:'var(--green)',color:'#000',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+                          {saving?'…':'✓ Approve & Create Account'}
+                        </button>
+                        <div style={{flex:1,minWidth:200}}>
+                          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>Reject reason (optional)</div>
+                          <input placeholder="e.g. Incomplete info, try again" value={rejectReason} onChange={e=>setRejectReason(e.target.value)}
+                            style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+                        </div>
+                        <button onClick={()=>reject(ob)} disabled={saving} style={{padding:'7px 14px',borderRadius:7,border:'1px solid #5a1a1a',background:'var(--red-bg)',color:'var(--red)',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+                          ✕ Reject
+                        </button>
+                      </div>
+                    )}
+                    {ob.status === 'approved' && (
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+                        <div style={{fontSize:11,color:'var(--green)'}}>✓ Approved {ob.approved_at?.slice(0,10)} · Commission: {ob.commission_pct}% · Vendor: {ob.vendor_name}</div>
+                        <button disabled={saving} onClick={async()=>{
+                          if(!window.confirm(`Remove ${ob.vendor_name}'s panel access? Their Shopify products will NOT be deleted. The application will go back to pending so you can re-approve with corrected details.`)) return;
+                          setSaving(true); setMsg(null);
+                          try {
+                            const r = await fetch(`${API}/admin/onboards/${encodeURIComponent(ob.email)}/vendor-account`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                            const d = await r.json();
+                            if(!r.ok) throw new Error(d.error);
+                            setMsg({type:'success',text:'Vendor account removed. Application is back to pending — you can re-approve with corrected details.'});
+                            setSelected(null); load();
+                          } catch(e){setMsg({type:'error',text:e.message});}
+                          setSaving(false);
+                        }} style={{padding:'5px 12px',borderRadius:6,border:'1px solid #5a1a1a',background:'var(--red-bg)',color:'var(--red)',fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                          🗑 Remove Account
+                        </button>
+                      </div>
+                    )}
+                    {ob.status === 'rejected' && (
+                      <div style={{fontSize:11,color:'var(--red)'}}>✕ Rejected {ob.rejected_at?.slice(0,10)}{ob.reject_reason?` — ${ob.reject_reason}`:''}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function CommissionRules({ token }) {
     const EMPTY = { vendor_name:'', product_id:'', sku:'', title:'', image:'', price:0, mode:'flat', flat_amount:'', flat_gst_inclusive:true, vendor_cost:'', margin_pct:'', margin_gst_inclusive:true };
     const [rules,      setRules]      = useState([]);

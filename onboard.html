@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Become a Vendor — CrosCrow</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #ffffff;
+      --bg-card:   #ffffff;
+      --bg-card2:  #f7f7f7;
+      --bg-hover:  #f2f2f2;
+      --border:    #ebebeb;
+      --border-hi: #d4d4d4;
+      --accent:    #0a0a0a;
+      --accent-dim:#f2f2f2;
+      --red:       #c00000;
+      --red-bg:    #fff5f5;
+      --green:     #0a7c4e;
+      --green-bg:  #f0fdf4;
+      --text:      #0a0a0a;
+      --text-muted:#8c8c8c;
+      --text-dim:  #4a4a4a;
+      --shadow:    0 1px 4px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+      --radius:    10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+    .page-wrap { max-width: 600px; margin: 0 auto; padding: 20px 16px 60px; }
+
+    .header { text-align: center; padding: 20px 0 18px; }
+    .header-logo { margin: 0 auto 10px; display: flex; align-items: center; justify-content: center; }
+    .header-title { font-size: 20px; font-weight: 800; color: var(--text); letter-spacing: -0.5px; }
+    .header-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    .divider { height: 1px; background: var(--border); margin: 0 0 20px; }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .section-label {
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 14px;
+    }
+
+    .field { margin-bottom: 14px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label {
+      display: block; font-size: 12px; font-weight: 600;
+      color: var(--text-dim); margin-bottom: 5px;
+    }
+    .badge-req {
+      display: inline-block; background: #0a0a0a; color: #fff;
+      font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+      margin-left: 5px; vertical-align: middle; letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    .badge-opt {
+      display: inline-block; background: #f0f0f0; color: #8c8c8c;
+      font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+      margin-left: 5px; vertical-align: middle; letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    .field input, .field textarea, .field select {
+      width: 100%; padding: 10px 12px;
+      border: 1.5px solid var(--border); border-radius: 8px;
+      font-family: 'Inter', sans-serif; font-size: 13px; color: var(--text);
+      background: #fff; outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus, .field textarea:focus { border-color: var(--accent); }
+    .field textarea { resize: vertical; min-height: 80px; }
+    .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media(max-width:480px) { .field-row { grid-template-columns: 1fr; } }
+
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: 8px; padding: 20px;
+      text-align: center; cursor: pointer; transition: all 0.15s; background: #fafafa;
+    }
+    .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: #f5f5f5; }
+    .upload-zone input { display: none; }
+    .upload-icon { font-size: 26px; margin-bottom: 6px; }
+    .upload-text { font-size: 12px; color: var(--text-muted); }
+    .upload-text strong { color: var(--accent); }
+    .file-preview {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; background: var(--green-bg);
+      border: 1px solid #a7f3d0; border-radius: 7px;
+      margin-top: 8px; font-size: 12px; color: var(--green); font-weight: 600;
+    }
+
+    .submit-btn {
+      width: 100%; padding: 13px; border: none; border-radius: 9px;
+      background: var(--accent); color: #fff;
+      font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s; letter-spacing: -0.2px;
+    }
+    .submit-btn:hover:not(:disabled) { background: #222; box-shadow: var(--shadow-md); }
+    .submit-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .alert {
+      padding: 11px 14px; border-radius: 8px;
+      font-size: 12px; margin-bottom: 14px; line-height: 1.5;
+    }
+    .alert-error { background: var(--red-bg); border: 1px solid #ffd0d0; color: var(--red); }
+    .alert-success { background: var(--green-bg); border: 1px solid #a7f3d0; color: var(--green); }
+
+    .success-wrap { text-align: center; padding: 48px 20px; }
+    .success-icon { font-size: 52px; margin-bottom: 14px; }
+    .success-title { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+    .success-sub { font-size: 13px; color: var(--text-muted); line-height: 1.7; max-width: 380px; margin: 0 auto; }
+
+    .spin { display: inline-block; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .footer-note { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 14px; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <div class="header">
+    <div class="header-logo">
+      <img src="/croscrow-logo.png" alt="CrosCrow" style="height:44px;width:auto;border-radius:8px;"/>
+    </div>
+    <div class="header-sub" style="margin-top:6px">Vendor Onboarding · Takes under 3 minutes</div>
+  </div>
+
+  <div class="divider"></div>
+  <div id="root"></div>
+</div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+  const { useState, useRef } = React;
+  const API = window.location.origin;
+
+  function Field({ label, required, optional, hint, children }) {
+    return (
+      <div className="field">
+        <label>
+          {label}
+          {required && <span className="badge-req">required</span>}
+          {optional && <span className="badge-opt">optional</span>}
+        </label>
+        {children}
+        {hint && <div className="hint">{hint}</div>}
+      </div>
+    );
+  }
+
+  function App() {
+    const [done,    setDone]    = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [err,     setErr]     = useState('');
+    const [gstFile, setGstFile] = useState(null);
+    const [drag,    setDrag]    = useState(false);
+    const fileRef = useRef();
+
+    const [form, setForm] = useState({
+      contact_name:'', brand_name:'', email:'', phone:'',
+      website:'', address:'', city:'', state:'', pincode:'',
+      gst_no:'', about:'',
+    });
+    const set = (k, v) => setForm(f => ({...f, [k]: v}));
+
+    const handleFile = f => {
+      if (!f) return;
+      if (!['image/png','image/jpeg','application/pdf'].includes(f.type))
+        return setErr('GST document must be PNG, JPG or PDF.');
+      if (f.size > 8 * 1024 * 1024) return setErr('File too large. Max 8MB.');
+      setGstFile(f); setErr('');
+    };
+
+    const submit = async () => {
+      setErr('');
+      if (!form.contact_name.trim()) return setErr('Contact name is required.');
+      if (!form.brand_name.trim())   return setErr('Brand name is required.');
+      if (!form.email.trim() || !form.email.includes('@')) return setErr('A valid email is required.');
+      if (!form.phone.trim())        return setErr('Phone number is required.');
+      if (!form.website.trim())      return setErr('Website or social link is required.');
+
+      setLoading(true);
+      try {
+        const fd = new FormData();
+        Object.entries(form).forEach(([k,v]) => fd.append(k, v));
+        if (gstFile) fd.append('gst_document', gstFile);
+        const r = await fetch(`${API}/onboard/submit`, { method:'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Submission failed');
+        setDone(true);
+      } catch(e) { setErr(e.message); }
+      setLoading(false);
+    };
+
+    if (done) return (
+      <div className="success-wrap">
+        <div className="success-icon">🎉</div>
+        <div className="success-title">You're on the list!</div>
+        <div className="success-sub">
+          Thanks <strong>{form.contact_name}</strong>! We've received your application and will review it within 24–48 hours.<br/><br/>
+          Once approved, you'll get your login credentials at <strong>{form.email}</strong>.
+        </div>
+      </div>
+    );
+
+    return (
+      <>
+        {err && <div className="alert alert-error">⚠ {err}</div>}
+
+        {/* Who are you */}
+        <div className="card">
+          <div className="section-label">Who are you?</div>
+          <div className="field-row">
+            <Field label="Your Name" required>
+              <input placeholder="Full name" value={form.contact_name} onChange={e=>set('contact_name',e.target.value)}/>
+            </Field>
+            <Field label="Brand / Business Name" required>
+              <input placeholder="Your brand name" value={form.brand_name} onChange={e=>set('brand_name',e.target.value)}/>
+            </Field>
+          </div>
+          <div className="field-row">
+            <Field label="Email" required hint="Credentials will be sent here">
+              <input type="email" placeholder="you@brand.com" value={form.email} onChange={e=>set('email',e.target.value)}/>
+            </Field>
+            <Field label="Phone" required>
+              <input type="tel" placeholder="+91 98765 43210" value={form.phone} onChange={e=>set('phone',e.target.value)}/>
+            </Field>
+          </div>
+          <Field label="Website / Instagram / Catalogue" required hint="Where can we see your products?">
+            <input type="url" placeholder="https://yourbrand.com or instagram.com/yourbrand" value={form.website} onChange={e=>set('website',e.target.value)}/>
+          </Field>
+        </div>
+
+        {/* About your brand */}
+        <div className="card">
+          <div className="section-label">What's your brand about?</div>
+          <Field label="Tell us your story — what do you make, who is it for, what makes it special?" optional hint="The more you share, the faster we can set you up.">
+            <textarea
+              placeholder={"e.g. We make handcrafted leather bags for working professionals who want quality that lasts a lifetime. Every piece is made-to-order in our Mumbai workshop with full-grain leather..."}
+              value={form.about} onChange={e=>set('about',e.target.value)} rows={4}
+            />
+          </Field>
+        </div>
+
+        {/* Address */}
+        <div className="card">
+          <div className="section-label">Pickup / Business Address</div>
+          <Field label="Street Address" optional>
+            <input placeholder="Shop / Office / Warehouse address" value={form.address} onChange={e=>set('address',e.target.value)}/>
+          </Field>
+          <div className="field-row">
+            <Field label="City" optional>
+              <input placeholder="Mumbai" value={form.city} onChange={e=>set('city',e.target.value)}/>
+            </Field>
+            <Field label="State" optional>
+              <input placeholder="Maharashtra" value={form.state} onChange={e=>set('state',e.target.value)}/>
+            </Field>
+          </div>
+          <Field label="Pincode" optional>
+            <input placeholder="400001" value={form.pincode} onChange={e=>set('pincode',e.target.value)} style={{maxWidth:140}}/>
+          </Field>
+        </div>
+
+        {/* GST */}
+        <div className="card">
+          <div className="section-label">GST Details <span style={{fontSize:10,fontWeight:400,textTransform:'none',letterSpacing:0,color:'#aaa'}}>— you can add this later</span></div>
+          <Field label="GST Number" optional hint="15-digit GSTIN">
+            <input placeholder="27AAPFU0939F1ZV" value={form.gst_no} onChange={e=>set('gst_no',e.target.value.toUpperCase())} style={{letterSpacing:1,fontFamily:'monospace'}}/>
+          </Field>
+          <Field label="GST Certificate" optional hint="PNG, JPG or PDF · max 8MB">
+            <div
+              className={`upload-zone${drag?' drag':''}`}
+              onClick={()=>fileRef.current.click()}
+              onDragOver={e=>{e.preventDefault();setDrag(true);}}
+              onDragLeave={()=>setDrag(false)}
+              onDrop={e=>{e.preventDefault();setDrag(false);handleFile(e.dataTransfer.files[0]);}}
+            >
+              <input ref={fileRef} type="file" accept=".png,.jpg,.jpeg,.pdf" onChange={e=>handleFile(e.target.files[0])}/>
+              {!gstFile ? (
+                <>
+                  <div className="upload-icon">📎</div>
+                  <div className="upload-text"><strong>Click to upload</strong> or drag &amp; drop</div>
+                  <div className="upload-text" style={{fontSize:10,marginTop:2}}>PNG · JPG · PDF</div>
+                </>
+              ) : (
+                <div className="file-preview">
+                  <span>✓</span>
+                  <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{gstFile.name}</span>
+                  <button onClick={e=>{e.stopPropagation();setGstFile(null);}} style={{background:'none',border:'none',cursor:'pointer',color:'#065f46',fontSize:14,flexShrink:0}}>✕</button>
+                </div>
+              )}
+            </div>
+          </Field>
+        </div>
+
+        <button className="submit-btn" onClick={submit} disabled={loading}>
+          {loading ? <><span className="spin">↻</span> Submitting…</> : 'Submit Application →'}
+        </button>
+        <div className="footer-note">We'll review your application within 24–48 hours and reach out via email.</div>
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
