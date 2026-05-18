@@ -2067,6 +2067,8 @@
     const [bulkLoading, setBulkLoading] = useState({});
     const [reqMapping, setReqMapping] = useState({}); // productId → 'loading'|'done'|'error'
     const [reqRemoval, setReqRemoval] = useState({}); // productId → 'loading'|'done'|'error'
+    const [sizeChart, setSizeChart] = useState({}); // productId → { loading, data, expanded, uploading, error }
+    const scFileRefs = useRef({});
     const [shopifyProducts, setShopifyProducts] = useState([]);
     const [shopifyLoad, setShopifyLoad] = useState(false);
     const [shopifyLoaded, setShopifyLoaded] = useState(false);
@@ -2141,6 +2143,34 @@
         load();
       } catch(e){ setMsg({ type:'error', text: e.message }); }
       setEditing(e=>{ const n={...e}; if(n[key]) delete n[key].trackSaving; return n; });
+    };
+
+    const loadSizeChart = async (pid) => {
+      setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),loading:true,expanded:true,error:null}}));
+      try {
+        const r = await fetch(`${API}/vendor/products/${pid}/size-chart`,{headers:{Authorization:`Bearer ${token}`}});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error||'Failed');
+        setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),loading:false,data:d.metafield}}));
+      } catch(e) { setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),loading:false,error:e.message}})); }
+    };
+
+    const uploadSizeChart = async (pid, file) => {
+      if (!file) return;
+      setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),uploading:true,error:null}}));
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        const r = await fetch(`${API}/vendor/products/${pid}/size-chart`,{
+          method:'POST', headers:{Authorization:`Bearer ${token}`}, body:fd,
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error||'Upload failed');
+        setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),uploading:false,data:{...( s[pid]?.data||{}), image_url: d.image_url}}}));
+        setMsg({type:'success',text:'Size chart uploaded successfully!'});
+      } catch(e) {
+        setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),uploading:false,error:e.message}}));
+      }
     };
 
     return (
@@ -2240,6 +2270,50 @@
                     </>);
                   })()}
                 </div>
+
+                {/* ── Size Chart ─────────────────────────────────── */}
+                {(()=>{
+                  const sc = sizeChart[p.id];
+                  return (
+                    <div style={{marginTop:8,marginBottom:4}}>
+                      {!sc?.expanded ? (
+                        <button onClick={()=>loadSizeChart(p.id)}
+                          style={{fontSize:10,padding:'3px 9px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer',fontWeight:600}}>
+                          📏 Size Chart
+                        </button>
+                      ) : (
+                        <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px'}}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                            <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>📏 Size Chart</span>
+                            <button onClick={()=>setSizeChart(s=>({...s,[p.id]:{...s[p.id],expanded:false}}))}
+                              style={{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:13}}>✕</button>
+                          </div>
+                          {sc.loading && <div style={{fontSize:11,color:'var(--text-muted)'}}>Loading…</div>}
+                          {sc.error && <div style={{fontSize:11,color:'var(--red)'}}>{sc.error}</div>}
+                          {!sc.loading && !sc.error && sc.data?.image_url && (
+                            <div style={{marginBottom:8}}>
+                              <img src={sc.data.image_url} alt="Size Chart"
+                                style={{maxWidth:'100%',maxHeight:220,borderRadius:6,border:'1px solid var(--border)',objectFit:'contain'}}/>
+                            </div>
+                          )}
+                          {!sc.loading && !sc.error && !sc.data && (
+                            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>No size chart set yet.</div>
+                          )}
+                          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                            <button onClick={()=>{ if (!scFileRefs.current[p.id]) return; scFileRefs.current[p.id].value=''; scFileRefs.current[p.id].click(); }}
+                              disabled={sc.uploading}
+                              style={{fontSize:10,padding:'4px 11px',borderRadius:4,border:'1px solid var(--accent)',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600}}>
+                              {sc.uploading ? '↻ Uploading…' : sc.data?.image_url ? '↑ Replace Image' : '↑ Upload Image'}
+                            </button>
+                            <span style={{fontSize:10,color:'var(--text-muted)'}}>PNG, JPG, WEBP · max 10MB</span>
+                            <input ref={el=>scFileRefs.current[p.id]=el} type="file" accept=".png,.jpg,.jpeg,.webp,.gif"
+                              style={{display:'none'}} onChange={e=>uploadSizeChart(p.id, e.target.files[0])}/>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:6}}>
                   {p.variants.map(v=>{
@@ -3122,6 +3196,134 @@
   /* ══════════════════════════════════
      PROFILE VIEW
   ══════════════════════════════════ */
+  function VendorAgreement({ token }) {
+    const [agreements, setAgreements] = useState([]);
+    const [loading,    setLoading]    = useState(true);
+    const [uploading,  setUploading]  = useState(null);
+    const [msg,        setMsg]        = useState(null);
+    const fileRef = useRef();
+    const [uploadTarget, setUploadTarget] = useState(null);
+
+    useEffect(()=>{
+      fetch(`${API}/vendor/agreements`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setAgreements(d.agreements||[])).catch(()=>{}).finally(()=>setLoading(false));
+    },[token]);
+
+    const uploadSigned = async (ag, file) => {
+      if (!file) return;
+      const ok = ['application/pdf','image/png','image/jpeg'].includes(file.type);
+      if (!ok) return setMsg({ type:'error', text:'Only PDF, PNG or JPG allowed.' });
+      if (file.size > 20*1024*1024) return setMsg({ type:'error', text:'File too large. Max 20MB.' });
+      setUploading(ag.id); setMsg(null);
+      try {
+        const fd = new FormData();
+        fd.append('signed_doc', file);
+        const r = await fetch(`${API}/vendor/agreements/${ag.id}/upload-signed`, { method:'POST', headers:{ Authorization:`Bearer ${token}` }, body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:'✓ Signed agreement uploaded! Admin will review and confirm shortly.' });
+        setAgreements(prev => prev.map(a => a.id===ag.id ? {...a, status:'signed', signed_url: d.signed_url} : a));
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+      setUploading(null);
+    };
+
+    const STATUS_COLOR = { sent:'#f59e0b', signed:'#6366f1', approved:'#10b981', expired:'#ef4444' };
+    const STATUS_LABEL = { sent:'Sent — Awaiting Signature', signed:'Signed — Pending Approval', approved:'Active', expired:'Expired' };
+    const today = new Date().toISOString().slice(0,10);
+
+    return (
+      <div className="page">
+        <div style={{marginBottom:18}}>
+          <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:2}}>📋 My Agreement</div>
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>Your partnership agreement with CrosCrow. Download, sign, and upload your signed copy below.</div>
+        </div>
+
+        {msg && <div style={{padding:'10px 14px',borderRadius:8,marginBottom:14,fontSize:12,background:msg.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',border:`1px solid ${msg.type==='success'?'rgba(16,185,129,0.3)':'rgba(239,68,68,0.3)'}`,color:msg.type==='success'?'var(--green)':'var(--red)'}}>{msg.text}</div>}
+
+        {loading ? <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>Loading…</div> :
+         agreements.length === 0 ? (
+           <div style={{textAlign:'center',padding:48,color:'var(--text-muted)'}}>
+             <div style={{fontSize:32,marginBottom:12}}>📄</div>
+             <div style={{fontWeight:600,marginBottom:6}}>No agreement yet</div>
+             <div style={{fontSize:12}}>Your agreement will appear here once CrosCrow sends it.</div>
+           </div>
+         ) : (
+           <div style={{display:'flex',flexDirection:'column',gap:12}}>
+             {agreements.map(ag=>{
+               const isExpired = ag.valid_till && ag.valid_till < today;
+               const color = isExpired ? '#ef4444' : (STATUS_COLOR[ag.status]||'#888');
+               return (
+                 <div key={ag.id} style={{background:'var(--bg-card)',border:`1px solid var(--border)`,borderRadius:10,overflow:'hidden'}}>
+                   <div style={{padding:'14px 16px'}}>
+                     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8,marginBottom:10}}>
+                       <div>
+                         <div style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>Vendor Partnership Agreement</div>
+                         <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+                           Issued {ag.created_at?.slice(0,10)}
+                           {ag.valid_from && ` · Effective ${ag.valid_from}`}
+                           {ag.valid_till && ` · Valid till ${ag.valid_till}`}
+                         </div>
+                       </div>
+                       <span style={{fontSize:11,padding:'3px 10px',borderRadius:99,fontWeight:700,background:`${color}22`,color}}>{isExpired?'Expired':STATUS_LABEL[ag.status]||ag.status}</span>
+                     </div>
+
+                     {/* Progress steps */}
+                     <div style={{display:'flex',gap:0,marginBottom:14,overflow:'hidden',borderRadius:6}}>
+                       {[['Sent','sent'],['Download & Sign','sent'],['Upload Signed','signed'],['Approved','approved']].map(([label,activeOn],i,arr)=>{
+                         const steps = ['sent','sent','signed','approved'];
+                         const statusOrder = ['sent','signed','approved'];
+                         const myIdx = statusOrder.indexOf(ag.status);
+                         const stepIdx = [0,0,1,2][i];
+                         const done = myIdx >= stepIdx;
+                         return (
+                           <div key={i} style={{flex:1,padding:'5px 4px',background:done?'rgba(16,185,129,0.12)':'var(--bg-hover)',borderRight:i<arr.length-1?'1px solid var(--border)':'none',textAlign:'center'}}>
+                             <div style={{fontSize:9,color:done?'var(--green)':'var(--text-muted)',fontWeight:done?700:400}}>{done?'✓ ':''}{label}</div>
+                           </div>
+                         );
+                       })}
+                     </div>
+
+                     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                       {/* Download */}
+                       <button onClick={async()=>{
+                         const r = await fetch(`${API}/vendor/agreements/${ag.id}/download`, { headers:{ Authorization:`Bearer ${token}` } });
+                         const blob = await r.blob();
+                         const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='CrosCrow_Agreement.docx'; a.click(); URL.revokeObjectURL(url);
+                       }} style={{padding:'7px 14px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
+                         📥 Download Agreement
+                       </button>
+
+                       {/* Upload signed */}
+                       {(ag.status==='sent' || ag.status==='expired') && (
+                         <>
+                           <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg" style={{display:'none'}} onChange={e=>{ uploadSigned(ag, e.target.files[0]); e.target.value=''; }}/>
+                           <button onClick={()=>fileRef.current.click()} disabled={uploading===ag.id} style={{padding:'7px 14px',borderRadius:6,border:'none',background:'var(--green)',color:'#fff',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
+                             {uploading===ag.id ? '↻ Uploading…' : '✍ Upload Signed Copy'}
+                           </button>
+                           <span style={{fontSize:10,color:'var(--text-muted)'}}>PDF, PNG or JPG · max 20MB</span>
+                         </>
+                       )}
+
+                       {ag.status==='signed' && (
+                         <span style={{fontSize:11,color:'#6366f1',fontWeight:600}}>✓ Signed copy uploaded — pending admin review</span>
+                       )}
+                       {ag.status==='approved' && !isExpired && (
+                         <span style={{fontSize:11,color:'var(--green)',fontWeight:600}}>✓ Agreement active and approved</span>
+                       )}
+                       {isExpired && (
+                         <span style={{fontSize:11,color:'#ef4444',fontWeight:600}}>Agreement expired — contact CrosCrow for renewal</span>
+                       )}
+                     </div>
+                   </div>
+                 </div>
+               );
+             })}
+           </div>
+         )}
+      </div>
+    );
+  }
+
   function Profile({ token }) {
     const [profile,   setProfile]   = useState({});
     const [saving,    setSaving]    = useState(false);
@@ -4129,6 +4331,21 @@
       setLoading(false);
     },[auth, period]);
 
+    // Resolve vendorName from profile if missing (impersonation or old session)
+    useEffect(()=>{
+      if (!auth) return;
+      if (!auth.vendorName || auth.vendorName === '…') {
+        fetch(`${API}/vendor/profile`, { headers: { Authorization: `Bearer ${auth.token}` } })
+          .then(r => r.json()).then(d => {
+            if (d.vendor_name) {
+              const updated = { ...auth, vendorName: d.vendor_name };
+              ls.set('vendor_auth', updated);
+              setAuth(updated);
+            }
+          }).catch(() => {});
+      }
+    }, [auth?.token]); // eslint-disable-line
+
     useEffect(()=>{
       if(auth) {
         fetchData().then(()=>{
@@ -4175,6 +4392,7 @@
       { id:'shopifysync', icon:'🔄', label:'Shopify Sync',  section:'finance' },
       { id:'returns',     icon:'↩', label:'Returns',      section:'main' },
       { id:'profile',     icon:'⚙', label:'My Profile',   section:'finance' },
+      { id:'agreement',   icon:'📋', label:'Agreement',     section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Store', finance:'Finance' };
@@ -4261,6 +4479,7 @@
           {view==='shopifysync' && <ShopifySync token={auth.token} vendorName={auth.vendorName}/>}
           {view==='returns'     && <VendorReturns     token={auth.token}/>}
           {view==='profile'     && <Profile           token={auth.token}/>}
+          {view==='agreement'   && <VendorAgreement  token={auth.token}/>}
         </div>
 
         {/* Mobile bottom nav */}

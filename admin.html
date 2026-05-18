@@ -2766,7 +2766,11 @@
                            {Object.keys(o.vendorStages||{}).length>1&&<div style={{marginTop:3,display:'flex',flexDirection:'column',gap:2}}>{Object.entries(o.vendorStages).map(([v,s])=>(<div key={v} style={{fontSize:9,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:3}}><span style={{maxWidth:60,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.split(' ')[0]}</span><span className={`badge b-${s}`} style={{fontSize:8,padding:'1px 5px'}}>{s.toUpperCase()}</span>{(o.vendorPenalty||{})[v]&&['confirmed','partial'].includes(s)&&<PenaltyTimer vendorPenalty={{[v]:(o.vendorPenalty||{})[v]}} vendorStages={{[v]:s}}/>}</div>))}</div>}
                          </td>
                          <td>{o.awb?<div><div style={{fontSize:10,color:dsColor,fontWeight:600}}>{ds||'Dispatched'}</div><div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'monospace'}}>{o.awb}</div></div>:<span style={{color:'var(--text-muted)',fontSize:11}}>—</span>}</td>
-                         <td className="td-mut">{fmtDate(o.date)}</td>
+                         <td className="td-mut">
+                           <div>{fmtDate(o.date)}</div>
+                           {o.settlementStatus==='paid'    && <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(16,185,129,0.12)',color:'#10b981',fontWeight:700,letterSpacing:0.3}}>✓ SETTLED</span>}
+                           {o.settlementStatus==='pending' && <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(245,158,11,0.12)',color:'#f59e0b',fontWeight:700,letterSpacing:0.3}}>INV · PENDING</span>}
+                         </td>
                          <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>✏</td>
                        </tr>
                      );
@@ -3427,7 +3431,7 @@
   /* ══════════════════════════════════
      VENDORS VIEW
   ══════════════════════════════════ */
-  function Vendors({ token }) {
+  function Vendors({ token, onNewAgreement }) {
     const [vendors,  setVendors]  = useState([]);
     const [loading,  setLoading]  = useState(true);
     const [editing,  setEditing]  = useState(null);
@@ -3522,16 +3526,27 @@
           <div className="card-header"><span className="card-title">Vendors & Commission</span></div>
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>#</th><th>Vendor / Brand</th><th>Commission %</th><th>GST on Commission</th><th>Actions</th></tr></thead>
+              <thead><tr><th>#</th><th>Vendor / Brand</th><th>Agreement</th><th>Commission %</th><th>GST on Commission</th><th>Actions</th></tr></thead>
               <tbody>
-                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={5}/>) :
+                {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={6}/>) :
                  visible.length===0 ? (
-                   <tr><td colSpan={5}><div className="empty"><div className="empty-icon">🏪</div><div className="empty-title">No vendors found</div></div></td></tr>
+                   <tr><td colSpan={6}><div className="empty"><div className="empty-icon">🏪</div><div className="empty-title">No vendors found</div></div></td></tr>
                  ) :
-                 visible.map((v,i)=>(
+                 visible.map((v,i)=>{
+                  const ag = v.agreement;
+                  const today = new Date().toISOString().slice(0,10);
+                  const agColor = !ag ? '#888' : ag.status==='approved' && ag.valid_till && ag.valid_till < today ? '#ef4444' : ag.status==='approved' && ag.expiring_soon ? '#f59e0b' : ag.status==='approved' ? '#10b981' : ag.status==='signed' ? '#6366f1' : '#94a3b8';
+                  const agLabel = !ag ? '—' : ag.status==='approved' && ag.valid_till && ag.valid_till < today ? '⚠ Expired' : ag.status==='approved' && ag.expiring_soon ? '⚡ Expiring' : ag.status==='approved' ? '✓ Active' : ag.status==='signed' ? '✍ Signed' : ag.status==='sent' ? '📤 Sent' : ag.status;
+                  return (
                   <tr key={v.name}>
                     <td className="td-mut">{i+1}</td>
                     <td style={{fontWeight:600,color:'var(--text)'}}>{v.name}</td>
+                    <td>
+                      <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                        <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,fontWeight:700,background:`${agColor}22`,color:agColor,width:'fit-content'}}>{agLabel}</span>
+                        {ag?.valid_till && <span style={{fontSize:9,color:'var(--text-muted)'}}>till {ag.valid_till}</span>}
+                      </div>
+                    </td>
                     <td>
                       {editing===v.name ? (
                         <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -3548,12 +3563,21 @@
                     </td>
                     <td style={{color:'var(--orange)'}}>{(v.commission_pct * 0.18).toFixed(2)}% effective</td>
                     <td>
-                      {editing!==v.name && (
-                        <button className="btn btn-ghost btn-sm" onClick={()=>startEdit(v)}>✏ Edit Commission</button>
-                      )}
+                      <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                        {editing!==v.name && (
+                          <button className="btn btn-ghost btn-sm" onClick={()=>startEdit(v)}>✏ Commission</button>
+                        )}
+                        {onNewAgreement && (
+                          <button className="btn btn-ghost btn-sm" onClick={()=>onNewAgreement(v.name)}
+                            style={{fontSize:10, color: !ag ? 'var(--text-muted)' : agColor, borderColor: !ag ? 'var(--border)' : `${agColor}66`, background: !ag ? 'transparent' : `${agColor}11` }}>
+                            {!ag ? '📝 No Agreement' : ag.status==='approved' && ag.valid_till && ag.valid_till < today ? '⚠ Expired — Renew' : ag.status==='approved' && ag.expiring_soon ? '⚡ Expiring — Renew' : ag.status==='approved' ? '✓ Active' : ag.status==='signed' ? '✍ Signed — Review' : ag.status==='sent' ? '📤 Sent — Awaiting' : '📝 Agreement'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
-                 ))}
+                 );
+                })}
               </tbody>
             </table>
           </div>
@@ -5286,6 +5310,8 @@
     const [approvMsg,   setApprovMsg]   = useState({});
     const [showAllApprovals, setShowAllApprovals] = useState(true);
     const [importing,   setImporting]   = useState({}); // productId -> bool
+    const [selectedProds, setSelectedProds] = useState(new Set()); // multi-select
+    const [bulkImporting, setBulkImporting] = useState(false);
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
     // Map modal
@@ -5314,7 +5340,7 @@
     }, []);
 
     const loadVendorProducts = (vendor) => {
-      setSelected(vendor); setProdLoading(true); setProducts([]); setMappings([]); setMsg('');
+      setSelected(vendor); setProdLoading(true); setProducts([]); setMappings([]); setMsg(''); setSelectedProds(new Set());
       fetch(`/admin/vendor-sync/${encodeURIComponent(vendor)}/products`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setMappings(d.mappings||[]); setProdLoading(false); });
     };
@@ -5333,6 +5359,32 @@
       setImporting(p=>({...p,[product.id]:false}));
       if (d.success) { setMsg(`✅ "${product.title}" imported as active product #${d.croscrow_product_id} (${d.variants_mapped} variants mapped)`); loadVendorProducts(selected); }
       else setMsg(`❌ ${d.error}`);
+    };
+
+    const importBulk = async (ids) => {
+      const toImport = (ids || [...selectedProds]).filter(id => {
+        const p = products.find(p=>String(p.id)===String(id));
+        return p && !p.variants.every(v=>v.mapped);
+      });
+      if (!toImport.length) return;
+      setBulkImporting(true); setMsg('');
+      let done=0, failed=0;
+      for (const id of toImport) {
+        const p = products.find(p=>String(p.id)===String(id));
+        if (!p) continue;
+        setImporting(prev=>({...prev,[id]:true}));
+        try {
+          const r = await fetch('/admin/vendor-sync/import', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+            body: JSON.stringify({ vendor_name: selected, vendor_product_id: String(id), sync_inventory: true }) });
+          const d = await r.json();
+          if (d.success) done++; else failed++;
+        } catch { failed++; }
+        setImporting(prev=>({...prev,[id]:false}));
+      }
+      setBulkImporting(false);
+      setSelectedProds(new Set());
+      setMsg(`✅ Imported ${done} product${done!==1?'s':''}${failed?` · ${failed} failed`:''}`);
+      loadVendorProducts(selected);
     };
 
     const syncInventory = async () => {
@@ -5632,14 +5684,41 @@
               {tab==='products' && (
                 prodLoading ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>Loading products…</div> :
                 products.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No products found in vendor store.</div> :
-                <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                <>
+                  {/* Bulk action toolbar */}
+                  {(() => {
+                    const importable = products.filter(p=>!p.variants.every(v=>v.mapped));
+                    const allSelected = importable.length > 0 && importable.every(p=>selectedProds.has(String(p.id)));
+                    return (
+                      <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,marginBottom:4,flexWrap:'wrap'}}>
+                        <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'var(--text-dim)',userSelect:'none'}}>
+                          <input type="checkbox" checked={allSelected} onChange={e=>{
+                            if(e.target.checked) setSelectedProds(new Set(importable.map(p=>String(p.id))));
+                            else setSelectedProds(new Set());
+                          }} style={{cursor:'pointer'}}/>
+                          Select All Unimported ({importable.length})
+                        </label>
+                        {selectedProds.size > 0 && (
+                          <button className="btn btn-sm btn-indigo" onClick={()=>importBulk()} disabled={bulkImporting}>
+                            {bulkImporting ? '↻ Importing…' : `↓ Import Selected (${selectedProds.size})`}
+                          </button>
+                        )}
+                        <button className="btn btn-sm btn-indigo" onClick={()=>importBulk(importable.map(p=>String(p.id)))} disabled={bulkImporting||!importable.length}
+                          style={{marginLeft:'auto'}}>
+                          {bulkImporting ? '↻ Importing…' : `↓ Import All (${importable.length})`}
+                        </button>
+                      </div>
+                    );
+                  })()}
+                  <div style={{display:'flex',flexDirection:'column',gap:10}}>
                   {products.map(p=>{
                     const allMapped = p.variants.every(v=>v.mapped);
                     const someMapped = p.variants.some(v=>v.mapped);
                     const img = p.images?.[0]?.src;
                     return (
-                      <div key={p.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:14}}>
+                      <div key={p.id} style={{background:'var(--bg-card)',border:`1px solid ${selectedProds.has(String(p.id))?'var(--indigo)':'var(--border)'}`,borderRadius:10,padding:14}}>
                         <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+                          {!allMapped && <input type="checkbox" checked={selectedProds.has(String(p.id))} onChange={e=>{ setSelectedProds(prev=>{ const n=new Set(prev); e.target.checked?n.add(String(p.id)):n.delete(String(p.id)); return n; }); }} style={{marginTop:4,cursor:'pointer',flexShrink:0}}/>}
                           {img && <img src={img} style={{width:56,height:56,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>}
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
@@ -5678,7 +5757,8 @@
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                </>
               )}
 
               {/* MAPPINGS TAB */}
@@ -7374,6 +7454,7 @@
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
       { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
+      { id:'agreements',       icon:'📝', label:'Agreements',          section:'finance' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
@@ -7428,7 +7509,7 @@
 
           {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick}/>}
           {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
-          {view==='vendors'     && <Vendors     token={token}/>}
+          {view==='vendors'     && <Vendors     token={token} onNewAgreement={name=>{ setView('agreements'); window.__prefillAgreement=name; }}/>}
           {view==='returns'     && <ReturnRequests token={token}/>}
           {view==='ccinventory' && <CCInventory token={token}/>}
           {view==='jarvis'      && <JarvisChat  token={token}/>}
@@ -7445,6 +7526,7 @@
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
           {view==='commissionrules' && <CommissionRules  token={token}/>}
           {view==='onboarding'     && <VendorOnboarding token={token}/>}
+          {view==='agreements'     && <AgreementManagement token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}
@@ -7474,6 +7556,534 @@
   /* ══════════════════════════════════════════════════════════
      WEBHOOKS PANEL
   ══════════════════════════════════ */
+  // ── Agreement Generator ───────────────────────────────────────────────
+  // ── Agreement Management ──────────────────────────────────────────────
+  function AgreementManagement({ token }) {
+    const [list,     setList]     = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [filter,   setFilter]   = useState('all');
+    const [selected, setSelected] = useState(null);
+    const [saving,   setSaving]   = useState(false);
+    const [msg,      setMsg]      = useState(null);
+    const [showCreate, setShowCreate] = useState(false);
+    const [approveDate, setApproveDate] = useState('');
+
+    const load = () => {
+      setLoading(true);
+      fetch(`${API}/admin/agreements`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setList(d.agreements||[])).catch(()=>[]).finally(()=>setLoading(false));
+    };
+    useEffect(()=>{
+      load();
+      if (window.__prefillAgreement) {
+        setShowCreate(true);
+        window.__prefillAgreement = null;
+      }
+    }, []);
+
+    const filtered = filter==='all' ? list : list.filter(a=>a.status===filter);
+
+    const approve = async (ag) => {
+      if (!approveDate) return setMsg({ type:'error', text:'Set the valid till date before approving.' });
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/agreements/${ag.id}/approve`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ valid_till: approveDate }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:`✓ Approved. Vendor emailed. Valid till ${approveDate}.` });
+        setSelected(null); setApproveDate(''); load();
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+      setSaving(false);
+    };
+
+    const del = async (ag) => {
+      if (!window.confirm('Delete this agreement record?')) return;
+      setSaving(true);
+      await fetch(`${API}/admin/agreements/${ag.id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } });
+      setSaving(false); load();
+    };
+
+    const STATUS_COLOR = { sent:'#f59e0b', signed:'#6366f1', approved:'#10b981', expired:'#ef4444', draft:'#94a3b8' };
+    const today = new Date().toISOString().slice(0,10);
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>📋 Agreement Management</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Track, send, and renew vendor agreements. Vendors upload signed copies from their panel.</div>
+          </div>
+          <button onClick={()=>setShowCreate(true)} style={{padding:'7px 16px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+            + New Agreement
+          </button>
+        </div>
+
+        {msg && <div style={{padding:'10px 14px',borderRadius:8,marginBottom:12,fontSize:12,background:msg.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',border:`1px solid ${msg.type==='success'?'rgba(16,185,129,0.3)':'rgba(239,68,68,0.3)'}`,color:msg.type==='success'?'#10b981':'var(--red)'}}>{msg.text}</div>}
+
+        {/* Filter tabs */}
+        <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+          {['all','sent','signed','approved','expired'].map(s=>(
+            <button key={s} onClick={()=>setFilter(s)} style={{
+              padding:'4px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',textTransform:'capitalize',
+              border:`1px solid ${filter===s?(STATUS_COLOR[s]||'var(--indigo)'):'var(--border)'}`,
+              background: filter===s ? `${STATUS_COLOR[s]||'var(--indigo)'}22` : 'transparent',
+              color: filter===s ? (STATUS_COLOR[s]||'var(--indigo)') : 'var(--text-muted)',
+            }}>{s} {s!=='all'?`(${list.filter(a=>a.status===s).length})`:''}</button>
+          ))}
+        </div>
+
+        {loading ? <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>Loading…</div> : (
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {filtered.length===0 && <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>No agreements found.</div>}
+            {filtered.map(ag=>(
+              <div key={ag.id} style={{background:'var(--bg-card)',border:`1px solid ${selected?.id===ag.id?'var(--indigo)':'var(--border)'}`,borderRadius:10,overflow:'hidden'}}>
+                <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',cursor:'pointer'}} onClick={()=>setSelected(selected?.id===ag.id?null:ag)}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>{ag.vendor_name}</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                      Created {ag.created_at?.slice(0,10)}
+                      {ag.valid_from && ` · From ${ag.valid_from}`}
+                      {ag.valid_till && ` · Till ${ag.valid_till}`}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                    {ag.valid_till && ag.valid_till < today && ag.status==='approved' && (
+                      <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(239,68,68,0.15)',color:'#ef4444',fontWeight:700}}>EXPIRED</span>
+                    )}
+                    {ag.valid_till && ag.valid_till >= today && ag.valid_till <= new Date(Date.now()+30*86400000).toISOString().slice(0,10) && ag.status==='approved' && (
+                      <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(245,158,11,0.15)',color:'#f59e0b',fontWeight:700}}>EXPIRING SOON</span>
+                    )}
+                    <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,fontWeight:700,textTransform:'capitalize',background:`${STATUS_COLOR[ag.status]||'#888'}22`,color:STATUS_COLOR[ag.status]||'#888'}}>{ag.status}</span>
+                    <span style={{fontSize:11,color:'var(--text-muted)'}}>{selected?.id===ag.id?'▲':'▼'}</span>
+                  </div>
+                </div>
+
+                {selected?.id===ag.id && (
+                  <div style={{borderTop:'1px solid var(--border)',padding:16}} onClick={e=>e.stopPropagation()}>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14}}>
+                      <a href={`${API}/admin/agreements/${ag.id}/download?token=${token}`} target="_blank"
+                        onClick={e=>{e.preventDefault();fetch(`${API}/admin/agreements/${ag.id}/download`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=`Agreement_${ag.vendor_name}.docx`;a.click();URL.revokeObjectURL(u);});}}
+                        style={{padding:'6px 14px',borderRadius:6,background:'var(--indigo)',color:'#fff',fontWeight:600,fontSize:11,textDecoration:'none',cursor:'pointer',display:'inline-block'}}>
+                        📥 Download Agreement
+                      </a>
+                      {ag.signed_url && (
+                        <a href={ag.signed_url} target="_blank" rel="noreferrer"
+                          style={{padding:'6px 14px',borderRadius:6,background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'var(--indigo)',fontWeight:600,fontSize:11,textDecoration:'none'}}>
+                          📎 View Signed Copy
+                        </a>
+                      )}
+                      <button onClick={()=>del(ag)} disabled={saving} style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                        🗑 Delete
+                      </button>
+                    </div>
+
+                    {ag.signed_url && ag.status==='signed' && (
+                      <div style={{background:'rgba(99,102,241,0.06)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:8,padding:'12px 14px',marginBottom:12}}>
+                        <div style={{fontSize:11,fontWeight:700,color:'var(--indigo)',marginBottom:8}}>✍ Signed copy uploaded — ready to approve</div>
+                        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                          <div>
+                            <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Valid Till Date</div>
+                            <input type="date" value={approveDate} onChange={e=>setApproveDate(e.target.value)}
+                              style={{padding:'6px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+                          </div>
+                          <button onClick={()=>approve(ag)} disabled={saving||!approveDate} style={{padding:'7px 16px',borderRadius:6,border:'none',background:'var(--green)',color:'#000',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit',marginTop:16}}>
+                            {saving?'…':'✓ Approve & Notify Vendor'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {(ag.status==='approved'||ag.status==='expired') && (
+                      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',padding:'10px 12px',background:'var(--bg-hover)',borderRadius:8}}>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>Renew / extend valid till:</span>
+                        <input type="date" value={approveDate} onChange={e=>setApproveDate(e.target.value)}
+                          style={{padding:'5px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+                        <button onClick={async()=>{
+                          if(!approveDate) return;
+                          setSaving(true);
+                          await fetch(`${API}/admin/agreements/${ag.id}`,{method:'PUT',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({valid_till:approveDate,status:'approved'})});
+                          setSaving(false); setApproveDate(''); load(); setMsg({type:'success',text:'Valid till updated.'});
+                        }} disabled={saving||!approveDate} style={{padding:'5px 14px',borderRadius:6,border:'none',background:'var(--indigo)',color:'#fff',fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                          Update
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Create new agreement modal */}
+        {showCreate && <AgreementCreateModal token={token} onClose={()=>setShowCreate(false)} onCreated={()=>{load();setShowCreate(false);setMsg({type:'success',text:'Agreement created and sent to vendor.'});}}/>}
+      </div>
+    );
+  }
+
+  function AgreementCreateModal({ token, onClose, onCreated }) {
+    const today = new Date();
+    const ordinal = d => { const s=['th','st','nd','rd'], v=d%100; return d+(s[(v-20)%10]||s[v]||s[0]); };
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const defaultDate = `${ordinal(today.getDate())} day of ${months[today.getMonth()]}, ${today.getFullYear()}`;
+    const defaultEff  = `${today.getDate()} ${months[today.getMonth()]} ${today.getFullYear()}`;
+
+    const [form, setForm] = useState({
+      agreementDate: defaultDate, effectiveDate: defaultEff,
+      commissionRate:'20%', settlementCycle:'days', settlementDate:'10', prepaidSettlementDays:'7',
+      trackingPenalty:'₹200', pricingPenalty:'₹500', minimumTerm:'6 months', noticePeriod:'15 days', forceMajeureDays:'30 days',
+      vendorName:'', vendorGstin:'', vendorAddress:'', vendorSignatory:'', croscrowSignatory:'Harshit',
+    });
+    const [validTill,      setValidTill]      = useState('');
+    const [sendEmail,      setSendEmail]      = useState(true);
+    const [loading,        setLoading]        = useState(false);
+    const [err,            setErr]            = useState('');
+    const [vendors,        setVendors]        = useState([]);
+    const [selectedVendor, setSelectedVendor] = useState('');
+    const [prefilling,     setPrefilling]     = useState(false);
+
+    const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+    useEffect(()=>{
+      fetch(`${API}/admin/vendors`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setVendors(d.vendors||[])).catch(()=>{});
+    },[token]);
+
+    const prefillFromVendor = async name => {
+      setSelectedVendor(name);
+      if (!name) return;
+      setPrefilling(true);
+      try {
+        const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/profile`, { headers:{ Authorization:`Bearer ${token}` } });
+        const p = await r.json();
+        const cfg = vendors.find(v=>v.name===name);
+        setForm(f=>({
+          ...f,
+          vendorName:    name,
+          vendorGstin:   p.gst_no || '',
+          vendorAddress: [p.address, p.city, p.state, p.pincode].filter(Boolean).join(', '),
+          commissionRate:(cfg?.commission_pct ?? p.commission_pct ?? 20)+'%',
+        }));
+      } catch(e) {}
+      setPrefilling(false);
+    };
+
+    const buildConfig = () => ({
+      agreementDate: form.agreementDate, effectiveDate: form.effectiveDate,
+      commissionRate: form.commissionRate, settlementCycle: form.settlementCycle,
+      settlementDate: form.settlementDate, prepaidSettlementDays: form.prepaidSettlementDays,
+      trackingPenalty: form.trackingPenalty, pricingPenalty: form.pricingPenalty,
+      minimumTerm: form.minimumTerm, noticePeriod: form.noticePeriod, forceMajeureDays: form.forceMajeureDays,
+      partyA: { name: form.vendorName.trim(), gstin: form.vendorGstin.trim(), address: form.vendorAddress.trim(), signatory: form.vendorSignatory.trim() },
+      partyB: { signatory: form.croscrowSignatory.trim() },
+    });
+
+    const downloadPreview = async () => {
+      if (!form.vendorName.trim()) return setErr('Enter vendor name first.');
+      setLoading(true); setErr('');
+      try {
+        const r = await fetch(`${API}/admin/generate-agreement`, { method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' }, body: JSON.stringify(buildConfig()) });
+        if (!r.ok) { const d=await r.json(); throw new Error(d.error); }
+        const blob = await r.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a'); a.href=url; a.download=`Preview_${form.vendorName}.docx`; a.click();
+        URL.revokeObjectURL(url);
+      } catch(e) { setErr(e.message); }
+      setLoading(false);
+    };
+
+    const submit = async () => {
+      if (!form.vendorName.trim() || !form.vendorAddress.trim()) return setErr('Vendor name and address are required.');
+      setLoading(true); setErr('');
+      try {
+        const r = await fetch(`${API}/admin/agreements`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ config: buildConfig(), valid_till: validTill||null, send_email: sendEmail }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        onCreated();
+      } catch(e) { setErr(e.message); }
+      setLoading(false);
+    };
+
+    const inp = (k, placeholder, extra={}) => <input value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={placeholder} style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'IBM Plex Mono,monospace',boxSizing:'border-box',...extra}}/>;
+    const fl = (label, children) => <div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:600,color:'var(--text-dim)',marginBottom:4}}>{label}</div>{children}</div>;
+
+    return (
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:600,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'20px 12px',overflowY:'auto'}}>
+        <div style={{background:'var(--bg-card)',borderRadius:12,width:'100%',maxWidth:720,boxShadow:'0 8px 40px #000a'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
+            <div style={{fontWeight:700,fontSize:14,color:'var(--text)'}}>📝 Create Agreement</div>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:18}}>✕</button>
+          </div>
+          <div style={{padding:20,maxHeight:'75vh',overflowY:'auto'}}>
+            {err && <div style={{padding:'8px 12px',borderRadius:6,marginBottom:12,fontSize:12,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'var(--red)'}}>{err}</div>}
+
+            {/* Vendor selector */}
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,padding:'10px 12px',background:'var(--bg-hover)',borderRadius:8,flexWrap:'wrap'}}>
+              <span style={{fontSize:11,fontWeight:600,color:'var(--text)',flexShrink:0}}>Select existing vendor:</span>
+              <select value={selectedVendor} onChange={e=>prefillFromVendor(e.target.value)}
+                style={{flex:1,minWidth:160,padding:'6px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card)',color:'var(--text)',fontSize:12,fontFamily:'inherit',cursor:'pointer'}}>
+                <option value="">— New / manual entry —</option>
+                {vendors.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}
+              </select>
+              {prefilling && <span style={{fontSize:11,color:'var(--text-muted)'}}>↻ Loading…</span>}
+              {selectedVendor && !prefilling && <span style={{fontSize:11,color:'#10b981',fontWeight:600}}>✓ Prefilled</span>}
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+              <div style={{background:'var(--bg-hover)',borderRadius:8,padding:14}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--indigo)',letterSpacing:1.5,textTransform:'uppercase',marginBottom:10}}>Party A — Vendor</div>
+                {fl('Brand Name *', inp('vendorName','GHOST CONCEPT'))}
+                {fl('GSTIN', inp('vendorGstin','19AAIFO1966H1ZW'))}
+                {fl('Address *', <textarea value={form.vendorAddress} onChange={e=>set('vendorAddress',e.target.value)} rows={2} placeholder="Registered address" style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,resize:'vertical',fontFamily:'inherit',boxSizing:'border-box'}}/>)}
+                {fl('Signatory', inp('vendorSignatory','Leave blank for vendor to fill'))}
+              </div>
+              <div style={{background:'var(--bg-hover)',borderRadius:8,padding:14}}>
+                <div style={{fontSize:10,fontWeight:700,color:'#10b981',letterSpacing:1.5,textTransform:'uppercase',marginBottom:10}}>Commercial Terms</div>
+                {fl('Commission %', inp('commissionRate','20%'))}
+                {fl('Settlement Cycle',
+                  <div>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      {[['days','N Days'],['monthly','Monthly'],['date','Fixed Date']].map(([v,l])=>(
+                        <button key={v} onClick={()=>set('settlementCycle',v)} style={{padding:'4px 8px',borderRadius:5,fontSize:10,fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',fontFamily:'inherit',background:form.settlementCycle===v?'var(--indigo)':'transparent',color:form.settlementCycle===v?'#fff':'var(--text-muted)'}}>{l}</button>
+                      ))}
+                    </div>
+                    {form.settlementCycle==='days' && inp('prepaidSettlementDays','7',{marginTop:6,maxWidth:60})}
+                    {form.settlementCycle==='date' && <div style={{display:'flex',alignItems:'center',gap:6,marginTop:6}}><span style={{fontSize:11,color:'var(--text-muted)'}}>Every</span>{inp('settlementDate','10',{maxWidth:50})}<span style={{fontSize:11,color:'var(--text-muted)'}}>of month</span></div>}
+                  </div>
+                )}
+                {fl('Tracking Penalty', inp('trackingPenalty','₹200'))}
+                {fl('Pricing Penalty', inp('pricingPenalty','₹500'))}
+                {fl('Minimum Term', inp('minimumTerm','6 months'))}
+              </div>
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+              {fl('Agreement Date', inp('agreementDate',''))}
+              {fl('Effective Date', inp('effectiveDate',''))}
+              {fl('Valid Till (optional)', <input type="date" value={validTill} onChange={e=>setValidTill(e.target.value)} style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>)}
+              {fl('CrosCrow Signatory', inp('croscrowSignatory',''))}
+            </div>
+
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 12px',background:'var(--bg-hover)',borderRadius:8}}>
+              <input type="checkbox" id="send_email" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} style={{cursor:'pointer'}}/>
+              <label htmlFor="send_email" style={{fontSize:12,color:'var(--text)',cursor:'pointer'}}>Email agreement to vendor (with .docx attachment)</label>
+            </div>
+          </div>
+          <div style={{padding:'14px 20px',borderTop:'1px solid var(--border)',display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <button onClick={downloadPreview} disabled={loading} style={{padding:'7px 16px',borderRadius:7,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontWeight:600,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+              {loading?'…':'👁 Preview .docx'}
+            </button>
+            <button onClick={submit} disabled={loading} style={{padding:'7px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+              {loading?'↻ Creating…':'✓ Create & Send'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function AgreementGenerator({ token }) {
+    const today = new Date();
+    const ordinal = d => { const s=['th','st','nd','rd'], v=d%100; return d+(s[(v-20)%10]||s[v]||s[0]); };
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const defaultAgreementDate = `${ordinal(today.getDate())} day of ${months[today.getMonth()]}, ${today.getFullYear()}`;
+    const defaultEffectiveDate = `${today.getDate()} ${months[today.getMonth()]} ${today.getFullYear()}`;
+
+    const [form, setForm] = useState({
+      agreementDate:        defaultAgreementDate,
+      effectiveDate:        defaultEffectiveDate,
+      commissionRate:       '20%',
+      settlementCycle:      'days',
+      settlementDate:       '10',
+      prepaidSettlementDays:'7',
+      codSettlementDays:    '7',
+      trackingPenalty:      '₹200',
+      pricingPenalty:       '₹500',
+      minimumTerm:          '6 months',
+      noticePeriod:         '15 days',
+      forceMajeureDays:     '30 days',
+      vendorName:    '',
+      vendorGstin:   '',
+      vendorAddress: '',
+      vendorSignatory: '',
+      croscrowSignatory: 'Harshit',
+    });
+    const [loading,       setLoading]       = useState(false);
+    const [err,           setErr]           = useState('');
+    const [vendors,       setVendors]       = useState([]);
+    const [selectedVendor,setSelectedVendor]= useState('');
+    const [prefilling,    setPrefilling]    = useState(false);
+
+    useEffect(()=>{
+      fetch(`${API}/admin/vendors`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setVendors(d.vendors||[])).catch(()=>{});
+    },[token]);
+
+    const prefillFromVendor = async name => {
+      setSelectedVendor(name);
+      if (!name) return;
+      setPrefilling(true);
+      try {
+        const r = await fetch(`${API}/admin/vendors/${encodeURIComponent(name)}/profile`, { headers:{ Authorization:`Bearer ${token}` } });
+        const p = await r.json();
+        const cfg = vendors.find(v=>v.name===name);
+        setForm(f=>({
+          ...f,
+          vendorName:    name,
+          vendorGstin:   p.gst_no   || '',
+          vendorAddress: [p.address, p.city, p.state, p.pincode].filter(Boolean).join(', '),
+          commissionRate:(cfg?.commission_pct ?? p.commission_pct ?? 20)+'%',
+        }));
+      } catch(e) {}
+      setPrefilling(false);
+    };
+    const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+    const generate = async () => {
+      setErr('');
+      if (!form.vendorName.trim()) return setErr('Vendor / Brand Name is required.');
+      if (!form.vendorAddress.trim()) return setErr('Vendor address is required.');
+      setLoading(true);
+      try {
+        const body = {
+          agreementDate:  form.agreementDate,
+          effectiveDate:  form.effectiveDate,
+          commissionRate: form.commissionRate,
+          prepaidSettlementDays: form.prepaidSettlementDays,
+          codSettlementDays:     form.codSettlementDays,
+          trackingPenalty:  form.trackingPenalty,
+          pricingPenalty:   form.pricingPenalty,
+          minimumTerm:      form.minimumTerm,
+          noticePeriod:     form.noticePeriod,
+          forceMajeureDays: form.forceMajeureDays,
+          partyA: { name: form.vendorName.trim(), gstin: form.vendorGstin.trim(), address: form.vendorAddress.trim(), signatory: form.vendorSignatory.trim() },
+          partyB: { signatory: form.croscrowSignatory.trim() },
+        };
+        const r = await fetch(`${API}/admin/generate-agreement`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({ ...body, settlementCycle: form.settlementCycle, settlementDate: form.settlementDate }),
+        });
+        if (!r.ok) { const d=await r.json(); throw new Error(d.error); }
+        const blob = await r.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url;
+        a.download = `CrosCrow_Agreement_${form.vendorName.replace(/\s+/g,'_')}.docx`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch(e) { setErr(e.message); }
+      setLoading(false);
+    };
+
+    const gField = (label, children, hint) => (
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:600,color:'var(--text-dim)',marginBottom:4}}>{label}</div>
+        {children}
+        {hint && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{hint}</div>}
+      </div>
+    );
+    const gInp = (k, placeholder, extra={}) => (
+      <input value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={placeholder}
+        style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'IBM Plex Mono,monospace',boxSizing:'border-box',...extra}}/>
+    );
+
+    return (
+      <div className="page">
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>📝 Agreement Generator</div>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Fill in the vendor details and download a ready-to-sign .docx agreement.</div>
+        </div>
+
+        {err && <div style={{padding:'10px 14px',borderRadius:8,marginBottom:14,fontSize:12,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'var(--red)'}}>{err}</div>}
+
+        {/* Vendor selector */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{fontSize:12,fontWeight:600,color:'var(--text)',flexShrink:0}}>Select existing vendor to prefill:</div>
+          <select value={selectedVendor} onChange={e=>prefillFromVendor(e.target.value)}
+            style={{flex:1,minWidth:200,padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit',cursor:'pointer'}}>
+            <option value="">— New / manual entry —</option>
+            {vendors.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}
+          </select>
+          {prefilling && <span style={{fontSize:11,color:'var(--text-muted)'}}>↻ Loading…</span>}
+          {selectedVendor && !prefilling && <span style={{fontSize:11,color:'#10b981',fontWeight:600}}>✓ Prefilled from profile</span>}
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,alignItems:'start'}}>
+
+          {/* Party A — Vendor */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:20}}>
+            <div style={{fontSize:10,fontWeight:700,color:'var(--indigo)',letterSpacing:1.5,textTransform:'uppercase',marginBottom:16}}>Party A — Vendor</div>
+            {gField('Brand / Company Name *', gInp('vendorName','GHOST CONCEPT'))}
+            {gField('GSTIN', gInp('vendorGstin','19AAIFO1966H1ZW',{letterSpacing:1,fontFamily:'monospace'}))}
+            {gField('Registered Address *', <textarea value={form.vendorAddress} onChange={e=>set('vendorAddress',e.target.value)} rows={2} placeholder="105, Block – F, New Alipore, Kolkata – 700053" style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit',resize:'vertical',boxSizing:'border-box'}}/>)}
+            {gField('Signatory Name', gInp('vendorSignatory','________________________'), 'Leave blank — vendor fills in when signing')}
+          </div>
+
+          {/* Party B — CrosCrow */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:20}}>
+            <div style={{fontSize:10,fontWeight:700,color:'#10b981',letterSpacing:1.5,textTransform:'uppercase',marginBottom:16}}>Party B — CrosCrow (Pre-filled)</div>
+            {gField('CrosCrow Signatory', gInp('croscrowSignatory','Harshit'))}
+            <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.7,background:'var(--bg-hover)',borderRadius:6,padding:'10px 12px'}}>
+              <div><strong style={{color:'var(--text)'}}>GSTIN:</strong> 08AAUFC5436G1Z4</div>
+              <div style={{marginTop:4}}><strong style={{color:'var(--text)'}}>Address:</strong> KHASRA No. 3545, 3548, Plot No. 19, Kalyan Colony, Ajmer Road, Kekri – 305404, Rajasthan</div>
+            </div>
+          </div>
+
+          {/* Commercial Terms */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:20}}>
+            <div style={{fontSize:10,fontWeight:700,color:'#f59e0b',letterSpacing:1.5,textTransform:'uppercase',marginBottom:16}}>Commercial Terms</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              {gField('Commission Rate', gInp('commissionRate','20%'))}
+              {gField('Tracking Penalty', gInp('trackingPenalty','₹200'))}
+            </div>
+            {gField('Settlement Cycle',
+              <div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                  {[['days','Within N days'],['monthly','Monthly (last business day)'],['date','Fixed date of month']].map(([v,l])=>(
+                    <button key={v} onClick={()=>set('settlementCycle',v)} style={{padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',fontFamily:'IBM Plex Mono,monospace',background:form.settlementCycle===v?'var(--accent)':'var(--bg-card2)',color:form.settlementCycle===v?'#fff':'var(--text-muted)'}}>{l}</button>
+                  ))}
+                </div>
+                {form.settlementCycle==='days' && <div style={{marginTop:8}}>{gInp('prepaidSettlementDays','7',{maxWidth:80})}<span style={{fontSize:11,color:'var(--text-muted)',marginLeft:8}}>business days</span></div>}
+                {form.settlementCycle==='date' && <div style={{marginTop:8,display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:11,color:'var(--text-muted)'}}>Every</span>{gInp('settlementDate','10',{maxWidth:60})}<span style={{fontSize:11,color:'var(--text-muted)'}}>of each month</span></div>}
+              </div>,
+              'How often does the vendor get paid?'
+            )}
+            {gField('Pricing Penalty', gInp('pricingPenalty','₹500'))}
+          </div>
+
+          {/* Contract Terms */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:20}}>
+            <div style={{fontSize:10,fontWeight:700,color:'#a78bfa',letterSpacing:1.5,textTransform:'uppercase',marginBottom:16}}>Contract Terms</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              {gField('Minimum Term', gInp('minimumTerm','6 months'))}
+              {gField('Notice Period', gInp('noticePeriod','15 days'))}
+            </div>
+            {gField('Force Majeure Days', gInp('forceMajeureDays','30 days'))}
+            {gField('Agreement Date', gInp('agreementDate',''), 'e.g. "15th day of May, 2026"')}
+            {gField('Effective Date', gInp('effectiveDate',''), 'Short date shown on cover, e.g. "15 May 2026"')}
+          </div>
+        </div>
+
+        <div style={{marginTop:20}}>
+          <button onClick={generate} disabled={loading} style={{
+            padding:'12px 32px',borderRadius:8,border:'none',background:'var(--indigo)',color:'#fff',
+            fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',
+            opacity:loading?0.6:1,
+          }}>
+            {loading ? '↻ Generating…' : '📥 Generate & Download Agreement (.docx)'}
+          </button>
+          <span style={{marginLeft:14,fontSize:11,color:'var(--text-muted)'}}>File will download immediately — ready to send for signing.</span>
+        </div>
+      </div>
+    );
+  }
+
   // ── Vendor Onboarding Panel ────────────────────────────────────────────
   function VendorOnboarding({ token }) {
     const [list,     setList]     = useState([]);

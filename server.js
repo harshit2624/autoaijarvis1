@@ -23,6 +23,11 @@ const multer     = require("multer");
 const { MongoClient } = require("mongodb");
 const { google }     = require("googleapis");
 const Razorpay       = require("razorpay");
+const {
+  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+  AlignmentType, BorderStyle, WidthType, ShadingType,
+  Header, Footer, SimpleField, ImageRun, PageBreak,
+} = require('docx');
 const cookieParser   = require("cookie-parser");
 require("dotenv").config();
 
@@ -52,6 +57,27 @@ const rrUpload = multer({ storage: rrStorage, limits: { fileSize: 8 * 1024 * 102
   if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
   cb(null, true);
 }});
+
+// ── Agreement doc storage ─────────────────────────────────────────────────
+const agreementDocDir  = path.join(__dirname, 'agreement-docs');
+const signedAgreementDir = path.join(__dirname, 'signed-agreements');
+if (!fs.existsSync(agreementDocDir))   fs.mkdirSync(agreementDocDir,   { recursive: true });
+if (!fs.existsSync(signedAgreementDir)) fs.mkdirSync(signedAgreementDir, { recursive: true });
+const signedAgreementUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, signedAgreementDir),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '.pdf';
+      cb(null, `signed_${Date.now()}_${Math.random().toString(36).slice(2,7)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = ['application/pdf','image/png','image/jpeg'].includes(file.mimetype);
+    if (!ok) return cb(new Error('Only PDF, PNG, JPG allowed'));
+    cb(null, true);
+  },
+});
 
 // ── Vendor onboarding uploads ─────────────────────────────────────────────
 const onboardUploadDir = path.join(__dirname, 'onboard-uploads');
@@ -353,6 +379,8 @@ app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
 app.use('/rr-uploads', express.static(rrUploadDir));
 app.use('/onboard-uploads', express.static(onboardUploadDir));
+app.use('/agreement-docs', express.static(agreementDocDir));
+app.use('/signed-agreements', adminAuth, express.static(signedAgreementDir)); // admin-only
 
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
@@ -4256,6 +4284,139 @@ app.put("/vendor/products/:productId/variants/:variantId/tracking", vendorAuth, 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /vendor/products/:productId/size-chart ────────────────────────────
+app.get("/vendor/products/:productId/size-chart", vendorAuth, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,vendor`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+
+    const mfData = await shopifyREST(`/products/${productId}/metafields.json`);
+    // Match any likely variation of the size chart key name
+    const SC_KEYS = ['sizechart', 'size_chart', 'size-chart', 'size chart'];
+    const mf = (mfData.metafields || []).find(m =>
+      SC_KEYS.includes((m.key || '').toLowerCase().trim())
+    );
+    if (!mf) {
+      // Return all metafield keys for debugging
+      const allKeys = (mfData.metafields || []).map(m => `${m.namespace}.${m.key}`);
+      return res.json({ metafield: null, debug_keys: allKeys });
+    }
+
+    // For file_reference type, resolve the image URL via GraphQL
+    if (mf.type === 'file_reference' && mf.value) {
+      const token = await getAccessToken();
+      const gql = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: `{ node(id: "${mf.value}") { ... on MediaImage { image { url } } } }` }),
+      });
+      const gd = await gql.json();
+      const url = gd?.data?.node?.image?.url || null;
+      return res.json({ metafield: { id: mf.id, type: mf.type, value: mf.value, image_url: url, namespace: mf.namespace, key: mf.key } });
+    }
+
+    // For single_line_text / url types — value is a direct URL
+    res.json({ metafield: { id: mf.id, type: mf.type, value: mf.value, image_url: mf.value, namespace: mf.namespace, key: mf.key } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /vendor/products/:productId/size-chart ───────────────────────────
+// Upload an image file and set it as the size_chart metafield
+const sizeChartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+app.post("/vendor/products/:productId/size-chart", vendorAuth, sizeChartUpload.single('image'), async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,vendor`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+
+    if (!req.file) return res.status(400).json({ error: 'Image file required.' });
+    const allowedTypes = ['image/png','image/jpeg','image/jpg','image/webp','image/gif'];
+    if (!allowedTypes.includes(req.file.mimetype)) return res.status(400).json({ error: 'Only PNG, JPG, WEBP or GIF allowed.' });
+
+    const token = await getAccessToken();
+
+    // Step 1: Get a staged upload URL from Shopify Files API
+    const stageRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets { url resourceUrl parameters { name value } }
+            userErrors { field message }
+          }
+        }`,
+        variables: {
+          input: [{
+            filename: req.file.originalname || 'size_chart.jpg',
+            mimeType: req.file.mimetype,
+            resource: 'FILE',
+            fileSize: String(req.file.size),
+            httpMethod: 'POST',
+          }],
+        },
+      }),
+    });
+    const stageData = await stageRes.json();
+    const target = stageData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
+    if (!target) throw new Error('Failed to get upload URL: ' + JSON.stringify(stageData?.data?.stagedUploadsCreate?.userErrors));
+
+    // Step 2: Upload the file to the staged URL
+    const formData = new (require('form-data'))();
+    (target.parameters || []).forEach(p => formData.append(p.name, p.value));
+    formData.append('file', req.file.buffer, { filename: req.file.originalname || 'size_chart.jpg', contentType: req.file.mimetype });
+    const uploadRes = await fetch(target.url, { method: 'POST', body: formData, headers: formData.getHeaders() });
+    if (!uploadRes.ok) throw new Error(`Staged upload failed: ${uploadRes.status}`);
+
+    // Step 3: Create the file in Shopify Files
+    const fileRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `mutation fileCreate($files: [FileCreateInput!]!) {
+          fileCreate(files: $files) {
+            files { id ... on MediaImage { image { url } } }
+            userErrors { field message }
+          }
+        }`,
+        variables: { files: [{ originalSource: target.resourceUrl, contentType: 'IMAGE' }] },
+      }),
+    });
+    const fileData = await fileRes.json();
+    const fileId = fileData?.data?.fileCreate?.files?.[0]?.id;
+    const imageUrl = fileData?.data?.fileCreate?.files?.[0]?.image?.url;
+    if (!fileId) throw new Error('Failed to create file: ' + JSON.stringify(fileData?.data?.fileCreate?.userErrors));
+
+    // Step 4: Find existing metafield or create/update it
+    const mfData = await shopifyREST(`/products/${productId}/metafields.json`);
+    const SC_KEYS2 = ['sizechart', 'size_chart', 'size-chart', 'size chart'];
+    const existing = (mfData.metafields || []).find(m => SC_KEYS2.includes((m.key||'').toLowerCase().trim()));
+
+    let mfResult;
+    if (existing) {
+      const upd = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/metafields/${existing.id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metafield: { id: existing.id, value: fileId, type: 'file_reference' } }),
+      });
+      mfResult = await upd.json();
+    } else {
+      const created = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${productId}/metafields.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metafield: { namespace: 'custom', key: 'sizechart', value: fileId, type: 'file_reference' } }),
+      });
+      mfResult = await created.json();
+    }
+
+    auditLog("vendor", "size_chart_upload", productId, { vendor: req.vendor, fileId });
+    res.json({ success: true, image_url: imageUrl, file_id: fileId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── POST /vendor/orders/:shopifyId/fulfill ────────────────────────────────
 // Partially fulfills ONLY this vendor's line items — not the whole order
 app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
@@ -4984,6 +5145,18 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
     const ccInvItems = await mdb.collection('cc_inventory').find({ quantity: { $gt: 0 } }, { projection: { variant_id: 1, product_title: 1, variant_title: 1, vendor_name: 1, quantity: 1, _id: 0 } }).toArray();
     const ccInvMap = Object.fromEntries(ccInvItems.map(i => [i.variant_id, i]));
 
+    // Settlement status per order
+    const settlOrderDocs = await mdb.collection('settlement_orders').find({}, { projection: { shopify_order_id: 1, settlement_id: 1, _id: 0 } }).toArray();
+    const allSettlements = await mdb.collection('settlements').find({}, { projection: { id: 1, status: 1, _id: 0 } }).toArray();
+    const settlStatusMap = Object.fromEntries(allSettlements.map(s => [s.id, s.status]));
+    const orderSettlementMap = {}; // shopify_order_id → 'paid' | 'pending'
+    settlOrderDocs.forEach(s => {
+      const status = settlStatusMap[s.settlement_id] || 'pending';
+      const existing = orderSettlementMap[String(s.shopify_order_id)];
+      // If any settlement is paid, mark as paid
+      if (!existing || status === 'paid') orderSettlementMap[String(s.shopify_order_id)] = status;
+    });
+
     const confirmedPenaltyDocs = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { shopify_id: 1, vendor_name: 1, penalty_amount: 1, _id: 0 } }).toArray();
     const confirmedPenaltyMap = {}; // { shopify_id: { vendor_name: amount } }
     confirmedPenaltyDocs.forEach(p => {
@@ -5029,6 +5202,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
       return {
         id:             o.name,
         shopifyId:      String(o.id),
+        settlementStatus: orderSettlementMap[String(o.id)] || null,
         customer:       o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "Guest",
         email:          o.email || "",
         phone:          o.shipping_address?.phone || "",
@@ -5430,11 +5604,24 @@ app.get("/admin/vendors", adminAuth, async (req, res) => {
     const cfgMap   = Object.fromEntries(configs.map(c => [c.vendor_name, c]));
     const profiles = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name: 1, email: 1, _id: 0 } }).toArray();
     const profMap  = Object.fromEntries(profiles.map(p => [p.vendor_name, p]));
+    // Latest agreement per vendor
+    const agreements = await mdb.collection('vendor_agreements').find({}, { projection: { vendor_name:1, status:1, valid_till:1, valid_from:1, created_at:1, _id:1 } }).sort({ created_at:-1 }).toArray();
+    const agMap = {};
+    agreements.forEach(a => { if (!agMap[a.vendor_name]) agMap[a.vendor_name] = { ...a, id: a._id.toString() }; });
+    const today = new Date().toISOString().slice(0,10);
     res.json({ vendors: vendors.map(v => ({
       name:           v,
       commission_pct: cfgMap[v]?.commission_pct ?? 20,
       active:         cfgMap[v]?.active ?? 1,
       email:          cfgMap[v]?.email || profMap[v]?.email || '',
+      agreement:      agMap[v] ? {
+        id:        agMap[v].id,
+        status:    agMap[v].status,
+        valid_till:agMap[v].valid_till,
+        valid_from:agMap[v].valid_from,
+        expired:   agMap[v].valid_till && agMap[v].valid_till < today,
+        expiring_soon: agMap[v].valid_till && agMap[v].valid_till >= today && agMap[v].valid_till <= new Date(Date.now()+30*86400000).toISOString().slice(0,10),
+      } : null,
     }))});
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -8657,6 +8844,479 @@ app.post("/admin/penalties/run-cron", adminAuth, async (req, res) => {
   res.json({ success: true, message: "Penalty cron ran." });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// AGREEMENT GENERATOR
+// ══════════════════════════════════════════════════════════════════════════
+function buildAgreementDoc(c, logoBuffer) {
+  const BLK='0A0A0A', DARK='1A1A1A', GRAY='555555', MGRAY='888888', LGRAY='F5F5F5', WHITE='FFFFFF', LINE='DDDDDD';
+  const nb = { style:BorderStyle.NONE, size:0, color:WHITE };
+  const noBorders = { top:nb, bottom:nb, left:nb, right:nb };
+
+  // Settlement cycle text
+  const settlementText = (() => {
+    if (c.settlementCycle === 'monthly') return 'on a monthly basis, settled by the last business day of each calendar month';
+    if (c.settlementCycle === 'date' && c.settlementDate)
+      return `on the ${c.settlementDate}${['st','nd','rd'][((c.settlementDate%100-11)%10)-1]||'th'} day of each calendar month`;
+    return 'within '+c.prepaidSettlementDays+' business days of order placement';
+  })();
+  const settlementLabel = c.settlementCycle === 'monthly' ? 'Monthly (last business day)' :
+    c.settlementCycle === 'date' ? `Every ${c.settlementDate}${['st','nd','rd'][((c.settlementDate%100-11)%10)-1]||'th'} of month` :
+    'Within '+c.prepaidSettlementDays+' business days';
+
+  const spacer = (before=200,after=0) => new Paragraph({ spacing:{ before, after }, children:[] });
+  const hr = () => new Paragraph({ border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:LINE, space:1 } }, spacing:{ before:0, after:200 }, children:[] });
+  const sectionHeading = t => new Paragraph({ spacing:{ before:360, after:140 }, border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:BLK, space:4 } }, children:[new TextRun({ text:t, bold:true, size:24, color:BLK, font:'Arial' })] });
+  const clauseTitle = t => new Paragraph({ spacing:{ before:220, after:80 }, children:[new TextRun({ text:t, bold:true, size:21, color:DARK, font:'Arial' })] });
+  const body = (t,opts={}) => new Paragraph({ spacing:{ before:60, after:100 }, children:[new TextRun({ text:t, size:21, color:GRAY, font:'Arial', ...opts })] });
+
+  const highlight = (label, value) => new Table({
+    width:{ size:9360, type:WidthType.DXA }, columnWidths:[2800,6560],
+    rows:[new TableRow({ children:[
+      new TableCell({ borders:noBorders, shading:{ fill:'EFEFEF', type:ShadingType.CLEAR }, margins:{ top:90,bottom:90,left:140,right:100 }, width:{ size:2800, type:WidthType.DXA },
+        children:[new Paragraph({ children:[new TextRun({ text:label, bold:true, size:19, color:DARK, font:'Arial' })] })] }),
+      new TableCell({ borders:noBorders, shading:{ fill:WHITE, type:ShadingType.CLEAR }, margins:{ top:90,bottom:90,left:140,right:100 }, width:{ size:6560, type:WidthType.DXA },
+        children:[new Paragraph({ children:[new TextRun({ text:value, size:19, color:DARK, font:'Arial' })] })] })
+    ]})]
+  });
+
+  const sigBlock = (party,label,name,gstin,address) => {
+    const b={ style:BorderStyle.SINGLE, size:4, color:BLK };
+    const thin={ style:BorderStyle.SINGLE, size:1, color:LINE };
+    return new TableCell({
+      borders:{ top:b, bottom:thin, left:thin, right:thin },
+      margins:{ top:160,bottom:300,left:200,right:200 }, width:{ size:4440, type:WidthType.DXA },
+      children:[
+        new Paragraph({ spacing:{ before:0,after:60 }, children:[new TextRun({ text:label, size:17, color:MGRAY, font:'Arial', allCaps:true, characterSpacing:40 })] }),
+        new Paragraph({ spacing:{ before:0,after:120 }, children:[new TextRun({ text:party, bold:true, size:24, color:BLK, font:'Arial' })] }),
+        spacer(200,0),
+        new Paragraph({ spacing:{ before:0,after:60 }, children:[new TextRun({ text:'Authorized Signatory', size:17, color:MGRAY, font:'Arial' })] }),
+        new Paragraph({ border:{ bottom:{ style:BorderStyle.SINGLE, size:2, color:BLK } }, spacing:{ before:0,after:200 }, children:[new TextRun({ text:name||'________________________', size:20, font:'Arial', color:BLK })] }),
+        new Paragraph({ spacing:{ before:0,after:50 }, children:[new TextRun({ text:'GSTIN: '+gstin, size:17, color:GRAY, font:'Arial' })] }),
+        new Paragraph({ spacing:{ before:0,after:50 }, children:[new TextRun({ text:'Address: '+address, size:17, color:GRAY, font:'Arial' })] }),
+        spacer(200,0),
+        new Paragraph({ spacing:{ before:0,after:50 }, children:[new TextRun({ text:'Date:', size:17, color:MGRAY, font:'Arial' })] }),
+        new Paragraph({ border:{ bottom:{ style:BorderStyle.SINGLE, size:2, color:BLK } }, spacing:{ before:0,after:80 }, children:[new TextRun({ text:'________________________', size:20, font:'Arial', color:WHITE })] }),
+      ]
+    });
+  };
+
+  // ── Cover page children ───────────────────────────────────────────────────
+  const coverChildren = [
+    spacer(1200, 0),
+    // Logo
+    ...(logoBuffer ? [new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, children:[new ImageRun({ data:logoBuffer, transformation:{ width:180, height:36 }, type:'png' })] })] : [
+      new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, children:[new TextRun({ text:'CROSCROW', bold:true, size:48, color:BLK, font:'Arial' })] })
+    ]),
+    spacer(600, 0),
+    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, border:{ bottom:{ style:BorderStyle.SINGLE, size:2, color:LINE } }, children:[] }),
+    spacer(400, 0),
+    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:120 }, children:[new TextRun({ text:'VENDOR PARTNERSHIP AGREEMENT', bold:true, size:32, color:BLK, font:'Arial', characterSpacing:80 })] }),
+    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:600 }, children:[new TextRun({ text:'between  '+c.partyB.name+'  and  '+c.partyA.name, size:22, color:GRAY, font:'Arial', italics:true })] }),
+    // Key info minimal block
+    ...['Effective Date: '+c.effectiveDate, 'Commission: '+c.commissionRate, 'Settlement: '+settlementLabel, 'Minimum Term: '+c.minimumTerm].map(line =>
+      new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:60 }, children:[new TextRun({ text:line, size:19, color:MGRAY, font:'Arial' })] })
+    ),
+    spacer(800, 0),
+    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, children:[new TextRun({ text:'CONFIDENTIAL', size:17, color:MGRAY, font:'Arial', characterSpacing:120, allCaps:true })] }),
+    // Page break to start agreement on new page
+    new Paragraph({ children:[new TextRun({ break:1 })] }),
+  ];
+
+  // ── Agreement content children ────────────────────────────────────────────
+  const agreementChildren = [
+    spacer(200,0),
+    sectionHeading('AGREEMENT SUMMARY'), spacer(80,0),
+    highlight('Marketplace (Party B)', c.partyB.name), spacer(40,0),
+    highlight('Vendor (Party A)', c.partyA.name), spacer(40,0),
+    highlight('Commission Rate', c.commissionRate+' of net sale value + applicable GST'), spacer(40,0),
+    highlight('Settlement Cycle', settlementLabel), spacer(40,0),
+    highlight('COD & Settlement Cycle', settlementLabel), spacer(40,0),
+    highlight('Minimum Term', c.minimumTerm+' from date of signing'), spacer(40,0),
+    highlight('Notice Period', c.noticePeriod+' prior written notice (post lock-in)'), spacer(200,0), hr(),
+    sectionHeading('AGREEMENT'),
+    body('This Vendor Partnership Agreement ("Agreement") is entered into as of the '+c.agreementDate+', by and between the parties identified below, and shall be binding upon both parties upon execution.'),
+    spacer(120,0),
+    clauseTitle('PARTY B – Marketplace'), body(c.partyB.name+', a company registered under the laws of India, having its registered office at '+c.partyB.address+', GSTIN: '+c.partyB.gstin+'.'),
+    spacer(80,0),
+    clauseTitle('PARTY A – Vendor'), body(c.partyA.name+', a company registered under the laws of India, having its registered office at '+c.partyA.address+', GSTIN: '+c.partyA.gstin+'.'),
+    spacer(120,0), body('Both parties hereby agree to be bound by the following terms and conditions:', { bold:true }),
+    sectionHeading('1. COMMISSION & SETTLEMENT'),
+    clauseTitle('1.1  Commission Rate'), body('Party A agrees to pay Party B a commission of '+c.commissionRate+' on the net sale value of every order fulfilled through Party B\'s marketplace platform, plus applicable GST on the commission amount.'),
+    clauseTitle('1.2  Settlement Cycle'), body('Settlements shall be processed '+settlementText+'. Party B shall deduct its commission from prepaid order proceeds prior to remittance.'),
+    clauseTitle('1.3  Cash on Delivery (COD) Orders'), body('For COD orders, Party A shall remit the applicable commission amount to Party B '+settlementText+', following confirmed delivery of the order to the end customer.'),
+    clauseTitle('1.4  Security Reserve'), body('In the event Party A\'s monthly gross sales through Party B\'s platform exceed ₹50,000, Party B reserves the right to retain a refundable security reserve of ₹5,000 from upcoming settlements. This reserve may be applied against returns, exchanges, penalties, disputes, chargebacks, COD reconciliation shortfalls, or any other operational losses attributable to Party A. The reserve shall be refunded upon termination of this Agreement, subject to full clearance of all outstanding liabilities.'),
+    clauseTitle('1.5  Margin Protection'), body('Any amount by which the selling price on Party B\'s platform exceeds Party A\'s own website price or the mutually agreed transfer/base price shall accrue exclusively to Party B and shall be retained by Party B in addition to the agreed commission. Party A shall have no claim over such margin differential.'),
+    clauseTitle('1.6  Settlement Hold for Disputes & Fraud'), body('Party B reserves the right to withhold or delay settlement of amounts relating to orders that are suspected to be fraudulent, disputed by customers, subject to chargeback, or flagged as high-risk RTO, pending the completion of Party B\'s internal investigation. Party B shall notify Party A of any such hold within a reasonable time and release withheld amounts upon satisfactory resolution.'),
+    sectionHeading('2. OPERATIONAL OBLIGATIONS & PENALTIES'),
+    clauseTitle('2.1  Order Fulfilment & Tracking'), body('Party A must provide a valid shipment tracking ID or initiate an order cancellation within 48 hours of order confirmation. Failure to comply will result in a penalty of '+c.trackingPenalty+' per order, recoverable by Party B via deduction from the next applicable settlement.'),
+    clauseTitle('2.2  Inventory Accuracy'), body('Party A warrants that inventory levels reflected on Party B\'s platform shall be accurate and updated in a timely manner. Any order cancellation arising due to stock unavailability or inaccurate inventory representations after order confirmation shall attract a penalty of ₹200 per cancelled order, deductible from the next applicable settlement.'),
+    clauseTitle('2.3  Exchange & Reverse Pickup Obligation'), body('Upon approval of a return or exchange request by Party B, Party A shall arrange reverse pickup of the customer\'s item within 24 hours of such approval. Failure to do so shall attract a penalty of ₹100 per order per day of delay. In the event Party A fails to arrange pickup within the stipulated period, Party B may, at its sole discretion, arrange the pickup independently and retain the returned stock in its own inventory for future fulfilment on behalf of Party A. Party A shall bear all associated logistics costs.'),
+    clauseTitle('2.4  Penalty Recovery'), body('Party B reserves the right to deduct all accrued penalties, including those arising under Clauses 2.1, 2.2, 2.3, and 3.2, from any outstanding settlements or payable amounts owed to Party A, without requiring separate invoicing or prior notice.'),
+    sectionHeading('3. PRICING, OFFERS & DISCOUNTS'),
+    clauseTitle('3.1  Pricing Parity'), body('Party A shall ensure that all product prices listed on Party B\'s platform are identical to or lower than those offered on Party A\'s own website or any other sales channel. Party B reserves the right to adjust the displayed selling price at its discretion for promotional or business purposes.'),
+    clauseTitle('3.2  Offer Synchronisation'), body('Party A shall ensure that all discount codes, promotional offers, and coupons available on its own website are simultaneously applicable on Party B\'s platform. Failure to communicate or implement any price or offer update within 48 hours of publishing shall attract a penalty of '+c.pricingPenalty+' per occurrence.'),
+    clauseTitle('3.3  Discount Responsibility'), body('All customer-facing discounts on Party B\'s platform shall be borne by Party B unless otherwise agreed in writing. Prepaid-specific discounts shall be borne by Party A, in accordance with Clause 3.2.'),
+    sectionHeading('4. RETURN & QUALITY OBLIGATIONS'),
+    clauseTitle('4.1  Vendor Fault Returns'), body('In cases where a return or refund arises directly due to fault attributable to Party A, including but not limited to defective or damaged products, incorrect item dispatch, inaccurate or misleading size charts, poor or inadequate packaging, fake shipment entries, or missing items, all associated logistics costs, reverse pickup charges, and refund amounts shall be borne exclusively by Party A. Party B shall not be liable for any financial loss arising from such vendor-attributable returns.'),
+    clauseTitle('4.2  Quality Control & Platform Delisting'), body('Party B reserves the right to suspend, delist, or permanently remove any product or vendor from its platform at its sole discretion, without prior notice, in the event of repeated or serious instances including excessive return rates, consistent delays in order fulfilment, submission of fake or incorrect tracking information, patterns of customer complaints, or any violation of the terms of this Agreement or Party B\'s platform policies. Such action shall not entitle Party A to any compensation or damages.'),
+    sectionHeading('5. MARKETING & INTELLECTUAL PROPERTY RIGHTS'),
+    clauseTitle('5.1  Brand Licence for Listing'), body('Each party retains ownership of its respective intellectual property. Party A grants Party B a non-exclusive, royalty-free licence to use Party A\'s brand name, logo, and product content solely for the purpose of listing, displaying, and marketing products on Party B\'s platform during the term of this Agreement.'),
+    clauseTitle('5.2  Extended Marketing Rights'), body('In addition to Clause 5.1, Party A grants Party B the irrevocable right, during the term of this Agreement, to use Party A\'s product images, videos, logos, and other brand assets for the purposes of digital and offline advertisements, paid media campaigns, influencer and affiliate marketing, social media promotions, and any other promotional or marketing activities undertaken by Party B. Party A shall not demand any royalty, compensation, or approval in connection with such use.'),
+    sectionHeading('6. MODIFICATION OF TERMS'), body('These terms may be amended at any time by mutual written consent of both parties. No unilateral modification shall be valid or binding. Agreed amendments shall be documented in writing and signed by authorised representatives of both parties.'),
+    sectionHeading('7. TAXES & LEGAL COMPLIANCE'),
+    clauseTitle('7.1  Tax Obligations'), body('Both parties shall independently comply with all applicable tax and duty obligations under Indian law, including GST regulations, with respect to their respective billings, commissions, and transactions arising from this Agreement.'),
+    clauseTitle('7.2  Policy Compliance'), body('Party A shall fully honour all customer-facing policies published on its website or communicated to customers, including return, exchange, cancellation, and warranty policies, for all orders fulfilled through Party B\'s platform.'),
+    sectionHeading('8. REPRESENTATIONS & WARRANTIES'), body('Each party represents and warrants that: (a) it has full legal authority to enter into and perform under this Agreement; (b) execution does not violate any applicable law, regulation, or third-party agreement; and (c) all information provided to the other party is accurate and complete as of the date of signing.'),
+    sectionHeading('9. CONFIDENTIALITY'), body('Both parties agree to keep confidential all non-public business information shared under this Agreement, including pricing, customer data, commission rates, and operational data. This obligation survives termination for two (2) years.'),
+    sectionHeading('10. LIMITATION OF LIABILITY'), body('Neither party shall be liable for indirect, incidental, consequential, or punitive damages arising out of or in connection with this Agreement. Each party\'s total aggregate liability shall not exceed the total commission amounts paid or payable in the three (3) months preceding the event giving rise to the claim.'),
+    sectionHeading('11. BREACH OF AGREEMENT'),
+    clauseTitle('11.1  Right to Remedy'), body('In the event of a material breach, the non-breaching party shall provide written notice to the breaching party. The breaching party shall have 7 business days from receipt of such notice to cure the breach. If the breach remains uncured, the non-breaching party may pursue legal remedies available under applicable law.'),
+    clauseTitle('11.2  Governing Law'), body('This Agreement shall be governed by and construed in accordance with the laws of the Republic of India, without regard to conflict of law principles.'),
+    clauseTitle('11.3  Dispute Resolution & Arbitration'), body('In the event of any dispute, controversy, or claim arising out of or in connection with this Agreement, or the breach, termination, or invalidity thereof, the parties shall first endeavour to resolve the matter through good-faith negotiation. If the dispute is not resolved within 30 days of written notice, it shall be submitted to and finally resolved by arbitration in accordance with the Arbitration and Conciliation Act, 1996 (as amended). The seat and venue of arbitration shall be Rajasthan, India. The arbitration shall be conducted by a sole arbitrator mutually appointed by the parties. The language of arbitration shall be English. The arbitral award shall be final and binding on both parties.'),
+    sectionHeading('12. FORCE MAJEURE'),
+    clauseTitle('12.1  Exclusion of Liability'), body('Neither party shall be held liable for any failure or delay in the performance of its obligations under this Agreement resulting from Force Majeure Events, including natural disasters, pandemics or epidemics, governmental orders or restrictions, cyberattacks, or acts of war or terrorism.'),
+    clauseTitle('12.2  Notification & Suspension'), body('The party affected by a Force Majeure Event shall notify the other party in writing as soon as reasonably practicable. The affected party\'s obligations shall be suspended for the duration of the event. If the Force Majeure Event continues for more than '+c.forceMajeureDays+', either party may terminate this Agreement by written notice, provided that all payment obligations accrued prior to the commencement of such event remain unaffected.'),
+    sectionHeading('13. TERM & TERMINATION'),
+    clauseTitle('13.1  Initial Term'), body('This Agreement shall be effective from the date of signing and shall remain in force for a minimum period of '+c.minimumTerm+' ("Lock-in Period").'),
+    clauseTitle('13.2  Termination After Lock-in'), body('Upon expiry of the Lock-in Period, either party may terminate this Agreement by providing '+c.noticePeriod+' prior written notice to the other party.'),
+    clauseTitle('13.3  Effect of Termination'), body('Upon termination of this Agreement: (a) all outstanding payments shall be settled within 14 business days, subject to deduction of any applicable penalties, reserves, or liabilities; (b) Party B shall delist all of Party A\'s products from its platform; and (c) the provisions relating to confidentiality, intellectual property, dispute resolution, limitation of liability, and return/quality obligations shall survive termination and remain in full force and effect.'),
+    spacer(400,0), hr(),
+    sectionHeading('SIGNATURES'),
+    body('IN WITNESS WHEREOF, the parties have duly executed this Agreement as of the date first written above.'),
+    spacer(240,0),
+    new Table({
+      width:{ size:9360, type:WidthType.DXA }, columnWidths:[4440,480,4440],
+      rows:[new TableRow({ children:[
+        sigBlock(c.partyB.name,'Party B – Marketplace',c.partyB.signatory,c.partyB.gstin,c.partyB.address),
+        new TableCell({ borders:noBorders, width:{ size:480, type:WidthType.DXA }, children:[new Paragraph({ children:[] })] }),
+        sigBlock(c.partyA.name,'Party A – Vendor',c.partyA.signatory,c.partyA.gstin,c.partyA.address)
+      ]})]
+    }),
+    spacer(400,0),
+    new Paragraph({ alignment:AlignmentType.CENTER, children:[new TextRun({ text:'This document is prepared under CrosCrow Standard Policy and is legally binding upon execution.', size:17, color:MGRAY, font:'Arial', italics:true })] })
+  ];
+
+  const pageProps = { size:{ width:11906, height:16838 }, margin:{ top:1080,right:1080,bottom:1080,left:1080 } };
+
+  return new Document({
+    styles:{ default:{ document:{ run:{ font:'Arial', size:21, color:DARK } } } },
+    sections:[
+      // ── Cover page (no header/footer) ──────────────────────────────────
+      {
+        properties:{ page:{ ...pageProps } },
+        children: coverChildren,
+      },
+      // ── Agreement body ─────────────────────────────────────────────────
+      {
+        properties:{ page:{ ...pageProps } },
+        headers:{ default: new Header({ children:[new Paragraph({ spacing:{ before:0,after:100 }, border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:LINE, space:4 } }, children:[new TextRun({ text:'CROSCROW  |  Vendor Partnership Agreement  —  '+c.partyA.name, size:17, color:MGRAY, font:'Arial' }), new TextRun({ text:'   CONFIDENTIAL', size:15, color:'888888', font:'Arial', bold:true })] })] }) },
+        footers:{ default: new Footer({ children:[new Paragraph({ spacing:{ before:100,after:0 }, border:{ top:{ style:BorderStyle.SINGLE, size:4, color:LINE, space:4 } }, children:[new TextRun({ text:"CrosCrow – India's Curated Streetwear Marketplace   |   Page ", size:16, color:MGRAY, font:'Arial' }), new TextRun({ children:[new SimpleField('PAGE')], size:16, color:MGRAY, font:'Arial' })] })] }) },
+        children: agreementChildren,
+      }
+    ]
+  });
+}
+
+// POST /admin/generate-agreement — generate and stream .docx
+app.post('/admin/generate-agreement', adminAuth, async (req, res) => {
+  try {
+    const c = req.body;
+    if (!c?.partyA?.name || !c?.agreementDate) return res.status(400).json({ error: 'partyA.name and agreementDate are required' });
+    // Defaults for Party B
+    c.partyB = {
+      name:      'CROSCROW',
+      signatory: 'Harshit',
+      gstin:     '08AAUFC5436G1Z4',
+      address:   'KHASRA No. 3545, 3548, Plot No. 19, Kalyan Colony, Ajmer Road, Kekri – 305404, Rajasthan',
+      ...c.partyB,
+    };
+    c.commissionRate        = c.commissionRate        || '20%';
+    c.prepaidSettlementDays = c.prepaidSettlementDays || '7';
+    c.codSettlementDays     = c.codSettlementDays     || '7';
+    c.trackingPenalty       = c.trackingPenalty       || '₹200';
+    c.pricingPenalty        = c.pricingPenalty        || '₹500';
+    c.minimumTerm           = c.minimumTerm           || '6 months';
+    c.noticePeriod          = c.noticePeriod          || '15 days';
+    c.forceMajeureDays      = c.forceMajeureDays      || '30 days';
+
+    c.settlementCycle = c.settlementCycle || 'days';
+    c.settlementDate  = c.settlementDate  || '';
+    const logoPath = path.join(__dirname, 'croscrow-logo.png');
+    const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
+    const doc    = buildAgreementDoc(c, logoBuffer);
+    const buffer = await Packer.toBuffer(doc);
+    const fname  = `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}_${(c.effectiveDate||c.agreementDate).replace(/\s+/g,'_')}.docx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('❌ generate-agreement:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// AGREEMENT MANAGEMENT
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /admin/agreements — generate, save, and optionally email to vendor
+app.post('/admin/agreements', adminAuth, async (req, res) => {
+  try {
+    const { config, valid_till, send_email, notes } = req.body || {};
+    if (!config?.partyA?.name) return res.status(400).json({ error: 'partyA.name required' });
+
+    const c = { ...config };
+    c.partyB = { name:'CROSCROW', signatory:'Harshit', gstin:'08AAUFC5436G1Z4', address:'KHASRA No. 3545, 3548, Plot No. 19, Kalyan Colony, Ajmer Road, Kekri – 305404, Rajasthan', ...c.partyB };
+    c.commissionRate        = c.commissionRate        || '20%';
+    c.prepaidSettlementDays = c.prepaidSettlementDays || '7';
+    c.trackingPenalty       = c.trackingPenalty       || '₹200';
+    c.pricingPenalty        = c.pricingPenalty        || '₹500';
+    c.minimumTerm           = c.minimumTerm           || '6 months';
+    c.noticePeriod          = c.noticePeriod          || '15 days';
+    c.forceMajeureDays      = c.forceMajeureDays      || '30 days';
+    c.settlementCycle       = c.settlementCycle       || 'days';
+    c.settlementDate        = c.settlementDate        || '';
+
+    const logoPath   = path.join(__dirname, 'croscrow-logo.png');
+    const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
+    const buffer     = await Packer.toBuffer(buildAgreementDoc(c, logoBuffer));
+
+    const id       = new (require('mongodb').ObjectId)();
+    const fname    = `agreement_${id}_${c.partyA.name.replace(/\s+/g,'_')}.docx`;
+    const filePath = path.join(agreementDocDir, fname);
+    fs.writeFileSync(filePath, buffer);
+    const fileUrl  = `/agreement-docs/${fname}`;
+
+    // Get vendor email
+    const profile = await mdb.collection('vendor_profiles').findOne({ vendor_name: c.partyA.name }, { projection: { email:1, _id:0 } });
+    const cfg2    = await mdb.collection('vendor_config').findOne({ vendor_name: c.partyA.name }, { projection: { email:1, _id:0 } });
+    const vendorEmail = profile?.email || cfg2?.email || null;
+
+    const doc = {
+      _id: id,
+      vendor_name:   c.partyA.name,
+      vendor_email:  vendorEmail,
+      vendor_gstin:  c.partyA.gstin || '',
+      vendor_address:c.partyA.address || '',
+      agreement_config: c,
+      file_url:      fileUrl,
+      valid_from:    c.effectiveDate || new Date().toISOString().slice(0,10),
+      valid_till:    valid_till || null,
+      status:        'sent',
+      signed_url:    null,
+      approved_at:   null,
+      notes:         notes || '',
+      created_at:    new Date().toISOString(),
+    };
+
+    await mdb.collection('vendor_agreements').insertOne(doc);
+
+    // Email vendor
+    if (send_email && vendorEmail) {
+      const smtpCfg = await getSmtpConfig();
+      if (smtpCfg) {
+        const panelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+        const html = emailBase(`📄 Vendor Partnership Agreement — ${c.partyA.name}`, '#0A0A0A', `
+          <div class="subtitle">Please find your CrosCrow Vendor Partnership Agreement attached. Review, sign, and upload your signed copy via the vendor panel.</div>
+          <div class="info-box">
+            <div class="info-row"><span class="info-label">Vendor</span><span class="info-val"><strong>${c.partyA.name}</strong></span></div>
+            <div class="info-row"><span class="info-label">Effective Date</span><span class="info-val">${c.effectiveDate}</span></div>
+            ${valid_till ? `<div class="info-row"><span class="info-label">Valid Till</span><span class="info-val">${valid_till}</span></div>` : ''}
+            <div class="info-row"><span class="info-label">Commission</span><span class="info-val">${c.commissionRate}</span></div>
+          </div>
+          <p style="font-size:13px;color:#6b7280;line-height:1.7">To sign: <strong>print, sign, and scan</strong> the attached agreement — then either:<br/>• <strong>Reply to this email</strong> with the signed copy attached, or<br/>• Upload it directly in <strong>Vendor Panel → Agreement</strong>.<br/>Once received, our team will review and confirm your agreement status within 24 hours.</p>
+          <div style="text-align:center;margin-top:20px"><a href="${panelUrl}" style="display:inline-block;background:#0a0a0a;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px">Upload Signed Agreement →</a></div>
+        `);
+        const adminEmail = 'harshitvj24@gmail.com';
+        const transporter = require('nodemailer').createTransport({ host:smtpCfg.host, port:parseInt(smtpCfg.port)||587, secure:parseInt(smtpCfg.port)===465, auth:{ user:smtpCfg.user, pass:smtpCfg.pass } });
+        await transporter.sendMail({
+          from: `"${smtpCfg.fromName||'CrosCrow'}" <${smtpCfg.fromEmail||smtpCfg.user}>`,
+          replyTo: adminEmail,
+          to: vendorEmail,
+          subject: `📄 Partnership Agreement — ${c.partyA.name} — CrosCrow`,
+          html,
+          attachments: [{ filename: `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}.docx`, content: buffer }],
+        });
+      }
+    }
+
+    res.json({ success: true, id: id.toString(), file_url: fileUrl });
+  } catch (err) { console.error('❌ create agreement:', err.message); res.status(500).json({ error: err.message }); }
+});
+
+// GET /admin/agreements — list all with latest per vendor
+app.get('/admin/agreements', adminAuth, async (req, res) => {
+  try {
+    const { vendor_name } = req.query;
+    const q = vendor_name ? { vendor_name } : {};
+    const docs = await mdb.collection('vendor_agreements').find(q, { projection: { agreement_config:0, _id:1 } }).sort({ created_at:-1 }).toArray();
+    res.json({ agreements: docs.map(d => ({ ...d, id: d._id.toString(), _id: undefined })) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /admin/agreements/:id/download — download the docx
+app.get('/admin/agreements/:id/download', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id) });
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    const filePath = path.join(__dirname, doc.file_url);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    res.download(filePath, `CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.docx`);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /admin/agreements/:id — update valid_till, notes, status
+app.put('/admin/agreements/:id', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { valid_till, notes, status } = req.body || {};
+    const upd = { updated_at: new Date().toISOString() };
+    if (valid_till !== undefined) upd.valid_till = valid_till;
+    if (notes     !== undefined) upd.notes = notes;
+    if (status    !== undefined) upd.status = status;
+    await mdb.collection('vendor_agreements').updateOne({ _id: new ObjectId(req.params.id) }, { $set: upd });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /admin/agreements/:id/approve — approve signed agreement
+app.post('/admin/agreements/:id/approve', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { valid_till } = req.body || {};
+    const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id) });
+    if (!doc) return res.status(404).json({ error: 'Agreement not found' });
+    const upd = { status: 'approved', approved_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    if (valid_till) upd.valid_till = valid_till;
+    await mdb.collection('vendor_agreements').updateOne({ _id: new ObjectId(req.params.id) }, { $set: upd });
+    auditLog('admin', 'agreement_approved', doc.vendor_name, { id: req.params.id, valid_till });
+
+    // Email vendor confirmation
+    if (doc.vendor_email) {
+      const smtpCfg = await getSmtpConfig();
+      if (smtpCfg) {
+        const html = emailBase('✅ Agreement Approved — CrosCrow', '#0A0A0A', `
+          <div class="subtitle">Your signed Vendor Partnership Agreement has been reviewed and approved by CrosCrow.</div>
+          <div class="info-box">
+            <div class="info-row"><span class="info-label">Vendor</span><span class="info-val"><strong>${doc.vendor_name}</strong></span></div>
+            <div class="info-row"><span class="info-label">Approved On</span><span class="info-val">${new Date().toLocaleDateString('en-IN')}</span></div>
+            ${(valid_till||doc.valid_till) ? `<div class="info-row"><span class="info-label">Agreement Valid Till</span><span class="info-val"><strong>${valid_till||doc.valid_till}</strong></span></div>` : ''}
+          </div>
+          <p style="font-size:13px;color:#6b7280;line-height:1.7">Your partnership with CrosCrow is now officially active. Thank you for completing the onboarding process.</p>
+        `);
+        await sendEmail({ to: doc.vendor_email, subject: '✅ Your CrosCrow Agreement is Approved', html, shopifyId:'', trigger:'agreement_approved' });
+      }
+    }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /admin/agreements/:id — delete agreement record + file
+app.delete('/admin/agreements/:id', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id) });
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (doc.file_url) { const fp = path.join(__dirname, doc.file_url); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
+    await mdb.collection('vendor_agreements').deleteOne({ _id: new ObjectId(req.params.id) });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /vendor/agreements — vendor sees their own agreements
+app.get('/vendor/agreements', vendorAuth, async (req, res) => {
+  try {
+    const docs = await mdb.collection('vendor_agreements').find(
+      { vendor_name: req.vendor },
+      { projection: { agreement_config:0 } }
+    ).sort({ created_at:-1 }).toArray();
+    res.json({ agreements: docs.map(d => ({ ...d, id: d._id.toString(), _id: undefined })) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /vendor/agreements/:id/download — vendor downloads their agreement
+app.get('/vendor/agreements/:id/download', vendorAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id), vendor_name: req.vendor });
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    const filePath = path.join(__dirname, doc.file_url);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    res.download(filePath, `CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.docx`);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /vendor/agreements/:id/upload-signed — vendor uploads signed copy
+app.post('/vendor/agreements/:id/upload-signed', vendorAuth, signedAgreementUpload.single('signed_doc'), async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id), vendor_name: req.vendor });
+    if (!doc) return res.status(404).json({ error: 'Agreement not found' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const signedUrl = `/signed-agreements/${req.file.filename}`;
+    await mdb.collection('vendor_agreements').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { signed_url: signedUrl, status: 'signed', signed_at: new Date().toISOString() } }
+    );
+    // Notify admin
+    const smtpCfg = await getSmtpConfig();
+    if (smtpCfg) {
+      const html = emailBase('📝 Signed Agreement Uploaded — Action Required', '#0A0A0A', `
+        <div class="subtitle"><strong>${req.vendor}</strong> has uploaded their signed agreement and it is pending your review.</div>
+        <div class="info-box">
+          <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${req.vendor}</span></div>
+          <div class="info-row"><span class="info-label">Uploaded On</span><span class="info-val">${new Date().toLocaleDateString('en-IN')}</span></div>
+        </div>
+        <p style="font-size:13px;color:#6b7280">Go to Admin → Agreements → review and approve.</p>
+      `);
+      await sendEmail({ to: 'harshitvj24@gmail.com', subject: `📝 Signed Agreement Uploaded — ${req.vendor}`, html, shopifyId:'', trigger:'agreement_signed_upload' });
+    }
+    res.json({ success: true, signed_url: signedUrl });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Agreement expiry cron — runs daily, emails vendor + admin when expiring in 30/7 days or expired
+async function agreementExpiryCron() {
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const in7   = new Date(Date.now() + 7*86400000).toISOString().slice(0,10);
+    const in30  = new Date(Date.now() + 30*86400000).toISOString().slice(0,10);
+    // Find approved agreements expiring in 30 days or less, not already reminded
+    const agreements = await mdb.collection('vendor_agreements').find({
+      status: 'approved', valid_till: { $lte: in30, $gte: today },
+    }).toArray();
+    for (const ag of agreements) {
+      const daysLeft = Math.round((new Date(ag.valid_till) - new Date(today)) / 86400000);
+      const alreadySent = daysLeft <= 7 ? ag.reminded_7d : ag.reminded_30d;
+      if (alreadySent) continue;
+      const smtpCfg = await getSmtpConfig();
+      if (!smtpCfg) continue;
+      const urgency = daysLeft <= 7 ? '🔴 Urgent' : '🟡 Reminder';
+      const html = emailBase(`${urgency}: Agreement Expiring in ${daysLeft} Days`, '#0A0A0A', `
+        <div class="subtitle">Your CrosCrow Vendor Partnership Agreement is expiring soon.</div>
+        <div class="info-box">
+          <div class="info-row"><span class="info-label">Vendor</span><span class="info-val"><strong>${ag.vendor_name}</strong></span></div>
+          <div class="info-row"><span class="info-label">Expires On</span><span class="info-val"><strong>${ag.valid_till}</strong></span></div>
+          <div class="info-row"><span class="info-label">Days Remaining</span><span class="info-val">${daysLeft} days</span></div>
+        </div>
+        <p style="font-size:13px;color:#6b7280;line-height:1.7">Please contact CrosCrow to initiate a renewal. A new agreement will be sent to you shortly.</p>
+      `);
+      if (ag.vendor_email) await sendEmail({ to: ag.vendor_email, subject: `${urgency}: Your CrosCrow Agreement Expires in ${daysLeft} Days`, html, shopifyId:'', trigger:'agreement_expiry' });
+      await sendEmail({ to: 'harshitvj24@gmail.com', subject: `${urgency}: Agreement Expiring — ${ag.vendor_name} (${daysLeft}d left)`, html, shopifyId:'', trigger:'agreement_expiry_admin' });
+      const flag = daysLeft <= 7 ? { reminded_7d: true } : { reminded_30d: true };
+      await mdb.collection('vendor_agreements').updateOne({ _id: ag._id }, { $set: flag });
+    }
+    // Mark expired
+    await mdb.collection('vendor_agreements').updateMany(
+      { status: 'approved', valid_till: { $lt: today } },
+      { $set: { status: 'expired' } }
+    );
+  } catch(e) { console.error('Agreement expiry cron error:', e.message); }
+}
+setInterval(agreementExpiryCron, 24 * 60 * 60 * 1000); // daily
+
 // ── Send test warning email to vendor ────────────────────────────────────
 app.post("/admin/penalties/test-warning", adminAuth, async (req, res) => {
   const { shopify_id, vendor_name, order_name } = req.body || {};
@@ -10885,6 +11545,8 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
 
     const existing = await mdb.collection('vendor_onboards').findOne({ email: email.toLowerCase().trim(), status: { $in: ['pending','approved'] } });
     if (existing) return res.status(409).json({ error: 'An application with this email is already pending or approved.' });
+    const existingVendor = await mdb.collection('vendor_profiles').findOne({ email: email.toLowerCase().trim() }, { projection: { vendor_name: 1, _id: 0 } });
+    if (existingVendor) return res.status(409).json({ error: `This email is already linked to an active vendor account (${existingVendor.vendor_name}). Please use a different email or contact support.` });
 
     const doc = {
       contact_name: contact_name.trim(),
