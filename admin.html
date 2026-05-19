@@ -5308,9 +5308,10 @@
     const [approvals,   setApprovals]   = useState([]);
     const [approvLoad,  setApprovLoad]  = useState(false);
     const [approvMsg,   setApprovMsg]   = useState({});
-    const [showAllApprovals, setShowAllApprovals] = useState(true);
+    const [showAllApprovals, setShowAllApprovals] = useState('pending');
     const [importing,   setImporting]   = useState({}); // productId -> bool
     const [selectedProds, setSelectedProds] = useState(new Set()); // multi-select
+    const [mapSelState,  setMapSelState]   = useState(new Set()); // mapping multi-select
     const [bulkImporting, setBulkImporting] = useState(false);
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
@@ -5347,6 +5348,7 @@
 
     const loadMappings = () => {
       if (!selected) return;
+      setMapSelState(new Set());
       fetch(`/admin/vendor-sync/mappings?vendor_name=${encodeURIComponent(selected)}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>setMappings(d.mappings||[]));
     };
@@ -5418,13 +5420,16 @@
       setApprovMsg(m=>({...m,[reqId]:'loading'}));
       try {
         if (action === 'import') {
-          // Import as new product
           const r = await fetch('/admin/vendor-sync/import', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
             body: JSON.stringify({ vendor_name: vendorName, vendor_product_id: productId, sync_inventory: true }) });
           const d = await r.json();
           if (!r.ok) throw new Error(d.error);
           await fetch(`/admin/vendor-sync/upload-requests/${reqId}`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ status:'approved', action:'imported' }) });
           setApprovMsg(m=>({...m,[reqId]:'✅ Imported!'}));
+        } else if (action === 'approve_removal') {
+          if (!window.confirm('Mark this removal request as approved? Make sure you have already deleted the product from the Shopify store.')) return setApprovMsg(m=>({...m,[reqId]:null}));
+          await fetch(`/admin/vendor-sync/upload-requests/${reqId}`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ status:'approved', action:'removed' }) });
+          setApprovMsg(m=>({...m,[reqId]:'✅ Approved'}));
         } else if (action === 'reject') {
           await fetch(`/admin/vendor-sync/upload-requests/${reqId}`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ status:'rejected' }) });
           setApprovMsg(m=>({...m,[reqId]:'Rejected'}));
@@ -5531,79 +5536,103 @@
           </div>
         </div>
 
-        {/* Global Approvals — all pending requests regardless of vendor */}
-        {(() => {
-          const pending = approvals.filter(a=>a.status==='pending');
+        {/* Global Approvals — tabbed by status */}
+        {(()=>{
           const typeColor = t => t==='removal'?'var(--red)':t==='mapping'?'var(--green)':'var(--indigo)';
-          const typeBg = t => t==='removal'?'var(--red-bg)':t==='mapping'?'var(--green-dim)':'var(--indigo-dim)';
+          const typeBg    = t => t==='removal'?'var(--red-bg)':t==='mapping'?'var(--green-dim)':'var(--indigo-dim)';
           const typeLabel = t => t==='removal'?'🗑 Removal':t==='mapping'?'🔗 Map Request':'📤 Upload';
+          const REQ_TABS = [
+            { key:'pending',  label:'Pending',  color:'#f59e0b' },
+            { key:'approved', label:'Approved', color:'var(--green)' },
+            { key:'rejected', label:'Rejected', color:'var(--red)' },
+            { key:'all',      label:'All',      color:'var(--text-muted)' },
+          ];
+          // Filter by selected vendor if one is active
+          const vendorApprovals = selected ? approvals.filter(a => a.vendor_name === selected) : approvals;
+          const pendingCount = vendorApprovals.filter(a=>a.status==='pending').length;
+          const filteredReqs = vendorApprovals.filter(r => showAllApprovals === 'all' || r.status === showAllApprovals);
           return (
             <div style={{marginBottom:24,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',borderBottom: showAllApprovals&&approvals.length?'1px solid var(--border)':'none'}}
-                onClick={()=>setShowAllApprovals(s=>!s)}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid var(--border)'}}>
                 <div style={{display:'flex',alignItems:'center',gap:10}}>
-                  <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>📤 All Product Requests</span>
-                  {pending.length>0 && <span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'rgba(245,158,11,0.15)',color:'#f59e0b',fontWeight:700,border:'1px solid rgba(245,158,11,0.3)'}}>{pending.length} pending</span>}
+                  <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>📤 Product Requests{selected ? <span style={{fontSize:11,color:'var(--indigo)',fontWeight:500,marginLeft:6}}>· {selected}</span> : ''}</span>
+                  {pendingCount>0 && <span style={{fontSize:11,padding:'2px 8px',borderRadius:99,background:'rgba(245,158,11,0.15)',color:'#f59e0b',fontWeight:700,border:'1px solid rgba(245,158,11,0.3)'}}>{pendingCount} pending</span>}
                 </div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();loadApprovals();}} disabled={approvLoad}>{approvLoad?'…':'↻'}</button>
-                  <span style={{color:'var(--text-muted)',fontSize:12}}>{showAllApprovals?'▲':'▼'}</span>
-                </div>
+                <button className="btn btn-ghost btn-sm" onClick={loadApprovals} disabled={approvLoad}>{approvLoad?'…':'↻'}</button>
               </div>
-              {showAllApprovals && (
-                approvLoad ? <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>Loading…</div> :
-                approvals.length===0 ? <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>No requests yet.</div> :
-                <div style={{display:'flex',flexDirection:'column',gap:0}}>
-                  {approvals.map(req=>(
-                    <div key={req._id} style={{display:'flex',gap:10,alignItems:'center',padding:'10px 16px',borderBottom:'1px solid var(--border)',background:req.status==='pending'?'transparent':'var(--bg-hover)'}}>
-                      {req.product_image && <img src={req.product_image} style={{width:36,height:36,objectFit:'cover',borderRadius:5,flexShrink:0,border:'1px solid var(--border)'}} alt=""/>}
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{req.product_title||req.cc_product_id||req.product_id}</div>
-                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
-                          <span style={{color:'var(--indigo)',fontWeight:600}}>{req.vendor_name}</span>
-                          {' · '}{new Date(req.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
-                        </div>
-                        {req.note && <div style={{fontSize:10,color:'#fbbf24',marginTop:2}}>📝 {req.note}</div>}
+              {/* Tabs */}
+              <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card2)'}}>
+                {REQ_TABS.map(t=>{
+                  const count = t.key==='all' ? vendorApprovals.length : vendorApprovals.filter(r=>r.status===t.key).length;
+                  const active = showAllApprovals===t.key;
+                  return (
+                    <button key={t.key} onClick={()=>setShowAllApprovals(t.key)}
+                      style={{flex:1,padding:'8px 4px',border:'none',borderBottom:`2px solid ${active?t.color:'transparent'}`,
+                        background:'transparent',color:active?t.color:'var(--text-muted)',cursor:'pointer',
+                        fontSize:11,fontWeight:active?700:500,fontFamily:'IBM Plex Mono,monospace',
+                        display:'flex',alignItems:'center',justifyContent:'center',gap:5,transition:'all 0.15s'}}>
+                      {t.label}
+                      {count>0&&<span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:active?t.color:'var(--bg-hover)',color:active?'#000':'var(--text-muted)',fontWeight:700}}>{count}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {approvLoad ? <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>Loading…</div> :
+               filteredReqs.length===0 ? <div style={{padding:16,color:'var(--text-muted)',fontSize:12,textAlign:'center'}}>No {showAllApprovals==='all'?'':showAllApprovals} requests.</div> :
+               <div style={{display:'flex',flexDirection:'column',gap:0}}>
+                {filteredReqs.map(req=>(
+                  <div key={req._id} style={{display:'flex',gap:10,alignItems:'center',padding:'10px 16px',borderBottom:'1px solid var(--border)',background:req.status==='pending'?'transparent':'var(--bg-hover)'}}>
+                    {req.product_image && <img src={req.product_image} style={{width:36,height:36,objectFit:'cover',borderRadius:5,flexShrink:0,border:'1px solid var(--border)'}} alt=""/>}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{req.product_title||req.cc_product_id||req.product_id}</div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                        <span style={{color:'var(--indigo)',fontWeight:600}}>{req.vendor_name}</span>
+                        {' · '}{new Date(req.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}
+                        {req.action && <span style={{marginLeft:6,color:'var(--text-muted)'}}>· {req.action}</span>}
                       </div>
-                      <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:typeBg(req.request_type),color:typeColor(req.request_type),border:`1px solid ${typeColor(req.request_type)}`,fontWeight:700,flexShrink:0}}>{typeLabel(req.request_type)}</span>
-                      <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,fontWeight:700,flexShrink:0,
-                        background:req.status==='pending'?'rgba(245,158,11,0.1)':req.status==='approved'?'var(--green-dim)':'var(--bg-card2)',
-                        color:req.status==='pending'?'#f59e0b':req.status==='approved'?'var(--green)':'var(--text-muted)',
-                        border:`1px solid ${req.status==='pending'?'rgba(245,158,11,0.3)':req.status==='approved'?'var(--green)':'var(--border)'}`
-                      }}>{req.status.toUpperCase()}</span>
-                      {req.status==='pending' && (
-                        <div style={{display:'flex',gap:4,flexShrink:0}}>
-                          {req.request_type==='removal' ? (
-                            <button className="btn btn-danger btn-sm" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
-                              onClick={()=>handleApproval(req._id,'reject',req.vendor_name,req.product_id)}>
-                              ✓ Ack
-                            </button>
-                          ) : req.request_type==='mapping' ? (
-                            <button className="btn btn-sm btn-ghost" style={{fontSize:10,borderColor:'var(--green)',color:'var(--green)'}} disabled={approvMsg[req._id]==='loading'}
-                              onClick={async()=>{
-                                setSmartMap({ step:'loading', req, vendorVariants:[], ccProduct:null, matches:[], saving:false, saveMsg:'' });
-                                try {
-                                  const r2 = await fetch(`/admin/vendor-sync/vendor-product-variants?vendor_name=${encodeURIComponent(req.vendor_name)}&product_id=${req.product_id}`, { headers:{ Authorization:'Bearer '+token } });
-                                  const d2 = await r2.json();
-                                  setSmartMap(s=>({...s, step:'search_cc', vendorVariants: d2.variants||[] }));
-                                } catch(e) { setSmartMap(s=>({...s, step:'error', error:e.message})); }
-                              }}>
-                              🔗 Smart Map
-                            </button>
-                          ) : (
-                            <button className="btn btn-sm btn-indigo" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
-                              onClick={()=>handleApproval(req._id,'import',req.vendor_name,req.product_id)}>
-                              ↓ Import
-                            </button>
-                          )}
-                          <button className="btn btn-sm btn-ghost" style={{fontSize:10,borderColor:'var(--red)',color:'var(--red)'}} disabled={approvMsg[req._id]==='loading'}
-                            onClick={()=>handleApproval(req._id,'reject',req.vendor_name,req.product_id)}>✕</button>
-                        </div>
-                      )}
+                      {req.note && <div style={{fontSize:10,color:'#fbbf24',marginTop:2}}>📝 {req.note}</div>}
                     </div>
-                  ))}
-                </div>
-              )}
+                    <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:typeBg(req.request_type),color:typeColor(req.request_type),border:`1px solid ${typeColor(req.request_type)}`,fontWeight:700,flexShrink:0}}>{typeLabel(req.request_type)}</span>
+                    {approvMsg[req._id] && approvMsg[req._id]!=='loading' && (
+                      <span style={{fontSize:10,color:'var(--green)',fontWeight:600,flexShrink:0}}>{approvMsg[req._id]}</span>
+                    )}
+                    {req.status==='pending' && (
+                      <div style={{display:'flex',gap:4,flexShrink:0,flexWrap:'wrap',justifyContent:'flex-end'}}>
+                        {req.request_type==='removal' ? (<>
+                          <button className="btn btn-danger btn-sm" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
+                            onClick={()=>handleApproval(req._id,'approve_removal',req.vendor_name,req.product_id)}>
+                            ✓ Approve
+                          </button>
+                        </>) : req.request_type==='mapping' ? (<>
+                          <button className="btn btn-sm btn-ghost" style={{fontSize:10,borderColor:'var(--green)',color:'var(--green)'}} disabled={approvMsg[req._id]==='loading'}
+                            onClick={async()=>{
+                              setSmartMap({ step:'loading', req, vendorVariants:[], ccProduct:null, matches:[], saving:false, saveMsg:'' });
+                              try {
+                                const r2 = await fetch(`/admin/vendor-sync/vendor-product-variants?vendor_name=${encodeURIComponent(req.vendor_name)}&product_id=${req.product_id}`, { headers:{ Authorization:'Bearer '+token } });
+                                const d2 = await r2.json();
+                                setSmartMap(s=>({...s, step:'search_cc', vendorVariants: d2.variants||[] }));
+                              } catch(e) { setSmartMap(s=>({...s, step:'error', error:e.message})); }
+                            }}>
+                            🔗 Smart Map
+                          </button>
+                          <button className="btn btn-sm btn-indigo" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
+                            onClick={()=>handleApproval(req._id,'import',req.vendor_name,req.product_id)}>
+                            ↑ Upload New
+                          </button>
+                        </>) : (
+                          <button className="btn btn-sm btn-indigo" style={{fontSize:10}} disabled={approvMsg[req._id]==='loading'}
+                            onClick={()=>handleApproval(req._id,'import',req.vendor_name,req.product_id)}>
+                            ↓ Import
+                          </button>
+                        )}
+                        <button className="btn btn-sm btn-ghost" style={{fontSize:10,borderColor:'var(--red)',color:'var(--red)'}} disabled={approvMsg[req._id]==='loading'}
+                          onClick={()=>handleApproval(req._id,'reject',req.vendor_name,req.product_id)}>✕</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+               </div>
+              }
             </div>
           );
         })()}
@@ -5826,59 +5855,97 @@
               {tab==='mappings' && (
                 mappings.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No variant mappings yet. Import or map products from the Products tab.</div> :
                 (() => {
-                  // Group by vendor_product_id to show image sync toggle once per product
+                  const [selMaps, setSelMaps] = [mapSelState, setMapSelState];
+                  const allIds = mappings.map(m=>m.id);
+                  const allSelected = allIds.length > 0 && allIds.every(id=>selMaps.has(id));
                   const seenProducts = new Set();
                   return (
-                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  {mappings.map(m=>{
-                    const isFirstVariant = !seenProducts.has(m.vendor_product_id);
-                    if (isFirstVariant) seenProducts.add(m.vendor_product_id);
-                    return (
-                    <div key={m.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:12,display:'flex',gap:12,alignItems:'center'}}>
-                      {/* Vendor side */}
-                      <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
-                        {m.vendor_image
-                          ? <img src={m.vendor_image} style={{width:44,height:44,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
-                          : <div style={{width:44,height:44,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>📦</div>}
-                        <div style={{minWidth:0}}>
-                          <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.vendor_product_title||m.vendor_variant_id}</div>
-                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.vendor_variant_title&&m.vendor_variant_title!=='Default Title'?m.vendor_variant_title:''}</div>
-                          <div style={{fontSize:9,fontFamily:'monospace',color:'var(--indigo)',marginTop:1}}>ID: {m.vendor_variant_id}</div>
-                        </div>
-                      </div>
-                      {/* Arrow */}
-                      <div style={{fontSize:18,color:'var(--text-muted)',flexShrink:0}}>→</div>
-                      {/* CrosCrow side */}
-                      <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
-                        {m.croscrow_image
-                          ? <img src={m.croscrow_image} style={{width:44,height:44,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
-                          : <div style={{width:44,height:44,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>🛍</div>}
-                        <div style={{minWidth:0}}>
-                          <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.croscrow_product_title||m.croscrow_product_id}</div>
-                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.croscrow_variant_title&&m.croscrow_variant_title!=='Default Title'?m.croscrow_variant_title:''}</div>
-                          <div style={{fontSize:9,fontFamily:'monospace',color:'var(--text-muted)',marginTop:1}}>ID: {m.croscrow_variant_id}</div>
-                        </div>
-                      </div>
-                      {/* Sync status + actions */}
-                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6,flexShrink:0}}>
-                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
-                          {m.sync_inventory?'↻ Auto-sync':'No sync'}
-                        </span>
-                        {isFirstVariant && (
-                          <button onClick={async()=>{
-                            const newVal = m.sync_images === false ? true : false;
-                            await fetch(`/admin/vendor-sync/map/${m.id}/image-sync`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify({sync_images:newVal}) });
-                            loadMappings();
-                          }} style={{fontSize:9,padding:'2px 8px',borderRadius:10,cursor:'pointer',border:`1px solid ${m.sync_images===false?'var(--border)':'rgba(99,102,241,0.4)'}`,background:m.sync_images===false?'var(--bg-card2)':'rgba(99,102,241,0.1)',color:m.sync_images===false?'var(--text-muted)':'#a5b4fc'}}>
-                            {m.sync_images===false?'🖼 Image sync off':'🖼 Image sync on'}
-                          </button>
-                        )}
-                        <div style={{fontSize:10,color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never synced'}</div>
-                        <button className="btn btn-danger btn-sm" onClick={()=>unmapVariant(m.id)}>Unmap</button>
-                      </div>
+                  <div>
+                    {/* Bulk toolbar */}
+                    <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderBottom:'1px solid var(--border)',background:'var(--bg-card2)'}}>
+                      <input type="checkbox" checked={allSelected} onChange={()=>{
+                        if (allSelected) setSelMaps(new Set());
+                        else setSelMaps(new Set(allIds));
+                      }} style={{cursor:'pointer'}}/>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>
+                        {selMaps.size>0 ? `${selMaps.size} selected` : `${mappings.length} variant${mappings.length!==1?'s':''}`}
+                      </span>
+                      {selMaps.size>0 && (
+                        <button className="btn btn-danger btn-sm" style={{marginLeft:'auto',fontSize:11}}
+                          onClick={async()=>{
+                            if (!window.confirm(`Unmap ${selMaps.size} selected variant${selMaps.size!==1?'s':''}?`)) return;
+                            await fetch('/admin/vendor-sync/map-bulk', { method:'DELETE', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body:JSON.stringify({ids:[...selMaps]}) });
+                            setSelMaps(new Set());
+                            loadMappings(); loadVendorProducts(selected);
+                          }}>
+                          🗑 Unmap Selected ({selMaps.size})
+                        </button>
+                      )}
                     </div>
-                    );
-                  })}
+                    <div style={{display:'flex',flexDirection:'column',gap:8,padding:8}}>
+                    {mappings.map(m=>{
+                      const isFirstVariant = !seenProducts.has(m.vendor_product_id);
+                      if (isFirstVariant) seenProducts.add(m.vendor_product_id);
+                      const checked = selMaps.has(m.id);
+                      return (
+                      <div key={m.id} style={{background:'var(--bg-card)',border:`1px solid ${checked?'var(--indigo)':'var(--border)'}`,borderRadius:10,padding:12,display:'flex',gap:10,alignItems:'center',transition:'border-color 0.15s'}}>
+                        {/* Checkbox */}
+                        <input type="checkbox" checked={checked} onChange={()=>{
+                          setSelMaps(s=>{ const n=new Set(s); n.has(m.id)?n.delete(m.id):n.add(m.id); return n; });
+                        }} style={{cursor:'pointer',flexShrink:0}}/>
+                        {/* Vendor side */}
+                        <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
+                          {m.vendor_image
+                            ? <img src={m.vendor_image} style={{width:40,height:40,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
+                            : <div style={{width:40,height:40,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>📦</div>}
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.vendor_product_title||m.vendor_variant_id}</div>
+                            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.vendor_variant_title&&m.vendor_variant_title!=='Default Title'?m.vendor_variant_title:''}</div>
+                            <div style={{fontSize:9,fontFamily:'monospace',color:'var(--indigo)',marginTop:1}}>ID: {m.vendor_variant_id}</div>
+                          </div>
+                        </div>
+                        <div style={{fontSize:16,color:'var(--text-muted)',flexShrink:0}}>→</div>
+                        {/* CrosCrow side */}
+                        <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
+                          {m.croscrow_image
+                            ? <img src={m.croscrow_image} style={{width:40,height:40,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
+                            : <div style={{width:40,height:40,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>🛍</div>}
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.croscrow_product_title||m.croscrow_product_id}</div>
+                            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.croscrow_variant_title&&m.croscrow_variant_title!=='Default Title'?m.croscrow_variant_title:''}</div>
+                            <div style={{fontSize:9,fontFamily:'monospace',color:'var(--text-muted)',marginTop:1}}>ID: {m.croscrow_variant_id}</div>
+                          </div>
+                        </div>
+                        {/* Sync status + actions */}
+                        <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5,flexShrink:0}}>
+                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
+                            {m.sync_inventory?'↻ Auto-sync':'No sync'}
+                          </span>
+                          {isFirstVariant && (<>
+                            <button onClick={async()=>{
+                              const newVal = m.sync_images === false ? true : false;
+                              await fetch(`/admin/vendor-sync/map/${m.id}/image-sync`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify({sync_images:newVal}) });
+                              loadMappings();
+                            }} style={{fontSize:9,padding:'2px 8px',borderRadius:10,cursor:'pointer',border:`1px solid ${m.sync_images===false?'var(--border)':'rgba(99,102,241,0.4)'}`,background:m.sync_images===false?'var(--bg-card2)':'rgba(99,102,241,0.1)',color:m.sync_images===false?'var(--text-muted)':'#a5b4fc'}}>
+                              {m.sync_images===false?'🖼 Img sync off':'🖼 Img sync on'}
+                            </button>
+                            <button className="btn btn-danger btn-sm" style={{fontSize:9,whiteSpace:'nowrap'}}
+                              onClick={async()=>{
+                                if (!window.confirm(`Unmap ALL variants of "${m.vendor_product_title||m.vendor_product_id}"?`)) return;
+                                await fetch(`/admin/vendor-sync/map-product/${m.id}`, { method:'DELETE', headers:{Authorization:`Bearer ${token}`} });
+                                setSelMaps(s=>{ const n=new Set(s); mappings.filter(x=>x.vendor_product_id===m.vendor_product_id).forEach(x=>n.delete(x.id)); return n; });
+                                loadMappings(); loadVendorProducts(selected);
+                              }}>
+                              🗑 Unmap Product
+                            </button>
+                          </>)}
+                          <div style={{fontSize:10,color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never synced'}</div>
+                          <button className="btn btn-danger btn-sm" style={{fontSize:9}} onClick={()=>unmapVariant(m.id)}>Unmap Variant</button>
+                        </div>
+                      </div>
+                      );
+                    })}
+                    </div>
                   </div>
                   );
                 })()

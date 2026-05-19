@@ -1463,10 +1463,11 @@ async function sendProductRequestEmail({ type, vendorName, productTitle, product
       upload:  { label:'New Upload Request',   accent:'#6366f1', emoji:'📤' },
       mapping: { label:'Mapping Request',       accent:'#10b981', emoji:'🔗' },
       removal: { label:'Product Removal Request', accent:'#ef4444', emoji:'🗑' },
-      imported:{ label:'Product Imported',      accent:'#10b981', emoji:'✅' },
-      mapped:  { label:'Product Mapped',        accent:'#6366f1', emoji:'🔗' },
-      rejected:{ label:'Request Rejected',      accent:'#ef4444', emoji:'✗' },
-      updated: { label:'Product Out of Stock Alert', accent:'#ef4444', emoji:'⚠️' },
+      imported:        { label:'Product Imported',          accent:'#10b981', emoji:'✅' },
+      mapped:          { label:'Product Mapped',             accent:'#6366f1', emoji:'🔗' },
+      rejected:        { label:'Request Rejected',           accent:'#ef4444', emoji:'✗' },
+      updated:         { label:'Product Out of Stock Alert', accent:'#ef4444', emoji:'⚠️' },
+      approved_removal:{ label:'Removal Request Approved',   accent:'#10b981', emoji:'✅' },
     };
     const t = TYPE_MAP[type] || { label: type, accent:'#6366f1', emoji:'📦' };
     const heading = `${t.emoji} ${t.label}`;
@@ -1479,12 +1480,13 @@ async function sendProductRequestEmail({ type, vendorName, productTitle, product
     await sendEmail({ to: cfg.adminEmail, subject: `${t.emoji} ${t.label} — ${productTitle} (${vendorName})`, html: adminHtml });
 
     // Vendor email for actions that affect them
-    if (vcfg?.email && ['imported','mapped','rejected','updated'].includes(type)) {
+    if (vcfg?.email && ['imported','mapped','rejected','updated','approved_removal'].includes(type)) {
       const vendorMsg = {
-        imported: 'Your product has been imported to CrosCrow store and is now live.',
-        mapped:   'Your product has been mapped to an existing CrosCrow product. Inventory sync is now active.',
-        rejected: 'Your product request has been reviewed and was not approved at this time. Please contact CrosCrow for more details.',
-        updated:  'Your product changes have been synced to the CrosCrow store.',
+        imported:         'Your product has been imported to CrosCrow store and is now live.',
+        mapped:           'Your product has been mapped to an existing CrosCrow product. Inventory sync is now active.',
+        rejected:         'Your product request has been reviewed and was not approved at this time. Please contact CrosCrow for more details.',
+        updated:          'Your product changes have been synced to the CrosCrow store.',
+        approved_removal: 'Your removal request has been approved. The product has been deleted from the CrosCrow store.',
       };
       const vendorHtml = productRequestEmailHtml({ title: heading, accentColor: t.accent, heading, rows: [['Product', productTitle||'—'], ...extraRows], image: productImage, note: vendorMsg[type], footerNote: 'View your products in the Vendor Panel → My Products.' });
       await sendEmail({ to: vcfg.email, subject: `${t.emoji} ${t.label} — ${productTitle}`, html: vendorHtml });
@@ -8226,8 +8228,12 @@ app.put('/admin/vendor-sync/upload-requests/:id', adminAuth, async (req, res) =>
     { _id: new ObjectId(req.params.id) },
     { $set: { status, action: action||null, updated_at: new Date().toISOString() } }
   );
-  if (existing && status === 'rejected') {
-    sendProductRequestEmail({ type:'rejected', vendorName:existing.vendor_name, productTitle:existing.product_title, productImage:existing.product_image }).catch(()=>{});
+  if (existing) {
+    if (status === 'rejected') {
+      sendProductRequestEmail({ type:'rejected', vendorName:existing.vendor_name, productTitle:existing.product_title, productImage:existing.product_image }).catch(()=>{});
+    } else if (status === 'approved' && existing.request_type === 'removal') {
+      sendProductRequestEmail({ type:'approved_removal', vendorName:existing.vendor_name, productTitle:existing.product_title, productImage:existing.product_image }).catch(()=>{});
+    }
   }
   res.json({ success: true });
 });
@@ -8423,10 +8429,8 @@ app.put("/admin/vendor-sync/map/:id/image-sync", adminAuth, async (req, res) => 
 
 app.delete("/admin/vendor-sync/map/:id", adminAuth, async (req, res) => {
   const { ObjectId } = require('mongodb');
-  // Find the mapping first so we know vendor + product
   const mapping = await mdb.collection('vendor_product_mappings').findOne({ _id: new ObjectId(String(req.params.id)) });
   await VPM.delete(req.params.id);
-  // If no more mappings for this product, clean up the upload request too
   if (mapping) {
     const remaining = await mdb.collection('vendor_product_mappings').countDocuments({ vendor_name: mapping.vendor_name, vendor_product_id: mapping.vendor_product_id });
     if (remaining === 0) {
@@ -8434,6 +8438,34 @@ app.delete("/admin/vendor-sync/map/:id", adminAuth, async (req, res) => {
     }
   }
   res.json({ success: true });
+});
+
+// ── DELETE /admin/vendor-sync/map-product/:id — unmap all variants of a product ─
+app.delete("/admin/vendor-sync/map-product/:id", adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const mapping = await mdb.collection('vendor_product_mappings').findOne({ _id: new ObjectId(String(req.params.id)) });
+  if (!mapping) return res.status(404).json({ error: 'Not found' });
+  await mdb.collection('vendor_product_mappings').deleteMany({ vendor_name: mapping.vendor_name, vendor_product_id: mapping.vendor_product_id });
+  await mdb.collection('product_upload_requests').deleteMany({ vendor_name: mapping.vendor_name, product_id: String(mapping.vendor_product_id) });
+  res.json({ success: true });
+});
+
+// ── DELETE /admin/vendor-sync/map-bulk — unmap multiple mappings by id ───────
+app.delete("/admin/vendor-sync/map-bulk", adminAuth, async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids required' });
+  const { ObjectId } = require('mongodb');
+  const objIds = ids.map(id => new ObjectId(String(id)));
+  const mappings = await mdb.collection('vendor_product_mappings').find({ _id: { $in: objIds } }).toArray();
+  await mdb.collection('vendor_product_mappings').deleteMany({ _id: { $in: objIds } });
+  // Clean up upload requests for products that now have no mappings left
+  const productKeys = [...new Set(mappings.map(m => `${m.vendor_name}::${m.vendor_product_id}`))];
+  for (const key of productKeys) {
+    const [vn, vpid] = key.split('::');
+    const remaining = await mdb.collection('vendor_product_mappings').countDocuments({ vendor_name: vn, vendor_product_id: vpid });
+    if (remaining === 0) await mdb.collection('product_upload_requests').deleteMany({ vendor_name: vn, product_id: vpid });
+  }
+  res.json({ success: true, deleted: ids.length });
 });
 
 // ── Admin: list all mappings ──────────────────────────────────────────────

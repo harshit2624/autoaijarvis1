@@ -4193,11 +4193,22 @@
                     </details>
                   </span>
                 )},
-                { n:3, label:'Add Redirect URL', body: (
+                { n:3, label:'Add Redirect URLs', body: (
                   <span>
-                    Still in <strong>Configuration</strong> → <strong>Allowed redirection URL(s)</strong> → add:<br/>
-                    <code style={{display:'inline-block',marginTop:4,background:'rgba(0,0,0,0.25)',border:'1px solid var(--border)',padding:'4px 10px',borderRadius:5,fontSize:10,color:'#a5f3fc',wordBreak:'break-all'}}>https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback</code>
-                    <br/><span style={{fontSize:10,color:'var(--text-muted)'}}>Save before continuing.</span>
+                    Still in <strong>Configuration</strong> → <strong>Allowed redirection URL(s)</strong> → add all 4 URLs below (copy &amp; paste each one):<br/>
+                    {[
+                      'https://autoaijarvis1.onrender.com/vendor/shopify/callback',
+                      'https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback',
+                      'https://dashboard.croscrow.com/vendor/shopify/callback',
+                      'https://dashboard.croscrow.com/vendor/shopify/manual-callback',
+                    ].map(url => (
+                      <span key={url} style={{display:'flex',alignItems:'center',gap:6,marginTop:6}}>
+                        <code style={{flex:1,display:'inline-block',background:'rgba(0,0,0,0.25)',border:'1px solid var(--border)',padding:'4px 10px',borderRadius:5,fontSize:10,color:'#a5f3fc',wordBreak:'break-all'}}>{url}</code>
+                        <button onClick={()=>navigator.clipboard.writeText(url)}
+                          style={{flexShrink:0,fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'rgba(99,102,241,0.15)',color:'var(--indigo)',cursor:'pointer',fontFamily:'inherit'}}>Copy</button>
+                      </span>
+                    ))}
+                    <br/><span style={{fontSize:10,color:'var(--text-muted)'}}>Add all 4 and save before continuing.</span>
                   </span>
                 )},
               ].map(({n,label,body})=>(
