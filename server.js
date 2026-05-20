@@ -5694,12 +5694,20 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 
       // Check product-level rules per line item
       let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
+      let hasProductRule = false, ruleLabel = null;
       for (const li of myItems) {
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
         const productRule = await findProductRule(vendor_name, li.product_id, li.sku);
-        const liCalc = productRule
-          ? calcProductCommission(productRule, li.price, li.quantity || 1)
-          : calcCommission(itemRev, payType, config.commission_pct, 0);
+        let liCalc;
+        if (productRule) {
+          liCalc = calcProductCommission(productRule, li.price, li.quantity || 1);
+          hasProductRule = true;
+          if (productRule.mode === 'flat') ruleLabel = `Flat ₹${productRule.flat_amount}`;
+          else if (productRule.mode === 'margin') ruleLabel = `Margin ${productRule.margin_pct}%`;
+          else if (productRule.mode === 'mixed') ruleLabel = `Mixed`;
+        } else {
+          liCalc = calcCommission(itemRev, payType, config.commission_pct, 0);
+        }
         totalItemComm += liCalc.commission;
         totalItemGst  += liCalc.gst;
         totalItemNet  += liCalc.net;
@@ -5736,6 +5744,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         advance_paid:     meta.advance_paid || 0,
         shipping_charge:  shippingSplit,
         net:              parseFloat((calc.net + shippingSplit).toFixed(2)),
+        has_product_rule: hasProductRule,
+        rule_label:       ruleLabel,
       });
     }
 

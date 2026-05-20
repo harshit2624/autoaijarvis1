@@ -1455,7 +1455,9 @@
                         <td style={{textTransform:'uppercase',fontSize:8,color:isPrepaid?'#e67e22':'#666'}}>{o.payment_type}</td>
                         <td style={{color:'#e67e22'}}>{isPrepaid?`−₹${disc.toFixed(2)}`:'—'}</td>
                         <td style={{fontWeight:600}}>₹{base.toFixed(2)}</td>
-                        <td style={{color:'#666'}}>{o.commission_pct}%</td>
+                        <td style={{color: o.has_product_rule?'#6366f1':'#666', fontWeight: o.has_product_rule?700:400, fontSize: o.has_product_rule?7.5:undefined}}>
+                          {o.has_product_rule ? (o.rule_label||'Custom') : `${o.commission_pct}%`}
+                        </td>
                         <td>₹{(o.commission||0).toFixed(2)}</td>
                         <td>₹{(o.gst||0).toFixed(2)}</td>
                         <td style={{color:'#555'}}>{(o.advance_paid||0)>0?`₹${(o.advance_paid||0).toFixed(2)}`:'—'}</td>

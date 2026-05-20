@@ -2646,7 +2646,11 @@
                         <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}><span className="dr-label" style={{fontWeight:700}}>Taxable Base</span><span className="dr-val" style={{fontWeight:700}}>{fmtCur(taxable)}</span></div>
                       </>) : null;
                     })()}
-                    <div className="detail-row"><span className="dr-label">Commission ({detail.settlement.custom_commission_pct||20}%)</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{(detail.settlement.commission||0).toFixed(2)}</span></div>
+                    {(()=>{
+                      const hasCustom = (detail.orders||[]).some(o=>o.has_product_rule);
+                      const label = hasCustom ? 'Commission (custom/mixed rules)' : `Commission (${detail.settlement.custom_commission_pct||20}%)`;
+                      return <div className="detail-row"><span className="dr-label">{label}</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{(detail.settlement.commission||0).toFixed(2)}</span></div>;
+                    })()}
                     <div className="detail-row"><span className="dr-label">GST (18%)</span><span className="dr-val" style={{color:'var(--orange)'}}>₹{(detail.settlement.gst_amount||0).toFixed(2)}</span></div>
                     <div className="detail-row"><span className="dr-label">Advance Adj.</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>
                     {(detail.settlement.extra_discount||0)>0     && <div className="detail-row"><span className="dr-label">Extra Discount</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_discount.toFixed(2)}</span></div>}
@@ -2667,7 +2671,7 @@
                 </div>
                 <div style={{marginBottom:6,fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>Order Breakdown</div>
                 <table className="items-table">
-                  <thead><tr><th>Order</th><th>MRP Value</th><th>Type</th><th>Discount</th><th>Taxable Base</th><th>Commission</th><th>GST</th><th>Advance</th><th>Net</th></tr></thead>
+                  <thead><tr><th>Order</th><th>MRP Value</th><th>Type</th><th>Discount</th><th>Taxable Base</th><th>Comm Rule</th><th>Commission</th><th>GST</th><th>Advance</th><th>Net</th></tr></thead>
                   <tbody>
                     {(detail.orders||[]).map((o,i)=>{
                       const isPrepaid = o.payment_type==='prepaid';
@@ -2680,6 +2684,7 @@
                         <td style={{fontSize:9,textTransform:'uppercase',color:isPrepaid?'var(--orange)':'var(--text-muted)'}}>{o.payment_type}</td>
                         <td style={{color:'var(--orange)'}}>{isPrepaid?`−₹${disc.toFixed(2)}`:'—'}</td>
                         <td style={{fontWeight:600}}>₹{base.toFixed(2)}</td>
+                        <td style={{fontSize:9,color:o.has_product_rule?'#a5b4fc':'var(--text-muted)',fontWeight:o.has_product_rule?700:400}}>{o.has_product_rule?(o.rule_label||'Custom'):`${o.commission_pct||20}%`}</td>
                         <td style={{color:'var(--yellow)'}}>₹{(o.commission||0).toFixed(2)}</td>
                         <td style={{color:'var(--orange)'}}>₹{(o.gst||0).toFixed(2)}</td>
                         <td>₹{(o.advance_paid||0).toFixed(2)}</td>
