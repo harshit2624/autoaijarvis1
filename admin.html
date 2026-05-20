@@ -5870,17 +5870,29 @@
                       <span style={{fontSize:11,color:'var(--text-muted)'}}>
                         {selMaps.size>0 ? `${selMaps.size} selected` : `${mappings.length} variant${mappings.length!==1?'s':''}`}
                       </span>
-                      {selMaps.size>0 && (
-                        <button className="btn btn-danger btn-sm" style={{marginLeft:'auto',fontSize:11}}
-                          onClick={async()=>{
-                            if (!window.confirm(`Unmap ${selMaps.size} selected variant${selMaps.size!==1?'s':''}?`)) return;
-                            await fetch('/admin/vendor-sync/map-bulk', { method:'DELETE', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body:JSON.stringify({ids:[...selMaps]}) });
-                            setSelMaps(new Set());
-                            loadMappings(); loadVendorProducts(selected);
-                          }}>
-                          🗑 Unmap Selected ({selMaps.size})
-                        </button>
-                      )}
+                      {selMaps.size>0 && (<>
+                        <div style={{marginLeft:'auto',display:'flex',gap:6,flexWrap:'wrap'}}>
+                          <button className="btn btn-sm" style={{fontSize:10,border:'1px solid rgba(99,102,241,0.4)',color:'#a5b4fc',background:'rgba(99,102,241,0.1)'}}
+                            onClick={async()=>{ await fetch('/admin/vendor-sync/map-bulk/image-sync',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({ids:[...selMaps],sync_images:true})}); loadMappings(); }}>
+                            🖼 Img ON</button>
+                          <button className="btn btn-sm" style={{fontSize:10,border:'1px solid var(--border)',color:'var(--text-muted)',background:'var(--bg-card2)'}}
+                            onClick={async()=>{ await fetch('/admin/vendor-sync/map-bulk/image-sync',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({ids:[...selMaps],sync_images:false})}); loadMappings(); }}>
+                            🖼 Img OFF</button>
+                          <button className="btn btn-sm" style={{fontSize:10,border:'1px solid rgba(16,185,129,0.4)',color:'var(--green)',background:'var(--green-dim)'}}
+                            onClick={async()=>{ await fetch('/admin/vendor-sync/map-bulk/price-sync',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({ids:[...selMaps],sync_price:true})}); loadMappings(); }}>
+                            💰 Price ON</button>
+                          <button className="btn btn-sm" style={{fontSize:10,border:'1px solid var(--border)',color:'var(--text-muted)',background:'var(--bg-card2)'}}
+                            onClick={async()=>{ await fetch('/admin/vendor-sync/map-bulk/price-sync',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({ids:[...selMaps],sync_price:false})}); loadMappings(); }}>
+                            💰 Price OFF</button>
+                          <button className="btn btn-danger btn-sm" style={{fontSize:10}}
+                            onClick={async()=>{
+                              if (!window.confirm(`Unmap ${selMaps.size} selected variant${selMaps.size!==1?'s':''}?`)) return;
+                              await fetch('/admin/vendor-sync/map-bulk', { method:'DELETE', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body:JSON.stringify({ids:[...selMaps]}) });
+                              setSelMaps(new Set());
+                              loadMappings(); loadVendorProducts(selected);
+                            }}>🗑 Unmap ({selMaps.size})</button>
+                        </div>
+                      </>)}
                     </div>
                     <div style={{display:'flex',flexDirection:'column',gap:8,padding:8}}>
                     {mappings.map(m=>{
@@ -5919,7 +5931,10 @@
                         {/* Sync status + actions */}
                         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5,flexShrink:0}}>
                           <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
-                            {m.sync_inventory?'↻ Auto-sync':'No sync'}
+                            {m.sync_inventory?'↻ Inv sync':'No inv sync'}
+                          </span>
+                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_price===false?'var(--bg-card2)':'rgba(16,185,129,0.1)',color:m.sync_price===false?'var(--text-muted)':'var(--green)',border:`1px solid ${m.sync_price===false?'var(--border)':'rgba(16,185,129,0.4)'}`}}>
+                            {m.sync_price===false?'💰 Price off':'💰 Price sync'}
                           </span>
                           {isFirstVariant && (<>
                             <button onClick={async()=>{

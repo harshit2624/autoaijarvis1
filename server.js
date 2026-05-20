@@ -7413,7 +7413,9 @@ app.delete("/vendor/shopify/disconnect", vendorAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 
 const SHOPIFY_APP_SCOPES = 'read_files,write_files,write_inventory,read_inventory,write_inventory_shipments,read_inventory_shipments,write_inventory_shipments_received_items,read_inventory_shipments_received_items,write_inventory_transfers,read_inventory_transfers,write_locations,read_locations,read_orders,write_orders,read_product_feeds,write_product_feeds,read_product_listings,write_product_listings,read_products,write_products,unauthenticated_read_product_pickup_locations,unauthenticated_read_product_inventory,unauthenticated_read_product_listings,unauthenticated_read_product_tags';
-const SHOPIFY_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/callback`;
+const SERVER_URL = (process.env.SERVER_URL || 'http://localhost:3001').trim().replace(/\/+$/, '');
+const SERVER_BASE = SERVER_URL;
+const SHOPIFY_REDIRECT_URI = `${SERVER_URL}/vendor/shopify/callback`;
 
 // Privacy policy page (required by Shopify)
 app.get('/privacy', (req, res) => {
@@ -7479,7 +7481,7 @@ app.post('/webhooks/shop/redact', express.raw({type:'application/json'}), async 
 
 // GET /vendor/shopify/app — embedded app dashboard inside Shopify admin
 app.get('/vendor/shopify/app', (req, res) => {
-  const vendorPanelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+  const vendorPanelUrl = `${SERVER_URL}/vendor.html`;
   const CLIENT_ID = process.env.VENDOR_APP_CLIENT_ID || '';
   res.send(`<!DOCTYPE html>
 <html>
@@ -7530,7 +7532,7 @@ app.get('/vendor/shopify/app', (req, res) => {
 
   <script>
     const PANEL_URL = '${vendorPanelUrl}';
-    const SERVER = '${process.env.SERVER_URL || 'http://localhost:3001'}';
+    const SERVER = '${SERVER_URL}';
 
     async function getToken() {
       if (window.shopify?.idToken) return await window.shopify.idToken();
@@ -7819,7 +7821,7 @@ app.get('/vendor/shopify/callback', async (req, res) => {
     sendShopifyConnectedEmails(vendorName, cleanShop, 'quick_install');
 
     // Redirect back to vendor panel with success flag
-    const vendorPanelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html?shopifyConnected=1`;
+    const vendorPanelUrl = `${SERVER_URL}/vendor.html?shopifyConnected=1`;
     res.redirect(vendorPanelUrl);
   } catch(e) {
     console.error('❌ Shopify OAuth callback error:', e.message);
@@ -7859,7 +7861,7 @@ app.post('/vendor/shopify/manual-install', async (req, res) => {
   // TTL cleanup — expire after 10 min
   mdb.collection('vendor_manual_oauth_sessions').createIndex({ created_at: 1 }, { expireAfterSeconds: 600 }).catch(() => {});
 
-  const MANUAL_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/manual-callback`;
+  const MANUAL_REDIRECT_URI = `${SERVER_URL}/vendor/shopify/manual-callback`;
   const params = new URLSearchParams({
     client_id,
     scope: SHOPIFY_APP_SCOPES,
@@ -7883,7 +7885,7 @@ app.get('/vendor/shopify/manual-callback', async (req, res) => {
   const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '');
 
   try {
-    const MANUAL_REDIRECT_URI = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor/shopify/manual-callback`;
+    const MANUAL_REDIRECT_URI = `${SERVER_URL}/vendor/shopify/manual-callback`;
     const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -7926,7 +7928,7 @@ app.get('/vendor/shopify/manual-callback', async (req, res) => {
     auditLog('shopify_app', 'manual_install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
     sendShopifyConnectedEmails(vendorName, cleanShop, 'manual_oauth');
 
-    res.redirect(`${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html?shopifyConnected=1`);
+    res.redirect(`${SERVER_URL}/vendor.html?shopifyConnected=1`);
   } catch(e) {
     console.error('❌ Manual OAuth callback error:', e.message);
     res.status(500).send(`Connection failed: ${e.message}. Please try again.`);
@@ -7935,7 +7937,7 @@ app.get('/vendor/shopify/manual-callback', async (req, res) => {
 
 // Register webhooks on vendor's store after install
 async function registerShopifyAppWebhooks(shop, accessToken) {
-  const baseUrl = process.env.SERVER_URL || 'http://localhost:3001';
+  const baseUrl = SERVER_URL;
   const topics = [
     { topic: 'products/update',          address: `${baseUrl}/vendor/shopify/webhook/products-update` },
     { topic: 'inventory_levels/update',   address: `${baseUrl}/vendor/shopify/webhook/inventory-update` },
@@ -7975,12 +7977,14 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       });
       if (!mapping?.croscrow_variant_id) continue;
 
-      // Sync price
-      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
-        method: 'PUT',
-        headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
-      });
+      // Sync price (skip if sync_price disabled)
+      if (mapping.sync_price !== false) {
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
+          method: 'PUT',
+          headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
+        });
+      }
 
       // Sync inventory
       const qty = parseInt(vVariant.inventory_quantity ?? 0);
@@ -8427,6 +8431,30 @@ app.put("/admin/vendor-sync/map/:id/image-sync", adminAuth, async (req, res) => 
   res.json({ success: true, sync_images: newVal });
 });
 
+// ── PUT /admin/vendor-sync/map-bulk/image-sync ───────────────────────────────
+app.put("/admin/vendor-sync/map-bulk/image-sync", adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const { ids, sync_images } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids required' });
+  await mdb.collection('vendor_product_mappings').updateMany(
+    { _id: { $in: ids.map(id => new ObjectId(String(id))) } },
+    { $set: { sync_images: sync_images !== false } }
+  );
+  res.json({ success: true });
+});
+
+// ── PUT /admin/vendor-sync/map-bulk/price-sync ───────────────────────────────
+app.put("/admin/vendor-sync/map-bulk/price-sync", adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const { ids, sync_price } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids required' });
+  await mdb.collection('vendor_product_mappings').updateMany(
+    { _id: { $in: ids.map(id => new ObjectId(String(id))) } },
+    { $set: { sync_price: sync_price !== false } }
+  );
+  res.json({ success: true });
+});
+
 app.delete("/admin/vendor-sync/map/:id", adminAuth, async (req, res) => {
   const { ObjectId } = require('mongodb');
   const mapping = await mdb.collection('vendor_product_mappings').findOne({ _id: new ObjectId(String(req.params.id)) });
@@ -8506,12 +8534,14 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
           const vVariant = varData.variant;
           if (!vVariant) continue;
 
-          // Sync price on CrosCrow variant
-          await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, {
-            method: 'PUT',
-            headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ variant: { id: m.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
-          });
+          // Sync price on CrosCrow variant (skip if sync_price disabled)
+          if (m.sync_price !== false) {
+            await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, {
+              method: 'PUT',
+              headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ variant: { id: m.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
+            });
+          }
 
           // Sync inventory only if vendor tracks it
           const invItemId = vVariant.inventory_item_id;
@@ -9148,7 +9178,7 @@ app.post('/admin/agreements', adminAuth, async (req, res) => {
     if (send_email && vendorEmail) {
       const smtpCfg = await getSmtpConfig();
       if (smtpCfg) {
-        const panelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+        const panelUrl = `${SERVER_URL}/vendor.html`;
         const html = emailBase(`📄 Vendor Partnership Agreement — ${c.partyA.name}`, '#0A0A0A', `
           <div class="subtitle">Please find your CrosCrow Vendor Partnership Agreement attached. Review, sign, and upload your signed copy via the vendor panel.</div>
           <div class="info-box">
@@ -9557,7 +9587,7 @@ app.post("/track/razorpay-verify", async (req, res) => {
 
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-const GOOGLE_REDIRECT_URI  = `${process.env.SERVER_URL || 'http://localhost:3001'}/admin/google/callback`;
+const GOOGLE_REDIRECT_URI  = `${SERVER_URL}/admin/google/callback`;
 
 function getGoogleOAuth2Client() {
   return new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI);
@@ -9732,7 +9762,6 @@ app.post("/admin/google/sync", adminAuth, async (req, res) => {
 const PENALTY_CHECK_MS = 15 * 60 * 1000;
 const HR24 = 24 * 60 * 60 * 1000;
 const HR48 = 48 * 60 * 60 * 1000;
-const SERVER_BASE = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3001}`;
 
 async function penaltyCronJob() {
   try {
@@ -11708,7 +11737,7 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
     // Email vendor their credentials
     const cfg = await getSmtpConfig();
     if (cfg) {
-      const panelUrl = `${process.env.SERVER_URL || 'http://localhost:3001'}/vendor.html`;
+      const panelUrl = `${SERVER_URL}/vendor.html`;
       const html = emailBase('🎉 Welcome to CrosCrow — You\'re Approved!', '#10b981', `
         <div class="subtitle">Congratulations! Your vendor application has been approved. Here are your login credentials.</div>
         <div class="info-box">
