@@ -104,6 +104,7 @@ async function startServer() {
     const client = await MongoClient.connect(MONGO_URI, { tls: true, tlsAllowInvalidCertificates: false });
     mdb = client.db("jarvis");
     console.log("✅  MongoDB connected");
+    buildVendorCanonicalMap();
 
     // Drop stale indexes from pre-migration schema
     await mdb.collection('tag_mappings').dropIndex('tag_1').catch(() => {});
@@ -459,6 +460,21 @@ function vendorStagesFromFulfillments(fulfillments = [], lineItems = []) {
   return result;
 }
 
+// ── Vendor name canonicalisation ─────────────────────────────────────────
+// Maps any known variant (case-insensitive) to the canonical name used in DB/panel
+const VENDOR_CANONICAL = {};
+async function buildVendorCanonicalMap() {
+  try {
+    const vendors = await mdb.collection('vendor_config').find({}, { projection: { vendor_name: 1, _id: 0 } }).toArray();
+    vendors.forEach(v => { VENDOR_CANONICAL[v.vendor_name.toLowerCase()] = v.vendor_name; });
+  } catch {}
+}
+// Call after DB connects (called in initDB)
+function canonicalVendor(name) {
+  if (!name) return name;
+  return VENDOR_CANONICAL[name.toLowerCase()] || name;
+}
+
 // ── Commission + GST calculation ──────────────────────────────────────────
 const GST_RATE = 0.18;
 
@@ -484,30 +500,29 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
 
 // ── Product-level flat/margin commission calculator ───────────────────────
 // rule: { mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive }
-// sellingPrice: the Shopify line item price (per unit)
-// qty: quantity
-// Returns same shape as calcCommission: { base, commission, gst, invoice, net, type }
-function calcProductCommission(rule, sellingPrice, qty) {
-  const price = parseFloat(sellingPrice) * (qty || 1);
+// sellingPrice: Shopify line item unit price, qty: quantity, paymentType: 'prepaid'|'cod'
+function calcProductCommission(rule, sellingPrice, qty, paymentType) {
+  const unitPrice = parseFloat(sellingPrice);
+  const totalPrice = unitPrice * (qty || 1);
+  // For prepaid: CrosCrow gives vendor 10% discount (same as standard calc)
+  const base = paymentType === 'prepaid' ? totalPrice * 0.9 : totalPrice;
   let commission = 0, gst = 0;
 
   if (rule.mode === 'flat' || rule.mode === 'mixed') {
     const flatTotal = (rule.flat_amount || 0) * (qty || 1);
     if (rule.flat_gst_inclusive) {
-      // GST extracted from flat amount (flat includes GST)
       gst        += parseFloat((flatTotal * 18 / 118).toFixed(2));
       commission += parseFloat((flatTotal * 100 / 118).toFixed(2));
     } else {
-      // GST added on top of flat amount
       commission += flatTotal;
       gst        += parseFloat((flatTotal * GST_RATE).toFixed(2));
     }
   }
 
   if (rule.mode === 'margin' || rule.mode === 'mixed') {
-    const base = (rule.vendor_cost || 0) * (qty || 1);
-    const pct  = (rule.margin_pct || 0) / 100;
-    const commOnBase = parseFloat((base * pct).toFixed(2));
+    const marginBase = (rule.vendor_cost || 0) * (qty || 1);
+    const pct = (rule.margin_pct || 0) / 100;
+    const commOnBase = parseFloat((marginBase * pct).toFixed(2));
     if (rule.margin_gst_inclusive) {
       gst        += parseFloat((commOnBase * 18 / 118).toFixed(2));
       commission += parseFloat((commOnBase * 100 / 118).toFixed(2));
@@ -519,15 +534,15 @@ function calcProductCommission(rule, sellingPrice, qty) {
 
   commission = parseFloat(commission.toFixed(2));
   gst        = parseFloat(gst.toFixed(2));
-  const invoice  = parseFloat((commission + gst).toFixed(2));
-  // Vendor's effective base: for margin mode use vendor_cost, otherwise selling price
-  const base = rule.mode === 'margin'
-    ? (rule.vendor_cost || 0) * (qty || 1)
-    : rule.mode === 'mixed'
-    ? (rule.vendor_cost || 0) * (qty || 1) // margin base for mixed
-    : price;
-  const net = parseFloat((invoice).toFixed(2)); // COD: vendor owes invoice to CrosCrow
-  return { base, commission, gst, invoice, net, type: 'receivable', isProductRule: true };
+  const invoice = parseFloat((commission + gst).toFixed(2));
+
+  if (paymentType === 'prepaid') {
+    // CrosCrow collected from customer → pays vendor (base - commission - gst)
+    const vendorNet = parseFloat((base - commission - gst).toFixed(2));
+    return { base, commission, gst, invoice, net: -vendorNet, type: 'payout', isProductRule: true };
+  }
+  // COD: vendor owes commission+gst to CrosCrow
+  return { base, commission, gst, invoice, net: invoice, type: 'receivable', isProductRule: true };
 }
 
 // Look up a product commission rule by product_id, then SKU, for a given vendor
@@ -3175,7 +3190,7 @@ async function runJarvisTool(name, args, reqCache) {
       advance_paid: metas[String(o.id)]?.advance_paid||0,
       awb: metas[String(o.id)]?.awb||null,
       date: o.created_at?.slice(0,10),
-      vendors: [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))],
+      vendors: [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))],
       vendor_stages: vsMap[String(o.id)]||{},
     }));
   }
@@ -3207,7 +3222,7 @@ async function runJarvisTool(name, args, reqCache) {
     const vendorMap = {};
     os.forEach(o=>{
       const sid=String(o.id);
-      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors=[...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       vendors.forEach(v=>{
         if(args.vendor && v.toLowerCase()!==args.vendor.toLowerCase()) return;
         const vs=vsMap[sid]?.[v];
@@ -3244,7 +3259,7 @@ async function runJarvisTool(name, args, reqCache) {
     const stuck = [];
     allOrders.forEach(o=>{
       const sid=String(o.id);
-      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors=[...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       vendors.forEach(v=>{
         if(args.vendor && v.toLowerCase()!==args.vendor.toLowerCase()) return;
         const vs=vsMap[sid]?.[v];
@@ -3274,7 +3289,7 @@ async function runJarvisTool(name, args, reqCache) {
     const stuck = [];
     os.forEach(o=>{
       const sid=String(o.id);
-      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors=[...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       if(vendors.length<2) return;
       const vendorStatuses=vendors.map(v=>({ vendor:v, stage:vsMap[sid]?.[v]?.stage||metas[sid]?.stage||'new', awb:vsMap[sid]?.[v]?.awb||null }));
       const dispatched=vendorStatuses.filter(v=>DISPATCHED.includes(v.stage)||v.awb);
@@ -3300,7 +3315,7 @@ async function runJarvisTool(name, args, reqCache) {
     const vMap = {};
     os.forEach(o=>{
       const sid=String(o.id);
-      const vendors=[...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors=[...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       vendors.forEach(v=>{
         if(args.vendor && v.toLowerCase()!==args.vendor.toLowerCase()) return;
         const vs=vsMap[sid]?.[v];
@@ -3912,7 +3927,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             const metaStage = meta.stage || 'new';
             const shopifyDerived = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null;
             const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
-            const ordVendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+            const ordVendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
             const isSingleVendor = ordVendors.length === 1;
             // Multi-vendor: don't let order_meta stage override individual vendor stage
             if (!isSingleVendor) {
@@ -4965,7 +4980,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const SO_STAGECOUNT = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
     ordersMain.forEach(o => {
       const sid = String(o.id);
-      const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       let s;
       if (vendors.length > 0 && ovsStageMap[sid]) {
         const vstages = vendors.map(v=>ovsStageMap[sid]?.[v]).filter(Boolean);
@@ -5021,7 +5036,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
     for (const o of ordersMain) {
       const sid     = String(o.id);
-      const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       const stage   = effectiveStage(sid, vendors);
       const { c, g } = calcOrderComm(o);
       commBuckets.total.c += c; commBuckets.total.g += g;
@@ -5067,7 +5082,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
     ordersMain.forEach(o => {
       const sid = String(o.id);
-      const vendors = [...new Set((o.line_items||[]).map(li=>li.vendor).filter(Boolean))];
+      const vendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       vendors.forEach(v => {
         const vs = vsMapLb[sid]?.[v];
         const stage = vs?.stage || metaMap[sid]?.stage || 'new';
@@ -5694,24 +5709,31 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 
       // Check product-level rules per line item
       let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
-      let hasProductRule = false, ruleLabel = null;
+      let hasProductRule = false;
+      const ruleLabels = new Set();
+      let hasDefaultRule = false;
       for (const li of myItems) {
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
         const productRule = await findProductRule(vendor_name, li.product_id, li.sku);
         let liCalc;
         if (productRule) {
-          liCalc = calcProductCommission(productRule, li.price, li.quantity || 1);
+          liCalc = calcProductCommission(productRule, li.price, li.quantity || 1, payType);
           hasProductRule = true;
-          if (productRule.mode === 'flat') ruleLabel = `Flat ₹${productRule.flat_amount}`;
-          else if (productRule.mode === 'margin') ruleLabel = `Margin ${productRule.margin_pct}%`;
-          else if (productRule.mode === 'mixed') ruleLabel = `Mixed`;
+          if (productRule.mode === 'flat') ruleLabels.add(`Flat ₹${productRule.flat_amount}`);
+          else if (productRule.mode === 'margin') ruleLabels.add(`Margin ${productRule.margin_pct}%`);
+          else if (productRule.mode === 'mixed') ruleLabels.add(`Mixed`);
         } else {
           liCalc = calcCommission(itemRev, payType, config.commission_pct, 0);
+          hasDefaultRule = true;
         }
         totalItemComm += liCalc.commission;
         totalItemGst  += liCalc.gst;
         totalItemNet  += liCalc.net;
       }
+      // Build label: show all unique rules used, flag if mixed with default %
+      const ruleLabel = ruleLabels.size === 0 ? null
+        : ruleLabels.size === 1 && !hasDefaultRule ? [...ruleLabels][0]
+        : [...ruleLabels].join(' + ') + (hasDefaultRule ? ` + ${config.commission_pct}%` : '');
       const advancePaid = meta.advance_paid || 0;
       // Fold advance into net (reduces what vendor owes)
       const calcNet = parseFloat((totalItemNet - advancePaid).toFixed(2));
@@ -5895,7 +5917,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
         const productRule = await findProductRule(vendor, li.product_id, li.sku);
         let calc;
         if (productRule) {
-          calc = calcProductCommission(productRule, li.price, li.quantity || 1);
+          calc = calcProductCommission(productRule, li.price, li.quantity || 1, payType);
         } else {
           const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
           calc = calcCommission(itemRev, payType, commPct, 0);
@@ -5994,9 +6016,8 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
   if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
 
   try {
-    // Fetch ALL delivered orders (same as delivered-summary — no date filter on creation,
-    // since orders created before the period may be delivered within it)
-    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+    // Fetch orders created in the specified period (matches how settlement invoices are generated)
+    const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
 
     // Load supporting data
     const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
@@ -6009,30 +6030,34 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     const vendorStageMap = {};
     allVendorStages.forEach(r => {
       if (!vendorStageMap[r.shopify_id]) vendorStageMap[r.shopify_id] = {};
-      vendorStageMap[r.shopify_id][r.vendor_name] = r.stage;
+      vendorStageMap[r.shopify_id][canonicalVendor(r.vendor_name)] = r.stage;
     });
 
     // Aggregate per-vendor totals — only delivered orders
     const vendorMap = {};
-    allOrders.forEach(o => {
+    for (const o of allOrders) {
       const sid = String(o.id);
       const meta = metaMap[sid] || {};
       const orderStage = meta.stage || 'new';
       const payType = meta.payment_type || 'cod';
       const isCod = payType !== 'prepaid';
       const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
-      const ordVendorSet = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+      const ordVendorSet = new Set((o.line_items || []).map(li => canonicalVendor(li.vendor)).filter(Boolean));
       const shippingPerVendor = ordVendorSet.size > 0 ? orderShipping / ordVendorSet.size : 0;
 
-      (o.line_items || []).forEach(li => {
-        const vendor = li.vendor;
-        if (!vendor) return;
+      for (const li of (o.line_items || [])) {
+        const vendor = canonicalVendor(li.vendor);
+        if (!vendor) continue;
         const effectiveStage = vendorStageMap[sid]?.[vendor] || orderStage;
-        if (effectiveStage !== 'delivered') return;
+        if (effectiveStage !== 'delivered') continue;
         if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, ordersAdded: new Set() };
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
         const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
-        const calc = calcCommission(itemRev, payType, commPct, 0);
+        // Use product-level rule if exists, else standard %
+        const productRule = await findProductRule(vendor, li.product_id, li.sku);
+        const calc = productRule
+          ? calcProductCommission(productRule, li.price, li.quantity || 1, payType)
+          : calcCommission(itemRev, payType, commPct, 0);
         vendorMap[vendor].gross += itemRev;
         if (!isCod) vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
         vendorMap[vendor].commission += calc.commission;
@@ -6042,8 +6067,8 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
           if ((meta.advance_paid || 0) > 0) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
           if (isCod) vendorMap[vendor].shipping += shippingPerVendor;
         }
-      });
-    });
+      }
+    }
 
     const escCsv = v => {
       const s = v == null ? '' : String(v);
@@ -6177,8 +6202,11 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   }
 
   const baseNet = orders.reduce((sum, o) => sum + (o.net || 0), 0);
+  // penalty_deduction is already baked into net_payable — re-apply it after recalculation
+  const existingPenalty = s.penalty_deduction || 0;
   const adjustedNet = parseFloat((
     baseNet
+    + existingPenalty
     - parseFloat(extra_discount || 0)
     - parseFloat(extra_advance  || 0)
     + parseFloat(shipping_adjustment || 0)

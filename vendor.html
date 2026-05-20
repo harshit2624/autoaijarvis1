@@ -2647,15 +2647,60 @@
                       </>) : null;
                     })()}
                     {(()=>{
-                      const hasCustom = (detail.orders||[]).some(o=>o.has_product_rule);
-                      const label = hasCustom ? 'Commission (custom/mixed rules)' : `Commission (${detail.settlement.custom_commission_pct||20}%)`;
-                      return <div className="detail-row"><span className="dr-label">{label}</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{(detail.settlement.commission||0).toFixed(2)}</span></div>;
+                      const flatOrders    = (detail.orders||[]).filter(o=>o.has_product_rule);
+                      const defaultOrders = (detail.orders||[]).filter(o=>!o.has_product_rule);
+                      const commPct = detail.settlement.custom_commission_pct||20;
+                      const ruleSet = [...new Set(flatOrders.map(o=>o.rule_label||'Custom').filter(Boolean))];
+                      return (<>
+                        {flatOrders.length>0 && (
+                          <div style={{background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:6,padding:'7px 10px',margin:'6px 0'}}>
+                            <div style={{fontSize:9,fontWeight:700,color:'var(--indigo)',letterSpacing:0.5,marginBottom:5,textTransform:'uppercase'}}>★ Custom Rate Orders ({flatOrders.length})</div>
+                            <div className="detail-row" style={{padding:'2px 0'}}><span className="dr-label" style={{fontSize:10}}>Revenue (MRP)</span><span className="dr-val" style={{fontSize:10}}>₹{flatOrders.reduce((s,o)=>s+(o.my_revenue||0),0).toFixed(2)}</span></div>
+                            {ruleSet.map(label=>{
+                              const these = flatOrders.filter(o=>o.rule_label===label);
+                              return <div key={label} className="detail-row" style={{padding:'2px 0'}}>
+                                <span className="dr-label" style={{fontSize:10,color:'var(--indigo)'}}>{label}</span>
+                                <span className="dr-val" style={{fontSize:10,color:'var(--yellow)'}}>₹{these.reduce((s,o)=>s+(o.commission||0),0).toFixed(2)}</span>
+                              </div>;
+                            })}
+                            <div className="detail-row" style={{padding:'2px 0',borderTop:'1px dashed var(--border)',marginTop:3,paddingTop:4}}>
+                              <span className="dr-label" style={{fontSize:10}}>GST on above</span>
+                              <span className="dr-val" style={{fontSize:10,color:'var(--orange)'}}>₹{flatOrders.reduce((s,o)=>s+(o.gst||0),0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+                        {defaultOrders.length>0 && (
+                          <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'7px 10px',margin:'6px 0'}}>
+                            <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',letterSpacing:0.5,marginBottom:5,textTransform:'uppercase'}}>Standard {commPct}% Orders ({defaultOrders.length})</div>
+                            <div className="detail-row" style={{padding:'2px 0'}}><span className="dr-label" style={{fontSize:10}}>Revenue (MRP)</span><span className="dr-val" style={{fontSize:10}}>₹{defaultOrders.reduce((s,o)=>s+(o.my_revenue||0),0).toFixed(2)}</span></div>
+                            <div className="detail-row" style={{padding:'2px 0'}}><span className="dr-label" style={{fontSize:10}}>{commPct}% commission</span><span className="dr-val" style={{fontSize:10,color:'var(--yellow)'}}>₹{defaultOrders.reduce((s,o)=>s+(o.commission||0),0).toFixed(2)}</span></div>
+                            <div className="detail-row" style={{padding:'2px 0',borderTop:'1px dashed var(--border)',marginTop:3,paddingTop:4}}>
+                              <span className="dr-label" style={{fontSize:10}}>GST on above</span>
+                              <span className="dr-val" style={{fontSize:10,color:'var(--orange)'}}>₹{defaultOrders.reduce((s,o)=>s+(o.gst||0),0).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+                        <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}>
+                          <span className="dr-label" style={{fontWeight:700}}>Total Commission + GST</span>
+                          <span className="dr-val" style={{color:'var(--yellow)',fontWeight:700}}>₹{((detail.settlement.commission||0)+(detail.settlement.gst_amount||0)).toFixed(2)}</span>
+                        </div>
+                      </>);
                     })()}
                     <div className="detail-row"><span className="dr-label">GST (18%)</span><span className="dr-val" style={{color:'var(--orange)'}}>₹{(detail.settlement.gst_amount||0).toFixed(2)}</span></div>
-                    <div className="detail-row"><span className="dr-label">Advance Adj.</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>
-                    {(detail.settlement.extra_discount||0)>0     && <div className="detail-row"><span className="dr-label">Extra Discount</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_discount.toFixed(2)}</span></div>}
-                    {(detail.settlement.extra_advance||0)>0      && <div className="detail-row"><span className="dr-label">Extra Advance</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_advance.toFixed(2)}</span></div>}
-                    {(detail.settlement.shipping_adjustment||0)!==0 && <div className="detail-row"><span className="dr-label">Shipping Adj.</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{detail.settlement.shipping_adjustment.toFixed(2)}</span></div>}
+                    {(()=>{
+                      const prepColl = (detail.orders||[]).filter(o=>o.payment_type==='prepaid').reduce((s,o)=>s+(o.my_revenue||0)*0.9,0);
+                      return (<>
+                        <div style={{borderTop:'1px solid var(--border)',marginTop:4,paddingTop:6}}>
+                          {prepColl>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--green)',fontWeight:600}}>Prepaid Collected by CrosCrow (MRP−10%)</span><span className="dr-val" style={{color:'var(--green)',fontWeight:600}}>−₹{prepColl.toFixed(2)}</span></div>}
+                          {(detail.settlement.advance_total||0)>0 && <div className="detail-row"><span className="dr-label">Advance Collected (COD partial)</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>}
+                          {(detail.settlement.total_shipping||0)>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--indigo)'}}>COD Shipping (vendor → CC)</span><span className="dr-val" style={{color:'var(--indigo)'}}>+₹{(detail.settlement.total_shipping||0).toFixed(2)}</span></div>}
+                          {(detail.settlement.penalty_deduction||0)>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--red)',fontWeight:600}}>⚠ Penalty Deduction</span><span className="dr-val" style={{color:'var(--red)',fontWeight:600}}>+₹{(detail.settlement.penalty_deduction||0).toFixed(2)}</span></div>}
+                          {(detail.settlement.extra_discount||0)>0 && <div className="detail-row"><span className="dr-label">Extra Discount</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_discount.toFixed(2)}</span></div>}
+                          {(detail.settlement.extra_advance||0)>0 && <div className="detail-row"><span className="dr-label">Extra Advance</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_advance.toFixed(2)}</span></div>}
+                          {(detail.settlement.shipping_adjustment||0)!==0 && <div className="detail-row"><span className="dr-label">Shipping Adj.</span><span className="dr-val" style={{color:'var(--yellow)'}}>₹{detail.settlement.shipping_adjustment.toFixed(2)}</span></div>}
+                        </div>
+                      </>);
+                    })()}
                     <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:4}}>
                       <span className="dr-label" style={{fontWeight:700}}>Net {detail.settlement.net_payable<0?'Receivable':'Payable'}</span>
                       <span className="dr-val" style={{color:detail.settlement.net_payable<0?'var(--green)':'var(--red)',fontWeight:700,fontSize:14}}>₹{Math.abs(detail.settlement.net_payable||0).toFixed(2)}</span>

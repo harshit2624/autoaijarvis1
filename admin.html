@@ -1314,8 +1314,8 @@
   ══════════════════════════════════ */
   function InvoiceModal({ settlement, orders, croscrow={}, vendorProfile={}, onClose }) {
     const s = settlement;
-    // net_payable from DB is the commission-based net; shipping and penalty are added on top for display
-    const displayNet = parseFloat(((s.net_payable||0) + (s.total_shipping||0) + (s.penalty_deduction||0)).toFixed(2));
+    // net_payable already contains everything: commissions, GST, advance, shipping, penalty (all baked in at generation)
+    const displayNet = parseFloat((s.net_payable||0).toFixed(2));
     const isCredit = displayNet < 0;
 
     const prepaidOrders   = (orders||[]).filter(o => o.payment_type === 'prepaid');
@@ -1477,19 +1477,86 @@
                 {/* Left: Financial summary */}
                 <div className="inv-summary">
                   <div style={{fontSize:8,letterSpacing:1,textTransform:'uppercase',color:'#888',marginBottom:6,fontWeight:700}}>Commission Summary</div>
+
+                  {/* Gross revenue */}
                   <div className="inv-row"><span>Gross Revenue (MRP)</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
                   {prepaidDiscount > 0 && <>
                     <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount (10%)</span><span>−₹{prepaidDiscount.toFixed(2)}</span></div>
                     <div className="inv-row" style={{fontWeight:600,borderTop:'1px solid #ddd',paddingTop:4,marginTop:2}}><span>Taxable Base</span><span>₹{taxableValue.toFixed(2)}</span></div>
                   </>}
-                  <div className="inv-row"><span>Commission ({s.custom_commission_pct||20}%)</span><span>₹{(s.commission||0).toFixed(2)}</span></div>
-                  <div className="inv-row"><span>GST on Commission (18%)</span><span>₹{(s.gst_amount||0).toFixed(2)}</span></div>
-                  {(s.advance_total||0)>0   && <div className="inv-row" style={{color:'#555'}}><span>Advance Collected</span><span>−₹{(s.advance_total||0).toFixed(2)}</span></div>}
-                  {(s.total_shipping||0)>0  && <div className="inv-row" style={{color:'#3b82f6'}}><span>COD Shipping (vendor collected)</span><span>+₹{(s.total_shipping||0).toFixed(2)}</span></div>}
-                  {(s.penalty_deduction||0)>0 && <div className="inv-row" style={{color:'#ef4444',fontWeight:600}}><span>⚠ Penalty Deduction</span><span>+₹{(s.penalty_deduction).toFixed(2)}</span></div>}
-                  {(s.extra_discount||0)>0  && <div className="inv-row" style={{color:'#555'}}><span>Extra Discount</span><span>−₹{(s.extra_discount).toFixed(2)}</span></div>}
-                  {(s.extra_advance||0)>0   && <div className="inv-row" style={{color:'#555'}}><span>Extra Advance</span><span>−₹{(s.extra_advance).toFixed(2)}</span></div>}
-                  {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Adj.</span><span>{s.shipping_adjustment>0?'+':'−'}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
+
+                  {/* Per-rule commission breakdown */}
+                  {(()=>{
+                    const flatOrders    = (orders||[]).filter(o=>o.has_product_rule);
+                    const defaultOrders = (orders||[]).filter(o=>!o.has_product_rule);
+                    const flatComm    = flatOrders.reduce((s,o)=>s+(o.commission||0),0);
+                    const flatGst     = flatOrders.reduce((s,o)=>s+(o.gst||0),0);
+                    const flatRev     = flatOrders.reduce((s,o)=>s+(o.my_revenue||0),0);
+                    const defComm     = defaultOrders.reduce((s,o)=>s+(o.commission||0),0);
+                    const defGst      = defaultOrders.reduce((s,o)=>s+(o.gst||0),0);
+                    const defRev      = defaultOrders.reduce((s,o)=>s+(o.my_revenue||0),0);
+                    // Unique rule labels used
+                    const ruleSet = [...new Set(flatOrders.map(o=>o.rule_label||'Custom').filter(Boolean))];
+
+                    return (<>
+                      {flatOrders.length > 0 && (
+                        <div style={{background:'rgba(99,102,241,0.05)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:4,padding:'6px 8px',margin:'6px 0'}}>
+                          <div style={{fontSize:8,fontWeight:700,color:'#6366f1',letterSpacing:0.5,marginBottom:4,textTransform:'uppercase'}}>
+                            ★ Custom Rate Orders ({flatOrders.length} order{flatOrders.length!==1?'s':''})
+                          </div>
+                          <div className="inv-row" style={{fontSize:9}}><span style={{color:'#555'}}>Revenue</span><span>₹{flatRev.toFixed(2)}</span></div>
+                          {ruleSet.map(label=>{
+                            const these = flatOrders.filter(o=>o.rule_label===label);
+                            const c = these.reduce((s,o)=>s+(o.commission||0),0);
+                            const g = these.reduce((s,o)=>s+(o.gst||0),0);
+                            return (
+                              <div key={label} className="inv-row" style={{fontSize:9}}>
+                                <span style={{color:'#6366f1',fontWeight:600}}>{label} commission</span>
+                                <span>₹{c.toFixed(2)}</span>
+                              </div>
+                            );
+                          })}
+                          <div className="inv-row" style={{fontSize:9,borderTop:'1px dashed #ddd',paddingTop:3,marginTop:2}}>
+                            <span style={{color:'#555'}}>GST (18%) on above</span><span>₹{flatGst.toFixed(2)}</span>
+                          </div>
+                          <div className="inv-row" style={{fontSize:9,fontWeight:700}}>
+                            <span>Subtotal (custom)</span><span>₹{(flatComm+flatGst).toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {defaultOrders.length > 0 && (
+                        <div style={{background:'rgba(0,0,0,0.02)',border:'1px solid #eee',borderRadius:4,padding:'6px 8px',margin:'6px 0'}}>
+                          <div style={{fontSize:8,fontWeight:700,color:'#555',letterSpacing:0.5,marginBottom:4,textTransform:'uppercase'}}>
+                            Standard {s.custom_commission_pct||20}% Orders ({defaultOrders.length} order{defaultOrders.length!==1?'s':''})
+                          </div>
+                          <div className="inv-row" style={{fontSize:9}}><span style={{color:'#555'}}>Revenue</span><span>₹{defRev.toFixed(2)}</span></div>
+                          <div className="inv-row" style={{fontSize:9}}><span style={{color:'#555'}}>{s.custom_commission_pct||20}% commission</span><span>₹{defComm.toFixed(2)}</span></div>
+                          <div className="inv-row" style={{fontSize:9,borderTop:'1px dashed #ddd',paddingTop:3,marginTop:2}}>
+                            <span style={{color:'#555'}}>GST (18%) on above</span><span>₹{defGst.toFixed(2)}</span>
+                          </div>
+                          <div className="inv-row" style={{fontSize:9,fontWeight:700}}>
+                            <span>Subtotal (standard)</span><span>₹{(defComm+defGst).toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="inv-row" style={{borderTop:'1px solid #ddd',paddingTop:4,marginTop:2,fontWeight:600}}>
+                        <span>Total Commission + GST</span>
+                        <span>₹{((s.commission||0)+(s.gst_amount||0)).toFixed(2)}</span>
+                      </div>
+                    </>);
+                  })()}
+
+                  <div style={{borderTop:'1px solid #ddd',marginTop:4,paddingTop:6}}>
+                    {prepaidCollected>0 && <div className="inv-row" style={{color:'#10b981',fontWeight:600}}><span>Prepaid Collected by CrosCrow (MRP−10%)</span><span>−₹{prepaidCollected.toFixed(2)}</span></div>}
+                    {(s.advance_total||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Advance Collected (COD partial)</span><span>−₹{(s.advance_total||0).toFixed(2)}</span></div>}
+                    {(s.total_shipping||0)>0 && <div className="inv-row" style={{color:'#3b82f6'}}><span>COD Shipping (vendor collected → CC)</span><span>+₹{(s.total_shipping||0).toFixed(2)}</span></div>}
+                    {(s.penalty_deduction||0)>0 && <div className="inv-row" style={{color:'#ef4444',fontWeight:600}}><span>⚠ Penalty Deduction</span><span>+₹{(s.penalty_deduction).toFixed(2)}</span></div>}
+                    {(s.extra_discount||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Discount</span><span>−₹{(s.extra_discount).toFixed(2)}</span></div>}
+                    {(s.extra_advance||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Advance</span><span>−₹{(s.extra_advance).toFixed(2)}</span></div>}
+                    {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Adj.</span><span>{s.shipping_adjustment>0?'+':'−'}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
+                  </div>
                   <div className="inv-row inv-total">
                     <span>{isCredit ? '↑ CrosCrow Pays Vendor' : '↓ Vendor Pays CrosCrow'}</span>
                     <span>₹{Math.abs(displayNet).toFixed(2)}</span>
