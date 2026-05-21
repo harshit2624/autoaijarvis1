@@ -2682,7 +2682,7 @@
                         )}
                         <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}>
                           <span className="dr-label" style={{fontWeight:700}}>Total Commission + GST</span>
-                          <span className="dr-val" style={{color:'var(--yellow)',fontWeight:700}}>₹{((detail.settlement.commission||0)+(detail.settlement.gst_amount||0)).toFixed(2)}</span>
+                          <span className="dr-val" style={{color:'var(--yellow)',fontWeight:700}}>₹{((detail.settlement.commission||0)+(detail.settlement.gst_amount||0)+(detail.settlement.total_shipping||0)).toFixed(2)}</span>
                         </div>
                       </>);
                     })()}
@@ -2693,7 +2693,16 @@
                         <div style={{borderTop:'1px solid var(--border)',marginTop:4,paddingTop:6}}>
                           {prepColl>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--green)',fontWeight:600}}>Prepaid Collected by CrosCrow (MRP−10%)</span><span className="dr-val" style={{color:'var(--green)',fontWeight:600}}>−₹{prepColl.toFixed(2)}</span></div>}
                           {(detail.settlement.advance_total||0)>0 && <div className="detail-row"><span className="dr-label">Advance Collected (COD partial)</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>}
-                          {(detail.settlement.total_shipping||0)>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--indigo)'}}>COD Shipping (vendor → CC)</span><span className="dr-val" style={{color:'var(--indigo)'}}>+₹{(detail.settlement.total_shipping||0).toFixed(2)}</span></div>}
+                          {(detail.settlement.total_shipping||0)>0 && (()=>{
+                            const sh = detail.settlement.total_shipping||0;
+                            const shBase = parseFloat((sh*100/118).toFixed(2));
+                            const shGst  = parseFloat((sh*18/118).toFixed(2));
+                            return (<div style={{background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:5,padding:'5px 8px',margin:'4px 0'}}>
+                              <div style={{fontSize:9,fontWeight:700,color:'var(--indigo)',marginBottom:3}}>COD Shipping Recovery (₹{sh.toFixed(2)} collected, GST-incl.)</div>
+                              <div className="detail-row" style={{padding:'1px 0'}}><span className="dr-label" style={{fontSize:10}}>Shipping base (excl. GST)</span><span className="dr-val" style={{fontSize:10}}>₹{shBase.toFixed(2)}</span></div>
+                              <div className="detail-row" style={{padding:'1px 0'}}><span className="dr-label" style={{fontSize:10}}>GST on shipping (18%)</span><span className="dr-val" style={{fontSize:10}}>₹{shGst.toFixed(2)}</span></div>
+                            </div>);
+                          })()}
                           {(detail.settlement.penalty_deduction||0)>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--red)',fontWeight:600}}>⚠ Penalty Deduction</span><span className="dr-val" style={{color:'var(--red)',fontWeight:600}}>+₹{(detail.settlement.penalty_deduction||0).toFixed(2)}</span></div>}
                           {(detail.settlement.extra_discount||0)>0 && <div className="detail-row"><span className="dr-label">Extra Discount</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_discount.toFixed(2)}</span></div>}
                           {(detail.settlement.extra_advance||0)>0 && <div className="detail-row"><span className="dr-label">Extra Advance</span><span className="dr-val" style={{color:'var(--green)'}}>−₹{detail.settlement.extra_advance.toFixed(2)}</span></div>}

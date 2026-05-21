@@ -1542,8 +1542,21 @@
                       )}
 
                       <div className="inv-row" style={{borderTop:'1px solid #ddd',paddingTop:4,marginTop:2,fontWeight:600}}>
-                        <span>Total Commission + GST</span>
-                        <span>₹{((s.commission||0)+(s.gst_amount||0)).toFixed(2)}</span>
+                        {(s.total_shipping||0)>0 && (()=>{
+                          const shipBase = parseFloat(((s.total_shipping||0)*100/118).toFixed(2));
+                          const shipGst  = parseFloat(((s.total_shipping||0)*18/118).toFixed(2));
+                          return (
+                            <div style={{background:'rgba(59,130,246,0.05)',border:'1px solid rgba(59,130,246,0.15)',borderRadius:4,padding:'6px 8px',margin:'4px 0'}}>
+                              <div style={{fontSize:8,fontWeight:700,color:'#3b82f6',letterSpacing:0.5,marginBottom:4,textTransform:'uppercase'}}>COD Shipping Recovery ({(s.total_shipping||0).toFixed(2)} collected, GST-inclusive)</div>
+                              <div className="inv-row" style={{fontSize:9}}><span style={{color:'#555'}}>Shipping base (excl. GST)</span><span>₹{shipBase.toFixed(2)}</span></div>
+                              <div className="inv-row" style={{fontSize:9}}><span style={{color:'#555'}}>GST on shipping (18%)</span><span>₹{shipGst.toFixed(2)}</span></div>
+                            </div>
+                          );
+                        })()}
+                        <div className="inv-row" style={{borderTop:'1px solid #ddd',paddingTop:4,marginTop:2,fontWeight:600}}>
+                          <span>Total Commission + GST</span>
+                          <span>₹{((s.commission||0)+(s.gst_amount||0)+(s.total_shipping||0)).toFixed(2)}</span>
+                        </div>
                       </div>
                     </>);
                   })()}
@@ -1551,7 +1564,6 @@
                   <div style={{borderTop:'1px solid #ddd',marginTop:4,paddingTop:6}}>
                     {prepaidCollected>0 && <div className="inv-row" style={{color:'#10b981',fontWeight:600}}><span>Prepaid Collected by CrosCrow (MRP−10%)</span><span>−₹{prepaidCollected.toFixed(2)}</span></div>}
                     {(s.advance_total||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Advance Collected (COD partial)</span><span>−₹{(s.advance_total||0).toFixed(2)}</span></div>}
-                    {(s.total_shipping||0)>0 && <div className="inv-row" style={{color:'#3b82f6'}}><span>COD Shipping (vendor collected → CC)</span><span>+₹{(s.total_shipping||0).toFixed(2)}</span></div>}
                     {(s.penalty_deduction||0)>0 && <div className="inv-row" style={{color:'#ef4444',fontWeight:600}}><span>⚠ Penalty Deduction</span><span>+₹{(s.penalty_deduction).toFixed(2)}</span></div>}
                     {(s.extra_discount||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Discount</span><span>−₹{(s.extra_discount).toFixed(2)}</span></div>}
                     {(s.extra_advance||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Advance</span><span>−₹{(s.extra_advance).toFixed(2)}</span></div>}

@@ -131,6 +131,8 @@ async function startServer() {
       mdb.collection("settlement_penalties").createIndex({ settlement_id: 1 }),
       mdb.collection("wallet_tx").createIndex({ vendor_name: 1, created_at: -1 }),
       mdb.collection("audit_log").createIndex({ created_at: -1 }),
+      mdb.collection("admin_sessions").createIndex({ token: 1 }, { unique: true }),
+      mdb.collection("admin_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       mdb.collection("product_commission_rules").createIndex({ vendor_name: 1, product_id: 1 }, { unique: true, sparse: true }),
       mdb.collection("product_commission_rules").createIndex({ id: 1 }, { unique: true }),
     ];
@@ -631,14 +633,21 @@ async function applyTagMappings(orderId, tags, financialStatus) {
 
 // ── Admin auth ────────────────────────────────────────────────────────────
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CrosCrowAdmin@00";
-const adminSessions  = new Map();
-
-function adminAuth(req, res, next) {
+// Admin sessions stored in MongoDB — survives server restarts/redeploys
+async function adminAuth(req, res, next) {
   const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
-  if (!token || !adminSessions.has(token)) return res.status(401).json({ error: "Unauthorized" });
-  const s = adminSessions.get(token);
-  if (Date.now() > s.expiresAt) { adminSessions.delete(token); return res.status(401).json({ error: "Session expired" }); }
-  next();
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const s = await mdb.collection('admin_sessions').findOne({ token });
+    if (!s) return res.status(401).json({ error: "Unauthorized" });
+    if (Date.now() > s.expiresAt) {
+      await mdb.collection('admin_sessions').deleteOne({ token });
+      return res.status(401).json({ error: "Session expired" });
+    }
+    // Sliding window: refresh expiry on each request (keeps active users logged in)
+    await mdb.collection('admin_sessions').updateOne({ token }, { $set: { expiresAt: Date.now() + 24 * 60 * 60 * 1000 } });
+    next();
+  } catch(e) { res.status(500).json({ error: 'Auth error' }); }
 }
 
 function auditLog(actor, action, targetId, details) {
@@ -4672,17 +4681,21 @@ app.post("/admin/orders/:id/tag", adminAuth, async (req, res) => {
 // ADMIN PORTAL
 // ══════════════════════════════════════════════════════════════════════════
 
-app.post("/admin/login", (req, res) => {
+app.post("/admin/login", async (req, res) => {
   const { password } = req.body || {};
   if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: "Invalid admin password." });
   const token = crypto.randomBytes(32).toString("hex");
-  adminSessions.set(token, { expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24h, sliding (refreshed on each request)
+  await mdb.collection('admin_sessions').insertOne({ token, expiresAt, created_at: new Date() });
+  // Prune expired sessions older than 7 days
+  await mdb.collection('admin_sessions').deleteMany({ expiresAt: { $lt: Date.now() - 7 * 24 * 60 * 60 * 1000 } }).catch(() => {});
   auditLog("admin", "login", "-", {});
   res.json({ token });
 });
 
-app.post("/admin/logout", adminAuth, (req, res) => {
-  adminSessions.delete(req.headers.authorization.replace("Bearer ", "").trim());
+app.post("/admin/logout", adminAuth, async (req, res) => {
+  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  await mdb.collection('admin_sessions').deleteOne({ token });
   res.json({ success: true });
 });
 
@@ -6094,14 +6107,18 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const vendorDiscount = parseFloat(d.prepaidDiscount.toFixed(2));
       const commissionable = parseFloat((totalSales - vendorDiscount).toFixed(2));
       const commission     = parseFloat(d.commission.toFixed(2));
-      const shipping       = parseFloat(d.shipping.toFixed(2));
-      const subtotal       = parseFloat((commission + shipping).toFixed(2));
-      const totalGst       = parseFloat(d.gst.toFixed(2));
+      // COD shipping is GST-inclusive — extract base and GST components
+      const shippingTotal  = parseFloat(d.shipping.toFixed(2));
+      const shippingBase   = parseFloat((shippingTotal * 100 / 118).toFixed(2));
+      const shippingGst    = parseFloat((shippingTotal * 18 / 118).toFixed(2));
+      // Commission + shipping base (both excl. GST) = taxable subtotal
+      const subtotal       = parseFloat((commission + shippingBase).toFixed(2));
+      const totalGst       = parseFloat((d.gst + shippingGst).toFixed(2));
       const hsnCode        = '998599';
 
-      // IGST if inter-state: CrosCrow = Delhi (07). Same state → SGST+CGST
+      // IGST if inter-state (CrosCrow = Rajasthan, state code 08). Same state → SGST+CGST
       const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
-      const isIGST = !vendorStateCode || vendorStateCode !== '07';
+      const isIGST = !vendorStateCode || vendorStateCode !== '08';
       const igst = isIGST ? totalGst : 0;
       const sgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
       const cgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
@@ -6110,7 +6127,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       return [
         periodLabel, '', vendorName, gstNo, location,
         totalSales.toFixed(2), vendorDiscount.toFixed(2), commissionable.toFixed(2),
-        commission.toFixed(2), shipping.toFixed(2), '0.00',
+        commission.toFixed(2), shippingBase.toFixed(2), '0.00',
         subtotal.toFixed(2), hsnCode,
         igst.toFixed(2), sgst.toFixed(2), cgst.toFixed(2),
         totalGst.toFixed(2), totalWithGst.toFixed(2),
@@ -6119,18 +6136,20 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
 
     // Totals row
     const allV = Object.values(vendorMap);
-    const tSales    = parseFloat(allV.reduce((s,d) => s + d.gross, 0).toFixed(2));
-    const tDisc     = parseFloat(allV.reduce((s,d) => s + d.prepaidDiscount, 0).toFixed(2));
-    const tComm     = parseFloat(allV.reduce((s,d) => s + d.commission, 0).toFixed(2));
-    const tShip     = parseFloat(allV.reduce((s,d) => s + d.shipping, 0).toFixed(2));
-    const tGst      = parseFloat(allV.reduce((s,d) => s + d.gst, 0).toFixed(2));
-    const tCommable = parseFloat((tSales - tDisc).toFixed(2));
-    const tSubtotal = parseFloat((tComm + tShip).toFixed(2));
-    const tTotal    = parseFloat((tSubtotal + tGst).toFixed(2));
+    const tSales     = parseFloat(allV.reduce((s,d) => s + d.gross, 0).toFixed(2));
+    const tDisc      = parseFloat(allV.reduce((s,d) => s + d.prepaidDiscount, 0).toFixed(2));
+    const tComm      = parseFloat(allV.reduce((s,d) => s + d.commission, 0).toFixed(2));
+    const tShipTotal = parseFloat(allV.reduce((s,d) => s + d.shipping, 0).toFixed(2));
+    const tShipBase  = parseFloat((tShipTotal * 100 / 118).toFixed(2));
+    const tShipGst   = parseFloat((tShipTotal * 18 / 118).toFixed(2));
+    const tGst       = parseFloat((allV.reduce((s,d) => s + d.gst, 0) + tShipGst).toFixed(2));
+    const tCommable  = parseFloat((tSales - tDisc).toFixed(2));
+    const tSubtotal  = parseFloat((tComm + tShipBase).toFixed(2));
+    const tTotal     = parseFloat((tSubtotal + tGst).toFixed(2));
     const totalsRow = [
       'TOTAL','','','','',
       tSales.toFixed(2), tDisc.toFixed(2), tCommable.toFixed(2),
-      tComm.toFixed(2), tShip.toFixed(2), '0.00',
+      tComm.toFixed(2), tShipBase.toFixed(2), '0.00',
       tSubtotal.toFixed(2), '',
       tGst.toFixed(2), '0.00', '0.00',
       tGst.toFixed(2), tTotal.toFixed(2),
@@ -9728,12 +9747,12 @@ async function upsertGoogleContact({ name, phone, orderName }) {
 }
 
 // GET /admin/google/auth — redirect to Google OAuth consent
-app.get("/admin/google/auth", (req, res) => {
+app.get("/admin/google/auth", async (req, res) => {
   // Allow token via query param (browser popup can't set Authorization header)
   const token = (req.query.token || (req.headers.authorization || "").replace("Bearer ", "")).trim();
-  if (!token || !adminSessions.has(token)) return res.status(401).send("Unauthorized");
-  const s = adminSessions.get(token);
-  if (Date.now() > s.expiresAt) { adminSessions.delete(token); return res.status(401).send("Session expired"); }
+  if (!token) return res.status(401).send("Unauthorized");
+  const s = await mdb.collection('admin_sessions').findOne({ token });
+  if (!s || Date.now() > s.expiresAt) return res.status(401).send("Session expired");
   if (!GOOGLE_CLIENT_ID) return res.status(400).json({ error: "Google credentials not configured in .env" });
   const auth = getGoogleOAuth2Client();
   const url  = auth.generateAuthUrl({
