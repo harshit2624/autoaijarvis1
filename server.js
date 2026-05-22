@@ -2099,7 +2099,28 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
 }
 
-function templateInTransit({ order, awb, courier, meta = {}, adsStrip = '' }) {
+// Build a track button HTML block — uses trackingUrl or CrosCrow track page fallback
+function trackButton(trackingUrl, awb, courier, label = 'Track Your Order →') {
+  const c = (courier || '').toLowerCase();
+  const fallback = awb ? (
+    c.includes('delhivery')  ? `https://www.delhivery.com/track/package/${awb}` :
+    c.includes('xpressbee')  ? `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}` :
+    c.includes('bluedart')   ? `https://www.bluedart.com/tracking?trackNo=${awb}` :
+    c.includes('dtdc')       ? `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}` :
+    c.includes('ecom')       ? `https://ecomexpress.in/tracking/?awb_field=${awb}` :
+    c.includes('shadowfax')  ? `https://track.shadowfax.in/?awb=${awb}` :
+    c.includes('shiprocket') ? `https://shiprocket.co/tracking/${awb}` :
+    c.includes('ekart')      ? `https://ekartlogistics.com/track?trackingId=${awb}` :
+    c.includes('fedex')      ? `https://www.fedex.com/fedextrack/?trknbr=${awb}` :
+    `https://track.croscrow.com`
+  ) : `https://track.croscrow.com`;
+  const url = (trackingUrl && trackingUrl.startsWith('http')) ? trackingUrl : fallback;
+  return `<div style="text-align:center;margin:28px 0;">
+    <a href="${url}" target="_blank" style="display:inline-block;background:#7eb8f7;color:#0d0d0d;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;padding:16px 40px;border-radius:3px;text-decoration:none;">${label}</a>
+  </div>`;
+}
+
+function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, adsStrip = '' }) {
   const addr      = order.shipping_address;
   const items     = order.line_items || [];
   const total     = parseFloat(order.total_price || 0);
@@ -2192,6 +2213,9 @@ function templateInTransit({ order, awb, courier, meta = {}, adsStrip = '' }) {
         ${addr.city}, ${addr.province} ${addr.zip}
       </div>
     </div>` : ''}
+
+    ${trackButton(trackingUrl, awb, courier, 'Track Your Order →')}
+
   </div>
 
   ${adsStrip}
@@ -2205,7 +2229,7 @@ function templateInTransit({ order, awb, courier, meta = {}, adsStrip = '' }) {
 </body></html>`;
 }
 
-function templateOfd({ order, awb, courier, meta = {}, adsStrip = '' }) {
+function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStrip = '' }) {
   const addr        = order.shipping_address;
   const items       = order.line_items || [];
   const total       = parseFloat(order.total_price || 0);
@@ -2328,6 +2352,8 @@ function templateOfd({ order, awb, courier, meta = {}, adsStrip = '' }) {
       </td></tr>
     </table>` : ''}
 
+    ${trackButton(trackingUrl, awb, courier, 'Track My Order →')}
+
   </div>
 
   <!-- FOOTER -->
@@ -2439,7 +2465,7 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
 </body></html>`;
 }
 
-function templateDelivered({ order, forRole = 'customer', adsStrip = '' }) {
+function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', forRole = 'customer', adsStrip = '' }) {
   // Vendor and admin use the compact emailBase theme
   if (forRole !== 'customer') {
     const titles = { vendor: `Order Delivered: ${order.name}`, admin: `Delivered: ${order.name}` };
@@ -2454,7 +2480,7 @@ function templateDelivered({ order, forRole = 'customer', adsStrip = '' }) {
         ${order.shipping_address ? `<div class="info-row"><span class="info-label">Delivered To</span><span class="info-val">${order.shipping_address.city}, ${order.shipping_address.province}</span></div>` : ''}
       </div>
       ${itemsTableHtml(order.line_items || [])}
-      ${forRole === 'vendor' ? `<div style="text-align:center;margin-top:16px;"><a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a></div>` : ''}
+      ${forRole === 'vendor' ? `<div style="text-align:center;margin-top:16px;"><a href="https://dashboard.croscrow.com/vendor.html" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a></div>` : ''}
     `;
     return emailBase(titles[forRole], '#10b981', body);
   }
@@ -2534,6 +2560,7 @@ function templateDelivered({ order, forRole = 'customer', adsStrip = '' }) {
     </table>
 
     <p style="font-size:12px;color:#555;margin-top:16px;text-align:center;line-height:1.7;">If you have any issues with your order, just reply to this email or reach us on WhatsApp.</p>
+    ${awb || trackingUrl ? trackButton(trackingUrl, awb, courier, 'View Order Tracking →') : ''}
   </div>
 
   ${adsStrip}
@@ -2804,15 +2831,15 @@ async function fireStageEmails(shopifyId, newStage) {
     }
 
     if (newStage === 'transit') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, meta, adsStrip }), shopifyId, trigger: 'transit' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, meta, adsStrip }), shopifyId, trigger: 'transit' });
     }
 
     if (newStage === 'ofd') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Get Ready to Drip Hard Today 🛵 — ${order.name} is Out for Delivery!`, html: templateOfd({ order, awb: meta.awb, courier: meta.courier, meta, adsStrip }), shopifyId, trigger: 'ofd' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Get Ready to Drip Hard Today 🛵 — ${order.name} is Out for Delivery!`, html: templateOfd({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, meta, adsStrip }), shopifyId, trigger: 'ofd' });
     }
 
     if (newStage === 'delivered') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, forRole: 'customer', adsStrip }), shopifyId, trigger: 'delivered_customer' });
+      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, forRole: 'customer', adsStrip }), shopifyId, trigger: 'delivered_customer' });
       if (adminEmail)    await sendEmail({ to: adminEmail,    subject: `Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'admin' }), shopifyId, trigger: 'delivered_admin' });
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
