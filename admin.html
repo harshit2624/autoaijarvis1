@@ -1759,6 +1759,24 @@
           </div>
         </div>
 
+        {/* Delivery rate + RTO rate */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+          <div style={{background:'rgba(6,182,212,0.08)',border:'1px solid rgba(6,182,212,0.2)',borderRadius:6,padding:'8px 10px'}}>
+            <div style={{fontSize:8,fontWeight:700,color:'#06b6d4',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>📦 Delivery Rate</div>
+            <div style={{fontSize:15,fontWeight:800,color: (v.deliveryRate||0)>=70?'#10b981':(v.deliveryRate||0)>=50?'#f59e0b':'#ef4444'}}>
+              {v.deliveryRate||0}%
+            </div>
+            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{v.delivered||0} delivered / {v.dispatched} dispatched</div>
+          </div>
+          <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.15)',borderRadius:6,padding:'8px 10px'}}>
+            <div style={{fontSize:8,fontWeight:700,color:'#f87171',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>↩ RTO Rate</div>
+            <div style={{fontSize:15,fontWeight:800,color: (v.rtoRate||0)<=10?'#10b981':(v.rtoRate||0)<=25?'#f59e0b':'#ef4444'}}>
+              {v.rtoRate||0}%
+            </div>
+            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{v.rto||0} RTO / {v.dispatched} dispatched</div>
+          </div>
+        </div>
+
         {/* Progress bar */}
         <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',overflow:'hidden',marginBottom:8}}>
           <div style={{height:'100%',width:`${v.dispatchRate}%`,background:color,borderRadius:2,transition:'width 0.6s ease'}}/>

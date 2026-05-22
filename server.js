@@ -5129,11 +5129,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         if (!ACTIVE_STAGES.has(stage)) return;
         // Vendor revenue share = line items belonging to this vendor
         const vendorRev = (o.line_items||[]).filter(li=>li.vendor===v).reduce((s,li)=>s+parseFloat(li.price||0)*(li.quantity||1),0);
-        if (!vfMap[v]) vfMap[v] = { confirmed:0, dispatched:0, pending:0, pendingOld48:0, dispatchedRev:0, pendingRev:0 };
+        if (!vfMap[v]) vfMap[v] = { confirmed:0, dispatched:0, pending:0, pendingOld48:0, delivered:0, rto:0, dispatchedRev:0, pendingRev:0 };
         vfMap[v].confirmed++;
         if (DISPATCHED_STAGES.has(stage) || vs?.awb) {
           vfMap[v].dispatched++;
           vfMap[v].dispatchedRev += vendorRev;
+          if (stage === 'delivered') vfMap[v].delivered++;
+          if (stage === 'rto')       vfMap[v].rto++;
         } else if (['confirmed','partial'].includes(stage)) {
           vfMap[v].pending++;
           vfMap[v].pendingRev += vendorRev;
@@ -5150,9 +5152,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         dispatched:   d.dispatched,
         pending:      d.pending,
         pendingOld48: d.pendingOld48,
+        delivered:    d.delivered,
+        rto:          d.rto,
         dispatchedRev: parseFloat(d.dispatchedRev.toFixed(2)),
         pendingRev:    parseFloat(d.pendingRev.toFixed(2)),
-        dispatchRate:  d.confirmed > 0 ? Math.round(d.dispatched / d.confirmed * 100) : 0,
+        dispatchRate:  d.confirmed  > 0 ? Math.round(d.dispatched / d.confirmed  * 100) : 0,
+        deliveryRate:  d.dispatched > 0 ? Math.round(d.delivered  / d.dispatched * 100) : 0,
+        rtoRate:       d.dispatched > 0 ? Math.round(d.rto        / d.dispatched * 100) : 0,
       }))
       .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate)
       .slice(0, 15);
