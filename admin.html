@@ -993,6 +993,28 @@
                 <div className="detail-row"><span className="dr-label">Order Value</span><span className="dr-val" style={{color:'var(--cyan)'}}>{fmtCur(order.orderValue)}</span></div>
                 <div className="detail-row"><span className="dr-label">Shipping</span><span className="dr-val">{fmtCur(order.shippingCharge)}</span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
+              </div>
+              <div className="detail-box">
+                <div className="detail-box-title">Shipping Address</div>
+                {order.shippingAddress ? (<>
+                  <div className="detail-row"><span className="dr-label">Name</span><span className="dr-val">{order.shippingAddress.name}</span></div>
+                  {order.shippingAddress.phone && <div className="detail-row"><span className="dr-label">Phone</span><span className="dr-val">{order.shippingAddress.phone}</span></div>}
+                  <div className="detail-row" style={{alignItems:'flex-start'}}><span className="dr-label">Address</span><span className="dr-val" style={{textAlign:'right',maxWidth:170}}>{order.shippingAddress.address1}{order.shippingAddress.address2?', '+order.shippingAddress.address2:''}</span></div>
+                  <div className="detail-row"><span className="dr-label">City</span><span className="dr-val">{order.shippingAddress.city}</span></div>
+                  <div className="detail-row"><span className="dr-label">State</span><span className="dr-val">{order.shippingAddress.province}</span></div>
+                  <div className="detail-row"><span className="dr-label">Pincode</span><span className="dr-val">{order.shippingAddress.zip}</span></div>
+                  <div className="detail-row"><span className="dr-label">Country</span><span className="dr-val">{order.shippingAddress.country}</span></div>
+                  <button onClick={()=>{
+                    const a = order.shippingAddress;
+                    const text = [a.name, a.phone, a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ');
+                    navigator.clipboard.writeText(text);
+                  }} style={{marginTop:8,width:'100%',fontSize:10,padding:'4px 0',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text-muted)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace'}}>
+                    📋 Copy Address
+                  </button>
+                </>) : <div style={{color:'var(--text-muted)',fontSize:12}}>No shipping address</div>}
+              </div>
+              <div className="detail-box">
+                <div className="detail-box-title">Order Tags</div>
                 <div className="detail-row" style={{alignItems:'flex-start'}}>
                   <span className="dr-label">Tags</span>
                   <span className="dr-val" style={{display:'block',width:'100%'}}>
