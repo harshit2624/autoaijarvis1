@@ -5156,9 +5156,11 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         rto:          d.rto,
         dispatchedRev: parseFloat(d.dispatchedRev.toFixed(2)),
         pendingRev:    parseFloat(d.pendingRev.toFixed(2)),
-        dispatchRate:  d.confirmed  > 0 ? Math.round(d.dispatched / d.confirmed  * 100) : 0,
-        deliveryRate:  d.dispatched > 0 ? Math.round(d.delivered  / d.dispatched * 100) : 0,
-        rtoRate:       d.dispatched > 0 ? Math.round(d.rto        / d.dispatched * 100) : 0,
+        dispatchRate:     d.confirmed  > 0 ? Math.round(d.dispatched / d.confirmed  * 100) : 0,
+        deliveryRate:     d.dispatched > 0 ? Math.round(d.delivered  / d.dispatched * 100) : 0,
+        rtoRate:          d.dispatched > 0 ? Math.round(d.rto        / d.dispatched * 100) : 0,
+        deliveryRateAll:  d.confirmed  > 0 ? Math.round(d.delivered  / d.confirmed  * 100) : 0,
+        rtoRateAll:       d.confirmed  > 0 ? Math.round(d.rto        / d.confirmed  * 100) : 0,
       }))
       .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate)
       .slice(0, 15);
