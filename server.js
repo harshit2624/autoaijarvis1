@@ -9614,6 +9614,52 @@ app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
   res.json({ success: true, status, amount });
 });
 
+// ── POST /admin/penalties/bulk ────────────────────────────────────────────
+app.post("/admin/penalties/bulk", adminAuth, async (req, res) => {
+  const { ids, action, penalty_amount, admin_note } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids required' });
+  if (!['confirm','cancel','delete'].includes(action)) return res.status(400).json({ error: 'action must be confirm, cancel, or delete' });
+
+  let done = 0;
+  for (const id of ids) {
+    try {
+      const p = await OP.get(id);
+      if (!p) continue;
+      if (action === 'delete') {
+        await mdb.collection('order_penalties').deleteOne({ id: parseInt(id) });
+        auditLog("admin", "penalty_deleted", String(id), { vendor: p.vendor_name, bulk: true });
+      } else {
+        const status = action === 'confirm' ? 'confirmed' : 'cancelled';
+        const amount = action === 'confirm' ? (parseFloat(penalty_amount) || 100) : 0;
+        await OP.resolve(id, status, amount, admin_note || (action==='confirm'?'Bulk confirmed by admin':'Bulk cancelled by admin'));
+        auditLog("admin", `penalty_${status}`, String(id), { vendor: p.vendor_name, amount, bulk: true });
+        // Send email per vendor
+        const vcfg = await VC.get(p.vendor_name);
+        if (vcfg?.email) {
+          const isConfirm = status === 'confirmed';
+          const html = emailBase(
+            isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`,
+            isConfirm ? '#ef4444' : '#10b981',
+            `<div class="subtitle">${isConfirm
+              ? `A penalty of <strong>₹${amount.toFixed(2)}</strong> has been confirmed for order <strong>${p.order_name}</strong>.`
+              : `The penalty for order <strong>${p.order_name}</strong> has been cancelled.`
+            }</div>
+            <div class="info-box">
+              <div class="info-row"><span class="info-label">Order</span><span class="info-val">${p.order_name}</span></div>
+              <div class="info-row"><span class="info-label">Decision</span><span class="info-val" style="color:${isConfirm?'#ef4444':'#10b981'};font-weight:700">${isConfirm?'CONFIRMED':'CANCELLED'}</span></div>
+              ${isConfirm?`<div class="info-row"><span class="info-label">Deduction</span><span class="info-val" style="color:#ef4444;font-weight:700">₹${amount.toFixed(2)}</span></div>`:''}
+            </div>`
+          );
+          await sendEmail({ to: vcfg.email, subject: isConfirm?`🚨 Penalty Confirmed: ${p.order_name}`:`✅ Penalty Cancelled: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: `penalty_${status}` });
+        }
+      }
+      done++;
+    } catch(e) { console.error('bulk penalty error:', id, e.message); }
+  }
+  res.json({ success: true, processed: done });
+});
+
+
 // ══════════════════════════════════════════════════════════════════════════
 // GOOGLE CONTACTS INTEGRATION
 // ══════════════════════════════════════════════════════════════════════════

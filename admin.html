@@ -6284,6 +6284,8 @@
     const [testMsg, setTestMsg]     = useState('');
     const [search, setSearch]       = useState('');
     const [vendorFilter, setVendorFilter] = useState('');
+    const [selected, setSelected]   = useState(new Set()); // bulk select
+    const [bulkSaving, setBulkSaving] = useState(false);
 
     const load = () => {
       setLoading(true);
@@ -6326,6 +6328,22 @@
       const r = await fetch('/admin/penalties/run-cron', { method:'POST', headers:{Authorization:'Bearer '+token} });
       const d = await r.json();
       setTestMsg('Cron ran — check for new penalties.');
+      load();
+    };
+
+    const bulkAction = async (action) => {
+      if (selected.size === 0) return;
+      const ids = [...selected];
+      const label = action === 'confirm' ? 'confirm' : action === 'cancel' ? 'cancel' : 'delete';
+      if (!window.confirm(`${label.charAt(0).toUpperCase()+label.slice(1)} ${ids.length} selected penalt${ids.length!==1?'ies':'y'}?`)) return;
+      setBulkSaving(true);
+      await fetch('/admin/penalties/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ids, action, penalty_amount: action==='confirm'?100:undefined, admin_note: action==='confirm'?'Bulk confirmed by admin':action==='cancel'?'Bulk cancelled by admin':undefined }),
+      });
+      setBulkSaving(false);
+      setSelected(new Set());
       load();
     };
 
@@ -6397,6 +6415,30 @@
           </div>
         )}
 
+        {!loading && visiblePenalties.length > 0 && (
+          <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',background:'var(--bg-card)',borderRadius:8,marginBottom:8,border:'1px solid var(--border)'}}>
+            <input type="checkbox"
+              checked={visiblePenalties.length>0 && visiblePenalties.every(p=>selected.has(p.id))}
+              onChange={()=>{
+                const allSel = visiblePenalties.every(p=>selected.has(p.id));
+                if (allSel) setSelected(s=>{ const n=new Set(s); visiblePenalties.forEach(p=>n.delete(p.id)); return n; });
+                else setSelected(s=>{ const n=new Set(s); visiblePenalties.forEach(p=>n.add(p.id)); return n; });
+              }} style={{cursor:'pointer'}}/>
+            <span style={{fontSize:11,color:'var(--text-muted)',flex:1}}>
+              {selected.size>0 ? `${selected.size} selected` : `Select all`}
+            </span>
+            {selected.size > 0 && (<>
+              {filter==='pending' && <button className="btn btn-sm" style={{fontSize:11,background:'#ef4444',color:'#fff',border:'none'}} disabled={bulkSaving}
+                onClick={()=>bulkAction('confirm')}>✓ Confirm ({selected.size})</button>}
+              {filter==='pending' && <button className="btn btn-sm btn-ghost" style={{fontSize:11,borderColor:'#6b7280',color:'#6b7280'}} disabled={bulkSaving}
+                onClick={()=>bulkAction('cancel')}>✕ Cancel ({selected.size})</button>}
+              <button className="btn btn-sm btn-danger" style={{fontSize:11}} disabled={bulkSaving}
+                onClick={()=>bulkAction('delete')}>🗑 Delete ({selected.size})</button>
+              {bulkSaving && <span style={{fontSize:11,color:'var(--text-muted)'}}>Processing…</span>}
+            </>)}
+          </div>
+        )}
+
         {loading ? <div style={{color:'var(--text-muted)'}}>Loading...</div> : visiblePenalties.length===0 ? (
           <div style={{background:'var(--bg-card)',borderRadius:10,padding:40,textAlign:'center',color:'var(--text-muted)'}}>
             {penalties.length===0 ? `No ${filter} penalties.` : 'No penalties match your search.'}
@@ -6404,8 +6446,11 @@
         ) : (
           <div style={{display:'flex',flexDirection:'column',gap:12}}>
             {visiblePenalties.map(p=>(
-              <div key={p.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:18}}>
+              <div key={p.id} style={{background:'var(--bg-card)',border:`1px solid ${selected.has(p.id)?'var(--indigo)':'var(--border)'}`,borderRadius:10,padding:18,transition:'border-color 0.15s'}}>
                 <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
+                  <input type="checkbox" checked={selected.has(p.id)}
+                    onChange={()=>setSelected(s=>{ const n=new Set(s); n.has(p.id)?n.delete(p.id):n.add(p.id); return n; })}
+                    style={{cursor:'pointer',marginTop:3,flexShrink:0}}/>
                   <div style={{flex:1}}>
                     <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
                       <span style={{fontWeight:700,color:'var(--text)',fontSize:15}}>{p.order_name||p.shopify_id}</span>
