@@ -6978,8 +6978,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           shipment_width:  String(breadth),
           shipment_height: String(height),
           weight:          String(Math.round(parseFloat(weight) * 1000)),
-          md:              shipMode === 'Express' ? 'E' : 'S',
-          shipment_mode:   shipMode === 'Express' ? 'E' : 'S',
+          shipping_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
           seller_name:   creds.company_name || req.vendor,
           seller_add:    creds.return_address || "",
           seller_city:   creds.return_city   || "",
@@ -6988,7 +6987,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           seller_country:"India",
         }],
       };
-      console.log(`[delhivery-payload]`, JSON.stringify({ weight: shipData.shipments[0].weight, md: shipData.shipments[0].md, shipment_mode: shipData.shipments[0].shipment_mode }));
+      console.log(`[delhivery-payload]`, JSON.stringify({ weight: shipData.shipments[0].weight, shipping_mode: shipData.shipments[0].shipping_mode }));
       const dlBody = new URLSearchParams();
       dlBody.append("format", "json");
       dlBody.append("data", JSON.stringify(shipData));
@@ -12148,7 +12147,7 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
         shipment_width:  String(breadth),
         shipment_height: String(height),
         weight:          String(weight),
-        shipment_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
+        shipping_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
         seller_name:   vendorAddr.name,
         seller_add:    vendorAddr.address1  || '',
         seller_city:   vendorAddr.city      || '',
