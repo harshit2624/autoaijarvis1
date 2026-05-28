@@ -5728,8 +5728,16 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
     const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vendorStages = await mdb.collection('order_vendor_stage').find({ vendor_name }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
-    const vendorStageMap = Object.fromEntries(vendorStages.map(r => [r.shopify_id, r.stage]));
+    // Fetch stages case-insensitively (handles "Odd Affair" vs "ODD AFFAIR" duplicates)
+    const vendorStages = await mdb.collection('order_vendor_stage').find(
+      { vendor_name: { $regex: new RegExp('^' + vendor_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
+      { projection: { shopify_id: 1, stage: 1, _id: 0 } }
+    ).toArray();
+    // Merge duplicates — keep the highest stage across all case variants
+    const vendorStageMap = {};
+    for (const r of vendorStages) {
+      vendorStageMap[r.shopify_id] = higherStage(vendorStageMap[r.shopify_id] || 'new', r.stage || 'new');
+    }
 
     // Only include delivered orders that have NOT been invoiced before
     const vendorDelivered = allOrders.filter(o => {
@@ -5737,7 +5745,9 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       if (alreadyInvoicedOrders.has(sid)) return false; // skip already-invoiced
       const dbStage = higherStage(vendorStageMap[sid] || 'new', metaMap[sid]?.stage || 'new');
       const shopifyStages = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || []);
-      const effectiveStage = higherStage(dbStage, shopifyStages[vendor_name] || null);
+      // Check shopifyStages case-insensitively too
+      const sfStage = Object.entries(shopifyStages).find(([k]) => k.toLowerCase() === vName)?.[1] || null;
+      const effectiveStage = higherStage(dbStage, sfStage);
       return effectiveStage === "delivered" &&
         (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName);
     });
