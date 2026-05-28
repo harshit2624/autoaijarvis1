@@ -12064,7 +12064,10 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
   const pickup   = isReverse ? customerAddr : vendorAddr;
   const delivery = isReverse ? vendorAddr   : customerAddr;
 
-  const orderId  = `${rr.request_id}-${direction.toUpperCase()[0]}`;
+  // Append a suffix so re-creations after cancellation get a fresh order ID on the courier side
+  // (Delhivery deduplicates by order field and would return the old cancelled AWB otherwise)
+  const rrSuffix = Date.now().toString(36).toUpperCase().slice(-4);
+  const orderId  = `${rr.request_id}-${direction.toUpperCase()[0]}-${rrSuffix}`;
   const desc     = (rr.items||[]).map(it=>it.title).join(', ').slice(0,250) || 'Return/Exchange items';
   const itemVal  = (rr.items||[]).reduce((s,it)=>s+parseFloat(it.price||0)*it.qty,0);
 
