@@ -5758,12 +5758,24 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     let totalRev = 0, totalComm = 0, totalGst = 0, totalAdv = 0, totalNet = 0, totalShipping = 0;
     const orderDetails = [];
 
+    // Load all price overrides for orders in this settlement batch
+    const batchOrderIds = vendorDelivered.map(o => String(o.id));
+    const priceOverrideDocs = await mdb.collection('order_price_overrides').find({ shopify_order_id: { $in: batchOrderIds } }, { projection: { _id: 0 } }).toArray();
+    // Map: { shopify_order_id -> { line_item_id -> overridden_price } }
+    const priceOverrideMap = {};
+    for (const ov of priceOverrideDocs) {
+      if (!priceOverrideMap[ov.shopify_order_id]) priceOverrideMap[ov.shopify_order_id] = {};
+      priceOverrideMap[ov.shopify_order_id][ov.line_item_id] = ov.overridden_price;
+    }
+
     for (const o of vendorDelivered) {
       const meta    = metaMap[String(o.id)] || {};
       const payType = meta.payment_type || "cod";
       const isCod   = payType !== "prepaid";
       const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
-      const myRev   = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+      const orderOverrides = priceOverrideMap[String(o.id)] || {};
+      const effectivePrice = (li) => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : parseFloat(li.price || 0);
+      const myRev   = myItems.reduce((s, li) => s + effectivePrice(li) * (li.quantity || 1), 0);
 
       // Check product-level rules per line item
       let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
@@ -5771,11 +5783,12 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       const ruleLabels = new Set();
       let hasDefaultRule = false;
       for (const li of myItems) {
-        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const liPrice = effectivePrice(li);
+        const itemRev = liPrice * (li.quantity || 1);
         const productRule = await findProductRule(vendor_name, li.product_id, li.sku);
         let liCalc;
         if (productRule) {
-          liCalc = calcProductCommission(productRule, li.price, li.quantity || 1, payType);
+          liCalc = calcProductCommission(productRule, liPrice, li.quantity || 1, payType);
           hasProductRule = true;
           if (productRule.mode === 'flat') ruleLabels.add(`Flat ₹${productRule.flat_amount}`);
           else if (productRule.mode === 'margin') ruleLabels.add(`Margin ${productRule.margin_pct}%`);
@@ -5813,6 +5826,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       totalShipping += shippingSplit;
       totalNet      += calc.net + shippingSplit; // shipping vendor collected → owes CrosCrow (COD only)
 
+      const hasPriceOverride = myItems.some(li => orderOverrides[String(li.id)] !== undefined);
       orderDetails.push({
         shopify_order_id: String(o.id),
         order_name:       o.name,
@@ -5826,6 +5840,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         net:              parseFloat((calc.net + shippingSplit).toFixed(2)),
         has_product_rule: hasProductRule,
         rule_label:       ruleLabel,
+        has_price_override: hasPriceOverride,
       });
     }
 
@@ -7375,6 +7390,43 @@ app.post("/admin/orders/:id/notes", adminAuth, async (req, res) => {
   if (!note?.trim()) return res.status(400).json({ error: "note required." });
   await ON.insert(req.params.id, 'admin', 'Admin', note.trim());
   res.json({ success: true });
+});
+
+// ── Admin: price overrides for order line items ───────────────────────────
+// GET  /admin/orders/:id/price-overrides  → { overrides: [{line_item_id, overridden_price, original_price}] }
+// POST /admin/orders/:id/price-overrides  → body: { line_item_id, price, original_price }
+// DELETE /admin/orders/:id/price-overrides/:lineItemId
+
+app.get("/admin/orders/:id/price-overrides", adminAuth, async (req, res) => {
+  try {
+    const overrides = await mdb.collection('order_price_overrides')
+      .find({ shopify_order_id: String(req.params.id) }, { projection: { _id: 0 } })
+      .toArray();
+    res.json({ overrides });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/admin/orders/:id/price-overrides", adminAuth, async (req, res) => {
+  try {
+    const { line_item_id, price, original_price } = req.body || {};
+    if (!line_item_id || price === undefined || price === null) return res.status(400).json({ error: 'line_item_id and price required' });
+    const parsed = parseFloat(price);
+    if (isNaN(parsed) || parsed < 0) return res.status(400).json({ error: 'price must be a non-negative number' });
+    await mdb.collection('order_price_overrides').updateOne(
+      { shopify_order_id: String(req.params.id), line_item_id: String(line_item_id) },
+      { $set: { shopify_order_id: String(req.params.id), line_item_id: String(line_item_id), overridden_price: parsed, original_price: parseFloat(original_price) || parsed, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    mdb.collection('order_price_overrides').createIndex({ shopify_order_id: 1, line_item_id: 1 }, { unique: true }).catch(() => {});
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/admin/orders/:id/price-overrides/:lineItemId", adminAuth, async (req, res) => {
+  try {
+    await mdb.collection('order_price_overrides').deleteOne({ shopify_order_id: String(req.params.id), line_item_id: String(req.params.lineItemId) });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // Vendor: get + post notes

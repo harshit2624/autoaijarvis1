@@ -834,6 +834,51 @@
     const [tagInput,   setTagInput]   = useState('');
     const [availTags,  setAvailTags]  = useState([]);
     const [msg,        setMsg]        = useState(null);
+    const [priceOverrides, setPriceOverrides] = useState({}); // { line_item_id: overridden_price }
+    const [priceEditing,   setPriceEditing]   = useState({}); // { line_item_id: draftString }
+    const [savingPrice,    setSavingPrice]     = useState({}); // { line_item_id: bool }
+
+    const loadPriceOverrides = () => {
+      fetch(`${API}/admin/orders/${order.shopifyId}/price-overrides`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{
+          const map = {};
+          (d.overrides||[]).forEach(ov => { map[ov.line_item_id] = ov.overridden_price; });
+          setPriceOverrides(map);
+        }).catch(()=>{});
+    };
+
+    const savePrice = async (li) => {
+      const draft = priceEditing[String(li.id)];
+      if (draft === undefined) return;
+      const parsed = parseFloat(draft);
+      if (isNaN(parsed) || parsed < 0) { setMsg({ type:'error', text:'Invalid price.' }); return; }
+      setSavingPrice(p=>({...p,[String(li.id)]:true}));
+      try {
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/price-overrides`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ line_item_id: String(li.id), price: parsed, original_price: parseFloat(li.price)||0 }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setPriceOverrides(p=>({...p,[String(li.id)]:parsed}));
+        setPriceEditing(p=>{ const n={...p}; delete n[String(li.id)]; return n; });
+        setMsg({ type:'success', text:`Price override saved — will be used in next settlement.` });
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+      setSavingPrice(p=>({...p,[String(li.id)]:false}));
+    };
+
+    const resetPrice = async (li) => {
+      setSavingPrice(p=>({...p,[String(li.id)]:true}));
+      try {
+        await fetch(`${API}/admin/orders/${order.shopifyId}/price-overrides/${li.id}`, {
+          method:'DELETE', headers:{'Authorization':`Bearer ${token}`},
+        });
+        setPriceOverrides(p=>{ const n={...p}; delete n[String(li.id)]; return n; });
+        setPriceEditing(p=>{ const n={...p}; delete n[String(li.id)]; return n; });
+        setMsg({ type:'success', text:'Price reset to original Shopify price.' });
+      } catch(e) { setMsg({ type:'error', text:e.message }); }
+      setSavingPrice(p=>({...p,[String(li.id)]:false}));
+    };
 
     const loadNotes = () => {
       fetch(`${API}/admin/orders/${order.shopifyId}/notes`,{headers:{Authorization:`Bearer ${token}`}})
@@ -861,6 +906,7 @@
           }).catch(()=>{});
       }
       loadNotes();
+      loadPriceOverrides();
       fetch(`${API}/admin/order-tags`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setAvailTags(d.tags||[])).catch(()=>{});
     },[order.shopifyId]);
@@ -1051,17 +1097,73 @@
                 <div className="detail-box-title">Line Items</div>
                 {(order.lineItems||[]).map((li,i)=>{
                   const img = productImages[li.product_id] || null;
+                  const liId = String(li.id);
+                  const hasOverride = priceOverrides[liId] !== undefined;
+                  const effectivePrice = hasOverride ? priceOverrides[liId] : parseFloat(li.price||0);
+                  const isDrafting = priceEditing[liId] !== undefined;
                   return (
-                    <div key={i} className="detail-row" style={{alignItems:'center',gap:10}}>
-                      {img
-                        ? <img src={img} alt="" style={{width:40,height:40,borderRadius:6,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}}/>
-                        : <div style={{width:40,height:40,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>📦</div>
-                      }
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:12,color:'var(--text)'}}>{li.title}</div>
-                        {li.variant && li.variant!=='Default Title' && <div style={{fontSize:10,color:'var(--text-muted)'}}>{li.variant}</div>}
+                    <div key={i} style={{display:'flex',flexDirection:'column',gap:6,padding:'10px 0',borderBottom:'1px solid var(--border)'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:10}}>
+                        {img
+                          ? <img src={img} alt="" style={{width:44,height:44,borderRadius:6,objectFit:'cover',border:'1px solid var(--border)',flexShrink:0}}/>
+                          : <div style={{width:44,height:44,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,flexShrink:0}}>📦</div>
+                        }
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:12,color:'var(--text)',fontWeight:500}}>{li.title}</div>
+                          {li.variant && li.variant!=='Default Title' && <div style={{fontSize:10,color:'var(--text-muted)'}}>{li.variant}</div>}
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>SKU: {li.sku||'—'} · Vendor: {li.vendor||'—'}</div>
+                        </div>
+                        <div style={{flexShrink:0,textAlign:'right'}}>
+                          <div style={{fontSize:13,fontWeight:700,color: hasOverride ? '#f59e0b' : 'var(--cyan)'}}>
+                            {li.qty}× {fmtCur(effectivePrice)}
+                            {hasOverride && <span title="Price overridden for settlement" style={{marginLeft:4,fontSize:10}}>✏️</span>}
+                          </div>
+                          {hasOverride && (
+                            <div style={{fontSize:10,color:'var(--text-muted)',textDecoration:'line-through'}}>{fmtCur(li.price)} original</div>
+                          )}
+                        </div>
                       </div>
-                      <span className="dr-val" style={{flexShrink:0}}>{li.qty}× {fmtCur(li.price)} <span style={{color:'var(--text-muted)',fontSize:10}}>({li.vendor})</span></span>
+                      {/* Inline price override editor */}
+                      <div style={{display:'flex',alignItems:'center',gap:6,paddingLeft:54}}>
+                        {!isDrafting ? (
+                          <button onClick={()=>setPriceEditing(p=>({...p,[liId]:String(effectivePrice)}))}
+                            style={{fontSize:10,padding:'3px 10px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text-muted)',cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
+                            ✏️ {hasOverride ? 'Edit Override' : 'Override Price'}
+                          </button>
+                        ) : (
+                          <>
+                            <span style={{fontSize:10,color:'var(--text-muted)',whiteSpace:'nowrap'}}>₹</span>
+                            <input
+                              type="number" min="0" step="0.01"
+                              value={priceEditing[liId]}
+                              onChange={e=>setPriceEditing(p=>({...p,[liId]:e.target.value}))}
+                              onKeyDown={e=>{ if(e.key==='Enter') savePrice(li); if(e.key==='Escape') setPriceEditing(p=>{const n={...p};delete n[liId];return n;}); }}
+                              style={{width:90,fontSize:11,padding:'4px 8px',borderRadius:4,border:'1px solid #f59e0b',background:'#1a1200',color:'#f59e0b',outline:'none',fontFamily:'IBM Plex Mono,monospace'}}
+                              autoFocus
+                            />
+                            <button onClick={()=>savePrice(li)} disabled={savingPrice[liId]}
+                              style={{fontSize:10,padding:'3px 10px',borderRadius:4,border:'none',background:'#f59e0b',color:'#000',cursor:'pointer',fontWeight:700}}>
+                              {savingPrice[liId]?'…':'Save'}
+                            </button>
+                            <button onClick={()=>setPriceEditing(p=>{const n={...p};delete n[liId];return n;})}
+                              style={{fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'none',color:'var(--text-muted)',cursor:'pointer'}}>
+                              Cancel
+                            </button>
+                            {hasOverride && (
+                              <button onClick={()=>resetPrice(li)} disabled={savingPrice[liId]}
+                                style={{fontSize:10,padding:'3px 10px',borderRadius:4,border:'1px solid #ef4444',background:'none',color:'#ef4444',cursor:'pointer'}}>
+                                Reset to Original
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {hasOverride && !isDrafting && (
+                          <button onClick={()=>resetPrice(li)} disabled={savingPrice[liId]}
+                            style={{fontSize:10,padding:'3px 10px',borderRadius:4,border:'1px solid #ef4444',background:'none',color:'#ef4444',cursor:'pointer'}}>
+                            {savingPrice[liId]?'…':'↩ Reset'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -1472,7 +1574,10 @@
                     return (
                       <tr key={i}>
                         <td>{i+1}</td>
-                        <td style={{fontWeight:600}}>{o.order_name}</td>
+                        <td style={{fontWeight:600}}>
+                          {o.order_name}
+                          {o.has_price_override && <span title="Price overridden by admin" style={{marginLeft:4,fontSize:8,padding:'1px 4px',borderRadius:3,background:'rgba(245,158,11,0.15)',color:'#f59e0b',fontWeight:700}}>✏ OVERRIDE</span>}
+                        </td>
                         <td>₹{(o.my_revenue||0).toFixed(2)}</td>
                         <td style={{textTransform:'uppercase',fontSize:8,color:isPrepaid?'#e67e22':'#666'}}>{o.payment_type}</td>
                         <td style={{color:'#e67e22'}}>{isPrepaid?`−₹${disc.toFixed(2)}`:'—'}</td>
