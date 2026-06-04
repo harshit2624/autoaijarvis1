@@ -125,7 +125,7 @@ async function startServer() {
       mdb.collection("global_shipping_creds").createIndex({ partner: 1 }, { unique: true }),
       mdb.collection("vendor_shipping_partners").createIndex({ vendor_name: 1, partner: 1 }, { unique: true }),
       mdb.collection("email_log").createIndex({ sent_at: -1 }),
-      mdb.collection("settlements").createIndex({ vendor_name: 1, period_start: 1, period_end: 1 }, { unique: true }),
+      mdb.collection("settlements").createIndex({ vendor_name: 1, period_start: 1, period_end: 1 }),
       mdb.collection("settlements").createIndex({ status: 1 }),
       mdb.collection("settlement_orders").createIndex({ settlement_id: 1 }),
       mdb.collection("settlement_penalties").createIndex({ settlement_id: 1 }),
