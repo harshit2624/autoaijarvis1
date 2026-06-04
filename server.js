@@ -12364,7 +12364,8 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
 app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
   const { direction, awb, courier } = req.body || {};
   if (!direction || !awb) return res.status(400).json({ error: 'direction and awb required' });
-  const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: req.vendor }, { projection: { _id: 0 } });
+  const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+  const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { projection: { _id: 0 } });
   if (!rr) return res.status(404).json({ error: 'Request not found' });
   const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
   await mdb.collection('return_requests').updateOne(
@@ -12378,7 +12379,8 @@ app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
 app.post("/vendor/return-requests/:id/rate-check", vendorAuth, async (req, res) => {
   try {
     const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
-    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: req.vendor }, { projection: { customer_pincode:1, _id:0 } });
+    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { projection: { customer_pincode:1, _id:0 } });
     if (!rr) return res.status(404).json({ error: 'Request not found' });
     const credRow = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 });
     if (!credRow) return res.status(404).json({ error: `${partner} not connected` });
@@ -12405,7 +12407,8 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
     if (!direction || !partner) return res.status(400).json({ error: 'direction and partner required' });
     if (!['reverse','forward'].includes(direction)) return res.status(400).json({ error: 'direction must be reverse or forward' });
 
-    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: req.vendor }, { projection: { _id: 0 } });
+    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { projection: { _id: 0 } });
     if (!rr) return res.status(404).json({ error: 'Request not found' });
     if (direction === 'forward' && rr.type !== 'exchange') return res.status(400).json({ error: 'Forward shipment only valid for exchange requests' });
 
@@ -12433,7 +12436,7 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
 
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
     await mdb.collection('return_requests').updateOne(
-      { request_id: req.params.id, vendor_name: req.vendor },
+      { request_id: req.params.id },
       { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
     sendRRShipmentEmail(rr, direction, result.awb, result.courier);
@@ -12469,7 +12472,8 @@ app.put("/admin/vendors/:name/return-config", adminAuth, async (req, res) => {
 app.get("/vendor/return-requests", vendorAuth, async (req, res) => {
   try {
     const { status } = req.query;
-    const q = { vendor_name: req.vendor };
+    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const q = { vendor_name: { $regex: vendorRegex } };
     if (status && status !== 'all') q.status = status;
     const requests = await mdb.collection('return_requests').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
     res.json({ requests });
@@ -12483,7 +12487,8 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
     const update = { updated_at: new Date().toISOString() };
     if (vendor_note !== undefined) update.vendor_note = vendor_note;
     if (status) update.status = status;
-    await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: req.vendor }, { $set: update });
+    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { $set: update });
     if (status === 'approved') {
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
       if (updated) sendRREmail('approved_by_vendor', updated).catch(() => {});
