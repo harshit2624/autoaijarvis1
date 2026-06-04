@@ -5326,7 +5326,7 @@ app.get("/admin/orders", adminAuth, async (req, res) => {
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
         tags:           o.tags || "",
         lineItems:      (o.line_items || []).map(li => ({
-          title: li.title, vendor: li.vendor, qty: li.quantity,
+          id: li.id, title: li.title, vendor: li.vendor, qty: li.quantity,
           price: parseFloat(li.price || 0), sku: li.sku || "",
           variant: li.variant_title || '', product_id: li.product_id || null,
         })),
