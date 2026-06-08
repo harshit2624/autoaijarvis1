@@ -961,7 +961,10 @@ function verifyShopifyHmac(req) {
   const hmac = req.headers["x-shopify-hmac-sha256"];
   if (!CLIENT_SECRET || !hmac) return true; // skip check if not configured
   const computed = crypto.createHmac("sha256", CLIENT_SECRET).update(req.body).digest("base64");
-  return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(computed));
+  const hmacBuf = Buffer.from(hmac);
+  const computedBuf = Buffer.from(computed);
+  if (hmacBuf.length !== computedBuf.length) return false;
+  return crypto.timingSafeEqual(hmacBuf, computedBuf);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -7512,7 +7515,10 @@ function validateShopifyHmac(query) {
   if (!hmac) return false;
   const msg = Object.keys(rest).sort().map(k => `${k}=${rest[k]}`).join('&');
   const computed = crypto.createHmac('sha256', VENDOR_APP_SECRET).update(msg).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(hmac));
+  const computedBuf = Buffer.from(computed);
+  const hmacBuf = Buffer.from(hmac);
+  if (computedBuf.length !== hmacBuf.length) return false;
+  return crypto.timingSafeEqual(computedBuf, hmacBuf);
 }
 
 // ── Step 1: Vendor initiates OAuth (from vendor panel) ───────────────────
@@ -7598,7 +7604,10 @@ function verifyShopifyComplianceHmac(req) {
   if (!hmacHeader) return false;
   const secret = process.env.VENDOR_APP_SECRET || '';
   const digest = crypto.createHmac('sha256', secret).update(req.body).digest('base64');
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
+  const digestBuf = Buffer.from(digest);
+  const hmacBuf = Buffer.from(hmacHeader);
+  if (digestBuf.length !== hmacBuf.length) return false;
+  return crypto.timingSafeEqual(digestBuf, hmacBuf);
 }
 
 app.post('/webhooks/compliance', express.raw({type:'application/json'}), async (req, res) => {
