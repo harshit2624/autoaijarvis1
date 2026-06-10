@@ -11809,8 +11809,8 @@ app.get("/track/rr-shipment-status", async (req, res) => {
 app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, res) => {
   try {
     const { contact_name, brand_name, email, phone, website, address, city, state, pincode, gst_no, about } = req.body || {};
-    if (!contact_name?.trim() || !brand_name?.trim() || !email?.trim() || !phone?.trim() || !address?.trim())
-      return res.status(400).json({ error: 'contact_name, brand_name, email, phone and address are required.' });
+    if (!contact_name?.trim() || !brand_name?.trim() || !email?.trim() || !phone?.trim() || !website?.trim())
+      return res.status(400).json({ error: 'contact_name, brand_name, email, phone and website are required.' });
 
     const existing = await mdb.collection('vendor_onboards').findOne({ email: email.toLowerCase().trim(), status: { $in: ['pending','approved'] } });
     if (existing) return res.status(409).json({ error: 'An application with this email is already pending or approved.' });
@@ -11823,7 +11823,7 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
       email:        email.toLowerCase().trim(),
       phone:        phone.trim(),
       website:      website?.trim() || '',
-      address:      address.trim(),
+      address:      address?.trim() || '',
       city:         city?.trim() || '',
       state:        state?.trim() || '',
       pincode:      pincode?.trim() || '',
