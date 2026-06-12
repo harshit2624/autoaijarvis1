@@ -43,17 +43,10 @@ const adsStorage = multer.diskStorage({
 });
 const adsUpload = multer({ storage: adsStorage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-// ── Multer — admin brand logo ───────────────────────────────────────────────
-const brandUploadDir = path.join(__dirname, 'brand-uploads');
-if (!fs.existsSync(brandUploadDir)) fs.mkdirSync(brandUploadDir, { recursive: true });
-const brandStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, brandUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.png';
-    cb(null, `logo_${Date.now()}${ext}`);
-  },
-});
-const brandUpload = multer({ storage: brandStorage, limits: { fileSize: 3 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+// ── Multer — admin/vendor brand logos ───────────────────────────────────────
+// Stored as base64 data URIs in MongoDB (not on disk) so they survive
+// restarts/redeploys on hosts with ephemeral filesystems.
+const brandUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
   if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
   cb(null, true);
 }});
@@ -420,7 +413,6 @@ app.use((req, res, next) => {
 
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
-app.use('/brand-uploads', express.static(brandUploadDir));
 app.use('/rr-uploads', express.static(rrUploadDir));
 app.use('/onboard-uploads', express.static(onboardUploadDir));
 app.use('/agreement-docs', express.static(agreementDocDir));
@@ -6806,7 +6798,7 @@ app.post("/admin/branding", adminAuth, async (req, res) => {
 app.post("/admin/branding/logo", adminAuth, brandUpload.single('logo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const url = `/brand-uploads/${req.file.filename}`;
+    const url = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
     await BRAND.save({ logo_url: url });
     res.json({ url });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -6823,7 +6815,7 @@ app.delete("/admin/branding/logo", adminAuth, async (req, res) => {
 app.post("/admin/branding/vendor-logo", adminAuth, brandUpload.single('logo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const url = `/brand-uploads/${req.file.filename}`;
+    const url = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
     await BRAND.save({ vendor_logo_url: url });
     res.json({ url });
   } catch(e) { res.status(500).json({ error: e.message }); }
