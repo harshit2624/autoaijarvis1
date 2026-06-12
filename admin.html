@@ -2645,6 +2645,68 @@
             );
           })()}
 
+          {/* Dispatch Quality card — turnaround time from confirmed → dispatched */}
+          {!aLoading && a?.dispatchQuality && (() => {
+            const dq = a.dispatchQuality;
+            const Seg = ({label, icon, count, pct, color, sub}) => (
+              <div style={{background:`${color}12`,border:`1px solid ${color}35`,borderRadius:8,padding:'12px 14px',display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:140}}>
+                <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color,fontWeight:700}}>{icon} {label}</div>
+                <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                  <span style={{fontSize:26,fontWeight:900,color,lineHeight:1}}>{count}</span>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>orders · {pct}%</span>
+                </div>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>{sub}</div>
+              </div>
+            );
+            return (
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-header">
+                  <span className="card-title">⏱ Dispatch Quality</span>
+                  <span className="card-sub">Time from order confirmation to dispatch (ready/pickup) · {periodLabel}</span>
+                </div>
+                <div style={{padding:16}}>
+                  {dq.total === 0 ? (
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>
+                      No dispatch-timing data yet for this period. Tracking started recently — this card will populate as orders move from Confirmed/Partial to Ready/Pickup going forward.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>{dq.total} orders dispatched with timing data</span>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>·</span>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>Avg dispatch time: <strong style={{color:'var(--text)'}}>{dq.avgHours < 24 ? `${dq.avgHours}h` : `${(dq.avgHours/24).toFixed(1)}d`}</strong></span>
+                      </div>
+                      <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',display:'flex',marginBottom:12}}>
+                        <div style={{height:'100%',width:`${dq.goodPct}%`,background:'#10b981'}}/>
+                        <div style={{height:'100%',width:`${dq.badPct}%`,background:'#f59e0b'}}/>
+                        <div style={{height:'100%',width:`${dq.veryBadPct}%`,background:'#ef4444'}}/>
+                      </div>
+                      <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:dq.topOffenders.length?14:0}}>
+                        <Seg label="Good"      icon="✅" count={dq.good}    pct={dq.goodPct}    color="#10b981" sub="Dispatched within 4 days"/>
+                        <Seg label="Bad"       icon="⚠️" count={dq.bad}     pct={dq.badPct}     color="#f59e0b" sub="Dispatched in 4–7 days"/>
+                        <Seg label="Very Bad"  icon="🔴" count={dq.veryBad} pct={dq.veryBadPct} color="#ef4444" sub="Dispatched after 7 days"/>
+                      </div>
+                      {dq.topOffenders.length > 0 && (
+                        <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>Vendors with most delayed dispatches</div>
+                          {dq.topOffenders.map(v=>(
+                            <div key={v.vendor} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{fontSize:12,fontWeight:600}}>{v.vendor}</span>
+                              <div style={{display:'flex',gap:8}}>
+                                {v.bad>0 && <span style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>{v.bad} bad</span>}
+                                {v.veryBad>0 && <span style={{fontSize:11,fontWeight:700,color:'#ef4444'}}>{v.veryBad} very bad</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Prepaid vs COD stat card */}
           {!aLoading && a?.paymentSplit && (() => {
             const { prepaid=0, cod=0, partial=0 } = a.paymentSplit;

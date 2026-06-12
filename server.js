@@ -239,6 +239,20 @@ const OM = {
 const OVS = {
   async upsert(shopify_id, vendor_name, fields) {
     const sid = String(shopify_id);
+    // Capture dispatch timestamp the first time an order moves from a
+    // pre-dispatch stage (new/confirmed/partial) into a dispatched stage.
+    // Used to measure dispatch turnaround time (stage_started_at → dispatched_at).
+    const DISPATCHED_STAGES = new Set(['ready','pickup','transit','ofd','delivered','rto']);
+    if (fields.stage && DISPATCHED_STAGES.has(fields.stage)) {
+      const existing = await mdb.collection('order_vendor_stage').findOne(
+        { shopify_id: sid, vendor_name },
+        { projection: { stage: 1, dispatched_at: 1, _id: 0 } }
+      );
+      const wasPreDispatch = !existing || ['new','confirmed','partial'].includes(existing.stage);
+      if (wasPreDispatch && !existing?.dispatched_at) {
+        fields = { ...fields, dispatched_at: Date.now() };
+      }
+    }
     await mdb.collection('order_vendor_stage').updateOne(
       { shopify_id: sid, vendor_name },
       { $set: { shopify_id: sid, vendor_name, ...fields, _updated: new Date() } },
@@ -4921,7 +4935,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const raw     = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
     const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const allVS   = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, awb:1, _id:0 } }).toArray();
+    const allVS   = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, awb:1, stage_started_at:1, dispatched_at:1, _id:0 } }).toArray();
 
     const now      = Date.now();
     const DAY      = 86400000;
@@ -5275,6 +5289,52 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate)
       .slice(0, 15);
 
+    // ── Dispatch Quality — turnaround time from confirmed/partial → first dispatched stage
+    // Only includes orders dispatched since dispatch-time tracking was added (dispatched_at present).
+    const dispatchQuality = (() => {
+      const GOOD_HRS = 96;   // <= 4 days
+      const BAD_HRS  = 168;  // <= 7 days, else "very bad"
+
+      const rows = allVS.filter(r => r.dispatched_at && r.stage_started_at && r.dispatched_at > r.stage_started_at);
+      const inPeriod = rows.filter(r => {
+        const d = new Date(r.dispatched_at);
+        return d >= periodFrom && d <= periodTo;
+      });
+
+      let good = 0, bad = 0, veryBad = 0, totalHrs = 0;
+      const vendorIssues = {};
+      inPeriod.forEach(r => {
+        const hrs = (r.dispatched_at - r.stage_started_at) / 3600000;
+        totalHrs += hrs;
+        if (hrs <= GOOD_HRS) {
+          good++;
+        } else if (hrs <= BAD_HRS) {
+          bad++;
+          vendorIssues[r.vendor_name] = vendorIssues[r.vendor_name] || { bad: 0, veryBad: 0 };
+          vendorIssues[r.vendor_name].bad++;
+        } else {
+          veryBad++;
+          vendorIssues[r.vendor_name] = vendorIssues[r.vendor_name] || { bad: 0, veryBad: 0 };
+          vendorIssues[r.vendor_name].veryBad++;
+        }
+      });
+
+      const total = inPeriod.length;
+      const topOffenders = Object.entries(vendorIssues)
+        .map(([vendor, d]) => ({ vendor, bad: d.bad, veryBad: d.veryBad, total: d.bad + d.veryBad }))
+        .sort((a, b) => b.veryBad - a.veryBad || b.bad - a.bad)
+        .slice(0, 5);
+
+      return {
+        total, good, bad, veryBad,
+        goodPct:    total > 0 ? Math.round(good    / total * 100) : 0,
+        badPct:     total > 0 ? Math.round(bad     / total * 100) : 0,
+        veryBadPct: total > 0 ? Math.round(veryBad / total * 100) : 0,
+        avgHours:   total > 0 ? Math.round(totalHrs / total) : 0,
+        topOffenders,
+      };
+    })();
+
     const periodDays = Math.round((periodTo - periodFrom) / DAY) + 1;
 
     res.json({
@@ -5297,6 +5357,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       topCities,
       trend14d,
       vendorLeaderboard,
+      dispatchQuality,
     });
   } catch (err) {
     console.error("❌ /admin/analytics:", err.message);
@@ -10786,9 +10847,17 @@ async function penaltyCronJob() {
         console.log(`📧  24hr warning sent: ${orderName} / ${vendor}`);
       }
 
-      // 48hr penalty trigger
+      // 48hr penalty trigger — skipped if vendor submitted a delay remark with
+      // a committed dispatch (ETA) date that hasn't passed yet. In that case
+      // the order is instead covered by the ETA-breach check below, which
+      // only fires once that committed date is missed.
       if (elapsed >= HR48 && !row.penalty_triggered) {
-        triggerPenalty(sid, vendor, orderName, '48hr_breach');
+        const today = new Date().toISOString().split('T')[0];
+        const remark = await DR.latest(sid, vendor);
+        const hasFutureEta = remark?.eta_date && remark.eta_date >= today;
+        if (!hasFutureEta) {
+          triggerPenalty(sid, vendor, orderName, '48hr_breach');
+        }
       }
     }
 
