@@ -10,10 +10,11 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&family=Poppins:wght@300;400;500;600;700;800&display=swap');
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
+      --font-family: 'IBM Plex Mono', monospace;
       --bg:        #060a14;
       --bg-card:   #0a1020;
       --bg-card2:  #0d1428;
@@ -24,6 +25,7 @@
       --indigo-dim:#1e1b4b;
       --indigo-glow:#6366f130;
       --cyan:      #22d3ee;
+      --cyan-bg:   #0d1f30;
       --green:     #10b981;
       --green-dim: #064e3b;
       --red:       #f87171;
@@ -35,39 +37,84 @@
       --purple:    #a78bfa;
       --purple-bg: #1e1b4b;
       --teal:      #2dd4bf;
+      --teal-bg:   #0d2620;
+      --blue:      #60a5fa;
+      --blue-bg:   #0d2240;
+      --gray:      #9ca3af;
+      --gray-bg:   #1c2230;
       --text:      #e2e8f0;
       --text-muted:#4b6a8e;
       --text-dim:  #7d9ab8;
     }
 
-    /* ── Light theme ── */
-    body.light-theme {
-      --bg:        #f0f4f8;
+    /* ── Minimal theme (white & black, elegant) ── */
+    body[data-theme="minimal"] {
+      --bg:        #f7f7f8;
       --bg-card:   #ffffff;
-      --bg-card2:  #f8fafc;
-      --bg-hover:  #e8eef5;
-      --border:    #cbd5e1;
-      --border-hi: #94a3b8;
-      --indigo:    #4f46e5;
-      --indigo-dim:#e0e7ff;
-      --indigo-glow:#4f46e520;
-      --cyan:      #0891b2;
-      --green:     #059669;
-      --green-dim: #d1fae5;
+      --bg-card2:  #fbfbfb;
+      --bg-hover:  #f0f0f1;
+      --border:    #e4e4e7;
+      --border-hi: #cfcfd4;
+      --indigo:    #18181b;
+      --indigo-dim:#f0f0f1;
+      --indigo-glow:#18181b1f;
+      --cyan:      #0e7490;
+      --cyan-bg:   #e0f2fe;
+      --green:     #16a34a;
+      --green-dim: #dcfce7;
       --red:       #dc2626;
       --red-bg:    #fee2e2;
-      --yellow:    #d97706;
-      --yellow-bg: #fef3c7;
+      --yellow:    #ca8a04;
+      --yellow-bg: #fef9c3;
       --orange:    #ea580c;
       --orange-bg: #ffedd5;
-      --purple:    #7c3aed;
-      --purple-bg: #ede9fe;
-      --teal:      #0d9488;
-      --text:      #0f172a;
-      --text-muted:#64748b;
-      --text-dim:  #475569;
+      --purple:    #6b21a8;
+      --purple-bg: #f3e8ff;
+      --teal:      #0f766e;
+      --teal-bg:   #ecfdf5;
+      --blue:      #2563eb;
+      --blue-bg:   #dbeafe;
+      --gray:      #52525b;
+      --gray-bg:   #f0f0f1;
+      --text:      #18181b;
+      --text-muted:#71717a;
+      --text-dim:  #3f3f46;
     }
-    body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; }
+
+    /* ── Emerald theme (dark, emerald accent) ── */
+    body[data-theme="emerald"] {
+      --bg:        #061412;
+      --bg-card:   #0a1c18;
+      --bg-card2:  #0d231e;
+      --bg-hover:  #122e27;
+      --border:    #1c3d35;
+      --border-hi: #2a5447;
+      --indigo:    #10b981;
+      --indigo-dim:#06352a;
+      --indigo-glow:#10b98130;
+      --cyan:      #2dd4bf;
+      --cyan-bg:   #0a2a28;
+      --green:     #34d399;
+      --green-dim: #064e3b;
+      --red:       #f87171;
+      --red-bg:    #2d0a0a;
+      --yellow:    #fbbf24;
+      --yellow-bg: #422006;
+      --orange:    #fb923c;
+      --orange-bg: #431407;
+      --purple:    #a78bfa;
+      --purple-bg: #241e4b;
+      --teal:      #2dd4bf;
+      --teal-bg:   #0a2a28;
+      --blue:      #38bdf8;
+      --blue-bg:   #0a2233;
+      --gray:      #7dc4a8;
+      --gray-bg:   #122e27;
+      --text:      #e3f6ee;
+      --text-muted:#4f8f7b;
+      --text-dim:  #86d6bb;
+    }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-family); min-height: 100vh; }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: var(--bg); }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -79,10 +126,10 @@
     .login-title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-align: center; color: var(--text); margin-bottom: 4px; }
     .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 28px; }
     .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
-    .field-input { width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 7px; padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px; outline: none; transition: border-color 0.15s; margin-bottom: 16px; }
+    .field-input { width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 7px; padding: 10px 14px; color: var(--text); font-family: var(--font-family); font-size: 13px; outline: none; transition: border-color 0.15s; margin-bottom: 16px; }
     .field-input:focus { border-color: var(--indigo); }
     .field-input::placeholder { color: var(--text-muted); }
-    .login-btn  { width: 100%; padding: 11px; border-radius: 7px; border: none; cursor: pointer; background: var(--indigo); color: #fff; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; letter-spacing: 2px; transition: background 0.15s; margin-top: 4px; }
+    .login-btn  { width: 100%; padding: 11px; border-radius: 7px; border: none; cursor: pointer; background: var(--indigo); color: #fff; font-family: var(--font-family); font-size: 12px; font-weight: 700; letter-spacing: 2px; transition: background 0.15s; margin-top: 4px; }
     .login-btn:hover:not(:disabled) { background: #4f46e5; }
     .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .login-error { background: var(--red-bg); border: 1px solid #5a1a1a; border-radius: 7px; padding: 10px 14px; font-size: 12px; color: var(--red); margin-bottom: 14px; }
@@ -96,21 +143,38 @@
     .sidebar-role  { font-size: 9px; color: var(--indigo); letter-spacing: 1px; }
     .nav           { padding: 12px 10px; flex: 1; }
     .nav-section   { font-size: 9px; letter-spacing: 2px; color: var(--text-muted); padding: 8px 8px 4px; text-transform: uppercase; }
-    .nav-item      { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; cursor: pointer; font-size: 12px; color: var(--text-dim); font-weight: 500; transition: all 0.15s; margin-bottom: 2px; border: none; background: none; width: 100%; text-align: left; font-family: 'IBM Plex Mono', monospace; }
+    .nav-item      { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; cursor: pointer; font-size: 12px; color: var(--text-dim); font-weight: 500; transition: all 0.15s; margin-bottom: 2px; border: none; background: none; width: 100%; text-align: left; font-family: var(--font-family); }
     .nav-item:hover  { background: var(--bg-hover); color: var(--text); }
     .nav-item.active { background: var(--indigo-dim); color: var(--indigo); }
     .nav-icon        { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
     .sidebar-footer  { padding: 14px 10px; border-top: 1px solid var(--border); }
-    .logout-btn { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
+    .logout-btn { width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: var(--font-family); font-size: 11px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
     .logout-btn:hover { background: var(--red-bg); color: var(--red); border-color: #5a1a1a; }
 
     /* ── Main content ── */
     .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-    .topbar  { height: 54px; background: rgba(6,10,20,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .topbar  { height: 54px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
     .topbar-title { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
     .topbar-right { display: flex; align-items: center; gap: 10px; }
     .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--indigo); animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+
+    /* ── Announcement bar ── */
+    .ann-bar { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px 0 16px; background: var(--indigo-dim); border-bottom: 1px solid var(--border); overflow: hidden; position: relative; }
+    .ann-icon { font-size: 13px; flex-shrink: 0; }
+    .ann-track { display: flex; flex: 1; overflow: hidden; white-space: nowrap; mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent); }
+    .ann-track-inner { display: flex; align-items: center; gap: 48px; animation: ann-scroll linear infinite; padding-right: 48px; }
+    @keyframes ann-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .ann-item { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); white-space: nowrap; }
+    .ann-tag { font-size: 9px; padding: 1px 7px; border-radius: 9px; font-weight: 700; letter-spacing: 1px; flex-shrink: 0; }
+    .ann-tag-order  { background: var(--indigo); color: #fff; }
+    .ann-tag-vendor { background: var(--green); color: #06281f; }
+    .ann-tag-all-vendors { background: var(--purple); color: #1e1b4b; }
+    .ann-tag-admin  { background: var(--red); color: #2d0a0a; }
+    .ann-nav { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .ann-nav-btn { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-card2); color: var(--text-dim); cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; line-height: 1; transition: all 0.15s; }
+    .ann-nav-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .ann-counter { font-size: 9px; color: var(--text-muted); letter-spacing: 1px; min-width: 26px; text-align: center; }
     .page { padding: 20px 24px 40px; }
 
     /* ── Mobile ── */
@@ -163,7 +227,7 @@
     .mbn-label { font-size:8px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; }
 
     /* ── Buttons ── */
-    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 6px; border: none; cursor: pointer; font-family: var(--font-family); font-size: 11px; font-weight: 600; letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-indigo { background: var(--indigo); color: #fff; }
     .btn-indigo:hover:not(:disabled) { background: #4f46e5; }
@@ -224,23 +288,24 @@
     .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 700; letter-spacing: 1px; white-space: nowrap; }
     .bdot  { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
     .b-new       { background: var(--indigo-dim); color: var(--indigo); } .b-new       .bdot { background: var(--indigo); }
-    .b-confirmed { background: #0d1f30;           color: var(--cyan);   } .b-confirmed .bdot { background: var(--cyan); }
-    .b-ready     { background: #0d1f30;           color: var(--teal);   } .b-ready     .bdot { background: var(--teal); }
+    .b-confirmed { background: var(--cyan-bg);    color: var(--cyan);   } .b-confirmed .bdot { background: var(--cyan); }
+    .b-ready     { background: var(--teal-bg);    color: var(--teal);   } .b-ready     .bdot { background: var(--teal); }
     .b-pickup    { background: var(--yellow-bg);  color: var(--yellow); } .b-pickup    .bdot { background: var(--yellow); }
     .b-transit   { background: var(--orange-bg);  color: var(--orange); } .b-transit   .bdot { background: var(--orange); }
+    .b-ofd       { background: var(--blue-bg);    color: var(--blue);   } .b-ofd       .bdot { background: var(--blue); }
     .b-delivered { background: var(--green-dim);  color: var(--green);  } .b-delivered .bdot { background: var(--green); }
     .b-rto       { background: var(--red-bg);     color: var(--red);    } .b-rto       .bdot { background: var(--red); }
-    .b-partial   { background: #1a1200;           color: #fbbf24;       } .b-partial   .bdot { background: #fbbf24; }
-    .b-penalty   { background: #2d0a0a;           color: #f87171;       } .b-penalty   .bdot { background: #f87171; }
+    .b-partial   { background: var(--yellow-bg);  color: var(--yellow); } .b-partial   .bdot { background: var(--yellow); }
+    .b-penalty   { background: var(--red-bg);     color: var(--red);    } .b-penalty   .bdot { background: var(--red); }
     .b-hold      { background: var(--purple-bg);  color: var(--purple); } .b-hold      .bdot { background: var(--purple); }
     .b-cancelled { background: var(--red-bg);     color: var(--red);    } .b-cancelled .bdot { background: var(--red); }
-    .b-misc      { background: rgba(156,163,175,0.15); color: #9ca3af;   } .b-misc      .bdot { background: #9ca3af; }
+    .b-misc      { background: var(--gray-bg);    color: var(--gray);   } .b-misc      .bdot { background: var(--gray); }
     .b-pending   { background: var(--yellow-bg);  color: var(--yellow); } .b-pending   .bdot { background: var(--yellow); }
     .b-paid      { background: var(--green-dim);  color: var(--green);  } .b-paid      .bdot { background: var(--green); }
 
     /* ── Stage tabs ── */
     .stage-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
-    .stab { padding: 6px 12px; border-radius: 6px; font-size: 10px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; letter-spacing: 1px; transition: all 0.15s; }
+    .stab { padding: 6px 12px; border-radius: 6px; font-size: 10px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: var(--font-family); letter-spacing: 1px; transition: all 0.15s; }
     .stab:hover  { background: var(--bg-card2); color: var(--text); }
     .stab.active { background: var(--indigo); color: #fff; border-color: var(--indigo); }
 
@@ -248,11 +313,11 @@
     .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
     .search-wrap { position: relative; flex: 1; min-width: 180px; }
     .search-ico  { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
-    .search-input { width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px 7px 30px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px; outline: none; transition: border-color 0.15s; }
+    .search-input { width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px 7px 30px; color: var(--text); font-family: var(--font-family); font-size: 12px; outline: none; transition: border-color 0.15s; }
     .search-input:focus { border-color: var(--indigo); }
     .search-input::placeholder { color: var(--text-muted); }
     .fcount { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
-    .fselect { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 26px 7px 10px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 11px; outline: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b6a8e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .fselect { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 26px 7px 10px; color: var(--text); font-family: var(--font-family); font-size: 11px; outline: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b6a8e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
     .fselect:focus { border-color: var(--indigo); }
 
     /* ── Skeleton ── */
@@ -286,7 +351,7 @@
     .form-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .form-full  { grid-column: 1/-1; }
     .form-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 5px; }
-    .form-input, .form-select { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px; outline: none; transition: border-color 0.15s; }
+    .form-input, .form-select { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: var(--font-family); font-size: 12px; outline: none; transition: border-color 0.15s; }
     .form-select { appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234b6a8e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
     .form-input:focus, .form-select:focus { border-color: var(--indigo); }
     .form-input::placeholder { color: var(--text-muted); }
@@ -329,7 +394,7 @@
     .pager { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-card2); }
     .pager-info { font-size: 11px; color: var(--text-muted); }
     .pbtns { display: flex; gap: 3px; }
-    .pbtn { min-width: 30px; height: 30px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; padding: 0 6px; }
+    .pbtn { min-width: 30px; height: 30px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: var(--font-family); font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; padding: 0 6px; }
     .pbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
     .pbtn.cur { background: var(--indigo); color: #fff; border-color: var(--indigo); font-weight: 700; }
     .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -355,10 +420,10 @@
     .typing-dot:nth-child(3) { animation-delay: 0.4s; }
     @keyframes tdot { 0%,60%,100%{opacity:0.2;transform:scale(0.8);} 30%{opacity:1;transform:scale(1.1);} }
     .chat-suggestions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 20px 12px; flex-shrink: 0; }
-    .suggestion { padding: 5px 12px; border-radius: 20px; font-size: 11px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; transition: all 0.15s; }
+    .suggestion { padding: 5px 12px; border-radius: 20px; font-size: 11px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: var(--font-family); transition: all 0.15s; }
     .suggestion:hover { background: var(--bg-card2); color: var(--cyan); border-color: var(--cyan); }
     .chat-input-row { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0; }
-    .chat-textarea { flex: 1; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px; resize: none; outline: none; transition: border-color 0.15s; max-height: 120px; line-height: 1.5; }
+    .chat-textarea { flex: 1; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; color: var(--text); font-family: var(--font-family); font-size: 13px; resize: none; outline: none; transition: border-color 0.15s; max-height: 120px; line-height: 1.5; }
     .chat-textarea::placeholder { color: var(--text-muted); }
     .chat-textarea:focus { border-color: var(--cyan); }
     .chat-send { width: 40px; height: 40px; border-radius: 8px; border: none; background: var(--indigo); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; flex-shrink: 0; }
@@ -686,6 +751,103 @@
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
     { id:'misc',      label:'Miscellaneous',  color:'gray',   icon:'◌' },
   ];
+
+  // ── Icon sets (Minimal outline + Shapes solid) for the icon-style switcher ──
+  const ICONS = {
+    dashboard:   { minimal:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+                    shapes:'<rect x="2" y="2" width="9" height="9" rx="2" fill="currentColor"/><rect x="13" y="2" width="9" height="9" rx="2" fill="currentColor" opacity=".4"/><rect x="2" y="13" width="9" height="9" rx="2" fill="currentColor" opacity=".4"/><rect x="13" y="13" width="9" height="9" rx="2" fill="currentColor"/>' },
+    orders:      { minimal:'<rect x="4" y="2.5" width="16" height="19" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/>',
+                    shapes:'<rect x="3" y="2" width="18" height="20" rx="3" fill="currentColor" opacity=".18"/><rect x="6" y="6.5" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="6" y="11" width="12" height="2.4" rx="1.2" fill="currentColor" opacity=".75"/><rect x="6" y="15.5" width="8" height="2.4" rx="1.2" fill="currentColor" opacity=".5"/>' },
+    vendors:     { minimal:'<path d="M4 9 5.5 4h13L20 9"/><rect x="4" y="9" width="16" height="11" rx="1.5"/><line x1="9" y1="20" x2="9" y2="14"/><line x1="15" y1="20" x2="15" y2="14"/>',
+                    shapes:'<path d="M3 9 5 3h14l2 6z" fill="currentColor" opacity=".4"/><rect x="3" y="9" width="18" height="12" rx="2" fill="currentColor" opacity=".18"/><rect x="9.5" y="13" width="5" height="8" rx="1" fill="currentColor"/>' },
+    jarvis:      { minimal:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+                    shapes:'<path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/>' },
+    returns:     { minimal:'<path d="M3 11a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".15"/><path d="M6 11a7 7 0 1 0 2-4.9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M5 5v5h5z" fill="currentColor"/>' },
+    ccinventory: { minimal:'<path d="M12 2 21 7v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v9"/>',
+                    shapes:'<path d="M12 2 21 7v10l-9 5-9-5V7z" fill="currentColor" opacity=".18"/><path d="M3 7l9 5 9-5-9-5z" fill="currentColor" opacity=".5"/><path d="M3 7v10l9 5v-10z" fill="currentColor" opacity=".25"/>' },
+    settlements: { minimal:'<circle cx="12" cy="12" r="9"/><path d="M9 8h4a2.2 2.2 0 0 1 0 4.4H9m0 0h5M9 8v9m0-4.6h2"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><circle cx="12" cy="12" r="6.5" fill="currentColor"/>' },
+    settings:    { minimal:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M19.4 4.6l-2.1 2.1M6.7 17.3l-2.1 2.1"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".15"/><circle cx="12" cy="12" r="5" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="var(--bg-card)"/>' },
+    tagmappings: { minimal:'<path d="M3 11.5 11.5 3H20v8.5L11.5 20z"/><circle cx="15" cy="8" r="1.5"/>',
+                    shapes:'<path d="M3 11.5 11.5 3H20v8.5L11.5 20z" fill="currentColor" opacity=".3"/><circle cx="15" cy="8" r="2" fill="currentColor"/>' },
+    shippingcreds:{ minimal:'<rect x="1" y="7" width="13" height="9" rx="1"/><path d="M14 10h4l3 3v3h-7z"/><circle cx="6" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/>',
+                    shapes:'<rect x="1" y="6" width="14" height="10" rx="1.5" fill="currentColor" opacity=".4"/><path d="M15 9h4l3 3.5v3.5h-7z" fill="currentColor" opacity=".2"/><circle cx="6" cy="18" r="2" fill="currentColor"/><circle cx="17" cy="18" r="2" fill="currentColor"/>' },
+    emailsettings:{ minimal:'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7"/>',
+                    shapes:'<rect x="2" y="4" width="20" height="16" rx="2" fill="currentColor" opacity=".18"/><path d="M2 5l10 8 10-8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' },
+    vendorsync:  { minimal:'<path d="M21 12a9 9 0 0 1-15.5 6.4M3 12a9 9 0 0 1 15.5-6.4"/><path d="M3 4v5h5M21 20v-5h-5"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".15"/><path d="M7 8a6 6 0 0 1 9.5-1.5M17 16a6 6 0 0 1-9.5 1.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M16 4v3h-3z" fill="currentColor"/><path d="M8 20v-3h3z" fill="currentColor"/>' },
+    penalties:   { minimal:'<path d="M12 3 2 21h20z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.5" r="0.6" fill="currentColor"/>',
+                    shapes:'<path d="M12 2 23 21H1z" fill="currentColor" opacity=".25"/><rect x="11" y="8" width="2" height="6" rx="1" fill="currentColor"/><circle cx="12" cy="17" r="1.3" fill="currentColor"/>' },
+    reports:     { minimal:'<rect x="3" y="10" width="4" height="10" rx="1"/><rect x="10" y="5" width="4" height="15" rx="1"/><rect x="17" y="13" width="4" height="7" rx="1"/>',
+                    shapes:'<rect x="2" y="11" width="5" height="11" rx="1.5" fill="currentColor" opacity=".5"/><rect x="9.5" y="4" width="5" height="18" rx="1.5" fill="currentColor"/><rect x="17" y="13" width="5" height="9" rx="1.5" fill="currentColor" opacity=".5"/>' },
+    audit:       { minimal:'<rect x="4" y="3" width="16" height="18" rx="2"/><rect x="8" y="1.5" width="8" height="3" rx="1"/><path d="M8 13l2 2 5-5"/>',
+                    shapes:'<rect x="4" y="2" width="16" height="20" rx="2" fill="currentColor" opacity=".18"/><rect x="8" y="1" width="8" height="3" rx="1" fill="currentColor"/><path d="M8 13l2.2 2.2L16 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' },
+    webhooks:    { minimal:'<rect x="2" y="8" width="10" height="8" rx="4"/><rect x="12" y="8" width="10" height="8" rx="4"/>',
+                    shapes:'<circle cx="9" cy="12" r="6" fill="currentColor" opacity=".35"/><circle cx="15" cy="12" r="6" fill="currentColor"/>' },
+    googlecontacts:{ minimal:'<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="4" y1="7" x2="20" y2="7"/><circle cx="12" cy="13" r="2.5"/><path d="M8 19c0-2 1.8-3 4-3s4 1 4 3"/>',
+                    shapes:'<rect x="4" y="2" width="16" height="20" rx="2" fill="currentColor" opacity=".18"/><circle cx="12" cy="11" r="3" fill="currentColor"/><path d="M7 19c0-2.5 2.2-4 5-4s5 1.5 5 4z" fill="currentColor" opacity=".6"/>' },
+    commissionrules:{ minimal:'<line x1="5" y1="19" x2="19" y2="5"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/>',
+                    shapes:'<circle cx="7" cy="7" r="4" fill="currentColor"/><circle cx="17" cy="17" r="4" fill="currentColor" opacity=".4"/><rect x="10.5" y="3" width="3" height="18" rx="1.5" fill="currentColor" opacity=".7" transform="rotate(35 12 12)"/>' },
+    onboarding:  { minimal:'<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6.5 7-6.5s7 2.5 7 6.5"/><line x1="18" y1="6" x2="18" y2="12"/><line x1="15" y1="9" x2="21" y2="9"/>',
+                    shapes:'<circle cx="9" cy="8" r="4.5" fill="currentColor"/><path d="M1 21c0-4.5 3.5-7 8-7s8 2.5 8 7z" fill="currentColor" opacity=".35"/><circle cx="18" cy="9" r="4" fill="currentColor" opacity=".18"/><path d="M18 6.5v5M15.5 9h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' },
+    agreements:  { minimal:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
+                    shapes:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" opacity=".18"/><path d="M14 2v6h6z" fill="currentColor" opacity=".5"/><rect x="7" y="12" width="9" height="2" rx="1" fill="currentColor"/><rect x="7" y="16" width="6" height="2" rx="1" fill="currentColor" opacity=".6"/>' },
+    theme:       { minimal:'<path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2s-.5-1.5-1-2 .5-2 2-2h2a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="12" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="10.5" r="1.2" fill="currentColor"/>',
+                    shapes:'<path d="M12 2a10 10 0 1 0 0 20c1.7 0 2.5-1.1 2.5-2.3 0-.9-.6-1.6-1.1-2.2-.4-.5-.2-1.5 1-1.5h2.3A4.3 4.3 0 0 0 21 11.7C21 6.2 17 2 12 2z" fill="currentColor" opacity=".18"/><circle cx="7.5" cy="10" r="1.8" fill="currentColor"/><circle cx="12" cy="6.5" r="1.8" fill="currentColor" opacity=".7"/><circle cx="16.5" cy="10" r="1.8" fill="currentColor" opacity=".4"/>' },
+    // Order-stage icons
+    new:         { minimal:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor"/>' },
+    confirmed:   { minimal:'<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><path d="M7 12.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' },
+    partial:     { minimal:'<circle cx="12" cy="12" r="9"/><path d="M12 3v18"/>',
+                    shapes:'<path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor" opacity=".25"/>' },
+    ready:       { minimal:'<path d="M12 2 21 7v10l-9 5-9-5V7z"/>',
+                    shapes:'<path d="M12 2 21 7v10l-9 5-9-5V7z" fill="currentColor" opacity=".35"/><path d="M12 2 21 7l-9 5-9-5z" fill="currentColor"/>' },
+    pickup:      { minimal:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><path d="M12 6v6l4 4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' },
+    transit:     { minimal:'<line x1="3" y1="12" x2="18" y2="12"/><path d="M13 6l6 6-6 6"/>',
+                    shapes:'<rect x="2" y="10" width="13" height="4" rx="2" fill="currentColor" opacity=".5"/><path d="M13 5l8 7-8 7z" fill="currentColor"/>' },
+    ofd:         { minimal:'<rect x="3" y="6" width="11" height="8" rx="1.5"/><circle cx="6.5" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/><path d="M14 10h4l3 4h-4"/>',
+                    shapes:'<rect x="2" y="5" width="12" height="9" rx="2" fill="currentColor" opacity=".4"/><path d="M14 9h4l3 4.5h-7z" fill="currentColor" opacity=".2"/><circle cx="6.5" cy="18" r="2.4" fill="currentColor"/><circle cx="17.5" cy="18" r="2.4" fill="currentColor"/>' },
+    delivered:   { minimal:'<circle cx="12" cy="12" r="9"/><path d="M7.5 12.5l3 3 6-6.5"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M7 12.5l3.2 3.2L17 8.5" fill="none" stroke="var(--bg-card)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' },
+    hold:        { minimal:'<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+                    shapes:'<rect x="5" y="3" width="6" height="18" rx="2" fill="currentColor"/><rect x="13" y="3" width="6" height="18" rx="2" fill="currentColor" opacity=".5"/>' },
+    cancelled:   { minimal:'<circle cx="12" cy="12" r="9"/><line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/><line x1="15.5" y1="8.5" x2="8.5" y2="15.5"/>',
+                    shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><path d="M8 8l8 8M16 8l-8 8" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>' },
+    misc:        { minimal:'<circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/>',
+                    shapes:'<circle cx="6" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="3" fill="currentColor" opacity=".6"/><circle cx="18" cy="12" r="3" fill="currentColor" opacity=".3"/>' },
+    more:        { minimal:'<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+                    shapes:'<rect x="2" y="4" width="20" height="3.5" rx="1.5" fill="currentColor"/><rect x="2" y="10.5" width="20" height="3.5" rx="1.5" fill="currentColor" opacity=".7"/><rect x="2" y="17" width="20" height="3.5" rx="1.5" fill="currentColor" opacity=".4"/>' },
+  };
+  ICONS.all = ICONS.dashboard;
+  ICONS.rto = ICONS.returns;
+  ICONS.penalty = ICONS.penalties;
+
+  const ICON_STYLE_OPTIONS = [
+    { id:'emoji',   label:'Default Emoji' },
+    { id:'minimal', label:'Minimal Outline' },
+    { id:'shapes',  label:'Bold Shapes' },
+  ];
+
+  const FONT_OPTIONS = [
+    { id:'mono',  label:'Mono (Default)', family:"'IBM Plex Mono', monospace", sample:'The quick brown fox 0123' },
+    { id:'sans',  label:'Sans (Modern)',  family:"'Inter', sans-serif",        sample:'The quick brown fox 0123' },
+    { id:'round', label:'Rounded (Soft)', family:"'Poppins', sans-serif",      sample:'The quick brown fox 0123' },
+  ];
+
+  function Icon({ name, mode, fallback, size=15 }) {
+    if (mode !== 'minimal' && mode !== 'shapes') return <span>{fallback}</span>;
+    const def = ICONS[name];
+    const frag = def && def[mode];
+    if (!frag) return <span>{fallback}</span>;
+    const svgAttrs = mode==='minimal'
+      ? { fill:'none', stroke:'currentColor', strokeWidth:'1.7', strokeLinecap:'round', strokeLinejoin:'round' }
+      : {};
+    return <svg width={size} height={size} viewBox="0 0 24 24" style={{verticalAlign:'middle',flexShrink:0}} {...svgAttrs} dangerouslySetInnerHTML={{__html: frag}}/>;
+  }
 
   function trackingUrlFromCourier(courier='', awb='') {
     if (!awb) return '';
@@ -1054,7 +1216,7 @@
                     const a = order.shippingAddress;
                     const text = [a.name, a.phone, a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ');
                     navigator.clipboard.writeText(text);
-                  }} style={{marginTop:8,width:'100%',fontSize:10,padding:'4px 0',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text-muted)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace'}}>
+                  }} style={{marginTop:8,width:'100%',fontSize:10,padding:'4px 0',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text-muted)',cursor:'pointer',fontFamily:'var(--font-family)'}}>
                     📋 Copy Address
                   </button>
                 </>) : <div style={{color:'var(--text-muted)',fontSize:12}}>No shipping address</div>}
@@ -1138,7 +1300,7 @@
                               value={priceEditing[liId]}
                               onChange={e=>setPriceEditing(p=>({...p,[liId]:e.target.value}))}
                               onKeyDown={e=>{ if(e.key==='Enter') savePrice(li); if(e.key==='Escape') setPriceEditing(p=>{const n={...p};delete n[liId];return n;}); }}
-                              style={{width:90,fontSize:11,padding:'4px 8px',borderRadius:4,border:'1px solid #f59e0b',background:'#1a1200',color:'#f59e0b',outline:'none',fontFamily:'IBM Plex Mono,monospace'}}
+                              style={{width:90,fontSize:11,padding:'4px 8px',borderRadius:4,border:'1px solid #f59e0b',background:'#1a1200',color:'#f59e0b',outline:'none',fontFamily:'var(--font-family)'}}
                               autoFocus
                             />
                             <button onClick={()=>savePrice(li)} disabled={savingPrice[liId]}
@@ -1309,7 +1471,7 @@
                             <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{vName}</span>
                             <div style={{display:'flex',gap:6,alignItems:'center'}}>
                               {vd.tag && <span style={{fontSize:10,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 8px'}}>{vd.tag}</span>}
-                              <span style={{fontSize:9,color:'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace'}}>{vd.awb}</span>
+                              <span style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--font-family)'}}>{vd.awb}</span>
                             </div>
                           </div>
                           {vd.message && <div style={{fontSize:10,color:'var(--text-muted)'}}>{vd.message}</div>}
@@ -1924,7 +2086,7 @@
     );
   }
 
-  function Dashboard({ token, onStageClick }) {
+  function Dashboard({ token, onStageClick, iconStyle }) {
     const [data,      setData]      = useState(null);
     const [analytics, setAnalytics] = useState(null);
     const [aLoading,  setALoading]  = useState(true);
@@ -2363,7 +2525,7 @@
                 onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border-hi)'}
                 onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}
               >
-                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6}}>{s.icon} {s.label}</div>
+                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6,display:'flex',alignItems:'center',gap:5}}><Icon name={s.id} mode={iconStyle} fallback={s.icon}/> {s.label}</div>
                 <div style={{fontSize:24,fontWeight:700,color:stageColor(s.id)}}>
                   {sc[s.id]||0}
                 </div>
@@ -2738,11 +2900,11 @@
       return groups;
     };
 
-    const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa',misc:'#9ca3af' };
+    const stageColors = { new:'var(--indigo)',confirmed:'var(--cyan)',ready:'var(--teal)',pickup:'var(--yellow)',transit:'var(--orange)',ofd:'var(--blue)',delivered:'var(--green)',hold:'var(--purple)',rto:'var(--red)',cancelled:'var(--red)',partial:'var(--yellow)',misc:'var(--gray)'};
 
     const MobileOrderRow = ({ o }) => {
       const timeStr = new Date(o.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
-      const stageColor = stageColors[o.stage||'new'] || '#6366f1';
+      const stageColor = stageColors[o.stage||'new'] || 'var(--indigo)';
       const isSelected = selected.has(o.shopifyId);
       const ds = o.deliveryStatus;
       const dsColor = ds==='Delivered'?'#10b981':ds&&/transit|shipped/i.test(ds)?'#06b6d4':ds&&/rto|return/i.test(ds)?'#ef4444':ds?'#f59e0b':'var(--text-muted)';
@@ -2762,7 +2924,7 @@
               {(o.vendors||[]).length>0 && <span style={{marginLeft:6,color:'var(--indigo)',fontSize:11}}>{(o.vendors||[]).join(', ')}</span>}
             </div>
             <div style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap'}}>
-              <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`${stageColor}22`,color:stageColor,border:`1px solid ${stageColor}44`}}>
+              <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`color-mix(in srgb, ${stageColor} 18%, transparent)`,color:stageColor,border:`1px solid color-mix(in srgb, ${stageColor} 40%, transparent)`}}>
                 {(o.stage||'new').charAt(0).toUpperCase()+(o.stage||'new').slice(1)}
               </span>
               <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,
@@ -2779,11 +2941,14 @@
             {o.awb && <div style={{fontSize:10,color:dsColor,marginTop:4,fontWeight:600}}>{ds||'Dispatched'} · {o.awb}</div>}
             {Object.keys(o.vendorStages||{}).length>1 && (
               <div style={{display:'flex',gap:4,marginTop:5,flexWrap:'wrap'}}>
-                {Object.entries(o.vendorStages).map(([v,s])=>(
-                  <span key={v} style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:`${stageColors[s]||'#888'}22`,color:stageColors[s]||'#888',border:`1px solid ${stageColors[s]||'#888'}44`}}>
-                    {v.split(' ')[0]}: {s}
-                  </span>
-                ))}
+                {Object.entries(o.vendorStages).map(([v,s])=>{
+                  const c = stageColors[s] || 'var(--text-muted)';
+                  return (
+                    <span key={v} style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:`color-mix(in srgb, ${c} 18%, transparent)`,color:c,border:`1px solid color-mix(in srgb, ${c} 40%, transparent)`}}>
+                      {v.split(' ')[0]}: {s}
+                    </span>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -2826,7 +2991,7 @@
               return (
                 <button key={s.id} onClick={()=>{setStage(s.id);setPage(1);}} style={{
                   flexShrink:0,padding:'5px 11px',borderRadius:20,border:'none',cursor:'pointer',
-                  fontSize:12,fontWeight:600,whiteSpace:'nowrap',fontFamily:'IBM Plex Mono,monospace',
+                  fontSize:12,fontWeight:600,whiteSpace:'nowrap',fontFamily:'var(--font-family)',
                   background:stage===s.id?'var(--indigo)':'var(--bg-card2)',
                   color:stage===s.id?'#fff':'var(--text-muted)',transition:'all 0.15s',
                 }}>
@@ -2838,7 +3003,7 @@
           {/* Extra filters row */}
           <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8,flexWrap:'wrap'}}>
             {/* Vendor filter */}
-            <select style={{fontSize:11,padding:'4px 8px',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,color:filterVendor!=='all'?'var(--indigo)':'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace',cursor:'pointer'}}
+            <select style={{fontSize:11,padding:'4px 8px',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,color:filterVendor!=='all'?'var(--indigo)':'var(--text-muted)',fontFamily:'var(--font-family)',cursor:'pointer'}}
               value={filterVendor} onChange={e=>{setFilterVendor(e.target.value);setPage(1);}}>
               <option value="all">All Vendors</option>
               {allVendorNames.map(v=><option key={v} value={v}>{v}</option>)}
@@ -2846,7 +3011,7 @@
             {/* Tag filter */}
             <div style={{position:'relative'}}>
               <button onClick={()=>{ setShowTagDrop(v=>!v); setTagSearch(''); }}
-                style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:`1px solid ${filterTags.size>0?'var(--indigo)':'var(--border)'}`,background:'var(--bg-card2)',color:filterTags.size>0?'var(--indigo)':'var(--text-muted)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',display:'flex',alignItems:'center',gap:5}}>
+                style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:`1px solid ${filterTags.size>0?'var(--indigo)':'var(--border)'}`,background:'var(--bg-card2)',color:filterTags.size>0?'var(--indigo)':'var(--text-muted)',cursor:'pointer',fontFamily:'var(--font-family)',display:'flex',alignItems:'center',gap:5}}>
                 🏷 Tags{filterTags.size>0?` (${filterTags.size})`:''}
                 <span style={{fontSize:9}}>{showTagDrop?'▲':'▼'}</span>
               </button>
@@ -2895,7 +3060,7 @@
             {['all','prepaid','cod','advance'].map(p=>(
               <button key={p} onClick={()=>{setFilterPayment(p);setPage(1);}} style={{
                 padding:'4px 10px',borderRadius:20,border:'none',cursor:'pointer',
-                fontSize:11,fontWeight:600,fontFamily:'IBM Plex Mono,monospace',
+                fontSize:11,fontWeight:600,fontFamily:'var(--font-family)',
                 background: filterPayment===p ? (p==='prepaid'?'#10b981':p==='cod'?'#f59e0b':p==='advance'?'#a78bfa':'var(--indigo)') : 'var(--bg-card2)',
                 color: filterPayment===p ? (p==='all'?'#fff':'#000') : 'var(--text-muted)',
                 transition:'all 0.15s',
@@ -3189,11 +3354,11 @@
                 <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
                   <div>
                     <div style={{color,fontWeight:700,marginBottom:3}}>{label}</div>
-                    <div style={{color:'var(--text)',fontFamily:'IBM Plex Mono,monospace'}}>{ship.awb}</div>
+                    <div style={{color:'var(--text)',fontFamily:'var(--font-family)'}}>{ship.awb}</div>
                     <div style={{color:'var(--text-muted)',marginTop:2}}>{ship.courier} · {ship.created_at?.split('T')[0]}</div>
                   </div>
                   <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
-                    {(()=>{ const url = ship.tracking_url || trackingUrlFromCourier(ship.courier||'', ship.awb||''); return url ? <a href={url} target="_blank" rel="noreferrer" style={{fontSize:10,padding:'2px 9px',borderRadius:4,border:`1px solid ${color}`,color,background:'transparent',textDecoration:'none',fontFamily:'IBM Plex Mono,monospace',fontWeight:600,cursor:'pointer'}}>🔗 Track →</a> : null; })()}
+                    {(()=>{ const url = ship.tracking_url || trackingUrlFromCourier(ship.courier||'', ship.awb||''); return url ? <a href={url} target="_blank" rel="noreferrer" style={{fontSize:10,padding:'2px 9px',borderRadius:4,border:`1px solid ${color}`,color,background:'transparent',textDecoration:'none',fontFamily:'var(--font-family)',fontWeight:600,cursor:'pointer'}}>🔗 Track →</a> : null; })()}
                     <button
                       onClick={async()=>{
                         if(!window.confirm(`Remove this ${dir} shipment (AWB: ${ship.awb})? You can then recreate or re-enter a new one.`)) return;
@@ -3202,7 +3367,7 @@
                         if(r.ok){ setMsg({type:'success',text:`${dir} shipment removed.`}); onUpdated&&onUpdated(); }
                         else setMsg({type:'error',text:'Remove failed.'});
                       }}
-                      style={{background:'var(--red-bg)',border:'1px solid var(--red)',color:'var(--red)',borderRadius:4,padding:'2px 7px',fontSize:10,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace'}}>
+                      style={{background:'var(--red-bg)',border:'1px solid var(--red)',color:'var(--red)',borderRadius:4,padding:'2px 7px',fontSize:10,cursor:'pointer',fontFamily:'var(--font-family)'}}>
                       ✕ Remove
                     </button>
                   </div>
@@ -3221,14 +3386,14 @@
           <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
             <div>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Direction</div>
-              <select value={manualDir} onChange={e=>setManualDir(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+              <select value={manualDir} onChange={e=>setManualDir(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none'}}>
                 <option value="reverse">↩ Reverse (Return pickup)</option>
                 {rr.type==='exchange'&&<option value="forward">→ Forward (Exchange dispatch)</option>}
               </select>
             </div>
             <div>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
-              <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none',minWidth:130}}>
+              <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none',minWidth:130}}>
                 <option value="">— Select —</option>
                 {ssCouriers.length > 0
                   ? ssCouriers.map(c=><option key={c.CourierCode||c.CourierName} value={c.CourierCode||c.CourierName}>{c.CourierName||c.CourierCode}</option>)
@@ -3239,7 +3404,7 @@
             <div style={{flex:1,minWidth:160}}>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking Number</div>
               <input value={manualAwb} onChange={e=>setManualAwb(e.target.value)} placeholder="Enter AWB…"
-                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none',boxSizing:'border-box'}}/>
+                style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none',boxSizing:'border-box'}}/>
             </div>
             <button className="btn btn-primary" style={{fontSize:11,padding:'7px 14px',whiteSpace:'nowrap'}} onClick={saveManualAwb} disabled={savingManual||!manualAwb.trim()}>
               {savingManual?<><span className="spin">↻</span> Saving…</>:'💾 Save AWB'}
@@ -3255,7 +3420,7 @@
             <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end',marginBottom:10}}>
               <div>
                 <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Partner</div>
-                <select value={partner} onChange={e=>setPartner(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                <select value={partner} onChange={e=>setPartner(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none'}}>
                   {partners.map(p=><option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}
                 </select>
               </div>
@@ -3263,7 +3428,7 @@
                 <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Deliver To (Warehouse){whLoading&&<span style={{marginLeft:6,opacity:0.5}}>↻</span>}</div>
                 {warehouses.length > 0 ? (
                   <select value={warehouse?.id||''} onChange={e=>setWarehouse(warehouses.find(w=>w.id===e.target.value)||null)}
-                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                    style={{width:'100%',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none'}}>
                     {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}{w.address?` — ${w.address}`:''}</option>)}
                   </select>
                 ) : (
@@ -3273,14 +3438,14 @@
               {[['Weight (kg)','weight',weight,setWeight],['L (cm)','length',length,setLength],['B (cm)','breadth',breadth,setBreadth],['H (cm)','height',height,setHeight]].map(([lbl,k,val,set])=>(
                 <div key={k}>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{lbl}</div>
-                  <input type="number" value={val} onChange={e=>{ set(e.target.value); setRateInfo(null); }} style={{width:68,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}} />
+                  <input type="number" value={val} onChange={e=>{ set(e.target.value); setRateInfo(null); }} style={{width:68,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none'}} />
                 </div>
               ))}
               {partner==='delhivery' && (
                 <div>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Mode</div>
                   <select value={shipMode} onChange={e=>{setShipMode(e.target.value);setRateInfo(null);}}
-                    style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,outline:'none'}}>
+                    style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 8px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none'}}>
                     <option value="Surface">Surface</option>
                     <option value="Express">Express</option>
                   </select>
@@ -3319,7 +3484,7 @@
                 <div style={{fontSize:11,fontWeight:700,color:'var(--cyan)',marginBottom:4}}>↩ Reverse Pickup</div>
                 <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>Customer → Vendor · Pickup return item from customer</div>
                 {revShip
-                  ? <div style={{fontSize:10,color:'var(--text-muted)'}}>AWB: <span style={{color:'var(--cyan)',fontFamily:'IBM Plex Mono,monospace'}}>{revShip.awb}</span> — remove above to recreate</div>
+                  ? <div style={{fontSize:10,color:'var(--text-muted)'}}>AWB: <span style={{color:'var(--cyan)',fontFamily:'var(--font-family)'}}>{revShip.awb}</span> — remove above to recreate</div>
                   : <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>createShipment('reverse')} disabled={!!creating}>{creating==='reverse'?<><span className="spin">↻</span> Creating…</>:'Create Reverse Pickup'}</button>
                 }
               </div>
@@ -3330,7 +3495,7 @@
                   <div style={{fontSize:11,fontWeight:700,color:'var(--green)',marginBottom:4}}>→ Forward Dispatch</div>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:8}}>Vendor → Customer · Send exchange item to customer</div>
                   {fwdShip
-                    ? <div style={{fontSize:10,color:'var(--text-muted)'}}>AWB: <span style={{color:'var(--green)',fontFamily:'IBM Plex Mono,monospace'}}>{fwdShip.awb}</span> — remove above to recreate</div>
+                    ? <div style={{fontSize:10,color:'var(--text-muted)'}}>AWB: <span style={{color:'var(--green)',fontFamily:'var(--font-family)'}}>{fwdShip.awb}</span> — remove above to recreate</div>
                     : <button className="btn btn-ghost btn-sm" style={{fontSize:11,borderColor:'var(--green)',color:'var(--green)'}} onClick={()=>createShipment('forward')} disabled={!!creating}>{creating==='forward'?<><span className="spin">↻</span> Creating…</>:'Create Forward Shipment'}</button>
                   }
                 </div>
@@ -3421,11 +3586,11 @@
               padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',
               background:tab===t?'var(--indigo-dim)':'var(--bg-card2)',
               color:tab===t?'var(--indigo)':'var(--text-muted)',
-              fontFamily:'IBM Plex Mono,monospace',fontSize:11,fontWeight:tab===t?700:400,
+              fontFamily:'var(--font-family)',fontSize:11,fontWeight:tab===t?700:400,
               textTransform:'capitalize',
             }}>{t}</button>
           ))}
-          <button onClick={()=>setRetCfgVendor(retCfgVendor?null:'__open')} style={{padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',background:retCfgVendor?'var(--yellow-bg)':'var(--bg-card2)',color:retCfgVendor?'var(--yellow)':'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace',fontSize:11,marginLeft:'auto'}}>
+          <button onClick={()=>setRetCfgVendor(retCfgVendor?null:'__open')} style={{padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',background:retCfgVendor?'var(--yellow-bg)':'var(--bg-card2)',color:retCfgVendor?'var(--yellow)':'var(--text-muted)',fontFamily:'var(--font-family)',fontSize:11,marginLeft:'auto'}}>
             ⚙ Vendor Return Config
           </button>
         </div>
@@ -3473,9 +3638,9 @@
                             <td style={{padding:'8px 10px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{rq.created_at?.split('T')[0]}</td>
                             <td style={{padding:'8px 10px'}} onClick={e=>e.stopPropagation()}>
                               <div style={{display:'flex',gap:4}}>
-                                {rq.status==='pending'&&<><button onClick={()=>updateRequest(rq.request_id,{status:'approved'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--green)',background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>✓</button><button onClick={()=>updateRequest(rq.request_id,{status:'rejected'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>✗</button></>}
-                                {rq.status==='approved'&&<button onClick={()=>updateRequest(rq.request_id,{status:'completed'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--teal)',background:'#042f2e',color:'var(--teal)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>Done</button>}
-                                <button onClick={()=>deleteRequest(rq.request_id)} title="Delete request" style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontSize:10}} disabled={saving}>🗑</button>
+                                {rq.status==='pending'&&<><button onClick={()=>updateRequest(rq.request_id,{status:'approved'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--green)',background:'var(--green-dim)',color:'var(--green)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:10}} disabled={saving}>✓</button><button onClick={()=>updateRequest(rq.request_id,{status:'rejected'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:10}} disabled={saving}>✗</button></>}
+                                {rq.status==='approved'&&<button onClick={()=>updateRequest(rq.request_id,{status:'completed'})} style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--teal)',background:'#042f2e',color:'var(--teal)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:10}} disabled={saving}>Done</button>}
+                                <button onClick={()=>deleteRequest(rq.request_id)} title="Delete request" style={{padding:'3px 8px',borderRadius:6,border:'1px solid var(--red)',background:'var(--red-bg)',color:'var(--red)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:10}} disabled={saving}>🗑</button>
                               </div>
                             </td>
                           </tr>
@@ -3539,12 +3704,12 @@
 
                                 <div style={{marginTop:14,marginBottom:6,fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Admin Note</div>
                                 <textarea
-                                  style={{width:'100%',maxWidth:480,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,minHeight:60,outline:'none',resize:'vertical'}}
+                                  style={{width:'100%',maxWidth:480,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:12,minHeight:60,outline:'none',resize:'vertical'}}
                                   placeholder="Internal note…"
                                   value={noteVal}
                                   onChange={e=>setNoteVal(e.target.value)}
                                 />
-                                <button className="btn btn-primary" style={{marginTop:8,fontSize:11,padding:'7px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',fontWeight:700}} onClick={()=>updateRequest(rq.request_id,{admin_note:noteVal})} disabled={saving}>
+                                <button className="btn btn-primary" style={{marginTop:8,fontSize:11,padding:'7px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontFamily:'var(--font-family)',fontWeight:700}} onClick={()=>updateRequest(rq.request_id,{admin_note:noteVal})} disabled={saving}>
                                   {saving?<><span className="spin">↻</span> Saving…</>:'Save Note'}
                                 </button>
                               </div>
@@ -3607,7 +3772,7 @@
         <div style={{padding:16}}>
           <div style={{marginBottom:14}}>
             <label className="field-label">Select Vendor</label>
-            <select style={{width:'100%',maxWidth:260,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:7,padding:'8px 12px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none'}} value={selectedVendor} onChange={e=>setSelectedVendor(e.target.value)}>
+            <select style={{width:'100%',maxWidth:260,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:7,padding:'8px 12px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:12,outline:'none'}} value={selectedVendor} onChange={e=>setSelectedVendor(e.target.value)}>
               {vendors.map(v=><option key={v} value={v}>{v}</option>)}
             </select>
           </div>
@@ -3631,13 +3796,13 @@
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span style={{fontSize:12,color:'var(--text)'}}>Window</span>
-                  <input type="number" min={1} max={90} style={{width:60,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.return_window_days} onChange={e=>setCfg(p=>({...p,return_window_days:parseInt(e.target.value)||7}))}/>
+                  <input type="number" min={1} max={90} style={{width:60,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.return_window_days} onChange={e=>setCfg(p=>({...p,return_window_days:parseInt(e.target.value)||7}))}/>
                   <span style={{fontSize:11,color:'var(--text-muted)'}}>days</span>
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span style={{fontSize:12,color:'var(--text)'}}>💳 RR Fee</span>
                   <span style={{fontSize:12,color:'var(--text-muted)'}}>₹</span>
-                  <input type="number" min={0} style={{width:70,background:'var(--bg-card2)',border:'1px solid var(--indigo)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'IBM Plex Mono,monospace',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.rr_fee??199} onChange={e=>setCfg(p=>({...p,rr_fee:parseFloat(e.target.value)||0}))}/>
+                  <input type="number" min={0} style={{width:70,background:'var(--bg-card2)',border:'1px solid var(--indigo)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:12,outline:'none',textAlign:'center'}} value={cfg.rr_fee??199} onChange={e=>setCfg(p=>({...p,rr_fee:parseFloat(e.target.value)||0}))}/>
                   <span style={{fontSize:10,color:'var(--text-muted)'}}>upfront (Razorpay)</span>
                 </div>
               </div>
@@ -3650,7 +3815,7 @@
                   </div>
                 ))}
               </div>
-              <button onClick={save} disabled={saving} style={{marginTop:14,padding:'8px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',fontFamily:'IBM Plex Mono,monospace',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
+              <button onClick={save} disabled={saving} style={{marginTop:14,padding:'8px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',fontFamily:'var(--font-family)',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
                 {saving?<><span className="spin">↻</span> Saving…</>:'✓ Save Config'}
               </button>
             </>
@@ -5266,7 +5431,7 @@
 
     return (
       <div style={{marginTop:10,borderTop:'1px solid var(--border)',paddingTop:10}}>
-        <button onClick={()=>setOpen(o=>!o)} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,fontFamily:'IBM Plex Mono,monospace',padding:0}}>
+        <button onClick={()=>setOpen(o=>!o)} style={{background:'none',border:'none',color:'var(--indigo)',cursor:'pointer',fontSize:11,fontFamily:'var(--font-family)',padding:0}}>
           {open?'▼':'▶'} 📍 Pickup / Warehouse Locations ({locs.length})
         </button>
         {open && (
@@ -5801,7 +5966,7 @@
                     <button key={t.key} onClick={()=>setShowAllApprovals(t.key)}
                       style={{flex:1,padding:'8px 4px',border:'none',borderBottom:`2px solid ${active?t.color:'transparent'}`,
                         background:'transparent',color:active?t.color:'var(--text-muted)',cursor:'pointer',
-                        fontSize:11,fontWeight:active?700:500,fontFamily:'IBM Plex Mono,monospace',
+                        fontSize:11,fontWeight:active?700:500,fontFamily:'var(--font-family)',
                         display:'flex',alignItems:'center',justifyContent:'center',gap:5,transition:'all 0.15s'}}>
                       {t.label}
                       {count>0&&<span style={{fontSize:9,padding:'1px 5px',borderRadius:99,background:active?t.color:'var(--bg-hover)',color:active?'#000':'var(--text-muted)',fontWeight:700}}>{count}</span>}
@@ -7226,7 +7391,7 @@
       if (!canvasRef.current || !window.Chart) return;
       if (chartRef.current) chartRef.current.destroy();
       const PALETTE = ['#6366f1','#22d3ee','#a78bfa','#34d399','#f59e0b','#f87171','#60a5fa','#fb923c','#e879f9','#4ade80'];
-      const isDark = !document.body.classList.contains('light-theme');
+      const isDark = document.body.getAttribute('data-theme') !== 'minimal';
       const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
       const textColor = isDark ? '#94a3b8' : '#64748b';
       chartRef.current = new Chart(canvasRef.current, {
@@ -7740,6 +7905,286 @@
   /* ══════════════════════════════════
      MAIN APP
   ══════════════════════════════════ */
+  function ThemeSettings({ token, theme, setTheme, brand, setBrand, THEME_OPTIONS, ICON_STYLE_OPTIONS, FONT_OPTIONS }) {
+    const [accent, setAccent] = useState(brand.accent_color || '');
+    const [saving, setSaving] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [msg, setMsg] = useState(null);
+
+    useEffect(()=>{ setAccent(brand.accent_color || ''); }, [brand.accent_color]);
+
+    const THEME_PREVIEWS = {
+      midnight: { bg:'#060a14', card:'#0a1020', accent:'#6366f1', text:'#e2e8f0' },
+      minimal:  { bg:'#f7f7f8', card:'#ffffff', accent:'#18181b', text:'#18181b' },
+      emerald:  { bg:'#061412', card:'#0a1c18', accent:'#10b981', text:'#e3f6ee' },
+    };
+
+    const pickTheme = async (id) => {
+      setTheme(id);
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/branding`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({theme:id})});
+        if (!r.ok) throw new Error('Save failed');
+        setBrand(b=>({...b, theme:id}));
+        setMsg({type:'success',text:'Theme saved.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const pickIconStyle = async (id) => {
+      setBrand(b=>({...b, icon_style:id}));
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/branding`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({icon_style:id})});
+        if (!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Icon style saved.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const pickFont = async (id) => {
+      setBrand(b=>({...b, font_style:id}));
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/branding`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({font_style:id})});
+        if (!r.ok) throw new Error('Save failed');
+        setMsg({type:'success',text:'Font style saved.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const saveAccent = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/branding`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({accent_color:accent})});
+        if (!r.ok) throw new Error('Save failed');
+        setBrand(b=>({...b, accent_color:accent}));
+        setMsg({type:'success',text:'Accent color saved.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const resetAccent = async () => {
+      setAccent('');
+      setSaving(true); setMsg(null);
+      try {
+        await fetch(`${API}/admin/branding`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({accent_color:''})});
+        setBrand(b=>({...b, accent_color:''}));
+        setMsg({type:'success',text:'Accent color reset to theme default.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    const uploadLogo = async (file) => {
+      if (!file) return;
+      setUploading(true); setMsg(null);
+      try {
+        const fd = new FormData(); fd.append('logo', file);
+        const r = await fetch(`${API}/admin/branding/logo`,{method:'POST',headers:{Authorization:`Bearer ${token}`},body:fd});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error||'Upload failed');
+        setBrand(b=>({...b, logo_url:d.url}));
+        setMsg({type:'success',text:'Logo uploaded.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setUploading(false);
+    };
+
+    const removeLogo = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/branding/logo`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+        if (!r.ok) throw new Error('Remove failed');
+        setBrand(b=>({...b, logo_url:''}));
+        setMsg({type:'success',text:'Logo removed.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
+    return (
+      <div className="page">
+        {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:12}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🎨 Panel Theme</span>
+            <span className="card-sub">Pick a look for the entire admin panel</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12}}>
+            {THEME_OPTIONS.map(t=>{
+              const p = THEME_PREVIEWS[t.id];
+              const active = theme===t.id;
+              return (
+                <div key={t.id} onClick={()=>pickTheme(t.id)}
+                  style={{cursor:'pointer',border:`2px solid ${active?'var(--indigo)':'var(--border)'}`,borderRadius:10,overflow:'hidden',background:'var(--bg-card2)'}}>
+                  <div style={{height:70,background:p.bg,display:'flex',alignItems:'center',padding:10,gap:6}}>
+                    <div style={{width:14,height:14,borderRadius:4,background:p.accent}}/>
+                    <div style={{flex:1}}>
+                      <div style={{height:24,borderRadius:5,background:p.card,marginBottom:4}}/>
+                      <div style={{height:8,width:'60%',borderRadius:3,background:p.accent,opacity:0.6}}/>
+                    </div>
+                  </div>
+                  <div style={{padding:'8px 10px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <span style={{fontSize:12,fontWeight:600}}>{t.icon} {t.label}</span>
+                    {active && <span style={{fontSize:10,color:'var(--indigo)',fontWeight:700}}>✓ Active</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🔣 Icon Style</span>
+            <span className="card-sub">Choose how sidebar &amp; dashboard icons look</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12}}>
+            {ICON_STYLE_OPTIONS.map(opt=>{
+              const active = (brand.icon_style||'emoji')===opt.id;
+              const previewIcons = [
+                {id:'dashboard', fb:'◈'}, {id:'orders', fb:'◎'}, {id:'vendors', fb:'🏪'},
+                {id:'jarvis', fb:'⚡'}, {id:'settings', fb:'⚙'}, {id:'theme', fb:'🎨'},
+              ];
+              return (
+                <div key={opt.id} onClick={()=>pickIconStyle(opt.id)}
+                  style={{cursor:'pointer',border:`2px solid ${active?'var(--indigo)':'var(--border)'}`,borderRadius:10,background:'var(--bg-card2)',padding:'12px 10px'}}>
+                  <div style={{display:'flex',gap:10,marginBottom:8,fontSize:18,color:'var(--indigo)'}}>
+                    {previewIcons.map(p=><Icon key={p.id} name={p.id} mode={opt.id} fallback={p.fb} size={18}/>)}
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <span style={{fontSize:12,fontWeight:600}}>{opt.label}</span>
+                    {active && <span style={{fontSize:10,color:'var(--indigo)',fontWeight:700}}>✓ Active</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🔤 Font Style</span>
+            <span className="card-sub">Sets the typeface for the whole panel</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
+            {FONT_OPTIONS.map(f=>{
+              const active = (brand.font_style||'mono')===f.id;
+              return (
+                <div key={f.id} onClick={()=>pickFont(f.id)}
+                  style={{cursor:'pointer',border:`2px solid ${active?'var(--indigo)':'var(--border)'}`,borderRadius:10,background:'var(--bg-card2)',padding:'12px 14px'}}>
+                  <div style={{fontFamily:f.family,fontSize:15,marginBottom:8,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{f.sample}</div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <span style={{fontSize:12,fontWeight:600}}>{f.label}</span>
+                    {active && <span style={{fontSize:10,color:'var(--indigo)',fontWeight:700}}>✓ Active</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🖌 Accent Color</span>
+            <span className="card-sub">Overrides the highlight color for all themes</span>
+          </div>
+          <div style={{padding:16,display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap'}}>
+            <div>
+              <label className="field-label">Custom Accent</label>
+              <input type="color" value={accent||'#6366f1'} onChange={e=>setAccent(e.target.value)} style={{width:60,height:38,border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-card2)',cursor:'pointer'}}/>
+            </div>
+            <div style={{flex:1,minWidth:160}}>
+              <label className="field-label">Hex Value</label>
+              <input className="field-input" type="text" placeholder="#6366f1" value={accent} onChange={e=>setAccent(e.target.value)}/>
+            </div>
+            <button className="btn btn-indigo" onClick={saveAccent} disabled={saving}>{saving?<span className="spin">↻</span>:'💾'} Save</button>
+            <button className="btn btn-ghost" onClick={resetAccent} disabled={saving}>Reset to Default</button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🏷 Brand Logo</span>
+            <span className="card-sub">Shown in the sidebar across the panel</span>
+          </div>
+          <div style={{padding:16,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+            <div style={{width:60,height:60,borderRadius:10,border:'1px solid var(--border)',background:'var(--bg-card2)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+              {brand.logo_url ? <img src={brand.logo_url} alt="logo" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontWeight:800,fontSize:18}}>A</span>}
+            </div>
+            <label className="btn btn-ghost" style={{cursor:'pointer'}}>
+              {uploading?<><span className="spin">↻</span> Uploading…</>:<>📎 Upload Logo</>}
+              <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>uploadLogo(e.target.files[0])}/>
+            </label>
+            {brand.logo_url && <button className="btn btn-ghost" onClick={removeLogo} disabled={saving}>✕ Remove</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function AnnouncementBar({ token, endpoint }) {
+    const [items, setItems] = useState([]);
+    const [offset, setOffset] = useState(0); // rotation offset for prev/next
+    const trackRef = useRef(null);
+    const [duration, setDuration] = useState(30);
+
+    useEffect(()=>{
+      let alive = true;
+      const load = () => {
+        fetch(endpoint, { headers:{ Authorization:`Bearer ${token}` } })
+          .then(r=>r.json()).then(d=>{ if (alive) setItems(d.items || []); }).catch(()=>{});
+      };
+      load();
+      const iv = setInterval(load, 60000);
+      return () => { alive = false; clearInterval(iv); };
+    }, [token, endpoint]);
+
+    // Recompute scroll duration from actual content width so longer messages
+    // don't whiz by faster — keeps a steady reading speed (~55px/sec).
+    useEffect(()=>{
+      if (!trackRef.current) return;
+      const fullWidth = trackRef.current.scrollWidth / 2; // duplicated content
+      const PIXELS_PER_SEC = 55;
+      setDuration(Math.max(20, fullWidth / PIXELS_PER_SEC));
+    }, [items, offset]);
+
+    if (!items.length) return null;
+
+    // Rotate the list so prev/next can jump straight to a different message
+    const ordered = items.map((_, i) => items[(i + offset) % items.length]);
+
+    const next = () => setOffset(o => (o + 1) % items.length);
+    const prev = () => setOffset(o => (o - 1 + items.length) % items.length);
+
+    const renderItem = (item, key) => (
+      <span className="ann-item" key={key}>
+        {item.tag_type === 'order' && item.tag_value && <span className="ann-tag ann-tag-order">ORDER #{item.tag_value}</span>}
+        {item.tag_type === 'vendor' && item.tag_value && <span className="ann-tag ann-tag-vendor">{item.tag_value}</span>}
+        {item.tag_type === 'all_vendors' && <span className="ann-tag ann-tag-all-vendors">ALL VENDORS</span>}
+        {item.admin_only && <span className="ann-tag ann-tag-admin">ADMIN</span>}
+        {item.text}
+      </span>
+    );
+
+    return (
+      <div className="ann-bar">
+        <span className="ann-icon">📢</span>
+        <div className="ann-track">
+          <div key={offset} ref={trackRef} className="ann-track-inner" style={{animationDuration:`${duration}s`}}>
+            {ordered.map((item,i)=>renderItem(item, `a${i}`))}
+            {ordered.map((item,i)=>renderItem(item, `b${i}`))}
+          </div>
+        </div>
+        {items.length > 1 && (
+          <div className="ann-nav">
+            <button className="ann-nav-btn" onClick={prev} title="Previous">‹</button>
+            <button className="ann-nav-btn" onClick={next} title="Next">›</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function App() {
     const [token,      setToken]      = useState(()=>ls.get('admin_token',null));
     const [view,       setView]       = useState('dashboard');
@@ -7748,11 +8193,40 @@
     const [loginErr,   setLoginErr]   = useState('');
     const [loginLoad,  setLoginLoad]  = useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
-    const [lightTheme, setLightTheme] = useState(()=>localStorage.getItem('admin_theme')==='light');
+    const [theme, setTheme] = useState(()=>localStorage.getItem('admin_theme')||'midnight');
     useEffect(()=>{
-      document.body.classList.toggle('light-theme', lightTheme);
-      localStorage.setItem('admin_theme', lightTheme?'light':'dark');
-    },[lightTheme]);
+      document.body.setAttribute('data-theme', theme);
+      localStorage.setItem('admin_theme', theme);
+    },[theme]);
+
+    const [brand, setBrand] = useState({ accent_color:'', logo_url:'', icon_style:'emoji', font_style:'mono' });
+    const iconStyle = brand.icon_style || 'emoji';
+    useEffect(()=>{
+      fetch(`${API}/admin/branding`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ if(d) setBrand(b=>({...b, ...d})); }).catch(()=>{});
+    },[token]);
+    useEffect(()=>{
+      const root = document.documentElement.style;
+      if (brand.accent_color) {
+        root.setProperty('--indigo', brand.accent_color);
+        root.setProperty('--indigo-dim', brand.accent_color+'22');
+        root.setProperty('--indigo-glow', brand.accent_color+'30');
+      } else {
+        root.removeProperty('--indigo');
+        root.removeProperty('--indigo-dim');
+        root.removeProperty('--indigo-glow');
+      }
+    },[brand.accent_color]);
+    useEffect(()=>{
+      const f = FONT_OPTIONS.find(f=>f.id===(brand.font_style||'mono')) || FONT_OPTIONS[0];
+      document.documentElement.style.setProperty('--font-family', f.family);
+    },[brand.font_style]);
+
+    const THEME_OPTIONS = [
+      { id:'midnight', label:'Midnight', icon:'🌌' },
+      { id:'minimal',  label:'Minimal',  icon:'⚪' },
+      { id:'emerald',  label:'Emerald',  icon:'🌿' },
+    ];
 
     // On mount: if we have a stored token, verify it's still valid (server may have restarted)
     useEffect(()=>{
@@ -7814,6 +8288,8 @@
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
       { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
       { id:'agreements',       icon:'📝', label:'Agreements',          section:'finance' },
+      { id:'theme',            icon:'🎨', label:'Theme',               section:'finance' },
+      { id:'announcements',    icon:'📢', label:'Announcements',       section:'finance', external:'/announce.html' },
     ];
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
@@ -7821,7 +8297,7 @@
     const handleStageClick = stage => { setStageFilter(stage); setView('orders'); };
     const closeSidebar = () => setSidebarOpen(false);
 
-    const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', jarvis:'JARVIS AI', settlements:'Settlements', settings:'Settings', audit:'Audit Log' };
+    const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', jarvis:'JARVIS AI', settlements:'Settlements', settings:'Settings', audit:'Audit Log', theme:'Theme' };
 
     return (
       <div className="app-shell">
@@ -7830,7 +8306,9 @@
 
         <aside className={`sidebar ${sidebarOpen?'mobile-open':''}`}>
           <div className="sidebar-brand">
-            <div className="sidebar-logo">A</div>
+            {brand.logo_url
+              ? <img src={brand.logo_url} alt="logo" className="sidebar-logo" style={{objectFit:'cover'}}/>
+              : <div className="sidebar-logo">A</div>}
             <div><div className="sidebar-name">CROSCROW</div><div className="sidebar-role">Admin Portal</div></div>
           </div>
           <nav className="nav">
@@ -7838,8 +8316,8 @@
               <div key={sec}>
                 <div className="nav-section">{sectionLabels[sec]}</div>
                 {navItems.filter(n=>n.section===sec).map(n=>(
-                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ setView(n.id); closeSidebar(); }}>
-                    <span className="nav-icon">{n.icon}</span>{n.label}
+                  <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ if (n.external) { window.open(n.external, '_blank'); closeSidebar(); return; } setView(n.id); closeSidebar(); }}>
+                    <span className="nav-icon"><Icon name={n.id} mode={iconStyle} fallback={n.icon}/></span>{n.label}
                   </button>
                 ))}
               </div>
@@ -7857,16 +8335,18 @@
               <span className="topbar-title">{titles[view]||view}</span>
             </div>
             <div className="topbar-right">
-              <button onClick={()=>setLightTheme(t=>!t)} title={lightTheme?'Switch to Dark':'Switch to Light'} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:20,padding:'4px 10px',cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:5,color:'var(--text-muted)',fontFamily:'IBM Plex Mono,monospace',fontSize:11}}>
-                {lightTheme ? '🌙 Dark' : '☀️ Light'}
-              </button>
+              <select value={theme} onChange={e=>setTheme(e.target.value)} title="Switch theme" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:20,padding:'4px 10px',cursor:'pointer',fontSize:11,color:'var(--text-muted)',fontFamily:'var(--font-family)'}}>
+                {THEME_OPTIONS.map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}
+              </select>
               <span style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1,display:'flex',alignItems:'center',gap:6}}>
                 <span className="pulse"/>Admin Mode
               </span>
             </div>
           </div>
 
-          {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick}/>}
+          <AnnouncementBar token={token} endpoint={`${API}/admin/announcements/ticker`}/>
+
+          {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick} iconStyle={iconStyle}/>}
           {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
           {view==='vendors'     && <Vendors     token={token} onNewAgreement={name=>{ setView('agreements'); window.__prefillAgreement=name; }}/>}
           {view==='returns'     && <ReturnRequests token={token}/>}
@@ -7886,6 +8366,7 @@
           {view==='commissionrules' && <CommissionRules  token={token}/>}
           {view==='onboarding'     && <VendorOnboarding token={token}/>}
           {view==='agreements'     && <AgreementManagement token={token}/>}
+          {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}
@@ -7898,13 +8379,13 @@
             { id:'jarvis',      icon:'⚡', label:'JARVIS'    },
           ].map(n=>(
             <button key={n.id} className={`mbn-item ${view===n.id?'active':''}`} onClick={()=>setView(n.id)}>
-              <span className="mbn-icon">{n.icon}</span>
+              <span className="mbn-icon"><Icon name={n.id} mode={iconStyle} fallback={n.icon}/></span>
               <span className="mbn-label">{n.label}</span>
             </button>
           ))}
           {/* More — opens sidebar */}
           <button className="mbn-item" onClick={()=>setSidebarOpen(o=>!o)}>
-            <span className="mbn-icon">☰</span>
+            <span className="mbn-icon"><Icon name="more" mode={iconStyle} fallback="☰"/></span>
             <span className="mbn-label">More</span>
           </button>
         </nav>
@@ -8169,7 +8650,7 @@
       setLoading(false);
     };
 
-    const inp = (k, placeholder, extra={}) => <input value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={placeholder} style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'IBM Plex Mono,monospace',boxSizing:'border-box',...extra}}/>;
+    const inp = (k, placeholder, extra={}) => <input value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={placeholder} style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'var(--font-family)',boxSizing:'border-box',...extra}}/>;
     const fl = (label, children) => <div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:600,color:'var(--text-dim)',marginBottom:4}}>{label}</div>{children}</div>;
 
     return (
@@ -8349,7 +8830,7 @@
     );
     const gInp = (k, placeholder, extra={}) => (
       <input value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={placeholder}
-        style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'IBM Plex Mono,monospace',boxSizing:'border-box',...extra}}/>
+        style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'var(--font-family)',boxSizing:'border-box',...extra}}/>
     );
 
     return (
@@ -8405,7 +8886,7 @@
               <div>
                 <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                   {[['days','Within N days'],['monthly','Monthly (last business day)'],['date','Fixed date of month']].map(([v,l])=>(
-                    <button key={v} onClick={()=>set('settlementCycle',v)} style={{padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',fontFamily:'IBM Plex Mono,monospace',background:form.settlementCycle===v?'var(--accent)':'var(--bg-card2)',color:form.settlementCycle===v?'#fff':'var(--text-muted)'}}>{l}</button>
+                    <button key={v} onClick={()=>set('settlementCycle',v)} style={{padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',fontFamily:'var(--font-family)',background:form.settlementCycle===v?'var(--accent)':'var(--bg-card2)',color:form.settlementCycle===v?'#fff':'var(--text-muted)'}}>{l}</button>
                   ))}
                 </div>
                 {form.settlementCycle==='days' && <div style={{marginTop:8}}>{gInp('prepaidSettlementDays','7',{maxWidth:80})}<span style={{fontSize:11,color:'var(--text-muted)',marginLeft:8}}>business days</span></div>}
@@ -8432,7 +8913,7 @@
         <div style={{marginTop:20}}>
           <button onClick={generate} disabled={loading} style={{
             padding:'12px 32px',borderRadius:8,border:'none',background:'var(--indigo)',color:'#fff',
-            fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'IBM Plex Mono,monospace',
+            fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'var(--font-family)',
             opacity:loading?0.6:1,
           }}>
             {loading ? '↻ Generating…' : '📥 Generate & Download Agreement (.docx)'}

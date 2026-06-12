@@ -171,6 +171,20 @@
     .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
+    /* ── Announcement bar ── */
+    .ann-bar { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px 0 16px; background: var(--indigo-dim); border-bottom: 1px solid var(--border); overflow: hidden; position: relative; }
+    .ann-icon { font-size: 13px; flex-shrink: 0; }
+    .ann-track { display: flex; flex: 1; overflow: hidden; white-space: nowrap; mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent); }
+    .ann-track-inner { display: flex; align-items: center; gap: 48px; animation: ann-scroll linear infinite; padding-right: 48px; }
+    @keyframes ann-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .ann-item { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); white-space: nowrap; }
+    .ann-tag { font-size: 9px; padding: 1px 7px; border-radius: 9px; font-weight: 700; letter-spacing: 1px; flex-shrink: 0; }
+    .ann-tag-vendor { background: var(--green); color: #06281f; }
+    .ann-tag-all-vendors { background: var(--purple); color: #1e1b4b; }
+    .ann-nav { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .ann-nav-btn { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg-card2); color: var(--text-dim); cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; line-height: 1; transition: all 0.15s; }
+    .ann-nav-btn:hover { background: var(--bg-hover); color: var(--text); }
+
     .page { padding: 20px 24px 40px; }
 
     /* ── Buttons ── */
@@ -4305,6 +4319,68 @@
     );
   }
 
+  function AnnouncementBar({ token }) {
+    const [items, setItems] = useState([]);
+    const [offset, setOffset] = useState(0); // rotation offset for prev/next
+    const trackRef = useRef(null);
+    const [duration, setDuration] = useState(30);
+
+    useEffect(()=>{
+      if (!token) return;
+      let alive = true;
+      const load = () => {
+        fetch(`${API}/vendor/announcements/ticker`, { headers:{ Authorization:`Bearer ${token}` } })
+          .then(r=>r.json()).then(d=>{ if (alive) setItems(d.items || []); }).catch(()=>{});
+      };
+      load();
+      const iv = setInterval(load, 60000);
+      return () => { alive = false; clearInterval(iv); };
+    }, [token]);
+
+    // Recompute scroll duration from actual content width so longer messages
+    // don't whiz by faster — keeps a steady reading speed (~55px/sec).
+    useEffect(()=>{
+      if (!trackRef.current) return;
+      const fullWidth = trackRef.current.scrollWidth / 2; // duplicated content
+      const PIXELS_PER_SEC = 55;
+      setDuration(Math.max(20, fullWidth / PIXELS_PER_SEC));
+    }, [items, offset]);
+
+    if (!items.length) return null;
+
+    // Rotate the list so prev/next can jump straight to a different message
+    const ordered = items.map((_, i) => items[(i + offset) % items.length]);
+
+    const next = () => setOffset(o => (o + 1) % items.length);
+    const prev = () => setOffset(o => (o - 1 + items.length) % items.length);
+
+    const renderItem = (item, key) => (
+      <span className="ann-item" key={key}>
+        {item.tag_type === 'vendor' && item.tag_value && <span className="ann-tag ann-tag-vendor">{item.tag_value}</span>}
+        {item.tag_type === 'all_vendors' && <span className="ann-tag ann-tag-all-vendors">ALL VENDORS</span>}
+        {item.text}
+      </span>
+    );
+
+    return (
+      <div className="ann-bar">
+        <span className="ann-icon">📢</span>
+        <div className="ann-track">
+          <div key={offset} ref={trackRef} className="ann-track-inner" style={{animationDuration:`${duration}s`}}>
+            {ordered.map((item,i)=>renderItem(item, `a${i}`))}
+            {ordered.map((item,i)=>renderItem(item, `b${i}`))}
+          </div>
+        </div>
+        {items.length > 1 && (
+          <div className="ann-nav">
+            <button className="ann-nav-btn" onClick={prev} title="Previous">‹</button>
+            <button className="ann-nav-btn" onClick={next} title="Next">›</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function App() {
     const [auth,    setAuth]    = useState(()=>{
       // Admin impersonation: ?token=XXX in URL auto-logins without credentials
@@ -4533,6 +4609,8 @@
               </button>
             </div>
           </div>
+
+          <AnnouncementBar token={auth.token}/>
 
           {auth.mustChangePassword && (
             <div style={{background:'#1c1208',border:'2px solid #f59e0b',borderRadius:8,padding:'12px 16px',marginBottom:12,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>

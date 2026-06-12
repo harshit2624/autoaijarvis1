@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrosCrow — Announcements</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #060a14;
+      --bg-card:   #0a1020;
+      --bg-card2:  #0d1428;
+      --bg-hover:  #111830;
+      --border:    #1a2540;
+      --border-hi: #243560;
+      --indigo:    #6366f1;
+      --indigo-dim:#1e1b4b;
+      --indigo-glow:#6366f130;
+      --green:     #10b981;
+      --green-bg:  #064e3b;
+      --red:       #f87171;
+      --red-bg:    #2d0a0a;
+      --yellow:    #fbbf24;
+      --yellow-bg: #422006;
+      --purple:    #a78bfa;
+      --purple-bg: #1e1b4b;
+      --text:      #e2e8f0;
+      --text-muted:#4b6a8e;
+      --text-dim:  #7d9ab8;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 0%, #1e1b4b20 0%, transparent 70%); padding: 16px; }
+    .login-box  { width: 100%; max-width: 380px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 32px; box-shadow: 0 0 60px var(--indigo-glow); }
+    .login-logo { width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 20px; background: linear-gradient(135deg, var(--indigo), #4f46e5); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; color: #fff; }
+    .login-title { font-size: 17px; font-weight: 700; letter-spacing: 2px; text-align: center; margin-bottom: 4px; }
+    .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 26px; }
+    .login-error { background: var(--red-bg); border: 1px solid #5a1a1a; border-radius: 7px; padding: 10px 14px; font-size: 12px; color: var(--red); margin-bottom: 14px; }
+
+    .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
+    .field-input, .field-select, textarea.field-input {
+      width: 100%; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 7px;
+      padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+      outline: none; transition: border-color 0.15s; margin-bottom: 14px;
+    }
+    textarea.field-input { resize: vertical; min-height: 64px; }
+    .field-input:focus, .field-select:focus { border-color: var(--indigo); }
+    .field-input::placeholder { color: var(--text-muted); }
+    .btn { padding: 11px 16px; border-radius: 7px; border: 1px solid var(--border); cursor: pointer; background: var(--bg-card2); color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; letter-spacing: 1px; transition: all 0.15s; }
+    .btn:hover:not(:disabled) { border-color: var(--border-hi); background: var(--bg-hover); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { width: 100%; border: none; background: var(--indigo); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #4f46e5; }
+    .btn-danger:hover:not(:disabled) { border-color: #5a1a1a; background: var(--red-bg); color: var(--red); }
+    .checkrow { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 12px; color: var(--text-dim); cursor: pointer; }
+    .checkrow input { width: 16px; height: 16px; accent-color: var(--indigo); cursor: pointer; }
+
+    .wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 18px; }
+    .topbar-title { font-size: 14px; font-weight: 700; letter-spacing: 2px; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+    .card-title { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 14px; }
+
+    .seg { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+    .seg-btn { flex: 1; min-width: 90px; padding: 9px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-card2); color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; letter-spacing: 1px; cursor: pointer; text-align: center; transition: all 0.15s; }
+    .seg-btn.active { background: var(--indigo-dim); color: var(--indigo); border-color: var(--indigo); }
+
+    .msg-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 8px; background: var(--bg-card2); }
+    .msg-item.inactive { opacity: 0.45; }
+    .msg-text { font-size: 13px; line-height: 1.5; flex: 1; word-break: break-word; }
+    .msg-tags { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .tag { font-size: 9px; padding: 2px 8px; border-radius: 10px; letter-spacing: 1px; font-weight: 700; }
+    .tag-order  { background: var(--indigo-dim); color: var(--indigo); }
+    .tag-vendor { background: var(--green-bg); color: var(--green); }
+    .tag-all-vendors { background: var(--purple-bg); color: var(--purple); }
+    .tag-admin  { background: var(--red-bg); color: var(--red); }
+    .msg-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+    .icon-btn { width: 30px; height: 30px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim); cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+    .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .empty { text-align: center; color: var(--text-muted); font-size: 12px; padding: 30px 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const API = '';
+    const ls = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} }, del:(k)=>localStorage.removeItem(k) };
+
+    function App() {
+      const [token, setToken] = useState(()=>ls.get('admin_token', null));
+      const [pass, setPass] = useState('');
+      const [loginErr, setLoginErr] = useState('');
+      const [loginLoad, setLoginLoad] = useState(false);
+
+      const [items, setItems] = useState([]);
+      const [vendors, setVendors] = useState([]);
+      const [loading, setLoading] = useState(true);
+
+      const [text, setText] = useState('');
+      const [tagType, setTagType] = useState('none');
+      const [tagValue, setTagValue] = useState('');
+      const [adminOnly, setAdminOnly] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const [err, setErr] = useState('');
+
+      const login = async () => {
+        setLoginLoad(true); setLoginErr('');
+        try {
+          const r = await fetch(`${API}/admin/login`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ password: pass }) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Login failed');
+          ls.set('admin_token', d.token);
+          setToken(d.token);
+        } catch(e) { setLoginErr(e.message); }
+        setLoginLoad(false);
+      };
+
+      const load = async () => {
+        if (!token) return;
+        setLoading(true);
+        try {
+          const r = await fetch(`${API}/admin/announcements`, { headers:{ Authorization:`Bearer ${token}` } });
+          if (r.status === 401) { ls.del('admin_token'); setToken(null); return; }
+          const d = await r.json();
+          setItems(d.items || []);
+        } catch(e) {}
+        setLoading(false);
+      };
+
+      useEffect(()=>{
+        if (!token) return;
+        load();
+        fetch(`${API}/vendor/list`).then(r=>r.json()).then(d=>setVendors(d.vendors || d || [])).catch(()=>{});
+      }, [token]);
+
+      const reset = () => { setText(''); setTagType('none'); setTagValue(''); setAdminOnly(false); setErr(''); };
+
+      const addMessage = async () => {
+        if (!text.trim()) { setErr('Message text is required.'); return; }
+        if ((tagType === 'order' || tagType === 'vendor') && !tagValue.trim()) { setErr(`Please enter ${tagType === 'order' ? 'an order ID' : 'a vendor'}.`); return; }
+        setSaving(true); setErr('');
+        try {
+          const r = await fetch(`${API}/admin/announcements`, {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+            body: JSON.stringify({ text: text.trim(), tag_type: tagType, tag_value: tagValue.trim(), admin_only: adminOnly }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Failed to save');
+          reset();
+          load();
+        } catch(e) { setErr(e.message); }
+        setSaving(false);
+      };
+
+      const toggleActive = async (item) => {
+        await fetch(`${API}/admin/announcements/${item._id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+          body: JSON.stringify({ active: !item.active }),
+        }).catch(()=>{});
+        load();
+      };
+
+      const remove = async (item) => {
+        if (!confirm('Delete this message?')) return;
+        await fetch(`${API}/admin/announcements/${item._id}`, { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } }).catch(()=>{});
+        load();
+      };
+
+      if (!token) return (
+        <div className="login-wrap">
+          <div className="login-box">
+            <div className="login-logo">A</div>
+            <div className="login-title">CROSCROW</div>
+            <div className="login-sub">ANNOUNCEMENTS</div>
+            {loginErr && <div className="login-error">⚠ {loginErr}</div>}
+            <label className="field-label">Admin Password</label>
+            <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter' && login()} />
+            <button className="btn btn-primary" onClick={login} disabled={loginLoad || !pass}>{loginLoad ? 'Signing in…' : 'Sign In'}</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="wrap">
+          <div className="topbar">
+            <span className="topbar-title">📢 ANNOUNCEMENTS</span>
+            <button className="btn" onClick={()=>{ ls.del('admin_token'); setToken(null); }}>Logout</button>
+          </div>
+
+          <div className="card">
+            <div className="card-title">New Message</div>
+            {err && <div className="login-error">⚠ {err}</div>}
+            <textarea className="field-input" placeholder="e.g. Remind Odd Affair to sort order #1933 exchange" value={text} onChange={e=>setText(e.target.value)} />
+
+            <label className="field-label">Tag (optional)</label>
+            <div className="seg">
+              <div className={`seg-btn ${tagType==='none'?'active':''}`} onClick={()=>{ setTagType('none'); setTagValue(''); setAdminOnly(false); }}>General</div>
+              <div className={`seg-btn ${tagType==='order'?'active':''}`} onClick={()=>{ setTagType('order'); setTagValue(''); setAdminOnly(false); }}>Order ID</div>
+              <div className={`seg-btn ${tagType==='vendor'?'active':''}`} onClick={()=>{ setTagType('vendor'); setTagValue(''); }}>Vendor</div>
+              <div className={`seg-btn ${tagType==='all_vendors'?'active':''}`} onClick={()=>{ setTagType('all_vendors'); setTagValue(''); setAdminOnly(false); }}>All Vendors</div>
+            </div>
+
+            {tagType === 'order' && (
+              <input className="field-input" placeholder="Order ID, e.g. 1933" value={tagValue} onChange={e=>setTagValue(e.target.value)} />
+            )}
+            {tagType === 'vendor' && (
+              <select className="field-input field-select" value={tagValue} onChange={e=>setTagValue(e.target.value)}>
+                <option value="">— Select vendor —</option>
+                {vendors.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            )}
+
+            {tagType === 'vendor' ? (
+              <label className="checkrow">
+                <input type="checkbox" checked={adminOnly} onChange={e=>setAdminOnly(e.target.checked)} />
+                Admin only (hide from vendor panel too)
+              </label>
+            ) : (
+              <div className="checkrow" style={{color:'var(--text-muted)'}}>
+                <span className="tag tag-admin">ADMIN ONLY</span> No vendor selected — this message is only visible here.
+              </div>
+            )}
+
+            <button className="btn btn-primary" onClick={addMessage} disabled={saving}>{saving ? 'Saving…' : '+ Add Message'}</button>
+          </div>
+
+          <div className="card">
+            <div className="card-title">Active & Recent Messages</div>
+            {loading && <div className="empty">Loading…</div>}
+            {!loading && items.length === 0 && <div className="empty">No messages yet. Add one above.</div>}
+            {!loading && items.map(item => (
+              <div key={item._id} className={`msg-item ${item.active ? '' : 'inactive'}`}>
+                <div className="msg-text">
+                  {item.text}
+                  <div className="msg-tags">
+                    {item.tag_type === 'order' && item.tag_value && <span className="tag tag-order">ORDER #{item.tag_value}</span>}
+                    {item.tag_type === 'vendor' && item.tag_value && <span className="tag tag-vendor">{item.tag_value}</span>}
+                    {item.tag_type === 'all_vendors' && <span className="tag tag-all-vendors">ALL VENDORS</span>}
+                    {item.admin_only && <span className="tag tag-admin">ADMIN ONLY</span>}
+                    {!item.active && <span className="tag" style={{background:'var(--yellow-bg)',color:'var(--yellow)'}}>PAUSED</span>}
+                  </div>
+                </div>
+                <div className="msg-actions">
+                  <button className="icon-btn" title={item.active ? 'Pause' : 'Activate'} onClick={()=>toggleActive(item)}>{item.active ? '⏸' : '▶'}</button>
+                  <button className="icon-btn btn-danger" title="Delete" onClick={()=>remove(item)}>🗑</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

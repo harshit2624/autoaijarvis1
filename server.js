@@ -43,6 +43,21 @@ const adsStorage = multer.diskStorage({
 });
 const adsUpload = multer({ storage: adsStorage, limits: { fileSize: 5 * 1024 * 1024 } });
 
+// ── Multer — admin brand logo ───────────────────────────────────────────────
+const brandUploadDir = path.join(__dirname, 'brand-uploads');
+if (!fs.existsSync(brandUploadDir)) fs.mkdirSync(brandUploadDir, { recursive: true });
+const brandStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, brandUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.png';
+    cb(null, `logo_${Date.now()}${ext}`);
+  },
+});
+const brandUpload = multer({ storage: brandStorage, limits: { fileSize: 3 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
+  cb(null, true);
+}});
+
 // ── Multer — return/exchange request images ────────────────────────────────
 const rrUploadDir = path.join(__dirname, 'rr-uploads');
 if (!fs.existsSync(rrUploadDir)) fs.mkdirSync(rrUploadDir, { recursive: true });
@@ -196,6 +211,15 @@ const EA = {
   },
   async save(fields) {
     await mdb.collection('email_ads').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
+  },
+};
+
+const BRAND = {
+  async get() {
+    return (await mdb.collection('branding').findOne({}, { projection: { _id: 0 } })) || { theme: 'midnight', accent_color: '', logo_url: '', icon_style: 'emoji', font_style: 'mono' };
+  },
+  async save(fields) {
+    await mdb.collection('branding').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
   },
 };
 
@@ -380,6 +404,7 @@ app.use((req, res, next) => {
 
 app.use(express.static('.'));
 app.use('/ads-uploads', express.static(adsUploadDir));
+app.use('/brand-uploads', express.static(brandUploadDir));
 app.use('/rr-uploads', express.static(rrUploadDir));
 app.use('/onboard-uploads', express.static(onboardUploadDir));
 app.use('/agreement-docs', express.static(agreementDocDir));
@@ -6612,6 +6637,127 @@ app.post("/admin/email-settings/ads/upload", adminAuth, adsUpload.single('image'
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const url = `/ads-uploads/${req.file.filename}`;
     res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin branding (theme, accent color, logo) ──────────────────────────────
+app.get("/admin/branding", adminAuth, async (req, res) => {
+  try {
+    res.json(await BRAND.get());
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/admin/branding", adminAuth, async (req, res) => {
+  try {
+    const { theme, accent_color, icon_style, font_style } = req.body || {};
+    const fields = {};
+    if (theme !== undefined) fields.theme = theme;
+    if (accent_color !== undefined) fields.accent_color = accent_color;
+    if (icon_style !== undefined) fields.icon_style = icon_style;
+    if (font_style !== undefined) fields.font_style = font_style;
+    await BRAND.save(fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/admin/branding/logo", adminAuth, brandUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const url = `/brand-uploads/${req.file.filename}`;
+    await BRAND.save({ logo_url: url });
+    res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/admin/branding/logo", adminAuth, async (req, res) => {
+  try {
+    await BRAND.save({ logo_url: '' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Announcement bar messages ───────────────────────────────────────────────
+app.get("/admin/announcements", adminAuth, async (req, res) => {
+  try {
+    const items = await mdb.collection('announcements').find({}).sort({ created_at: -1 }).toArray();
+    res.json({ items });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/admin/announcements", adminAuth, async (req, res) => {
+  try {
+    const { text, tag_type, tag_value, admin_only } = req.body || {};
+    if (!text?.trim()) return res.status(400).json({ error: 'Message text is required.' });
+    const resolvedTagType = ['order','vendor','all_vendors'].includes(tag_type) ? tag_type : 'none';
+    const doc = {
+      text: text.trim(),
+      tag_type: resolvedTagType,
+      tag_value: tag_value?.trim() || '',
+      // Only vendor-tagged / all-vendor messages can appear on vendor panels; everything else is admin-only by default.
+      admin_only: resolvedTagType === 'vendor' ? !!admin_only : resolvedTagType === 'all_vendors' ? false : true,
+      active: true,
+      created_at: new Date(),
+    };
+    const r = await mdb.collection('announcements').insertOne(doc);
+    res.json({ ok: true, _id: r.insertedId });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put("/admin/announcements/:id", adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { text, tag_type, tag_value, admin_only, active } = req.body || {};
+    const fields = { updated_at: new Date() };
+    if (text !== undefined) fields.text = text.trim();
+    if (tag_type !== undefined) fields.tag_type = ['order','vendor','all_vendors'].includes(tag_type) ? tag_type : 'none';
+    if (tag_value !== undefined) fields.tag_value = tag_value.trim();
+    if (admin_only !== undefined) fields.admin_only = !!admin_only;
+    if (active !== undefined) fields.active = !!active;
+    // Only vendor-tagged / all-vendor messages can appear on vendor panels; everything else is admin-only by default.
+    if (fields.tag_type !== undefined) {
+      if (fields.tag_type === 'vendor') { /* keep provided admin_only */ }
+      else if (fields.tag_type === 'all_vendors') fields.admin_only = false;
+      else fields.admin_only = true;
+    }
+    await mdb.collection('announcements').updateOne({ _id: new ObjectId(req.params.id) }, { $set: fields });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/admin/announcements/:id", adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    await mdb.collection('announcements').deleteOne({ _id: new ObjectId(req.params.id) });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin ticker: all active messages
+app.get("/admin/announcements/ticker", adminAuth, async (req, res) => {
+  try {
+    const items = await mdb.collection('announcements')
+      .find({ active: true })
+      .sort({ created_at: -1 })
+      .toArray();
+    res.json({ items });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Vendor ticker: active, non admin-only, general or matching this vendor
+app.get("/vendor/announcements/ticker", vendorAuth, async (req, res) => {
+  try {
+    const items = await mdb.collection('announcements')
+      .find({
+        active: true,
+        admin_only: { $ne: true },
+        $or: [
+          { tag_type: 'all_vendors' },
+          { tag_type: 'vendor', tag_value: { $regex: `^${req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } },
+        ],
+      })
+      .sort({ created_at: -1 })
+      .toArray();
+    res.json({ items });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
