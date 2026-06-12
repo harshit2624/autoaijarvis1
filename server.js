@@ -6758,15 +6758,42 @@ app.delete("/admin/branding/logo", adminAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Vendor panel logo (shown to vendors on login + sidebar) ──────────────────
+app.post("/admin/branding/vendor-logo", adminAuth, brandUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const url = `/brand-uploads/${req.file.filename}`;
+    await BRAND.save({ vendor_logo_url: url });
+    res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/admin/branding/vendor-logo", adminAuth, async (req, res) => {
+  try {
+    await BRAND.save({ vendor_logo_url: '' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Public vendor panel logo (used on vendor login screen, pre-auth) ─────────
+app.get("/vendor/branding/public", async (req, res) => {
+  try {
+    const globalBrand = await BRAND.get();
+    res.json({ vendor_logo_url: globalBrand?.vendor_logo_url || '' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Vendor branding (per-vendor panel theme, accent color, font) ─────────────
 app.get("/vendor/branding", vendorAuth, async (req, res) => {
   try {
     const cfg = await VC.get(req.vendor);
+    const globalBrand = await BRAND.get();
     res.json({
       theme: cfg?.theme || 'minimal',
       accent_color: cfg?.accent_color || '',
       font_style: cfg?.font_style || 'round',
       icon_style: cfg?.icon_style || 'minimal',
+      vendor_logo_url: globalBrand?.vendor_logo_url || '',
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

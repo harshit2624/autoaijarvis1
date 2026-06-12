@@ -106,8 +106,13 @@
       width: 44px; height: 44px; border-radius: 10px; margin: 0 auto 20px;
       background: linear-gradient(135deg, var(--green), #059669);
       display: flex; align-items: center; justify-content: center;
-      font-size: 18px; font-weight: 800; color: #000;
+      font-size: 18px; font-weight: 800; color: #000; overflow: hidden;
     }
+    .login-logo.has-img {
+      width: 200px; height: 48px; border-radius: 0; background: none;
+    }
+    .login-logo img, .sidebar-logo img { width: 100%; height: 100%; object-fit: cover; }
+    .login-logo.has-img img { object-fit: contain; }
     .login-title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-align: center; color: var(--text); margin-bottom: 4px; }
     .login-sub   { font-size: 10px; color: var(--text-muted); text-align: center; letter-spacing: 2px; margin-bottom: 28px; }
     .field-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; display: block; }
@@ -146,12 +151,19 @@
       padding: 20px 18px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 10px;
     }
+    .sidebar-brand.has-img {
+      flex-direction: column; align-items: center; gap: 6px; text-align: center;
+    }
     .sidebar-logo {
-      width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0;
+      width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0; overflow: hidden;
       background: linear-gradient(135deg, var(--green), #059669);
       display: flex; align-items: center; justify-content: center;
       font-size: 13px; font-weight: 800; color: #000;
     }
+    .sidebar-logo.has-img {
+      width: 140px; height: 32px; border-radius: 0; background: none;
+    }
+    .sidebar-logo.has-img img { object-fit: contain; }
     .sidebar-name { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
     .sidebar-role { font-size: 9px; color: var(--green); letter-spacing: 1px; }
 
@@ -4748,9 +4760,13 @@
       localStorage.setItem('vendor_panel_theme', theme);
     },[theme]);
 
-    const [brand, setBrand] = useState({ accent_color:'', font_style:'round', icon_style:'minimal' });
+    const [brand, setBrand] = useState({ accent_color:'', font_style:'round', icon_style:'minimal', vendor_logo_url:'' });
     useEffect(()=>{
-      if (!auth) return;
+      if (!auth) {
+        fetch(`${API}/vendor/branding/public`)
+          .then(r=>r.json()).then(d=>{ if(d) setBrand(b=>({...b, vendor_logo_url: d.vendor_logo_url||'' })); }).catch(()=>{});
+        return;
+      }
       fetch(`${API}/vendor/branding`,{headers:{Authorization:`Bearer ${auth.token}`}})
         .then(r=>r.json()).then(d=>{ if(d) setBrand(b=>({...b, ...d})); }).catch(()=>{});
     },[auth?.token]);
@@ -4873,8 +4889,8 @@
     if(!auth) return (
       <div className="login-wrap">
         <div className="login-box">
-          <div className="login-logo">C</div>
-          <div className="login-title">CROSCROW</div>
+          <div className={`login-logo ${brand.vendor_logo_url?'has-img':''}`}>{brand.vendor_logo_url ? <img src={brand.vendor_logo_url} alt="logo"/> : 'C'}</div>
+          {!brand.vendor_logo_url && <div className="login-title">CROSCROW</div>}
           <div className="login-sub">Vendor Portal</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
           <label className="field-label">Vendor / Brand Name</label>
@@ -4922,10 +4938,10 @@
 
         {/* Sidebar */}
         <aside className={`sidebar ${sidebarOpen?'mobile-open':''}`}>
-          <div className="sidebar-brand">
-            <div className="sidebar-logo">C</div>
+          <div className={`sidebar-brand ${brand.vendor_logo_url?'has-img':''}`}>
+            <div className={`sidebar-logo ${brand.vendor_logo_url?'has-img':''}`}>{brand.vendor_logo_url ? <img src={brand.vendor_logo_url} alt="logo"/> : 'C'}</div>
             <div>
-              <div className="sidebar-name">CROSCROW</div>
+              {!brand.vendor_logo_url && <div className="sidebar-name">CROSCROW</div>}
               <div className="sidebar-role">Vendor Portal</div>
             </div>
           </div>

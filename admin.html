@@ -8171,6 +8171,31 @@
       setSaving(false);
     };
 
+    const uploadVendorLogo = async (file) => {
+      if (!file) return;
+      setUploading(true); setMsg(null);
+      try {
+        const fd = new FormData(); fd.append('logo', file);
+        const r = await fetch(`${API}/admin/branding/vendor-logo`,{method:'POST',headers:{Authorization:`Bearer ${token}`},body:fd});
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error||'Upload failed');
+        setBrand(b=>({...b, vendor_logo_url:d.url}));
+        setMsg({type:'success',text:'Vendor panel logo uploaded.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setUploading(false);
+    };
+
+    const removeVendorLogo = async () => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/branding/vendor-logo`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+        if (!r.ok) throw new Error('Remove failed');
+        setBrand(b=>({...b, vendor_logo_url:''}));
+        setMsg({type:'success',text:'Vendor panel logo removed.'});
+      } catch(e){ setMsg({type:'error',text:e.message}); }
+      setSaving(false);
+    };
+
     return (
       <div className="page">
         {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:12}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
@@ -8289,6 +8314,23 @@
             {brand.logo_url && <button className="btn btn-ghost" onClick={removeLogo} disabled={saving}>✕ Remove</button>}
           </div>
         </div>
+
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🏷 Vendor Panel Logo</span>
+            <span className="card-sub">Shown to vendors on the login screen &amp; sidebar of the vendor portal</span>
+          </div>
+          <div style={{padding:16,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+            <div style={{width:60,height:60,borderRadius:10,border:'1px solid var(--border)',background:'var(--bg-card2)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+              {brand.vendor_logo_url ? <img src={brand.vendor_logo_url} alt="logo" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontWeight:800,fontSize:18}}>C</span>}
+            </div>
+            <label className="btn btn-ghost" style={{cursor:'pointer'}}>
+              {uploading?<><span className="spin">↻</span> Uploading…</>:<>📎 Upload Logo</>}
+              <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>uploadVendorLogo(e.target.files[0])}/>
+            </label>
+            {brand.vendor_logo_url && <button className="btn btn-ghost" onClick={removeVendorLogo} disabled={saving}>✕ Remove</button>}
+          </div>
+        </div>
       </div>
     );
   }
@@ -8370,7 +8412,7 @@
       localStorage.setItem('admin_theme', theme);
     },[theme]);
 
-    const [brand, setBrand] = useState({ accent_color:'', logo_url:'', icon_style:'emoji', font_style:'mono' });
+    const [brand, setBrand] = useState({ accent_color:'', logo_url:'', vendor_logo_url:'', icon_style:'emoji', font_style:'mono' });
     const iconStyle = brand.icon_style || 'emoji';
     useEffect(()=>{
       fetch(`${API}/admin/branding`,{headers:{Authorization:`Bearer ${token}`}})
