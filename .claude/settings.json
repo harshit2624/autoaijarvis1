@@ -12,7 +12,17 @@
       "Bash(curl -s http://localhost:3001/health)",
       "Bash(python3 -m json.tool)",
       "Bash(curl -s http://localhost:3001/)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(kill -9 2846)",
+      "Bash(pkill -9 -f \"node server.js\")",
+      "Bash(pkill -9 -f node)",
+      "Bash(node -e ' *)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -s -m 3 http://localhost:3001/health)",
+      "Bash(sample 8479 3)",
+      "Read(//tmp/**)",
+      "Bash(sed -n '1225,1240p' server.js)",
+      "Bash(sed -n '1575,1590p' server.js)"
     ]
   }
 }

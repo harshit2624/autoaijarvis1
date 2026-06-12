@@ -150,6 +150,8 @@ async function startServer() {
       mdb.collection("admin_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       mdb.collection("product_commission_rules").createIndex({ vendor_name: 1, product_id: 1 }, { unique: true, sparse: true }),
       mdb.collection("product_commission_rules").createIndex({ id: 1 }, { unique: true }),
+      mdb.collection("order_shipments").createIndex({ shopify_id: 1 }),
+      mdb.collection("order_shipments").createIndex({ "items.vendor": 1 }),
     ];
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
@@ -2493,6 +2495,30 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
 </body></html>`;
 }
 
+function templateAdminFulfilledVendor({ order, vendorName, items, awb, courier }) {
+  const body = `
+    <div class="subtitle">Heads up — CrosCrow has fulfilled the following item(s) from order <strong>${order.name}</strong> on your behalf. No action needed from you for these items.</div>
+
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Fulfilled By</span><span class="info-val">CROSCROW</span></div>
+      ${courier ? `<div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier}</span></div>` : ''}
+      ${awb ? `<div class="info-row"><span class="info-label">AWB</span><span class="info-val">${awb}</span></div>` : ''}
+    </div>
+
+    ${itemsTableHtml(items)}
+
+    <div style="background:#f0fdf4;border-left:4px solid #10b981;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
+      <div style="font-size:12px;color:#065f46;line-height:1.7;">These item(s) have already been packed and shipped by CrosCrow — no need to dispatch them yourself. Any remaining items still pending from you (if any) should be fulfilled as usual.</div>
+    </div>
+
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
+    </div>
+  `;
+  return emailBase(`Order ${order.name} — Item(s) Fulfilled by CrosCrow`, '#10b981', body);
+}
+
 function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', forRole = 'customer', adsStrip = '' }) {
   // Vendor and admin use the compact emailBase theme
   if (forRole !== 'customer') {
@@ -3957,6 +3983,17 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     const vConfirmedPenaltyMap = {}; // { shopify_id: totalAmount }
     vConfirmedPenalties.forEach(p => { vConfirmedPenaltyMap[p.shopify_id] = (vConfirmedPenaltyMap[p.shopify_id] || 0) + (p.penalty_amount || 0); });
 
+    // Line items shipped by admin (CROSCROW) on this vendor's behalf
+    const adminShipments = await mdb.collection('order_shipments').find(
+      { created_by: 'admin', 'items.vendor': req.vendor },
+      { projection: { shopify_id: 1, items: 1, _id: 0 } }
+    ).toArray();
+    const adminShipMap = {}; // { shopify_id: Set(line_item_id) }
+    adminShipments.forEach(s => {
+      const set = adminShipMap[s.shopify_id] || (adminShipMap[s.shopify_id] = new Set());
+      s.items.filter(it => it.vendor === req.vendor).forEach(it => set.add(String(it.line_item_id)));
+    });
+
     const orders = allOrders
       .filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName))
       .map(o => {
@@ -4030,6 +4067,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           warningSent:      vStageMap[String(o.id)]?.warning_sent || 0,
           shopifyFulfilled:    !meta.awb && (o.fulfillments||[]).length > 0,
           confirmedPenalty:    vConfirmedPenaltyMap[String(o.id)] || 0,
+          adminFulfilled:      (adminShipMap[String(o.id)]?.size || 0) > 0,
           myItems: myItems.map(li => ({
             id:        li.id,
             title:     li.title,
@@ -4038,6 +4076,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             quantity:  li.quantity,
             price:     parseFloat(li.price || 0),
             fulfilled: li.fulfillment_status === "fulfilled",
+            fulfilledByAdmin: adminShipMap[String(o.id)]?.has(String(li.id)) || false,
             product_id: li.product_id || null,
           })),
           fulfillments: (o.fulfillments || [])
@@ -4503,7 +4542,7 @@ app.post("/vendor/products/:productId/size-chart", vendorAuth, sizeChartUpload.s
 app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
   const { shopifyId } = req.params;
   const vendorName = req.vendor; // set by vendorAuth middleware
-  const { courier, awb, trackingUrl } = req.body || {};
+  const { courier, awb, trackingUrl, items: selectedItems } = req.body || {};
   if (!awb) return res.status(400).json({ error: "AWB / tracking number is required." });
 
   try {
@@ -4530,20 +4569,63 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
     const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
     if (!openFOs.length) return res.status(400).json({ error: "No open fulfillment orders found. Items may already be fulfilled." });
 
-    // Build line_items_by_fulfillment_order with only this vendor's items
+    // Live fulfillable quantity per vendor line item
+    const foliMap = {}; // { line_item_id: fulfillable_quantity }
+    for (const fo of openFOs) {
+      for (const foli of (fo.line_items || [])) {
+        if (!vendorLineItemIds.has(foli.line_item_id)) continue;
+        foliMap[String(foli.line_item_id)] = (foliMap[String(foli.line_item_id)] || 0) + foli.fulfillable_quantity;
+      }
+    }
+
+    // Step 2b: figure out which items/quantities to ship — either vendor-selected, or everything pending
+    let shipQtyMap = {}; // { line_item_id: qty }
+    if (Array.isArray(selectedItems) && selectedItems.length) {
+      for (const s of selectedItems) {
+        const liId = String(s.line_item_id);
+        const avail = foliMap[liId] || 0;
+        const qty = Math.min(parseInt(s.quantity) || 0, avail);
+        if (qty > 0) shipQtyMap[liId] = qty;
+      }
+      if (!Object.keys(shipQtyMap).length) return res.status(400).json({ error: "No available items selected to ship." });
+    } else {
+      for (const [liId, qty] of Object.entries(foliMap)) {
+        if (qty > 0) shipQtyMap[liId] = qty;
+      }
+    }
+    if (!Object.keys(shipQtyMap).length) {
+      return res.status(400).json({ error: "All your items in this order have already been fulfilled." });
+    }
+
+    // Build line_items_by_fulfillment_order, allocating selected quantities across open FOs
+    const remaining = { ...shipQtyMap };
     const line_items_by_fulfillment_order = [];
     for (const fo of openFOs) {
-      const matchingItems = (fo.line_items || []).filter(foli => vendorLineItemIds.has(foli.line_item_id));
-      if (matchingItems.length) {
+      const matching = [];
+      for (const foli of (fo.line_items || [])) {
+        const liId = String(foli.line_item_id);
+        const rem = remaining[liId] || 0;
+        if (rem <= 0) continue;
+        const qty = Math.min(rem, foli.fulfillable_quantity);
+        if (qty <= 0) continue;
+        matching.push({ id: foli.id, quantity: qty });
+        remaining[liId] -= qty;
+      }
+      if (matching.length) {
         line_items_by_fulfillment_order.push({
           fulfillment_order_id: fo.id,
-          fulfillment_order_line_items: matchingItems.map(foli => ({ id: foli.id, quantity: foli.quantity })),
+          fulfillment_order_line_items: matching,
         });
       }
     }
     if (!line_items_by_fulfillment_order.length) {
       return res.status(400).json({ error: "Your items are already fulfilled or not found in open fulfillment orders." });
     }
+
+    // Items actually being shipped, with their shipped quantities (for the notification email)
+    const shippedItems = vendorLineItems
+      .filter(li => shipQtyMap[String(li.id)])
+      .map(li => ({ ...li, quantity: shipQtyMap[String(li.id)] }));
 
     // Step 3: create partial fulfillment on Shopify
     const fulfillBody = {
@@ -4577,7 +4659,7 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
       await sendEmail({
         to: order.email,
         subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
-        html: templateVendorShipped({ order, vendorName, items: vendorLineItems, awb, courier, trackingUrl, adsStrip }),
+        html: templateVendorShipped({ order, vendorName, items: shippedItems, awb, courier, trackingUrl, adsStrip }),
         shopifyId, trigger: 'vendor_shipped',
       });
     }
@@ -6676,6 +6758,32 @@ app.delete("/admin/branding/logo", adminAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Vendor branding (per-vendor panel theme, accent color, font) ─────────────
+app.get("/vendor/branding", vendorAuth, async (req, res) => {
+  try {
+    const cfg = await VC.get(req.vendor);
+    res.json({
+      theme: cfg?.theme || 'minimal',
+      accent_color: cfg?.accent_color || '',
+      font_style: cfg?.font_style || 'round',
+      icon_style: cfg?.icon_style || 'minimal',
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/vendor/branding", vendorAuth, async (req, res) => {
+  try {
+    const { theme, accent_color, font_style, icon_style } = req.body || {};
+    const fields = {};
+    if (theme !== undefined) fields.theme = theme;
+    if (accent_color !== undefined) fields.accent_color = accent_color;
+    if (font_style !== undefined) fields.font_style = font_style;
+    if (icon_style !== undefined) fields.icon_style = icon_style;
+    await VC.upsert(req.vendor, fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Announcement bar messages ───────────────────────────────────────────────
 app.get("/admin/announcements", adminAuth, async (req, res) => {
   try {
@@ -7031,7 +7139,7 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
 // POST /vendor/orders/:shopifyId/create-shipment — create shipment via connected partner
 app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, res) => {
   try {
-    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface' } = req.body || {};
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface', items: selectedItems } = req.body || {};
     if (!partner) return res.status(400).json({ error: "partner required" });
 
     const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });
@@ -7045,19 +7153,63 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     if (!shopifyOrder) return res.status(404).json({ error: "Order not found on Shopify" });
 
     const addr      = shopifyOrder.shipping_address || {};
-    const items     = (shopifyOrder.line_items || []).filter(li => (li.vendor || "").toLowerCase() === req.vendor.toLowerCase());
+    const sid       = String(shopifyOrder.id);
+    const allVendorItems = (shopifyOrder.line_items || []).filter(li => (li.vendor || "").toLowerCase() === req.vendor.toLowerCase());
     const cod       = shopifyOrder.financial_status !== "paid";
 
-    // Calculate this vendor's correct COD amount
-    const vendorSubtotal  = items.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+    // Live fulfillable quantities — exclude items already shipped (e.g. by admin)
+    const shopifyTokenEarly = await getAccessToken();
+    const foResEarly = await fetch(
+      `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/fulfillment_orders.json`,
+      { headers: { 'X-Shopify-Access-Token': shopifyTokenEarly } }
+    );
+    const foDataEarly = await foResEarly.json();
+    const openFOs = (foDataEarly.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
+    const foliMap = {}; // { line_item_id: fulfillable_quantity }
+    for (const fo of openFOs) {
+      for (const foli of (fo.line_items || [])) {
+        foliMap[String(foli.line_item_id)] = (foliMap[String(foli.line_item_id)] || 0) + foli.fulfillable_quantity;
+      }
+    }
+
+    // Only ship items (and quantities) that aren't already fulfilled
+    let items = allVendorItems
+      .map(li => ({ ...li, quantity: foliMap[String(li.id)] || 0 }))
+      .filter(li => li.quantity > 0);
+
+    // Optional: vendor selected specific items/quantities to ship now (e.g. partial availability)
+    if (Array.isArray(selectedItems) && selectedItems.length) {
+      const selMap = Object.fromEntries(selectedItems.map(s => [String(s.line_item_id), parseInt(s.quantity) || 0]));
+      items = items
+        .map(li => {
+          const reqQty = selMap[String(li.id)];
+          if (reqQty === undefined || reqQty <= 0) return null;
+          return { ...li, quantity: Math.min(reqQty, li.quantity) };
+        })
+        .filter(Boolean);
+    }
+
+    if (!items.length) {
+      return res.status(400).json({ error: selectedItems ? "No available items selected to ship." : "All your items in this order have already been fulfilled." });
+    }
+
+    // Calculate this vendor's correct COD amount (based only on the items being shipped now)
+    const vendorSubtotal  = items.reduce((s, li) => s + parseFloat(li.price || 0) * li.quantity, 0);
     const allVendors      = [...new Set((shopifyOrder.line_items || []).map(li => li.vendor).filter(Boolean))];
     const vendorCount     = allVendors.length || 1;
     const totalShipping   = (shopifyOrder.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
     const vendorShipping  = cod ? parseFloat((totalShipping / vendorCount).toFixed(2)) : 0;
 
-    // Fetch advance paid from order_meta and split across vendors
-    const meta            = await mdb.collection('order_meta').findOne({ shopify_id: String(shopifyOrder.id) }, { projection: { advance_paid: 1, payment_type: 1 } });
-    const advancePaid     = parseFloat(((meta?.advance_paid || 0) / vendorCount).toFixed(2));
+    // Advance paid: split equally across vendors, then split each vendor's share equally
+    // per item (by quantity, across ALL of this vendor's items on the order) — so a
+    // shipment covering only some of the vendor's items deducts only its share.
+    const meta            = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { advance_paid: 1, payment_type: 1 } });
+    const advancePaidTotal = parseFloat(meta?.advance_paid || 0);
+    const vendorAdvanceShare = vendorCount ? advancePaidTotal / vendorCount : 0;
+    const vendorTotalQty  = allVendorItems.reduce((s, li) => s + li.quantity, 0);
+    const perItemAdvance  = vendorTotalQty > 0 ? vendorAdvanceShare / vendorTotalQty : 0;
+    const shipQty         = items.reduce((s, li) => s + li.quantity, 0);
+    const advancePaid     = parseFloat((perItemAdvance * shipQty).toFixed(2));
 
     const vendorTotal     = parseFloat((vendorSubtotal + vendorShipping).toFixed(2));
     const codAmt          = cod ? parseFloat(Math.max(0, vendorTotal - advancePaid).toFixed(2)) : 0;
@@ -7253,31 +7405,32 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
     // Save AWB to this vendor's order_vendor_stage only — never to order_meta.awb
     if (result?.awb) {
-      const sid = String(shopifyOrder.id);
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
       // Auto-register with ShipSagar for tracking
       shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: ((shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||'')).trim(), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
-      // Also create a Shopify partial fulfillment for this vendor's line items
+      // Also create a Shopify partial fulfillment for exactly the quantities being shipped now
       try {
-        const shopifyToken = await getAccessToken();
-        const vendorLineItemIds = new Set(items.map(li => li.id));
-
-        // Fetch open fulfillment orders and match this vendor's items
-        const foRes = await fetch(
-          `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/fulfillment_orders.json`,
-          { headers: { 'X-Shopify-Access-Token': shopifyToken } }
-        );
-        const foData = await foRes.json();
-        const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
+        const shopifyToken = shopifyTokenEarly;
+        const remainingToShip = {}; // line_item_id -> qty still to allocate to a FO
+        items.forEach(li => { remainingToShip[String(li.id)] = li.quantity; });
 
         const line_items_by_fulfillment_order = [];
         for (const fo of openFOs) {
-          const matching = (fo.line_items || []).filter(foli => vendorLineItemIds.has(foli.line_item_id));
+          const matching = [];
+          for (const foli of (fo.line_items || [])) {
+            const liId = String(foli.line_item_id);
+            const remaining = remainingToShip[liId] || 0;
+            if (remaining <= 0) continue;
+            const qty = Math.min(remaining, foli.fulfillable_quantity);
+            if (qty <= 0) continue;
+            matching.push({ id: foli.id, quantity: qty });
+            remainingToShip[liId] -= qty;
+          }
           if (matching.length) {
             line_items_by_fulfillment_order.push({
               fulfillment_order_id: fo.id,
-              fulfillment_order_line_items: matching.map(foli => ({ id: foli.id, quantity: foli.quantity })),
+              fulfillment_order_line_items: matching,
             });
           }
         }
@@ -7301,6 +7454,18 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
             }),
           });
           result.shopifyFulfilled = true;
+
+          // Email customer about this shipment (only the items shipped now)
+          const cfg = await getSmtpConfig();
+          if (cfg && shopifyOrder.email) {
+            const adsStrip = await getEmailAdsStrip();
+            await sendEmail({
+              to: shopifyOrder.email,
+              subject: `Your Items from ${req.vendor} Have Shipped! 🚚`,
+              html: templateVendorShipped({ order: shopifyOrder, vendorName: req.vendor, items, awb: result.awb, courier: courierName, trackingUrl: trackUrl, adsStrip }),
+              shopifyId: sid, trigger: 'vendor_shipped',
+            });
+          }
         }
       } catch (e) {
         console.error('⚠️  Shopify fulfillment after create-shipment failed:', e.message);
@@ -7313,6 +7478,448 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     console.error("❌ /create-shipment:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// GET /vendor/orders/:shopifyId/fulfillment-items — this vendor's line items with live fulfillable quantities
+app.get("/vendor/orders/:shopifyId/fulfillment-items", vendorAuth, async (req, res) => {
+  try {
+    const sid = String(req.params.shopifyId);
+    const { order: shopifyOrder } = await shopifyREST(`/orders/${sid}.json`);
+    if (!shopifyOrder) return res.status(404).json({ error: "Order not found on Shopify" });
+
+    const shopifyToken = await getAccessToken();
+    const foRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/fulfillment_orders.json`, {
+      headers: { 'X-Shopify-Access-Token': shopifyToken },
+    });
+    const foData = await foRes.json();
+    const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
+    const foliMap = {};
+    for (const fo of openFOs) {
+      for (const foli of (fo.line_items || [])) {
+        foliMap[String(foli.line_item_id)] = (foliMap[String(foli.line_item_id)] || 0) + foli.fulfillable_quantity;
+      }
+    }
+
+    const items = (shopifyOrder.line_items || [])
+      .filter(li => (li.vendor || "").toLowerCase() === req.vendor.toLowerCase())
+      .map(li => ({
+        line_item_id: String(li.id),
+        title: li.title,
+        sku: li.sku || '',
+        quantity: li.quantity,
+        fulfillable_quantity: foliMap[String(li.id)] ?? 0,
+        price: parseFloat(li.price || 0),
+      }));
+
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/orders/:shopifyId/fulfillment-items — line items with live fulfillable quantities + existing shipments
+app.get("/admin/orders/:shopifyId/fulfillment-items", adminAuth, async (req, res) => {
+  try {
+    const sid = String(req.params.shopifyId);
+    const { order: shopifyOrder } = await shopifyREST(`/orders/${sid}.json`);
+    if (!shopifyOrder) return res.status(404).json({ error: "Order not found on Shopify" });
+
+    const shopifyToken = await getAccessToken();
+    const foRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/fulfillment_orders.json`, {
+      headers: { 'X-Shopify-Access-Token': shopifyToken },
+    });
+    const foData = await foRes.json();
+    const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
+    const foliMap = {};
+    for (const fo of openFOs) {
+      for (const foli of (fo.line_items || [])) {
+        foliMap[String(foli.line_item_id)] = foli.fulfillable_quantity;
+      }
+    }
+
+    const items = (shopifyOrder.line_items || []).map(li => ({
+      line_item_id: String(li.id),
+      title: li.title,
+      vendor: li.vendor || '',
+      sku: li.sku || '',
+      quantity: li.quantity,
+      fulfillable_quantity: foliMap[String(li.id)] ?? 0,
+      price: parseFloat(li.price || 0),
+    }));
+
+    const shipments = await mdb.collection('order_shipments')
+      .find({ shopify_id: sid }, { projection: { _id: 0 } })
+      .sort({ created_at: -1 })
+      .toArray();
+
+    res.json({ items, shipments });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/orders/:shopifyId/create-shipment — admin creates a shipment for selected line items/quantities
+// across one or more vendors, choosing a connected partner + saved pickup location.
+app.post("/admin/orders/:shopifyId/create-shipment", adminAuth, async (req, res) => {
+  try {
+    const sid = String(req.params.shopifyId);
+    const { items, partner, pickup_location, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface' } = req.body || {};
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: "items required" });
+    if (!partner) return res.status(400).json({ error: "partner required" });
+
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected. Go to Shipping Settings to connect.` });
+    const creds = JSON.parse(credRow.credentials);
+
+    const { order: shopifyOrder } = await shopifyREST(`/orders/${sid}.json`);
+    if (!shopifyOrder) return res.status(404).json({ error: "Order not found on Shopify" });
+
+    // Live fulfillable quantities from Shopify's fulfillment orders
+    const shopifyToken = await getAccessToken();
+    const foRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/fulfillment_orders.json`, {
+      headers: { 'X-Shopify-Access-Token': shopifyToken },
+    });
+    const foData = await foRes.json();
+    const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
+    const foliMap = {};
+    for (const fo of openFOs) {
+      for (const foli of (fo.line_items || [])) {
+        foliMap[String(foli.line_item_id)] = { fo_id: fo.id, foli_id: foli.id, fulfillable_quantity: foli.fulfillable_quantity };
+      }
+    }
+
+    const liMap = Object.fromEntries((shopifyOrder.line_items || []).map(li => [String(li.id), li]));
+    const selected = [];
+    for (const it of items) {
+      const liId = String(it.line_item_id);
+      const li = liMap[liId];
+      if (!li) return res.status(400).json({ error: `Line item ${liId} not found on this order` });
+      const qty = parseInt(it.quantity) || 0;
+      if (qty <= 0) continue;
+      const f = foliMap[liId];
+      const fulfillable = f ? f.fulfillable_quantity : 0;
+      if (qty > fulfillable) return res.status(400).json({ error: `${li.title}: only ${fulfillable} unit(s) available to fulfill` });
+      selected.push({ line_item_id: liId, vendor: li.vendor || '', title: li.title, sku: li.sku || '', quantity: qty, price: parseFloat(li.price || 0), foli: f });
+    }
+    if (!selected.length) return res.status(400).json({ error: "No items with quantity > 0 selected" });
+
+    const addr = shopifyOrder.shipping_address || {};
+    const cod = shopifyOrder.financial_status !== "paid";
+    const shipmentValue = parseFloat(selected.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2));
+
+    // Deduct this shipment's share of any advance already paid: split equally across
+    // vendors first, then within each vendor's share, split equally per item (by quantity)
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { advance_paid: 1 } });
+    const advancePaid = parseFloat(meta?.advance_paid || 0);
+    const allVendorsForAdvance = [...new Set((shopifyOrder.line_items || []).map(li => li.vendor).filter(Boolean))];
+    const vendorAdvanceShare = allVendorsForAdvance.length ? advancePaid / allVendorsForAdvance.length : 0;
+    let allocatedAdvance = 0;
+    if (advancePaid > 0) {
+      for (const vendor of new Set(selected.map(s => s.vendor).filter(Boolean))) {
+        const vendorItems = (shopifyOrder.line_items || []).filter(li => (li.vendor || '') === vendor);
+        const vendorTotalQty = vendorItems.reduce((s, li) => s + li.quantity, 0);
+        const perItemAdvance = vendorTotalQty > 0 ? vendorAdvanceShare / vendorTotalQty : 0;
+        const shipQtyForVendor = selected.filter(s => s.vendor === vendor).reduce((s, it) => s + it.quantity, 0);
+        allocatedAdvance += perItemAdvance * shipQtyForVendor;
+      }
+      allocatedAdvance = parseFloat(allocatedAdvance.toFixed(2));
+    }
+    const codAmt = cod ? parseFloat(Math.max(0, shipmentValue - allocatedAdvance).toFixed(2)) : 0;
+    const totalQty = selected.reduce((s, it) => s + it.quantity, 0);
+    const custName = `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || shopifyOrder.customer?.first_name || "Customer";
+    const orderDateStr = (shopifyOrder.created_at || new Date().toISOString()).replace("T", " ").replace(/\.\d+Z$/, "").replace("Z", "");
+    const warehouseName = pickup_location || creds.pickup_location || "Primary";
+    // Unique order id per shipment attempt — avoids partner-side dedup when an order ships in multiple parcels
+    const orderRef = `${shopifyOrder.name}-${Date.now().toString(36).slice(-5).toUpperCase()}`;
+
+    let result;
+
+    if (partner === "delhivery") {
+      const shipData = {
+        pickup_location: { name: warehouseName },
+        shipments: [{
+          name:          custName,
+          add:           addr.address1 || "",
+          add2:          addr.address2 || "",
+          pin:           addr.zip      || "",
+          city:          addr.city     || "",
+          state:         addr.province || "",
+          country:       "India",
+          phone:         (addr.phone || "").replace(/\D/g, "").slice(-10),
+          order:         orderRef,
+          payment_mode:  cod ? "COD" : "Pre-paid",
+          return_pin:    creds.return_pincode || "",
+          return_city:   creds.return_city    || "",
+          return_phone:  creds.return_phone   || "",
+          return_name:   creds.company_name   || "Croscrow",
+          return_add:    creds.return_address || "",
+          return_state:  creds.return_state   || "",
+          return_country:"India",
+          products_desc: selected.map(it => it.title).join(", ").slice(0, 250),
+          hsn_code:      "",
+          cod_amount:    cod ? codAmt : "",
+          order_date:    orderDateStr,
+          total_amount:  shipmentValue,
+          seller_inv:    shopifyOrder.name,
+          quantity:      String(totalQty),
+          shipment_length: String(length),
+          shipment_width:  String(breadth),
+          shipment_height: String(height),
+          weight:          String(Math.round(parseFloat(weight) * 1000)),
+          shipping_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
+          seller_name:   creds.company_name || "Croscrow",
+          seller_add:    creds.return_address || "",
+          seller_city:   creds.return_city   || "",
+          seller_state:  creds.return_state  || "",
+          seller_pin:    creds.return_pincode || "",
+          seller_country:"India",
+        }],
+      };
+      const dlBody = new URLSearchParams();
+      dlBody.append("format", "json");
+      dlBody.append("data", JSON.stringify(shipData));
+      const dlRaw = await fetch("https://track.delhivery.com/api/cmu/create.json", {
+        method:  "POST",
+        headers: { "Authorization": `Token ${creds.api_token}`, "Content-Type": "application/x-www-form-urlencoded" },
+        body:    dlBody.toString(),
+      });
+      const dlRes = await dlRaw.json();
+      if (dlRes.packages?.[0]?.waybill) {
+        result = { success: true, awb: dlRes.packages[0].waybill };
+      } else {
+        const errMsg = dlRes.packages?.[0]?.remarks || dlRes.rmk || (typeof dlRes === "string" ? dlRes : JSON.stringify(dlRes));
+        return res.status(400).json({ error: errMsg });
+      }
+    } else if (partner === "shiprocket") {
+      const authRes = await fetch("https://apiv2.shiprocket.in/v1/external/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: creds.email, password: creds.password }),
+      }).then(r => r.json());
+      if (!authRes.token) return res.status(400).json({ error: "Shiprocket auth failed. Check credentials." });
+
+      const payload = {
+        order_id:         orderRef,
+        order_date:       shopifyOrder.created_at,
+        pickup_location:  warehouseName,
+        billing_customer_name:  addr.first_name || shopifyOrder.customer?.first_name || "Customer",
+        billing_last_name:      addr.last_name  || shopifyOrder.customer?.last_name  || "",
+        billing_address:        addr.address1   || "",
+        billing_address_2:      addr.address2   || "",
+        billing_city:           addr.city        || "",
+        billing_pincode:        addr.zip         || "",
+        billing_state:          addr.province    || "",
+        billing_country:        addr.country     || "India",
+        billing_email:          shopifyOrder.email || "",
+        billing_phone:          addr.phone || "",
+        shipping_is_billing:    true,
+        order_items: selected.map(it => ({
+          name:     it.title,
+          sku:      it.sku || it.title.slice(0, 40),
+          units:    it.quantity,
+          selling_price: it.price,
+        })),
+        payment_method: cod ? "COD" : "Prepaid",
+        sub_total:      shipmentValue,
+        length, breadth, height, weight,
+      };
+      if (cod) payload.collect_amount = codAmt;
+
+      const srRes = await fetch("https://apiv2.shiprocket.in/v1/external/orders/create/adhoc", {
+        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authRes.token}` },
+        body: JSON.stringify(payload),
+      }).then(r => r.json());
+
+      if (srRes.status_code === 1) {
+        result = { success: true, orderId: srRes.order_id, shipmentId: srRes.shipment_id, awb: srRes.awb_code };
+      } else {
+        return res.status(400).json({ error: srRes.message || JSON.stringify(srRes) });
+      }
+    } else if (partner === "shipmozo") {
+      const smPublicKey  = creds.public_key  || "";
+      const smPrivateKey = creds.private_key || creds.api_key || "";
+      if (!smPublicKey || !smPrivateKey) return res.status(400).json({ error: "ShipMozo public and private keys required. Go to Shipping Settings." });
+
+      const smHeaders = { "Content-Type": "application/json", "public-key": smPublicKey, "private-key": smPrivateKey };
+      const safeJson = async (fetchPromise) => {
+        const r = await fetchPromise;
+        const text = await r.text();
+        try { return { ok: r.ok, status: r.status, data: JSON.parse(text) }; }
+        catch { return { ok: false, status: r.status, data: null, raw: text.slice(0, 400) }; }
+      };
+      const weightGrams = Math.round(parseFloat(weight) * 1000);
+
+      const smPayload = {
+        order_id:                   orderRef,
+        order_date:                 (shopifyOrder.created_at || "").slice(0, 10),
+        consignee_name:             custName,
+        consignee_phone:            (addr.phone || "").replace(/\D/g, "").slice(-10),
+        consignee_email:            shopifyOrder.email || "",
+        consignee_address_line_one: addr.address1 || "",
+        consignee_address_line_two: addr.address2 || "",
+        consignee_pin_code:         addr.zip      || "",
+        consignee_city:             addr.city     || "",
+        consignee_state:            addr.province || "",
+        product_detail:             selected.map(it => it.title).join(", ").slice(0, 250),
+        payment_type:               cod ? "COD" : "PREPAID",
+        cod_amount:                 cod ? String(codAmt) : "0",
+        weight:                     String(weightGrams),
+        length:                     String(length),
+        width:                      String(breadth),
+        height:                     String(height),
+        ...(creds.warehouse_id ? { warehouse_id: creds.warehouse_id } : {}),
+      };
+
+      const pushResult = await safeJson(fetch("https://shipping-api.com/api/v1/push-order", {
+        method: "POST", headers: smHeaders, body: JSON.stringify(smPayload),
+      }));
+      if (!pushResult.data) return res.status(500).json({ error: `ShipMozo returned non-JSON (HTTP ${pushResult.status}): ${pushResult.raw}` });
+
+      const smOrderId = pushResult.data?.order_id || pushResult.data?.data?.order_id;
+      if (!smOrderId && !pushResult.ok) return res.status(400).json({ error: pushResult.data?.message || JSON.stringify(pushResult.data) });
+
+      const assignResult = await safeJson(fetch("https://shipping-api.com/api/v1/auto-assign-order", {
+        method: "POST", headers: smHeaders, body: JSON.stringify({ order_id: smOrderId }),
+      }));
+      const awbNum = assignResult.data?.awb_number || assignResult.data?.data?.awb_number
+        || pushResult.data?.awb_number || pushResult.data?.data?.awb_number;
+
+      if (awbNum) {
+        result = { success: true, awb: awbNum };
+      } else {
+        const smMsg = assignResult.data?.message || pushResult.data?.message || "";
+        return res.status(400).json({ error: `ShipMozo order pushed (ID: ${smOrderId}) but AWB not yet assigned. ${smMsg}. Check ShipMozo panel.` });
+      }
+    } else {
+      return res.status(400).json({ error: `Unsupported partner: ${partner}` });
+    }
+
+    // Build Shopify fulfillment for exactly the selected line-item quantities
+    const byFo = {};
+    for (const it of selected) {
+      const f = it.foli;
+      if (!f) continue;
+      (byFo[f.fo_id] = byFo[f.fo_id] || []).push({ id: f.foli_id, quantity: it.quantity });
+    }
+    const line_items_by_fulfillment_order = Object.entries(byFo).map(([fo_id, fol]) => ({
+      fulfillment_order_id: Number(fo_id),
+      fulfillment_order_line_items: fol,
+    }));
+
+    let fulfillmentId = null;
+    if (line_items_by_fulfillment_order.length) {
+      const courierName = partner === 'shiprocket' ? 'Shiprocket' : partner === 'shipmozo' ? 'ShipMozo' : 'Delhivery';
+      const trackUrl = partner === 'delhivery'
+        ? `https://www.delhivery.com/track/package/${result.awb}`
+        : partner === 'shipmozo'
+        ? `https://panel.shipmozo.com/track-order?awb=${result.awb}`
+        : `https://shiprocket.co/tracking/${result.awb}`;
+      try {
+        const fRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/fulfillments.json`, {
+          method: 'POST',
+          headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fulfillment: {
+              line_items_by_fulfillment_order,
+              tracking_info: { number: result.awb, url: trackUrl, company: courierName },
+              notify_customer: false,
+            },
+          }),
+        });
+        const fData = await fRes.json();
+        fulfillmentId = fData.fulfillment?.id || null;
+        result.shopifyFulfilled = !!fulfillmentId;
+      } catch (e) {
+        console.error('⚠️  Shopify fulfillment after admin create-shipment failed:', e.message);
+        result.shopifyFulfillError = e.message;
+      }
+      shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: custName, email: shopifyOrder.email || '', mobileNo: (addr.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
+
+      // Email customer + affected vendors about this shipment (grouped per vendor)
+      try {
+        const cfg = await getSmtpConfig();
+        const adsStrip = cfg ? await getEmailAdsStrip() : '';
+        const vendorsTouchedNow = [...new Set(selected.map(s => s.vendor).filter(Boolean))];
+        for (const vendor of vendorsTouchedNow) {
+          const vendorItems = selected.filter(s => s.vendor === vendor);
+          if (cfg && shopifyOrder.email) {
+            await sendEmail({
+              to: shopifyOrder.email,
+              subject: `Your Items from ${vendor} Have Shipped! 🚚`,
+              html: templateVendorShipped({ order: shopifyOrder, vendorName: vendor, items: vendorItems, awb: result.awb, courier: courierName, trackingUrl: trackUrl, adsStrip }),
+              shopifyId: sid, trigger: 'vendor_shipped',
+            });
+          }
+          if (cfg) {
+            const vendorRow = await VC.get(vendor);
+            if (vendorRow?.email) {
+              await sendEmail({
+                to: vendorRow.email,
+                subject: `Order ${shopifyOrder.name} — Item(s) Fulfilled by CrosCrow`,
+                html: templateAdminFulfilledVendor({ order: shopifyOrder, vendorName: vendor, items: vendorItems, awb: result.awb, courier: courierName }),
+                shopifyId: sid, trigger: 'admin_fulfilled_vendor',
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.error('⚠️  Email after admin create-shipment failed:', e.message);
+      }
+    }
+
+    // Save shipment record
+    const shipmentDoc = {
+      shopify_id: sid,
+      order_name: shopifyOrder.name,
+      partner,
+      awb: result.awb,
+      courier: partner,
+      pickup_location: warehouseName,
+      weight: parseFloat(weight), length: parseFloat(length), breadth: parseFloat(breadth), height: parseFloat(height), shipMode,
+      items: selected.map(it => ({ line_item_id: it.line_item_id, vendor: it.vendor, title: it.title, quantity: it.quantity })),
+      fulfillment_id: fulfillmentId,
+      created_by: 'admin',
+      created_at: new Date().toISOString(),
+    };
+    await mdb.collection('order_shipments').insertOne(shipmentDoc);
+
+    // Update per-vendor stage: 'ready' if fully fulfilled, 'partial' if pieces remain pending
+    const vendorsTouched = [...new Set(selected.map(s => s.vendor).filter(Boolean))];
+    for (const vendor of vendorsTouched) {
+      const vendorItems = (shopifyOrder.line_items || []).filter(li => (li.vendor || '') === vendor);
+      let remaining = 0;
+      for (const li of vendorItems) {
+        const liId = String(li.id);
+        const f = foliMap[liId];
+        let fulfillable = f ? f.fulfillable_quantity : 0;
+        const sel = selected.find(s => s.line_item_id === liId && s.vendor === vendor);
+        if (sel) fulfillable -= sel.quantity;
+        remaining += Math.max(0, fulfillable);
+      }
+      if (remaining === 0) {
+        await OVS.upsert(sid, vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+      } else {
+        const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1 } });
+        await OVS.upsert(sid, vendor, { stage: higherStage(existing?.stage || 'new', 'partial'), updated_at: new Date().toISOString() });
+      }
+    }
+
+    res.json({ ...result, shipment: shipmentDoc, vendorsTouched });
+  } catch (err) {
+    console.error("❌ /admin/orders/:id/create-shipment:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /vendor/orders/:shopifyId/shipments — shipments (admin-created) containing this vendor's items
+app.get("/vendor/orders/:shopifyId/shipments", vendorAuth, async (req, res) => {
+  try {
+    const sid = String(req.params.shopifyId);
+    const shipments = await mdb.collection('order_shipments')
+      .find({ shopify_id: sid, 'items.vendor': req.vendor }, { projection: { _id: 0 } })
+      .sort({ created_at: -1 })
+      .toArray();
+    res.json({ shipments: shipments.map(s => ({ ...s, items: s.items.filter(it => it.vendor === req.vendor) })) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Admin Global Shipping Credentials ────────────────────────────────────────

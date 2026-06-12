@@ -220,7 +220,7 @@
     .mbn-item {
       flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
       gap:2px; border:none; background:none; cursor:pointer; padding:6px 2px;
-      color:var(--text-muted); font-family:'IBM Plex Mono',monospace; transition:color 0.15s;
+      color:var(--text-muted); font-family:var(--font-family); transition:color 0.15s;
     }
     .mbn-item.active { color:var(--indigo); }
     .mbn-icon { font-size:18px; line-height:1; }
@@ -433,7 +433,7 @@
     /* ── Jarvis mode tabs ─────────────────────────────── */
     .jv-tabs { display:flex; gap:4px; padding:14px 20px 0; flex-shrink:0; }
     .jv-tab  { flex:1; padding:8px; border-radius:8px 8px 0 0; border:1px solid var(--border); border-bottom:none;
-               background:transparent; color:var(--text-muted); font-family:'IBM Plex Mono',monospace; font-size:11px;
+               background:transparent; color:var(--text-muted); font-family:var(--font-family); font-size:11px;
                font-weight:700; letter-spacing:1.5px; cursor:pointer; text-transform:uppercase; transition:all 0.15s; }
     .jv-tab.active { background:var(--bg-card); color:var(--cyan); border-color:var(--cyan); }
 
@@ -1000,6 +1000,21 @@
     const [priceEditing,   setPriceEditing]   = useState({}); // { line_item_id: draftString }
     const [savingPrice,    setSavingPrice]     = useState({}); // { line_item_id: bool }
 
+    // Create Shipment panel
+    const [shipItems,       setShipItems]       = useState([]);
+    const [shipQty,         setShipQty]         = useState({}); // { line_item_id: qty }
+    const [existingShipments, setExistingShipments] = useState([]);
+    const [connectedPartners, setConnectedPartners] = useState([]);
+    const [shipPartner,     setShipPartner]     = useState('');
+    const [warehouses,      setWarehouses]      = useState([]);
+    const [shipPickup,      setShipPickup]      = useState('');
+    const [shipWeight,      setShipWeight]      = useState('0.5');
+    const [shipLength,      setShipLength]      = useState('15');
+    const [shipBreadth,     setShipBreadth]     = useState('12');
+    const [shipHeight,      setShipHeight]      = useState('8');
+    const [shipMode,        setShipMode]        = useState('Surface');
+    const [creatingShip,    setCreatingShip]    = useState(false);
+
     const loadPriceOverrides = () => {
       fetch(`${API}/admin/orders/${order.shopifyId}/price-overrides`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>{
@@ -1069,9 +1084,57 @@
       }
       loadNotes();
       loadPriceOverrides();
+      loadShipmentData();
       fetch(`${API}/admin/order-tags`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setAvailTags(d.tags||[])).catch(()=>{});
+      fetch(`${API}/admin/shipping-creds`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setConnectedPartners(d.partners||[])).catch(()=>{});
     },[order.shopifyId]);
+
+    useEffect(()=>{
+      if (!shipPartner) { setWarehouses([]); setShipPickup(''); return; }
+      fetch(`${API}/admin/shipping/warehouses?partner=${encodeURIComponent(shipPartner)}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{
+          const whs = d.warehouses||[];
+          setWarehouses(whs);
+          setShipPickup(whs[0]?.name || '');
+        }).catch(()=>{ setWarehouses([]); setShipPickup(''); });
+    },[shipPartner]);
+
+    const loadShipmentData = () => {
+      fetch(`${API}/admin/orders/${order.shopifyId}/fulfillment-items`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{
+          setShipItems(d.items||[]);
+          setExistingShipments(d.shipments||[]);
+        }).catch(()=>{});
+    };
+
+    const totalSelectedQty = Object.values(shipQty).reduce((s,v)=>s+(parseInt(v)||0),0);
+
+    const createShipment = async () => {
+      const itemsPayload = Object.entries(shipQty)
+        .filter(([,q])=>(parseInt(q)||0)>0)
+        .map(([line_item_id,quantity])=>({ line_item_id, quantity: parseInt(quantity) }));
+      if (!itemsPayload.length) return;
+      setCreatingShip(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/create-shipment`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({
+            items: itemsPayload, partner: shipPartner, pickup_location: shipPickup,
+            weight: parseFloat(shipWeight)||0.5, length: parseFloat(shipLength)||15,
+            breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8, shipMode,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed to create shipment');
+        setMsg({ type:'success', text:`Shipment created — AWB ${d.awb}` });
+        setShipQty({});
+        loadShipmentData();
+        if (onUpdated) onUpdated();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setCreatingShip(false);
+    };
 
     const postNote = async () => {
       if (!newNote.trim()) return;
@@ -1547,6 +1610,114 @@
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Create Shipment */}
+            <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
+              <div className="detail-box-title" style={{marginBottom:14}}>📦 Create Shipment</div>
+              {shipItems.length === 0 ? (
+                <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading line items…</div>
+              ) : (
+                <>
+                  <table style={{width:'100%',fontSize:11,marginBottom:12,borderCollapse:'collapse'}}>
+                    <thead>
+                      <tr style={{textAlign:'left',color:'var(--text-muted)'}}>
+                        <th style={{padding:'4px 6px'}}>Item</th>
+                        <th style={{padding:'4px 6px'}}>Vendor</th>
+                        <th style={{padding:'4px 6px'}}>Total</th>
+                        <th style={{padding:'4px 6px'}}>Pending</th>
+                        <th style={{padding:'4px 6px'}}>Ship Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shipItems.map(it=>(
+                        <tr key={it.line_item_id} style={{borderTop:'1px solid var(--border)'}}>
+                          <td style={{padding:'4px 6px'}}>{it.title}</td>
+                          <td style={{padding:'4px 6px'}}>{it.vendor||'—'}</td>
+                          <td style={{padding:'4px 6px'}}>{it.quantity}</td>
+                          <td style={{padding:'4px 6px',color: it.fulfillable_quantity>0?'#fbbf24':'#10b981'}}>{it.fulfillable_quantity}</td>
+                          <td style={{padding:'4px 6px'}}>
+                            <input type="number" min="0" max={it.fulfillable_quantity}
+                              style={{width:54,fontSize:11,padding:'3px 6px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card)',color:'var(--text)'}}
+                              value={shipQty[it.line_item_id]||0}
+                              disabled={it.fulfillable_quantity===0}
+                              onChange={e=>{
+                                let v = parseInt(e.target.value)||0;
+                                v = Math.max(0, Math.min(v, it.fulfillable_quantity));
+                                setShipQty(p=>({...p,[it.line_item_id]:v}));
+                              }}/>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {shipItems.every(it=>it.fulfillable_quantity===0) ? (
+                    <div style={{fontSize:11,color:'#10b981',marginBottom:8}}>✓ All items on this order have already been fulfilled.</div>
+                  ) : (
+                    <>
+                      <div className="form-grid" style={{marginBottom:12}}>
+                        <div>
+                          <label className="form-label">Courier Partner</label>
+                          <select className="form-select" value={shipPartner} onChange={e=>setShipPartner(e.target.value)}>
+                            <option value="">— Select —</option>
+                            {connectedPartners.map(p=><option key={p.partner} value={p.partner}>{p.partner}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="form-label">Pickup Location</label>
+                          <select className="form-select" value={shipPickup} onChange={e=>setShipPickup(e.target.value)} disabled={!warehouses.length}>
+                            <option value="">— Select —</option>
+                            {warehouses.map(w=><option key={w.id} value={w.name}>{w.name}{w.address?` — ${w.address}`:''}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="form-label">Weight (kg)</label>
+                          <input className="form-input" type="number" min="0" step="0.01" value={shipWeight} onChange={e=>setShipWeight(e.target.value)}/>
+                        </div>
+                        <div>
+                          <label className="form-label">Dimensions L × W × H (cm)</label>
+                          <div style={{display:'flex',gap:6}}>
+                            <input className="form-input" type="number" min="0" value={shipLength} onChange={e=>setShipLength(e.target.value)}/>
+                            <input className="form-input" type="number" min="0" value={shipBreadth} onChange={e=>setShipBreadth(e.target.value)}/>
+                            <input className="form-input" type="number" min="0" value={shipHeight} onChange={e=>setShipHeight(e.target.value)}/>
+                          </div>
+                        </div>
+                        {shipPartner==='delhivery' && (
+                          <div>
+                            <label className="form-label">Shipping Mode</label>
+                            <select className="form-select" value={shipMode} onChange={e=>setShipMode(e.target.value)}>
+                              <option value="Surface">Surface</option>
+                              <option value="Express">Express</option>
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                      <button className="btn btn-indigo" onClick={createShipment}
+                        disabled={creatingShip || !shipPartner || !shipPickup || totalSelectedQty===0}>
+                        {creatingShip ? '…' : `Create Shipment (${totalSelectedQty} item${totalSelectedQty===1?'':'s'})`}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+
+              {existingShipments.length > 0 && (
+                <div style={{marginTop:16,borderTop:'1px solid var(--border)',paddingTop:12}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)',fontWeight:700,marginBottom:8,letterSpacing:1}}>SHIPMENTS CREATED</div>
+                  {existingShipments.map((s,i)=>(
+                    <div key={i} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',marginBottom:6,fontSize:11}}>
+                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                        <span><strong style={{textTransform:'capitalize'}}>{s.courier}</strong> · <span style={{fontFamily:'monospace',color:'#6366f1'}}>{s.awb}</span></span>
+                        <span style={{color:'var(--text-muted)'}}>{new Date(s.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                      </div>
+                      <div style={{color:'var(--text-muted)'}}>
+                        Pickup: {s.pickup_location} · {s.items.map(it=>`${it.title} ×${it.quantity}${it.vendor?` (${it.vendor})`:''}`).join(', ')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Commission Preview */}
@@ -8206,7 +8377,7 @@
         .then(r=>r.json()).then(d=>{ if(d) setBrand(b=>({...b, ...d})); }).catch(()=>{});
     },[token]);
     useEffect(()=>{
-      const root = document.documentElement.style;
+      const root = document.body.style;
       if (brand.accent_color) {
         root.setProperty('--indigo', brand.accent_color);
         root.setProperty('--indigo-dim', brand.accent_color+'22');
@@ -8216,7 +8387,7 @@
         root.removeProperty('--indigo-dim');
         root.removeProperty('--indigo-glow');
       }
-    },[brand.accent_color]);
+    },[brand.accent_color, theme]);
     useEffect(()=>{
       const f = FONT_OPTIONS.find(f=>f.id===(brand.font_style||'mono')) || FONT_OPTIONS[0];
       document.documentElement.style.setProperty('--font-family', f.family);
