@@ -10626,6 +10626,143 @@ app.post("/track/razorpay-verify", async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+//  Order Confirmation Page — small refundable-against-bill amount collected
+//  from customers post-order to weed out mistaken/fake COD orders that
+//  otherwise get rejected at the doorstep and cost us return shipping.
+// ══════════════════════════════════════════════════════════════════════════
+const CONFIRM_FEE = 99; // INR
+
+// GET /track/confirm-lookup — find order + confirmation status
+app.get("/track/confirm-lookup", async (req, res) => {
+  try {
+    const { q, contact } = req.query;
+    if (!q) return res.status(400).json({ error: "Order number is required" });
+    if (!contact || !contact.trim()) return res.status(400).json({ error: "Email or mobile number is required" });
+
+    const normalized = q.replace(/^#/, '').trim();
+    const name = `#${normalized}`;
+    const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
+    const orders = data.orders || [];
+
+    const contactClean = contact.toLowerCase().trim();
+    const contactPhone = normalizePhone(contact);
+    const order = orders.find(o => {
+      const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
+      const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+      return oEmail === contactClean || (contactPhone.length >= 10 && oPhone === contactPhone);
+    });
+
+    if (!order) return res.status(404).json({ error: "Order not found. Please check the order number and your contact details." });
+    if (order.cancelled_at) return res.status(400).json({ error: "This order has been cancelled." });
+
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
+    const customerName = order.shipping_address
+      ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim()
+      : order.customer ? `${order.customer.first_name||''} ${order.customer.last_name||''}`.trim() : '';
+
+    res.json({
+      shopify_order_id: order.id,
+      order_name: order.name,
+      customer_name: customerName,
+      total: order.total_price,
+      currency: order.currency,
+      financial_status: order.financial_status,
+      item_count: (order.line_items||[]).reduce((s,li)=>s+li.quantity,0),
+      is_prepaid: order.financial_status === 'paid',
+      confirmation_paid: !!meta.confirmation_paid,
+      confirmation_amount: meta.confirmation_amount || 0,
+      fee: CONFIRM_FEE,
+    });
+  } catch (err) {
+    console.error("❌ /track/confirm-lookup:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /track/confirm-razorpay-order — create Razorpay order for the confirmation fee
+app.post("/track/confirm-razorpay-order", async (req, res) => {
+  try {
+    const { shopify_order_id, order_name, customer_name } = req.body || {};
+    if (!process.env.RAZORPAY_KEY_ID) return res.status(400).json({ error: "Razorpay not configured." });
+    if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
+
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(shopify_order_id) }, { projection: { confirmation_paid: 1, _id: 0 } });
+    if (meta?.confirmation_paid) return res.status(400).json({ error: "This order is already confirmed." });
+
+    const order = await getRzp().orders.create({
+      amount: CONFIRM_FEE * 100, // paise
+      currency: 'INR',
+      receipt: `confirm_${order_name || shopify_order_id}_${Date.now()}`.slice(0, 40),
+      notes: { type: 'order_confirmation', shopify_order_id: String(shopify_order_id), order_name: order_name || '', customer: customer_name || '' },
+    });
+    res.json({ order_id: order.id, amount: CONFIRM_FEE, key: process.env.RAZORPAY_KEY_ID });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /track/confirm-payment-verify — verify signature, record advance & confirm order
+app.post("/track/confirm-payment-verify", async (req, res) => {
+  try {
+    const { shopify_order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
+
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+    if (expectedSig !== razorpay_signature)
+      return res.status(400).json({ error: "Payment verification failed." });
+
+    const sid = String(shopify_order_id);
+    const now = new Date().toISOString();
+    const nowMs = Date.now();
+
+    const existingMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { _id: 0 } }) || {};
+    const newAdvance = (parseFloat(existingMeta.advance_paid || 0)) + CONFIRM_FEE;
+    const newStage = higherStage(existingMeta.stage || 'new', 'confirmed');
+
+    await OM.upsert(sid, {
+      advance_paid: newAdvance,
+      payment_type: existingMeta.payment_type || 'cod',
+      stage: newStage,
+      confirmation_paid: 1,
+      confirmation_amount: CONFIRM_FEE,
+      confirmation_payment_id: razorpay_payment_id,
+      confirmation_at: now,
+      updated_at: now,
+    });
+
+    // Sync confirmed stage to all vendors on this order (order-wide stage)
+    try {
+      const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items,tags`);
+      const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+      for (const vendor of vendors) {
+        const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
+        if (existing && ['ready','pickup','transit','ofd','delivered','rto','cancelled'].includes(existing.stage)) continue;
+        const startedAt = existing?.stage_started_at || nowMs;
+        await OVS.upsert(sid, vendor, { stage: higherStage(existing?.stage || 'new', 'confirmed'), updated_at: now, stage_started_at: startedAt, warning_sent: existing?.warning_sent || 0, penalty_triggered: existing?.penalty_triggered || 0 });
+      }
+
+      // Tag the Shopify order for an audit trail
+      const currentTags = (od?.order?.tags || '').split(',').map(t=>t.trim()).filter(Boolean);
+      const confirmTag = `Confirmed ₹${CONFIRM_FEE} Paid`;
+      if (!currentTags.some(t => t.toLowerCase() === confirmTag.toLowerCase())) {
+        currentTags.push(confirmTag);
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
+          method: 'PUT',
+          headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: { id: sid, tags: currentTags.join(', ') } }),
+        });
+      }
+    } catch (e) { console.error('confirm-payment-verify sync error:', e.message); }
+
+    res.json({ verified: true, payment_id: razorpay_payment_id });
+  } catch (err) {
+    console.error("❌ /track/confirm-payment-verify:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI  = `${SERVER_URL}/admin/google/callback`;
@@ -12161,6 +12298,11 @@ setInterval(rrReminderCron, 3600000);
 // ── Serve track.html ──────────────────────────────────────────────────────
 app.get("/track", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'track.html'));
+});
+
+// ── Serve confirm-order.html ─────────────────────────────────────────────
+app.get("/confirm-order", (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'confirm-order.html'));
 });
 
 // ── Public: lookup order by order number + email ──────────────────────────

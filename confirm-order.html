@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Confirm Your Order — CrosCrow</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #ffffff;
+      --bg-card:   #ffffff;
+      --bg-card2:  #f7f7f7;
+      --bg-hover:  #f2f2f2;
+      --border:    #ebebeb;
+      --border-hi: #d4d4d4;
+      --accent:    #0a0a0a;
+      --accent-dim:#f2f2f2;
+      --accent-mid:#6b6b6b;
+      --green:     #007a3a;
+      --green-bg:  #e8fff4;
+      --green-border:#9fedd0;
+      --red:       #c00000;
+      --red-bg:    #fff5f5;
+      --red-border:#ffd0d0;
+      --amber:     #a05800;
+      --amber-bg:  #fff8e6;
+      --amber-border:#fde9a0;
+      --text:      #0a0a0a;
+      --text-muted:#8c8c8c;
+      --text-dim:  #4a4a4a;
+      --shadow:    0 1px 4px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+      --shadow-lg: 0 8px 32px rgba(0,0,0,0.10);
+      --radius:    10px;
+      --radius-sm: 7px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+    .page-wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 20px 16px 48px;
+    }
+
+    /* Header */
+    .header { text-align: center; padding: 20px 0 18px; }
+    .header-logo { margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; }
+    .header-title { font-size: 18px; font-weight: 800; letter-spacing: -0.3px; margin-top: 4px; }
+    .header-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-weight: 400; letter-spacing: 0.1px; line-height: 1.6; }
+
+    .divider { height: 1px; background: var(--border); margin: 0 0 16px; }
+
+    /* Search card */
+    .search-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+    .search-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .search-field { flex: 1; min-width: 130px; }
+    .field-label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase;
+      color: var(--text-muted); margin-bottom: 6px; display: block;
+    }
+    .field-input {
+      width: 100%; background: var(--bg-card2); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 13px; color: var(--text);
+      font-family: inherit; font-size: 13px; font-weight: 400;
+      outline: none; transition: border-color 0.12s, box-shadow 0.12s;
+    }
+    .field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(10,10,10,0.07); background: #fff; }
+    .field-input::placeholder { color: #b8b8b8; }
+
+    .btn {
+      padding: 10px 20px; border-radius: var(--radius-sm); border: none; cursor: pointer;
+      font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0.1px;
+      transition: all 0.12s; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #222; box-shadow: var(--shadow-md); }
+    .btn-primary:active:not(:disabled) { background: #000; transform: translateY(1px); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-full { width: 100%; margin-top: 12px; }
+
+    .alert {
+      border-radius: var(--radius-sm); padding: 10px 13px; font-size: 12px;
+      margin-bottom: 12px; font-weight: 500; line-height: 1.6;
+    }
+    .alert-error { background: var(--red-bg); border: 1px solid var(--red-border); color: var(--red); }
+    .alert-success { background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green); }
+    .alert-info { background: var(--bg-card2); border: 1px solid var(--border); color: var(--text-dim); }
+
+    /* Order result card */
+    .order-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      animation: fadeIn 0.25s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+
+    .order-header {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+      flex-wrap: wrap;
+    }
+    .order-name { font-size: 17px; font-weight: 800; color: var(--accent); letter-spacing: -0.3px; }
+    .order-customer { font-size: 12px; color: var(--text-dim); margin-top: 2px; font-weight: 500; }
+    .order-total { font-size: 15px; font-weight: 700; color: var(--accent); text-align: right; }
+    .order-items { font-size: 11px; color: var(--text-muted); margin-top: 3px; text-align: right; }
+
+    .confirm-fee-box {
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .confirm-fee-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+    .confirm-fee-body { font-size: 12.5px; color: var(--text-dim); line-height: 1.8; }
+    .confirm-fee-body b { color: var(--text); }
+    .confirm-fee-amount {
+      display: flex; align-items: baseline; gap: 6px; margin: 14px 0 4px;
+    }
+    .confirm-fee-amount .amt { font-size: 28px; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+    .confirm-fee-amount .label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+    .confirm-fee-note { font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.7; }
+
+    .action-box { padding: 0 18px 18px; }
+
+    /* Confirmation */
+    .confirm-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      text-align: center;
+      box-shadow: var(--shadow-md);
+      animation: fadeIn 0.3s ease;
+    }
+    .confirm-icon { font-size: 40px; margin-bottom: 14px; }
+    .confirm-title { font-size: 18px; font-weight: 800; color: var(--accent); margin-bottom: 6px; letter-spacing: -0.3px; }
+    .confirm-sub { font-size: 12.5px; color: var(--text-muted); line-height: 1.8; }
+    .confirm-id {
+      display: inline-block; background: var(--accent); border-radius: var(--radius-sm);
+      padding: 9px 20px; font-size: 13px; font-weight: 700;
+      color: #fff; letter-spacing: 2px; margin: 14px 0; font-family: 'SF Mono', monospace;
+    }
+
+    .spin { display: inline-block; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .footer-note {
+      text-align: center; font-size: 11px; color: var(--text-muted);
+      margin-top: 18px; line-height: 1.8;
+    }
+
+    @media (max-width: 480px) {
+      .search-row { flex-direction: column; }
+      .order-header { flex-direction: column; }
+      .order-total, .order-items { text-align: left; }
+      .page-wrap { padding: 12px 12px 36px; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState } = React;
+  const API = window.location.origin;
+
+  function App() {
+    const [orderNumber, setOrderNumber] = useState('');
+    const [contact, setContact] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [order, setOrder] = useState(null);
+    const [paying, setPaying] = useState(false);
+    const [done, setDone] = useState(false);
+
+    const lookup = async (e) => {
+      e.preventDefault();
+      if (!orderNumber.trim() || !contact.trim()) {
+        setError('Please enter your order number and contact details.');
+        return;
+      }
+      setLoading(true); setError(null); setOrder(null); setDone(false);
+      try {
+        const params = new URLSearchParams({ q: orderNumber.trim(), contact: contact.trim() });
+        const r = await fetch(`${API}/track/confirm-lookup?${params}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Order not found.');
+        setOrder(d);
+      } catch (err) { setError(err.message); }
+      setLoading(false);
+    };
+
+    const payAndConfirm = async () => {
+      setError(null); setPaying(true);
+      try {
+        const orderRes = await fetch(`${API}/track/confirm-razorpay-order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shopify_order_id: order.shopify_order_id,
+            order_name: order.order_name,
+            customer_name: order.customer_name,
+          }),
+        });
+        const orderData = await orderRes.json();
+        if (!orderRes.ok) throw new Error(orderData.error || 'Could not start payment.');
+
+        const rzp = new window.Razorpay({
+          key: orderData.key,
+          amount: orderData.amount * 100,
+          currency: 'INR',
+          name: 'CrosCrow',
+          description: `Order Confirmation — ${order.order_name}`,
+          order_id: orderData.order_id,
+          prefill: { name: order.customer_name || '', contact: contact || '' },
+          theme: { color: '#0a0a0a' },
+          handler: async (response) => {
+            try {
+              const vr = await fetch(`${API}/track/confirm-payment-verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  shopify_order_id: order.shopify_order_id,
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
+                }),
+              });
+              const vd = await vr.json();
+              if (!vr.ok || !vd.verified) throw new Error('Payment verification failed.');
+              setDone(true);
+            } catch (err) { setError(err.message); }
+            setPaying(false);
+          },
+          modal: { ondismiss: () => setPaying(false) },
+        });
+        rzp.open();
+      } catch (err) { setError(err.message); setPaying(false); }
+    };
+
+    return (
+      <div className="page-wrap">
+        <div className="header">
+          <div className="header-logo">
+            <img src="/croscrow-logo.png" alt="CrosCrow" style={{height:40,width:'auto'}}/>
+          </div>
+          <div className="header-title">Confirm Your Order</div>
+          <div className="header-sub">Verify it's really you — secure your order for dispatch</div>
+        </div>
+        <div className="divider"></div>
+
+        {!order || !done ? null : null}
+
+        {(!order || (order && !done)) && !order?.confirmation_paid && (
+          <div className="search-card">
+            <form onSubmit={lookup}>
+              <div className="search-row">
+                <div className="search-field">
+                  <label className="field-label">Order Number</label>
+                  <input className="field-input" placeholder="e.g. 12345" value={orderNumber}
+                    onChange={e=>setOrderNumber(e.target.value)} disabled={loading}/>
+                </div>
+                <div className="search-field">
+                  <label className="field-label">Email or Mobile</label>
+                  <input className="field-input" placeholder="Used at checkout" value={contact}
+                    onChange={e=>setContact(e.target.value)} disabled={loading}/>
+                </div>
+              </div>
+              <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
+                {loading ? <><span className="spin">↻</span> Looking up...</> : 'Find My Order'}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {error && <div className="alert alert-error">⚠ {error}</div>}
+
+        {order && !done && (
+          <div className="order-card">
+            <div className="order-header">
+              <div>
+                <div className="order-name">{order.order_name}</div>
+                <div className="order-customer">{order.customer_name}</div>
+              </div>
+              <div>
+                <div className="order-total">₹{order.total}</div>
+                <div className="order-items">{order.item_count} item{order.item_count===1?'':'s'}</div>
+              </div>
+            </div>
+
+            {order.confirmation_paid ? (
+              <div style={{padding:18}}>
+                <div className="alert alert-success" style={{marginBottom:0}}>
+                  ✅ This order is already confirmed. Thank you — we're getting it ready for dispatch!
+                </div>
+              </div>
+            ) : order.is_prepaid ? (
+              <div style={{padding:18}}>
+                <div className="alert alert-info" style={{marginBottom:0}}>
+                  ✓ This order is already fully paid — no confirmation needed. We'll dispatch it shortly!
+                </div>
+              </div>
+            ) : (
+              <React.Fragment>
+                <div className="confirm-fee-box">
+                  <div className="confirm-fee-title">Why we ask for a small confirmation</div>
+                  <div className="confirm-fee-body">
+                    Cash-on-delivery orders are sometimes placed by mistake, or get rejected when our
+                    delivery partner arrives — and the return shipping for that costs us (and ultimately
+                    you, our customers) a lot. A tiny confirmation amount helps us know <b>you really
+                    want this order</b>, so we can pack and ship it with confidence.
+                  </div>
+                  <div className="confirm-fee-amount">
+                    <span className="amt">₹{order.fee}</span>
+                    <span className="label">— adjusted against your final bill</span>
+                  </div>
+                  <div className="confirm-fee-note">
+                    This amount is <b>not an extra charge</b> — it's part of your order total and will
+                    be deducted from the amount you pay on delivery. Once confirmed, your order moves
+                    straight into packing &amp; dispatch.
+                  </div>
+                </div>
+                <div className="action-box">
+                  <button className="btn btn-primary btn-full" onClick={payAndConfirm} disabled={paying}>
+                    {paying ? <><span className="spin">↻</span> Processing...</> : `Pay ₹${order.fee} & Confirm My Order`}
+                  </button>
+                </div>
+              </React.Fragment>
+            )}
+          </div>
+        )}
+
+        {done && (
+          <div className="confirm-card">
+            <div className="confirm-icon">✅</div>
+            <div className="confirm-title">Order Confirmed!</div>
+            <div className="confirm-id">{order.order_name}</div>
+            <div className="confirm-sub">
+              Thanks for confirming — your ₹{order.fee} has been adjusted against your order total.<br/>
+              We're now packing your order for dispatch. You'll get tracking details soon.
+            </div>
+          </div>
+        )}
+
+        <div className="footer-note">
+          Need help? Reach out to our support team with your order number.<br/>
+          CrosCrow · Secure payments powered by Razorpay
+        </div>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
