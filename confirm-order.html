@@ -340,15 +340,6 @@
 
     return (
       <div className="page-wrap">
-        <div className="header">
-          <div className="header-logo">
-            <img src="/croscrow-logo.png" alt="CrosCrow" style={{height:40,width:'auto'}}/>
-          </div>
-          <div className="header-title">Confirm Your Order</div>
-          <div className="header-sub">Verify it's really you — secure your order for dispatch</div>
-        </div>
-        <div className="divider"></div>
-
         {!order && (
           <div className="search-card">
             <form onSubmit={lookup}>
