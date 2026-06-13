@@ -178,6 +178,32 @@
     .cod-due-label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
     .cod-due-amt { font-size: 16px; color: var(--accent); font-weight: 800; }
 
+    /* Prepaid upsell */
+    .prepaid-box {
+      background: var(--bg-card);
+      border: 1.5px solid var(--green-border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow);
+      animation: fadeIn 0.25s ease;
+    }
+    .prepaid-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .prepaid-title { font-size: 14px; font-weight: 700; color: var(--text); }
+    .prepaid-save-badge {
+      background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green);
+      font-size: 11px; font-weight: 800; letter-spacing: 0.3px; padding: 3px 9px; border-radius: 99px;
+      white-space: nowrap;
+    }
+    .prepaid-body { font-size: 12.5px; color: var(--text-dim); line-height: 1.8; margin-bottom: 12px; }
+    .prepaid-price-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+    .prepaid-price-row .now { font-size: 26px; font-weight: 800; color: var(--green); letter-spacing: -0.5px; }
+    .prepaid-price-row .was { font-size: 14px; color: var(--text-muted); text-decoration: line-through; }
+    .btn-prepaid { background: var(--green); color: #fff; }
+    .btn-prepaid:hover:not(:disabled) { background: #00632f; box-shadow: var(--shadow-md); }
+    .btn-prepaid:active:not(:disabled) { background: #004f25; transform: translateY(1px); }
+    .btn-prepaid:disabled { opacity: 0.4; cursor: not-allowed; }
+
     /* Confirmation */
     .confirm-card {
       background: var(--bg-card);
@@ -226,6 +252,7 @@
     const [order, setOrder] = useState(null);
     const [paying, setPaying] = useState(false);
     const [done, setDone] = useState(false);
+    const [doneMode, setDoneMode] = useState('confirm');
 
     const runLookup = async (num) => {
       if (!num.trim()) {
@@ -260,7 +287,7 @@
       }
     }, []);
 
-    const payAndConfirm = async () => {
+    const payAndConfirm = async (mode = 'confirm') => {
       setError(null); setPaying(true);
       try {
         const orderRes = await fetch(`${API}/track/confirm-razorpay-order`, {
@@ -270,6 +297,7 @@
             shopify_order_id: order.shopify_order_id,
             order_name: order.order_name,
             customer_name: order.customer_name,
+            mode,
           }),
         });
         const orderData = await orderRes.json();
@@ -280,7 +308,7 @@
           amount: orderData.amount * 100,
           currency: 'INR',
           name: 'CrosCrow',
-          description: `Order Confirmation — ${order.order_name}`,
+          description: mode === 'prepaid' ? `Full Prepaid Order — ${order.order_name}` : `Order Confirmation — ${order.order_name}`,
           order_id: orderData.order_id,
           prefill: { name: order.customer_name || '' },
           theme: { color: '#0a0a0a' },
@@ -294,10 +322,12 @@
                   razorpay_order_id: response.razorpay_order_id,
                   razorpay_payment_id: response.razorpay_payment_id,
                   razorpay_signature: response.razorpay_signature,
+                  mode,
                 }),
               });
               const vd = await vr.json();
               if (!vr.ok || !vd.verified) throw new Error('Payment verification failed.');
+              setDoneMode(mode);
               setDone(true);
             } catch (err) { setError(err.message); }
             setPaying(false);
@@ -408,11 +438,11 @@
                   </div>
                 </div>
                 <div className="action-box">
-                  <button className="btn btn-primary btn-full" onClick={payAndConfirm} disabled={paying}>
+                  <button className="btn btn-primary btn-full" onClick={()=>payAndConfirm('confirm')} disabled={paying}>
                     {paying ? <><span className="spin">↻</span> Processing...</> : `Pay ₹${order.fee} & Confirm My Order`}
                   </button>
                   <div style={{textAlign:'center', marginTop:10}}>
-                    <img src="/razorpay-secure-badge.png" alt="Secured payments powered by Razorpay" style={{height:66}}/>
+                    <img src="/razorpay-secure-badge.png" alt="Secured payments powered by Razorpay" style={{width:'100%', maxWidth:320, height:'auto'}}/>
                   </div>
                 </div>
               </React.Fragment>
@@ -420,7 +450,43 @@
           </div>
         )}
 
-        {done && (
+        {order && !done && !order.is_prepaid && !order.converted_to_prepaid && order.prepaid_amount_due > 0 && (
+          <div className="prepaid-box">
+            <div className="prepaid-title-row">
+              <div className="prepaid-title">💸 Or pay in full now &amp; save more</div>
+              <div className="prepaid-save-badge">SAVE ₹{order.prepaid_savings}</div>
+            </div>
+            <div className="prepaid-body">
+              Skip cash-on-delivery entirely — pay your full order amount online right now and get an
+              extra <b>{order.prepaid_discount_pct}% off</b>. No payment to collect at your doorstep,
+              and your order jumps straight to the front of the dispatch queue.
+            </div>
+            <div className="prepaid-price-row">
+              <span className="now">₹{order.prepaid_amount_due}</span>
+              <span className="was">₹{order.total}</span>
+            </div>
+            <button className="btn btn-prepaid btn-full" onClick={()=>payAndConfirm('prepaid')} disabled={paying}>
+              {paying ? <><span className="spin">↻</span> Processing...</> : `Pay ₹${order.prepaid_amount_due} & Go Prepaid`}
+            </button>
+            <div style={{textAlign:'center', marginTop:10}}>
+              <img src="/razorpay-secure-badge.png" alt="Secured payments powered by Razorpay" style={{width:'100%', maxWidth:320, height:'auto'}}/>
+            </div>
+          </div>
+        )}
+
+        {done && doneMode === 'prepaid' && (
+          <div className="confirm-card">
+            <div className="confirm-icon">🎉</div>
+            <div className="confirm-title">Order Fully Paid!</div>
+            <div className="confirm-id">{order.order_name}</div>
+            <div className="confirm-sub">
+              You saved ₹{order.prepaid_savings} by paying online — no cash to collect on delivery.<br/>
+              We're now packing your order for dispatch. You'll get tracking details soon.
+            </div>
+          </div>
+        )}
+
+        {done && doneMode !== 'prepaid' && (
           <div className="confirm-card">
             <div className="confirm-icon">✅</div>
             <div className="confirm-title">Order Confirmed!</div>

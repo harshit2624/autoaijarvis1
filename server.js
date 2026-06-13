@@ -10632,6 +10632,7 @@ app.post("/track/razorpay-verify", async (req, res) => {
 //  otherwise get rejected at the doorstep and cost us return shipping.
 // ══════════════════════════════════════════════════════════════════════════
 const CONFIRM_FEE = 99; // INR
+const PREPAID_DISCOUNT_PCT = 10; // % off order total for paying in full upfront
 
 // GET /track/confirm-lookup — find order + confirmation status
 app.get("/track/confirm-lookup", async (req, res) => {
@@ -10679,7 +10680,13 @@ app.get("/track/confirm-lookup", async (req, res) => {
     // Treat orders already advance-paid (e.g. via the older "99 PARTIAL" tag flow) as confirmed too,
     // so we don't ask the customer to pay the ₹99 confirmation fee again.
     const alreadyConfirmed = !!meta.confirmation_paid || advancePaid >= CONFIRM_FEE;
-    const codDue = isPrepaid ? 0 : Math.max(0, parseFloat(order.total_price) - advancePaid - (alreadyConfirmed ? 0 : CONFIRM_FEE));
+    const total = parseFloat(order.total_price);
+    const codDue = isPrepaid ? 0 : Math.max(0, total - advancePaid - (alreadyConfirmed ? 0 : CONFIRM_FEE));
+
+    // "Convert to prepaid" — pay the full (discounted) order now instead of on delivery
+    const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+    const prepaidSavings = Math.round(total - discountedTotal);
+    const prepaidAmountDue = Math.max(0, discountedTotal - advancePaid);
 
     res.json({
       shopify_order_id: order.id,
@@ -10691,10 +10698,14 @@ app.get("/track/confirm-lookup", async (req, res) => {
       item_count: (order.line_items||[]).reduce((s,li)=>s+li.quantity,0),
       items,
       is_prepaid: isPrepaid,
+      converted_to_prepaid: !!meta.converted_to_prepaid,
       confirmation_paid: alreadyConfirmed,
       confirmation_amount: meta.confirmation_amount || advancePaid,
       cod_due_after_confirmation: codDue,
       fee: CONFIRM_FEE,
+      prepaid_discount_pct: PREPAID_DISCOUNT_PCT,
+      prepaid_savings: prepaidSavings,
+      prepaid_amount_due: prepaidAmountDue,
     });
   } catch (err) {
     console.error("❌ /track/confirm-lookup:", err.message);
@@ -10705,27 +10716,45 @@ app.get("/track/confirm-lookup", async (req, res) => {
 // POST /track/confirm-razorpay-order — create Razorpay order for the confirmation fee
 app.post("/track/confirm-razorpay-order", async (req, res) => {
   try {
-    const { shopify_order_id, order_name, customer_name } = req.body || {};
+    const { shopify_order_id, order_name, customer_name, mode } = req.body || {};
     if (!process.env.RAZORPAY_KEY_ID) return res.status(400).json({ error: "Razorpay not configured." });
     if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
 
-    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(shopify_order_id) }, { projection: { confirmation_paid: 1, _id: 0 } });
-    if (meta?.confirmation_paid) return res.status(400).json({ error: "This order is already confirmed." });
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(shopify_order_id) }, { projection: { confirmation_paid: 1, converted_to_prepaid: 1, advance_paid: 1, _id: 0 } });
+
+    let amount;
+    if (mode === 'prepaid') {
+      if (meta?.converted_to_prepaid) return res.status(400).json({ error: "This order is already paid in full." });
+      const od = await shopifyREST(`/orders/${shopify_order_id}.json?fields=total_price`);
+      const total = parseFloat(od?.order?.total_price || 0);
+      const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+      amount = Math.max(0, discountedTotal - parseFloat(meta?.advance_paid || 0));
+    } else {
+      const alreadyConfirmed = !!meta?.confirmation_paid || parseFloat(meta?.advance_paid || 0) >= CONFIRM_FEE;
+      if (alreadyConfirmed) return res.status(400).json({ error: "This order is already confirmed." });
+      amount = CONFIRM_FEE;
+    }
+    if (amount <= 0) return res.status(400).json({ error: "Nothing left to pay." });
+
+    // Our Razorpay account auto-applies a 5% off offer on payments above ₹300.
+    // Gross up the order amount so that after that 5% discount, the customer
+    // is charged exactly `amount` (the figure shown on the confirmation page).
+    const rzpAmount = amount > 300 ? Math.ceil((amount * 100) / 0.95) / 100 : amount;
 
     const order = await getRzp().orders.create({
-      amount: CONFIRM_FEE * 100, // paise
+      amount: Math.round(rzpAmount * 100), // paise
       currency: 'INR',
       receipt: `confirm_${order_name || shopify_order_id}_${Date.now()}`.slice(0, 40),
-      notes: { type: 'order_confirmation', shopify_order_id: String(shopify_order_id), order_name: order_name || '', customer: customer_name || '' },
+      notes: { type: mode === 'prepaid' ? 'order_convert_prepaid' : 'order_confirmation', shopify_order_id: String(shopify_order_id), order_name: order_name || '', customer: customer_name || '' },
     });
-    res.json({ order_id: order.id, amount: CONFIRM_FEE, key: process.env.RAZORPAY_KEY_ID });
+    res.json({ order_id: order.id, amount: rzpAmount, key: process.env.RAZORPAY_KEY_ID });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // POST /track/confirm-payment-verify — verify signature, record advance & confirm order
 app.post("/track/confirm-payment-verify", async (req, res) => {
   try {
-    const { shopify_order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    const { shopify_order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, mode } = req.body || {};
     if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
 
     const expectedSig = crypto
@@ -10740,19 +10769,38 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
     const nowMs = Date.now();
 
     const existingMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { _id: 0 } }) || {};
-    const newAdvance = (parseFloat(existingMeta.advance_paid || 0)) + CONFIRM_FEE;
     const newStage = higherStage(existingMeta.stage || 'new', 'confirmed');
+    const isPrepaidConvert = mode === 'prepaid';
 
-    await OM.upsert(sid, {
-      advance_paid: newAdvance,
-      payment_type: existingMeta.payment_type || 'cod',
-      stage: newStage,
-      confirmation_paid: 1,
-      confirmation_amount: CONFIRM_FEE,
-      confirmation_payment_id: razorpay_payment_id,
-      confirmation_at: now,
-      updated_at: now,
-    });
+    let metaUpdate;
+    if (isPrepaidConvert) {
+      const od0 = await shopifyREST(`/orders/${sid}.json?fields=total_price`);
+      const total = parseFloat(od0?.order?.total_price || 0);
+      const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+      metaUpdate = {
+        advance_paid: discountedTotal,
+        payment_type: 'prepaid',
+        stage: newStage,
+        confirmation_paid: 1,
+        confirmation_amount: existingMeta.confirmation_amount || existingMeta.advance_paid || 0,
+        converted_to_prepaid: 1,
+        prepaid_payment_id: razorpay_payment_id,
+        prepaid_at: now,
+        updated_at: now,
+      };
+    } else {
+      metaUpdate = {
+        advance_paid: (parseFloat(existingMeta.advance_paid || 0)) + CONFIRM_FEE,
+        payment_type: existingMeta.payment_type || 'cod',
+        stage: newStage,
+        confirmation_paid: 1,
+        confirmation_amount: CONFIRM_FEE,
+        confirmation_payment_id: razorpay_payment_id,
+        confirmation_at: now,
+        updated_at: now,
+      };
+    }
+    await OM.upsert(sid, metaUpdate);
 
     // Sync confirmed stage to all vendors on this order (order-wide stage)
     try {
@@ -10765,11 +10813,19 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
         await OVS.upsert(sid, vendor, { stage: higherStage(existing?.stage || 'new', 'confirmed'), updated_at: now, stage_started_at: startedAt, warning_sent: existing?.warning_sent || 0, penalty_triggered: existing?.penalty_triggered || 0 });
       }
 
-      // Tag the Shopify order for an audit trail
+      // Tag the Shopify order for an audit trail + trigger relevant automations
       const currentTags = (od?.order?.tags || '').split(',').map(t=>t.trim()).filter(Boolean);
-      const confirmTag = `Confirmed ₹${CONFIRM_FEE} Paid`;
-      if (!currentTags.some(t => t.toLowerCase() === confirmTag.toLowerCase())) {
-        currentTags.push(confirmTag);
+      const tagsToAdd = isPrepaidConvert
+        ? ['Converted to Prepaid ✅']
+        : [`Confirmed ₹${CONFIRM_FEE} Paid`, '99 PARTIAL✅'];
+      let tagsChanged = false;
+      for (const tag of tagsToAdd) {
+        if (!currentTags.some(t => t.toLowerCase() === tag.toLowerCase())) {
+          currentTags.push(tag);
+          tagsChanged = true;
+        }
+      }
+      if (tagsChanged) {
         await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
           method: 'PUT',
           headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
