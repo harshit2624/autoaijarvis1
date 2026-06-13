@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Confirm Your Order — CrosCrow</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -245,6 +245,8 @@
   const { useState } = React;
   const API = window.location.origin;
 
+  const inIframe = window.self !== window.top;
+
   function App() {
     const [orderNumber, setOrderNumber] = useState('');
     const [loading, setLoading] = useState(false);
@@ -287,7 +289,26 @@
       }
     }, []);
 
+    // If opened on its own (not inside the Shopify iframe) with ?autopay=confirm|prepaid,
+    // automatically launch the Razorpay checkout once the order has loaded.
+    React.useEffect(() => {
+      if (inIframe || !order || paying || done) return;
+      const params = new URLSearchParams(window.location.search);
+      const autopay = params.get('autopay');
+      if (autopay === 'confirm' || autopay === 'prepaid') {
+        payAndConfirm(autopay);
+      }
+      // eslint-disable-next-line
+    }, [order]);
+
     const payAndConfirm = async (mode = 'confirm') => {
+      // Razorpay's checkout popup doesn't render correctly inside the Shopify
+      // iframe — break out to the standalone page (top-level tab) to pay there.
+      if (inIframe) {
+        const target = `${API}/confirm-order?o=${encodeURIComponent(orderNumber)}&autopay=${mode}`;
+        window.top.location.href = target;
+        return;
+      }
       setError(null); setPaying(true);
       try {
         const orderRes = await fetch(`${API}/track/confirm-razorpay-order`, {
