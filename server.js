@@ -10638,22 +10638,26 @@ app.get("/track/confirm-lookup", async (req, res) => {
   try {
     const { q, contact } = req.query;
     if (!q) return res.status(400).json({ error: "Order number is required" });
-    if (!contact || !contact.trim()) return res.status(400).json({ error: "Email or mobile number is required" });
 
     const normalized = q.replace(/^#/, '').trim();
     const name = `#${normalized}`;
     const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
     const orders = data.orders || [];
 
-    const contactClean = contact.toLowerCase().trim();
-    const contactPhone = normalizePhone(contact);
-    const order = orders.find(o => {
-      const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
-      const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
-      return oEmail === contactClean || (contactPhone.length >= 10 && oPhone === contactPhone);
-    });
+    let order;
+    if (contact && contact.trim()) {
+      const contactClean = contact.toLowerCase().trim();
+      const contactPhone = normalizePhone(contact);
+      order = orders.find(o => {
+        const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
+        const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+        return oEmail === contactClean || (contactPhone.length >= 10 && oPhone === contactPhone);
+      });
+    } else {
+      order = orders[0];
+    }
 
-    if (!order) return res.status(404).json({ error: "Order not found. Please check the order number and your contact details." });
+    if (!order) return res.status(404).json({ error: "Order not found. Please check the order number." });
     if (order.cancelled_at) return res.status(400).json({ error: "This order has been cancelled." });
 
     const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};

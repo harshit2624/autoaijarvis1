@@ -193,22 +193,20 @@
 
   function App() {
     const [orderNumber, setOrderNumber] = useState('');
-    const [contact, setContact] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [order, setOrder] = useState(null);
     const [paying, setPaying] = useState(false);
     const [done, setDone] = useState(false);
 
-    const lookup = async (e) => {
-      e.preventDefault();
-      if (!orderNumber.trim() || !contact.trim()) {
-        setError('Please enter your order number and contact details.');
+    const runLookup = async (num) => {
+      if (!num.trim()) {
+        setError('Please enter your order number.');
         return;
       }
       setLoading(true); setError(null); setOrder(null); setDone(false);
       try {
-        const params = new URLSearchParams({ q: orderNumber.trim(), contact: contact.trim() });
+        const params = new URLSearchParams({ q: num.trim() });
         const r = await fetch(`${API}/track/confirm-lookup?${params}`);
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Order not found.');
@@ -216,6 +214,21 @@
       } catch (err) { setError(err.message); }
       setLoading(false);
     };
+
+    const lookup = (e) => {
+      e.preventDefault();
+      runLookup(orderNumber);
+    };
+
+    // Auto-fill & lookup if order number is passed via ?o= in the link
+    React.useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      const o = params.get('o');
+      if (o) {
+        setOrderNumber(o);
+        runLookup(o);
+      }
+    }, []);
 
     const payAndConfirm = async () => {
       setError(null); setPaying(true);
@@ -239,7 +252,7 @@
           name: 'CrosCrow',
           description: `Order Confirmation — ${order.order_name}`,
           order_id: orderData.order_id,
-          prefill: { name: order.customer_name || '', contact: contact || '' },
+          prefill: { name: order.customer_name || '' },
           theme: { color: '#0a0a0a' },
           handler: async (response) => {
             try {
@@ -276,22 +289,13 @@
         </div>
         <div className="divider"></div>
 
-        {!order || !done ? null : null}
-
-        {(!order || (order && !done)) && !order?.confirmation_paid && (
+        {!order && (
           <div className="search-card">
             <form onSubmit={lookup}>
-              <div className="search-row">
-                <div className="search-field">
-                  <label className="field-label">Order Number</label>
-                  <input className="field-input" placeholder="e.g. 12345" value={orderNumber}
-                    onChange={e=>setOrderNumber(e.target.value)} disabled={loading}/>
-                </div>
-                <div className="search-field">
-                  <label className="field-label">Email or Mobile</label>
-                  <input className="field-input" placeholder="Used at checkout" value={contact}
-                    onChange={e=>setContact(e.target.value)} disabled={loading}/>
-                </div>
+              <div className="search-field">
+                <label className="field-label">Order Number</label>
+                <input className="field-input" placeholder="e.g. 12345" value={orderNumber}
+                  onChange={e=>setOrderNumber(e.target.value)} disabled={loading}/>
               </div>
               <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
                 {loading ? <><span className="spin">↻</span> Looking up...</> : 'Find My Order'}
