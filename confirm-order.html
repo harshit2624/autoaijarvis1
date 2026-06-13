@@ -248,11 +248,13 @@
       runLookup(orderNumber);
     };
 
-    // Auto-fill & lookup if order number is passed via ?o= in the link
+    // Auto-fill & lookup if order number is passed via ?o= or as #1234 (order.name includes the #,
+    // which browsers treat as a URL fragment rather than part of the query string)
     React.useEffect(() => {
       const params = new URLSearchParams(window.location.search);
-      const o = params.get('o');
+      let o = params.get('o') || window.location.hash.replace(/^#/, '');
       if (o) {
+        o = o.trim();
         setOrderNumber(o);
         runLookup(o);
       }
