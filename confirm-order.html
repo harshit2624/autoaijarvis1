@@ -150,6 +150,34 @@
 
     .action-box { padding: 0 18px 18px; }
 
+    /* Items list */
+    .items-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+    .items-title { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .item-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 0; border-bottom: 1px solid var(--border);
+    }
+    .item-row:last-child { border-bottom: none; }
+    .item-img {
+      width: 44px; height: 44px; border-radius: 6px; object-fit: cover;
+      border: 1px solid var(--border); flex-shrink: 0; background: var(--bg-card2);
+    }
+    .item-info { flex: 1; min-width: 0; }
+    .item-title { font-size: 13px; color: var(--text); font-weight: 500; line-height: 1.4; }
+    .item-variant { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .item-qty { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .item-price { font-size: 13px; color: var(--accent); white-space: nowrap; font-weight: 700; }
+
+    /* COD due banner */
+    .cod-due-box {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-card2);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .cod-due-label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+    .cod-due-amt { font-size: 16px; color: var(--accent); font-weight: 800; }
+
     /* Confirmation */
     .confirm-card {
       background: var(--bg-card);
@@ -318,6 +346,32 @@
                 <div className="order-items">{order.item_count} item{order.item_count===1?'':'s'}</div>
               </div>
             </div>
+
+            {order.items?.length > 0 && (
+              <div className="items-section">
+                <div className="items-title">Order Items</div>
+                {order.items.map((it, i) => (
+                  <div className="item-row" key={i}>
+                    {it.image_url
+                      ? <img className="item-img" src={it.image_url} alt={it.title}/>
+                      : <div className="item-img"></div>}
+                    <div className="item-info">
+                      <div className="item-title">{it.title}</div>
+                      {it.variant_title && <div className="item-variant">{it.variant_title}</div>}
+                      <div className="item-qty">Qty: {it.quantity}</div>
+                    </div>
+                    <div className="item-price">₹{it.price}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!order.is_prepaid && (
+              <div className="cod-due-box">
+                <div className="cod-due-label">Amount payable on delivery (after ₹{order.fee} confirmation)</div>
+                <div className="cod-due-amt">₹{order.cod_due_after_confirmation}</div>
+              </div>
+            )}
 
             {order.confirmation_paid ? (
               <div style={{padding:18}}>

@@ -10665,6 +10665,19 @@ app.get("/track/confirm-lookup", async (req, res) => {
       ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim()
       : order.customer ? `${order.customer.first_name||''} ${order.customer.last_name||''}`.trim() : '';
 
+    const enriched = await enrichOrderImages(order);
+    const items = (enriched.line_items || []).map(li => ({
+      title: li.title,
+      variant_title: li.variant_title || '',
+      quantity: li.quantity,
+      price: li.price,
+      image_url: li.image_url || null,
+    }));
+
+    const isPrepaid = order.financial_status === 'paid';
+    const advancePaid = parseFloat(meta.advance_paid || 0);
+    const codDue = isPrepaid ? 0 : Math.max(0, parseFloat(order.total_price) - advancePaid - (meta.confirmation_paid ? 0 : CONFIRM_FEE));
+
     res.json({
       shopify_order_id: order.id,
       order_name: order.name,
@@ -10673,9 +10686,11 @@ app.get("/track/confirm-lookup", async (req, res) => {
       currency: order.currency,
       financial_status: order.financial_status,
       item_count: (order.line_items||[]).reduce((s,li)=>s+li.quantity,0),
-      is_prepaid: order.financial_status === 'paid',
+      items,
+      is_prepaid: isPrepaid,
       confirmation_paid: !!meta.confirmation_paid,
       confirmation_amount: meta.confirmation_amount || 0,
+      cod_due_after_confirmation: codDue,
       fee: CONFIRM_FEE,
     });
   } catch (err) {
