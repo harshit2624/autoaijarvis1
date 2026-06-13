@@ -2797,6 +2797,154 @@ function templatePartialAdvanceCustomer({ order, meta = {}, adsStrip = '' }) {
 </body></html>`;
 }
 
+// ── Convert-to-Prepaid templates ───────────────────────────────────────────
+function templateConvertedToPrepaidCustomer({ order, meta = {}, adsStrip = '' }) {
+  const items   = order.line_items || [];
+  const addr    = order.shipping_address;
+  const total   = parseFloat(order.total_price || 0);
+  const paid    = parseFloat(meta.advance_paid || 0);
+  const savings = Math.max(0, total - paid);
+  const IMG     = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const LOGO    = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+
+  <div style="position:relative;line-height:0;">
+    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">FULLY PAID &nbsp;|&nbsp; NO COD</div>
+      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOU'RE<br>ALL SET.</div>
+    </div>
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+    <tr>
+      <td style="padding:18px 32px;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
+        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      </td>
+      <td style="padding:18px 32px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Amount Paid</div>
+        <div style="font-size:20px;font-weight:900;color:#34d399;letter-spacing:1px;">&#8377;${paid.toFixed(2)}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#161616;padding:32px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;">You've gone fully prepaid on order ${order.name} — there's nothing to pay on delivery. Your order now jumps to the front of the dispatch queue.</div>
+    </div>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a1a0a;border:1px solid #1a4a1a;border-radius:8px;margin-bottom:24px;">
+      <tr><td style="padding:20px 24px;text-align:center;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#34d399;text-transform:uppercase;margin-bottom:8px;">🎉 You Saved</div>
+        <div style="font-size:32px;font-weight:900;color:#ffffff;">&#8377;${savings.toFixed(2)}</div>
+        <div style="font-size:12px;color:#555;margin-top:4px;">by paying online instead of cash on delivery</div>
+      </td></tr>
+    </table>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+      <tr><td style="padding:10px 0;font-size:13px;color:#666;border-bottom:1px solid #1e1e1e;">Order Total</td><td style="padding:10px 0;text-align:right;font-size:13px;font-weight:600;color:#aaa;border-bottom:1px solid #1e1e1e;text-decoration:line-through;">&#8377;${total.toFixed(2)}</td></tr>
+      <tr style="background:#0a1a0a;"><td style="padding:14px 12px;font-size:13px;font-weight:800;color:#34d399;border-radius:6px 0 0 6px;">✅ You Paid (Prepaid Price)</td><td style="padding:14px 12px;text-align:right;font-size:20px;font-weight:900;color:#34d399;border-radius:0 6px 6px 0;">&#8377;${paid.toFixed(2)}</td></tr>
+    </table>
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
+
+    ${items.map(li => {
+      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+      return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+      <tr>
+        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+    }).join('')}
+
+    ${addr ? `
+    <div style="margin-top:20px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Shipping To</div>
+      <div style="font-size:13px;color:#888;line-height:1.9;">
+        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
+        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
+        ${addr.city}, ${addr.province} ${addr.zip}
+      </div>
+    </div>` : ''}
+  </div>
+
+  ${adsStrip}
+  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
+function templateConvertedToPrepaidVendor({ order, vendorName, meta = {} }) {
+  const myItems = (order.line_items || []).filter(li => li.vendor === vendorName);
+  const addr    = order.shipping_address;
+
+  const body = `
+    <div class="subtitle">The customer has paid the full order amount online for <strong>${order.name}</strong>. This order is now <strong>fully prepaid</strong> — do not collect any cash on delivery.</div>
+
+    <div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center">
+      <div style="font-size:12px;color:#065f46;font-weight:600;margin-bottom:4px;">✅ FULLY PREPAID — NO COD TO COLLECT</div>
+      <div style="font-size:28px;font-weight:800;color:#059669;">₹0.00</div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
+      ${addr ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
+      ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
+    </div>
+
+    ${itemsTableHtml(myItems)}
+
+    <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
+      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:4px;">Dispatch Window — 24 to 48 Hours</div>
+      <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
+    </div>
+
+    <div style="text-align:center;margin-bottom:8px;">
+      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
+    </div>
+  `;
+  return emailBase(`Order Fully Prepaid: ${order.name}`, '#10b981', body);
+}
+
+function templateConvertedToPrepaidAdmin({ order, meta = {} }) {
+  const total = parseFloat(order.total_price || 0);
+  const paid  = parseFloat(meta.advance_paid || 0);
+  const addr  = order.shipping_address;
+
+  const body = `
+    <div class="subtitle">A customer converted order <strong>${order.name}</strong> to full prepaid via the Confirm Order page.</div>
+    <div class="info-box">
+      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
+      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
+      <div class="info-row"><span class="info-label">Original Total</span><span class="info-val">₹${total.toFixed(2)}</span></div>
+      <div class="info-row"><span class="info-label">Amount Paid (10% off)</span><span class="info-val" style="color:#10b981">₹${paid.toFixed(2)}</span></div>
+      <div class="info-row"><span class="info-label">Payment ID</span><span class="info-val">${meta.prepaid_payment_id || '—'}</span></div>
+    </div>
+  `;
+  return emailBase(`Converted to Prepaid: ${order.name}`, '#10b981', body);
+}
+
 // ── Send email helper ─────────────────────────────────────────────────────
 async function sendEmail({ to, subject, html, shopifyId, trigger }) {
   const settingsRow = await ES.get();
@@ -10826,6 +10974,7 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
         }
       }
       if (tagsChanged) {
+        const shopifyToken = await getAccessToken();
         await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
           method: 'PUT',
           headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
@@ -10834,9 +10983,108 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
       }
     } catch (e) { console.error('confirm-payment-verify sync error:', e.message); }
 
+    // Email customer, vendor(s) and admin about the payment
+    try {
+      const cfg = await getSmtpConfig();
+      if (cfg?.host) {
+        let od = await shopifyREST(`/orders/${sid}.json`);
+        let order = od?.order;
+        if (order) {
+          order = await enrichOrderImages(order);
+          const customerEmail = order.email;
+          const adsStrip = await getEmailAdsStrip();
+          const vendors = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+          const newMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { _id: 0 } }) || {};
+
+          if (isPrepaidConvert) {
+            if (customerEmail) await sendEmail({ to: customerEmail, subject: `You're All Set — ${order.name} is Fully Prepaid 🎉`, html: templateConvertedToPrepaidCustomer({ order, meta: newMeta, adsStrip }), shopifyId: sid, trigger: 'converted_prepaid_customer' });
+            for (const vendor of vendors) {
+              const vendorRow = await VC.get(vendor);
+              if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Fully Prepaid: ${order.name} — No COD`, html: templateConvertedToPrepaidVendor({ order, vendorName: vendor, meta: newMeta }), shopifyId: sid, trigger: 'converted_prepaid_vendor' });
+            }
+            if (cfg.adminEmail) await sendEmail({ to: cfg.adminEmail, subject: `Converted to Prepaid: ${order.name}`, html: templateConvertedToPrepaidAdmin({ order, meta: newMeta }), shopifyId: sid, trigger: 'converted_prepaid_admin' });
+          } else {
+            if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Advance is Confirmed — ${order.name} 🎉`, html: templatePartialAdvanceCustomer({ order, meta: newMeta, adsStrip }), shopifyId: sid, trigger: 'partial_customer' });
+            for (const vendor of vendors) {
+              const vendorRow = await VC.get(vendor);
+              if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Advance Collected — Updated COD for ${order.name}`, html: templatePartialAdvanceVendor({ order, vendorName: vendor, meta: newMeta }), shopifyId: sid, trigger: 'partial_vendor' });
+            }
+          }
+        }
+      }
+    } catch (e) { console.error('confirm-payment-verify email error:', e.message); }
+
     res.json({ verified: true, payment_id: razorpay_payment_id });
   } catch (err) {
     console.error("❌ /track/confirm-payment-verify:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/confirm-resync — retroactively re-apply tags + send notification
+// emails for an order whose /track/confirm-payment-verify run failed to do so
+// (e.g. due to the shopifyToken bug fixed alongside this endpoint).
+app.post("/admin/confirm-resync", adminAuth, async (req, res) => {
+  try {
+    const { shopify_order_id, mode } = req.body || {};
+    if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
+    const sid = String(shopify_order_id);
+    const isPrepaidConvert = mode === 'prepaid';
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { _id: 0 } }) || {};
+
+    const od = await shopifyREST(`/orders/${sid}.json`);
+    let order = od?.order;
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    // Tags
+    const currentTags = (order.tags || '').split(',').map(t=>t.trim()).filter(Boolean);
+    const tagsToAdd = isPrepaidConvert
+      ? ['Converted to Prepaid ✅']
+      : [`Confirmed ₹${CONFIRM_FEE} Paid`, '99 PARTIAL✅'];
+    let tagsChanged = false;
+    for (const tag of tagsToAdd) {
+      if (!currentTags.some(t => t.toLowerCase() === tag.toLowerCase())) {
+        currentTags.push(tag);
+        tagsChanged = true;
+      }
+    }
+    if (tagsChanged) {
+      const shopifyToken = await getAccessToken();
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: { id: sid, tags: currentTags.join(', ') } }),
+      });
+    }
+
+    // Emails
+    const cfg = await getSmtpConfig();
+    let emailed = [];
+    if (cfg?.host) {
+      order = await enrichOrderImages(order);
+      const customerEmail = order.email;
+      const adsStrip = await getEmailAdsStrip();
+      const vendors = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+
+      if (isPrepaidConvert) {
+        if (customerEmail) { await sendEmail({ to: customerEmail, subject: `You're All Set — ${order.name} is Fully Prepaid 🎉`, html: templateConvertedToPrepaidCustomer({ order, meta, adsStrip }), shopifyId: sid, trigger: 'converted_prepaid_customer' }); emailed.push(customerEmail); }
+        for (const vendor of vendors) {
+          const vendorRow = await VC.get(vendor);
+          if (vendorRow?.email) { await sendEmail({ to: vendorRow.email, subject: `Order Fully Prepaid: ${order.name} — No COD`, html: templateConvertedToPrepaidVendor({ order, vendorName: vendor, meta }), shopifyId: sid, trigger: 'converted_prepaid_vendor' }); emailed.push(vendorRow.email); }
+        }
+        if (cfg.adminEmail) { await sendEmail({ to: cfg.adminEmail, subject: `Converted to Prepaid: ${order.name}`, html: templateConvertedToPrepaidAdmin({ order, meta }), shopifyId: sid, trigger: 'converted_prepaid_admin' }); emailed.push(cfg.adminEmail); }
+      } else {
+        if (customerEmail) { await sendEmail({ to: customerEmail, subject: `Your Advance is Confirmed — ${order.name} 🎉`, html: templatePartialAdvanceCustomer({ order, meta, adsStrip }), shopifyId: sid, trigger: 'partial_customer' }); emailed.push(customerEmail); }
+        for (const vendor of vendors) {
+          const vendorRow = await VC.get(vendor);
+          if (vendorRow?.email) { await sendEmail({ to: vendorRow.email, subject: `Advance Collected — Updated COD for ${order.name}`, html: templatePartialAdvanceVendor({ order, vendorName: vendor, meta }), shopifyId: sid, trigger: 'partial_vendor' }); emailed.push(vendorRow.email); }
+        }
+      }
+    }
+
+    res.json({ ok: true, tags: currentTags, emailed });
+  } catch (err) {
+    console.error("❌ /admin/confirm-resync:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
