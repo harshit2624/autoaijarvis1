@@ -10676,7 +10676,10 @@ app.get("/track/confirm-lookup", async (req, res) => {
 
     const isPrepaid = order.financial_status === 'paid';
     const advancePaid = parseFloat(meta.advance_paid || 0);
-    const codDue = isPrepaid ? 0 : Math.max(0, parseFloat(order.total_price) - advancePaid - (meta.confirmation_paid ? 0 : CONFIRM_FEE));
+    // Treat orders already advance-paid (e.g. via the older "99 PARTIAL" tag flow) as confirmed too,
+    // so we don't ask the customer to pay the ₹99 confirmation fee again.
+    const alreadyConfirmed = !!meta.confirmation_paid || advancePaid >= CONFIRM_FEE;
+    const codDue = isPrepaid ? 0 : Math.max(0, parseFloat(order.total_price) - advancePaid - (alreadyConfirmed ? 0 : CONFIRM_FEE));
 
     res.json({
       shopify_order_id: order.id,
@@ -10688,8 +10691,8 @@ app.get("/track/confirm-lookup", async (req, res) => {
       item_count: (order.line_items||[]).reduce((s,li)=>s+li.quantity,0),
       items,
       is_prepaid: isPrepaid,
-      confirmation_paid: !!meta.confirmation_paid,
-      confirmation_amount: meta.confirmation_amount || 0,
+      confirmation_paid: alreadyConfirmed,
+      confirmation_amount: meta.confirmation_amount || advancePaid,
       cod_due_after_confirmation: codDue,
       fee: CONFIRM_FEE,
     });
