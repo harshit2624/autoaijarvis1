@@ -10922,11 +10922,31 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
 
     let metaUpdate;
     if (isPrepaidConvert) {
-      const od0 = await shopifyREST(`/orders/${sid}.json?fields=total_price`);
+      const od0 = await shopifyREST(`/orders/${sid}.json?fields=total_price,financial_status`);
       const total = parseFloat(od0?.order?.total_price || 0);
       const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+
+      // Mark the Shopify order as fully paid by posting a transaction for the full order total
+      try {
+        const shopifyToken = await getAccessToken();
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/transactions.json`, {
+          method: 'POST',
+          headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transaction: {
+              kind: 'sale',
+              status: 'success',
+              amount: total.toFixed(2),
+              currency: 'INR',
+              gateway: 'razorpay',
+              source: 'external',
+              authorization: razorpay_payment_id,
+            },
+          }),
+        });
+      } catch (e) { console.error('confirm-payment-verify: Shopify transaction error:', e.message); }
+
       metaUpdate = {
-        advance_paid: discountedTotal,
         payment_type: 'prepaid',
         stage: newStage,
         confirmation_paid: 1,
@@ -11055,6 +11075,26 @@ app.post("/admin/confirm-resync", adminAuth, async (req, res) => {
         headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ order: { id: sid, tags: currentTags.join(', ') } }),
       });
+    }
+
+    // Mark order paid on Shopify for prepaid conversions (if not already paid)
+    if (isPrepaidConvert && order.financial_status !== 'paid') {
+      try {
+        const total = parseFloat(order.total_price || 0);
+        const shopifyToken = await getAccessToken();
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}/transactions.json`, {
+          method: 'POST',
+          headers: { 'X-Shopify-Access-Token': shopifyToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transaction: {
+              kind: 'sale', status: 'success',
+              amount: total.toFixed(2), currency: 'INR',
+              gateway: 'razorpay', source: 'external',
+              authorization: meta.prepaid_payment_id || 'manual-resync',
+            },
+          }),
+        });
+      } catch (e) { console.error('confirm-resync: Shopify transaction error:', e.message); }
     }
 
     // Emails
