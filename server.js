@@ -8960,10 +8960,12 @@ app.get('/vendor/shopify/app', (req, res) => {
 
 // POST /vendor/shopify/ensure-connection — token-exchange auth for the embedded app.
 // Called immediately on every load of /vendor/shopify/app with the App Bridge
-// session token. If we don't yet have an access token for this shop (e.g. right
-// after install, before the legacy /callback round trip — if it ever ran at all),
-// this exchanges the session token directly for one. No redirect needed, so the
-// embedded iframe never has to bounce out to complete auth.
+// session token. Always re-exchanges for a fresh access token — a stored token
+// might exist but be a legacy non-expiring one (e.g. from the manual-install
+// flow, or an older install before this app adopted token exchange), which
+// Shopify now rejects for Admin API calls. Token exchange is cheap and
+// idempotent, so refreshing on every embed load keeps the stored token valid
+// without needing any redirect, and the embedded iframe never has to bounce out.
 app.post('/vendor/shopify/ensure-connection', async (req, res) => {
   const auth = req.headers.authorization || '';
   const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -8978,9 +8980,8 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
   }
 
   try {
-    const existing = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { access_token: 1, vendor_name: 1, _id: 0 } });
-    if (existing?.access_token) return res.json({ ok: true, shop, already_connected: true });
-
+    const existing = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { access_token: 1, vendor_name: 1, installed_at: 1, _id: 0 } });
+    const wasNew = !existing?.access_token;
     const tokenData = await shopifyTokenExchange(shop, sessionToken);
     await mdb.collection('vendor_shopify_connections').updateOne(
       { shop_domain: shop },
@@ -8988,7 +8989,7 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
         shop_domain:  shop,
         access_token: tokenData.access_token,
         scope:        tokenData.scope || SHOPIFY_APP_SCOPES,
-        installed_at: Date.now(),
+        installed_at: existing?.installed_at || Date.now(),
         vendor_name:  existing?.vendor_name || null,
         sync_enabled: 1,
         updated_at:   new Date().toISOString(),
@@ -8996,12 +8997,17 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
       { upsert: true }
     );
 
-    await registerShopifyAppWebhooks(shop, tokenData.access_token);
-    console.log(`✅ CrosCrow Sync installed via token exchange: ${shop}`);
-    auditLog('shopify_app', 'install_token_exchange', shop, { scope: tokenData.scope });
-    sendShopifyConnectedEmails(existing?.vendor_name || null, shop, 'token_exchange');
+    // Only fire install side-effects the first time — this endpoint re-runs on
+    // every embed load to keep the token fresh, so don't re-register webhooks
+    // or re-send the "connected" email on every page view.
+    if (wasNew) {
+      await registerShopifyAppWebhooks(shop, tokenData.access_token);
+      console.log(`✅ CrosCrow Sync installed via token exchange: ${shop}`);
+      auditLog('shopify_app', 'install_token_exchange', shop, { scope: tokenData.scope });
+      sendShopifyConnectedEmails(existing?.vendor_name || null, shop, 'token_exchange');
+    }
 
-    res.json({ ok: true, shop, already_connected: false });
+    res.json({ ok: true, shop, already_connected: !wasNew });
   } catch (e) {
     console.error('❌ /vendor/shopify/ensure-connection:', e.message);
     res.status(500).json({ error: e.message });
