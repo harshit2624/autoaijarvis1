@@ -510,6 +510,26 @@ function canonicalVendor(name) {
   return VENDOR_CANONICAL[name.toLowerCase()] || name;
 }
 
+// Resolve a vendor's effective stage for one order, blending our own
+// order_vendor_stage tracking with whatever Shopify's fulfillment record
+// implies. Shared by /vendor/orders and /vendor/reports so both pages agree.
+function deriveVendorStage(o, vendorName, vStageMap, metaMap) {
+  const meta = metaMap[String(o.id)] || {};
+  const stored = vStageMap[String(o.id)]?.stage || 'new';
+  const metaStage = meta.stage || 'new';
+  const shopifyDerived = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[vendorName] || null;
+  const BEYOND_READY = ['transit', 'ofd', 'delivered', 'rto', 'cancelled', 'misc'];
+  const ordVendors = [...new Set((o.line_items || []).map(li => canonicalVendor(li.vendor)).filter(Boolean))];
+  const isSingleVendor = ordVendors.length === 1;
+  if (!isSingleVendor) {
+    if (shopifyDerived === 'ready' && BEYOND_READY.includes(stored)) return stored;
+    return shopifyDerived ? higherStage(stored, shopifyDerived) : stored;
+  }
+  if (shopifyDerived === 'ready' && BEYOND_READY.includes(metaStage))
+    return higherStage(stored, metaStage);
+  return higherStage(higherStage(stored, metaStage), shopifyDerived);
+}
+
 // ── Commission + GST calculation ──────────────────────────────────────────
 const GST_RATE = 0.18;
 
@@ -4177,23 +4197,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           phone:        o.shipping_address?.phone ?? o.customer?.phone ?? "",
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
-          stage:        (() => {
-            const stored = vStageMap[String(o.id)]?.stage || 'new';
-            const metaStage = meta.stage || 'new';
-            const shopifyDerived = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[req.vendor] || null;
-            const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
-            const ordVendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
-            const isSingleVendor = ordVendors.length === 1;
-            // Multi-vendor: don't let order_meta stage override individual vendor stage
-            if (!isSingleVendor) {
-              if (shopifyDerived === 'ready' && BEYOND_READY.includes(stored)) return stored;
-              return shopifyDerived ? higherStage(stored, shopifyDerived) : stored;
-            }
-            // Single-vendor: suppress shopify 'ready' if already past ready
-            if (shopifyDerived === 'ready' && BEYOND_READY.includes(metaStage))
-              return higherStage(stored, metaStage);
-            return higherStage(higherStage(stored, metaStage), shopifyDerived);
-          })(),
+          stage:        deriveVendorStage(o, req.vendor, vStageMap, metaMap),
           financial:    o.financial_status ?? "—",
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
@@ -4266,6 +4270,145 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     res.json({ orders, total: orders.length });
   } catch (err) {
     console.error("❌ /vendor/orders:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Vendor performance report — order list + dispatch/delivery metrics ───
+const REPORT_DISPATCHED_STAGES = new Set(['ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto']);
+const REPORT_PENDING_STAGES    = new Set(['new', 'confirmed', 'partial', 'hold']);
+const REPORT_ON_TIME_HRS       = 48; // matches the dispatch-window SLA quoted in vendor emails
+
+async function buildVendorReport(vendorName, from, to) {
+  const fromDate = from ? `${from}T00:00:00Z` : "2000-01-01T00:00:00Z";
+  const toDate   = to   ? `${to}T23:59:59Z`   : null;
+  const allOrders = await fetchAllOrders("any", fromDate, toDate);
+  const vName = vendorName.toLowerCase();
+
+  const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+  const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+  const vStages = await mdb.collection('order_vendor_stage').find(
+    { vendor_name: vendorName },
+    { projection: { shopify_id: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, dispatched_at: 1, _id: 0 } }
+  ).toArray();
+  const vStageMap = Object.fromEntries(vStages.map(r => [r.shopify_id, r]));
+
+  const myOrders = allOrders.filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName));
+
+  let totalRevenue = 0, codDue = 0, dispatchHrsSum = 0, dispatchHrsCount = 0, onTimeCount = 0;
+  const stageCounts = {};
+
+  const rows = myOrders.map(o => {
+    const sid = String(o.id);
+    const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
+    const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+    const meta = metaMap[sid] || {};
+    const paymentType = meta.payment_type || (o.financial_status === "paid" ? "prepaid" : "cod");
+    const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
+    const vendorCount = ordVendors.size || 1;
+    const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+    const shippingCharge = paymentType !== "prepaid" ? parseFloat((orderShipping / vendorCount).toFixed(2)) : 0;
+    const advancePaid = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
+    const remainingCOD = parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2));
+
+    const stage = deriveVendorStage(o, vendorName, vStageMap, metaMap);
+    stageCounts[stage] = (stageCounts[stage] || 0) + 1;
+    totalRevenue += myRevenue + shippingCharge;
+    if (!['delivered', 'cancelled', 'rto'].includes(stage)) codDue += remainingCOD;
+
+    const vs = vStageMap[sid] || {};
+    let dispatchHours = null;
+    if (vs.dispatched_at && vs.stage_started_at && vs.dispatched_at > vs.stage_started_at) {
+      dispatchHours = parseFloat(((vs.dispatched_at - vs.stage_started_at) / 3600000).toFixed(1));
+      dispatchHrsSum += dispatchHours;
+      dispatchHrsCount++;
+      if (dispatchHours <= REPORT_ON_TIME_HRS) onTimeCount++;
+    }
+
+    return {
+      orderName:    o.name,
+      shopifyId:    sid,
+      date:         (o.created_at || "").split("T")[0],
+      customer:     o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "Guest",
+      paymentType,
+      myRevenue:    parseFloat(myRevenue.toFixed(2)),
+      shippingCharge,
+      advancePaid,
+      remainingCOD,
+      stage,
+      awb:          vs.awb || "",
+      courier:      vs.courier || "",
+      trackingUrl:  vs.tracking_url || "",
+      dispatchedAt: vs.dispatched_at ? new Date(vs.dispatched_at).toISOString().split("T")[0] : "",
+      dispatchHours,
+      onTime:       dispatchHours === null ? null : dispatchHours <= REPORT_ON_TIME_HRS,
+    };
+  }).sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  const total      = rows.length;
+  const dispatched = [...REPORT_DISPATCHED_STAGES].reduce((s, k) => s + (stageCounts[k] || 0), 0);
+  const pending     = [...REPORT_PENDING_STAGES].reduce((s, k) => s + (stageCounts[k] || 0), 0);
+  const delivered   = stageCounts.delivered || 0;
+  const rto         = stageCounts.rto || 0;
+  const cancelled   = stageCounts.cancelled || 0;
+  // Catches any stage outside the known dispatched/pending/cancelled buckets
+  // (e.g. 'misc') so totalOrders always equals dispatched+pending+cancelled+other.
+  const other       = Math.max(0, total - dispatched - pending - cancelled);
+
+  return {
+    from: from || null, to: to || null,
+    summary: {
+      totalOrders: total,
+      stageCounts,
+      dispatched, pending, delivered, rto, cancelled, other,
+      // % of orders that have left "new" (i.e. confirmed or beyond) which actually got dispatched
+      dispatchRate: (dispatched + pending) > 0 ? Math.round(dispatched / (dispatched + pending) * 100) : 0,
+      deliveryRate: dispatched > 0 ? Math.round(delivered / dispatched * 100) : 0,
+      rtoRate:      dispatched > 0 ? Math.round(rto / dispatched * 100) : 0,
+      avgDispatchHours: dispatchHrsCount > 0 ? parseFloat((dispatchHrsSum / dispatchHrsCount).toFixed(1)) : null,
+      onTimeDispatchRate: dispatchHrsCount > 0 ? Math.round(onTimeCount / dispatchHrsCount * 100) : null,
+      // Avg dispatch time / on-time rate are only computed from orders that have a
+      // dispatched_at timestamp — that tracking field was introduced 2026-06-13, so
+      // orders dispatched before that date are excluded from these two metrics only.
+      dispatchTimeTrackedSince: '2026-06-13',
+      dispatchTimeSampleSize: dispatchHrsCount,
+      totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+      codDue: parseFloat(codDue.toFixed(2)),
+    },
+    rows,
+  };
+}
+
+app.get("/vendor/reports", vendorAuth, async (req, res) => {
+  try {
+    const data = await buildVendorReport(req.vendor, req.query.from, req.query.to);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ /vendor/reports:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/vendor/reports/export", vendorAuth, async (req, res) => {
+  try {
+    const { rows } = await buildVendorReport(req.vendor, req.query.from, req.query.to);
+    const escCsv = v => {
+      const s = v == null ? '' : String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ['Order', 'Date', 'Customer', 'Payment Type', 'Stage', 'My Revenue', 'Shipping Share', 'Advance Paid', 'COD Due', 'AWB', 'Courier', 'Tracking URL', 'Dispatched At', 'Dispatch Time (hrs)', 'On Time (≤48h)'];
+    const csvRows = [header, ...rows.map(r => [
+      r.orderName, r.date, r.customer, r.paymentType, r.stage,
+      r.myRevenue, r.shippingCharge, r.advancePaid, r.remainingCOD,
+      r.awb, r.courier, r.trackingUrl, r.dispatchedAt,
+      r.dispatchHours ?? '', r.onTime === null ? '' : (r.onTime ? 'Yes' : 'No'),
+    ])];
+    const csv = csvRows.map(row => row.map(escCsv).join(',')).join('\r\n');
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${req.vendor.replace(/[^a-z0-9]+/gi,'_')}-report-${Date.now()}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    console.error("❌ /vendor/reports/export:", err.message);
     res.status(500).json({ error: err.message });
   }
 });

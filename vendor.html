@@ -656,6 +656,8 @@
                     shapes:'<rect x="1" y="6" width="14" height="10" rx="1.5" fill="currentColor" opacity=".4"/><path d="M15 9h4l3 3.5v3.5h-7z" fill="currentColor" opacity=".2"/><circle cx="6" cy="18" r="2" fill="currentColor"/><circle cx="17" cy="18" r="2" fill="currentColor"/>' },
     settlements: { minimal:'<circle cx="12" cy="12" r="9"/><path d="M9 8h4a2.2 2.2 0 0 1 0 4.4H9m0 0h5M9 8v9m0-4.6h2"/>',
                     shapes:'<circle cx="12" cy="12" r="10" fill="currentColor" opacity=".18"/><circle cx="12" cy="12" r="6.5" fill="currentColor"/>' },
+    reports:     { minimal:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 16v-4M12 16V8m5 8v-6"/>',
+                    shapes:'<rect x="2" y="2" width="20" height="20" rx="3" fill="currentColor" opacity=".15"/><rect x="6" y="12" width="3" height="6" rx="1" fill="currentColor"/><rect x="10.5" y="7" width="3" height="11" rx="1" fill="currentColor" opacity=".75"/><rect x="15" y="10" width="3" height="8" rx="1" fill="currentColor" opacity=".5"/>' },
     wallet:      { minimal:'<rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="17" cy="15" r="1.4" fill="currentColor"/>',
                     shapes:'<rect x="2" y="5" width="20" height="15" rx="2.5" fill="currentColor" opacity=".18"/><rect x="2" y="9" width="20" height="3.5" fill="currentColor" opacity=".5"/><circle cx="17" cy="16" r="1.8" fill="currentColor"/>' },
     shopifysync: { minimal:'<path d="M21 12a9 9 0 0 1-15.5 6.4M3 12a9 9 0 0 1 15.5-6.4"/><path d="M3 4v5h5M21 20v-5h-5"/>',
@@ -4723,6 +4725,148 @@
     );
   }
 
+  /* ══════════════════════════════════
+     REPORTS VIEW
+  ══════════════════════════════════ */
+  function Reports({ token }) {
+    const [period, setPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
+    const [data,   setData]     = useState(null);
+    const [loading,setLoading]  = useState(true);
+    const [err,    setErr]      = useState('');
+    const [downloading, setDownloading] = useState(false);
+
+    const stageColors = { new:'#6366f1',confirmed:'#3b82f6',ready:'#f59e0b',pickup:'#8b5cf6',transit:'#06b6d4',ofd:'#0ea5e9',delivered:'#10b981',hold:'#f59e0b',rto:'#ef4444',cancelled:'#6b7280',partial:'#a78bfa',misc:'#9ca3af' };
+    const stageLabel  = id => (STAGES.find(s=>s.id===id)?.label) || id;
+
+    const load = (p) => {
+      const per = p || period;
+      setLoading(true); setErr('');
+      fetch(`${API}/vendor/reports?from=${per.from}&to=${per.to}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json())
+        .then(d=>{ if(d.error) throw new Error(d.error); setData(d); })
+        .catch(e=>setErr(e.message||'Failed to load report'))
+        .finally(()=>setLoading(false));
+    };
+    useEffect(()=>{ load(period); }, [token]);
+
+    const onPeriodChange = p => { setPeriod(p); load(p); };
+
+    const download = async () => {
+      setDownloading(true);
+      try {
+        const r = await fetch(`${API}/vendor/reports/export?from=${period.from}&to=${period.to}`, { headers:{ Authorization:`Bearer ${token}` } });
+        if(!r.ok) throw new Error('Export failed');
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `report-${period.from}-to-${period.to}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch(e) { setErr(e.message); }
+      setDownloading(false);
+    };
+
+    const s = data?.summary;
+    const hrsLabel = h => h==null ? '—' : h < 24 ? `${h}h` : `${(h/24).toFixed(1)}d`;
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10,marginBottom:18}}>
+          <div style={{fontSize:12,color:'var(--text-muted)'}}>Your dispatch &amp; delivery performance for the selected period.</div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <PeriodPicker period={period} onChange={onPeriodChange} align="right"/>
+            <button className="btn btn-green btn-sm" onClick={download} disabled={downloading||loading||!data?.rows?.length}>
+              {downloading ? <span className="spin">↻</span> : '⬇'} CSV
+            </button>
+          </div>
+        </div>
+
+        {err && <div className="alert alert-error" style={{marginBottom:14}}>⚠ {err}</div>}
+
+        {loading ? (
+          <div className="stats-grid">
+            {Array.from({length:5}).map((_,i)=><div key={i} className="skel" style={{height:84,borderRadius:10}}/>)}
+          </div>
+        ) : !s ? null : (
+          <>
+            <div className="stats-grid">
+              <StatCard color="teal"   icon="📦" label="Total Orders" value={s.totalOrders} sub={s.other>0?`${s.other} uncategorized`:`${s.dispatched}+${s.pending}+${s.cancelled} accounted`} />
+              <StatCard color="yellow" icon="🚚" label="Dispatch Rate" value={`${s.dispatchRate}%`} sub={`${s.dispatched} of ${s.dispatched+s.pending} confirmed orders`} />
+              <StatCard color="green"  icon="✅" label="Delivery Rate" value={`${s.deliveryRate}%`} sub={`${s.delivered} of ${s.dispatched} dispatched`} />
+              <StatCard color="red"    icon="↩"  label="RTO Rate"     value={`${s.rtoRate}%`} sub={`${s.rto} of ${s.dispatched} dispatched`} />
+              <StatCard color="green"  icon="₹"  label="Revenue (Period)" value={fmtCur(s.totalRevenue)} sub={s.codDue>0?`₹${s.codDue.toFixed(0)} COD pending`:'No COD pending'} />
+            </div>
+            <div className="stats-grid">
+              <StatCard color="purple" icon="⏱" label="Avg Dispatch Time" value={hrsLabel(s.avgDispatchHours)} sub={`from ${s.dispatchTimeSampleSize} orders tracked since ${fmtDate(s.dispatchTimeTrackedSince)}`} />
+              <StatCard color="yellow" icon="🎯" label="On-Time Dispatch" value={s.onTimeDispatchRate==null?'—':`${s.onTimeDispatchRate}%`} sub={`within ${REPORT_ON_TIME_HRS_LABEL}, same ${s.dispatchTimeSampleSize}-order sample`} />
+              <StatCard color="teal"   icon="⏳" label="Pending"   value={s.pending} sub="new / confirmed / partial / hold" />
+              <StatCard               icon="✕"  label="Cancelled" value={s.cancelled} sub={s.other>0?`+${s.other} other/misc`:undefined} />
+            </div>
+            {s.dispatchTimeSampleSize < s.dispatched && (
+              <div className="alert" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-muted)',marginBottom:14}}>
+                ℹ Dispatch-time tracking started on {fmtDate(s.dispatchTimeTrackedSince)} — {s.dispatched - s.dispatchTimeSampleSize} of {s.dispatched} dispatched orders in this period are older than that and aren't included in the Avg Dispatch Time / On-Time Dispatch figures above.
+              </div>
+            )}
+
+            <div className="card">
+              <div className="card-header">
+                <span className="card-title">Order Detail ({data.rows.length})</span>
+              </div>
+              {!data.rows.length ? (
+                <div className="empty">
+                  <div className="empty-icon">📭</div>
+                  <div className="empty-title">No orders in this period</div>
+                  <div className="empty-sub">Try a wider date range.</div>
+                </div>
+              ) : (
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead>
+                      <tr style={{textAlign:'left',color:'var(--text-muted)',fontSize:10,textTransform:'uppercase',letterSpacing:0.5}}>
+                        <th style={{padding:'8px 12px'}}>Order</th>
+                        <th style={{padding:'8px 12px'}}>Date</th>
+                        <th style={{padding:'8px 12px'}}>Customer</th>
+                        <th style={{padding:'8px 12px'}}>Payment</th>
+                        <th style={{padding:'8px 12px'}}>Stage</th>
+                        <th style={{padding:'8px 12px',textAlign:'right'}}>Revenue</th>
+                        <th style={{padding:'8px 12px',textAlign:'right'}}>COD Due</th>
+                        <th style={{padding:'8px 12px'}}>Tracking</th>
+                        <th style={{padding:'8px 12px',textAlign:'right'}}>Dispatch Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.rows.map(r=>{
+                        const color = stageColors[r.stage] || '#6366f1';
+                        return (
+                          <tr key={r.shopifyId} style={{borderTop:'1px solid var(--border)'}}>
+                            <td style={{padding:'10px 12px',fontWeight:700,color:'var(--text)'}}>{r.orderName}</td>
+                            <td style={{padding:'10px 12px',color:'var(--text-dim)'}}>{fmtDate(r.date)}</td>
+                            <td style={{padding:'10px 12px',color:'var(--text-dim)'}}>{r.customer}</td>
+                            <td style={{padding:'10px 12px',color:'var(--text-dim)',textTransform:'capitalize'}}>{r.paymentType}</td>
+                            <td style={{padding:'10px 12px'}}>
+                              <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`${color}22`,color,border:`1px solid ${color}44`}}>{stageLabel(r.stage)}</span>
+                            </td>
+                            <td style={{padding:'10px 12px',textAlign:'right',color:'var(--text)'}}>{fmtCur(r.myRevenue+r.shippingCharge)}</td>
+                            <td style={{padding:'10px 12px',textAlign:'right',color:r.remainingCOD>0?'var(--yellow)':'var(--text-muted)'}}>{r.remainingCOD>0?fmtCur(r.remainingCOD):'—'}</td>
+                            <td style={{padding:'10px 12px',color:'var(--text-dim)'}}>
+                              {r.awb ? (r.trackingUrl ? <a href={r.trackingUrl} target="_blank" rel="noreferrer" style={{color:'var(--indigo)'}}>{r.awb}</a> : r.awb) : '—'}
+                            </td>
+                            <td style={{padding:'10px 12px',textAlign:'right',color:r.onTime===false?'var(--red)':'var(--text-dim)'}}>{hrsLabel(r.dispatchHours)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+  const REPORT_ON_TIME_HRS_LABEL = '48h';
+
   function App() {
     const [auth,    setAuth]    = useState(()=>{
       // Admin impersonation: ?token=XXX in URL auto-logins without credentials
@@ -4908,6 +5052,7 @@
       { id:'orders',      icon:'◎', label:'My Orders',    section:'main' },
       { id:'products',    icon:'⬡', label:'My Products',  section:'main' },
       { id:'shipping',    icon:'🚚', label:'Shipping',     section:'main' },
+      { id:'reports',     icon:'📊', label:'Reports',      section:'finance' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'wallet',      icon:'◉', label:'Wallet',       section:'finance' },
       { id:'shopifysync', icon:'🔄', label:'Shopify Sync',  section:'finance' },
@@ -4919,7 +5064,7 @@
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Store', finance:'Finance' };
 
-    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', shipping:'Shipping Partners', settlements:'Settlements', wallet:'Wallet', returns:'Returns', profile:'My Profile', agreement:'Agreement', theme:'Theme' };
+    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', shipping:'Shipping Partners', reports:'Reports', settlements:'Settlements', wallet:'Wallet', returns:'Returns', profile:'My Profile', agreement:'Agreement', theme:'Theme' };
     const closeSidebar = () => setSidebarOpen(false);
 
     // Bottom nav shows most important 5 items
@@ -4998,6 +5143,7 @@
           {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName} onGoToShopifySync={()=>setView('shopifysync')}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
+          {view==='reports'     && <Reports           token={auth.token}/>}
           {view==='settlements' && <Settlements       token={auth.token} stats={stats}/>}
           {view==='wallet'      && <Wallet            token={auth.token}/>}
           {view==='shopifysync' && <ShopifySync token={auth.token} vendorName={auth.vendorName}/>}
