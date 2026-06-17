@@ -8762,6 +8762,29 @@ async function shopifyRefreshToken(shop, refreshToken) {
   return data; // { access_token, refresh_token, expires_in, ... }
 }
 
+// Migrates an already-stored non-expiring offline token to an expiring one —
+// no session token or merchant interaction required, per Shopify's documented
+// migration path (the old token itself is the subject_token). The original
+// non-expiring token is revoked by Shopify once this succeeds.
+async function shopifyMigrateToExpiringToken(shop, nonExpiringToken) {
+  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: new URLSearchParams({
+      client_id:            process.env.VENDOR_APP_CLIENT_ID,
+      client_secret:        process.env.VENDOR_APP_SECRET,
+      grant_type:            'urn:ietf:params:oauth:grant-type:token-exchange',
+      subject_token:         nonExpiringToken,
+      subject_token_type:    'urn:shopify:params:oauth:token-type:offline-access-token',
+      requested_token_type:  'urn:shopify:params:oauth:token-type:offline-access-token',
+      expiring:              '1',
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || 'Token migration failed');
+  return data; // { access_token, refresh_token, expires_in, refresh_token_expires_in, scope }
+}
+
 // Returns a valid (non-expired) access token for a vendor_shopify_connections
 // doc, refreshing and persisting it first if it's expiring-type and due to
 // expire within the next minute. No-op for non-expiring legacy tokens (no
