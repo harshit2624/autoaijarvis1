@@ -8700,6 +8700,43 @@ const SERVER_URL = (process.env.SERVER_URL || 'http://localhost:3001').trim().re
 const SERVER_BASE = SERVER_URL;
 const SHOPIFY_REDIRECT_URI = `${SERVER_URL}/vendor/shopify/callback`;
 
+// Verifies a Shopify App Bridge session token (JWT, HS256-signed with the app secret).
+// Returns the decoded payload (with `.shop` set from the `dest` claim) or throws.
+function verifyShopifySessionToken(token) {
+  const secret = process.env.VENDOR_APP_SECRET || '';
+  const [headerB64, payloadB64, sigB64] = (token || '').split('.');
+  if (!headerB64 || !payloadB64 || !sigB64) throw new Error('malformed token');
+  const expected = crypto.createHmac('sha256', secret).update(headerB64 + '.' + payloadB64).digest('base64url');
+  if (expected !== sigB64) throw new Error('invalid signature');
+  const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('expired');
+  payload.shop = (payload.dest || '').replace(/^https?:\/\//, '');
+  return payload;
+}
+
+// Exchanges an App Bridge session token for a real Admin API access token —
+// Shopify's current recommended embedded-app auth flow ("token exchange").
+// Unlike the legacy authorization_code flow, this needs no redirect/consent
+// round trip: the merchant already granted scopes at install time, so this
+// is a single server-to-server POST that succeeds immediately.
+async function shopifyTokenExchange(shop, sessionToken, offline = true) {
+  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id:               process.env.VENDOR_APP_CLIENT_ID,
+      client_secret:           process.env.VENDOR_APP_SECRET,
+      grant_type:               'urn:ietf:params:oauth:grant-type:token-exchange',
+      subject_token:            sessionToken,
+      subject_token_type:       'urn:ietf:params:oauth:token-type:id_token',
+      requested_token_type:     offline ? 'urn:ietf:params:oauth:token-type:offline_access_token' : 'urn:ietf:params:oauth:token-type:access_token',
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || 'Token exchange failed');
+  return data; // { access_token, scope, ... }
+}
+
 // Privacy policy page (required by Shopify)
 app.get('/privacy', (req, res) => {
   res.send(`<!DOCTYPE html><html><head><title>CrosCrow Sync — Privacy Policy</title>
@@ -8769,6 +8806,9 @@ app.post('/webhooks/shop/redact', express.raw({type:'application/json'}), async 
 app.get('/vendor/shopify/app', (req, res) => {
   const vendorPanelUrl = `${SERVER_URL}/vendor.html`;
   const CLIENT_ID = process.env.VENDOR_APP_CLIENT_ID || '';
+  // Explicitly allow Shopify to embed this page — required for embedded apps,
+  // and checked by Shopify's App Store review.
+  res.setHeader('Content-Security-Policy', "frame-ancestors https://admin.shopify.com https://*.myshopify.com;");
   res.send(`<!DOCTYPE html>
 <html>
 <head>
@@ -8834,8 +8874,11 @@ app.get('/vendor/shopify/app', (req, res) => {
     async function init() {
       try {
         const token = await getToken();
+        // Establish (or confirm) the Admin API connection via token exchange —
+        // no redirect needed, so the embedded iframe never has to bounce out.
+        await fetch(SERVER + '/vendor/shopify/ensure-connection', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
         const res = await fetch(SERVER + '/vendor/shopify/summary', { headers: { 'Authorization': 'Bearer ' + token } });
-        if (!res.ok) { showError('Store not linked. Open vendor panel to connect.'); return; }
+        if (!res.ok) { showError('Store connected — open the vendor panel to finish linking your brand account.'); return; }
         const d = await res.json();
         render(d);
       } catch(e) { showError(e.message); }
@@ -8915,6 +8958,56 @@ app.get('/vendor/shopify/app', (req, res) => {
 </html>`);
 });
 
+// POST /vendor/shopify/ensure-connection — token-exchange auth for the embedded app.
+// Called immediately on every load of /vendor/shopify/app with the App Bridge
+// session token. If we don't yet have an access token for this shop (e.g. right
+// after install, before the legacy /callback round trip — if it ever ran at all),
+// this exchanges the session token directly for one. No redirect needed, so the
+// embedded iframe never has to bounce out to complete auth.
+app.post('/vendor/shopify/ensure-connection', async (req, res) => {
+  const auth = req.headers.authorization || '';
+  const sessionToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!sessionToken) return res.status(401).json({ error: 'No token' });
+
+  let shop;
+  try {
+    shop = verifyShopifySessionToken(sessionToken).shop;
+    if (!shop) throw new Error('missing shop in token');
+  } catch (e) {
+    return res.status(401).json({ error: e.message });
+  }
+
+  try {
+    const existing = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { access_token: 1, vendor_name: 1, _id: 0 } });
+    if (existing?.access_token) return res.json({ ok: true, shop, already_connected: true });
+
+    const tokenData = await shopifyTokenExchange(shop, sessionToken);
+    await mdb.collection('vendor_shopify_connections').updateOne(
+      { shop_domain: shop },
+      { $set: {
+        shop_domain:  shop,
+        access_token: tokenData.access_token,
+        scope:        tokenData.scope || SHOPIFY_APP_SCOPES,
+        installed_at: Date.now(),
+        vendor_name:  existing?.vendor_name || null,
+        sync_enabled: 1,
+        updated_at:   new Date().toISOString(),
+      }},
+      { upsert: true }
+    );
+
+    await registerShopifyAppWebhooks(shop, tokenData.access_token);
+    console.log(`✅ CrosCrow Sync installed via token exchange: ${shop}`);
+    auditLog('shopify_app', 'install_token_exchange', shop, { scope: tokenData.scope });
+    sendShopifyConnectedEmails(existing?.vendor_name || null, shop, 'token_exchange');
+
+    res.json({ ok: true, shop, already_connected: false });
+  } catch (e) {
+    console.error('❌ /vendor/shopify/ensure-connection:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /vendor/shopify/summary — embedded app dashboard data (session token auth)
 app.get('/vendor/shopify/summary', async (req, res) => {
   const auth = req.headers.authorization || '';
@@ -8924,14 +9017,7 @@ app.get('/vendor/shopify/summary', async (req, res) => {
   // Verify session token JWT
   let shop;
   try {
-    const secret = process.env.VENDOR_APP_SECRET || '';
-    const [h, p, s] = token.split('.');
-    if (!h || !p || !s) throw new Error('malformed');
-    const expected = crypto.createHmac('sha256', secret).update(h + '.' + p).digest('base64url');
-    if (expected !== s) throw new Error('invalid signature');
-    const payload = JSON.parse(Buffer.from(p, 'base64url').toString());
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('expired');
-    shop = (payload.dest || '').replace('https://', '');
+    shop = verifyShopifySessionToken(token).shop;
   } catch(e) {
     return res.status(401).json({ error: e.message });
   }
@@ -8998,15 +9084,7 @@ app.get('/vendor/shopify/verify-session', (req, res) => {
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   if (!token) return res.status(401).json({ ok: false, error: 'No token' });
   try {
-    // Session tokens are JWTs signed with the app secret
-    const secret = process.env.VENDOR_APP_SECRET || '';
-    const [headerB64, payloadB64, sigB64] = token.split('.');
-    if (!headerB64 || !payloadB64 || !sigB64) throw new Error('malformed');
-    const expected = crypto.createHmac('sha256', secret)
-      .update(headerB64 + '.' + payloadB64).digest('base64url');
-    if (expected !== sigB64) throw new Error('invalid signature');
-    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('expired');
+    const payload = verifyShopifySessionToken(token);
     return res.json({ ok: true, shop: payload.dest });
   } catch(e) {
     return res.status(401).json({ ok: false, error: e.message });
