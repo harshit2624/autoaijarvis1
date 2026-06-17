@@ -9239,21 +9239,31 @@ app.get('/vendor/shopify/callback', async (req, res) => {
   const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '');
 
   try {
-    // Exchange code for permanent access token
+    // Exchange code for an expiring access token (per Shopify's docs: form-
+    // urlencoded body, expiring=1 — same fix as the embedded app's token
+    // exchange, applied here to the authorization-code grant this "Quick
+    // Install" flow uses).
     const codeVerifier = req.cookies?.shopify_code_verifier || '';
     res.clearCookie('shopify_code_verifier');
     const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: new URLSearchParams({
         client_id:     process.env.VENDOR_APP_CLIENT_ID,
         client_secret: process.env.VENDOR_APP_SECRET,
         code,
+        expiring:      '1',
         ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
       }),
     });
-    const tokenData = await tokenRes.json();
+    let tokenData = await tokenRes.json();
     if (!tokenData.access_token) throw new Error(tokenData.error_description || 'Failed to get access token');
+    // Same Shopify quirk seen on the embedded-app path: expiring=1 isn't always
+    // honored on first issuance. Fall back to migrating the result if needed.
+    if (!tokenData.refresh_token) {
+      try { tokenData = await shopifyMigrateToExpiringToken(cleanShop, tokenData.access_token); }
+      catch (e) { console.error(`⚠ Could not migrate to expiring token for ${cleanShop}:`, e.message); }
+    }
 
     const accessToken = tokenData.access_token;
 
@@ -9269,6 +9279,8 @@ app.get('/vendor/shopify/callback', async (req, res) => {
       { $set: {
         shop_domain:   cleanShop,
         access_token:  accessToken,
+        refresh_token: tokenData.refresh_token || null,
+        expires_at:    tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : null,
         scope:         tokenData.scope || SHOPIFY_APP_SCOPES,
         installed_at:  Date.now(),
         vendor_name:   vendorName || null,
