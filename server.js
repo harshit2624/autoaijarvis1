@@ -9056,7 +9056,19 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
   try {
     const existing = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { access_token: 1, vendor_name: 1, installed_at: 1, _id: 0 } });
     const wasNew = !existing?.access_token;
-    const tokenData = await shopifyTokenExchange(shop, sessionToken);
+    let tokenData = await shopifyTokenExchange(shop, sessionToken);
+    // Shopify's session-token (id_token) based exchange doesn't reliably honor
+    // `expiring=1` for this app and can still return a non-expiring token with
+    // no refresh_token/expires_in. Immediately migrate whatever we got via the
+    // offline-token migration path instead, which has been verified to always
+    // return a proper expiring token + refresh token.
+    if (!tokenData.refresh_token) {
+      try {
+        tokenData = await shopifyMigrateToExpiringToken(shop, tokenData.access_token);
+      } catch (e) {
+        console.error(`⚠ Could not migrate to expiring token for ${shop}, keeping non-expiring token:`, e.message);
+      }
+    }
     await mdb.collection('vendor_shopify_connections').updateOne(
       { shop_domain: shop },
       { $set: {
@@ -9073,11 +9085,18 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
       { upsert: true }
     );
 
-    // Only fire install side-effects the first time — this endpoint re-runs on
-    // every embed load to keep the token fresh, so don't re-register webhooks
-    // or re-send the "connected" email on every page view.
+    // Always (re-)register webhooks — registration is idempotent on Shopify's
+    // side (duplicate topic+address just 422s, which we log and ignore), and
+    // gating this on "wasNew" was wrong: a store can already have a
+    // vendor_shopify_connections row from the separate manual-install flow
+    // (which never registers these embedded-app webhooks), so wasNew would be
+    // false on first embed even though webhooks were never actually set up.
+    await registerShopifyAppWebhooks(shop, tokenData.access_token);
+
+    // Only fire one-time install side-effects the first time — this endpoint
+    // re-runs on every embed load to keep the token fresh, so don't re-send
+    // the "connected" email on every page view.
     if (wasNew) {
-      await registerShopifyAppWebhooks(shop, tokenData.access_token);
       console.log(`✅ CrosCrow Sync installed via token exchange: ${shop}`);
       auditLog('shopify_app', 'install_token_exchange', shop, { scope: tokenData.scope });
       sendShopifyConnectedEmails(existing?.vendor_name || null, shop, 'token_exchange');
@@ -9391,13 +9410,21 @@ async function registerShopifyAppWebhooks(shop, accessToken) {
   ];
   for (const { topic, address } of topics) {
     try {
-      await fetch(`https://${shop}/admin/api/2025-01/webhooks.json`, {
+      const res = await fetch(`https://${shop}/admin/api/2025-01/webhooks.json`, {
         method: 'POST',
         headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ webhook: { topic, address, format: 'json' } }),
       });
-      console.log(`📡 Webhook registered: ${shop} → ${topic}`);
-    } catch(e) { console.error(`Webhook registration failed (${topic}):`, e.message); }
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        console.log(`📡 Webhook registered: ${shop} → ${topic} (id ${body.webhook?.id})`);
+      } else {
+        // "already exists" (422, address taken) is expected/harmless on re-registration
+        const alreadyExists = JSON.stringify(body.errors || '').toLowerCase().includes('already been taken');
+        const logFn = alreadyExists ? console.log : console.error;
+        logFn(`${alreadyExists ? '📡' : '❌'} Webhook ${alreadyExists ? 'already registered' : 'registration FAILED'}: ${shop} → ${topic} (${res.status}) ${JSON.stringify(body.errors || body)}`);
+      }
+    } catch(e) { console.error(`❌ Webhook registration error (${topic}):`, e.message); }
   }
 }
 
