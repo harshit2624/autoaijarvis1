@@ -8719,22 +8719,73 @@ function verifyShopifySessionToken(token) {
 // Unlike the legacy authorization_code flow, this needs no redirect/consent
 // round trip: the merchant already granted scopes at install time, so this
 // is a single server-to-server POST that succeeds immediately.
+// `expiring=1` (a form body param, per Shopify's docs) opts this legacy
+// (non-CLI-managed) app into expiring offline tokens — without it, and
+// without the exact `urn:shopify:...` token-type URN, tokens are minted
+// non-expiring regardless of grant type, which Shopify now rejects outright.
 async function shopifyTokenExchange(shop, sessionToken, offline = true) {
   const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: new URLSearchParams({
       client_id:               process.env.VENDOR_APP_CLIENT_ID,
       client_secret:           process.env.VENDOR_APP_SECRET,
       grant_type:               'urn:ietf:params:oauth:grant-type:token-exchange',
       subject_token:            sessionToken,
       subject_token_type:       'urn:ietf:params:oauth:token-type:id_token',
-      requested_token_type:     offline ? 'urn:ietf:params:oauth:token-type:offline_access_token' : 'urn:ietf:params:oauth:token-type:access_token',
+      requested_token_type:     offline ? 'urn:shopify:params:oauth:token-type:offline-access-token' : 'urn:shopify:params:oauth:token-type:online-access-token',
+      expiring:                 '1',
     }),
   });
   const data = await res.json();
   if (!data.access_token) throw new Error(data.error_description || 'Token exchange failed');
-  return data; // { access_token, scope, ... }
+  return data; // { access_token, refresh_token, expires_in, refresh_token_expires_in, scope, ... }
+}
+
+// Refreshes an expiring offline access token using its refresh_token — a
+// standard OAuth refresh, no session token or embedded context required, so
+// this works even when called from the vendor panel hours after any embed
+// session ended.
+async function shopifyRefreshToken(shop, refreshToken) {
+  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: new URLSearchParams({
+      client_id:     process.env.VENDOR_APP_CLIENT_ID,
+      client_secret: process.env.VENDOR_APP_SECRET,
+      grant_type:    'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || 'Token refresh failed');
+  return data; // { access_token, refresh_token, expires_in, ... }
+}
+
+// Returns a valid (non-expired) access token for a vendor_shopify_connections
+// doc, refreshing and persisting it first if it's expiring-type and due to
+// expire within the next minute. No-op for non-expiring legacy tokens (no
+// expires_at stored) so this is safe to call unconditionally everywhere.
+async function getValidVendorToken(conn) {
+  if (!conn.expires_at || !conn.refresh_token) return conn.access_token;
+  if (Date.now() < conn.expires_at - 60000) return conn.access_token;
+
+  const data = await shopifyRefreshToken(conn.shop_domain, conn.refresh_token);
+  const expires_at = data.expires_in ? Date.now() + data.expires_in * 1000 : null;
+  await mdb.collection('vendor_shopify_connections').updateOne(
+    { shop_domain: conn.shop_domain },
+    { $set: { access_token: data.access_token, refresh_token: data.refresh_token || conn.refresh_token, expires_at, updated_at: new Date().toISOString() } }
+  );
+  conn.access_token = data.access_token;
+  conn.refresh_token = data.refresh_token || conn.refresh_token;
+  conn.expires_at = expires_at;
+  return conn.access_token;
+}
+
+// Convenience wrapper — looks up a valid token for `conn` before calling the API.
+async function vendorShopifyRESTByConn(conn, path) {
+  const token = await getValidVendorToken(conn);
+  return vendorShopifyREST(conn.shop_domain, token, path);
 }
 
 // Privacy policy page (required by Shopify)
@@ -8986,13 +9037,15 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
     await mdb.collection('vendor_shopify_connections').updateOne(
       { shop_domain: shop },
       { $set: {
-        shop_domain:  shop,
-        access_token: tokenData.access_token,
-        scope:        tokenData.scope || SHOPIFY_APP_SCOPES,
-        installed_at: existing?.installed_at || Date.now(),
-        vendor_name:  existing?.vendor_name || null,
-        sync_enabled: 1,
-        updated_at:   new Date().toISOString(),
+        shop_domain:   shop,
+        access_token:  tokenData.access_token,
+        refresh_token: tokenData.refresh_token || null,
+        expires_at:    tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : null,
+        scope:         tokenData.scope || SHOPIFY_APP_SCOPES,
+        installed_at:  existing?.installed_at || Date.now(),
+        vendor_name:   existing?.vendor_name || null,
+        sync_enabled:  1,
+        updated_at:    new Date().toISOString(),
       }},
       { upsert: true }
     );
@@ -9417,7 +9470,7 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
   res.status(200).send('ok');
   try {
     const shop = req.headers['x-shopify-shop-domain'];
-    const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, _id: 0 } });
+    const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, shop_domain: 1, access_token: 1, refresh_token: 1, expires_at: 1, _id: 0 } });
     if (!conn?.vendor_name) { console.log(`⚠ [inventory-update] no vendor_name for shop: ${shop}`); return; }
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
     const { inventory_item_id, available } = body;
@@ -9433,7 +9486,7 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
 
     // Fallback: find variant by inventory_item_id from vendor store and match by variant_id
     if (!mapping) {
-      const varData = await vendorShopifyREST(shop, conn.access_token, `/inventory_items/${inventory_item_id}.json`).catch(()=>null);
+      const varData = await vendorShopifyRESTByConn(conn, `/inventory_items/${inventory_item_id}.json`).catch(()=>null);
       const variantId = varData?.inventory_item?.variant_id;
       if (variantId) {
         mapping = await mdb.collection('vendor_product_mappings').findOne({
@@ -9520,7 +9573,7 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
   if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${req.vendor}$`, 'i') } }, { projection: { _id: 0 } });
   if (!conn) return res.status(404).json({ error: "Shopify store not connected." });
   try {
-    const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
+    const data = await vendorShopifyRESTByConn(conn, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
     const products = data.products || [];
     const liveProductIds = new Set(products.map(p => String(p.id)));
 
@@ -9680,7 +9733,7 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   const conn = await VSC.get(req.params.vendor);
   if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
   try {
-    const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/products.json?limit=100&fields=id,title,variants,images,status,product_type,vendor,body_html,tags');
+    const data = await vendorShopifyRESTByConn(conn, '/products.json?limit=100&fields=id,title,variants,images,status,product_type,vendor,body_html,tags');
     const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
     const products = (data.products || []).map(p => ({
@@ -9701,7 +9754,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
 
   try {
     // Fetch full product from vendor store
-    const vData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/products/${vendor_product_id}.json`);
+    const vData = await vendorShopifyRESTByConn(conn, `/products/${vendor_product_id}.json`);
     const vProduct = vData.product;
     if (!vProduct) throw new Error("Product not found in vendor store.");
 
@@ -9888,7 +9941,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
     if (!conn) continue;
     try {
       // Get vendor's primary location
-      const locData = await vendorShopifyREST(conn.shop_domain, conn.access_token, '/locations.json');
+      const locData = await vendorShopifyRESTByConn(conn, '/locations.json');
       const locationId = locData.locations?.[0]?.id;
       if (!locationId) continue;
 
@@ -9900,7 +9953,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
       for (const m of vMappings) {
         try {
           // Get vendor variant (price + inventory_item_id)
-          const varData = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/variants/${m.vendor_variant_id}.json`);
+          const varData = await vendorShopifyRESTByConn(conn, `/variants/${m.vendor_variant_id}.json`);
           const vVariant = varData.variant;
           if (!vVariant) continue;
 
@@ -9965,7 +10018,7 @@ app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
   if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${vendor_name}$`, 'i') } }, { projection: { _id: 0 } });
   let vProductData = null;
   if (conn) {
-    try { vProductData = (await vendorShopifyREST(conn.shop_domain, conn.access_token, `/products/${vendor_product_id}.json?fields=id,title,variants,images`)).product; } catch {}
+    try { vProductData = (await vendorShopifyRESTByConn(conn, `/products/${vendor_product_id}.json?fields=id,title,variants,images`)).product; } catch {}
   }
   const vendorVariantMap = {}; // vendor_variant_id → variant object
   (vProductData?.variants || []).forEach(v => { vendorVariantMap[String(v.id)] = v; });
@@ -10035,7 +10088,7 @@ app.get("/admin/vendor-sync/vendor-product-variants", adminAuth, async (req, res
   if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${vendor_name}$`, 'i') } }, { projection: { _id: 0 } });
   if (!conn) return res.status(404).json({ error: 'Vendor store not connected' });
   try {
-    const data = await vendorShopifyREST(conn.shop_domain, conn.access_token, `/products/${product_id}.json?fields=id,title,variants,images`);
+    const data = await vendorShopifyRESTByConn(conn, `/products/${product_id}.json?fields=id,title,variants,images`);
     const product = data.product || {};
     res.json({ variants: (product.variants || []).map(v => ({ id: v.id, title: v.title, price: v.price, sku: v.sku })) });
   } catch(e) { res.status(500).json({ error: e.message }); }
