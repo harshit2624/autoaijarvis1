@@ -9400,6 +9400,17 @@ app.get('/vendor/shopify/manual-callback', async (req, res) => {
   }
 });
 
+// DB-backed log for vendor product/inventory webhook sync events — console.log
+// only shows up in the production server's live console (not queryable from
+// here), so this gives a persistent, queryable trail of every sync attempt.
+function logVendorSync(vendorName, shop, event, status, details = {}) {
+  mdb.collection('vendor_sync_log').insertOne({
+    vendor_name: vendorName || '', shop_domain: shop || '', event, status,
+    details: typeof details === 'object' ? JSON.stringify(details) : String(details),
+    created_at: new Date().toISOString(),
+  }).catch(() => {});
+}
+
 // Register webhooks on vendor's store after install
 async function registerShopifyAppWebhooks(shop, accessToken) {
   const baseUrl = SERVER_URL;
@@ -9434,9 +9445,10 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
   try {
     const shop = req.headers['x-shopify-shop-domain'];
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop });
-    if (!conn?.vendor_name) return;
+    if (!conn?.vendor_name) { logVendorSync(null, shop, 'products-update', 'skipped', { reason: 'no vendor_name for shop' }); return; }
     const product = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
     console.log(`📦 Product updated: ${shop} → ${product.title} (${product.id})`);
+    logVendorSync(conn.vendor_name, shop, 'products-update', 'received', { product_id: product.id, title: product.title });
 
     const ccToken = await getAccessToken();
     const locData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/locations.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
@@ -9482,6 +9494,7 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       }
 
       console.log(`✅ Product webhook synced: ${conn.vendor_name} variant ${vVariant.id} → CC ${mapping.croscrow_variant_id} qty=${qty} price=${vVariant.price}`);
+      logVendorSync(conn.vendor_name, shop, 'products-update', 'synced', { vendor_variant_id: vVariant.id, croscrow_variant_id: mapping.croscrow_variant_id, qty, price: vVariant.price });
     }
 
     // Sync images to CC product (if any variant is mapped and sync_images not disabled)
@@ -9511,7 +9524,10 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
         }
       }
     }
-  } catch(e) { console.error('products-update webhook error:', e.message); }
+  } catch(e) {
+    console.error('products-update webhook error:', e.message);
+    logVendorSync(null, req.headers['x-shopify-shop-domain'], 'products-update', 'error', { error: e.message });
+  }
 });
 
 // POST /vendor/shopify/webhook/inventory-update — stock changed on vendor's store
@@ -9521,10 +9537,11 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
   try {
     const shop = req.headers['x-shopify-shop-domain'];
     const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { vendor_name: 1, shop_domain: 1, access_token: 1, refresh_token: 1, expires_at: 1, _id: 0 } });
-    if (!conn?.vendor_name) { console.log(`⚠ [inventory-update] no vendor_name for shop: ${shop}`); return; }
+    if (!conn?.vendor_name) { console.log(`⚠ [inventory-update] no vendor_name for shop: ${shop}`); logVendorSync(null, shop, 'inventory-update', 'skipped', { reason: 'no vendor_name for shop' }); return; }
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
     const { inventory_item_id, available } = body;
     console.log(`📊 Inventory update: ${shop} → item ${inventory_item_id} = ${available}`);
+    logVendorSync(conn.vendor_name, shop, 'inventory-update', 'received', { inventory_item_id, available });
 
     // Look up by vendor_inventory_item_id first, then fallback via vendor API
     const syncQ = { $in: [1, true, '1'] };
@@ -9567,6 +9584,7 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
           body: JSON.stringify({ location_id: locationId, inventory_item_id: ccInvItemId, available }),
         });
         console.log(`✅ Auto-synced: ${conn.vendor_name} → CC variant ${mapping.croscrow_variant_id} qty=${available}`);
+        logVendorSync(conn.vendor_name, shop, 'inventory-update', 'synced', { croscrow_variant_id: mapping.croscrow_variant_id, qty: available });
         await mdb.collection('vendor_product_mappings').updateOne(
           { _id: mapping._id },
           { $set: { last_synced_at: Date.now() } }
@@ -9574,8 +9592,12 @@ app.post('/vendor/shopify/webhook/inventory-update', async (req, res) => {
       }
     } else {
       console.log(`⚠ No mapping found for ${conn.vendor_name} inventory_item ${inventory_item_id}`);
+      logVendorSync(conn.vendor_name, shop, 'inventory-update', 'no_mapping', { inventory_item_id });
     }
-  } catch(e) { console.error('inventory-update webhook error:', e.message); }
+  } catch(e) {
+    console.error('inventory-update webhook error:', e.message);
+    logVendorSync(null, req.headers['x-shopify-shop-domain'], 'inventory-update', 'error', { error: e.message });
+  }
 });
 
 // POST /vendor/shopify/webhook/uninstalled — vendor removed the app
@@ -9600,6 +9622,19 @@ app.get('/admin/shopify-app/connections', adminAuth, async (req, res) => {
       { projection: { shop_domain: 1, vendor_name: 1, scope: 1, installed_at: 1, sync_enabled: 1, uninstalled_at: 1, _id: 0 } }
     ).sort({ installed_at: -1 }).toArray();
     res.json({ connections: conns });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /admin/shopify-app/sync-log — recent product/inventory webhook sync events
+app.get('/admin/shopify-app/sync-log', adminAuth, async (req, res) => {
+  try {
+    const { shop, vendor_name, limit } = req.query;
+    const q = {};
+    if (shop) q.shop_domain = shop;
+    if (vendor_name) q.vendor_name = vendor_name;
+    const logs = await mdb.collection('vendor_sync_log').find(q, { projection: { _id: 0 } })
+      .sort({ created_at: -1 }).limit(Math.min(parseInt(limit) || 50, 200)).toArray();
+    res.json({ logs });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
