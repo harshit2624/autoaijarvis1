@@ -63,6 +63,8 @@
     }
     body.light-theme .login-btn, body[data-theme="minimal"] .login-btn { color: #fff; }
     body.light-theme .login-btn:hover:not(:disabled), body[data-theme="minimal"] .login-btn:hover:not(:disabled) { background: #3f3f46; }
+    body.light-theme .btn-green, body[data-theme="minimal"] .btn-green { color: #fff; }
+    body.light-theme .btn-green:hover:not(:disabled), body[data-theme="minimal"] .btn-green:hover:not(:disabled) { background: #3f3f46; }
 
     /* ── Midnight theme (indigo dark) ── */
     body[data-theme="midnight"] {
@@ -4792,8 +4794,6 @@
             <div className="stats-grid">
               <StatCard color="teal"   icon="📦" label="Total Orders" value={s.totalOrders} sub={s.other>0?`${s.other} uncategorized`:`${s.dispatched}+${s.pending}+${s.cancelled} accounted`} />
               <StatCard color="yellow" icon="🚚" label="Dispatch Rate" value={`${s.dispatchRate}%`} sub={`${s.dispatched} of ${s.dispatched+s.pending} confirmed orders`} />
-              <StatCard color="green"  icon="✅" label="Delivery Rate" value={`${s.deliveryRate}%`} sub={`${s.delivered} of ${s.dispatched} dispatched`} />
-              <StatCard color="red"    icon="↩"  label="RTO Rate"     value={`${s.rtoRate}%`} sub={`${s.rto} of ${s.dispatched} dispatched`} />
               <StatCard color="green"  icon="₹"  label="Revenue (Period)" value={fmtCur(s.totalRevenue)} sub={s.codDue>0?`₹${s.codDue.toFixed(0)} COD pending`:'No COD pending'} />
             </div>
             <div className="stats-grid">
