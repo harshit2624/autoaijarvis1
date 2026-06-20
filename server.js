@@ -8877,12 +8877,49 @@ app.post('/webhooks/shop/redact', express.raw({type:'application/json'}), async 
 });
 
 // GET /vendor/shopify/app — embedded app dashboard inside Shopify admin
-app.get('/vendor/shopify/app', (req, res) => {
+app.get('/vendor/shopify/app', async (req, res) => {
   const vendorPanelUrl = `${SERVER_URL}/vendor.html`;
   const CLIENT_ID = process.env.VENDOR_APP_CLIENT_ID || '';
   // Explicitly allow Shopify to embed this page — required for embedded apps,
   // and checked by Shopify's App Store review.
   res.setHeader('Content-Security-Policy', "frame-ancestors https://admin.shopify.com https://*.myshopify.com;");
+
+  // Resolve which shop this load is for. Shopify usually passes `shop`
+  // directly; when it doesn't (some embedded reloads), derive it from the
+  // base64 `host` param (decodes to "<shop>.myshopify.com/admin").
+  let shop = (req.query.shop || '').toString().trim();
+  if (!shop && req.query.host) {
+    try {
+      const decoded = Buffer.from(req.query.host.toString(), 'base64').toString('utf8');
+      shop = decoded.split('/')[0];
+    } catch {}
+  }
+
+  // Fresh installs (including Shopify's own App Store review install) load
+  // this exact URL before any OAuth grant exists. App Bridge token exchange
+  // only works for an already-authorized shop, so without this check the
+  // page would silently fail to connect and Shopify's embedded app bridge
+  // ends up bouncing between the bare domain and the admin.shopify.com
+  // iframe forever, never reaching the OAuth consent screen. Detect that
+  // case here and break out of the iframe to start the real OAuth flow.
+  if (shop && shop.includes('.myshopify.com')) {
+    let installed = false;
+    try {
+      const conn = await mdb.collection('vendor_shopify_connections').findOne({ shop_domain: shop }, { projection: { access_token: 1 } });
+      installed = !!conn?.access_token;
+    } catch {}
+    if (!installed) {
+      const installUrl = `${SERVER_URL}/vendor/shopify/install?shop=${encodeURIComponent(shop)}`;
+      return res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+<script>
+  var url = ${JSON.stringify(installUrl)};
+  if (window.top === window.self) { window.location.assign(url); }
+  else { window.top.location.assign(url); }
+</script>
+</body></html>`);
+    }
+  }
+
   res.send(`<!DOCTYPE html>
 <html>
 <head>
