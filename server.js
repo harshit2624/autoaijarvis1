@@ -11794,7 +11794,7 @@ setInterval(penaltyCronJob, PENALTY_CHECK_MS);
 //  AUTO-HOLD: orders stuck in "new" for 7 days → move to hold + tag Shopify
 // ══════════════════════════════════════════════════════════════════════════
 const AUTO_HOLD_DAYS = 7;
-const AUTO_HOLD_TAG  = 'on hold';
+const AUTO_HOLD_TAG  = '🫲 On Hold';
 
 function templateOrderOnHoldCustomer({ order, adsStrip = '' }) {
   const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
@@ -11955,7 +11955,7 @@ async function autoHoldCronJob() {
 
       // Add "on hold" tag in Shopify (preserve existing tags)
       const existingTags = (o.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-      if (!existingTags.some(t => t.toLowerCase() === AUTO_HOLD_TAG)) {
+      if (!existingTags.some(t => t.toLowerCase() === AUTO_HOLD_TAG.toLowerCase())) {
         const newTags = [...existingTags, AUTO_HOLD_TAG].join(', ');
         await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
           method: 'PUT',
