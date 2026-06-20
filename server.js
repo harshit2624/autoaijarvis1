@@ -11957,12 +11957,30 @@ async function autoHoldCronJob() {
       const existingTags = (o.tags || '').split(',').map(t => t.trim()).filter(Boolean);
       if (!existingTags.some(t => t.toLowerCase() === AUTO_HOLD_TAG.toLowerCase())) {
         const newTags = [...existingTags, AUTO_HOLD_TAG].join(', ');
-        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
-          method: 'PUT',
-          headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: { id: sid, tags: newTags } }),
-        });
+        let tagOk = false;
+        for (let attempt = 1; attempt <= 2 && !tagOk; attempt++) {
+          try {
+            const tagRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${sid}.json`, {
+              method: 'PUT',
+              headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order: { id: sid, tags: newTags } }),
+            });
+            if (tagRes.ok) { tagOk = true; }
+            else {
+              const errBody = await tagRes.text().catch(() => '');
+              console.error(`⚠️  Auto-hold tag PUT failed for ${o.name} (attempt ${attempt}): ${tagRes.status} ${errBody.slice(0, 300)}`);
+              if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+            }
+          } catch (tagErr) {
+            console.error(`⚠️  Auto-hold tag PUT error for ${o.name} (attempt ${attempt}):`, tagErr.message);
+            if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+        if (!tagOk) {
+          auditLog('system', 'auto_hold_tag_failed', sid, { reason: 'Shopify tag PUT failed after retry' });
+        }
       }
+      await new Promise(r => setTimeout(r, 300)); // throttle Shopify API calls across orders
 
       moved.push({ name: o.name, id: sid, created_at: o.created_at });
       auditLog('system', 'auto_hold', sid, { reason: `${AUTO_HOLD_DAYS}d in new stage` });
