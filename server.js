@@ -12901,7 +12901,7 @@ function piWindow(dataset, startMs, endMs) {
 
 // ── Individual analyzers — each returns an array of finding objects ────────
 
-function analyzeDispatchTime(current, baseline) {
+function analyzeDispatchTime(current, baseline, currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS) {
   const avgDispatchHrs = (rows) => {
     const hrs = [];
     rows.forEach(o => o.vendorStages.forEach(vs => {
@@ -12921,7 +12921,7 @@ function analyzeDispatchTime(current, baseline) {
     category: 'Dispatch Speed',
     severity: change >= 40 ? 'red' : 'amber',
     title: `Avg dispatch time has ${worse ? 'risen' : 'fallen'} from ${base.avg.toFixed(0)}h to ${cur.avg.toFixed(0)}h`,
-    detail: `Based on ${base.count} baseline shipments (last ${PI_BASELINE_DAYS}d) vs ${cur.count} this week. ${worse ? 'Orders are taking longer to leave the warehouse — worth a look.' : 'Dispatch speed has improved — whatever changed, keep doing it.'}`,
+    detail: `Based on ${base.count} baseline shipments (trailing ${baselineDays}d) vs ${cur.count} in the current ${currentDays}d window. ${worse ? 'Orders are taking longer to leave the warehouse — worth a look.' : 'Dispatch speed has improved — whatever changed, keep doing it.'}`,
   }];
 }
 
@@ -13119,7 +13119,7 @@ function analyzeProductDispatchDelay(current) {
   return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
 }
 
-function analyzeProductMomentum(current, baseline) {
+function analyzeProductMomentum(current, baseline, currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS) {
   const countUnits = (rows) => {
     const map = {};
     rows.forEach(o => o.line_items.forEach(li => { map[li.title] = (map[li.title] || 0) + li.qty; }));
@@ -13127,11 +13127,14 @@ function analyzeProductMomentum(current, baseline) {
   };
   const curMap = countUnits(current);
   const baseMap = countUnits(baseline);
-  const baselineWeeks = Math.max(PI_BASELINE_DAYS / 7, 1);
+  const currentWeeks = Math.max(currentDays / 7, 1);
+  const baselineWeeks = Math.max(baselineDays / 7, 1);
+  const periodLabel = currentDays === 7 ? 'this week' : `in the last ${currentDays}d`;
 
   const findings = [];
   for (const [title, curUnits] of Object.entries(curMap)) {
     if (curUnits < 6) continue;
+    const curWeeklyAvg = curUnits / currentWeeks;
     const baseUnits = baseMap[title] || 0;
     const baseWeeklyAvg = baseUnits / baselineWeeks;
 
@@ -13140,20 +13143,20 @@ function analyzeProductMomentum(current, baseline) {
       findings.push({
         category: 'Silent Winner',
         severity: 'info',
-        title: `"${title}" sold ${curUnits} units this week after near-zero sales in the prior ${PI_BASELINE_DAYS} days`,
+        title: `"${title}" sold ${curUnits} units ${periodLabel} after near-zero sales in the prior ${baselineDays} days`,
         detail: `Sudden demand with no prior trend — check stock levels before it runs out, and look for what triggered it (organic, ad spend, influencer, marketplace placement).`,
-        strength: curUnits,
+        strength: curWeeklyAvg,
         productTitle: title,
       });
       continue;
     }
 
-    const growth = curUnits / baseWeeklyAvg;
+    const growth = curWeeklyAvg / baseWeeklyAvg;
     if (growth >= 2.5) {
       findings.push({
         category: 'Silent Winner',
         severity: 'info',
-        title: `"${title}" sold ${curUnits} units this week vs a ${baseWeeklyAvg.toFixed(1)}/week baseline — ${growth.toFixed(1)}× normal`,
+        title: `"${title}" sold ${curUnits} units ${periodLabel} (${curWeeklyAvg.toFixed(1)}/wk) vs a ${baseWeeklyAvg.toFixed(1)}/wk baseline — ${growth.toFixed(1)}× normal`,
         detail: `Worth confirming inventory can keep up, and whether this is a one-off bulk order or a real trend.`,
         strength: growth,
         productTitle: title,
@@ -13162,7 +13165,7 @@ function analyzeProductMomentum(current, baseline) {
       findings.push({
         category: 'Product Momentum',
         severity: 'amber',
-        title: `"${title}" sales dropped to ${curUnits} units this week vs a ${baseWeeklyAvg.toFixed(1)}/week baseline`,
+        title: `"${title}" sales dropped to ${curWeeklyAvg.toFixed(1)}/wk ${periodLabel} vs a ${baseWeeklyAvg.toFixed(1)}/wk baseline`,
         detail: `Significant slowdown for a product that was previously selling steadily — check for stockouts, listing changes, or a price/visibility issue.`,
         strength: 1 / Math.max(growth, 0.01),
         productTitle: title,
@@ -13291,23 +13294,26 @@ function analyzeRepeatRtoCustomers(lookback) {
   }];
 }
 
-async function runPatternAnalysis() {
-  const dataset = await buildPatternDataset(PI_LOOKBACK_DAYS);
+async function runPatternAnalysis(currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS) {
+  // Lookback must cover both windows, plus enough extra for the
+  // weekday/repeat-customer analyzers which scan the whole dataset.
+  const lookbackDays = Math.max(PI_LOOKBACK_DAYS, currentDays + baselineDays);
+  const dataset = await buildPatternDataset(lookbackDays);
   const nowMs = Date.now();
-  const currentStart = nowMs - PI_CURRENT_DAYS * 24 * 3600 * 1000;
-  const baselineStart = currentStart - PI_BASELINE_DAYS * 24 * 3600 * 1000;
+  const currentStart = nowMs - currentDays * 24 * 3600 * 1000;
+  const baselineStart = currentStart - baselineDays * 24 * 3600 * 1000;
 
   const current  = piWindow(dataset, currentStart, nowMs);
   const baseline = piWindow(dataset, baselineStart, currentStart);
 
   const findings = [
-    ...analyzeDispatchTime(current, baseline),
+    ...analyzeDispatchTime(current, baseline, currentDays, baselineDays),
     ...analyzeTagRegionAnomalies(current),
     ...analyzeRTOHotspots(current),
     ...analyzeConfirmNotComplete(current),
     ...analyzeVendorOutliers(current),
     ...analyzeProductDispatchDelay(current),
-    ...analyzeProductMomentum(current, baseline),
+    ...analyzeProductMomentum(current, baseline, currentDays, baselineDays),
     ...analyzeProductGeoSpike(current),
     ...analyzeProductRtoConcentration(current),
     ...analyzeWeekdaySkew(dataset),
@@ -13331,7 +13337,7 @@ async function runPatternAnalysis() {
     });
   }
 
-  return { findings, period: { current_orders: current.length, baseline_orders: baseline.length, generated_at: new Date().toISOString() } };
+  return { findings, period: { current_days: currentDays, baseline_days: baselineDays, current_orders: current.length, baseline_orders: baseline.length, generated_at: new Date().toISOString() } };
 }
 
 async function getProductImageMap(productIds) {
@@ -13398,12 +13404,14 @@ function renderPatternReportHtml({ findings, period }) {
   </body></html>`;
 }
 
-async function generateAndSendPatternReport() {
-  const { findings, period } = await runPatternAnalysis();
+async function generateAndSendPatternReport({ currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS, sendEmail = true } = {}) {
+  const { findings, period } = await runPatternAnalysis(currentDays, baselineDays);
   const html = renderPatternReportHtml({ findings, period });
 
-  await mdb.collection('pattern_reports').insertOne({ ...period, findings, created_at: new Date().toISOString() });
+  await mdb.collection('pattern_reports').insertOne({ ...period, findings, emailed_skipped: !sendEmail, created_at: new Date().toISOString() });
   await mdb.collection('pattern_reports').deleteMany({ created_at: { $lt: new Date(Date.now() - 180*24*3600*1000).toISOString() } });
+
+  if (!sendEmail) { console.log('🧠 Pattern Intelligence: analysis run without emailing (manual preview run)'); return { findings, period, emailed: 0 }; }
 
   const cfg = await getSmtpConfig();
   if (!cfg?.host) { console.log('⚠️  Pattern report: SMTP not configured, skipped email'); return { findings, period, emailed: 0 }; }
@@ -13484,14 +13492,19 @@ setInterval(() => {
 // ── Pattern Intelligence API endpoints ─────────────────────────────────────
 app.post("/admin/pattern-report/run", adminAuth, async (req, res) => {
   try {
-    const result = await generateAndSendPatternReport();
+    const currentDays  = parseInt(req.body?.currentDays)  || PI_CURRENT_DAYS;
+    const baselineDays = parseInt(req.body?.baselineDays) || PI_BASELINE_DAYS;
+    const sendEmail     = req.body?.sendEmail !== false; // default true unless explicitly unchecked
+    const result = await generateAndSendPatternReport({ currentDays, baselineDays, sendEmail });
     res.json({ success: true, ...result });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get("/admin/pattern-report/preview", adminAuth, async (req, res) => {
   try {
-    const { findings, period } = await runPatternAnalysis();
+    const currentDays  = parseInt(req.query.currentDays)  || PI_CURRENT_DAYS;
+    const baselineDays = parseInt(req.query.baselineDays) || PI_BASELINE_DAYS;
+    const { findings, period } = await runPatternAnalysis(currentDays, baselineDays);
     res.json({ findings, period });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

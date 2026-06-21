@@ -7338,6 +7338,11 @@
      BRAINS — Pattern Intelligence
   ══════════════════════════════════ */
   function Brains({ token }) {
+    const WINDOW_PRESETS = [
+      { label:'7d vs 30d',  current:7,  baseline:30 },
+      { label:'14d vs 60d', current:14, baseline:60 },
+      { label:'30d vs 90d', current:30, baseline:90 },
+    ];
     const [findings, setFindings] = useState(null);
     const [period,   setPeriod]   = useState(null);
     const [history,  setHistory]  = useState([]);
@@ -7345,6 +7350,10 @@
     const [running,  setRunning]  = useState(false);
     const [msg,       setMsg]     = useState('');
     const [viewingPast, setViewingPast] = useState(null); // index into history, or null = live preview
+    const [windowSel, setWindowSel] = useState(WINDOW_PRESETS[0]);
+    const [customCurrent,  setCustomCurrent]  = useState('');
+    const [customBaseline, setCustomBaseline] = useState('');
+    const [sendEmail, setSendEmail] = useState(false); // manual runs default to NOT emailing — explicit opt-in
 
     const SEV = {
       red:   { color:'#ef4444', bg:'rgba(239,68,68,0.08)',  label:'🔴 RED FLAG' },
@@ -7352,10 +7361,17 @@
       info:  { color:'#6366f1', bg:'rgba(99,102,241,0.08)', label:'🔵 NOTICED' },
     };
 
+    const activeWindow = () => {
+      const c = parseInt(customCurrent), b = parseInt(customBaseline);
+      if (c > 0 && b > 0) return { current: c, baseline: b };
+      return windowSel;
+    };
+
     const loadPreview = async () => {
       setLoading(true); setMsg(''); setViewingPast(null);
+      const { current, baseline } = activeWindow();
       try {
-        const r = await fetch(`${API}/admin/pattern-report/preview`, { headers: { Authorization: 'Bearer '+token } });
+        const r = await fetch(`${API}/admin/pattern-report/preview?currentDays=${current}&baselineDays=${baseline}`, { headers: { Authorization: 'Bearer '+token } });
         const d = await r.json();
         if (d.error) setMsg('❌ ' + d.error);
         else { setFindings(d.findings); setPeriod(d.period); }
@@ -7375,13 +7391,20 @@
 
     const runNow = async () => {
       setRunning(true); setMsg('');
+      const { current, baseline } = activeWindow();
       try {
-        const r = await fetch(`${API}/admin/pattern-report/run`, { method:'POST', headers: { Authorization: 'Bearer '+token } });
+        const r = await fetch(`${API}/admin/pattern-report/run`, {
+          method:'POST',
+          headers: { 'Content-Type':'application/json', Authorization: 'Bearer '+token },
+          body: JSON.stringify({ currentDays: current, baselineDays: baseline, sendEmail }),
+        });
         const d = await r.json();
         if (d.error) setMsg('❌ ' + d.error);
         else {
           setFindings(d.findings); setPeriod(d.period);
-          setMsg(`✅ Analysis run complete — emailed to ${d.emailed} recipient${d.emailed!==1?'s':''}`);
+          setMsg(sendEmail
+            ? `✅ Analysis run complete — emailed to ${d.emailed} recipient${d.emailed!==1?'s':''}`
+            : `✅ Analysis run complete — not emailed (checkbox off)`);
           loadHistory();
         }
       } catch (e) { setMsg('❌ ' + e.message); }
@@ -7399,14 +7422,37 @@
 
     return (
       <div>
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24,flexWrap:'wrap'}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,flexWrap:'wrap'}}>
           <span style={{fontSize:24}}>🧠</span>
           <div style={{flex:1}}>
             <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>Brains — Pattern Intelligence</h2>
-            <div style={{fontSize:12,color:'var(--text-muted)'}}>Autonomous anomaly detection across regions, vendors, tags &amp; RTOs. Full digest every 3 days · urgent red flags alerted within hours.</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Autonomous anomaly detection across regions, vendors, products &amp; RTOs. Full digest every 3 days · urgent red flags alerted within hours.</div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={loadPreview} disabled={loading}>{loading?'Loading…':'↻ Refresh'}</button>
-          <button className="btn btn-indigo btn-sm" onClick={runNow} disabled={running}>{running?'Running…':'⚡ Run Now & Email'}</button>
+        </div>
+
+        {/* Window selector + send-email toggle */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:14,marginBottom:16,display:'flex',gap:14,alignItems:'center',flexWrap:'wrap'}}>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {WINDOW_PRESETS.map(p => (
+              <button key={p.label} className="btn btn-sm" onClick={()=>{ setWindowSel(p); setCustomCurrent(''); setCustomBaseline(''); }}
+                style={{
+                  background: (!customCurrent && !customBaseline && windowSel.label===p.label) ? 'var(--indigo-dim)' : 'transparent',
+                  border:'1px solid var(--border)', color: (!customCurrent && !customBaseline && windowSel.label===p.label) ? 'var(--indigo)' : 'var(--text-muted)',
+                }}>{p.label}</button>
+            ))}
+          </div>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            <span style={{fontSize:11,color:'var(--text-muted)'}}>Custom:</span>
+            <input type="number" min="1" placeholder="current days" value={customCurrent} onChange={e=>setCustomCurrent(e.target.value)} className="form-input" style={{width:100,fontSize:12,padding:'5px 8px'}}/>
+            <span style={{fontSize:11,color:'var(--text-muted)'}}>vs</span>
+            <input type="number" min="1" placeholder="baseline days" value={customBaseline} onChange={e=>setCustomBaseline(e.target.value)} className="form-input" style={{width:100,fontSize:12,padding:'5px 8px'}}/>
+          </div>
+          <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',marginLeft:'auto',fontSize:12,color:'var(--text-muted)'}}>
+            <input type="checkbox" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} style={{width:14,height:14,accentColor:'#6366f1'}}/>
+            Email this report to admin/staff
+          </label>
+          <button className="btn btn-ghost btn-sm" onClick={loadPreview} disabled={loading}>{loading?'Loading…':'↻ Preview'}</button>
+          <button className="btn btn-indigo btn-sm" onClick={runNow} disabled={running}>{running?'Running…':(sendEmail?'⚡ Run & Email':'⚡ Run (no email)')}</button>
         </div>
 
         {msg && <div style={{marginBottom:16,fontSize:13,color: msg.startsWith('✅')?'#10b981':'#ef4444',fontWeight:600}}>{msg}</div>}
@@ -7430,7 +7476,7 @@
                 </div>
                 {viewingPast===null && period.current_orders!=null && (
                   <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px',marginLeft:'auto'}}>
-                    <div style={{fontSize:11,color:'var(--text-muted)'}}>Analyzed <strong style={{color:'var(--text)'}}>{period.current_orders}</strong> orders this week vs <strong style={{color:'var(--text)'}}>{period.baseline_orders}</strong> baseline</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)'}}>Analyzed <strong style={{color:'var(--text)'}}>{period.current_orders}</strong> orders ({period.current_days||7}d) vs <strong style={{color:'var(--text)'}}>{period.baseline_orders}</strong> baseline ({period.baseline_days||30}d)</div>
                   </div>
                 )}
                 {viewingPast!==null && (
