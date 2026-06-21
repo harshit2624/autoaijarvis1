@@ -12882,6 +12882,7 @@ async function buildPatternDataset(days) {
       phone: (addr.phone || o.phone || '').replace(/\D/g, '').slice(-10) || null,
       email: o.email || null,
       customerName: addr.name || `${o.customer?.first_name||''} ${o.customer?.last_name||''}`.trim() || null,
+      cancelled_at: o.cancelled_at || null,
       financial_status: o.financial_status,
       vendorStages: vsMap[sid] || [],
       line_items: (o.line_items || []).map(li => ({
@@ -12925,6 +12926,13 @@ function analyzeDispatchTime(current, baseline, currentDays = PI_CURRENT_DAYS, b
   }];
 }
 
+// Routine workflow tags applied to nearly every order in the normal course of
+// business — clustering by region is meaningless noise for these, since
+// they're not signals of a problem, just a status marker. Anything matching
+// is excluded from the regional-cluster scan.
+const PI_NOISE_TAG_PATTERNS = [/forwarded/i, /order confirmed/i, /^confirmed$/i];
+function piIsNoiseTag(tag) { return PI_NOISE_TAG_PATTERNS.some(re => re.test(tag)); }
+
 function analyzeTagRegionAnomalies(current) {
   const totalOrders = current.length;
   if (totalOrders < 10) return [];
@@ -12933,7 +12941,7 @@ function analyzeTagRegionAnomalies(current) {
 
   const tagCounts = {}; // tag -> total count
   const tagByState = {}; // tag -> { state: count }
-  current.forEach(o => o.tags.forEach(tag => {
+  current.forEach(o => o.tags.filter(t => !piIsNoiseTag(t)).forEach(tag => {
     tagCounts[tag] = (tagCounts[tag] || 0) + 1;
     (tagByState[tag] ||= {})[o.state] = (tagByState[tag][o.state] || 0) + 1;
   }));
@@ -13248,6 +13256,104 @@ function analyzeProductRtoConcentration(current) {
   return findings.sort((a,b) => b.strength - a.strength).slice(0, 5);
 }
 
+function analyzeCancellations(current) {
+  const totalOrders = current.length;
+  if (totalOrders < 10) return [];
+  const isCancelled = (o) => o.stage === 'cancelled' || !!o.cancelled_at;
+  const cancelled = current.filter(isCancelled);
+  if (cancelled.length < PI_MIN_SAMPLE) return [];
+  const overallRate = pctSafe(cancelled.length, totalOrders);
+
+  const findings = [];
+
+  // 1) Orders that sat too long before being cancelled instead of confirmed/dispatched in time.
+  const delayed = cancelled.filter(o => {
+    if (!o.cancelled_at) return false;
+    return hoursBetween(o.created_ms, new Date(o.cancelled_at).getTime()) >= 48;
+  });
+  if (delayed.length >= PI_MIN_SAMPLE) {
+    findings.push({
+      category: 'Cancellation Delay',
+      severity: delayed.length >= 10 ? 'red' : 'amber',
+      title: `${delayed.length} orders sat 48h+ before being cancelled`,
+      detail: `Out of ${cancelled.length} cancellations this period, ${delayed.length} were never confirmed/dispatched in time and ended up cancelled instead of fulfilled. Faster confirmation calls or earlier follow-up nudges could likely save some of these.`,
+      strength: delayed.length,
+    });
+  }
+
+  // 2) Hotspots by state and city
+  for (const [label, keyFn] of [['state', o => o.state], ['city', o => o.city]]) {
+    const map = {};
+    current.forEach(o => {
+      const k = keyFn(o);
+      if (k === 'Unknown') return;
+      (map[k] ||= { total: 0, cancelled: 0 }).total++;
+      if (isCancelled(o)) map[k].cancelled++;
+    });
+    for (const [name, v] of Object.entries(map)) {
+      if (v.total < PI_MIN_SAMPLE) continue;
+      const rate = pctSafe(v.cancelled, v.total);
+      if (rate >= Math.max(overallRate * 1.8, overallRate + 15) && rate >= 20) {
+        findings.push({
+          category: 'Cancellation Hotspot',
+          severity: rate >= 40 ? 'red' : 'amber',
+          title: `${name} (${label}) cancellation rate is ${rate.toFixed(0)}% vs ${overallRate.toFixed(0)}% overall`,
+          detail: `${v.cancelled} of ${v.total} orders from ${name} were cancelled this period.`,
+          strength: rate,
+        });
+      }
+    }
+  }
+
+  // 3) Vendor hotspots
+  const vendorMap = {};
+  current.forEach(o => o.vendors.forEach(vn => {
+    (vendorMap[vn] ||= { total: 0, cancelled: 0 }).total++;
+    if (isCancelled(o)) vendorMap[vn].cancelled++;
+  }));
+  for (const [vn, v] of Object.entries(vendorMap)) {
+    if (v.total < PI_MIN_SAMPLE) continue;
+    const rate = pctSafe(v.cancelled, v.total);
+    if (rate >= Math.max(overallRate * 1.8, overallRate + 15) && rate >= 20) {
+      findings.push({
+        category: 'Cancellation Hotspot',
+        severity: rate >= 40 ? 'red' : 'amber',
+        title: `${vn}: cancellation rate ${rate.toFixed(0)}% vs ${overallRate.toFixed(0)}% marketplace average`,
+        detail: `${v.cancelled} of ${v.total} orders from ${vn} were cancelled this period.`,
+        strength: rate,
+      });
+    }
+  }
+
+  // 4) Product concentration — which SKUs make up an outsized share of cancellations
+  const productMap = {};
+  current.forEach(o => {
+    const titles = new Set(o.line_items.map(li => li.title));
+    titles.forEach(title => {
+      (productMap[title] ||= { total: 0, cancelled: 0 }).total++;
+      if (isCancelled(o)) productMap[title].cancelled++;
+    });
+  });
+  const totalCancelled = cancelled.length;
+  for (const [title, v] of Object.entries(productMap)) {
+    if (v.total < PI_MIN_SAMPLE) continue;
+    const ownRate = pctSafe(v.cancelled, v.total);
+    const shareOfAll = pctSafe(v.cancelled, totalCancelled);
+    if (shareOfAll >= 15 || ownRate >= 35) {
+      findings.push({
+        category: 'Product Cancellation',
+        severity: (shareOfAll >= 25 || ownRate >= 50) ? 'red' : 'amber',
+        title: `"${title}" is ${shareOfAll.toFixed(0)}% of all cancellations — ${ownRate.toFixed(0)}% of its own orders cancelled`,
+        detail: `${v.cancelled} of ${v.total} orders containing this product were cancelled this period.`,
+        strength: Math.max(shareOfAll, ownRate),
+        productTitle: title,
+      });
+    }
+  }
+
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 8);
+}
+
 function analyzeWeekdaySkew(lookback) {
   const terminal = lookback.filter(o => ['delivered', 'rto'].includes(o.stage));
   if (terminal.length < 30) return [];
@@ -13316,6 +13422,7 @@ async function runPatternAnalysis(currentDays = PI_CURRENT_DAYS, baselineDays = 
     ...analyzeProductMomentum(current, baseline, currentDays, baselineDays),
     ...analyzeProductGeoSpike(current),
     ...analyzeProductRtoConcentration(current),
+    ...analyzeCancellations(current),
     ...analyzeWeekdaySkew(dataset),
     ...analyzeRepeatRtoCustomers(dataset),
   ];
