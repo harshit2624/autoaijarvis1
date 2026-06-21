@@ -15477,7 +15477,14 @@ async function scGetOrderStatus(orderName, contact) {
     if (!order) order = orders[0]; // fall back if contact doesn't match but order exists — bot will just not over-claim certainty
     if (!order) return { found: false, message: 'Order not found. Please double check the order number.' };
     const payload = await buildOrderPayload(order);
-    return { found: true, ...payload, track_url: SUPPORT_TRACK_URL(payload.order_name, contact) };
+    // Orders stuck in new/hold, or cancelled before confirmation, need the
+    // customer to actively confirm them — surface that link directly so the
+    // bot can offer it instead of just explaining the order isn't moving.
+    const CONFIRMABLE_STAGES = ['new', 'hold', 'cancelled'];
+    const confirm_url = CONFIRMABLE_STAGES.includes(payload.stage)
+      ? `${SERVER_URL}/confirm-order?o=${encodeURIComponent(payload.order_name.replace(/^#/, ''))}`
+      : null;
+    return { found: true, ...payload, track_url: SUPPORT_TRACK_URL(payload.order_name, contact), confirm_url };
   } catch (e) { return { found: false, error: e.message }; }
 }
 
@@ -15528,7 +15535,7 @@ async function scRunTool(name, args, contact) {
 
 const SC_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You help customers:
 1. Find products ("I'm looking for sweatpants") — use search_products, then describe 2-3 best matches naturally and mention they're shown as cards below your message. If a matching collection page is returned too, mention they can browse the full collection for more options.
-2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking card is shown automatically below your message, so don't repeat every detail — just the headline).
+2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking card is shown automatically below your message, so don't repeat every detail — just the headline). If the order's stage is "new", "hold", or "cancelled", a confirm_url will be present in the tool result — proactively tell the customer they need to confirm the order and that the confirm link is shown below your message, instead of just saying it hasn't shipped yet.
 3. Explain delays — use get_delay_reason. If there's a specific vendor reason, relay it warmly with the ETA. If not, use the generic explanation, but reassure them it's being handled.
 4. Returns/exchanges — use start_return_exchange and point them to the link/card shown below your message.
 Rules:

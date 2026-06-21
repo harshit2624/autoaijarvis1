@@ -46,6 +46,7 @@
   .vshipment .vname { font-weight:700; color:#0a0a0a; margin-bottom:3px; }
   .vshipment .vmeta { color:#6b7280; }
   .tc-link { display:inline-block; margin-top:10px; font-size:11px; color:#0a0a0a; text-decoration:underline; font-weight:700; }
+  .tc-confirm-btn { display:block; text-align:center; margin-top:10px; background:#16a34a; color:#fff; text-decoration:none; font-size:12px; font-weight:700; padding:10px; border-radius:8px; }
 
   /* Product cards — swipeable carousel with scroll-snap */
   .product-block { align-self:flex-start; max-width:96%; width:100%; }
@@ -132,6 +133,7 @@
       </div>
       <div class="progress-track">${segs}</div>
       ${vshipments}
+      ${data.confirm_url ? `<a class="tc-confirm-btn" href="${data.confirm_url}" target="_blank">✅ Confirm This Order →</a>` : ''}
       <a class="tc-link" href="${data.track_url}" target="_blank">View full tracking page →</a>
     </div>`);
   }
