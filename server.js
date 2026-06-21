@@ -3828,10 +3828,11 @@ function buildRenderData(toolResults, query = '') {
 // ── POST /jarvis — tool-calling AI, fetches only what it needs ───────────────
 app.post("/jarvis", async (req, res) => {
   const { query = "", history = [] } = req.body;
+  const DEEPSEEK_KEY  = process.env.DEEPSEEK_API_KEY;
   const GROQ_KEY      = process.env.GROQ_API_KEY;
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
-  if (!GROQ_KEY && !ANTHROPIC_KEY) {
+  if (!DEEPSEEK_KEY && !GROQ_KEY && !ANTHROPIC_KEY) {
     return res.json({ reply: "No AI key set. Add GROQ_API_KEY (free at console.groq.com) to your .env." });
   }
 
@@ -3873,69 +3874,93 @@ Rules:
     { role:"user", content: query },
   ];
 
-  try {
-    if (GROQ_KEY) {
-      // ── Groq tool-calling loop ──────────────────────────────────────────
-      const messages = [{ role:"system", content: systemPrompt }, ...msgs];
-      const reqCache = {};
-      let finalReply = "";
-      let renderData = null; // structured chart/table/product data for frontend rendering
-      const allToolResults = []; // collect all tool results for renderData extraction
+  // ── Shared OpenAI-compatible tool-calling loop (DeepSeek + Groq both use this shape) ──
+  async function runOpenAICompatJarvis({ apiUrl, apiKey, model, label }) {
+    const messages = [{ role:"system", content: systemPrompt }, ...msgs];
+    const reqCache = {};
+    let finalReply = "";
+    const allToolResults = []; // collect all tool results for renderData extraction
 
-      for (let turn = 0; turn < 5; turn++) {
-        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    for (let turn = 0; turn < 5; turn++) {
+      const r = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1200,
+          messages,
+          tools: JARVIS_TOOLS,
+          tool_choice: "auto",
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error?.message || `${label} ${r.status}`);
+
+      const choice = d.choices?.[0];
+      const msg    = choice?.message;
+
+      // Tool-generation failure — retry once without tools as plain chat
+      if (choice?.finish_reason === "error" || d.error?.code === "tool_use_failed") {
+        console.warn(`⚠️ JARVIS (${label}) tool-gen failed, retrying without tools…`);
+        const fallback = await fetch(apiUrl, {
           method: "POST",
-          headers: { "Content-Type":"application/json", "Authorization":`Bearer ${GROQ_KEY}` },
-          body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            max_tokens: 1200,
-            messages,
-            tools: JARVIS_TOOLS,
-            tool_choice: "auto",
-          }),
+          headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
+          body: JSON.stringify({ model, max_tokens: 1200, messages }),
         });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error?.message || `Groq ${r.status}`);
-
-        const choice = d.choices?.[0];
-        const msg    = choice?.message;
-
-        // Groq tool-generation failure — retry once without tools as plain chat
-        if (choice?.finish_reason === "error" || d.error?.code === "tool_use_failed") {
-          console.warn("⚠️ JARVIS tool-gen failed, retrying without tools…");
-          const fallback = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type":"application/json", "Authorization":`Bearer ${GROQ_KEY}` },
-            body: JSON.stringify({ model: "llama-3.3-70b-versatile", max_tokens: 1200, messages }),
-          });
-          const fd = await fallback.json();
-          finalReply = fd.choices?.[0]?.message?.content || "I ran into a processing error. Please rephrase your question.";
-          break;
-        }
-
-        if (choice?.finish_reason === "tool_calls" && msg?.tool_calls?.length) {
-          // Pre-fetch orders once before parallel tool calls to avoid 429
-          if (!reqCache.orders) reqCache.orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-          if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
-          messages.push(msg);
-          const toolResults = await Promise.all(msg.tool_calls.map(async tc => {
-            let args = {};
-            try { args = JSON.parse(tc.function.arguments || "{}"); } catch(_){}
-            console.log(`🔧 JARVIS tool: ${tc.function.name}`, args);
-            const result = await runJarvisTool(tc.function.name, args, reqCache);
-            allToolResults.push({ tool: tc.function.name, args, result });
-            return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
-          }));
-          messages.push(...toolResults);
-          continue;
-        }
-
-        finalReply = msg?.content || "No response.";
+        const fd = await fallback.json();
+        finalReply = fd.choices?.[0]?.message?.content || "I ran into a processing error. Please rephrase your question.";
         break;
       }
 
-      renderData = buildRenderData(allToolResults, query);
-      return res.json({ reply: finalReply || "No response after tool calls.", renderData });
+      if (choice?.finish_reason === "tool_calls" && msg?.tool_calls?.length) {
+        // Pre-fetch orders once before parallel tool calls to avoid 429
+        if (!reqCache.orders) reqCache.orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
+        if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
+        messages.push(msg);
+        const toolResults = await Promise.all(msg.tool_calls.map(async tc => {
+          let args = {};
+          try { args = JSON.parse(tc.function.arguments || "{}"); } catch(_){}
+          console.log(`🔧 JARVIS (${label}) tool: ${tc.function.name}`, args);
+          const result = await runJarvisTool(tc.function.name, args, reqCache);
+          allToolResults.push({ tool: tc.function.name, args, result });
+          return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
+        }));
+        messages.push(...toolResults);
+        continue;
+      }
+
+      finalReply = msg?.content || "No response.";
+      break;
+    }
+
+    const renderData = buildRenderData(allToolResults, query);
+    return { reply: finalReply || "No response after tool calls.", renderData };
+  }
+
+  try {
+    if (DEEPSEEK_KEY) {
+      try {
+        const out = await runOpenAICompatJarvis({
+          apiUrl: "https://api.deepseek.com/chat/completions",
+          apiKey: DEEPSEEK_KEY,
+          model: "deepseek-chat",
+          label: "DeepSeek",
+        });
+        return res.json(out);
+      } catch (dsErr) {
+        console.error("❌ JARVIS DeepSeek failed, falling back to Groq:", dsErr.message);
+        if (!GROQ_KEY) throw dsErr;
+      }
+    }
+
+    if (GROQ_KEY) {
+      const out = await runOpenAICompatJarvis({
+        apiUrl: "https://api.groq.com/openai/v1/chat/completions",
+        apiKey: GROQ_KEY,
+        model: "llama-3.3-70b-versatile",
+        label: "Groq",
+      });
+      return res.json(out);
     }
 
     // ── Anthropic fallback ─────────────────────────────────────────────────
