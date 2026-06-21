@@ -67,9 +67,9 @@
     Object.assign(launcher.style, {
       position: 'fixed', bottom: '22px', right: '22px', zIndex: 999999,
       width: '58px', height: '58px', borderRadius: '50%', border: 'none',
-      background: 'linear-gradient(135deg,#6366f1,#4f46e5)', color: '#fff',
+      background: '#0a0a0a', color: '#fff',
       fontSize: '24px', cursor: 'pointer',
-      boxShadow: '0 6px 24px rgba(99,102,241,0.45)',
+      boxShadow: '0 6px 24px rgba(0,0,0,0.35)',
       transition: 'transform 0.2s ease',
     });
     launcher.onmouseenter = function () { launcher.style.transform = 'scale(1.08)'; };
