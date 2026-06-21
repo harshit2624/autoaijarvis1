@@ -47,6 +47,8 @@
   .vshipment .vmeta { color:#6b7280; }
   .tc-link { display:inline-block; margin-top:10px; font-size:11px; color:#0a0a0a; text-decoration:underline; font-weight:700; }
   .tc-confirm-btn { display:block; text-align:center; margin-top:10px; background:#16a34a; color:#fff; text-decoration:none; font-size:12px; font-weight:700; padding:10px; border-radius:8px; }
+  .tc-resume-btn { display:block; width:100%; text-align:left; background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:11px; font-weight:600; padding:9px 12px; border-radius:8px; margin-bottom:10px; cursor:pointer; font-family:inherit; line-height:1.4; }
+  .tc-resume-btn:hover { background:#fef3c7; }
 
   /* Product cards — swipeable carousel with scroll-snap */
   .product-block { align-self:flex-start; max-width:96%; width:100%; }
@@ -127,6 +129,10 @@
         <div class="vmeta">Stage: ${v.stage}${v.awb ? ' · AWB: '+v.awb : ''}${v.courier ? ' · '+v.courier : ''}</div>
       </div>`).join('');
     return el(`<div class="track-card">
+      ${data.existing_chat ? `
+      <button class="tc-resume-btn" onclick="switchToChat('${data.existing_chat.chat_id}')">
+        💬 You have a previous conversation about this order (${data.existing_chat.message_count} messages) — Resume it →
+      </button>` : ''}
       <div class="tc-head">
         <span class="tc-order">${data.order_name}</span>
         <span class="tc-stage" style="background:${color}22;color:${color}">${data.stage.toUpperCase()}</span>
@@ -228,6 +234,23 @@
       lastSeenCount = (d.messages||[]).length;
     }
     pollTimer = setInterval(pollNewMessages, 4000);
+  }
+
+  // Switches the active conversation to a different (pre-existing) chat —
+  // used by the "resume previous conversation about this order" card, so a
+  // customer asking about the same order from a new device/session lands
+  // back in the one continuous thread instead of fragmenting it.
+  async function switchToChat(newChatId) {
+    if (!newChatId || newChatId === chatId) return;
+    chatId = newChatId;
+    localStorage.setItem('cc_support_chat_id', chatId);
+    messagesEl.innerHTML = '';
+    try {
+      const r = await fetch(`${API}/support/chat/${chatId}/messages`);
+      const d = await r.json();
+      (d.messages||[]).forEach(addMessage);
+      lastSeenCount = (d.messages||[]).length;
+    } catch (e) {}
   }
 
   let lastSeenCount = 0;

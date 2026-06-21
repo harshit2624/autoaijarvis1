@@ -15584,12 +15584,12 @@ async function scRunChatTurn(chat, history, customerText) {
       for (const tc of msg.tool_calls) {
         let args = {}; try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
         const result = await scRunTool(tc.function.name, args, contact);
-        if (tc.function.name === 'get_order_status' && result.found) cardMeta = { type:'tracking_card', data: result };
+        if (tc.function.name === 'get_order_status' && result.found) {
+          const existingChat = await scFindExistingChatForOrder(result.shopify_order_id, chat._id);
+          cardMeta = { type:'tracking_card', data: { ...result, existing_chat: existingChat } };
+        }
         else if (tc.function.name === 'search_products' && (result.found || result.collections?.length)) cardMeta = { type:'product_cards', data: { products: result.products, collections: result.collections || [] } };
         else if (tc.function.name === 'start_return_exchange' && result.found) cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } };
-        else if (tc.function.name === 'get_order_status' && result.shopify_order_id) {
-          // Resolve order context onto the chat for vendor notification, even if not yet returned as final card
-        }
         if (result.shopify_order_id) {
           await SC.update(chat._id, { order_name: result.order_name, shopify_order_id: String(result.shopify_order_id), vendor_names: result.vendor_names || [] });
         }
@@ -15601,6 +15601,24 @@ async function scRunChatTurn(chat, history, customerText) {
     break;
   }
   return { reply: finalReply, meta: cardMeta };
+}
+
+// Finds a prior chat already tied to this order (a different browser/device
+// session asked about the same order before) so the widget can offer to
+// resume that single thread instead of fragmenting the conversation across
+// multiple chats — keeps the vendor's view of an order to one coherent
+// thread instead of several scattered ones.
+async function scFindExistingChatForOrder(shopifyOrderId, excludeChatId) {
+  if (!shopifyOrderId) return null;
+  const prior = await mdb.collection('support_chats').findOne(
+    { shopify_order_id: String(shopifyOrderId), _id: { $ne: new SC_ObjectId(String(excludeChatId)) } },
+    { sort: { updated_at: -1 } }
+  );
+  if (!prior) return null;
+  const msgCount = await mdb.collection('support_messages').countDocuments({ chat_id: String(prior._id) });
+  if (msgCount < 2) return null; // nothing beyond the welcome message — not worth resuming
+  const lastMsg = await mdb.collection('support_messages').find({ chat_id: String(prior._id) }, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(1).next();
+  return { chat_id: String(prior._id), message_count: msgCount, updated_at: prior.updated_at, last_message: lastMsg?.text?.slice(0, 80) || '' };
 }
 
 async function scNotifyVendorsIfNeeded(chatId) {
@@ -15723,10 +15741,12 @@ app.post('/vendor/support/chats/:id/reply', vendorAuth, async (req, res) => {
 // ── Serve the embeddable widget ─────────────────────────────────────────────
 app.get('/support-widget.html', (req, res) => {
   res.setHeader('Content-Security-Policy', "frame-ancestors *;");
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(require('path').join(__dirname, 'support-widget.html'));
 });
 app.get('/support-widget-embed.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(require('path').join(__dirname, 'support-widget-embed.js'));
 });
 
