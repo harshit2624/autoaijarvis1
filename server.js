@@ -12883,6 +12883,12 @@ async function buildPatternDataset(days) {
       email: o.email || null,
       financial_status: o.financial_status,
       vendorStages: vsMap[sid] || [],
+      line_items: (o.line_items || []).map(li => ({
+        title: li.title || 'Unknown Product',
+        vendor: li.vendor || '',
+        qty: li.quantity || 1,
+        price: parseFloat(li.price) || 0,
+      })),
     };
   });
 }
@@ -13065,6 +13071,172 @@ function analyzeVendorOutliers(current) {
   return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
 }
 
+// ── Product-level analyzers ─────────────────────────────────────────────────
+
+function analyzeProductDispatchDelay(current) {
+  // Per vendor, compare each product's avg dispatch time against that same
+  // vendor's overall average — catches "this SKU takes 24h longer than your
+  // other products" without needing a marketplace-wide baseline per product.
+  const vendorProductHrs = {};
+  const vendorAllHrs = {};
+  current.forEach(o => {
+    o.vendorStages.forEach(vs => {
+      if (!(vs.dispatched_at && vs.stage_started_at && vs.dispatched_at > vs.stage_started_at)) return;
+      const hrs = hoursBetween(vs.stage_started_at, vs.dispatched_at);
+      (vendorAllHrs[vs.vendor_name] ||= []).push(hrs);
+      const seenTitles = new Set();
+      o.line_items.filter(li => li.vendor === vs.vendor_name).forEach(li => {
+        if (seenTitles.has(li.title)) return;
+        seenTitles.add(li.title);
+        ((vendorProductHrs[vs.vendor_name] ||= {})[li.title] ||= []).push(hrs);
+      });
+    });
+  });
+
+  const findings = [];
+  for (const [vendor, productMap] of Object.entries(vendorProductHrs)) {
+    const allHrs = vendorAllHrs[vendor] || [];
+    if (allHrs.length < PI_MIN_SAMPLE) continue;
+    const vendorAvg = allHrs.reduce((a,b)=>a+b,0) / allHrs.length;
+    for (const [title, hrsArr] of Object.entries(productMap)) {
+      if (hrsArr.length < PI_MIN_SAMPLE) continue;
+      const avg = hrsArr.reduce((a,b)=>a+b,0) / hrsArr.length;
+      const diff = avg - vendorAvg;
+      if (diff >= 15 && avg >= vendorAvg * 1.3) {
+        findings.push({
+          category: 'Product Dispatch Delay',
+          severity: diff >= 30 ? 'red' : 'amber',
+          title: `"${title}" (${vendor}) takes ${diff.toFixed(0)}h longer to dispatch than this vendor's other products`,
+          detail: `Avg ${avg.toFixed(0)}h for this product vs ${vendorAvg.toFixed(0)}h vendor average this week, based on ${hrsArr.length} shipment${hrsArr.length>1?'s':''}. Could be a stocking/sourcing delay specific to this SKU.`,
+          strength: diff,
+        });
+      }
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
+}
+
+function analyzeProductMomentum(current, baseline) {
+  const countUnits = (rows) => {
+    const map = {};
+    rows.forEach(o => o.line_items.forEach(li => { map[li.title] = (map[li.title] || 0) + li.qty; }));
+    return map;
+  };
+  const curMap = countUnits(current);
+  const baseMap = countUnits(baseline);
+  const baselineWeeks = Math.max(PI_BASELINE_DAYS / 7, 1);
+
+  const findings = [];
+  for (const [title, curUnits] of Object.entries(curMap)) {
+    if (curUnits < 6) continue;
+    const baseUnits = baseMap[title] || 0;
+    const baseWeeklyAvg = baseUnits / baselineWeeks;
+
+    if (baseWeeklyAvg < 1) {
+      // Barely sold (or didn't exist) in the baseline period, now selling — a silent winner.
+      findings.push({
+        category: 'Silent Winner',
+        severity: 'info',
+        title: `"${title}" sold ${curUnits} units this week after near-zero sales in the prior ${PI_BASELINE_DAYS} days`,
+        detail: `Sudden demand with no prior trend — check stock levels before it runs out, and look for what triggered it (organic, ad spend, influencer, marketplace placement).`,
+        strength: curUnits,
+      });
+      continue;
+    }
+
+    const growth = curUnits / baseWeeklyAvg;
+    if (growth >= 2.5) {
+      findings.push({
+        category: 'Silent Winner',
+        severity: 'info',
+        title: `"${title}" sold ${curUnits} units this week vs a ${baseWeeklyAvg.toFixed(1)}/week baseline — ${growth.toFixed(1)}× normal`,
+        detail: `Worth confirming inventory can keep up, and whether this is a one-off bulk order or a real trend.`,
+        strength: growth,
+      });
+    } else if (growth <= 0.35 && baseWeeklyAvg >= 2) {
+      findings.push({
+        category: 'Product Momentum',
+        severity: 'amber',
+        title: `"${title}" sales dropped to ${curUnits} units this week vs a ${baseWeeklyAvg.toFixed(1)}/week baseline`,
+        detail: `Significant slowdown for a product that was previously selling steadily — check for stockouts, listing changes, or a price/visibility issue.`,
+        strength: 1 / Math.max(growth, 0.01),
+      });
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
+}
+
+function analyzeProductGeoSpike(current) {
+  const totalOrders = current.length;
+  if (totalOrders < 10) return [];
+  const totalByState = {};
+  current.forEach(o => { totalByState[o.state] = (totalByState[o.state] || 0) + 1; });
+
+  const productTotal = {};
+  const productByState = {};
+  current.forEach(o => {
+    const titles = new Set(o.line_items.map(li => li.title));
+    titles.forEach(title => {
+      productTotal[title] = (productTotal[title] || 0) + 1;
+      (productByState[title] ||= {})[o.state] = (productByState[title][o.state] || 0) + 1;
+    });
+  });
+
+  const findings = [];
+  for (const [title, total] of Object.entries(productTotal)) {
+    if (total < 6) continue;
+    for (const [state, count] of Object.entries(productByState[title])) {
+      if (count < PI_MIN_SAMPLE || state === 'Unknown') continue;
+      const expectedShare = totalByState[state] / totalOrders;
+      const actualShare = count / total;
+      if (actualShare >= expectedShare * 2.2) {
+        findings.push({
+          category: 'Product Geography',
+          severity: actualShare >= expectedShare * 3.5 ? 'amber' : 'info',
+          title: `"${title}" orders are clustering in ${state}`,
+          detail: `${count} of ${total} orders for this product this week are from ${state}, which normally accounts for ${(expectedShare*100).toFixed(0) === '0' ? '<1' : (expectedShare*100).toFixed(0)}% of order volume — about ${(actualShare/expectedShare).toFixed(1)}× the expected concentration.`,
+          strength: actualShare / expectedShare,
+        });
+      }
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 5);
+}
+
+function analyzeProductRtoConcentration(current) {
+  const terminal = current.filter(o => ['delivered', 'rto'].includes(o.stage));
+  const totalRto = terminal.filter(o => o.stage === 'rto').length;
+  if (totalRto < 6) return [];
+
+  const productTotalOrders = {};
+  const productRtoCount = {};
+  terminal.forEach(o => {
+    const titles = new Set(o.line_items.map(li => li.title));
+    titles.forEach(title => {
+      productTotalOrders[title] = (productTotalOrders[title] || 0) + 1;
+      if (o.stage === 'rto') productRtoCount[title] = (productRtoCount[title] || 0) + 1;
+    });
+  });
+
+  const findings = [];
+  for (const [title, rtoCount] of Object.entries(productRtoCount)) {
+    const total = productTotalOrders[title];
+    if (total < PI_MIN_SAMPLE) continue;
+    const ownRate = pctSafe(rtoCount, total);
+    const shareOfAllRto = pctSafe(rtoCount, totalRto);
+    if (shareOfAllRto >= 15 || ownRate >= 50) {
+      findings.push({
+        category: 'Product RTO',
+        severity: (shareOfAllRto >= 25 || ownRate >= 60) ? 'red' : 'amber',
+        title: `"${title}" is ${shareOfAllRto.toFixed(0)}% of all RTOs this week — ${ownRate.toFixed(0)}% of its own orders refused`,
+        detail: `${rtoCount} of ${total} orders containing this product came back RTO. People are ordering it but not accepting delivery — check the listing (sizing/description accuracy) and COD confirmation quality for this product.`,
+        strength: Math.max(shareOfAllRto, ownRate),
+      });
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 5);
+}
+
 function analyzeWeekdaySkew(lookback) {
   const terminal = lookback.filter(o => ['delivered', 'rto'].includes(o.stage));
   if (terminal.length < 30) return [];
@@ -13124,6 +13296,10 @@ async function runPatternAnalysis() {
     ...analyzeRTOHotspots(current),
     ...analyzeConfirmNotComplete(current),
     ...analyzeVendorOutliers(current),
+    ...analyzeProductDispatchDelay(current),
+    ...analyzeProductMomentum(current, baseline),
+    ...analyzeProductGeoSpike(current),
+    ...analyzeProductRtoConcentration(current),
     ...analyzeWeekdaySkew(dataset),
     ...analyzeRepeatRtoCustomers(dataset),
   ];
