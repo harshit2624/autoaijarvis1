@@ -232,23 +232,36 @@ const OM = {
 const OVS = {
   async upsert(shopify_id, vendor_name, fields) {
     const sid = String(shopify_id);
+    const existing = await mdb.collection('order_vendor_stage').findOne(
+      { shopify_id: sid, vendor_name },
+      { projection: { stage: 1, dispatched_at: 1, stage_history: 1, _id: 0 } }
+    );
+
     // Capture dispatch timestamp the first time an order moves from a
     // pre-dispatch stage (new/confirmed/partial) into a dispatched stage.
     // Used to measure dispatch turnaround time (stage_started_at → dispatched_at).
     const DISPATCHED_STAGES = new Set(['ready','pickup','transit','ofd','delivered','rto']);
     if (fields.stage && DISPATCHED_STAGES.has(fields.stage)) {
-      const existing = await mdb.collection('order_vendor_stage').findOne(
-        { shopify_id: sid, vendor_name },
-        { projection: { stage: 1, dispatched_at: 1, _id: 0 } }
-      );
       const wasPreDispatch = !existing || ['new','confirmed','partial'].includes(existing.stage);
       if (wasPreDispatch && !existing?.dispatched_at) {
         fields = { ...fields, dispatched_at: Date.now() };
       }
     }
+
+    // Log every distinct stage transition with a timestamp — this is the
+    // generic history we mine later for avg time-in-stage, avg total
+    // delivery time, avg transit time etc. Only append when the stage
+    // actually changes (avoid duplicate entries on no-op upserts that just
+    // update other fields like awb/courier without changing stage).
+    let stageHistoryUpdate = {};
+    if (fields.stage && fields.stage !== existing?.stage) {
+      const history = Array.isArray(existing?.stage_history) ? existing.stage_history : [];
+      stageHistoryUpdate = { stage_history: [...history, { stage: fields.stage, at: Date.now() }].slice(-25) };
+    }
+
     await mdb.collection('order_vendor_stage').updateOne(
       { shopify_id: sid, vendor_name },
-      { $set: { shopify_id: sid, vendor_name, ...fields, _updated: new Date() } },
+      { $set: { shopify_id: sid, vendor_name, ...fields, ...stageHistoryUpdate, _updated: new Date() } },
       { upsert: true }
     );
   },
@@ -5671,6 +5684,59 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     console.error("❌ /admin/analytics:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── GET /admin/dashboard/stage-timings ─────────────────────────────────────
+// Mines order_vendor_stage.stage_history (captured by OVS.upsert on every
+// stage change) for avg time spent in each transition, plus avg total
+// confirmed→delivered time. Only reflects data captured going forward —
+// history wasn't backfilled for orders that transitioned before this was added.
+app.get("/admin/dashboard/stage-timings", adminAuth, async (req, res) => {
+  try {
+    const docs = await mdb.collection('order_vendor_stage').find(
+      { stage_history: { $exists: true, $not: { $size: 0 } } },
+      { projection: { stage_history: 1, _id: 0 } }
+    ).toArray();
+
+    const avg = (arr) => arr.length ? arr.reduce((a,b)=>a+b,0) / arr.length : null;
+    const transitionHours = {}; // "from→to" -> [hours]
+    const totalDeliveryHours = [];
+    const totalRtoHours = [];
+
+    docs.forEach(d => {
+      const h = d.stage_history;
+      if (!Array.isArray(h) || h.length < 2) return;
+      for (let i = 1; i < h.length; i++) {
+        const hrs = (h[i].at - h[i-1].at) / 3600000;
+        if (hrs < 0) continue;
+        const key = `${h[i-1].stage} → ${h[i].stage}`;
+        (transitionHours[key] ||= []).push(hrs);
+      }
+      const delivered = h.find(e => e.stage === 'delivered');
+      if (delivered) {
+        const hrs = (delivered.at - h[0].at) / 3600000;
+        if (hrs >= 0) totalDeliveryHours.push(hrs);
+      }
+      const rto = h.find(e => e.stage === 'rto');
+      if (rto) {
+        const hrs = (rto.at - h[0].at) / 3600000;
+        if (hrs >= 0) totalRtoHours.push(hrs);
+      }
+    });
+
+    const transitions = Object.entries(transitionHours)
+      .map(([transition, hrs]) => ({ transition, avgHours: avg(hrs), count: hrs.length }))
+      .filter(t => t.count >= 3)
+      .sort((a,b) => b.count - a.count);
+
+    res.json({
+      avgConfirmedToDeliveredHours: avg(totalDeliveryHours),
+      deliveredSampleCount: totalDeliveryHours.length,
+      avgConfirmedToRtoHours: avg(totalRtoHours),
+      rtoSampleCount: totalRtoHours.length,
+      transitions,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── GET /admin/orders ─────────────────────────────────────────────────────

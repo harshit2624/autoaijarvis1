@@ -2263,6 +2263,8 @@
     const [aLoading,  setALoading]  = useState(true);
     const [aTab,      setATab]      = useState('overview');
     const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
+    const [timings,   setTimings]   = useState(null);
+    const [tLoading,  setTLoading]  = useState(true);
 
     useEffect(()=>{
       setALoading(true);
@@ -2271,6 +2273,18 @@
       fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(setAnalytics).catch(()=>{}).finally(()=>setALoading(false));
     },[token, aPeriod]);
+
+    useEffect(()=>{
+      setTLoading(true);
+      fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(setTimings).catch(()=>{}).finally(()=>setTLoading(false));
+    },[token]);
+
+    const fmtHrs = (h) => {
+      if (h == null) return '—';
+      if (h < 24) return `${h.toFixed(1)}h`;
+      return `${Math.floor(h/24)}d ${Math.round(h%24)}h`;
+    };
 
     const stages = STAGES.filter(s=>s.id!=='all');
     const a = analytics;
@@ -2328,6 +2342,38 @@
               </div>
             </div>
           )}
+
+          {/* Stage timing averages — mined from stage_history, all-time */}
+          <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>⏱ Avg Stage Timings · All Time</div>
+            {tLoading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+            {!tLoading && timings && (
+              <>
+                <div className="comm-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12,marginBottom: timings.transitions?.length ? 14 : 0}}>
+                  <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #4ade80'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>✅ Avg Confirmed → Delivered</div>
+                    <div style={{fontSize:16,fontWeight:800,color:'#4ade80'}}>{fmtHrs(timings.avgConfirmedToDeliveredHours)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{timings.deliveredSampleCount||0} delivered orders</div>
+                  </div>
+                  <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #f87171'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>↩ Avg Confirmed → RTO</div>
+                    <div style={{fontSize:16,fontWeight:800,color:'#f87171'}}>{fmtHrs(timings.avgConfirmedToRtoHours)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{timings.rtoSampleCount||0} RTO orders</div>
+                  </div>
+                  {(timings.transitions||[]).slice(0,4).map(t => (
+                    <div key={t.transition} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #60a5fa'}}>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>🔄 {t.transition}</div>
+                      <div style={{fontSize:16,fontWeight:800,color:'#60a5fa'}}>{fmtHrs(t.avgHours)}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{t.count} orders</div>
+                    </div>
+                  ))}
+                </div>
+                {!timings.transitions?.length && !timings.deliveredSampleCount && (
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>No stage history captured yet — this builds up automatically as orders move through stages from now on.</div>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* Big breakdown cards — always 3 equal columns */}
