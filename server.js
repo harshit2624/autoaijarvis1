@@ -15358,6 +15358,7 @@ const SC = {
       customer_phone: (customer_phone||'').replace(/\D/g,'').slice(-10) || null,
       order_name: null, shopify_order_id: null, vendor_names: [],
       status: 'open', hidden_from_vendors: false, vendor_notified_at: null,
+      tags: [], resolved: false, resolved_at: null, resolved_by: null,
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     };
     const r = await mdb.collection('support_chats').insertOne(doc);
@@ -15575,6 +15576,7 @@ async function scRunChatTurn(chat, history, customerText) {
 
   let finalReply = '';
   let cardMeta = null;
+  const newTags = new Set();
   for (let turn = 0; turn < 4; turn++) {
     const d = await scCallLLM(messages);
     const choice = d.choices?.[0];
@@ -15587,9 +15589,14 @@ async function scRunChatTurn(chat, history, customerText) {
         if (tc.function.name === 'get_order_status' && result.found) {
           const existingChat = await scFindExistingChatForOrder(result.shopify_order_id, chat._id);
           cardMeta = { type:'tracking_card', data: { ...result, existing_chat: existingChat } };
+          if (['new','confirmed','partial','hold'].includes(result.stage)) newTags.add('Not Dispatched');
+          if (result.stage === 'rto') newTags.add('RTO');
+          const openExchange = (result.return_requests||[]).find(r => r.type === 'exchange' && !['completed','rejected','cancelled'].includes(r.status));
+          if (openExchange) newTags.add('Exchange Pending');
         }
-        else if (tc.function.name === 'search_products' && (result.found || result.collections?.length)) cardMeta = { type:'product_cards', data: { products: result.products, collections: result.collections || [] } };
-        else if (tc.function.name === 'start_return_exchange' && result.found) cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } };
+        else if (tc.function.name === 'search_products' && (result.found || result.collections?.length)) { cardMeta = { type:'product_cards', data: { products: result.products, collections: result.collections || [] } }; newTags.add('Product Inquiry'); }
+        else if (tc.function.name === 'start_return_exchange' && result.found) { cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } }; newTags.add('Exchange Issue'); }
+        else if (tc.function.name === 'get_delay_reason') newTags.add('Delay Inquiry');
         if (result.shopify_order_id) {
           await SC.update(chat._id, { order_name: result.order_name, shopify_order_id: String(result.shopify_order_id), vendor_names: result.vendor_names || [] });
         }
@@ -15599,6 +15606,9 @@ async function scRunChatTurn(chat, history, customerText) {
     }
     finalReply = msg?.content || "I'm here to help — could you tell me a bit more?";
     break;
+  }
+  if (newTags.size) {
+    await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $addToSet: { tags: { $each: [...newTags] } } });
   }
   return { reply: finalReply, meta: cardMeta };
 }
@@ -15703,10 +15713,44 @@ app.post('/support/vendor-view/reply', async (req, res) => {
   res.json({ message: msg });
 });
 
+// Attaches each chat's dispatch-timer info (reusing the same
+// stage_started_at/dispatched_at fields the vendor's Orders page already
+// shows) so the chat list can surface "confirmed 14h ago, not dispatched
+// yet" without the vendor needing to flip over to the orders tab.
+async function scEnrichChatsWithDispatchInfo(chats) {
+  const orderIds = [...new Set(chats.map(c => c.shopify_order_id).filter(Boolean))];
+  const stages = orderIds.length ? await mdb.collection('order_vendor_stage').find(
+    { shopify_id: { $in: orderIds } },
+    { projection: { shopify_id: 1, vendor_name: 1, stage: 1, stage_started_at: 1, dispatched_at: 1, _id: 0 } }
+  ).toArray() : [];
+  const byOrder = {};
+  stages.forEach(s => { (byOrder[s.shopify_id] ||= []).push(s); });
+
+  const chatIds = chats.map(c => String(c._id));
+  const lastMessages = chatIds.length ? await mdb.collection('support_messages').aggregate([
+    { $match: { chat_id: { $in: chatIds } } },
+    { $sort: { created_at: -1 } },
+    { $group: { _id: '$chat_id', text: { $first: '$text' }, sender: { $first: '$sender' }, created_at: { $first: '$created_at' } } },
+  ]).toArray() : [];
+  const lastMsgByChat = Object.fromEntries(lastMessages.map(m => [m._id, m]));
+
+  return chats.map(c => {
+    const vs = byOrder[c.shopify_order_id] || [];
+    const dispatch_info = vs.map(s => ({
+      vendor_name: s.vendor_name,
+      stage: s.stage,
+      hours_since_stage_started: s.stage_started_at ? Math.round((Date.now() - s.stage_started_at) / 3600000) : null,
+      dispatched: !!s.dispatched_at,
+    }));
+    const last = lastMsgByChat[String(c._id)];
+    return { ...c, dispatch_info, last_message: last ? { text: last.text, sender: last.sender, created_at: last.created_at } : null };
+  });
+}
+
 // ── Admin moderation ─────────────────────────────────────────────────────
 app.get('/admin/support/chats', adminAuth, async (req, res) => {
   const chats = await mdb.collection('support_chats').find({}).sort({ updated_at: -1 }).limit(200).toArray();
-  res.json({ chats });
+  res.json({ chats: await scEnrichChatsWithDispatchInfo(chats) });
 });
 app.get('/admin/support/chats/:id/messages', adminAuth, async (req, res) => {
   const messages = await SC.messages(req.params.id);
@@ -15717,11 +15761,26 @@ app.post('/admin/support/chats/:id/hide', adminAuth, async (req, res) => {
   await SC.update(req.params.id, { hidden_from_vendors: !!hidden });
   res.json({ success: true });
 });
+app.post('/admin/support/chats/:id/resolve', adminAuth, async (req, res) => {
+  const { resolved } = req.body || {};
+  await SC.update(req.params.id, resolved
+    ? { resolved: true, resolved_at: new Date().toISOString(), resolved_by: 'admin' }
+    : { resolved: false, resolved_at: null, resolved_by: null });
+  res.json({ success: true });
+});
+app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
+  const { text } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+  const chat = await SC.get(req.params.id);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+  const msg = await SC.addMessage(chat._id, { sender:'admin', sender_name:'CrosCrow Support', text: text.trim() });
+  res.json({ message: msg });
+});
 
 // ── Vendor panel (logged-in) view of their own order chats ─────────────────
 app.get('/vendor/support/chats', vendorAuth, async (req, res) => {
   const chats = await mdb.collection('support_chats').find({ vendor_names: req.vendor, hidden_from_vendors: { $ne: true } }).sort({ updated_at: -1 }).toArray();
-  res.json({ chats });
+  res.json({ chats: await scEnrichChatsWithDispatchInfo(chats) });
 });
 app.get('/vendor/support/chats/:id/messages', vendorAuth, async (req, res) => {
   const chat = await SC.get(req.params.id);
@@ -15736,6 +15795,15 @@ app.post('/vendor/support/chats/:id/reply', vendorAuth, async (req, res) => {
   if (!text?.trim()) return res.status(400).json({ error: 'text required' });
   const msg = await SC.addMessage(chat._id, { sender:'vendor', sender_name: req.vendor, text: text.trim() });
   res.json({ message: msg });
+});
+app.post('/vendor/support/chats/:id/resolve', vendorAuth, async (req, res) => {
+  const chat = await SC.get(req.params.id);
+  if (!chat || chat.hidden_from_vendors || !chat.vendor_names?.includes(req.vendor)) return res.status(403).json({ error: 'Not available' });
+  const { resolved } = req.body || {};
+  await SC.update(req.params.id, resolved
+    ? { resolved: true, resolved_at: new Date().toISOString(), resolved_by: req.vendor }
+    : { resolved: false, resolved_at: null, resolved_by: null });
+  res.json({ success: true });
 });
 
 // ── Serve the embeddable widget ─────────────────────────────────────────────

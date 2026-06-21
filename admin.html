@@ -7381,6 +7381,181 @@
   }
 
   /* ══════════════════════════════════
+     SUPPORT CHATS — WhatsApp-style admin inbox
+  ══════════════════════════════════ */
+  function SupportChats({ token }) {
+    const [chats,      setChats]      = useState([]);
+    const [loading,    setLoading]    = useState(true);
+    const [tab,        setTab]        = useState('pending');
+    const [selectedId, setSelectedId] = useState(null);
+    const [messages,   setMessages]   = useState([]);
+    const [msgLoading, setMsgLoading] = useState(false);
+    const [replyText,  setReplyText]  = useState('');
+    const [sending,    setSending]    = useState(false);
+    const [now,        setNow]        = useState(Date.now());
+
+    useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+
+    const loadChats = () => {
+      setLoading(true);
+      fetch(`${API}/admin/support/chats`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).then(d => setChats(d.chats || [])).catch(()=>{}).finally(() => setLoading(false));
+    };
+    useEffect(() => { loadChats(); const t = setInterval(loadChats, 15000); return () => clearInterval(t); }, []);
+
+    const loadMessages = (chatId) => {
+      setMsgLoading(true);
+      fetch(`${API}/admin/support/chats/${chatId}/messages`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).then(d => setMessages(d.messages || [])).catch(()=>{}).finally(() => setMsgLoading(false));
+    };
+    useEffect(() => { if (selectedId) loadMessages(selectedId); }, [selectedId]);
+
+    const selectChat = (id) => setSelectedId(id);
+    const selected = chats.find(c => c._id === selectedId);
+
+    const toggleResolve = async () => {
+      if (!selected) return;
+      await fetch(`${API}/admin/support/chats/${selected._id}/resolve`, {
+        method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ resolved: !selected.resolved }),
+      });
+      loadChats();
+    };
+
+    const toggleHide = async () => {
+      if (!selected) return;
+      await fetch(`${API}/admin/support/chats/${selected._id}/hide`, {
+        method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ hidden: !selected.hidden_from_vendors }),
+      });
+      loadChats();
+    };
+
+    const sendReply = async () => {
+      if (!replyText.trim() || !selected) return;
+      setSending(true);
+      try {
+        await fetch(`${API}/admin/support/chats/${selected._id}/reply`, {
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+          body: JSON.stringify({ text: replyText.trim() }),
+        });
+        setReplyText('');
+        loadMessages(selected._id);
+      } catch(e) {}
+      setSending(false);
+    };
+
+    const elapsed = (iso) => {
+      const mins = Math.floor((now - new Date(iso).getTime()) / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return `${mins}m ago`;
+      if (mins < 1440) return `${Math.floor(mins/60)}h ${mins%60}m ago`;
+      return `${Math.floor(mins/1440)}d ago`;
+    };
+
+    const TAG_COLORS = {
+      'Not Dispatched': { bg:'rgba(245,158,11,0.12)', color:'#f59e0b' },
+      'RTO':            { bg:'rgba(239,68,68,0.12)',  color:'#ef4444' },
+      'Exchange Issue': { bg:'rgba(168,85,247,0.12)',  color:'#a855f7' },
+      'Exchange Pending': { bg:'rgba(168,85,247,0.12)', color:'#a855f7' },
+      'Delay Inquiry':  { bg:'rgba(99,102,241,0.12)',  color:'#6366f1' },
+      'Product Inquiry':{ bg:'rgba(100,116,139,0.12)', color:'#64748b' },
+    };
+    const TagPill = ({ tag }) => {
+      const c = TAG_COLORS[tag] || { bg:'rgba(100,116,139,0.12)', color:'#64748b' };
+      return <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:c.bg,color:c.color,letterSpacing:0.3}}>{tag}</span>;
+    };
+
+    const filtered = chats.filter(c => tab === 'pending' ? !c.resolved : c.resolved);
+    const SEV = { customer:'#0a0a0a', assistant:'#6366f1', vendor:'#b45309', admin:'#16a34a' };
+
+    return (
+      <div style={{display:'flex',gap:14,height:'calc(100vh - 140px)'}}>
+        {/* Chat list */}
+        <div style={{width:320,flexShrink:0,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+          <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+            {['pending','resolved'].map(t => (
+              <button key={t} onClick={()=>setTab(t)} style={{
+                flex:1, padding:'12px 0', fontSize:12, fontWeight:700, textTransform:'uppercase', letterSpacing:0.5,
+                background: tab===t ? 'var(--indigo-dim)' : 'transparent', color: tab===t ? 'var(--indigo)' : 'var(--text-muted)',
+                border:'none', cursor:'pointer', fontFamily:'var(--font-family)',
+              }}>{t} {tab===t && `(${filtered.length})`}</button>
+            ))}
+          </div>
+          <div style={{flex:1,overflowY:'auto'}}>
+            {loading && <div style={{padding:20,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>Loading…</div>}
+            {!loading && filtered.length===0 && <div style={{padding:20,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>No {tab} chats.</div>}
+            {filtered.map(c => (
+              <div key={c._id} onClick={()=>selectChat(c._id)} style={{
+                padding:'12px 14px', borderBottom:'1px solid var(--border)', cursor:'pointer',
+                background: selectedId===c._id ? 'var(--bg-hover)' : 'transparent',
+              }}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{c.order_name || c.customer_email || c.customer_phone || 'New chat'}</span>
+                  <span style={{fontSize:10,color:'var(--text-muted)'}}>{elapsed(c.last_message?.created_at || c.created_at)}</span>
+                </div>
+                {c.last_message && <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:6}}>
+                  {c.last_message.sender!=='customer' ? '↩ ' : ''}{c.last_message.text}
+                </div>}
+                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                  {(c.tags||[]).map(t => <TagPill key={t} tag={t}/>)}
+                  {c.hidden_from_vendors && <span style={{fontSize:9,color:'#ef4444',fontWeight:700}}>🚫 hidden</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Chat detail */}
+        <div style={{flex:1,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+          {!selected && <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13}}>Select a chat to view the conversation</div>}
+          {selected && (
+            <>
+              <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{selected.order_name || 'New chat'} {selected.vendor_names?.length ? `· ${selected.vendor_names.join(', ')}` : ''}</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+                    Started {elapsed(selected.created_at)}
+                    {(selected.dispatch_info||[]).map(d => (
+                      <span key={d.vendor_name} style={{marginLeft:10,color: d.dispatched ? '#10b981' : '#f59e0b'}}>
+                        ⏱ {d.vendor_name}: {d.stage}{d.hours_since_stage_started!=null ? ` (${d.hours_since_stage_started}h)` : ''}{d.dispatched ? ' ✓ dispatched' : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <button className="btn btn-ghost btn-sm" onClick={toggleHide}>{selected.hidden_from_vendors ? '👁 Unhide from vendor' : '🚫 Hide from vendor'}</button>
+                <button className={`btn btn-sm ${selected.resolved?'btn-ghost':'btn-indigo'}`} onClick={toggleResolve}>{selected.resolved ? '↺ Reopen' : '✓ Mark Resolved'}</button>
+              </div>
+
+              <div style={{flex:1,overflowY:'auto',padding:18,display:'flex',flexDirection:'column',gap:10}}>
+                {msgLoading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+                {messages.map((m,i) => (
+                  <div key={i} style={{alignSelf: m.sender==='customer' ? 'flex-end' : 'flex-start', maxWidth:'70%'}}>
+                    {m.sender!=='customer' && <div style={{fontSize:9,fontWeight:700,color:SEV[m.sender]||'#64748b',marginBottom:3,textTransform:'uppercase'}}>{m.sender_name || m.sender}</div>}
+                    <div style={{
+                      background: m.sender==='customer' ? 'var(--indigo)' : 'var(--bg-hover)',
+                      color: m.sender==='customer' ? '#fff' : 'var(--text)',
+                      border: m.sender==='customer' ? 'none' : '1px solid var(--border)',
+                      borderRadius:12, padding:'9px 13px', fontSize:13, lineHeight:1.5, whiteSpace:'pre-wrap',
+                    }}>{m.text}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{display:'flex',gap:8,padding:14,borderTop:'1px solid var(--border)'}}>
+                <input className="form-input" placeholder="Reply as CrosCrow Support…" value={replyText}
+                  onChange={e=>setReplyText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendReply()}
+                  style={{flex:1}}/>
+                <button className="btn btn-indigo" onClick={sendReply} disabled={sending||!replyText.trim()}>{sending?'…':'Send'}</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      BRAINS — Pattern Intelligence
   ══════════════════════════════════ */
   function Brains({ token }) {
@@ -8804,6 +8979,7 @@
       { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
       { id:'brains',      icon:'🧠', label:'Brains',        section:'finance' },
+      { id:'supportchats', icon:'💬', label:'Support Chats', section:'main' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
@@ -8883,6 +9059,7 @@
           {view==='penalties'   && <PenaltyManager token={token}/>}
           {view==='reports'     && <Reports token={token}/>}
           {view==='brains'      && <Brains token={token}/>}
+          {view==='supportchats' && <SupportChats token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
