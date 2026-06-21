@@ -15405,24 +15405,37 @@ async function scSearchProducts(query) {
     // search — "boxy fit" finds nothing even when "MOCKING BIRD BOXY FIT
     // SHIRT" exists. GraphQL's query syntax supports real wildcard search.
     const terms = query.trim().split(/\s+/).filter(Boolean).map(t => `title:*${t}*`).join(' OR ');
-    const gqlQuery = `{ products(first: 8, query: "status:active AND (${terms})") {
-      edges { node { title handle featuredImage { url }
-        variants(first: 10) { edges { node { price availableForSale } } } } } } }`;
-    const d = await shopifyGQL(gqlQuery);
-    const edges = d.data?.products?.edges || [];
+
+    const [productData, collectionData] = await Promise.all([
+      shopifyGQL(`{ products(first: 10, query: "status:active AND (${terms})") {
+        edges { node { title handle featuredImage { url }
+          variants(first: 10) { edges { node { price availableForSale } } } } } } }`),
+      shopifyGQL(`{ collections(first: 3, query: "title:*${query.trim().split(/\s+/)[0]}*") {
+        edges { node { title handle image { url } } } } }`),
+    ]);
+
+    const edges = productData.data?.products?.edges || [];
     const products = edges
       .map(e => e.node)
       .filter(p => p.variants.edges.some(v => v.node.availableForSale));
+
+    const collections = (collectionData.data?.collections?.edges || []).map(e => ({
+      title: e.node.title,
+      url: `${STOREFRONT_URL}/collections/${e.node.handle}`,
+      image: e.node.image?.url || null,
+    }));
+
     return {
       found: products.length,
-      products: products.slice(0, 6).map(p => ({
+      products: products.slice(0, 8).map(p => ({
         title: p.title,
         url: `${STOREFRONT_URL}/products/${p.handle}`,
         image: p.featuredImage?.url || null,
         price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
       })),
+      collections,
     };
-  } catch (e) { return { found: 0, products: [], error: e.message }; }
+  } catch (e) { return { found: 0, products: [], collections: [], error: e.message }; }
 }
 
 async function scGetOrderStatus(orderName, contact) {
@@ -15491,7 +15504,7 @@ async function scRunTool(name, args, contact) {
 }
 
 const SC_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You help customers:
-1. Find products ("I'm looking for sweatpants") — use search_products, then describe 2-3 best matches naturally and mention they're shown as cards below your message.
+1. Find products ("I'm looking for sweatpants") — use search_products, then describe 2-3 best matches naturally and mention they're shown as cards below your message. If a matching collection page is returned too, mention they can browse the full collection for more options.
 2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking card is shown automatically below your message, so don't repeat every detail — just the headline).
 3. Explain delays — use get_delay_reason. If there's a specific vendor reason, relay it warmly with the ETA. If not, use the generic explanation, but reassure them it's being handled.
 4. Returns/exchanges — use start_return_exchange and point them to the link/card shown below your message.
@@ -15542,7 +15555,7 @@ async function scRunChatTurn(chat, history, customerText) {
         let args = {}; try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
         const result = await scRunTool(tc.function.name, args, contact);
         if (tc.function.name === 'get_order_status' && result.found) cardMeta = { type:'tracking_card', data: result };
-        else if (tc.function.name === 'search_products' && result.found) cardMeta = { type:'product_cards', data: result.products };
+        else if (tc.function.name === 'search_products' && (result.found || result.collections?.length)) cardMeta = { type:'product_cards', data: { products: result.products, collections: result.collections || [] } };
         else if (tc.function.name === 'start_return_exchange' && result.found) cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } };
         else if (tc.function.name === 'get_order_status' && result.shopify_order_id) {
           // Resolve order context onto the chat for vendor notification, even if not yet returned as final card
