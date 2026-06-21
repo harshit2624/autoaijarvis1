@@ -15403,14 +15403,27 @@ async function scSearchProducts(query) {
   try {
     // Shopify's REST /products.json?title= is an EXACT match, not a substring
     // search — "boxy fit" finds nothing even when "MOCKING BIRD BOXY FIT
-    // SHIRT" exists. GraphQL's query syntax supports real wildcard search.
-    const terms = query.trim().split(/\s+/).filter(Boolean).map(t => `title:*${t}*`).join(' OR ');
+    // SHIRT" exists. GraphQL's query syntax supports real wildcard search,
+    // but it's still a literal substring match — "shirts" (plural) does NOT
+    // match "T-SHIRT" (singular) since "shirts" isn't a substring of "shirt".
+    // Widen each word with its singular form (strip trailing 's') so plural
+    // search terms still find singular product titles, which is the common
+    // case (verified: "shirts" found 0 products until this was added).
+    const words = query.trim().split(/\s+/).filter(Boolean);
+    const wordVariants = new Set();
+    words.forEach(w => {
+      wordVariants.add(w);
+      if (w.length > 3 && /s$/i.test(w)) wordVariants.add(w.slice(0, -1));
+    });
+    const terms = [...wordVariants].map(t => `title:*${t}*`).join(' OR ');
+    const firstWordVariants = [...wordVariants].filter(v => words[0]?.toLowerCase().startsWith(v.toLowerCase()) || v.toLowerCase().startsWith(words[0]?.toLowerCase()||''));
+    const collTerms = (firstWordVariants.length ? firstWordVariants : [words[0]||'']).map(t => `title:*${t}*`).join(' OR ');
 
     const [productData, collectionData] = await Promise.all([
       shopifyGQL(`{ products(first: 10, query: "status:active AND (${terms})") {
         edges { node { title handle featuredImage { url }
           variants(first: 10) { edges { node { price availableForSale } } } } } } }`),
-      shopifyGQL(`{ collections(first: 3, query: "title:*${query.trim().split(/\s+/)[0]}*") {
+      shopifyGQL(`{ collections(first: 3, query: "${collTerms}") {
         edges { node { title handle image { url } } } } }`),
     ]);
 
