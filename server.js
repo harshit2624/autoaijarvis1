@@ -2181,8 +2181,8 @@ function trackButton(trackingUrl, awb, courier, label = 'Track Your Order →') 
     c.includes('shiprocket') ? `https://shiprocket.co/tracking/${awb}` :
     c.includes('ekart')      ? `https://ekartlogistics.com/track?trackingId=${awb}` :
     c.includes('fedex')      ? `https://www.fedex.com/fedextrack/?trknbr=${awb}` :
-    `https://track.croscrow.com`
-  ) : `https://track.croscrow.com`;
+    `https://dashboard.croscrow.com/track`
+  ) : `https://dashboard.croscrow.com/track`;
   const url = (trackingUrl && trackingUrl.startsWith('http')) ? trackingUrl : fallback;
   return `<div style="text-align:center;margin:28px 0;">
     <a href="${url}" target="_blank" style="display:inline-block;background:#7eb8f7;color:#0d0d0d;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;padding:16px 40px;border-radius:3px;text-decoration:none;">${label}</a>
@@ -15348,7 +15348,7 @@ app.post("/admin/cc-inventory/check", adminAuth, async (req, res) => {
 
 const { ObjectId: SC_ObjectId } = require('mongodb');
 const STOREFRONT_URL = process.env.STOREFRONT_URL || 'https://croscrow.com';
-const SUPPORT_TRACK_URL = (orderName, contact) => `https://track.croscrow.com/?order=${encodeURIComponent(orderName)}&contact=${encodeURIComponent(contact?.trim() || 'na')}`;
+const SUPPORT_TRACK_URL = (orderName, contact) => `https://dashboard.croscrow.com/track?order=${encodeURIComponent(orderName)}&contact=${encodeURIComponent(contact?.trim() || 'na')}`;
 
 const SC = {
   async createChat({ shop_domain, customer_email, customer_phone }) {
