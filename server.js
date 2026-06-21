@@ -12839,6 +12839,401 @@ app.post("/admin/reports/send", adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// PATTERN INTELLIGENCE — autonomous anomaly + trend detection
+// Finds things nobody asked it to look for: regional tag clusters, dispatch
+// drift, RTO hotspots, vendors quietly drifting worse, confirm-without-ship
+// regions, repeat-RTO customers, weekday RTO skew. Runs every 3 days and
+// emails a digest; also triggerable on demand.
+// ══════════════════════════════════════════════════════════════════════════
+
+const PI_RUN_EVERY_DAYS    = 3;
+const PI_CURRENT_DAYS      = 7;   // "this week" window
+const PI_BASELINE_DAYS     = 30;  // trailing baseline window, ending where current window starts
+const PI_LOOKBACK_DAYS     = 90;  // total dataset pulled, for weekday/repeat-customer patterns
+const PI_MIN_SAMPLE        = 4;   // ignore any bucket smaller than this — avoids noise from 1-2 order flukes
+
+function pctSafe(n, d) { return d > 0 ? (n / d) * 100 : 0; }
+function hoursBetween(a, b) { return (b - a) / 3600000; }
+
+async function buildPatternDataset(days) {
+  const fromISO = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+  const orders = await fetchAllOrders("any", fromISO);
+  const metasArr = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+  const metaMap = Object.fromEntries(metasArr.map(m => [m.shopify_id, m]));
+  const vsArr = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
+  const vsMap = {};
+  vsArr.forEach(r => { (vsMap[r.shopify_id] ||= []).push(r); });
+
+  return orders.map(o => {
+    const sid = String(o.id);
+    const meta = metaMap[sid] || {};
+    const addr = o.shipping_address || {};
+    return {
+      id: sid,
+      name: o.name,
+      created_at: o.created_at,
+      created_ms: new Date(o.created_at).getTime(),
+      stage: meta.stage || 'new',
+      tags: (o.tags || '').split(',').map(t => t.trim()).filter(Boolean),
+      vendors: [...new Set((o.line_items || []).map(li => li.vendor).filter(Boolean))],
+      state: addr.province || 'Unknown',
+      city: (addr.city || 'Unknown').trim(),
+      phone: (addr.phone || o.phone || '').replace(/\D/g, '').slice(-10) || null,
+      email: o.email || null,
+      financial_status: o.financial_status,
+      vendorStages: vsMap[sid] || [],
+    };
+  });
+}
+
+function piWindow(dataset, startMs, endMs) {
+  return dataset.filter(o => o.created_ms >= startMs && o.created_ms < endMs);
+}
+
+// ── Individual analyzers — each returns an array of finding objects ────────
+
+function analyzeDispatchTime(current, baseline) {
+  const avgDispatchHrs = (rows) => {
+    const hrs = [];
+    rows.forEach(o => o.vendorStages.forEach(vs => {
+      if (vs.dispatched_at && vs.stage_started_at && vs.dispatched_at > vs.stage_started_at) {
+        hrs.push(hoursBetween(vs.stage_started_at, vs.dispatched_at));
+      }
+    }));
+    return hrs.length >= PI_MIN_SAMPLE ? { avg: hrs.reduce((a,b)=>a+b,0)/hrs.length, count: hrs.length } : null;
+  };
+  const cur = avgDispatchHrs(current);
+  const base = avgDispatchHrs(baseline);
+  if (!cur || !base) return [];
+  const change = ((cur.avg - base.avg) / base.avg) * 100;
+  if (Math.abs(change) < 15) return [];
+  const worse = change > 0;
+  return [{
+    category: 'Dispatch Speed',
+    severity: change >= 40 ? 'red' : 'amber',
+    title: `Avg dispatch time has ${worse ? 'risen' : 'fallen'} from ${base.avg.toFixed(0)}h to ${cur.avg.toFixed(0)}h`,
+    detail: `Based on ${base.count} baseline shipments (last ${PI_BASELINE_DAYS}d) vs ${cur.count} this week. ${worse ? 'Orders are taking longer to leave the warehouse — worth a look.' : 'Dispatch speed has improved — whatever changed, keep doing it.'}`,
+  }];
+}
+
+function analyzeTagRegionAnomalies(current) {
+  const totalOrders = current.length;
+  if (totalOrders < 10) return [];
+  const totalByState = {};
+  current.forEach(o => { totalByState[o.state] = (totalByState[o.state] || 0) + 1; });
+
+  const tagCounts = {}; // tag -> total count
+  const tagByState = {}; // tag -> { state: count }
+  current.forEach(o => o.tags.forEach(tag => {
+    tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    (tagByState[tag] ||= {})[o.state] = (tagByState[tag][o.state] || 0) + 1;
+  }));
+
+  const findings = [];
+  for (const [tag, total] of Object.entries(tagCounts)) {
+    if (total < 5) continue; // need enough occurrences of the tag itself
+    for (const [state, count] of Object.entries(tagByState[tag])) {
+      if (count < PI_MIN_SAMPLE || state === 'Unknown') continue;
+      const expectedShare = totalByState[state] / totalOrders;
+      const actualShare = count / total;
+      if (actualShare >= expectedShare * 2.2) {
+        findings.push({
+          category: 'Regional Tag Cluster',
+          severity: actualShare >= expectedShare * 3.5 ? 'red' : 'amber',
+          title: `"${tag}" is disproportionately coming from ${state}`,
+          detail: `${count} of ${total} orders tagged "${tag}" this week are from ${state}, which only accounts for ${expectedShare.toFixed(0) === '0' ? '<1' : (expectedShare*100).toFixed(0)}% of total order volume — about ${(actualShare/expectedShare).toFixed(1)}× its expected share.`,
+          strength: actualShare / expectedShare,
+        });
+      }
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
+}
+
+function analyzeRTOHotspots(current) {
+  const terminal = current.filter(o => ['delivered', 'rto'].includes(o.stage));
+  if (terminal.length < 10) return [];
+  const overallRtoRate = pctSafe(terminal.filter(o => o.stage === 'rto').length, terminal.length);
+
+  const byKey = (keyFn) => {
+    const map = {};
+    terminal.forEach(o => {
+      const k = keyFn(o);
+      if (k === 'Unknown') return;
+      (map[k] ||= { total: 0, rto: 0 }).total++;
+      if (o.stage === 'rto') map[k].rto++;
+    });
+    return map;
+  };
+
+  const findings = [];
+  for (const [label, keyFn] of [['state', o => o.state], ['city', o => o.city]]) {
+    const map = byKey(keyFn);
+    for (const [name, v] of Object.entries(map)) {
+      if (v.total < PI_MIN_SAMPLE) continue;
+      const rate = pctSafe(v.rto, v.total);
+      if (rate >= Math.max(overallRtoRate * 1.6, overallRtoRate + 20) && rate >= 30) {
+        findings.push({
+          category: 'RTO Hotspot',
+          severity: rate >= 50 ? 'red' : 'amber',
+          title: `${name} (${label}) RTO rate is ${rate.toFixed(0)}% — overall average is ${overallRtoRate.toFixed(0)}%`,
+          detail: `${v.rto} of ${v.total} delivered/RTO orders from ${name} came back as RTO this week.`,
+          strength: rate,
+        });
+      }
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
+}
+
+function analyzeConfirmNotComplete(current) {
+  const stuckCandidates = current.filter(o => ['confirmed', 'partial'].includes(o.stage));
+  const nowMs = Date.now();
+  const stuck = stuckCandidates.filter(o => hoursBetween(o.created_ms, nowMs) >= 5 * 24);
+  if (stuck.length < PI_MIN_SAMPLE) return [];
+
+  const totalByState = {};
+  current.forEach(o => { totalByState[o.state] = (totalByState[o.state] || 0) + 1; });
+  const overallStuckRate = pctSafe(stuck.length, current.length);
+
+  const stuckByState = {};
+  stuck.forEach(o => { stuckByState[o.state] = (stuckByState[o.state] || 0) + 1; });
+
+  const findings = [];
+  for (const [state, count] of Object.entries(stuckByState)) {
+    if (count < PI_MIN_SAMPLE || state === 'Unknown') continue;
+    const stateTotal = totalByState[state] || 0;
+    if (stateTotal < PI_MIN_SAMPLE) continue;
+    const rate = pctSafe(count, stateTotal);
+    if (rate >= Math.max(overallStuckRate * 2, overallStuckRate + 20)) {
+      findings.push({
+        category: 'Confirmed but Stuck',
+        severity: rate >= 60 ? 'red' : 'amber',
+        title: `${state}: customers confirm but orders aren't shipping`,
+        detail: `${count} of ${stateTotal} orders from ${state} (${rate.toFixed(0)}%) have sat in "confirmed/partial" for 5+ days without dispatch — vs ${overallStuckRate.toFixed(0)}% overall. Customers are saying yes, fulfilment isn't following through.`,
+        strength: rate,
+      });
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 5);
+}
+
+function analyzeVendorOutliers(current) {
+  const vendorStats = {};
+  current.forEach(o => o.vendors.forEach(vn => {
+    const v = vendorStats[vn] ||= { total: 0, rto: 0, dispatchHrs: [] };
+    v.total++;
+    if (o.stage === 'rto') v.rto++;
+    const myStage = o.vendorStages.find(vs => vs.vendor_name === vn);
+    if (myStage?.dispatched_at && myStage?.stage_started_at && myStage.dispatched_at > myStage.stage_started_at) {
+      v.dispatchHrs.push(hoursBetween(myStage.stage_started_at, myStage.dispatched_at));
+    }
+  }));
+
+  const rtoRates = Object.values(vendorStats).filter(v=>v.total>=PI_MIN_SAMPLE).map(v => pctSafe(v.rto, v.total));
+  const overallRto = rtoRates.length ? rtoRates.reduce((a,b)=>a+b,0)/rtoRates.length : 0;
+  const allDispatchHrs = Object.values(vendorStats).flatMap(v=>v.dispatchHrs);
+  const overallDispatch = allDispatchHrs.length ? allDispatchHrs.reduce((a,b)=>a+b,0)/allDispatchHrs.length : 0;
+
+  const findings = [];
+  for (const [vn, v] of Object.entries(vendorStats)) {
+    if (v.total < PI_MIN_SAMPLE) continue;
+    const rate = pctSafe(v.rto, v.total);
+    if (overallRto > 0 && rate >= Math.max(overallRto * 1.8, overallRto + 20) && rate >= 25) {
+      findings.push({
+        category: 'Vendor Watchlist',
+        severity: rate >= 45 ? 'red' : 'amber',
+        title: `${vn}: RTO rate ${rate.toFixed(0)}% vs ${overallRto.toFixed(0)}% marketplace average`,
+        detail: `${v.rto} of ${v.total} orders from ${vn} this week came back RTO.`,
+        strength: rate,
+      });
+    }
+    if (v.dispatchHrs.length >= PI_MIN_SAMPLE && overallDispatch > 0) {
+      const avgHrs = v.dispatchHrs.reduce((a,b)=>a+b,0)/v.dispatchHrs.length;
+      if (avgHrs >= Math.max(overallDispatch * 1.6, overallDispatch + 18)) {
+        findings.push({
+          category: 'Vendor Watchlist',
+          severity: avgHrs >= overallDispatch * 2.2 ? 'red' : 'amber',
+          title: `${vn}: dispatching in ${avgHrs.toFixed(0)}h vs ${overallDispatch.toFixed(0)}h marketplace average`,
+          detail: `Slowest dispatch turnaround among active vendors this week, based on ${v.dispatchHrs.length} shipments.`,
+          strength: avgHrs,
+        });
+      }
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
+}
+
+function analyzeWeekdaySkew(lookback) {
+  const terminal = lookback.filter(o => ['delivered', 'rto'].includes(o.stage));
+  if (terminal.length < 30) return [];
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const byDay = DAYS.map(() => ({ total: 0, rto: 0 }));
+  terminal.forEach(o => {
+    const d = new Date(o.created_ms).getDay();
+    byDay[d].total++;
+    if (o.stage === 'rto') byDay[d].rto++;
+  });
+  const rates = byDay.map((d,i) => ({ day: DAYS[i], rate: pctSafe(d.rto, d.total), total: d.total }))
+    .filter(d => d.total >= 8);
+  if (rates.length < 4) return [];
+  const best = rates.reduce((a,b) => a.rate < b.rate ? a : b);
+  const worst = rates.reduce((a,b) => a.rate > b.rate ? a : b);
+  if (worst.rate - best.rate < 15) return [];
+  return [{
+    category: 'Weekday Pattern',
+    severity: worst.rate - best.rate >= 25 ? 'amber' : 'info',
+    title: `Orders placed on ${worst.day} RTO at ${worst.rate.toFixed(0)}%, vs ${best.rate.toFixed(0)}% on ${best.day}`,
+    detail: `Based on the last ${PI_LOOKBACK_DAYS} days of delivered/RTO orders. Day-of-order-placement appears to predict return risk — worth checking if it's a courier scheduling or COD-confirmation-call timing issue.`,
+  }];
+}
+
+function analyzeRepeatRtoCustomers(lookback) {
+  const rto = lookback.filter(o => o.stage === 'rto');
+  const byCustomer = {};
+  rto.forEach(o => {
+    const key = o.phone || o.email;
+    if (!key) return;
+    (byCustomer[key] ||= []).push(o.name);
+  });
+  const repeats = Object.entries(byCustomer).filter(([,names]) => names.length >= 2);
+  if (!repeats.length) return [];
+  repeats.sort((a,b) => b[1].length - a[1].length);
+  const top = repeats.slice(0, 8);
+  return [{
+    category: 'Repeat RTO Customers',
+    severity: top[0][1].length >= 3 ? 'amber' : 'info',
+    title: `${repeats.length} customer${repeats.length>1?'s':''} with 2+ RTO orders in the last ${PI_LOOKBACK_DAYS} days`,
+    detail: top.map(([key, names]) => `${key}: ${names.join(', ')} (${names.length} RTOs)`).join('<br>'),
+  }];
+}
+
+async function runPatternAnalysis() {
+  const dataset = await buildPatternDataset(PI_LOOKBACK_DAYS);
+  const nowMs = Date.now();
+  const currentStart = nowMs - PI_CURRENT_DAYS * 24 * 3600 * 1000;
+  const baselineStart = currentStart - PI_BASELINE_DAYS * 24 * 3600 * 1000;
+
+  const current  = piWindow(dataset, currentStart, nowMs);
+  const baseline = piWindow(dataset, baselineStart, currentStart);
+
+  const findings = [
+    ...analyzeDispatchTime(current, baseline),
+    ...analyzeTagRegionAnomalies(current),
+    ...analyzeRTOHotspots(current),
+    ...analyzeConfirmNotComplete(current),
+    ...analyzeVendorOutliers(current),
+    ...analyzeWeekdaySkew(dataset),
+    ...analyzeRepeatRtoCustomers(dataset),
+  ];
+
+  const severityRank = { red: 0, amber: 1, info: 2 };
+  findings.sort((a,b) => severityRank[a.severity] - severityRank[b.severity]);
+
+  return { findings, period: { current_orders: current.length, baseline_orders: baseline.length, generated_at: new Date().toISOString() } };
+}
+
+function renderPatternReportHtml({ findings, period }) {
+  const SEV = {
+    red:   { color:'#ef4444', bg:'#2d0a0a', label:'🔴 RED FLAG' },
+    amber: { color:'#f59e0b', bg:'#2d1a00', label:'🟡 WATCH'   },
+    info:  { color:'#6366f1', bg:'#10142d', label:'🔵 NOTICED' },
+  };
+  const grouped = {};
+  findings.forEach(f => (grouped[f.category] ||= []).push(f));
+
+  const card = (f) => {
+    const s = SEV[f.severity];
+    return `
+    <div style="background:${s.bg};border-left:4px solid ${s.color};border-radius:8px;padding:14px 18px;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:800;color:${s.color};letter-spacing:1px;margin-bottom:6px">${s.label}</div>
+      <div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:4px;line-height:1.4">${f.title}</div>
+      <div style="font-size:12px;color:#94a3b8;line-height:1.6">${f.detail}</div>
+    </div>`;
+  };
+
+  const sections = Object.entries(grouped).map(([cat, items]) => `
+    <div style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin:24px 0 10px">${cat}</div>
+    ${items.map(card).join('')}
+  `).join('');
+
+  const body = findings.length ? sections : `
+    <div style="text-align:center;padding:36px 20px;color:#10b981;font-weight:700;font-size:14px">
+      ✅ No significant anomalies found this period. Everything's tracking within normal range.
+    </div>`;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+  <body style="margin:0;padding:0;background:#0b0f1a;font-family:'Segoe UI',Arial,sans-serif">
+    <div style="max-width:640px;margin:0 auto;padding:36px 20px">
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="font-size:13px;color:#6366f1;font-weight:800;letter-spacing:2px">CROSCROW · PATTERN INTELLIGENCE</div>
+        <div style="font-size:21px;font-weight:800;color:#f8fafc;margin-top:6px">Autonomous Findings Report</div>
+        <div style="font-size:12px;color:#64748b;margin-top:4px">Generated ${new Date(period.generated_at).toLocaleString('en-IN', { dateStyle:'medium', timeStyle:'short' })} · ${period.current_orders} orders analyzed this week</div>
+      </div>
+      ${body}
+      <div style="text-align:center;margin-top:28px;padding-top:18px;border-top:1px solid #1e293b">
+        <div style="font-size:11px;color:#475569">Findings are statistical anomalies vs trailing baselines — verify before acting. Generated automatically every ${PI_RUN_EVERY_DAYS} days.</div>
+      </div>
+    </div>
+  </body></html>`;
+}
+
+async function generateAndSendPatternReport() {
+  const { findings, period } = await runPatternAnalysis();
+  const html = renderPatternReportHtml({ findings, period });
+
+  await mdb.collection('pattern_reports').insertOne({ ...period, findings, created_at: new Date().toISOString() });
+  await mdb.collection('pattern_reports').deleteMany({ created_at: { $lt: new Date(Date.now() - 180*24*3600*1000).toISOString() } });
+
+  const cfg = await getSmtpConfig();
+  if (!cfg?.host) { console.log('⚠️  Pattern report: SMTP not configured, skipped email'); return { findings, period, emailed: 0 }; }
+  const settings = await RS.get();
+  const recipients = [cfg.adminEmail, ...(settings.staff_emails || '').split(',').map(e=>e.trim())].filter(Boolean);
+  let emailed = 0;
+  for (const to of recipients) {
+    try {
+      await sendEmail({ to, subject: `🧠 Pattern Intelligence Report — ${findings.filter(f=>f.severity==='red').length} red flag${findings.filter(f=>f.severity==='red').length===1?'':'s'}`, html, shopifyId: 'pattern_report', trigger: 'pattern_intelligence' });
+      emailed++;
+    } catch (e) { console.error('Pattern report email failed:', to, e.message); }
+  }
+  await mdb.collection('global_config').updateOne({ _id: 'pattern_intelligence' }, { $set: { last_sent_at: new Date().toISOString() } }, { upsert: true });
+  console.log(`🧠 Pattern Intelligence report sent to ${emailed} recipients — ${findings.length} findings`);
+  return { findings, period, emailed };
+}
+
+async function patternIntelligenceCronJob() {
+  try {
+    const cfg = await mdb.collection('global_config').findOne({ _id: 'pattern_intelligence' });
+    const lastSent = cfg?.last_sent_at ? new Date(cfg.last_sent_at).getTime() : 0;
+    if (Date.now() - lastSent < PI_RUN_EVERY_DAYS * 24 * 3600 * 1000) return;
+    console.log('🧠 Running Pattern Intelligence cron…');
+    await generateAndSendPatternReport();
+  } catch (e) { console.error('Pattern Intelligence cron error:', e.message); }
+}
+setTimeout(() => patternIntelligenceCronJob().catch(()=>{}), 90 * 1000); // 90s after boot
+setInterval(patternIntelligenceCronJob, 6 * 60 * 60 * 1000); // check every 6h, actually sends every PI_RUN_EVERY_DAYS
+
+// ── Pattern Intelligence API endpoints ─────────────────────────────────────
+app.post("/admin/pattern-report/run", adminAuth, async (req, res) => {
+  try {
+    const result = await generateAndSendPatternReport();
+    res.json({ success: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/admin/pattern-report/preview", adminAuth, async (req, res) => {
+  try {
+    const { findings, period } = await runPatternAnalysis();
+    res.json({ findings, period });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/admin/pattern-report/history", adminAuth, async (req, res) => {
+  const reports = await mdb.collection('pattern_reports').find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(20).toArray();
+  res.json({ reports });
+});
+
 // ── Include confirmed penalties in settlement generation ──────────────────
 // Patch: wrap the settlement generate route to add penalty deductions
 // (The logic is injected into the existing route via post-insert query)
