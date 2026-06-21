@@ -7720,9 +7720,10 @@
       window.speechSynthesis.cancel();
       const clean = text.replace(/[*_`#►•●]/g,'').replace(/\n+/g,' ').slice(0, 500);
       const utt = new SpeechSynthesisUtterance(clean);
-      utt.rate = 1.0; utt.pitch = 0.85; utt.volume = 1;
+      utt.rate = 1.0; utt.pitch = 1.0; utt.volume = 1;
       const voices = window.speechSynthesis.getVoices();
-      const pref = voices.find(v=>/google uk english male|daniel|alex|fred/i.test(v.name))
+      const pref = voices.find(v=>/google uk english female/i.test(v.name))
+                || voices.find(v=>/samantha|karen|moira/i.test(v.name))
                 || voices.find(v=>v.lang==='en-US'||v.lang==='en-GB');
       if (pref) utt.voice = pref;
       utt.onstart = ()=>setSpeaking(true);
