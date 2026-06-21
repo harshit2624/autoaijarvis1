@@ -7450,13 +7450,16 @@
             {shown.map((f, i) => {
               const s = SEV[f.severity] || SEV.info;
               return (
-                <div key={i} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderLeft:`4px solid ${s.color}`,borderRadius:10,padding:'14px 18px',marginBottom:10}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-                    <span style={{fontSize:10,fontWeight:800,color:s.color,letterSpacing:1}}>{s.label}</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:600}}>{f.category}</span>
+                <div key={i} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderLeft:`4px solid ${s.color}`,borderRadius:10,padding:'14px 18px',marginBottom:10,display:'flex',gap:12,alignItems:'flex-start'}}>
+                  {f.image && <img src={f.image} alt="" style={{width:48,height:48,borderRadius:6,objectFit:'cover',flexShrink:0,border:'1px solid var(--border)'}}/>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                      <span style={{fontSize:10,fontWeight:800,color:s.color,letterSpacing:1}}>{s.label}</span>
+                      <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:600}}>{f.category}</span>
+                    </div>
+                    <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:4,lineHeight:1.4}}>{f.title}</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6}} dangerouslySetInnerHTML={{__html:f.detail}}/>
                   </div>
-                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:4,lineHeight:1.4}}>{f.title}</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6}} dangerouslySetInnerHTML={{__html:f.detail}}/>
                 </div>
               );
             })}

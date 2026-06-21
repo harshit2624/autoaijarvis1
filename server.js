@@ -12881,6 +12881,7 @@ async function buildPatternDataset(days) {
       city: (addr.city || 'Unknown').trim(),
       phone: (addr.phone || o.phone || '').replace(/\D/g, '').slice(-10) || null,
       email: o.email || null,
+      customerName: addr.name || `${o.customer?.first_name||''} ${o.customer?.last_name||''}`.trim() || null,
       financial_status: o.financial_status,
       vendorStages: vsMap[sid] || [],
       line_items: (o.line_items || []).map(li => ({
@@ -12888,6 +12889,7 @@ async function buildPatternDataset(days) {
         vendor: li.vendor || '',
         qty: li.quantity || 1,
         price: parseFloat(li.price) || 0,
+        product_id: li.product_id ? String(li.product_id) : null,
       })),
     };
   });
@@ -13109,6 +13111,7 @@ function analyzeProductDispatchDelay(current) {
           title: `"${title}" (${vendor}) takes ${diff.toFixed(0)}h longer to dispatch than this vendor's other products`,
           detail: `Avg ${avg.toFixed(0)}h for this product vs ${vendorAvg.toFixed(0)}h vendor average this week, based on ${hrsArr.length} shipment${hrsArr.length>1?'s':''}. Could be a stocking/sourcing delay specific to this SKU.`,
           strength: diff,
+          productTitle: title,
         });
       }
     }
@@ -13140,6 +13143,7 @@ function analyzeProductMomentum(current, baseline) {
         title: `"${title}" sold ${curUnits} units this week after near-zero sales in the prior ${PI_BASELINE_DAYS} days`,
         detail: `Sudden demand with no prior trend — check stock levels before it runs out, and look for what triggered it (organic, ad spend, influencer, marketplace placement).`,
         strength: curUnits,
+        productTitle: title,
       });
       continue;
     }
@@ -13152,6 +13156,7 @@ function analyzeProductMomentum(current, baseline) {
         title: `"${title}" sold ${curUnits} units this week vs a ${baseWeeklyAvg.toFixed(1)}/week baseline — ${growth.toFixed(1)}× normal`,
         detail: `Worth confirming inventory can keep up, and whether this is a one-off bulk order or a real trend.`,
         strength: growth,
+        productTitle: title,
       });
     } else if (growth <= 0.35 && baseWeeklyAvg >= 2) {
       findings.push({
@@ -13160,6 +13165,7 @@ function analyzeProductMomentum(current, baseline) {
         title: `"${title}" sales dropped to ${curUnits} units this week vs a ${baseWeeklyAvg.toFixed(1)}/week baseline`,
         detail: `Significant slowdown for a product that was previously selling steadily — check for stockouts, listing changes, or a price/visibility issue.`,
         strength: 1 / Math.max(growth, 0.01),
+        productTitle: title,
       });
     }
   }
@@ -13196,6 +13202,7 @@ function analyzeProductGeoSpike(current) {
           title: `"${title}" orders are clustering in ${state}`,
           detail: `${count} of ${total} orders for this product this week are from ${state}, which normally accounts for ${(expectedShare*100).toFixed(0) === '0' ? '<1' : (expectedShare*100).toFixed(0)}% of order volume — about ${(actualShare/expectedShare).toFixed(1)}× the expected concentration.`,
           strength: actualShare / expectedShare,
+          productTitle: title,
         });
       }
     }
@@ -13231,6 +13238,7 @@ function analyzeProductRtoConcentration(current) {
         title: `"${title}" is ${shareOfAllRto.toFixed(0)}% of all RTOs this week — ${ownRate.toFixed(0)}% of its own orders refused`,
         detail: `${rtoCount} of ${total} orders containing this product came back RTO. People are ordering it but not accepting delivery — check the listing (sizing/description accuracy) and COD confirmation quality for this product.`,
         strength: Math.max(shareOfAllRto, ownRate),
+        productTitle: title,
       });
     }
   }
@@ -13267,17 +13275,19 @@ function analyzeRepeatRtoCustomers(lookback) {
   rto.forEach(o => {
     const key = o.phone || o.email;
     if (!key) return;
-    (byCustomer[key] ||= []).push(o.name);
+    const bucket = (byCustomer[key] ||= { name: o.customerName || '', orders: [] });
+    if (!bucket.name && o.customerName) bucket.name = o.customerName;
+    bucket.orders.push(o.name);
   });
-  const repeats = Object.entries(byCustomer).filter(([,names]) => names.length >= 2);
+  const repeats = Object.entries(byCustomer).filter(([,v]) => v.orders.length >= 2);
   if (!repeats.length) return [];
-  repeats.sort((a,b) => b[1].length - a[1].length);
+  repeats.sort((a,b) => b[1].orders.length - a[1].orders.length);
   const top = repeats.slice(0, 8);
   return [{
     category: 'Repeat RTO Customers',
-    severity: top[0][1].length >= 3 ? 'amber' : 'info',
+    severity: top[0][1].orders.length >= 3 ? 'amber' : 'info',
     title: `${repeats.length} customer${repeats.length>1?'s':''} with 2+ RTO orders in the last ${PI_LOOKBACK_DAYS} days`,
-    detail: top.map(([key, names]) => `${key}: ${names.join(', ')} (${names.length} RTOs)`).join('<br>'),
+    detail: top.map(([key, v]) => `${v.name ? v.name + ' — ' : ''}${key}: ${v.orders.join(', ')} (${v.orders.length} RTOs)`).join('<br>'),
   }];
 }
 
@@ -13307,7 +13317,37 @@ async function runPatternAnalysis() {
   const severityRank = { red: 0, amber: 1, info: 2 };
   findings.sort((a,b) => severityRank[a.severity] - severityRank[b.severity]);
 
+  // Attach product photos to any finding tagged with a productTitle
+  const titleToProductId = {};
+  current.forEach(o => o.line_items.forEach(li => {
+    if (li.product_id && !titleToProductId[li.title]) titleToProductId[li.title] = li.product_id;
+  }));
+  const productIds = [...new Set(findings.map(f => titleToProductId[f.productTitle]).filter(Boolean))];
+  if (productIds.length) {
+    const imageMap = await getProductImageMap(productIds);
+    findings.forEach(f => {
+      const pid = titleToProductId[f.productTitle];
+      if (pid && imageMap[pid]) f.image = imageMap[pid];
+    });
+  }
+
   return { findings, period: { current_orders: current.length, baseline_orders: baseline.length, generated_at: new Date().toISOString() } };
+}
+
+async function getProductImageMap(productIds) {
+  const map = {};
+  if (!productIds.length) return map;
+  try {
+    const token = await getAccessToken();
+    for (let i = 0; i < productIds.length; i += 50) {
+      const batch = productIds.slice(i, i + 50);
+      const res = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products.json?ids=${batch.join(',')}&fields=id,image`, {
+        headers: { 'X-Shopify-Access-Token': token },
+      }).then(r => r.json());
+      (res.products || []).forEach(p => { if (p.image?.src) map[String(p.id)] = p.image.src; });
+    }
+  } catch (e) { console.error('getProductImageMap error:', e.message); }
+  return map;
 }
 
 function renderPatternReportHtml({ findings, period }) {
@@ -13322,10 +13362,13 @@ function renderPatternReportHtml({ findings, period }) {
   const card = (f) => {
     const s = SEV[f.severity];
     return `
-    <div style="background:${s.bg};border-left:4px solid ${s.color};border-radius:8px;padding:14px 18px;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:800;color:${s.color};letter-spacing:1px;margin-bottom:6px">${s.label}</div>
-      <div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:4px;line-height:1.4">${f.title}</div>
-      <div style="font-size:12px;color:#94a3b8;line-height:1.6">${f.detail}</div>
+    <div style="background:${s.bg};border-left:4px solid ${s.color};border-radius:8px;padding:14px 18px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start">
+      ${f.image ? `<img src="${f.image}" alt="" width="48" height="48" style="width:48px;height:48px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid rgba(255,255,255,0.12)">` : ''}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:800;color:${s.color};letter-spacing:1px;margin-bottom:6px">${s.label}</div>
+        <div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:4px;line-height:1.4">${f.title}</div>
+        <div style="font-size:12px;color:#94a3b8;line-height:1.6">${f.detail}</div>
+      </div>
     </div>`;
   };
 
