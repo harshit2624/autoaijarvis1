@@ -15410,14 +15410,24 @@ async function scSearchProducts(query) {
     // search terms still find singular product titles, which is the common
     // case (verified: "shirts" found 0 products until this was added).
     const words = query.trim().split(/\s+/).filter(Boolean);
-    const wordVariants = new Set();
-    words.forEach(w => {
-      wordVariants.add(w);
-      if (w.length > 3 && /s$/i.test(w)) wordVariants.add(w.slice(0, -1));
-    });
-    const terms = [...wordVariants].map(t => `title:*${t}*`).join(' OR ');
-    const firstWordVariants = [...wordVariants].filter(v => words[0]?.toLowerCase().startsWith(v.toLowerCase()) || v.toLowerCase().startsWith(words[0]?.toLowerCase()||''));
-    const collTerms = (firstWordVariants.length ? firstWordVariants : [words[0]||'']).map(t => `title:*${t}*`).join(' OR ');
+    const mentionsTshirt = /t[\s-]?shirt/i.test(query);
+
+    function clauseForWord(w) {
+      const variants = new Set([w]);
+      if (w.length > 3 && /s$/i.test(w)) variants.add(w.slice(0, -1));
+      const singular = w.toLowerCase().replace(/s$/, '');
+      // "shirt"/"shirts" alone means collared shirts in this catalog, distinct
+      // from "T-Shirts" — without this, *shirt* also matches "T-SHIRT" titles
+      // since "shirt" is a literal substring of "t-shirt" (verified bug:
+      // searching "shirts" surfaced T-shirts instead of actual shirts).
+      if (singular === 'shirt' && !mentionsTshirt) {
+        return `(title:*shirt* AND NOT title:*t-shirt* AND NOT title:*tshirt* AND NOT title:*t shirt*)`;
+      }
+      return `(${[...variants].map(v => `title:*${v}*`).join(' OR ')})`;
+    }
+
+    const terms = words.map(clauseForWord).join(' OR ');
+    const collTerms = clauseForWord(words[0] || '');
 
     const [productData, collectionData] = await Promise.all([
       shopifyGQL(`{ products(first: 10, query: "status:active AND (${terms})") {
