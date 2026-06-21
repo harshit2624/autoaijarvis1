@@ -13214,6 +13214,54 @@ async function patternIntelligenceCronJob() {
 setTimeout(() => patternIntelligenceCronJob().catch(()=>{}), 90 * 1000); // 90s after boot
 setInterval(patternIntelligenceCronJob, 6 * 60 * 60 * 1000); // check every 6h, actually sends every PI_RUN_EVERY_DAYS
 
+// ── Fast lane: catches urgent (red) findings between the 3-day digests ─────
+// Runs every 3h, re-analyzes, and immediately emails ONLY red-severity
+// findings that haven't already been alerted in the last PI_ALERT_DEDUPE_DAYS
+// — so a real fire gets reported same-day instead of waiting up to 3 days,
+// without spamming the same ongoing issue every 3 hours.
+const PI_FASTLANE_INTERVAL_MS = 3 * 60 * 60 * 1000;
+const PI_ALERT_DEDUPE_DAYS    = 3;
+
+function piFindingFingerprint(f) { return `${f.category}::${f.title}`; }
+
+async function patternIntelligenceFastLane() {
+  try {
+    const { findings } = await runPatternAnalysis();
+    const reds = findings.filter(f => f.severity === 'red');
+    if (!reds.length) return;
+
+    const cfg = await getSmtpConfig();
+    if (!cfg?.host) return;
+    const settings = await RS.get();
+    const recipients = [cfg.adminEmail, ...(settings.staff_emails || '').split(',').map(e => e.trim())].filter(Boolean);
+    if (!recipients.length) return;
+
+    const newOnes = [];
+    for (const f of reds) {
+      const fp = piFindingFingerprint(f);
+      const existing = await mdb.collection('pattern_alerts_fired').findOne({ _id: fp });
+      if (existing && Date.now() - new Date(existing.fired_at).getTime() < PI_ALERT_DEDUPE_DAYS * 24 * 3600 * 1000) continue;
+      newOnes.push(f);
+      await mdb.collection('pattern_alerts_fired').updateOne({ _id: fp }, { $set: { fired_at: new Date().toISOString(), title: f.title } }, { upsert: true });
+    }
+    if (!newOnes.length) return;
+
+    const html = renderPatternReportHtml({ findings: newOnes, period: { generated_at: new Date().toISOString(), current_orders: 0 } });
+    for (const to of recipients) {
+      try {
+        await sendEmail({ to, subject: `🚨 Urgent Pattern Alert — ${newOnes.length} new red flag${newOnes.length > 1 ? 's' : ''}`, html, shopifyId: 'pattern_alert', trigger: 'pattern_intelligence_alert' });
+      } catch (e) { console.error('Pattern fast-lane email failed:', to, e.message); }
+    }
+    console.log(`🚨 Pattern fast-lane: ${newOnes.length} new red flag(s) alerted immediately`);
+  } catch (e) { console.error('Pattern Intelligence fast-lane error:', e.message); }
+}
+setInterval(patternIntelligenceFastLane, PI_FASTLANE_INTERVAL_MS);
+// Prune fired-alert fingerprints older than the dedupe window so old, now-resolved
+// findings don't permanently block re-alerting if the same issue recurs later.
+setInterval(() => {
+  mdb.collection('pattern_alerts_fired').deleteMany({ fired_at: { $lt: new Date(Date.now() - PI_ALERT_DEDUPE_DAYS * 24 * 3600 * 1000).toISOString() } }).catch(()=>{});
+}, 24 * 60 * 60 * 1000);
+
 // ── Pattern Intelligence API endpoints ─────────────────────────────────────
 app.post("/admin/pattern-report/run", adminAuth, async (req, res) => {
   try {

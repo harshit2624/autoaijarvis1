@@ -7335,6 +7335,156 @@
   }
 
   /* ══════════════════════════════════
+     BRAINS — Pattern Intelligence
+  ══════════════════════════════════ */
+  function Brains({ token }) {
+    const [findings, setFindings] = useState(null);
+    const [period,   setPeriod]   = useState(null);
+    const [history,  setHistory]  = useState([]);
+    const [loading,  setLoading]  = useState(false);
+    const [running,  setRunning]  = useState(false);
+    const [msg,       setMsg]     = useState('');
+    const [viewingPast, setViewingPast] = useState(null); // index into history, or null = live preview
+
+    const SEV = {
+      red:   { color:'#ef4444', bg:'rgba(239,68,68,0.08)',  label:'🔴 RED FLAG' },
+      amber: { color:'#f59e0b', bg:'rgba(245,158,11,0.08)', label:'🟡 WATCH'   },
+      info:  { color:'#6366f1', bg:'rgba(99,102,241,0.08)', label:'🔵 NOTICED' },
+    };
+
+    const loadPreview = async () => {
+      setLoading(true); setMsg(''); setViewingPast(null);
+      try {
+        const r = await fetch(`${API}/admin/pattern-report/preview`, { headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        if (d.error) setMsg('❌ ' + d.error);
+        else { setFindings(d.findings); setPeriod(d.period); }
+      } catch (e) { setMsg('❌ ' + e.message); }
+      setLoading(false);
+    };
+
+    const loadHistory = async () => {
+      try {
+        const r = await fetch(`${API}/admin/pattern-report/history`, { headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        setHistory(d.reports || []);
+      } catch (e) {}
+    };
+
+    useEffect(() => { loadPreview(); loadHistory(); }, []);
+
+    const runNow = async () => {
+      setRunning(true); setMsg('');
+      try {
+        const r = await fetch(`${API}/admin/pattern-report/run`, { method:'POST', headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        if (d.error) setMsg('❌ ' + d.error);
+        else {
+          setFindings(d.findings); setPeriod(d.period);
+          setMsg(`✅ Analysis run complete — emailed to ${d.emailed} recipient${d.emailed!==1?'s':''}`);
+          loadHistory();
+        }
+      } catch (e) { setMsg('❌ ' + e.message); }
+      setRunning(false);
+    };
+
+    const showHistoryItem = (i) => {
+      setViewingPast(i);
+      setFindings(history[i].findings);
+      setPeriod(history[i]);
+    };
+
+    const shown = findings || [];
+    const counts = { red: shown.filter(f=>f.severity==='red').length, amber: shown.filter(f=>f.severity==='amber').length, info: shown.filter(f=>f.severity==='info').length };
+
+    return (
+      <div>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24,flexWrap:'wrap'}}>
+          <span style={{fontSize:24}}>🧠</span>
+          <div style={{flex:1}}>
+            <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>Brains — Pattern Intelligence</h2>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Autonomous anomaly detection across regions, vendors, tags &amp; RTOs. Full digest every 3 days · urgent red flags alerted within hours.</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={loadPreview} disabled={loading}>{loading?'Loading…':'↻ Refresh'}</button>
+          <button className="btn btn-indigo btn-sm" onClick={runNow} disabled={running}>{running?'Running…':'⚡ Run Now & Email'}</button>
+        </div>
+
+        {msg && <div style={{marginBottom:16,fontSize:13,color: msg.startsWith('✅')?'#10b981':'#ef4444',fontWeight:600}}>{msg}</div>}
+
+        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,alignItems:'start'}}>
+          {/* Findings */}
+          <div>
+            {period && (
+              <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}}>
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px'}}>
+                  <div style={{fontSize:20,fontWeight:800,color:'#ef4444'}}>{counts.red}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,letterSpacing:0.5}}>RED FLAGS</div>
+                </div>
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px'}}>
+                  <div style={{fontSize:20,fontWeight:800,color:'#f59e0b'}}>{counts.amber}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,letterSpacing:0.5}}>WATCHING</div>
+                </div>
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px'}}>
+                  <div style={{fontSize:20,fontWeight:800,color:'#6366f1'}}>{counts.info}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,letterSpacing:0.5}}>NOTICED</div>
+                </div>
+                {viewingPast===null && period.current_orders!=null && (
+                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px',marginLeft:'auto'}}>
+                    <div style={{fontSize:11,color:'var(--text-muted)'}}>Analyzed <strong style={{color:'var(--text)'}}>{period.current_orders}</strong> orders this week vs <strong style={{color:'var(--text)'}}>{period.baseline_orders}</strong> baseline</div>
+                  </div>
+                )}
+                {viewingPast!==null && (
+                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px',marginLeft:'auto',fontSize:11,color:'var(--text-muted)'}}>
+                    Viewing past report from {new Date(period.created_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {shown.length === 0 && !loading && (
+              <div style={{textAlign:'center',padding:'40px 20px',color:'#10b981',fontWeight:700,fontSize:14,background:'var(--bg-card)',borderRadius:12,border:'1px solid var(--border)'}}>
+                ✅ No significant anomalies found. Everything's tracking within normal range.
+              </div>
+            )}
+
+            {shown.map((f, i) => {
+              const s = SEV[f.severity] || SEV.info;
+              return (
+                <div key={i} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderLeft:`4px solid ${s.color}`,borderRadius:10,padding:'14px 18px',marginBottom:10}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                    <span style={{fontSize:10,fontWeight:800,color:s.color,letterSpacing:1}}>{s.label}</span>
+                    <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:600}}>{f.category}</span>
+                  </div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:4,lineHeight:1.4}}>{f.title}</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6}} dangerouslySetInnerHTML={{__html:f.detail}}/>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* History sidebar */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16}}>
+            <div style={{fontWeight:700,color:'var(--text)',marginBottom:12,fontSize:13}}>📜 Past Reports</div>
+            {history.length === 0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>No reports run yet.</div>}
+            {history.map((h, i) => {
+              const red = (h.findings||[]).filter(f=>f.severity==='red').length;
+              return (
+                <button key={i} onClick={()=>showHistoryItem(i)} style={{
+                  display:'block', width:'100%', textAlign:'left', background: viewingPast===i?'var(--indigo-dim)':'transparent',
+                  border:'1px solid var(--border)', borderRadius:8, padding:'8px 10px', marginBottom:6, cursor:'pointer', fontFamily:'var(--font-family)',
+                }}>
+                  <div style={{fontSize:11,color:'var(--text)',fontWeight:600}}>{new Date(h.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)'}}>{(h.findings||[]).length} findings{red>0?` · ${red} red`:''}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      REPORTS
   ══════════════════════════════════ */
   function Reports({ token }) {
@@ -8558,6 +8708,7 @@
       { id:'vendorsync',  icon:'🔄', label:'Vendor Sync',   section:'finance' },
       { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
+      { id:'brains',      icon:'🧠', label:'Brains',        section:'finance' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
@@ -8636,6 +8787,7 @@
           {view==='vendorsync'  && <VendorSync token={token}/>}
           {view==='penalties'   && <PenaltyManager token={token}/>}
           {view==='reports'     && <Reports token={token}/>}
+          {view==='brains'      && <Brains token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
