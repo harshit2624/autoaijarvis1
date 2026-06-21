@@ -15348,7 +15348,7 @@ app.post("/admin/cc-inventory/check", adminAuth, async (req, res) => {
 
 const { ObjectId: SC_ObjectId } = require('mongodb');
 const STOREFRONT_URL = process.env.STOREFRONT_URL || 'https://croscrow.com';
-const SUPPORT_TRACK_URL = (orderName, contact) => `https://track.croscrow.com/?order=${encodeURIComponent(orderName)}&contact=${encodeURIComponent(contact||'')}`;
+const SUPPORT_TRACK_URL = (orderName, contact) => `https://track.croscrow.com/?order=${encodeURIComponent(orderName)}&contact=${encodeURIComponent(contact?.trim() || 'na')}`;
 
 const SC = {
   async createChat({ shop_domain, customer_email, customer_phone }) {
