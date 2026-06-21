@@ -59,8 +59,11 @@
   .pcard { flex-shrink:0; width:128px; background:#fff; border:1px solid #e5e5e5; border-radius:10px; overflow:hidden; text-decoration:none; color:inherit; scroll-snap-align:start; transition:transform 0.15s ease, box-shadow 0.15s ease; }
   .pcard:hover { transform:translateY(-2px); box-shadow:0 4px 14px rgba(0,0,0,0.1); }
   .pcard .pimg-wrap { width:100%; height:128px; background:#f4f4f5; position:relative; overflow:hidden; }
-  .pcard img { width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity 0.25s ease; }
+  .pcard img { width:100%; height:100%; object-fit:cover; display:block; opacity:0; transition:opacity 0.25s ease; position:relative; z-index:1; }
   .pcard img.loaded { opacity:1; }
+  .pimg-spinner { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  .pimg-spinner div { width:18px; height:18px; border:2px solid #e5e5e5; border-top-color:#0a0a0a; border-radius:50%; animation:pspin 0.7s linear infinite; }
+  @keyframes pspin { to { transform:rotate(360deg); } }
   .pcard .pinfo { padding:8px 9px; }
   .pcard .ptitle { font-size:11px; font-weight:600; color:#0a0a0a; line-height:1.3; max-height:28px; overflow:hidden; }
   .pcard .pprice { font-size:11px; color:#16a34a; font-weight:700; margin-top:4px; }
@@ -144,9 +147,12 @@
       </a>`).join('');
     const cards = products.map(p => `
       <a class="pcard" href="${p.url}" target="_blank">
-        <div class="pimg-wrap"><img src="${p.image||''}" loading="lazy" referrerpolicy="no-referrer"
-          onload="this.classList.add('loaded')"
-          onerror="this.parentElement.style.background='#e5e5e5'"/></div>
+        <div class="pimg-wrap">
+          <div class="pimg-spinner"><div></div></div>
+          <img src="${p.image||''}" loading="lazy" referrerpolicy="no-referrer"
+            onload="this.classList.add('loaded'); this.parentElement.querySelector('.pimg-spinner')?.remove();"
+            onerror="this.parentElement.style.background='#e5e5e5'; this.parentElement.querySelector('.pimg-spinner')?.remove();"/>
+        </div>
         <div class="pinfo">
           <div class="ptitle">${p.title}</div>
           <div class="pprice">From ₹${Math.round(p.price_from)}</div>
@@ -165,11 +171,11 @@
       const row = el(`<div class="row user"><div class="bubble">${escapeHtml(m.text)}</div></div>`);
       messagesEl.appendChild(row);
     } else if (m.sender === 'vendor' || m.sender === 'admin') {
-      const row = el(`<div class="row ${m.sender}"><div class="bubble"><div class="sender-tag">${m.sender_name||m.sender}</div>${escapeHtml(m.text)}</div></div>`);
+      const row = el(`<div class="row ${m.sender}"><div class="bubble"><div class="sender-tag">${m.sender_name||m.sender}</div>${formatBotText(m.text)}</div></div>`);
       messagesEl.appendChild(row);
     } else {
       if (m.text) {
-        const row = el(`<div class="row bot"><div class="bubble">${escapeHtml(m.text)}</div></div>`);
+        const row = el(`<div class="row bot"><div class="bubble">${formatBotText(m.text)}</div></div>`);
         messagesEl.appendChild(row);
       }
       if (m.meta?.type === 'tracking_card') messagesEl.appendChild(renderTrackingCard(m.meta.data));
@@ -180,6 +186,15 @@
   }
 
   function escapeHtml(s='') { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // Bot replies sometimes use lightweight markdown (**bold**, "- " bullets) —
+  // escape first, then convert just those two patterns to real HTML.
+  function formatBotText(text) {
+    let safe = escapeHtml(text);
+    safe = safe.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+    safe = safe.replace(/^- (.+)$/gm, '• $1');
+    return safe;
+  }
 
   function showTyping() {
     const t = el(`<div class="typing" id="typing-indicator"><span></span><span></span><span></span></div>`);
