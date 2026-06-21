@@ -87,6 +87,8 @@
   const API = location.origin.includes('localhost') ? location.origin : 'https://dashboard.croscrow.com';
   const params = new URLSearchParams(location.search);
   const vendorToken = params.get('token'); // present only on vendor magic-link view
+  const customerEmail = params.get('email') || '';
+  const customerNameParam = params.get('name') || '';
   let chatId = localStorage.getItem('cc_support_chat_id');
   let lastTs = null;
   let pollTimer = null;
@@ -175,7 +177,7 @@
       return;
     }
     if (!chatId) {
-      const r = await fetch(`${API}/support/chat/start`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shop_domain: location.hostname }) });
+      const r = await fetch(`${API}/support/chat/start`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shop_domain: location.hostname, customer_email: customerEmail }) });
       const d = await r.json();
       chatId = d.chatId; localStorage.setItem('cc_support_chat_id', chatId);
       (d.messages||[]).forEach(addMessage);
