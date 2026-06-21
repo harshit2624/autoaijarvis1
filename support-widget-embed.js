@@ -60,24 +60,32 @@
   }, 300);
 
   function autoInjectDefault() {
+    // Stacked above a typical WhatsApp chat widget (usually ~22px from the
+    // bottom, ~56-60px tall) plus, on mobile, above the storefront's own
+    // bottom tab bar (Account/Shop/Home/Wishlist/Cart) too — both of which
+    // this button was previously overlapping.
+    var LAUNCHER_BOTTOM_DESKTOP = '94px';
+    var LAUNCHER_BOTTOM_MOBILE  = '160px';
+    var LAUNCHER_RIGHT = '22px'; // same right inset as the WhatsApp button, for horizontal alignment
+
     var launcher = document.createElement('button');
     launcher.id = 'croscrow-support-launcher';
     launcher.innerHTML = '💬';
     launcher.setAttribute('aria-label', 'Open support chat');
     Object.assign(launcher.style, {
-      position: 'fixed', bottom: '22px', right: '22px', zIndex: 999999,
+      position: 'fixed', bottom: LAUNCHER_BOTTOM_DESKTOP, right: LAUNCHER_RIGHT, zIndex: 999999,
       width: '58px', height: '58px', borderRadius: '50%', border: 'none',
       background: '#0a0a0a', color: '#fff',
       fontSize: '24px', cursor: 'pointer',
       boxShadow: '0 6px 24px rgba(0,0,0,0.35)',
-      transition: 'transform 0.2s ease',
+      transition: 'transform 0.2s ease, bottom 0.2s ease',
     });
     launcher.onmouseenter = function () { launcher.style.transform = 'scale(1.08)'; };
     launcher.onmouseleave = function () { launcher.style.transform = 'scale(1)'; };
 
     var frame = buildIframe();
     Object.assign(frame.style, {
-      position: 'fixed', bottom: '92px', right: '22px', zIndex: 999999,
+      position: 'fixed', zIndex: 999999,
       width: '380px', height: '560px', maxHeight: '75vh',
       borderRadius: '16px', boxShadow: '0 12px 48px rgba(0,0,0,0.35)',
       display: 'none',
@@ -86,9 +94,11 @@
     var mq = window.matchMedia('(max-width: 480px)');
     function applyResponsive() {
       if (mq.matches) {
-        Object.assign(frame.style, { width: '92vw', height: '70vh', right: '4vw', bottom: '88px' });
+        launcher.style.bottom = LAUNCHER_BOTTOM_MOBILE;
+        Object.assign(frame.style, { width: '92vw', height: '65vh', right: '4vw', bottom: 'calc(' + LAUNCHER_BOTTOM_MOBILE + ' + 66px)' });
       } else {
-        Object.assign(frame.style, { width: '380px', height: '560px', right: '22px', bottom: '92px' });
+        launcher.style.bottom = LAUNCHER_BOTTOM_DESKTOP;
+        Object.assign(frame.style, { width: '380px', height: '560px', right: LAUNCHER_RIGHT, bottom: 'calc(' + LAUNCHER_BOTTOM_DESKTOP + ' + 66px)' });
       }
     }
     applyResponsive();
