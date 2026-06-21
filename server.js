@@ -15341,3 +15341,349 @@ app.post("/admin/cc-inventory/check", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// SUPPORT CHAT — AI-driven customer support widget (product search, order
+// tracking, delay reasons, return/exchange handoff) + vendor/admin visibility
+// ══════════════════════════════════════════════════════════════════════════
+
+const { ObjectId: SC_ObjectId } = require('mongodb');
+const STOREFRONT_URL = process.env.STOREFRONT_URL || 'https://croscrow.com';
+const SUPPORT_TRACK_URL = (orderName, contact) => `https://track.croscrow.com/?order=${encodeURIComponent(orderName)}&contact=${encodeURIComponent(contact||'')}`;
+
+const SC = {
+  async createChat({ shop_domain, customer_email, customer_phone }) {
+    const doc = {
+      shop_domain: shop_domain || null,
+      customer_email: (customer_email||'').toLowerCase().trim() || null,
+      customer_phone: (customer_phone||'').replace(/\D/g,'').slice(-10) || null,
+      order_name: null, shopify_order_id: null, vendor_names: [],
+      status: 'open', hidden_from_vendors: false, vendor_notified_at: null,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    const r = await mdb.collection('support_chats').insertOne(doc);
+    return { _id: r.insertedId, ...doc };
+  },
+  async get(chatId) {
+    return mdb.collection('support_chats').findOne({ _id: new SC_ObjectId(String(chatId)) });
+  },
+  async update(chatId, fields) {
+    await mdb.collection('support_chats').updateOne({ _id: new SC_ObjectId(String(chatId)) }, { $set: { ...fields, updated_at: new Date().toISOString() } });
+  },
+  async addMessage(chatId, { sender, sender_name = '', text = '', meta = null }) {
+    const msg = { chat_id: String(chatId), sender, sender_name, text, meta, created_at: new Date().toISOString() };
+    await mdb.collection('support_messages').insertOne(msg);
+    return msg;
+  },
+  async messages(chatId, afterTs = null) {
+    const q = { chat_id: String(chatId) };
+    if (afterTs) q.created_at = { $gt: afterTs };
+    return mdb.collection('support_messages').find(q, { projection: { _id: 0 } }).sort({ created_at: 1 }).toArray();
+  },
+};
+
+function signSupportToken(chatId, vendorName) {
+  const payload = `${chatId}.${Buffer.from(vendorName).toString('base64url')}.${Date.now() + 30*24*3600*1000}`;
+  const sig = crypto.createHmac('sha256', process.env.VENDOR_APP_SECRET || 'fallback-secret').update(payload).digest('hex').slice(0, 24);
+  return Buffer.from(`${payload}.${sig}`).toString('base64url');
+}
+function verifySupportToken(token) {
+  try {
+    const decoded = Buffer.from(token, 'base64url').toString('utf8');
+    const [chatId, vendorB64, expiry, sig] = decoded.split('.');
+    const payload = `${chatId}.${vendorB64}.${expiry}`;
+    const expectedSig = crypto.createHmac('sha256', process.env.VENDOR_APP_SECRET || 'fallback-secret').update(payload).digest('hex').slice(0, 24);
+    if (sig !== expectedSig) return null;
+    if (Date.now() > parseInt(expiry)) return null;
+    return { chatId, vendorName: Buffer.from(vendorB64, 'base64url').toString('utf8') };
+  } catch { return null; }
+}
+
+// ── Support bot tools ───────────────────────────────────────────────────────
+async function scSearchProducts(query) {
+  try {
+    // Shopify's REST /products.json?title= is an EXACT match, not a substring
+    // search — "boxy fit" finds nothing even when "MOCKING BIRD BOXY FIT
+    // SHIRT" exists. GraphQL's query syntax supports real wildcard search.
+    const terms = query.trim().split(/\s+/).filter(Boolean).map(t => `title:*${t}*`).join(' OR ');
+    const gqlQuery = `{ products(first: 8, query: "status:active AND (${terms})") {
+      edges { node { title handle featuredImage { url }
+        variants(first: 10) { edges { node { price availableForSale } } } } } } }`;
+    const d = await shopifyGQL(gqlQuery);
+    const edges = d.data?.products?.edges || [];
+    const products = edges
+      .map(e => e.node)
+      .filter(p => p.variants.edges.some(v => v.node.availableForSale));
+    return {
+      found: products.length,
+      products: products.slice(0, 6).map(p => ({
+        title: p.title,
+        url: `${STOREFRONT_URL}/products/${p.handle}`,
+        image: p.featuredImage?.url || null,
+        price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
+      })),
+    };
+  } catch (e) { return { found: 0, products: [], error: e.message }; }
+}
+
+async function scGetOrderStatus(orderName, contact) {
+  try {
+    const normalized = String(orderName).replace(/^#/, '').trim();
+    const name = `#${normalized}`;
+    const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
+    const orders = data.orders || [];
+    const contactClean = (contact||'').toLowerCase().trim();
+    const contactPhone = normalizePhone(contact||'');
+    let order = orders.find(o => {
+      const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
+      const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+      return oEmail === contactClean || (contactPhone.length >= 10 && oPhone === contactPhone);
+    });
+    if (!order) order = orders[0]; // fall back if contact doesn't match but order exists — bot will just not over-claim certainty
+    if (!order) return { found: false, message: 'Order not found. Please double check the order number.' };
+    const payload = await buildOrderPayload(order);
+    return { found: true, ...payload, track_url: SUPPORT_TRACK_URL(payload.order_name, contact) };
+  } catch (e) { return { found: false, error: e.message }; }
+}
+
+async function scGetDelayReason(orderName, contact) {
+  const status = await scGetOrderStatus(orderName, contact);
+  if (!status.found) return status;
+  const reasons = [];
+  for (const v of status.vendor_names || []) {
+    const r = await mdb.collection('delay_remarks').findOne(
+      { shopify_id: String(status.shopify_order_id), vendor_name: v },
+      { sort: { submitted_at: -1 }, projection: { _id: 0 } }
+    );
+    if (r) reasons.push({ vendor: v, reason: r.reason, eta_date: r.eta_date });
+  }
+  if (reasons.length) return { found: true, has_specific_reason: true, reasons, order_name: status.order_name };
+  return {
+    found: true, has_specific_reason: false, order_name: status.order_name,
+    generic_message: "There's a slight delay — likely routine warehouse processing time on the vendor's side. It should move to dispatch shortly; we'll keep you posted.",
+  };
+}
+
+async function scStartReturnExchange(orderName, contact) {
+  const status = await scGetOrderStatus(orderName, contact);
+  if (!status.found) return status;
+  return {
+    found: true, order_name: status.order_name, track_url: status.track_url,
+    return_configs: status.return_configs,
+    message: 'Returns and exchanges are started from the order tracking page — it has the full flow (photo upload, reason, pickup scheduling).',
+  };
+}
+
+const SUPPORT_TOOLS = [
+  { type:'function', function:{ name:'search_products', description:'Search the CrosCrow catalog for products by name/keyword (e.g. "sweatpants", "waffle hoodie"). Use when the customer is browsing/shopping, not asking about an existing order.', parameters:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } } },
+  { type:'function', function:{ name:'get_order_status', description:'Look up a specific order\'s live status, stage, AWB, and per-vendor shipment details. Requires the order number; ask for it if not given.', parameters:{ type:'object', properties:{ order_name:{type:'string', description:'Order number, with or without #'} }, required:['order_name'] } } },
+  { type:'function', function:{ name:'get_delay_reason', description:'Explain why an order has not shipped yet — checks if the vendor submitted a specific delay reason, otherwise gives a generic explanation.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
+  { type:'function', function:{ name:'start_return_exchange', description:'Customer wants to return or exchange an item from an order. Returns a link to the self-serve return/exchange flow.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
+];
+
+async function scRunTool(name, args, contact) {
+  switch (name) {
+    case 'search_products':        return scSearchProducts(args.query);
+    case 'get_order_status':       return scGetOrderStatus(args.order_name, contact);
+    case 'get_delay_reason':       return scGetDelayReason(args.order_name, contact);
+    case 'start_return_exchange':  return scStartReturnExchange(args.order_name, contact);
+    default: return { error: 'Unknown tool' };
+  }
+}
+
+const SC_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You help customers:
+1. Find products ("I'm looking for sweatpants") — use search_products, then describe 2-3 best matches naturally and mention they're shown as cards below your message.
+2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking card is shown automatically below your message, so don't repeat every detail — just the headline).
+3. Explain delays — use get_delay_reason. If there's a specific vendor reason, relay it warmly with the ETA. If not, use the generic explanation, but reassure them it's being handled.
+4. Returns/exchanges — use start_return_exchange and point them to the link/card shown below your message.
+Rules:
+- Never invent order data — always call the tool first.
+- Keep replies short (2-4 sentences max), human, no corporate phrasing.
+- If a customer is venting/frustrated, acknowledge it briefly before helping.
+- If something is outside what your tools can do, say you're flagging it for a human and that's fine.`;
+
+async function scCallLLM(messages) {
+  const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+  const GROQ_KEY = process.env.GROQ_API_KEY;
+  const attempt = async (apiUrl, apiKey, model) => {
+    const r = await fetch(apiUrl, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
+      body: JSON.stringify({ model, max_tokens:500, messages, tools: SUPPORT_TOOLS, tool_choice:'auto' }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error?.message || `${model} ${r.status}`);
+    return d;
+  };
+  if (DEEPSEEK_KEY) {
+    try { return await attempt('https://api.deepseek.com/chat/completions', DEEPSEEK_KEY, 'deepseek-chat'); }
+    catch (e) { console.error('Support chat DeepSeek failed, falling back to Groq:', e.message); if (!GROQ_KEY) throw e; }
+  }
+  if (GROQ_KEY) return attempt('https://api.groq.com/openai/v1/chat/completions', GROQ_KEY, 'llama-3.3-70b-versatile');
+  throw new Error('No AI key configured (DEEPSEEK_API_KEY or GROQ_API_KEY)');
+}
+
+async function scRunChatTurn(chat, history, customerText) {
+  const contact = chat.customer_email || chat.customer_phone || '';
+  const messages = [
+    { role:'system', content: SC_SYSTEM_PROMPT },
+    ...history.map(m => ({ role: m.sender === 'customer' ? 'user' : (m.sender === 'assistant' ? 'assistant' : 'user'), content: m.sender==='vendor'||m.sender==='admin' ? `[${m.sender} note: ${m.text}]` : m.text })),
+    { role:'user', content: customerText },
+  ];
+
+  let finalReply = '';
+  let cardMeta = null;
+  for (let turn = 0; turn < 4; turn++) {
+    const d = await scCallLLM(messages);
+    const choice = d.choices?.[0];
+    const msg = choice?.message;
+    if (choice?.finish_reason === 'tool_calls' && msg?.tool_calls?.length) {
+      messages.push(msg);
+      for (const tc of msg.tool_calls) {
+        let args = {}; try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+        const result = await scRunTool(tc.function.name, args, contact);
+        if (tc.function.name === 'get_order_status' && result.found) cardMeta = { type:'tracking_card', data: result };
+        else if (tc.function.name === 'search_products' && result.found) cardMeta = { type:'product_cards', data: result.products };
+        else if (tc.function.name === 'start_return_exchange' && result.found) cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } };
+        else if (tc.function.name === 'get_order_status' && result.shopify_order_id) {
+          // Resolve order context onto the chat for vendor notification, even if not yet returned as final card
+        }
+        if (result.shopify_order_id) {
+          await SC.update(chat._id, { order_name: result.order_name, shopify_order_id: String(result.shopify_order_id), vendor_names: result.vendor_names || [] });
+        }
+        messages.push({ role:'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+      }
+      continue;
+    }
+    finalReply = msg?.content || "I'm here to help — could you tell me a bit more?";
+    break;
+  }
+  return { reply: finalReply, meta: cardMeta };
+}
+
+async function scNotifyVendorsIfNeeded(chatId) {
+  const chat = await SC.get(chatId);
+  if (!chat || !chat.vendor_names?.length || chat.vendor_notified_at) return;
+  const cfg = await getSmtpConfig();
+  if (!cfg?.host) return;
+  for (const vendorName of chat.vendor_names) {
+    const vc = await VC.get(vendorName);
+    if (!vc?.email) continue;
+    const link = `${SERVER_URL}/support/vendor-view?token=${signSupportToken(chat._id, vendorName)}`;
+    const html = emailBase(
+      `Customer chat about Order ${chat.order_name}`,
+      '#6366f1',
+      `<div class="subtitle">A customer is chatting with CrosCrow support about <strong>${chat.order_name}</strong>, which includes your products. You can read the conversation and reply directly if relevant.</div>
+       <div style="text-align:center;margin-top:20px"><a href="${link}" class="cta">Open Chat →</a></div>`
+    );
+    try { await sendEmail({ to: vc.email, subject: `💬 Customer asking about Order ${chat.order_name}`, html, shopifyId: chat.shopify_order_id, trigger: 'support_chat_vendor_notify' }); }
+    catch (e) { console.error('Support chat vendor notify failed:', vendorName, e.message); }
+  }
+  await SC.update(chatId, { vendor_notified_at: new Date().toISOString() });
+}
+
+// ── Public widget endpoints (no auth — same trust model as /track) ─────────
+app.post('/support/chat/start', async (req, res) => {
+  try {
+    const { shop_domain, customer_email, customer_phone } = req.body || {};
+    const chat = await SC.createChat({ shop_domain, customer_email, customer_phone });
+    const welcome = await SC.addMessage(chat._id, { sender:'assistant', text:"Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?" });
+    res.json({ chatId: chat._id, messages: [welcome] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/support/chat/:chatId/message', async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+    const chat = await SC.get(req.params.chatId);
+    if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+    const history = await SC.messages(chat._id);
+    const userMsg = await SC.addMessage(chat._id, { sender:'customer', text: text.trim() });
+    const { reply, meta } = await scRunChatTurn(chat, history, text.trim());
+    const botMsg = await SC.addMessage(chat._id, { sender:'assistant', text: reply, meta });
+
+    scNotifyVendorsIfNeeded(chat._id).catch(()=>{});
+    res.json({ messages: [userMsg, botMsg] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/support/chat/:chatId/messages', async (req, res) => {
+  try {
+    const messages = await SC.messages(req.params.chatId, req.query.after || null);
+    res.json({ messages });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Vendor magic-link view (from email, no login required) ─────────────────
+app.get('/support/vendor-view', async (req, res) => {
+  const v = verifySupportToken(req.query.token || '');
+  if (!v) return res.status(403).send('This link has expired or is invalid.');
+  const chat = await SC.get(v.chatId);
+  if (!chat || chat.hidden_from_vendors) return res.status(403).send('This conversation is not available.');
+  res.sendFile(require('path').join(__dirname, 'support-widget.html'));
+});
+app.get('/support/vendor-view/data', async (req, res) => {
+  const v = verifySupportToken(req.query.token || '');
+  if (!v) return res.status(403).json({ error: 'Invalid or expired link' });
+  const chat = await SC.get(v.chatId);
+  if (!chat || chat.hidden_from_vendors) return res.status(403).json({ error: 'Not available' });
+  const messages = await SC.messages(chat._id);
+  res.json({ messages, vendorName: v.vendorName, orderName: chat.order_name });
+});
+app.post('/support/vendor-view/reply', async (req, res) => {
+  const v = verifySupportToken(req.body?.token || '');
+  if (!v) return res.status(403).json({ error: 'Invalid or expired link' });
+  const chat = await SC.get(v.chatId);
+  if (!chat || chat.hidden_from_vendors) return res.status(403).json({ error: 'Not available' });
+  const { text } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+  const msg = await SC.addMessage(chat._id, { sender:'vendor', sender_name: v.vendorName, text: text.trim() });
+  res.json({ message: msg });
+});
+
+// ── Admin moderation ─────────────────────────────────────────────────────
+app.get('/admin/support/chats', adminAuth, async (req, res) => {
+  const chats = await mdb.collection('support_chats').find({}).sort({ updated_at: -1 }).limit(200).toArray();
+  res.json({ chats });
+});
+app.get('/admin/support/chats/:id/messages', adminAuth, async (req, res) => {
+  const messages = await SC.messages(req.params.id);
+  res.json({ messages });
+});
+app.post('/admin/support/chats/:id/hide', adminAuth, async (req, res) => {
+  const { hidden } = req.body || {};
+  await SC.update(req.params.id, { hidden_from_vendors: !!hidden });
+  res.json({ success: true });
+});
+
+// ── Vendor panel (logged-in) view of their own order chats ─────────────────
+app.get('/vendor/support/chats', vendorAuth, async (req, res) => {
+  const chats = await mdb.collection('support_chats').find({ vendor_names: req.vendor, hidden_from_vendors: { $ne: true } }).sort({ updated_at: -1 }).toArray();
+  res.json({ chats });
+});
+app.get('/vendor/support/chats/:id/messages', vendorAuth, async (req, res) => {
+  const chat = await SC.get(req.params.id);
+  if (!chat || chat.hidden_from_vendors || !chat.vendor_names?.includes(req.vendor)) return res.status(403).json({ error: 'Not available' });
+  const messages = await SC.messages(chat._id);
+  res.json({ messages });
+});
+app.post('/vendor/support/chats/:id/reply', vendorAuth, async (req, res) => {
+  const chat = await SC.get(req.params.id);
+  if (!chat || chat.hidden_from_vendors || !chat.vendor_names?.includes(req.vendor)) return res.status(403).json({ error: 'Not available' });
+  const { text } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+  const msg = await SC.addMessage(chat._id, { sender:'vendor', sender_name: req.vendor, text: text.trim() });
+  res.json({ message: msg });
+});
+
+// ── Serve the embeddable widget ─────────────────────────────────────────────
+app.get('/support-widget.html', (req, res) => {
+  res.setHeader('Content-Security-Policy', "frame-ancestors *;");
+  res.sendFile(require('path').join(__dirname, 'support-widget.html'));
+});
+app.get('/support-widget-embed.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(require('path').join(__dirname, 'support-widget-embed.js'));
+});
+
