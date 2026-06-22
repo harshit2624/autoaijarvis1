@@ -102,44 +102,33 @@
     launcher.onmouseenter = function () { launcher.style.transform = 'scale(1.08)'; };
     launcher.onmouseleave = function () { launcher.style.transform = 'scale(1)'; };
 
-    // 3D crow on the launcher itself — falls back to the chat emoji if the
-    // model-viewer script or the .glb fails to load (e.g. crow.glb missing).
+    // Crow icon on the launcher itself — falls back to the chat emoji if
+    // crowicon.png is missing/fails to load.
     var closeLabel = document.createElement('span');
     closeLabel.textContent = '✕';
     closeLabel.style.fontSize = '22px';
     var fallbackEmoji = document.createElement('span');
     fallbackEmoji.textContent = '💬';
     fallbackEmoji.style.fontSize = '24px';
-    var crowEl = null;
+    var crowEl = document.createElement('img');
+    crowEl.src = WIDGET_ORIGIN + '/crowicon.png';
+    crowEl.alt = 'Support';
+    crowEl.style.width = '100%';
+    crowEl.style.height = '100%';
+    crowEl.style.objectFit = 'cover';
+    crowEl.style.borderRadius = '50%';
+    crowEl.style.pointerEvents = 'none';
     var crowFailed = false;
 
     function updateIcon(isOpen) {
       closeLabel.style.display = isOpen ? 'block' : 'none';
-      var showCrow = !isOpen && crowEl && !crowFailed;
-      if (crowEl) crowEl.style.display = showCrow ? 'block' : 'none';
+      var showCrow = !isOpen && !crowFailed;
+      crowEl.style.display = showCrow ? 'block' : 'none';
       fallbackEmoji.style.display = (!isOpen && !showCrow) ? 'block' : 'none';
     }
+    crowEl.addEventListener('error', function () { crowFailed = true; updateIcon(open); });
 
-    try {
-      if (!customElements.get('model-viewer')) {
-        var mvScript = document.createElement('script');
-        mvScript.type = 'module';
-        mvScript.src = 'https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js';
-        document.head.appendChild(mvScript);
-      }
-      crowEl = document.createElement('model-viewer');
-      crowEl.setAttribute('src', WIDGET_ORIGIN + '/crow3.glb');
-      crowEl.setAttribute('auto-rotate', '');
-      crowEl.setAttribute('rotation-per-second', '25deg');
-      crowEl.setAttribute('camera-controls', 'false');
-      crowEl.setAttribute('disable-zoom', '');
-      crowEl.setAttribute('interaction-prompt', 'none');
-      crowEl.style.width = '100%';
-      crowEl.style.height = '100%';
-      crowEl.style.pointerEvents = 'none';
-      crowEl.addEventListener('error', function () { crowFailed = true; updateIcon(open); });
-      launcher.appendChild(crowEl);
-    } catch (e) { crowFailed = true; }
+    launcher.appendChild(crowEl);
     launcher.appendChild(fallbackEmoji);
     launcher.appendChild(closeLabel);
 

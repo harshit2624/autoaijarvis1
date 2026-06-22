@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrosCrow Support</title>
-<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
   html,body { height:100%; font-family:'Segoe UI',-apple-system,Arial,sans-serif; }
@@ -17,10 +16,10 @@
   .header .close { margin-left:auto; cursor:pointer; color:#6b7280; font-size:18px; line-height:1; padding:4px; }
   .header .close:hover { color:#0a0a0a; }
 
-  /* Crow mascot — drop crow.glb in the repo root to bring it to life;
-     falls back to an emoji silently if the model is missing/fails to load. */
+  /* Crow mascot — /crowicon.png in the repo root; falls back to an emoji
+     silently if the image is missing/fails to load. */
   .crow-mascot-wrap { width:44px; height:44px; flex-shrink:0; position:relative; }
-  .crow-mascot { width:100%; height:100%; --poster-color: transparent; }
+  .crow-mascot { width:100%; height:100%; object-fit:contain; border-radius:50%; }
   .crow-fallback { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:26px; }
   .crow-bubble {
     position:absolute; top:50%; left:52px; transform:translateY(-50%) scale(0.85); transform-origin:left center;
@@ -101,9 +100,7 @@
 <body>
   <div class="header">
     <div class="crow-mascot-wrap" id="crow-wrap">
-      <model-viewer class="crow-mascot" id="crow-model" src="/crow3.glb" alt="Crow mascot"
-        auto-rotate auto-rotate-delay="0" rotation-per-second="20deg" camera-controls="false"
-        disable-zoom interaction-prompt="none" loading="eager"></model-viewer>
+      <img class="crow-mascot" id="crow-model" src="/crowicon.png" alt="Crow mascot"/>
       <span class="crow-fallback" id="crow-fallback" style="display:none">🐦‍⬛</span>
       <div class="crow-bubble" id="crow-bubble">Hii! 👋</div>
     </div>
