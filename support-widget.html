@@ -4,17 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrosCrow Support</title>
+<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
   html,body { height:100%; font-family:'Segoe UI',-apple-system,Arial,sans-serif; }
   body { background:#ffffff; color:#0a0a0a; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
 
-  .header { display:flex; align-items:center; gap:10px; padding:16px 18px; background:#fff; border-bottom:1px solid #e5e5e5; flex-shrink:0; }
+  .header { display:flex; align-items:center; gap:10px; padding:14px 18px; background:#fff; border-bottom:1px solid #e5e5e5; flex-shrink:0; position:relative; }
   .header .dot { width:9px; height:9px; border-radius:50%; background:#16a34a; box-shadow:0 0 8px rgba(22,163,74,0.5); }
   .header .title { font-size:14px; font-weight:700; letter-spacing:0.3px; color:#0a0a0a; }
   .header .sub { font-size:11px; color:#6b7280; }
   .header .close { margin-left:auto; cursor:pointer; color:#6b7280; font-size:18px; line-height:1; padding:4px; }
   .header .close:hover { color:#0a0a0a; }
+
+  /* Crow mascot — drop crow.glb in the repo root to bring it to life;
+     falls back to an emoji silently if the model is missing/fails to load. */
+  .crow-mascot-wrap { width:44px; height:44px; flex-shrink:0; position:relative; }
+  .crow-mascot { width:100%; height:100%; --poster-color: transparent; }
+  .crow-fallback { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:26px; }
+  .crow-bubble {
+    position:absolute; top:50%; left:52px; transform:translateY(-50%) scale(0.85); transform-origin:left center;
+    background:#0a0a0a; color:#fff; font-size:12px; font-weight:700; padding:7px 12px; border-radius:10px;
+    white-space:nowrap; opacity:0; pointer-events:none; transition:opacity 0.25s ease, transform 0.25s ease; z-index:5;
+  }
+  .crow-bubble::before { content:''; position:absolute; left:-5px; top:50%; transform:translateY(-50%); border:5px solid transparent; border-right-color:#0a0a0a; }
+  .crow-bubble.show { opacity:1; transform:translateY(-50%) scale(1); }
 
   .messages { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:14px; background:#fff; }
   .messages::-webkit-scrollbar { width:5px; }
@@ -86,7 +100,13 @@
 </head>
 <body>
   <div class="header">
-    <div class="dot"></div>
+    <div class="crow-mascot-wrap" id="crow-wrap">
+      <model-viewer class="crow-mascot" id="crow-model" src="/crow.glb" alt="Crow mascot"
+        auto-rotate auto-rotate-delay="0" rotation-per-second="20deg" camera-controls="false"
+        disable-zoom interaction-prompt="none" loading="eager"></model-viewer>
+      <span class="crow-fallback" id="crow-fallback" style="display:none">🐦‍⬛</span>
+      <div class="crow-bubble" id="crow-bubble">Hii! 👋</div>
+    </div>
     <div>
       <div class="title">CrosCrow Support</div>
       <div class="sub" id="sub-status">Online · usually replies instantly</div>
@@ -106,7 +126,17 @@
   const vendorToken = params.get('token'); // present only on vendor magic-link view
   const customerEmail = params.get('email') || '';
   const customerNameParam = params.get('name') || '';
-  let chatId = localStorage.getItem('cc_support_chat_id');
+  // This page is usually embedded as a cross-origin (third-party) iframe,
+  // where browsers restrict/wipe localStorage written from inside the
+  // iframe — so the parent embed script passes the chat ID back in via
+  // ?chatId=, persisted in the PARENT page's own storage instead. Direct,
+  // same-origin loads (local testing, vendor magic link) still fall back
+  // to this page's own localStorage, which works fine in that context.
+  let chatId = params.get('chatId') || localStorage.getItem('cc_support_chat_id');
+  function reportChatIdToParent(id) {
+    try { localStorage.setItem('cc_support_chat_id', id); } catch (e) {}
+    try { parent.postMessage({ croscrowSupport: 'chatId', chatId: id }, '*'); } catch (e) {}
+  }
   let lastTs = null;
   let pollTimer = null;
 
@@ -224,7 +254,7 @@
     if (!chatId) {
       const r = await fetch(`${API}/support/chat/start`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shop_domain: location.hostname, customer_email: customerEmail }) });
       const d = await r.json();
-      chatId = d.chatId; localStorage.setItem('cc_support_chat_id', chatId);
+      chatId = d.chatId; reportChatIdToParent(chatId);
       (d.messages||[]).forEach(addMessage);
       lastSeenCount = (d.messages||[]).length;
     } else {
@@ -234,7 +264,31 @@
       lastSeenCount = (d.messages||[]).length;
     }
     pollTimer = setInterval(pollNewMessages, 4000);
+    showCrowGreeting();
   }
+
+  // ── Crow mascot ──────────────────────────────────────────────────────────
+  let crowGreetTimer = null;
+  function showCrowGreeting() {
+    const bubble = document.getElementById('crow-bubble');
+    if (!bubble) return;
+    bubble.classList.add('show');
+    clearTimeout(crowGreetTimer);
+    crowGreetTimer = setTimeout(() => bubble.classList.remove('show'), 3500);
+  }
+  const crowModel = document.getElementById('crow-model');
+  if (crowModel) {
+    crowModel.addEventListener('error', () => {
+      crowModel.style.display = 'none';
+      const fb = document.getElementById('crow-fallback');
+      if (fb) fb.style.display = 'flex';
+    });
+  }
+  // Re-greet every time the parent page actually opens the widget (not just
+  // on the iframe's first load — the iframe stays loaded while hidden).
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.croscrowSupport === 'opened' && !vendorToken) showCrowGreeting();
+  });
 
   // Switches the active conversation to a different (pre-existing) chat —
   // used by the "resume previous conversation about this order" card, so a
@@ -243,7 +297,7 @@
   async function switchToChat(newChatId) {
     if (!newChatId || newChatId === chatId) return;
     chatId = newChatId;
-    localStorage.setItem('cc_support_chat_id', chatId);
+    reportChatIdToParent(chatId);
     messagesEl.innerHTML = '';
     try {
       const r = await fetch(`${API}/support/chat/${chatId}/messages`);
