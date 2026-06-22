@@ -85,9 +85,9 @@
     // bottom tab bar (Account/Shop/Home/Wishlist/Cart) too — both of which
     // this button was previously overlapping.
     var LAUNCHER_BOTTOM_DESKTOP = '94px';
-    var LAUNCHER_BOTTOM_MOBILE  = '102px'; // sits between the scroll-to-top button (above) and WhatsApp (below)
+    var LAUNCHER_BOTTOM_MOBILE  = '120px'; // sits between the scroll-to-top button (above) and WhatsApp (below)
     var LAUNCHER_RIGHT = '22px';
-    var LAUNCHER_RIGHT_MOBILE = '17px'; // matches the scroll-to-top button's configured Mobile Side Offset, for horizontal alignment
+    var LAUNCHER_RIGHT_MOBILE = '15px'; // shifted slightly right of the scroll-to-top button's 17px offset, per feedback
 
     var launcher = document.createElement('button');
     launcher.id = 'croscrow-support-launcher';
