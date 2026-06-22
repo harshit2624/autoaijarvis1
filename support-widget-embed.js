@@ -128,7 +128,7 @@
         document.head.appendChild(mvScript);
       }
       crowEl = document.createElement('model-viewer');
-      crowEl.setAttribute('src', WIDGET_ORIGIN + '/crow.glb');
+      crowEl.setAttribute('src', WIDGET_ORIGIN + '/crow3.glb');
       crowEl.setAttribute('auto-rotate', '');
       crowEl.setAttribute('rotation-per-second', '25deg');
       crowEl.setAttribute('camera-controls', 'false');
