@@ -85,7 +85,7 @@
     // bottom tab bar (Account/Shop/Home/Wishlist/Cart) too — both of which
     // this button was previously overlapping.
     var LAUNCHER_BOTTOM_DESKTOP = '94px';
-    var LAUNCHER_BOTTOM_MOBILE  = '140px'; // sits between the scroll-to-top button (above) and WhatsApp (below)
+    var LAUNCHER_BOTTOM_MOBILE  = '138px'; // sits between the scroll-to-top button (above) and WhatsApp (below)
     var LAUNCHER_RIGHT = '22px';
     var LAUNCHER_RIGHT_MOBILE = '15px'; // shifted slightly right of the scroll-to-top button's 17px offset, per feedback
 
