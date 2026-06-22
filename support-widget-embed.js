@@ -85,7 +85,7 @@
     // bottom tab bar (Account/Shop/Home/Wishlist/Cart) too — both of which
     // this button was previously overlapping.
     var LAUNCHER_BOTTOM_DESKTOP = '94px';
-    var LAUNCHER_BOTTOM_MOBILE  = '120px'; // sits between the scroll-to-top button (above) and WhatsApp (below)
+    var LAUNCHER_BOTTOM_MOBILE  = '125px'; // sits between the scroll-to-top button (above) and WhatsApp (below)
     var LAUNCHER_RIGHT = '22px';
     var LAUNCHER_RIGHT_MOBILE = '15px'; // shifted slightly right of the scroll-to-top button's 17px offset, per feedback
 
@@ -94,7 +94,7 @@
     launcher.setAttribute('aria-label', 'Open support chat');
     Object.assign(launcher.style, {
       position: 'fixed', bottom: LAUNCHER_BOTTOM_DESKTOP, right: LAUNCHER_RIGHT, zIndex: 999999,
-      width: '58px', height: '58px', borderRadius: '50%', border: 'none',
+      width: '56px', height: '56px', borderRadius: '50%', border: 'none',
       background: '#0a0a0a', color: '#fff', padding: 0, overflow: 'hidden',
       fontSize: '24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
       boxShadow: '0 6px 24px rgba(0,0,0,0.35)',
