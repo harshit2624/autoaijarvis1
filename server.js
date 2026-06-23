@@ -9025,19 +9025,21 @@ async function vendorShopifyRESTByConn(conn, path) {
 
 // Privacy policy page (required by Shopify)
 app.get('/privacy', (req, res) => {
-  res.send(`<!DOCTYPE html><html><head><title>CrosCrow Sync — Privacy Policy</title>
+  res.send(`<!DOCTYPE html><html><head><title>MARKETPLACE SYNC by Antortiq — Privacy Policy</title>
   <style>body{font-family:Arial,sans-serif;max-width:700px;margin:60px auto;padding:0 20px;color:#333;line-height:1.7}h1{color:#111}h2{color:#444;margin-top:32px}a{color:#6366f1}</style>
   </head><body>
-  <h1>CrosCrow Sync — Privacy Policy</h1>
+  <h1>MARKETPLACE SYNC by Antortiq — Privacy Policy</h1>
   <p>Last updated: ${new Date().toLocaleDateString('en-IN')}</p>
   <h2>Data We Collect</h2>
-  <p>CrosCrow Sync collects your Shopify store domain, product catalog, inventory levels, and location data solely to sync inventory between your store and the CrosCrow marketplace.</p>
+  <p>MARKETPLACE SYNC by Antortiq collects your Shopify store domain, product catalog, inventory levels, and location data solely to sync inventory between your store and the CrosCrow marketplace.</p>
   <h2>How We Use Your Data</h2>
   <p>Your data is used exclusively to provide inventory synchronization services. We do not sell or share your data with third parties.</p>
   <h2>Data Storage</h2>
   <p>Access tokens and store data are stored securely on CrosCrow servers and are deleted upon app uninstallation.</p>
   <h2>Contact</h2>
-  <p>For privacy concerns: <a href="mailto:harshitvj24@gmail.com">harshitvj24@gmail.com</a></p>
+  <p>CrosCrow Team: <a href="mailto:croscrowteam@gmail.com">croscrowteam@gmail.com</a></p>
+  <p>Developer (Antortiq): <a href="mailto:antortiq@gmail.com">antortiq@gmail.com</a></p>
+  <p>Phone: <a href="tel:+918209544626">+91 8209544626</a></p>
   </body></html>`);
 });
 
