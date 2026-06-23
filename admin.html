@@ -7381,6 +7381,152 @@
   }
 
   /* ══════════════════════════════════
+     STAFF ACCOUNTS — create/manage limited-access logins
+  ══════════════════════════════════ */
+  // Only permissions wired up to an actual backend check belong here —
+  // showing a checkbox that doesn't gate anything would be misleading.
+  const STAFF_PERMISSIONS = [
+    { id:'orders', label:'Orders', desc:'View the Orders page (read-only — no bulk actions, fulfillment, or settlements).' },
+  ];
+
+  function StaffAccounts({ token }) {
+    const [staff,    setStaff]    = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [showNew,  setShowNew]  = useState(false);
+    const [newUser,  setNewUser]  = useState({ username:'', name:'', password:'', permissions:[] });
+    const [creating, setCreating] = useState(false);
+    const [msg,      setMsg]      = useState('');
+    const [createdCreds, setCreatedCreds] = useState(null);
+
+    const load = () => {
+      setLoading(true);
+      fetch(`${API}/admin/staff`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setStaff(d.staff||[])).catch(()=>{}).finally(()=>setLoading(false));
+    };
+    useEffect(load, []);
+
+    const togglePerm = (perm) => setNewUser(u => ({
+      ...u, permissions: u.permissions.includes(perm) ? u.permissions.filter(p=>p!==perm) : [...u.permissions, perm],
+    }));
+
+    const createStaff = async () => {
+      if (!newUser.username.trim()) { setMsg('❌ Username required'); return; }
+      setCreating(true); setMsg('');
+      try {
+        const r = await fetch(`${API}/admin/staff`, {
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+          body: JSON.stringify(newUser),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setCreatedCreds({ username:d.username, password:d.password });
+        setNewUser({ username:'', name:'', password:'', permissions:[] });
+        setShowNew(false);
+        load();
+      } catch(e) { setMsg('❌ '+e.message); }
+      setCreating(false);
+    };
+
+    const togglePermOnExisting = async (s, perm) => {
+      const next = (s.permissions||[]).includes(perm) ? s.permissions.filter(p=>p!==perm) : [...(s.permissions||[]), perm];
+      await fetch(`${API}/admin/staff/${s.username}`, {
+        method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ permissions: next }),
+      });
+      load();
+    };
+
+    const resetPassword = async (username) => {
+      const pw = 'Croscrow@00';
+      await fetch(`${API}/admin/staff/${username}`, {
+        method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ password: pw }),
+      });
+      setCreatedCreds({ username, password: pw });
+    };
+
+    const deleteStaff = async (username) => {
+      if (!confirm(`Remove staff account "${username}"? They'll be logged out immediately.`)) return;
+      await fetch(`${API}/admin/staff/${username}`, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
+      load();
+    };
+
+    return (
+      <div>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
+          <span style={{fontSize:24}}>🔐</span>
+          <div style={{flex:1}}>
+            <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>Staff Accounts</h2>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Limited-access logins — they sign in here too, but only see pages you grant them.</div>
+          </div>
+          <button className="btn btn-indigo btn-sm" onClick={()=>setShowNew(s=>!s)}>{showNew?'Cancel':'+ New Staff Account'}</button>
+        </div>
+
+        {createdCreds && (
+          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.3)',borderRadius:10,padding:'14px 18px',marginBottom:18,fontSize:13}}>
+            ✅ Credentials — share these with the staff member (shown once):
+            <div style={{marginTop:8,fontFamily:'monospace',fontSize:13}}>
+              Username: <strong>{createdCreds.username}</strong> · Password: <strong>{createdCreds.password}</strong>
+            </div>
+            <button className="btn btn-ghost btn-sm" style={{marginTop:8}} onClick={()=>setCreatedCreds(null)}>Dismiss</button>
+          </div>
+        )}
+
+        {showNew && (
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:20,marginBottom:20}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+              <div>
+                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>USERNAME</label>
+                <input className="form-input" value={newUser.username} onChange={e=>setNewUser(u=>({...u,username:e.target.value}))} style={{width:'100%'}}/>
+              </div>
+              <div>
+                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>DISPLAY NAME</label>
+                <input className="form-input" value={newUser.name} onChange={e=>setNewUser(u=>({...u,name:e.target.value}))} placeholder="e.g. Intern — Priya" style={{width:'100%'}}/>
+              </div>
+              <div>
+                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>PASSWORD</label>
+                <input className="form-input" type="text" value={newUser.password} onChange={e=>setNewUser(u=>({...u,password:e.target.value}))} placeholder="Default: Croscrow@00" style={{width:'100%'}}/>
+              </div>
+            </div>
+            <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:8}}>PAGE ACCESS</label>
+            <div style={{display:'flex',gap:14,flexWrap:'wrap',marginBottom:16}}>
+              {STAFF_PERMISSIONS.map(p => (
+                <label key={p.id} style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',maxWidth:280}}>
+                  <input type="checkbox" checked={newUser.permissions.includes(p.id)} onChange={()=>togglePerm(p.id)} style={{marginTop:2,width:15,height:15,accentColor:'#6366f1'}}/>
+                  <span><div style={{fontSize:13,color:'var(--text)',fontWeight:600}}>{p.label}</div><div style={{fontSize:11,color:'var(--text-muted)'}}>{p.desc}</div></span>
+                </label>
+              ))}
+            </div>
+            {msg && <div style={{fontSize:12,color:'#ef4444',marginBottom:10}}>{msg}</div>}
+            <button className="btn btn-indigo" onClick={createStaff} disabled={creating}>{creating?'Creating…':'Create Account'}</button>
+          </div>
+        )}
+
+        {loading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+        {!loading && staff.length===0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>No staff accounts yet.</div>}
+        {!loading && staff.map(s => (
+          <div key={s.username} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 18px',marginBottom:10,display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{s.name || s.username}</div>
+              <div style={{fontSize:11,color:'var(--text-muted)'}}>@{s.username}</div>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {STAFF_PERMISSIONS.map(p => (
+                <label key={p.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--text-muted)',cursor:'pointer',background:'var(--bg-hover)',padding:'4px 9px',borderRadius:99}}>
+                  <input type="checkbox" checked={(s.permissions||[]).includes(p.id)} onChange={()=>togglePermOnExisting(s,p.id)} style={{width:12,height:12,accentColor:'#6366f1'}}/>
+                  {p.label}
+                </label>
+              ))}
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>resetPassword(s.username)}>Reset Password</button>
+            <button className="btn btn-ghost btn-sm" style={{color:'#ef4444'}} onClick={()=>deleteStaff(s.username)}>Remove</button>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      SUPPORT CHATS — WhatsApp-style admin inbox
   ══════════════════════════════════ */
   function SupportChats({ token }) {
@@ -8883,12 +9029,18 @@
 
   function App() {
     const [token,      setToken]      = useState(()=>ls.get('admin_token',null));
+    const [role,       setRole]       = useState(()=>ls.get('admin_role','admin'));
+    const [permissions,setPermissions]= useState(()=>ls.get('admin_permissions',['*']));
+    const [staffName,  setStaffName]  = useState(()=>ls.get('admin_staff_name',''));
     const [view,       setView]       = useState('dashboard');
     const [stageFilter,setStageFilter]= useState('all');
     const [pass,       setPass]       = useState('');
+    const [staffUser,  setStaffUser]  = useState(null); // null = admin login mode, '' or string = staff login mode
     const [loginErr,   setLoginErr]   = useState('');
     const [loginLoad,  setLoginLoad]  = useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
+    const isAdmin = role === 'admin';
+    const canSee = (perm) => isAdmin || permissions.includes(perm);
     const [theme, setTheme] = useState(()=>localStorage.getItem('admin_theme')||'midnight');
     useEffect(()=>{
       document.body.setAttribute('data-theme', theme);
@@ -8925,28 +9077,44 @@
     ];
 
     // On mount: if we have a stored token, verify it's still valid (server may have restarted)
+    // /staff/me works for BOTH admin and staff tokens — tells us which role
+    // this token actually is and refreshes permissions in case they changed.
     useEffect(()=>{
       if (!token) return;
-      fetch(`${API}/admin/ping`, { headers:{ Authorization:`Bearer ${token}` } })
-        .then(r => { if (r.status === 401) { ls.del('admin_token'); setToken(null); } })
+      fetch(`${API}/staff/me`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r => r.json().then(d => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => {
+          if (!ok) { ls.del('admin_token'); ls.del('admin_role'); ls.del('admin_permissions'); ls.del('admin_staff_name'); setToken(null); return; }
+          setRole(d.role); ls.set('admin_role', d.role);
+          setPermissions(d.permissions || []); ls.set('admin_permissions', d.permissions || []);
+          setStaffName(d.name || ''); ls.set('admin_staff_name', d.name || '');
+        })
         .catch(()=>{});
     }, []);
 
     const login = async () => {
       setLoginLoad(true); setLoginErr('');
       try {
-        const r = await fetch(`${API}/admin/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pass})});
+        const isStaff = staffUser !== null;
+        const r = await fetch(`${API}/${isStaff?'staff':'admin'}/login`,{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(isStaff ? {username:staffUser,password:pass} : {password:pass}),
+        });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error||'Login failed');
         ls.set('admin_token', d.token);
+        const r2 = isStaff ? 'staff' : 'admin';
+        setRole(r2); ls.set('admin_role', r2);
+        setPermissions(isStaff ? (d.permissions||[]) : ['*']); ls.set('admin_permissions', isStaff ? (d.permissions||[]) : ['*']);
+        setStaffName(isStaff ? (d.name||'') : ''); ls.set('admin_staff_name', isStaff ? (d.name||'') : '');
         setToken(d.token);
       } catch(e) { setLoginErr(e.message); }
       setLoginLoad(false);
     };
 
     const logout = async () => {
-      await fetch(`${API}/admin/logout`,{method:'POST',headers:{Authorization:`Bearer ${token}`}}).catch(()=>{});
-      ls.del('admin_token'); setToken(null);
+      await fetch(`${API}/${isAdmin?'admin':'staff'}/logout`,{method:'POST',headers:{Authorization:`Bearer ${token}`}}).catch(()=>{});
+      ls.del('admin_token'); ls.del('admin_role'); ls.del('admin_permissions'); ls.del('admin_staff_name'); setToken(null);
     };
 
     if (!token) return (
@@ -8954,11 +9122,20 @@
         <div className="login-box">
           <div className="login-logo">A</div>
           <div className="login-title">CROSCROW</div>
-          <div className="login-sub">Admin Portal</div>
+          <div className="login-sub">{staffUser ? 'Staff Login' : 'Admin Portal'}</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
-          <label className="field-label">Admin Password</label>
+          {staffUser && <>
+            <label className="field-label">Username</label>
+            <input className="field-input" placeholder="Staff username" value={staffUser} onChange={e=>setStaffUser(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
+          </>}
+          <label className="field-label">{staffUser ? 'Password' : 'Admin Password'}</label>
           <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
-          <button className="login-btn" onClick={login} disabled={loginLoad||!pass}>{loginLoad?'Signing in…':'Sign In'}</button>
+          <button className="login-btn" onClick={login} disabled={loginLoad||!pass||(staffUser!==null&&!staffUser)}>{loginLoad?'Signing in…':'Sign In'}</button>
+          <div style={{textAlign:'center',marginTop:14}}>
+            <button onClick={()=>{setStaffUser(s=>s===null?'':null);setPass('');setLoginErr('');}} style={{background:'none',border:'none',color:'var(--text-muted)',fontSize:11,cursor:'pointer',textDecoration:'underline'}}>
+              {staffUser===null ? 'Staff member? Sign in here' : '← Back to admin login'}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -8988,9 +9165,19 @@
       { id:'agreements',       icon:'📝', label:'Agreements',          section:'finance' },
       { id:'theme',            icon:'🎨', label:'Theme',               section:'finance' },
       { id:'announcements',    icon:'📢', label:'Announcements',       section:'finance', external:'/announce.html' },
+      { id:'staffaccounts',    icon:'🔐', label:'Staff Accounts',      section:'finance', adminOnly:true },
     ];
-    const sections = [...new Set(navItems.map(n=>n.section))];
+    const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
+    const sections = [...new Set(visibleNavItems.map(n=>n.section))];
     const sectionLabels = { main:'Management', finance:'Finance & Logs' };
+
+    // Staff default to "dashboard", which they usually can't see — land them
+    // on the first page they actually have permission for instead of blank.
+    useEffect(() => {
+      if (!token) return;
+      const allowedIds = visibleNavItems.filter(n=>!n.external).map(n=>n.id);
+      if (!allowedIds.includes(view) && allowedIds.length) setView(allowedIds[0]);
+    }, [token, role, permissions.join(',')]);
 
     const handleStageClick = stage => { setStageFilter(stage); setView('orders'); };
     const closeSidebar = () => setSidebarOpen(false);
@@ -9007,13 +9194,13 @@
             {brand.logo_url
               ? <img src={brand.logo_url} alt="logo" className="sidebar-logo" style={{objectFit:'cover'}}/>
               : <div className="sidebar-logo">A</div>}
-            <div><div className="sidebar-name">CROSCROW</div><div className="sidebar-role">Admin Portal</div></div>
+            <div><div className="sidebar-name">CROSCROW</div><div className="sidebar-role">{isAdmin ? 'Admin Portal' : `Staff · ${staffName||'—'}`}</div></div>
           </div>
           <nav className="nav">
             {sections.map(sec=>(
               <div key={sec}>
                 <div className="nav-section">{sectionLabels[sec]}</div>
-                {navItems.filter(n=>n.section===sec).map(n=>(
+                {visibleNavItems.filter(n=>n.section===sec).map(n=>(
                   <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ if (n.external) { window.open(n.external, '_blank'); closeSidebar(); return; } setView(n.id); closeSidebar(); }}>
                     <span className="nav-icon"><Icon name={n.id} mode={iconStyle} fallback={n.icon}/></span>{n.label}
                   </button>
@@ -9067,6 +9254,7 @@
           {view==='onboarding'     && <VendorOnboarding token={token}/>}
           {view==='agreements'     && <AgreementManagement token={token}/>}
           {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
+          {view==='staffaccounts'  && <StaffAccounts token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}

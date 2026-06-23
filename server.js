@@ -716,6 +716,127 @@ async function adminAuth(req, res, next) {
   } catch(e) { res.status(500).json({ error: 'Auth error' }); }
 }
 
+// ── Staff auth (role-based, permission-gated access to the admin panel) ────
+// Staff log into the SAME admin.html as the full admin, with their own
+// username/password. Their account has a `permissions` array (e.g.
+// ['orders']) — the sidebar only renders pages they have permission for,
+// and (critically) the backend enforces it too via requirePermission(),
+// so hiding the UI isn't the only protection.
+function hashStaffPassword(plain) {
+  return crypto.createHash('sha256').update(plain + 'jarvis-staff-salt-2024').digest('hex');
+}
+
+async function staffLoginHandler(req, res) {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required.' });
+  const staff = await mdb.collection('staff_accounts').findOne({ username: username.trim() });
+  if (!staff || staff.password_hash !== hashStaffPassword(password)) {
+    return res.status(401).json({ error: 'Invalid username or password.' });
+  }
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+  await mdb.collection('staff_sessions').insertOne({ token, username: staff.username, expiresAt, created_at: new Date() });
+  await mdb.collection('staff_sessions').deleteMany({ expiresAt: { $lt: Date.now() - 7 * 24 * 60 * 60 * 1000 } }).catch(() => {});
+  auditLog('staff', 'login', staff.username, {});
+  res.json({ token, name: staff.name || staff.username, permissions: staff.permissions || [] });
+}
+
+// Accepts EITHER a valid admin token (full access) OR a valid staff token
+// that has `perm` in its permissions array. Attaches req.staffUsername when
+// it's a staff session, so routes can scope further if ever needed.
+function requirePermission(perm) {
+  return async function (req, res, next) {
+    const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const adminSession = await mdb.collection('admin_sessions').findOne({ token });
+      if (adminSession) {
+        if (Date.now() > adminSession.expiresAt) {
+          await mdb.collection('admin_sessions').deleteOne({ token });
+          return res.status(401).json({ error: "Session expired" });
+        }
+        await mdb.collection('admin_sessions').updateOne({ token }, { $set: { expiresAt: Date.now() + 24 * 60 * 60 * 1000 } });
+        return next();
+      }
+      const staffSession = await mdb.collection('staff_sessions').findOne({ token });
+      if (staffSession) {
+        if (Date.now() > staffSession.expiresAt) {
+          await mdb.collection('staff_sessions').deleteOne({ token });
+          return res.status(401).json({ error: "Session expired" });
+        }
+        const staff = await mdb.collection('staff_accounts').findOne({ username: staffSession.username });
+        if (!staff || !(staff.permissions || []).includes(perm)) {
+          return res.status(403).json({ error: "You don't have access to this." });
+        }
+        await mdb.collection('staff_sessions').updateOne({ token }, { $set: { expiresAt: Date.now() + 24 * 60 * 60 * 1000 } });
+        req.staffUsername = staff.username;
+        return next();
+      }
+      return res.status(401).json({ error: "Unauthorized" });
+    } catch (e) { res.status(500).json({ error: 'Auth error' }); }
+  };
+}
+
+app.post('/staff/login', staffLoginHandler);
+app.post('/staff/logout', async (req, res) => {
+  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  await mdb.collection('staff_sessions').deleteOne({ token });
+  res.json({ success: true });
+});
+// Lets admin.html distinguish "I'm logged in as staff with these
+// permissions" vs full admin, right after login, without guessing.
+app.get('/staff/me', async (req, res) => {
+  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+  const adminSession = await mdb.collection('admin_sessions').findOne({ token });
+  if (adminSession) return res.json({ role: 'admin', name: 'Admin', permissions: ['*'] });
+  const staffSession = await mdb.collection('staff_sessions').findOne({ token });
+  if (staffSession) {
+    const staff = await mdb.collection('staff_accounts').findOne({ username: staffSession.username });
+    if (staff) return res.json({ role: 'staff', name: staff.name || staff.username, permissions: staff.permissions || [] });
+  }
+  res.status(401).json({ error: "Unauthorized" });
+});
+
+// ── Admin management of staff accounts ─────────────────────────────────────
+const STAFF_DEFAULT_PASS = "Croscrow@00";
+app.get('/admin/staff', adminAuth, async (req, res) => {
+  const staff = await mdb.collection('staff_accounts').find({}, { projection: { password_hash: 0 } }).sort({ created_at: -1 }).toArray();
+  res.json({ staff });
+});
+app.post('/admin/staff', adminAuth, async (req, res) => {
+  const { username, name, password, permissions } = req.body || {};
+  if (!username?.trim()) return res.status(400).json({ error: 'Username required.' });
+  const clean = username.trim();
+  const existing = await mdb.collection('staff_accounts').findOne({ username: clean });
+  if (existing) return res.status(400).json({ error: 'That username is already taken.' });
+  const doc = {
+    username: clean, name: (name || '').trim() || clean,
+    password_hash: hashStaffPassword(password || STAFF_DEFAULT_PASS),
+    permissions: Array.isArray(permissions) ? permissions : [],
+    created_at: new Date().toISOString(),
+  };
+  await mdb.collection('staff_accounts').insertOne(doc);
+  auditLog('admin', 'staff_create', clean, { permissions: doc.permissions });
+  res.json({ success: true, username: clean, password: password || STAFF_DEFAULT_PASS });
+});
+app.put('/admin/staff/:username', adminAuth, async (req, res) => {
+  const { name, permissions, password } = req.body || {};
+  const fields = {};
+  if (name !== undefined) fields.name = name;
+  if (Array.isArray(permissions)) fields.permissions = permissions;
+  if (password) fields.password_hash = hashStaffPassword(password);
+  await mdb.collection('staff_accounts').updateOne({ username: req.params.username }, { $set: fields });
+  auditLog('admin', 'staff_update', req.params.username, { permissions });
+  res.json({ success: true });
+});
+app.delete('/admin/staff/:username', adminAuth, async (req, res) => {
+  await mdb.collection('staff_accounts').deleteOne({ username: req.params.username });
+  await mdb.collection('staff_sessions').deleteMany({ username: req.params.username });
+  auditLog('admin', 'staff_delete', req.params.username, {});
+  res.json({ success: true });
+});
+
 function auditLog(actor, action, targetId, details) {
   mdb.collection('audit_log').insertOne({
     actor, action,
@@ -5740,7 +5861,7 @@ app.get("/admin/dashboard/stage-timings", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/orders ─────────────────────────────────────────────────────
-app.get("/admin/orders", adminAuth, async (req, res) => {
+app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
   try {
     const { stage, vendor, created_at_min, created_at_max } = req.query;
     const raw    = await fetchAllOrders("any", created_at_min || "2000-01-01T00:00:00Z", created_at_max || null);
