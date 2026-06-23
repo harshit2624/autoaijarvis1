@@ -9035,7 +9035,9 @@
     const [view,       setView]       = useState('dashboard');
     const [stageFilter,setStageFilter]= useState('all');
     const [pass,       setPass]       = useState('');
-    const [staffUser,  setStaffUser]  = useState(null); // null = admin login mode, '' or string = staff login mode
+    // ?staff=1 (from the Staff Portal card on the landing page) opens straight
+    // into staff login mode instead of the default admin password screen.
+    const [staffUser,  setStaffUser]  = useState(() => new URLSearchParams(location.search).get('staff') ? '' : null);
     const [loginErr,   setLoginErr]   = useState('');
     const [loginLoad,  setLoginLoad]  = useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
