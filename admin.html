@@ -7386,7 +7386,7 @@
   // Only permissions wired up to an actual backend check belong here —
   // showing a checkbox that doesn't gate anything would be misleading.
   const STAFF_PERMISSIONS = [
-    { id:'orders', label:'Orders', desc:'View the Orders page (read-only — no bulk actions, fulfillment, or settlements).' },
+    { id:'orders', label:'Orders', desc:'Full access to the Orders page — tags, stage changes, fulfillment, timeline notes, bulk actions. Settlements stays admin-only.' },
   ];
 
   function StaffAccounts({ token }) {

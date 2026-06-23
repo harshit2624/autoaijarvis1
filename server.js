@@ -5250,7 +5250,7 @@ app.post("/vendor/orders/:shopifyId/tag", vendorAuth, async (req, res) => {
 });
 
 // ── POST /admin/orders/:id/tag ────────────────────────────────────────────
-app.post("/admin/orders/:id/tag", adminAuth, async (req, res) => {
+app.post("/admin/orders/:id/tag", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { tags } = req.body || {};
   if (tags === undefined) return res.status(400).json({ error: "tags field required." });
@@ -6024,7 +6024,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
 });
 
 // ── PUT /admin/orders/:id/stage ───────────────────────────────────────────
-app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
+app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
   const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
@@ -6057,7 +6057,7 @@ app.put("/admin/orders/:id/stage", adminAuth, async (req, res) => {
 // Mark or release super hold on an order. Admin-only, bypasses all guards.
 // ── POST /admin/orders/bulk-update ────────────────────────────────────────
 // Bulk set stage + add/remove Shopify tags for multiple orders
-app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
+app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, res) => {
   const { order_ids, stage, add_tags = [], remove_tags = [] } = req.body || {};
   if (!Array.isArray(order_ids) || order_ids.length === 0)
     return res.status(400).json({ error: "order_ids array required." });
@@ -6147,7 +6147,7 @@ app.post("/admin/orders/bulk-update", adminAuth, async (req, res) => {
 });
 
 // ── PUT /admin/orders/:id/vendor-stage — set stage for one vendor in an order ──
-app.put("/admin/orders/:id/vendor-stage", adminAuth, async (req, res) => {
+app.put("/admin/orders/:id/vendor-stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { vendor_name, stage } = req.body || {};
   const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
@@ -6187,14 +6187,14 @@ app.post("/admin/migrate/stringify-ids", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/orders/:id/vendor-stages ──────────────────────────────────
-app.get("/admin/orders/:id/vendor-stages", adminAuth, async (req, res) => {
+app.get("/admin/orders/:id/vendor-stages", requirePermission('orders'), async (req, res) => {
   const rows = await mdb.collection('order_vendor_stage').find({ shopify_id: req.params.id }, { projection: { vendor_name: 1, stage: 1, updated_at: 1, _id: 0 } }).toArray();
   res.json({ vendorStages: Object.fromEntries(rows.map(r => [r.vendor_name, r.stage])) });
 });
 
 // ── POST /admin/orders/:id/fulfill-vendor ────────────────────────────────
 // Partially fulfill only a specific vendor's line items on Shopify, save AWB, send customer email
-app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
+app.post("/admin/orders/:id/fulfill-vendor", requirePermission('orders'), async (req, res) => {
   const shopifyId = req.params.id;
   const { vendor_name, awb, courier, tracking_url } = req.body || {};
   if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
@@ -6275,7 +6275,7 @@ app.post("/admin/orders/:id/fulfill-vendor", adminAuth, async (req, res) => {
 });
 
 // ── PUT /admin/orders/:id/meta ────────────────────────────────────────────
-app.put("/admin/orders/:id/meta", adminAuth, async (req, res) => {
+app.put("/admin/orders/:id/meta", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { payment_type, advance_paid, shipping_charge, notes, awb, courier, tracking_url } = req.body || {};
   const now = new Date().toISOString();
@@ -6992,7 +6992,7 @@ app.put("/admin/settlements/:id/mark-paid", adminAuth, async (req, res) => {
 });
 
 // ── Tag Mapping endpoints ─────────────────────────────────────────────────
-app.get("/admin/order-tags", adminAuth, async (req, res) => {
+app.get("/admin/order-tags", requirePermission('orders'), async (req, res) => {
   try {
     const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
     const tagSet = new Set();
@@ -8101,7 +8101,7 @@ app.get("/vendor/orders/:shopifyId/fulfillment-items", vendorAuth, async (req, r
 });
 
 // GET /admin/orders/:shopifyId/fulfillment-items — line items with live fulfillable quantities + existing shipments
-app.get("/admin/orders/:shopifyId/fulfillment-items", adminAuth, async (req, res) => {
+app.get("/admin/orders/:shopifyId/fulfillment-items", requirePermission('orders'), async (req, res) => {
   try {
     const sid = String(req.params.shopifyId);
     const { order: shopifyOrder } = await shopifyREST(`/orders/${sid}.json`);
@@ -8143,7 +8143,7 @@ app.get("/admin/orders/:shopifyId/fulfillment-items", adminAuth, async (req, res
 
 // POST /admin/orders/:shopifyId/create-shipment — admin creates a shipment for selected line items/quantities
 // across one or more vendors, choosing a connected partner + saved pickup location.
-app.post("/admin/orders/:shopifyId/create-shipment", adminAuth, async (req, res) => {
+app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders'), async (req, res) => {
   try {
     const sid = String(req.params.shopifyId);
     const { items, partner, pickup_location, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface' } = req.body || {};
@@ -8569,7 +8569,7 @@ app.delete("/admin/commission-rules/:id", adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/admin/shipping-creds", adminAuth, async (req, res) => {
+app.get("/admin/shipping-creds", requirePermission('orders'), async (req, res) => {
   const rows = await mdb.collection('global_shipping_creds').find({}, { projection: { id: 1, partner: 1, connected_at: 1, _id: 0 } }).toArray();
   res.json({ partners: rows });
 });
@@ -8637,7 +8637,7 @@ app.put("/vendor/shipping/partners/:partner/locations", vendorAuth, async (req, 
 
 
 // Admin delivery status refresh — tracks all vendor AWBs, updates vendor-level stages
-app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) => {
+app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'), async (req, res) => {
   try {
     const { shopifyId } = req.params;
     const ssCreds = await getShipSagarCreds();
@@ -8718,13 +8718,13 @@ app.get("/admin/orders/:shopifyId/delivery-status", adminAuth, async (req, res) 
 
 
 // Admin: get + post notes
-app.get("/admin/orders/:id/notes", adminAuth, async (req, res) => {
+app.get("/admin/orders/:id/notes", requirePermission('orders'), async (req, res) => {
   const notes = await ON.allFor(req.params.id);
   const remarks = await DR.allFor(req.params.id);
   res.json({ notes, remarks });
 });
 
-app.post("/admin/orders/:id/notes", adminAuth, async (req, res) => {
+app.post("/admin/orders/:id/notes", requirePermission('orders'), async (req, res) => {
   const { note } = req.body || {};
   if (!note?.trim()) return res.status(400).json({ error: "note required." });
   await ON.insert(req.params.id, 'admin', 'Admin', note.trim());
@@ -8736,7 +8736,7 @@ app.post("/admin/orders/:id/notes", adminAuth, async (req, res) => {
 // POST /admin/orders/:id/price-overrides  → body: { line_item_id, price, original_price }
 // DELETE /admin/orders/:id/price-overrides/:lineItemId
 
-app.get("/admin/orders/:id/price-overrides", adminAuth, async (req, res) => {
+app.get("/admin/orders/:id/price-overrides", requirePermission('orders'), async (req, res) => {
   try {
     const overrides = await mdb.collection('order_price_overrides')
       .find({ shopify_order_id: String(req.params.id) }, { projection: { _id: 0 } })
@@ -8745,7 +8745,7 @@ app.get("/admin/orders/:id/price-overrides", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post("/admin/orders/:id/price-overrides", adminAuth, async (req, res) => {
+app.post("/admin/orders/:id/price-overrides", requirePermission('orders'), async (req, res) => {
   try {
     const { line_item_id, price, original_price } = req.body || {};
     if (!line_item_id || price === undefined || price === null) return res.status(400).json({ error: 'line_item_id and price required' });
@@ -8761,7 +8761,7 @@ app.post("/admin/orders/:id/price-overrides", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete("/admin/orders/:id/price-overrides/:lineItemId", adminAuth, async (req, res) => {
+app.delete("/admin/orders/:id/price-overrides/:lineItemId", requirePermission('orders'), async (req, res) => {
   try {
     await mdb.collection('order_price_overrides').deleteOne({ shopify_order_id: String(req.params.id), line_item_id: String(req.params.lineItemId) });
     res.json({ success: true });
@@ -12612,7 +12612,7 @@ async function fetchShipSagarCouriers() {
   return data.getCourier || [];
 }
 
-app.get("/admin/shipsagar/couriers", adminAuth, async (req, res) => {
+app.get("/admin/shipsagar/couriers", requirePermission('orders'), async (req, res) => {
   try {
     const list = await fetchShipSagarCouriers();
     res.json({ getCourier: list });
@@ -14344,7 +14344,7 @@ app.get("/track/product/:productId/variants", async (req, res) => {
 });
 
 // ── Batch product images — ?ids=pid1,pid2,pid3 (adminAuth) ───────────────
-app.get("/admin/product-images", adminAuth, async (req, res) => {
+app.get("/admin/product-images", requirePermission('orders'), async (req, res) => {
   try {
     const ids = (req.query.ids || '').split(',').map(s=>s.trim()).filter(Boolean);
     if (!ids.length) return res.json({ images: {} });
@@ -15096,7 +15096,7 @@ async function fetchPartnerWarehouses(partner, creds) {
   return credsToWarehouses(creds);
 }
 
-app.get("/admin/shipping/warehouses", adminAuth, async (req, res) => {
+app.get("/admin/shipping/warehouses", requirePermission('orders'), async (req, res) => {
   const { partner } = req.query;
   if (!partner) return res.status(400).json({ error: 'partner required' });
   try {
