@@ -21,6 +21,7 @@
       --border:    #1a3d35;
       --border-hi: #235c51;
       --green:     #10b981;
+      --on-green:  #000000;
       --green-dim: #064e3b;
       --green-glow:#05766050;
       --teal:      #2dd4bf;
@@ -46,6 +47,7 @@
       --border:    #e4e4e7;
       --border-hi: #cfcfd4;
       --green:     #18181b;
+      --on-green:  #ffffff;
       --green-dim: #f0f0f1;
       --green-glow:#18181b1f;
       --teal:      #3f3f46;
@@ -61,9 +63,7 @@
       --text-muted:#71717a;
       --text-dim:  #3f3f46;
     }
-    body.light-theme .login-btn, body[data-theme="minimal"] .login-btn { color: #fff; }
     body.light-theme .login-btn:hover:not(:disabled), body[data-theme="minimal"] .login-btn:hover:not(:disabled) { background: #3f3f46; }
-    body.light-theme .btn-green, body[data-theme="minimal"] .btn-green { color: #fff; }
     body.light-theme .btn-green:hover:not(:disabled), body[data-theme="minimal"] .btn-green:hover:not(:disabled) { background: #3f3f46; }
 
     /* ── Midnight theme (indigo dark) ── */
@@ -75,6 +75,7 @@
       --border:    #1a2540;
       --border-hi: #243560;
       --green:     #6366f1;
+      --on-green:  #ffffff;
       --green-dim: #1e1b4b;
       --green-glow:#6366f130;
       --teal:      #22d3ee;
@@ -127,7 +128,7 @@
     .field-input::placeholder { color: var(--text-muted); }
     .login-btn {
       width: 100%; padding: 11px; border-radius: 7px; border: none; cursor: pointer;
-      background: var(--green); color: #000; font-family: var(--font-family);
+      background: var(--green); color: var(--on-green); font-family: var(--font-family);
       font-size: 12px; font-weight: 700; letter-spacing: 2px; transition: background 0.15s;
       margin-top: 4px;
     }
@@ -237,7 +238,7 @@
       letter-spacing: 1px; transition: all 0.15s; white-space: nowrap; text-decoration: none;
     }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-green  { background: var(--green); color: #000; }
+    .btn-green  { background: var(--green); color: var(--on-green); }
     .btn-green:hover:not(:disabled)  { background: #34d399; }
     .btn-ghost  { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
     .btn-ghost:hover:not(:disabled)  { background: var(--bg-card2); color: var(--text); }
@@ -392,7 +393,7 @@
       letter-spacing: 1px; transition: all 0.15s;
     }
     .ftab:hover  { background: var(--bg-card2); color: var(--text); }
-    .ftab.active { background: var(--green); color: #000; border-color: var(--green); }
+    .ftab.active { background: var(--green); color: var(--on-green); border-color: var(--green); }
     .fselect {
       background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px;
       padding: 7px 26px 7px 10px; color: var(--text); font-family: var(--font-family);
@@ -431,7 +432,7 @@
       transition: all 0.15s; padding: 0 6px;
     }
     .pbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
-    .pbtn.cur { background: var(--green); color: #000; border-color: var(--green); font-weight: 700; }
+    .pbtn.cur { background: var(--green); color: var(--on-green); border-color: var(--green); font-weight: 700; }
     .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
     /* ── Modal overlay ── */
@@ -2123,7 +2124,7 @@
                   flexShrink:0, padding:'5px 12px', borderRadius:20, border:'none', cursor:'pointer',
                   fontSize:12, fontWeight:600, whiteSpace:'nowrap', fontFamily:'var(--font-family)',
                   background: stage===s.id ? 'var(--green)' : 'var(--bg-card2)',
-                  color: stage===s.id ? '#000' : 'var(--text-muted)',
+                  color: stage===s.id ? 'var(--on-green)' : 'var(--text-muted)',
                   transition:'all 0.15s',
                 }}>
                   {s.label} {count>0?`(${count})`:''}
