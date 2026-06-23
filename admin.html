@@ -9124,13 +9124,13 @@
         <div className="login-box">
           <div className="login-logo">A</div>
           <div className="login-title">CROSCROW</div>
-          <div className="login-sub">{staffUser ? 'Staff Login' : 'Admin Portal'}</div>
+          <div className="login-sub">{staffUser!==null ? 'Staff Login' : 'Admin Portal'}</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
-          {staffUser && <>
+          {staffUser!==null && <>
             <label className="field-label">Username</label>
             <input className="field-input" placeholder="Staff username" value={staffUser} onChange={e=>setStaffUser(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
           </>}
-          <label className="field-label">{staffUser ? 'Password' : 'Admin Password'}</label>
+          <label className="field-label">{staffUser!==null ? 'Password' : 'Admin Password'}</label>
           <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
           <button className="login-btn" onClick={login} disabled={loginLoad||!pass||(staffUser!==null&&!staffUser)}>{loginLoad?'Signing in…':'Sign In'}</button>
           <div style={{textAlign:'center',marginTop:14}}>
