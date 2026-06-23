@@ -6451,6 +6451,20 @@
                             <button className="btn btn-sm btn-indigo" onClick={()=>importProduct(p)} disabled={importing[p.id]||allMapped}>
                               {importing[p.id]?'Importing…':allMapped?'Imported':'↓ Import All'}
                             </button>
+                            {!allMapped && (
+                              <button className="btn btn-sm btn-ghost" style={{borderColor:'var(--green)',color:'var(--green)'}}
+                                onClick={async()=>{
+                                  const req = { vendor_name: selected, product_id: p.id, product_title: p.title };
+                                  setSmartMap({ step:'loading', req, vendorVariants:[], ccProduct:null, matches:[], saving:false, saveMsg:'' });
+                                  try {
+                                    const r2 = await fetch(`/admin/vendor-sync/vendor-product-variants?vendor_name=${encodeURIComponent(selected)}&product_id=${p.id}`, { headers:{ Authorization:'Bearer '+token } });
+                                    const d2 = await r2.json();
+                                    setSmartMap(s=>({...s, step:'search_cc', vendorVariants: d2.variants||[] }));
+                                  } catch(e) { setSmartMap(s=>({...s, step:'error', error:e.message})); }
+                                }}>
+                                🔗 Smart Map
+                              </button>
+                            )}
                             {allMapped && (
                               <button className="btn btn-sm btn-ghost" onClick={()=>syncProduct(p.id)} disabled={syncingProduct[p.id]}
                                 style={{borderColor:'var(--cyan)',color:'var(--cyan)'}}>
@@ -6681,7 +6695,7 @@
             }));
             try {
               const r = await fetch('/admin/vendor-sync/smart-map', { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
-                body: JSON.stringify({ vendor_name: smartMap.req.vendor_name, vendor_product_id: String(smartMap.req.product_id), croscrow_product_id: String(smartMap.ccProduct.id), mappings, upload_request_id: String(smartMap.req._id) }) });
+                body: JSON.stringify({ vendor_name: smartMap.req.vendor_name, vendor_product_id: String(smartMap.req.product_id), croscrow_product_id: String(smartMap.ccProduct.id), mappings, ...(smartMap.req._id ? { upload_request_id: String(smartMap.req._id) } : {}) }) });
               const d = await r.json();
               if (!r.ok) throw new Error(d.error);
               setSmartMap(s=>({...s, saving:false, saveMsg:`✅ ${d.mapped} mapped${d.skipped?`, ${d.skipped} skipped`:''}${d.errors?.length?`, ${d.errors.length} errors`:''}`}));
