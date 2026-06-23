@@ -9032,7 +9032,15 @@
     const [role,       setRole]       = useState(()=>ls.get('admin_role','admin'));
     const [permissions,setPermissions]= useState(()=>ls.get('admin_permissions',['*']));
     const [staffName,  setStaffName]  = useState(()=>ls.get('admin_staff_name',''));
-    const [view,       setView]       = useState('dashboard');
+    // Lazily picks the right starting page from whatever's already in
+    // localStorage from a previous login — avoids ever mounting 'dashboard'
+    // (which staff can't access) even for a split second on page reload.
+    const [view,       setView]       = useState(() => {
+      const r0 = ls.get('admin_role','admin');
+      const p0 = ls.get('admin_permissions',['*']);
+      if (r0 !== 'admin' && !p0.includes('*') && !p0.includes('dashboard')) return p0[0] || 'dashboard';
+      return 'dashboard';
+    });
     const [stageFilter,setStageFilter]= useState('all');
     const [pass,       setPass]       = useState('');
     // ?staff=1 (from the Staff Portal card on the landing page) opens straight
@@ -9109,6 +9117,11 @@
         setRole(r2); ls.set('admin_role', r2);
         setPermissions(isStaff ? (d.permissions||[]) : ['*']); ls.set('admin_permissions', isStaff ? (d.permissions||[]) : ['*']);
         setStaffName(isStaff ? (d.name||'') : ''); ls.set('admin_staff_name', isStaff ? (d.name||'') : '');
+        // Set view in the SAME batch as role/permissions so the very first
+        // render after login already lands on an allowed page — otherwise
+        // 'dashboard' (the default) briefly mounts for staff, who can't
+        // access it, before the separate redirect effect catches up.
+        if (isStaff) setView((d.permissions||[])[0] || 'dashboard');
         setToken(d.token);
       } catch(e) { setLoginErr(e.message); }
       setLoginLoad(false);
