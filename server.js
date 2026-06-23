@@ -10670,7 +10670,7 @@ app.post("/vendor/delay-remark", async (req, res) => {
 
 // ── Admin penalty endpoints ────────────────────────────────────────────────
 // ── Force-run penalty cron now (for testing) ──────────────────────────────
-app.post("/admin/penalties/run-cron", adminAuth, async (req, res) => {
+app.post("/admin/penalties/run-cron", requirePermission('penalties'), async (req, res) => {
   await penaltyCronJob();
   res.json({ success: true, message: "Penalty cron ran." });
 });
@@ -11149,7 +11149,7 @@ async function agreementExpiryCron() {
 setInterval(agreementExpiryCron, 24 * 60 * 60 * 1000); // daily
 
 // ── Send test warning email to vendor ────────────────────────────────────
-app.post("/admin/penalties/test-warning", adminAuth, async (req, res) => {
+app.post("/admin/penalties/test-warning", requirePermission('penalties'), async (req, res) => {
   const { shopify_id, vendor_name, order_name } = req.body || {};
   if (!shopify_id || !vendor_name) return res.status(400).json({ error: "shopify_id and vendor_name required." });
   const vcfg = await VC.get(vendor_name);
@@ -11162,14 +11162,14 @@ app.post("/admin/penalties/test-warning", adminAuth, async (req, res) => {
 });
 
 // ── Manually trigger a test penalty ──────────────────────────────────────
-app.post("/admin/penalties/test-trigger", adminAuth, async (req, res) => {
+app.post("/admin/penalties/test-trigger", requirePermission('penalties'), async (req, res) => {
   const { shopify_id, vendor_name, order_name } = req.body || {};
   if (!shopify_id || !vendor_name) return res.status(400).json({ error: "shopify_id and vendor_name required." });
   triggerPenalty(shopify_id, vendor_name, order_name || shopify_id, 'manual_test');
   res.json({ success: true, message: `Penalty triggered for ${vendor_name} on ${order_name || shopify_id}` });
 });
 
-app.delete("/admin/penalties/:id", adminAuth, async (req, res) => {
+app.delete("/admin/penalties/:id", requirePermission('penalties'), async (req, res) => {
   const p = await OP.get(req.params.id);
   if (!p) return res.status(404).json({ error: "Penalty not found." });
   await mdb.collection('order_penalties').deleteOne({ id: parseInt(req.params.id) });
@@ -11202,7 +11202,7 @@ app.delete("/admin/penalties/:id", adminAuth, async (req, res) => {
   })();
 });
 
-app.get("/admin/penalties", adminAuth, async (req, res) => {
+app.get("/admin/penalties", requirePermission('penalties'), async (req, res) => {
   const { status } = req.query;
   res.json({ penalties: await OP.all(status) });
 });
@@ -11259,7 +11259,7 @@ app.post("/vendor/penalties/:id/review-request", vendorAuth, async (req, res) =>
   res.json({ success: true });
 });
 
-app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
+app.put("/admin/penalties/:id", requirePermission('penalties'), async (req, res) => {
   const { action, penalty_amount, admin_note } = req.body || {};
   const p = await OP.get(req.params.id);
   if (!p) return res.status(404).json({ error: "Penalty not found." });
@@ -11300,7 +11300,7 @@ app.put("/admin/penalties/:id", adminAuth, async (req, res) => {
 });
 
 // ── POST /admin/penalties/bulk ────────────────────────────────────────────
-app.post("/admin/penalties/bulk", adminAuth, async (req, res) => {
+app.post("/admin/penalties/bulk", requirePermission('penalties'), async (req, res) => {
   const { ids, action, penalty_amount, admin_note } = req.body || {};
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids required' });
   if (!['confirm','cancel','delete'].includes(action)) return res.status(400).json({ error: 'action must be confirm, cancel, or delete' });
