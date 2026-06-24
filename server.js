@@ -115,6 +115,9 @@ async function startServer() {
       mdb.collection("settlement_penalties").createIndex({ settlement_id: 1 }),
       mdb.collection("wallet_tx").createIndex({ vendor_name: 1, created_at: -1 }),
       mdb.collection("audit_log").createIndex({ created_at: -1 }),
+      mdb.collection("pixel_events").createIndex({ created_at: -1 }),
+      mdb.collection("pixel_events").createIndex({ eventName: 1, created_at: -1 }),
+      mdb.collection("pixel_events").createIndex({ productName: 1, eventName: 1 }),
       mdb.collection("admin_sessions").createIndex({ token: 1 }, { unique: true }),
       mdb.collection("admin_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       mdb.collection("product_commission_rules").createIndex({ vendor_name: 1, product_id: 1 }, { unique: true, sparse: true }),
@@ -15936,5 +15939,115 @@ app.get('/support-widget-embed.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(require('path').join(__dirname, 'support-widget-embed.js'));
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PIXEL TRACKER — storefront event ingestion + product performance analytics
+// ══════════════════════════════════════════════════════════════════════════
+
+const PIXEL_EVENT_NAMES = ['ViewContent', 'AddToCart', 'InitiateCheckout', 'Purchase'];
+
+function pixelDateRange(from, to) {
+  const match = {};
+  if (from) match.$gte = `${from}T00:00:00.000Z`;
+  if (to) match.$lte = `${to}T23:59:59.999Z`;
+  return Object.keys(match).length ? { created_at: match } : {};
+}
+
+// ── Public ingestion — called directly from the storefront pixel script ────
+app.post('/track-event', async (req, res) => {
+  try {
+    const { storeCode, brandName, eventName, productName, productImage, value, currency, timestamp } = req.body || {};
+    if (!eventName || !PIXEL_EVENT_NAMES.includes(eventName)) return res.status(400).json({ error: 'Invalid or missing eventName' });
+    await mdb.collection('pixel_events').insertOne({
+      storeCode: storeCode || '',
+      brandName: brandName || '',
+      eventName,
+      productName: (productName || 'N/A').toString().slice(0, 200),
+      productImage: (productImage || '').toString().slice(0, 500),
+      value: value != null && value !== '' ? parseFloat(value) || 0 : null,
+      currency: currency || '',
+      client_timestamp: timestamp || null,
+      created_at: new Date().toISOString(),
+    });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Summary stat cards (views / ATC / checkout / purchases + funnel rates) ─
+app.get('/admin/pixel-tracker/summary', adminAuth, async (req, res) => {
+  try {
+    const match = pixelDateRange(req.query.from, req.query.to);
+    const rows = await mdb.collection('pixel_events').aggregate([
+      { $match: match },
+      { $group: { _id: '$eventName', count: { $sum: 1 }, value: { $sum: { $ifNull: ['$value', 0] } } } },
+    ]).toArray();
+    const byEvent = Object.fromEntries(rows.map(r => [r._id, r.count]));
+    const views = byEvent.ViewContent || 0, atc = byEvent.AddToCart || 0, checkout = byEvent.InitiateCheckout || 0, purchases = byEvent.Purchase || 0;
+    const purchaseValue = rows.find(r => r._id === 'Purchase')?.value || 0;
+    res.json({
+      views, atc, checkout, purchases, purchaseValue,
+      viewToAtcRate: views ? (atc / views) * 100 : 0,
+      atcToCheckoutRate: atc ? (checkout / atc) * 100 : 0,
+      checkoutToPurchaseRate: checkout ? (purchases / checkout) * 100 : 0,
+      viewToPurchaseRate: views ? (purchases / views) * 100 : 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Top N products by raw count for a given event type ──────────────────────
+app.get('/admin/pixel-tracker/top-products', adminAuth, async (req, res) => {
+  try {
+    const metric = PIXEL_EVENT_NAMES.includes(req.query.metric) ? req.query.metric : 'ViewContent';
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const match = { ...pixelDateRange(req.query.from, req.query.to), eventName: metric, productName: { $ne: 'N/A' } };
+    const top = await mdb.collection('pixel_events').aggregate([
+      { $match: match },
+      { $group: { _id: '$productName', count: { $sum: 1 }, image: { $last: '$productImage' } } },
+      { $sort: { count: -1 } },
+      { $limit: limit },
+    ]).toArray();
+    res.json({ products: top.map(t => ({ productName: t._id, count: t.count, productImage: t.image || '' })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Per-product funnel leaderboard — view→ATC, ATC→checkout, checkout→purchase
+app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const minViews = parseInt(req.query.minViews) || 3; // avoid noisy rates from 1-2 view flukes
+    const match = { ...pixelDateRange(req.query.from, req.query.to), productName: { $ne: 'N/A' } };
+    const rows = await mdb.collection('pixel_events').aggregate([
+      { $match: match },
+      { $group: {
+          _id: '$productName',
+          image: { $last: '$productImage' },
+          views:     { $sum: { $cond: [{ $eq: ['$eventName', 'ViewContent'] }, 1, 0] } },
+          atc:       { $sum: { $cond: [{ $eq: ['$eventName', 'AddToCart'] }, 1, 0] } },
+          checkout:  { $sum: { $cond: [{ $eq: ['$eventName', 'InitiateCheckout'] }, 1, 0] } },
+          purchases: { $sum: { $cond: [{ $eq: ['$eventName', 'Purchase'] }, 1, 0] } },
+      }},
+    ]).toArray();
+    const withRates = rows.filter(r => r.views >= minViews).map(r => ({
+      productName: r._id, productImage: r.image || '',
+      views: r.views, atc: r.atc, checkout: r.checkout, purchases: r.purchases,
+      viewToAtcRate: r.views ? (r.atc / r.views) * 100 : 0,
+      atcToCheckoutRate: r.atc ? (r.checkout / r.atc) * 100 : 0,
+      checkoutToPurchaseRate: r.checkout ? (r.purchases / r.checkout) * 100 : 0,
+      viewToPurchaseRate: r.views ? (r.purchases / r.views) * 100 : 0,
+    }));
+    const sortBy = ['viewToAtcRate','atcToCheckoutRate','checkoutToPurchaseRate','viewToPurchaseRate'].includes(req.query.sortBy) ? req.query.sortBy : 'viewToAtcRate';
+    withRates.sort((a, b) => b[sortBy] - a[sortBy]);
+    res.json({ products: withRates.slice(0, limit) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Recent raw events — the live "what's happening right now" log feed ─────
+app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const logs = await mdb.collection('pixel_events').find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(limit).toArray();
+    res.json({ logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

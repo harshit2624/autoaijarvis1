@@ -7542,6 +7542,204 @@
   }
 
   /* ══════════════════════════════════
+     PIXEL TRACKER — storefront event analytics
+  ══════════════════════════════════ */
+  const PIXEL_EVENT_NAMES_FE = ['ViewContent','AddToCart','InitiateCheckout','Purchase'];
+  function PixelTracker({ token }) {
+    const [period,    setPeriod]    = useState(PERIOD_PRESETS[2]); // Last 7 Days
+    const [summary,   setSummary]   = useState(null);
+    const [sumLoading,setSumLoading]= useState(true);
+    const [topTab,    setTopTab]    = useState('ViewContent');
+    const [topProducts, setTopProducts] = useState([]);
+    const [topLoading,setTopLoading]= useState(true);
+    const [rankBy,    setRankBy]    = useState('viewToAtcRate');
+    const [leaderboard,setLeaderboard] = useState([]);
+    const [lbLoading, setLbLoading] = useState(true);
+    const [logs,      setLogs]      = useState([]);
+    const [logsLoading,setLogsLoading] = useState(true);
+    const [now,       setNow]       = useState(Date.now());
+
+    useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+
+    const qs = () => `from=${period.from}&to=${period.to}`;
+
+    const loadSummary = () => {
+      setSumLoading(true);
+      fetch(`${API}/admin/pixel-tracker/summary?${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(setSummary).catch(()=>{}).finally(()=>setSumLoading(false));
+    };
+    const loadTopProducts = () => {
+      setTopLoading(true);
+      fetch(`${API}/admin/pixel-tracker/top-products?metric=${topTab}&limit=30&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setTopProducts(d.products||[])).catch(()=>{}).finally(()=>setTopLoading(false));
+    };
+    const loadLeaderboard = () => {
+      setLbLoading(true);
+      fetch(`${API}/admin/pixel-tracker/leaderboard?sortBy=${rankBy}&limit=20&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setLeaderboard(d.products||[])).catch(()=>{}).finally(()=>setLbLoading(false));
+    };
+    const loadLogs = () => {
+      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=50`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>{ setLogs(d.logs||[]); setLogsLoading(false); }).catch(()=>setLogsLoading(false));
+    };
+
+    useEffect(loadSummary, [period]);
+    useEffect(loadTopProducts, [period, topTab]);
+    useEffect(loadLeaderboard, [period, rankBy]);
+    useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, []);
+
+    const EVENT_META = {
+      ViewContent:       { label:'Views',     icon:'👁', color:'#6366f1' },
+      AddToCart:         { label:'Add to Cart', icon:'🛒', color:'#f59e0b' },
+      InitiateCheckout:  { label:'Checkout',  icon:'💳', color:'#22d3ee' },
+      Purchase:          { label:'Purchases', icon:'✅', color:'#10b981' },
+    };
+    const RATE_OPTIONS = [
+      { id:'viewToAtcRate',          label:'View → ATC' },
+      { id:'atcToCheckoutRate',      label:'ATC → Checkout' },
+      { id:'checkoutToPurchaseRate', label:'Checkout → Purchase' },
+      { id:'viewToPurchaseRate',     label:'View → Purchase (overall)' },
+    ];
+
+    const elapsed = (iso) => {
+      const secs = Math.floor((now - new Date(iso).getTime()) / 1000);
+      if (secs < 60) return `${secs}s ago`;
+      const mins = Math.floor(secs/60);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins/60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return new Date(iso).toLocaleDateString('en-IN', { day:'numeric', month:'short' });
+    };
+
+    const ProductRow = ({ products, loading, countLabel }) => (
+      <div style={{display:'flex',gap:10,overflowX:'auto',paddingBottom:8}}>
+        {loading && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>Loading…</div>}
+        {!loading && products.length===0 && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>No data for this period yet.</div>}
+        {products.map((p,i) => (
+          <div key={p.productName+i} style={{flexShrink:0,width:130,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
+            <div style={{width:'100%',height:100,background:'var(--bg-card2)',position:'relative'}}>
+              {p.productImage ? <img src={p.productImage} style={{width:'100%',height:'100%',objectFit:'cover'}} onError={e=>e.target.style.display='none'}/> : null}
+              <span style={{position:'absolute',top:5,left:5,fontSize:9,fontWeight:800,background:'rgba(0,0,0,0.6)',color:'#fff',padding:'1px 6px',borderRadius:99}}>#{i+1}</span>
+            </div>
+            <div style={{padding:'7px 9px'}}>
+              <div style={{fontSize:11,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.productName}>{p.productName}</div>
+              <div style={{fontSize:13,fontWeight:800,color:'var(--indigo)',marginTop:2}}>{p.count} {countLabel}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,gap:8,flexWrap:'wrap'}}>
+          <div>
+            <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>🎯 Pixel Tracker</h2>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Storefront product performance — views, add-to-cart, checkout, purchases</div>
+          </div>
+          <PeriodPicker period={period} onChange={setPeriod} align="right"/>
+        </div>
+
+        {/* Summary stat cards */}
+        <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',marginBottom:10}}>
+          <StatCard color="indigo" icon="👁" label="Views" value={sumLoading?'…':(summary?.views??0).toLocaleString()} sub={period.label}/>
+          <StatCard color="yellow" icon="🛒" label="Add to Cart" value={sumLoading?'…':(summary?.atc??0).toLocaleString()} sub={period.label}/>
+          <StatCard color="cyan" icon="💳" label="Checkout" value={sumLoading?'…':(summary?.checkout??0).toLocaleString()} sub={period.label}/>
+          <StatCard color="green" icon="✅" label="Purchases" value={sumLoading?'…':(summary?.purchases??0).toLocaleString()} sub={summary?.purchaseValue?`₹${summary.purchaseValue.toLocaleString()}`:period.label}/>
+        </div>
+
+        {/* Funnel conversion rates */}
+        {!sumLoading && summary && (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:24}}>
+            {[
+              { label:'View → ATC', val:summary.viewToAtcRate, color:'#f59e0b' },
+              { label:'ATC → Checkout', val:summary.atcToCheckoutRate, color:'#22d3ee' },
+              { label:'Checkout → Purchase', val:summary.checkoutToPurchaseRate, color:'#10b981' },
+              { label:'View → Purchase (overall)', val:summary.viewToPurchaseRate, color:'#a855f7' },
+            ].map(r => (
+              <div key={r.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:0.5,textTransform:'uppercase',marginBottom:4}}>{r.label}</div>
+                <div style={{fontSize:22,fontWeight:800,color:r.color}}>{r.val.toFixed(1)}%</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Top 30 products by metric */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16,marginBottom:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+            <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Top 30 Products</div>
+            <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+              {PIXEL_EVENT_NAMES_FE.map(ev => (
+                <button key={ev} onClick={()=>setTopTab(ev)} style={{
+                  fontSize:11, fontWeight:600, padding:'5px 11px', borderRadius:8, cursor:'pointer', fontFamily:'var(--font-family)',
+                  border:`1px solid ${topTab===ev?EVENT_META[ev].color:'var(--border)'}`,
+                  background: topTab===ev ? EVENT_META[ev].color+'22' : 'transparent',
+                  color: topTab===ev ? EVENT_META[ev].color : 'var(--text-muted)',
+                }}>{EVENT_META[ev].icon} {EVENT_META[ev].label}</button>
+              ))}
+            </div>
+          </div>
+          <ProductRow products={topProducts} loading={topLoading} countLabel={EVENT_META[topTab].label.toLowerCase()}/>
+        </div>
+
+        {/* Conversion leaderboard */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16,marginBottom:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Conversion Leaderboard</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>Ranked by your selected rate · minimum 3 views to qualify</div>
+            </div>
+            <select value={rankBy} onChange={e=>setRankBy(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px'}}>
+              {RATE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </div>
+          {lbLoading && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>Loading…</div>}
+          {!lbLoading && leaderboard.length===0 && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>No products with enough views in this period yet.</div>}
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            {leaderboard.map((p,i) => (
+              <div key={p.productName+i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg-hover)',borderRadius:8}}>
+                <span style={{fontSize:11,fontWeight:800,color:'var(--text-muted)',width:20,flexShrink:0}}>#{i+1}</span>
+                {p.productImage ? <img src={p.productImage} style={{width:36,height:36,borderRadius:6,objectFit:'cover',flexShrink:0}} onError={e=>e.target.style.display='none'}/> : <div style={{width:36,height:36,borderRadius:6,background:'var(--bg-card2)',flexShrink:0}}/>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.productName}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)'}}>{p.views} views · {p.atc} ATC · {p.checkout} checkout · {p.purchases} purchased</div>
+                </div>
+                <div style={{fontSize:16,fontWeight:800,color:'#10b981',flexShrink:0}}>{p[rankBy].toFixed(1)}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Live recent activity log */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+            <span style={{width:7,height:7,borderRadius:'50%',background:'#10b981',boxShadow:'0 0 6px #10b981'}}/>
+            <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Live Activity</div>
+            <div style={{fontSize:10,color:'var(--text-muted)'}}>updates every 6s</div>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:0,maxHeight:340,overflowY:'auto'}}>
+            {logsLoading && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>Loading…</div>}
+            {!logsLoading && logs.length===0 && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>No activity yet.</div>}
+            {logs.map((l,i) => {
+              const m = EVENT_META[l.eventName] || { label:l.eventName, icon:'•', color:'var(--text-muted)' };
+              return (
+                <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 4px',borderBottom:i<logs.length-1?'1px solid var(--border)':'none'}}>
+                  <span style={{fontSize:13}}>{m.icon}</span>
+                  <span style={{fontSize:12,color:'var(--text)',flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    <strong>{l.productName}</strong> <span style={{color:m.color,fontWeight:600}}>{m.label}</span>
+                  </span>
+                  <span style={{fontSize:10,color:'var(--text-muted)',flexShrink:0}}>{elapsed(l.created_at)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      SUPPORT CHATS — WhatsApp-style admin inbox
   ══════════════════════════════════ */
   function SupportChats({ token }) {
@@ -9187,6 +9385,7 @@
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
       { id:'brains',      icon:'🧠', label:'Brains',        section:'finance' },
       { id:'supportchats', icon:'💬', label:'Support Chats', section:'main' },
+      { id:'pixeltracker', icon:'🎯', label:'Pixel Tracker',  section:'main' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
@@ -9277,6 +9476,7 @@
           {view==='reports'     && <Reports token={token}/>}
           {view==='brains'      && <Brains token={token}/>}
           {view==='supportchats' && <SupportChats token={token}/>}
+          {view==='pixeltracker' && <PixelTracker token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
