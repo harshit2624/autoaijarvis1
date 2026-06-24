@@ -13439,6 +13439,127 @@ function analyzeProductRtoConcentration(current) {
   return findings.sort((a,b) => b.strength - a.strength).slice(0, 5);
 }
 
+// ── Pixel Tracker analyzers — storefront funnel data (views/ATC/checkout/
+// purchase), independent of the order-pipeline dataset above. Pulled
+// straight from pixel_events, which already carries productImage from the
+// storefront pixel itself, so these findings don't need the separate
+// order-line-item photo lookup the others use.
+async function buildPixelDataset(days) {
+  const fromISO = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+  const events = await mdb.collection('pixel_events').find(
+    { created_at: { $gte: fromISO }, productName: { $ne: 'N/A' } },
+    { projection: { eventName: 1, productName: 1, productImage: 1, value: 1, created_at: 1, _id: 0 } }
+  ).toArray();
+  return events.map(e => ({ ...e, created_ms: new Date(e.created_at).getTime() }));
+}
+
+function analyzePixelTrending(current, baseline, currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS) {
+  const countViews = (rows) => {
+    const map = {};
+    rows.forEach(e => { if (e.eventName === 'ViewContent') map[e.productName] = (map[e.productName] || 0) + 1; });
+    return map;
+  };
+  const curMap = countViews(current), baseMap = countViews(baseline);
+  const curWeeks = Math.max(currentDays / 7, 1), baseWeeks = Math.max(baselineDays / 7, 1);
+  const periodLabel = currentDays === 7 ? 'this week' : `in the last ${currentDays}d`;
+  const imageOf = (rows, name) => rows.find(e => e.productName === name && e.productImage)?.productImage || '';
+
+  const findings = [];
+  for (const [name, curViews] of Object.entries(curMap)) {
+    if (curViews < 8) continue; // need real traffic before calling it a trend
+    const curRate = curViews / curWeeks;
+    const baseViews = baseMap[name] || 0;
+    const baseRate = baseViews / baseWeeks;
+
+    if (baseRate < 2) {
+      findings.push({
+        category: 'Pixel Trending', severity: 'info',
+        title: `"${name}" got ${curViews} views ${periodLabel} after almost no traffic before`,
+        detail: `Sudden interest with no prior browsing trend — check what's driving it (ad spend, social mention, search ranking change) and make sure stock can handle a sales spike if it converts.`,
+        strength: curRate, productTitle: name, image: imageOf(current, name),
+      });
+      continue;
+    }
+    const growth = curRate / baseRate;
+    if (growth >= 2.5) {
+      findings.push({
+        category: 'Pixel Trending', severity: 'info',
+        title: `"${name}" views up ${growth.toFixed(1)}× — ${curRate.toFixed(0)}/wk vs ${baseRate.toFixed(0)}/wk baseline`,
+        detail: `Traffic to this product is climbing well above its normal pace. Worth featuring more prominently while interest is high.`,
+        strength: growth, productTitle: name, image: imageOf(current, name),
+      });
+    } else if (growth <= 0.35 && baseRate >= 5) {
+      findings.push({
+        category: 'Pixel Trending', severity: 'amber',
+        title: `"${name}" views dropped to ${curRate.toFixed(0)}/wk vs a ${baseRate.toFixed(0)}/wk baseline`,
+        detail: `Used to get steady traffic, now falling off — check if it dropped in search/collection ranking, went out of stock, or lost ad spend.`,
+        strength: 1 / Math.max(growth, 0.01), productTitle: name, image: imageOf(current, name),
+      });
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 6);
+}
+
+function analyzePixelFunnelDropoff(current) {
+  const stats = {};
+  current.forEach(e => {
+    const s = stats[e.productName] ||= { views: 0, atc: 0, checkout: 0, purchases: 0, image: '' };
+    if (e.productImage && !s.image) s.image = e.productImage;
+    if (e.eventName === 'ViewContent') s.views++;
+    else if (e.eventName === 'AddToCart') s.atc++;
+    else if (e.eventName === 'InitiateCheckout') s.checkout++;
+    else if (e.eventName === 'Purchase') s.purchases++;
+  });
+
+  const entries = Object.entries(stats);
+  const avgRate = (numKey, denKey, minDen) => {
+    let num = 0, den = 0;
+    entries.forEach(([, s]) => { if (s[denKey] >= minDen) { num += s[numKey]; den += s[denKey]; } });
+    return den ? (num / den) * 100 : 0;
+  };
+  const overallViewToAtc = avgRate('atc', 'views', 1);
+  const overallAtcToCheckout = avgRate('checkout', 'atc', 1);
+  const overallCheckoutToPurchase = avgRate('purchases', 'checkout', 1);
+
+  const findings = [];
+  for (const [name, s] of Object.entries(stats)) {
+    if (s.views >= 10 && s.views * (overallViewToAtc/100) >= PI_MIN_SAMPLE) {
+      const rate = (s.atc / s.views) * 100;
+      if (rate <= Math.min(overallViewToAtc * 0.4, overallViewToAtc - 8) && overallViewToAtc > 0) {
+        findings.push({
+          category: 'Funnel Drop-off', severity: 'amber',
+          title: `"${name}" gets views but barely converts to cart — ${rate.toFixed(0)}% vs ${overallViewToAtc.toFixed(0)}% average`,
+          detail: `${s.views} views, only ${s.atc} added to cart. Worth checking price, product photos, or description — there's traffic but something's stopping the add-to-cart.`,
+          strength: overallViewToAtc - rate, productTitle: name, image: s.image,
+        });
+      }
+    }
+    if (s.atc >= PI_MIN_SAMPLE) {
+      const rate = (s.checkout / s.atc) * 100;
+      if (rate <= Math.min(overallAtcToCheckout * 0.4, overallAtcToCheckout - 10) && overallAtcToCheckout > 0) {
+        findings.push({
+          category: 'Funnel Drop-off', severity: 'amber',
+          title: `"${name}" gets added to cart but checkout rarely starts — ${rate.toFixed(0)}% vs ${overallAtcToCheckout.toFixed(0)}% average`,
+          detail: `${s.atc} carts, only ${s.checkout} reached checkout. Could be a shipping-cost surprise or a price that looks different at cart vs product page.`,
+          strength: overallAtcToCheckout - rate, productTitle: name, image: s.image,
+        });
+      }
+    }
+    if (s.checkout >= PI_MIN_SAMPLE) {
+      const rate = (s.purchases / s.checkout) * 100;
+      if (rate <= Math.min(overallCheckoutToPurchase * 0.4, overallCheckoutToPurchase - 10) && overallCheckoutToPurchase > 0) {
+        findings.push({
+          category: 'Funnel Drop-off', severity: 'red',
+          title: `"${name}" starts checkout but rarely completes — ${rate.toFixed(0)}% vs ${overallCheckoutToPurchase.toFixed(0)}% average`,
+          detail: `${s.checkout} checkouts started, only ${s.purchases} completed. This is the most expensive drop-off point — check for a payment/COD issue specific to this product or its price point.`,
+          strength: overallCheckoutToPurchase - rate, productTitle: name, image: s.image,
+        });
+      }
+    }
+  }
+  return findings.sort((a,b) => b.strength - a.strength).slice(0, 8);
+}
+
 function analyzeCancellations(current) {
   const totalOrders = current.length;
   if (totalOrders < 10) return [];
@@ -13595,6 +13716,10 @@ async function runPatternAnalysis(currentDays = PI_CURRENT_DAYS, baselineDays = 
   const current  = piWindow(dataset, currentStart, nowMs);
   const baseline = piWindow(dataset, baselineStart, currentStart);
 
+  const pixelDataset  = await buildPixelDataset(lookbackDays);
+  const pixelCurrent  = pixelDataset.filter(e => e.created_ms >= currentStart && e.created_ms < nowMs);
+  const pixelBaseline = pixelDataset.filter(e => e.created_ms >= baselineStart && e.created_ms < currentStart);
+
   const findings = [
     ...analyzeDispatchTime(current, baseline, currentDays, baselineDays),
     ...analyzeTagRegionAnomalies(current),
@@ -13608,20 +13733,25 @@ async function runPatternAnalysis(currentDays = PI_CURRENT_DAYS, baselineDays = 
     ...analyzeCancellations(current),
     ...analyzeWeekdaySkew(dataset),
     ...analyzeRepeatRtoCustomers(dataset),
+    ...analyzePixelTrending(pixelCurrent, pixelBaseline, currentDays, baselineDays),
+    ...analyzePixelFunnelDropoff(pixelCurrent),
   ];
 
   const severityRank = { red: 0, amber: 1, info: 2 };
   findings.sort((a,b) => severityRank[a.severity] - severityRank[b.severity]);
 
-  // Attach product photos to any finding tagged with a productTitle
+  // Attach product photos to any finding tagged with a productTitle that
+  // doesn't already have one (Pixel Tracker findings already set their own
+  // image directly from the storefront pixel data — don't refetch those).
   const titleToProductId = {};
   current.forEach(o => o.line_items.forEach(li => {
     if (li.product_id && !titleToProductId[li.title]) titleToProductId[li.title] = li.product_id;
   }));
-  const productIds = [...new Set(findings.map(f => titleToProductId[f.productTitle]).filter(Boolean))];
+  const needsImage = findings.filter(f => f.productTitle && !f.image);
+  const productIds = [...new Set(needsImage.map(f => titleToProductId[f.productTitle]).filter(Boolean))];
   if (productIds.length) {
     const imageMap = await getProductImageMap(productIds);
-    findings.forEach(f => {
+    needsImage.forEach(f => {
       const pid = titleToProductId[f.productTitle];
       if (pid && imageMap[pid]) f.image = imageMap[pid];
     });
