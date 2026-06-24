@@ -20,7 +20,7 @@ const fs         = require("fs");
 const fetch      = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 const nodemailer = require("nodemailer");
 const multer     = require("multer");
-const { MongoClient } = require("mongodb");
+const { MongoClient, GridFSBucket, ObjectId } = require("mongodb");
 const { google }     = require("googleapis");
 const Razorpay       = require("razorpay");
 const {
@@ -31,17 +31,23 @@ const {
 const cookieParser   = require("cookie-parser");
 require("dotenv").config();
 
-// ── Multer — ads image uploads ─────────────────────────────────────────────
-const adsUploadDir = path.join(__dirname, 'ads-uploads');
-if (!fs.existsSync(adsUploadDir)) fs.mkdirSync(adsUploadDir, { recursive: true });
-const adsStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, adsUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `ad_${Date.now()}${ext}`);
-  },
-});
-const adsUpload = multer({ storage: adsStorage, limits: { fileSize: 5 * 1024 * 1024 } });
+// ── File uploads — all stored in MongoDB via GridFS, not on local disk ─────
+// Render's (and most PaaS) filesystems are ephemeral — anything written to
+// disk gets wiped on every redeploy/restart. Every upload below now goes
+// into Mongo instead, so files survive deploys regardless of host.
+// gridFsBucket is initialized once mdb connects (see startServer()).
+let gridFsBucket = null;
+
+async function storeFileInDb(buffer, filename, contentType, metadata = {}) {
+  return new Promise((resolve, reject) => {
+    const uploadStream = gridFsBucket.openUploadStream(filename, { contentType, metadata });
+    uploadStream.end(buffer);
+    uploadStream.on('finish', () => resolve(String(uploadStream.id)));
+    uploadStream.on('error', reject);
+  });
+}
+
+const adsUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ── Multer — admin/vendor brand logos ───────────────────────────────────────
 // Stored as base64 data URIs in MongoDB (not on disk) so they survive
@@ -51,34 +57,13 @@ const brandUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize
   cb(null, true);
 }});
 
-// ── Multer — return/exchange request images ────────────────────────────────
-const rrUploadDir = path.join(__dirname, 'rr-uploads');
-if (!fs.existsSync(rrUploadDir)) fs.mkdirSync(rrUploadDir, { recursive: true });
-const rrStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, rrUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `rr_${Date.now()}_${Math.random().toString(36).slice(2,7)}${ext}`);
-  },
-});
-const rrUpload = multer({ storage: rrStorage, limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+const rrUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
   if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
   cb(null, true);
 }});
 
-// ── Agreement doc storage ─────────────────────────────────────────────────
-const agreementDocDir  = path.join(__dirname, 'agreement-docs');
-const signedAgreementDir = path.join(__dirname, 'signed-agreements');
-if (!fs.existsSync(agreementDocDir))   fs.mkdirSync(agreementDocDir,   { recursive: true });
-if (!fs.existsSync(signedAgreementDir)) fs.mkdirSync(signedAgreementDir, { recursive: true });
 const signedAgreementUpload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, signedAgreementDir),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.pdf';
-      cb(null, `signed_${Date.now()}_${Math.random().toString(36).slice(2,7)}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = ['application/pdf','image/png','image/jpeg'].includes(file.mimetype);
@@ -87,17 +72,7 @@ const signedAgreementUpload = multer({
   },
 });
 
-// ── Vendor onboarding uploads ─────────────────────────────────────────────
-const onboardUploadDir = path.join(__dirname, 'onboard-uploads');
-if (!fs.existsSync(onboardUploadDir)) fs.mkdirSync(onboardUploadDir, { recursive: true });
-const onboardStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, onboardUploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.pdf';
-    cb(null, `gst_${Date.now()}_${Math.random().toString(36).slice(2,7)}${ext}`);
-  },
-});
-const onboardUpload = multer({ storage: onboardStorage, limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+const onboardUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
   const ok = ['image/png','image/jpeg','application/pdf'].includes(file.mimetype);
   if (!ok) return cb(new Error('Only PNG, JPG or PDF allowed'));
   cb(null, true);
@@ -111,6 +86,7 @@ async function startServer() {
   try {
     const client = await MongoClient.connect(MONGO_URI, { tls: true, tlsAllowInvalidCertificates: false });
     mdb = client.db("jarvis");
+    gridFsBucket = new GridFSBucket(mdb, { bucketName: 'uploads' });
     console.log("✅  MongoDB connected");
     buildVendorCanonicalMap();
 
@@ -425,11 +401,26 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static('.'));
-app.use('/ads-uploads', express.static(adsUploadDir));
-app.use('/rr-uploads', express.static(rrUploadDir));
-app.use('/onboard-uploads', express.static(onboardUploadDir));
-app.use('/agreement-docs', express.static(agreementDocDir));
-app.use('/signed-agreements', adminAuth, express.static(signedAgreementDir)); // admin-only
+
+// Serves any file stored via storeFileInDb() — replaces the old per-category
+// static-file routes now that uploads live in MongoDB (GridFS) instead of on
+// disk. signed-agreements stays admin/vendor-gated like before.
+app.get('/uploads/:id', async (req, res) => {
+  try {
+    const _id = new ObjectId(req.params.id);
+    const files = await gridFsBucket.find({ _id }).toArray();
+    if (!files.length) return res.status(404).send('Not found');
+    const file = files[0];
+    if (file.metadata?.category === 'signed-agreement') {
+      const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+      const isAdmin = token && await mdb.collection('admin_sessions').findOne({ token });
+      if (!isAdmin) return res.status(401).send('Unauthorized'); // admin-only, matches the original static-route gate
+    }
+    res.setHeader('Content-Type', file.contentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    gridFsBucket.openDownloadStream(_id).on('error', () => res.status(404).end()).pipe(res);
+  } catch (e) { res.status(404).send('Not found'); }
+});
 
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
@@ -7273,8 +7264,8 @@ app.put("/admin/email-settings/ads", adminAuth, async (req, res) => {
 app.post("/admin/email-settings/ads/upload", adminAuth, adsUpload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const url = `/ads-uploads/${req.file.filename}`;
-    res.json({ url });
+    const id = await storeFileInDb(req.file.buffer, req.file.originalname, req.file.mimetype, { category: 'ads' });
+    res.json({ url: `/uploads/${id}` });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -10915,11 +10906,10 @@ app.post('/admin/agreements', adminAuth, async (req, res) => {
     const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
     const buffer     = await Packer.toBuffer(buildAgreementDoc(c, logoBuffer));
 
-    const id       = new (require('mongodb').ObjectId)();
+    const id       = new ObjectId();
     const fname    = `agreement_${id}_${c.partyA.name.replace(/\s+/g,'_')}.docx`;
-    const filePath = path.join(agreementDocDir, fname);
-    fs.writeFileSync(filePath, buffer);
-    const fileUrl  = `/agreement-docs/${fname}`;
+    const fileId   = await storeFileInDb(buffer, fname, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', { category: 'agreement' });
+    const fileUrl  = `/uploads/${fileId}`;
 
     // Get vendor email
     const profile = await mdb.collection('vendor_profiles').findOne({ vendor_name: c.partyA.name }, { projection: { email:1, _id:0 } });
@@ -11088,7 +11078,8 @@ app.post('/vendor/agreements/:id/upload-signed', vendorAuth, signedAgreementUplo
     const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id), vendor_name: req.vendor });
     if (!doc) return res.status(404).json({ error: 'Agreement not found' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const signedUrl = `/signed-agreements/${req.file.filename}`;
+    const fileId = await storeFileInDb(req.file.buffer, req.file.originalname, req.file.mimetype, { category: 'signed-agreement' });
+    const signedUrl = `/uploads/${fileId}`;
     await mdb.collection('vendor_agreements').updateOne(
       { _id: new ObjectId(req.params.id) },
       { $set: { signed_url: signedUrl, status: 'signed', signed_at: new Date().toISOString() } }
@@ -14380,10 +14371,12 @@ app.get("/vendor/product-images", vendorAuth, async (req, res) => {
 });
 
 // ── Public: upload images for return/exchange request ─────────────────────
-app.post("/track/upload-images", rrUpload.array('images', 5), (req, res) => {
+app.post("/track/upload-images", rrUpload.array('images', 5), async (req, res) => {
   try {
-    const urls = (req.files || []).map(f => `/rr-uploads/${f.filename}`);
-    res.json({ urls });
+    const ids = await Promise.all((req.files || []).map(f =>
+      storeFileInDb(f.buffer, f.originalname, f.mimetype, { category: 'rr-image' })
+    ));
+    res.json({ urls: ids.map(id => `/uploads/${id}`) });
   } catch(err) {
     res.status(500).json({ error: err.message });
   }
@@ -14594,6 +14587,10 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
     const existingVendor = await mdb.collection('vendor_profiles').findOne({ email: email.toLowerCase().trim() }, { projection: { vendor_name: 1, _id: 0 } });
     if (existingVendor) return res.status(409).json({ error: `This email is already linked to an active vendor account (${existingVendor.vendor_name}). Please use a different email or contact support.` });
 
+    const gstDocUrl = req.file
+      ? `/uploads/${await storeFileInDb(req.file.buffer, req.file.originalname, req.file.mimetype, { category: 'onboard-gst' })}`
+      : null;
+
     const doc = {
       contact_name: contact_name.trim(),
       brand_name:   brand_name.trim(),
@@ -14606,7 +14603,7 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
       pincode:      pincode?.trim() || '',
       gst_no:       gst_no?.trim().toUpperCase() || '',
       about:        about?.trim() || '',
-      gst_document: req.file ? `/onboard-uploads/${req.file.filename}` : null,
+      gst_document: gstDocUrl,
       status:       'pending',
       submitted_at: new Date().toISOString(),
     };
