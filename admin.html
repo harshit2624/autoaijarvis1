@@ -1014,6 +1014,22 @@
     const [shipHeight,      setShipHeight]      = useState('8');
     const [shipMode,        setShipMode]        = useState('Surface');
     const [creatingShip,    setCreatingShip]    = useState(false);
+    const [shipRateInfo,    setShipRateInfo]    = useState(null);
+    const [shipRateLoad,    setShipRateLoad]    = useState(false);
+
+    const checkShipRate = async () => {
+      if (!shipPartner) return;
+      setShipRateLoad(true); setShipRateInfo(null);
+      try {
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/rate-check`, {
+          method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ partner: shipPartner, weight: parseFloat(shipWeight)||0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8 }),
+        });
+        const d = await r.json();
+        setShipRateInfo(d);
+      } catch(e) { setShipRateInfo({error:e.message}); }
+      setShipRateLoad(false);
+    };
 
     const loadPriceOverrides = () => {
       fetch(`${API}/admin/orders/${order.shopifyId}/price-overrides`, { headers:{ Authorization:`Bearer ${token}` } })
@@ -1686,13 +1702,35 @@
                         {shipPartner==='delhivery' && (
                           <div>
                             <label className="form-label">Shipping Mode</label>
-                            <select className="form-select" value={shipMode} onChange={e=>setShipMode(e.target.value)}>
+                            <select className="form-select" value={shipMode} onChange={e=>{setShipMode(e.target.value);setShipRateInfo(null);}}>
                               <option value="Surface">Surface</option>
                               <option value="Express">Express</option>
                             </select>
                           </div>
                         )}
                       </div>
+
+                      {shipPartner==='delhivery' && (
+                        <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:10}}>
+                          <button className="btn btn-ghost btn-sm" onClick={checkShipRate} disabled={shipRateLoad}
+                            style={{borderColor:'var(--yellow)',color:'var(--yellow)'}}>
+                            {shipRateLoad?'Checking…':'₹ Check Rate'}
+                          </button>
+                        </div>
+                      )}
+                      {shipRateInfo && (
+                        <div style={{padding:'8px 12px',borderRadius:7,marginBottom:10,background:shipRateInfo.error?'rgba(239,68,68,0.08)':'rgba(16,185,129,0.08)',border:`1px solid ${shipRateInfo.error?'rgba(239,68,68,0.3)':'rgba(16,185,129,0.3)'}`,fontSize:11}}>
+                          {shipRateInfo.error ? `❌ ${shipRateInfo.error}` : (
+                            <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                              {(shipRateInfo.rates||[]).map((r,i)=>(
+                                <div key={i}><span style={{color:'var(--text-muted)'}}>{r.mode}: </span><strong style={{color:'var(--green)'}}>₹{r.charge}</strong>{r.estimated_days&&<span style={{color:'var(--text-muted)',fontSize:10}}> · {r.estimated_days}d</span>}</div>
+                              ))}
+                              {shipRateInfo.rates?.length===0&&<span style={{color:'var(--text-muted)'}}>{shipRateInfo.message||'No rates available'}</span>}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <button className="btn btn-indigo" onClick={createShipment}
                         disabled={creatingShip || !shipPartner || !shipPickup || totalSelectedQty===0}>
                         {creatingShip ? '…' : `Create Shipment (${totalSelectedQty} item${totalSelectedQty===1?'':'s'})`}

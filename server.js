@@ -7870,7 +7870,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           return_add:    creds.return_address || "",
           return_state:  creds.return_state   || "",
           return_country:"India",
-          products_desc: items.map(li => li.title).join(", ").slice(0, 250),
+          products_desc: items.map(shipmentItemDesc).join(", ").slice(0, 250),
           hsn_code:      "",
           cod_amount:    cod ? codAmt : "",
           order_date:    orderDateStr,
@@ -8137,6 +8137,41 @@ app.get("/admin/orders/:shopifyId/fulfillment-items", requirePermission('orders'
 
 // POST /admin/orders/:shopifyId/create-shipment — admin creates a shipment for selected line items/quantities
 // across one or more vendors, choosing a connected partner + saved pickup location.
+// POST /admin/orders/:shopifyId/rate-check — same Delhivery rate lookup the
+// vendor side already has (/vendor/orders/:shopifyId/rate-check), missing
+// here entirely. Admin's create-shipment uses global_shipping_creds (not
+// per-vendor creds), so that's what this reads from too.
+app.post("/admin/orders/:shopifyId/rate-check", requirePermission('orders'), async (req, res) => {
+  try {
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
+    if (!credRow) return res.status(404).json({ error: `${partner} not connected. Go to Shipping Settings to connect.` });
+    const creds = JSON.parse(credRow.credentials);
+
+    const orderData = await shopifyREST(`/orders/${req.params.shopifyId}.json?fields=shipping_address`);
+    const destPin = orderData?.order?.shipping_address?.zip || '';
+    const originPin = creds.return_pincode || creds.pickup_pincode || '';
+
+    if (partner === 'delhivery') {
+      const md = parseFloat(weight) || 0.5;
+      const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
+      const chargeable = Math.max(md, vol).toFixed(2);
+      const baseUrl = `https://track.delhivery.com/api/kinko/v1/invoice/charges/.json?ss=Delivered&d_pin=${destPin}&o_pin=${originPin}&cgm=${Math.round(parseFloat(chargeable)*1000)}&pt=Pre-paid&cod=0`;
+      const headers = { Authorization: `Token ${creds.api_token}` };
+      const [surfRes, exprRes] = await Promise.all([
+        fetch(`${baseUrl}&md=S`, { headers }).then(r=>r.json()).catch(()=>null),
+        fetch(`${baseUrl}&md=E`, { headers }).then(r=>r.json()).catch(()=>null),
+      ]);
+      const rates = [
+        surfRes?.[0] ? { mode: 'Surface', charge: surfRes[0].total_amount, estimated_days: surfRes[0].etd || null } : null,
+        exprRes?.[0] ? { mode: 'Express', charge: exprRes[0].total_amount, estimated_days: exprRes[0].etd || null } : null,
+      ].filter(Boolean);
+      return res.json({ rates, chargeable_weight: chargeable });
+    }
+    res.json({ rates: [], message: 'Rate check only available for Delhivery' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders'), async (req, res) => {
   try {
     const sid = String(req.params.shopifyId);
@@ -8232,7 +8267,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
           return_add:    creds.return_address || "",
           return_state:  creds.return_state   || "",
           return_country:"India",
-          products_desc: selected.map(it => it.title).join(", ").slice(0, 250),
+          products_desc: selected.map(shipmentItemDesc).join(", ").slice(0, 250),
           hsn_code:      "",
           cod_amount:    cod ? codAmt : "",
           order_date:    orderDateStr,
@@ -14230,6 +14265,16 @@ function normalizePhone(p='') {
   return d.startsWith('91') && d.length > 10 ? d.slice(2) : d;
 }
 
+// Shipping label product description — includes the size/variant so the
+// packaging team can tell items apart without opening Shopify. Shopify's
+// default single-variant products get variant_title "Default Title", which
+// isn't a real size and shouldn't be printed.
+function shipmentItemDesc(li) {
+  const size = (li.variant_title || '').trim();
+  const hasRealSize = size && size.toLowerCase() !== 'default title';
+  return hasRealSize ? `${li.title} - ${size}` : li.title;
+}
+
 async function buildOrderPayload(order) {
   const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
   const vendorStages = await mdb.collection('order_vendor_stage').find({ shopify_id: String(order.id) }, { projection: { _id: 0 } }).toArray();
@@ -15046,7 +15091,7 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
   // (Delhivery deduplicates by order field and would return the old cancelled AWB otherwise)
   const rrSuffix = Date.now().toString(36).toUpperCase().slice(-4);
   const orderId  = `${rr.request_id}-${direction.toUpperCase()[0]}-${rrSuffix}`;
-  const desc     = (rr.items||[]).map(it=>it.title).join(', ').slice(0,250) || 'Return/Exchange items';
+  const desc     = (rr.items||[]).map(shipmentItemDesc).join(', ').slice(0,250) || 'Return/Exchange items';
   const itemVal  = (rr.items||[]).reduce((s,it)=>s+parseFloat(it.price||0)*it.qty,0);
 
   if (partner === 'shiprocket') {
