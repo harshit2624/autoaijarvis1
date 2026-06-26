@@ -8143,14 +8143,15 @@ app.get("/admin/orders/:shopifyId/fulfillment-items", requirePermission('orders'
 // per-vendor creds), so that's what this reads from too.
 app.post("/admin/orders/:shopifyId/rate-check", requirePermission('orders'), async (req, res) => {
   try {
-    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, pickup_location } = req.body || {};
     const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
     if (!credRow) return res.status(404).json({ error: `${partner} not connected. Go to Shipping Settings to connect.` });
     const creds = JSON.parse(credRow.credentials);
 
     const orderData = await shopifyREST(`/orders/${req.params.shopifyId}.json?fields=shipping_address`);
     const destPin = orderData?.order?.shipping_address?.zip || '';
-    const originPin = creds.return_pincode || creds.pickup_pincode || '';
+    const originPin = resolveOriginPincode(creds, pickup_location);
+    if (!originPin) return res.status(400).json({ error: 'No pincode saved for this pickup location — add one in Shipping Settings → Delhivery → pickup locations.' });
 
     if (partner === 'delhivery') {
       const md = parseFloat(weight) || 0.5;
@@ -15227,6 +15228,19 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
 }
 
 // ── Shared: fetch warehouses/pickup locations from a shipping partner ────────
+// Admin/global Delhivery creds store MULTIPLE pickup locations (each with
+// their own pincode) instead of a single return_pincode/pickup_pincode pair
+// like vendor creds do — resolve whichever one is actually selected for
+// this shipment instead of falling back to a field that doesn't exist on
+// this shape at all (the bug behind rate-check always coming back ₹0).
+function resolveOriginPincode(creds, pickupLocationName) {
+  if (Array.isArray(creds.pickup_locations) && creds.pickup_locations.length) {
+    const match = pickupLocationName ? creds.pickup_locations.find(l => l.name === pickupLocationName) : null;
+    return (match || creds.pickup_locations[0])?.pincode || '';
+  }
+  return creds.return_pincode || creds.pickup_pincode || '';
+}
+
 function credsToWarehouses(creds) {
   // Saved pickup_locations array (managed on settings page) — always authoritative
   if (Array.isArray(creds.pickup_locations) && creds.pickup_locations.length) {
@@ -15301,7 +15315,7 @@ app.get("/vendor/shipping/warehouses", vendorAuth, async (req, res) => {
 // Rate check for return request shipment
 app.post("/admin/return-requests/:id/rate-check", adminAuth, async (req, res) => {
   try {
-    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8 } = req.body || {};
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, pickup_location } = req.body || {};
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { customer_pincode:1, _id:0 } });
     if (!rr) return res.status(404).json({ error: 'Request not found' });
     const credRow = await mdb.collection('global_shipping_creds').findOne({ partner });
@@ -15310,7 +15324,8 @@ app.post("/admin/return-requests/:id/rate-check", adminAuth, async (req, res) =>
 
     if (partner === 'delhivery') {
       const destPin = rr.customer_pincode || '';
-      const originPin = creds.return_pincode || creds.pickup_pincode || '';
+      const originPin = resolveOriginPincode(creds, pickup_location);
+      if (!originPin) return res.status(400).json({ error: 'No pincode saved for this pickup location — add one in Shipping Settings → Delhivery → pickup locations.' });
       const md = parseFloat(weight) || 0.5;
       const vol = (parseFloat(length)||15) * (parseFloat(breadth)||12) * (parseFloat(height)||8) / 5000;
       const chargeable = Math.max(md, vol).toFixed(2);

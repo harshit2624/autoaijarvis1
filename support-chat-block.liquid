@@ -1,0 +1,377 @@
+{% doc %}
+  @prompt
+    Add a floating support chat icon button fixed to the bottom-right corner of the website (similar to a WhatsApp floating button style). When clicked, it should toggle open/close an embedded customer support chat widget loaded via this script: <script src="https://dashboard.croscrow.com/support-widget-embed.js" async></script>. The button should be a circular icon (use a chat bubble or headset SVG icon), styled with a dark/brand color, with a subtle box shadow and hover animation. The chat widget container should appear just above the button when opened. Make sure the script is only loaded once and the widget initializes properly on toggle. also keep the icon or icon image customible
+{% enddoc %}
+{% assign ai_gen_id = block.id | replace: '_', '' | downcase %}
+
+{% style %}
+  .ai-support-chat-{{ ai_gen_id }} {
+    position: fixed;
+    bottom: {{ block.settings.bottom_position }}px;
+    right: {{ block.settings.right_position }}px;
+    z-index: 9999;
+    display: block;
+  }
+
+  .ai-support-chat-button-{{ ai_gen_id }} {
+    width: {{ block.settings.button_size }}px;
+    height: {{ block.settings.button_size }}px;
+    border-radius: 50%;
+    background-color: {{ block.settings.button_bg_color }};
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    position: relative;
+  }
+
+  .ai-support-chat-button-{{ ai_gen_id }}:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  }
+
+  .ai-support-chat-button-{{ ai_gen_id }} svg {
+    width: calc({{ block.settings.button_size }}px * 0.5);
+    height: calc({{ block.settings.button_size }}px * 0.5);
+    fill: {{ block.settings.icon_color }};
+  }
+
+  .ai-support-chat-button-{{ ai_gen_id }} img {
+    width: calc({{ block.settings.button_size }}px * 0.6);
+    height: calc({{ block.settings.button_size }}px * 0.6);
+    object-fit: contain;
+  }
+
+  .ai-support-chat-widget-container-{{ ai_gen_id }} {
+    position: fixed;
+    bottom: calc({{ block.settings.bottom_position }}px + {{ block.settings.button_size }}px + 15px);
+    right: {{ block.settings.right_position }}px;
+    width: {{ block.settings.widget_width }}px;
+    height: {{ block.settings.widget_height }}px;
+    background-color: {{ block.settings.widget_bg_color }};
+    border-radius: {{ block.settings.widget_border_radius }}px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    z-index: 9998;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(20px);
+    transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.3s ease;
+  }
+
+  .ai-support-chat-widget-container-{{ ai_gen_id }}.active {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  .ai-support-chat-close-{{ ai_gen_id }} {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 5px;
+    z-index: 10;
+    color: {{ block.settings.close_button_color }};
+  }
+
+  .ai-support-chat-close-{{ ai_gen_id }} svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .ai-support-chat-widget-{{ ai_gen_id }} {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: {{ block.settings.widget_border_radius }}px;
+  }
+
+  @media screen and (max-width: 749px) {
+    .ai-support-chat-button-{{ ai_gen_id }} {
+      width: {{ block.settings.button_size | times: 0.85 }}px;
+      height: {{ block.settings.button_size | times: 0.85 }}px;
+    }
+
+    .ai-support-chat-widget-container-{{ ai_gen_id }} {
+      width: calc(100vw - 40px);
+      max-width: {{ block.settings.widget_width }}px;
+      height: {{ block.settings.widget_height | times: 0.8 }}px;
+      right: 20px;
+      bottom: calc({{ block.settings.bottom_position }}px + {{ block.settings.button_size | times: 0.85 }}px + 15px);
+    }
+
+    .ai-support-chat-{{ ai_gen_id }} {
+      right: 20px;
+    }
+  }
+{% endstyle %}
+
+<support-chat-widget-{{ ai_gen_id }}
+  class="ai-support-chat-{{ ai_gen_id }}"
+  {{ block.shopify_attributes }}
+>
+  <button
+    class="ai-support-chat-button-{{ ai_gen_id }}"
+    aria-label="Open support chat"
+    aria-expanded="false"
+  >
+    {% if block.settings.custom_icon %}
+      <img
+        src="{{ block.settings.custom_icon | image_url: width: 100 }}"
+        alt="Support chat icon"
+        loading="lazy"
+      >
+    {% else %}
+      {% if block.settings.icon_type == 'chat_bubble' %}
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+        </svg>
+      {% else %}
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/>
+        </svg>
+      {% endif %}
+    {% endif %}
+  </button>
+
+  <div class="ai-support-chat-widget-container-{{ ai_gen_id }}">
+    <button
+      class="ai-support-chat-close-{{ ai_gen_id }}"
+      aria-label="Close support chat"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+      </svg>
+    </button>
+    <div id="ai-support-chat-widget-content-{{ ai_gen_id }}"></div>
+  </div>
+</support-chat-widget-{{ ai_gen_id }}>
+
+<script>
+  (function() {
+    class SupportChatWidget{{ ai_gen_id }} extends HTMLElement {
+      constructor() {
+        super();
+        this.scriptLoaded = false;
+        this.widgetInitialized = false;
+        this.initialized = false;
+      }
+
+      connectedCallback() {
+        if (this.initialized) return;
+        this.initialized = true;
+        this.button = this.querySelector('.ai-support-chat-button-{{ ai_gen_id }}');
+        this.widgetContainer = this.querySelector('.ai-support-chat-widget-container-{{ ai_gen_id }}');
+        this.closeButton = this.querySelector('.ai-support-chat-close-{{ ai_gen_id }}');
+        this.widgetContent = this.querySelector('#ai-support-chat-widget-content-{{ ai_gen_id }}');
+
+        this.setupEventListeners();
+      }
+
+      setupEventListeners() {
+        this.button.addEventListener('click', () => this.toggleWidget());
+        this.closeButton.addEventListener('click', () => this.closeWidget());
+      }
+
+      toggleWidget() {
+        const isActive = this.widgetContainer.classList.contains('active');
+
+        if (isActive) {
+          this.closeWidget();
+        } else {
+          this.openWidget();
+        }
+      }
+
+      openWidget() {
+        if (!this.scriptLoaded) {
+          this.loadScript();
+        }
+
+        this.widgetContainer.classList.add('active');
+        this.button.setAttribute('aria-expanded', 'true');
+      }
+
+      closeWidget() {
+        this.widgetContainer.classList.remove('active');
+        this.button.setAttribute('aria-expanded', 'false');
+      }
+
+      loadScript() {
+        if (this.scriptLoaded) return;
+
+        const script = document.createElement('script');
+        script.src = 'https://dashboard.croscrow.com/support-widget-embed.js';
+        script.async = true;
+
+        script.onload = () => {
+          this.scriptLoaded = true;
+          this.initializeWidget();
+        };
+
+        script.onerror = () => {
+          console.error('Failed to load support widget script');
+          this.widgetContent.innerHTML = '<p style="padding: 20px; text-align: center;">Failed to load chat widget. Please try again later.</p>';
+        };
+
+        document.head.appendChild(script);
+      }
+
+      initializeWidget() {
+        if (this.widgetInitialized) return;
+
+        if (typeof window.initSupportWidget === 'function') {
+          window.initSupportWidget({
+            container: this.widgetContent,
+            shopDomain: '{{ shop.permanent_domain }}',
+            customerId: '{{ customer.id }}',
+            customerEmail: '{{ customer.email }}',
+            customerName: '{{ customer.name }}'
+          });
+          this.widgetInitialized = true;
+        } else {
+          setTimeout(() => this.initializeWidget(), 100);
+        }
+      }
+    }
+
+    customElements.define('support-chat-widget-{{ ai_gen_id }}', SupportChatWidget{{ ai_gen_id }});
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Support chat widget",
+  "tag": null,
+  "settings": [
+    {
+      "type": "header",
+      "content": "Button"
+    },
+    {
+      "type": "select",
+      "id": "icon_type",
+      "label": "Icon type",
+      "options": [
+        {
+          "value": "chat_bubble",
+          "label": "Chat bubble"
+        },
+        {
+          "value": "headset",
+          "label": "Headset"
+        }
+      ],
+      "default": "chat_bubble"
+    },
+    {
+      "type": "image_picker",
+      "id": "custom_icon",
+      "label": "Custom icon image",
+      "info": "Upload a custom icon to override the default icon"
+    },
+    {
+      "type": "range",
+      "id": "button_size",
+      "label": "Button size",
+      "min": 40,
+      "max": 80,
+      "step": 5,
+      "unit": "px",
+      "default": 60
+    },
+    {
+      "type": "color",
+      "id": "button_bg_color",
+      "label": "Button background",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "icon_color",
+      "label": "Icon color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "header",
+      "content": "Position"
+    },
+    {
+      "type": "range",
+      "id": "bottom_position",
+      "label": "Bottom position",
+      "min": 10,
+      "max": 100,
+      "step": 5,
+      "unit": "px",
+      "default": 20
+    },
+    {
+      "type": "range",
+      "id": "right_position",
+      "label": "Right position",
+      "min": 10,
+      "max": 100,
+      "step": 5,
+      "unit": "px",
+      "default": 20
+    },
+    {
+      "type": "header",
+      "content": "Widget"
+    },
+    {
+      "type": "range",
+      "id": "widget_width",
+      "label": "Widget width",
+      "min": 300,
+      "max": 500,
+      "step": 10,
+      "unit": "px",
+      "default": 380
+    },
+    {
+      "type": "range",
+      "id": "widget_height",
+      "label": "Widget height",
+      "min": 400,
+      "max": 700,
+      "step": 10,
+      "unit": "px",
+      "default": 500
+    },
+    {
+      "type": "color",
+      "id": "widget_bg_color",
+      "label": "Widget background",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "widget_border_radius",
+      "label": "Widget border radius",
+      "min": 0,
+      "max": 30,
+      "step": 2,
+      "unit": "px",
+      "default": 12
+    },
+    {
+      "type": "color",
+      "id": "close_button_color",
+      "label": "Close button color",
+      "default": "#000000"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Support chat widget"
+    }
+  ]
+}
+{% endschema %}

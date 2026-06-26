@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CROSCROW</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background:#000; font-family:'Inter',sans-serif;
+  }
+
+  /* ── Ambient background ── */
+  .bg {
+    position:fixed; inset:0; z-index:0;
+    background:
+      radial-gradient(ellipse 1200px 800px at 50% 20%, #1a1a1a 0%, transparent 60%),
+      linear-gradient(180deg, #000 0%, #050505 40%, #000 100%);
+  }
+  .grid-floor {
+    position:fixed; inset:0; z-index:0; perspective:600px; overflow:hidden;
+  }
+  .grid-floor::before {
+    content:''; position:absolute; left:-50%; right:-50%; bottom:0; height:200%;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px);
+    background-size:60px 60px;
+    transform:rotateX(75deg) translateZ(-100px);
+    transform-origin:bottom;
+    animation:gridMove 6s linear infinite;
+    opacity:0;
+    animation: gridMove 6s linear infinite, gridFade 1.5s ease 1.2s forwards;
+  }
+  @keyframes gridMove { from{background-position-y:0;} to{background-position-y:60px;} }
+  @keyframes gridFade { to { opacity:1; } }
+
+  /* ── Stage ── */
+  .stage {
+    position:relative; z-index:2;
+    width:100%; height:100%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    perspective:1400px;
+  }
+
+  .logo-wrap {
+    display:flex; transform-style:preserve-3d;
+  }
+  .letter {
+    font-family:'Anton',sans-serif;
+    font-size:clamp(48px, 11vw, 150px);
+    color:#fff;
+    line-height:1;
+    letter-spacing:2px;
+    display:inline-block;
+    transform-style:preserve-3d;
+    opacity:0;
+    text-shadow:
+      0 1px 0 #ccc, 0 2px 0 #c9c9c9, 0 3px 0 #bbb,
+      0 4px 0 #b9b9b9, 0 5px 0 #aaa,
+      0 6px 1px rgba(0,0,0,.1),
+      0 0 5px rgba(0,0,0,.1),
+      0 1px 3px rgba(0,0,0,.3),
+      0 3px 5px rgba(0,0,0,.2),
+      0 5px 10px rgba(0,0,0,.25),
+      0 10px 10px rgba(0,0,0,.2),
+      0 20px 20px rgba(0,0,0,.15);
+    animation: dropIn 0.9s cubic-bezier(.2,.9,.25,1.2) forwards;
+  }
+  @keyframes dropIn {
+    0%   { opacity:0; transform: translateY(-300px) translateZ(-400px) rotateX(80deg) rotateY(25deg); }
+    60%  { opacity:1; }
+    100% { opacity:1; transform: translateY(0) translateZ(0) rotateX(0deg) rotateY(0deg); }
+  }
+
+  .logo-glow {
+    position:absolute; inset:-40px;
+    background:radial-gradient(ellipse 60% 60% at 50% 50%, rgba(99,102,241,0.35), transparent 70%);
+    filter:blur(30px);
+    opacity:0;
+    animation: glowPulse 1s ease 1.4s forwards, glowBreathe 3s ease-in-out 2.4s infinite;
+    z-index:-1;
+    pointer-events:none;
+  }
+  @keyframes glowPulse { to { opacity:1; } }
+  @keyframes glowBreathe { 0%,100%{ transform:scale(1); opacity:0.8; } 50%{ transform:scale(1.08); opacity:1; } }
+
+  .tagline {
+    margin-top:26px;
+    font-size:13px;
+    font-weight:500;
+    letter-spacing:6px;
+    text-transform:uppercase;
+    color:#fff;
+    opacity:0;
+    animation: fadeUp 0.8s ease 1.5s forwards;
+  }
+  .tagline span { color:#fff; }
+
+  .underline {
+    width:0;
+    height:2px;
+    margin-top:18px;
+    background:linear-gradient(90deg, transparent, #9ca3af, #fff, #9ca3af, transparent);
+    animation: lineGrow 1s ease 1.7s forwards;
+  }
+  @keyframes lineGrow { to { width:280px; } }
+
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(12px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+
+  .enter-wrap {
+    margin-top:48px;
+    opacity:0;
+    animation: fadeUp 0.8s ease 2.3s forwards;
+  }
+  .enter-btn {
+    position:relative;
+    padding:14px 42px;
+    background:transparent;
+    border:1.5px solid rgba(255,255,255,0.25);
+    color:#fff;
+    font-family:'Inter',sans-serif;
+    font-size:12px;
+    font-weight:600;
+    letter-spacing:3px;
+    text-transform:uppercase;
+    border-radius:999px;
+    cursor:pointer;
+    overflow:hidden;
+    transition:border-color .3s, letter-spacing .3s, transform .2s;
+  }
+  .enter-btn:hover {
+    border-color:#818cf8;
+    letter-spacing:4px;
+    transform:translateY(-2px);
+  }
+  .enter-btn::before {
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(90deg, #6366f1, #ef4444);
+    opacity:0; transition:opacity .3s; z-index:-1;
+  }
+  .enter-btn:hover::before { opacity:0.18; }
+
+  .skip {
+    position:fixed; bottom:24px; right:28px; z-index:5;
+    font-size:11px; letter-spacing:2px; color:rgba(255,255,255,0.35);
+    cursor:pointer; text-transform:uppercase;
+    opacity:0; animation: fadeUp 0.6s ease 1s forwards;
+  }
+  .skip:hover { color:#fff; }
+
+  /* fade whole intro out */
+  .stage.leaving, .grid-floor.leaving, .particles.leaving, .bg.leaving {
+    transition:opacity 0.6s ease;
+    opacity:0;
+  }
+</style>
+</head>
+<body>
+  <div class="bg" id="bg"></div>
+  <div class="grid-floor" id="gridFloor"></div>
+
+  <div class="skip" id="skip">Skip Intro →</div>
+
+  <div class="stage" id="stage">
+    <div style="position:relative;">
+      <div class="logo-glow"></div>
+      <div class="logo-wrap" id="logoWrap"></div>
+    </div>
+    <div class="tagline">Built for India's Sickest Brands</div>
+    <div class="underline"></div>
+    <div class="enter-wrap">
+      <button class="enter-btn" id="enterBtn">Enter Site</button>
+    </div>
+  </div>
+
+<script>
+  // Build the CROSCROW wordmark letter-by-letter with staggered 3D drop-in
+  const word = "CROSCROW";
+  const wrap = document.getElementById('logoWrap');
+  [...word].forEach((ch, i) => {
+    const span = document.createElement('span');
+    span.className = 'letter';
+    span.textContent = ch;
+    span.style.animationDelay = `${0.15 + i * 0.07}s`;
+    wrap.appendChild(span);
+  });
+
+  // Subtle mouse-parallax tilt on the logo for an interactive 3D feel
+  const stage = document.getElementById('stage');
+  document.addEventListener('mousemove', (e) => {
+    const x = (e.clientX / window.innerWidth - 0.5) * 2;
+    const y = (e.clientY / window.innerHeight - 0.5) * 2;
+    wrap.style.transform = `rotateY(${x * 6}deg) rotateX(${-y * 4}deg)`;
+  });
+
+  function leaveIntro() {
+    ['bg','gridFloor','stage'].forEach(id => document.getElementById(id).classList.add('leaving'));
+    document.getElementById('skip').style.opacity = 0;
+    setTimeout(() => {
+      // Replace with your real homepage URL when wiring this in for real
+      window.location.href = '/';
+    }, 650);
+  }
+
+  document.getElementById('enterBtn').addEventListener('click', leaveIntro);
+  document.getElementById('skip').addEventListener('click', leaveIntro);
+</script>
+</body>
+</html>

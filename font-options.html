@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Support Chat — Font Options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Poppins:wght@400;600;700;800&family=Manrope:wght@400;600;700;800&family=Sora:wght@400;600;700;800&family=Space+Grotesk:wght@400;600;700&family=DM+Sans:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Outfit:wght@400;600;700;800&family=Urbanist:wght@400;600;700;800&family=Lexend:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f4f4f5; padding: 40px 20px; font-family: 'Inter', sans-serif; }
+  .page-title { text-align: center; font-size: 24px; font-weight: 800; color: #0a0a0a; margin-bottom: 6px; }
+  .page-sub { text-align: center; font-size: 13px; color: #6b7280; margin-bottom: 36px; }
+  .grid { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+
+  .card {
+    background: #fff; border: 2px solid #e5e5e5; border-radius: 16px; padding: 20px;
+    cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .card:hover { border-color: #0a0a0a; }
+  .card.selected { border-color: #0a0a0a; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+
+  .card-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .card-label .num { font-size: 10px; font-weight: 700; color: #fff; background: #0a0a0a; padding: 2px 8px; border-radius: 99px; letter-spacing: 0.5px; }
+  .card-label .fontname { font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0.5px; text-transform: uppercase; }
+
+  .preview-header { font-weight: 800; font-size: 17px; color: #0a0a0a; margin-bottom: 4px; }
+  .preview-sub { font-size: 11px; color: #6b7280; margin-bottom: 16px; }
+
+  .bubble-row { display: flex; flex-direction: column; gap: 8px; }
+  .bubble { padding: 9px 13px; border-radius: 13px; font-size: 13.5px; line-height: 1.5; max-width: 85%; }
+  .bubble.bot { background: #f4f4f5; border: 1px solid #e5e5e5; color: #0a0a0a; align-self: flex-start; border-radius: 13px 13px 13px 3px; }
+  .bubble.user { background: #0a0a0a; color: #fff; align-self: flex-end; border-radius: 13px 13px 3px 13px; font-weight: 600; }
+
+  .pick-btn {
+    margin-top: 16px; width: 100%; padding: 9px; border-radius: 9px; border: 1px solid #0a0a0a;
+    background: #fff; color: #0a0a0a; font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+  .card.selected .pick-btn { background: #0a0a0a; color: #fff; }
+
+  .result-bar {
+    position: sticky; bottom: 20px; max-width: 1100px; margin: 30px auto 0; background: #0a0a0a; color: #fff;
+    padding: 14px 20px; border-radius: 12px; font-size: 13px; font-weight: 600; text-align: center;
+    display: none;
+  }
+  .result-bar.show { display: block; }
+</style>
+</head>
+<body>
+  <div class="page-title">Support Chat — Font Options</div>
+  <div class="page-sub">10 pairings for the chat heading + message bubbles. Click a card to preview it selected.</div>
+
+  <div class="grid" id="grid"></div>
+  <div class="result-bar" id="result-bar"></div>
+
+<script>
+  const FONTS = [
+    { name: 'Inter',            weight: '800/400' },
+    { name: 'Poppins',          weight: '700/400' },
+    { name: 'Manrope',          weight: '800/500' },
+    { name: 'Sora',             weight: '700/400' },
+    { name: 'Space Grotesk',    weight: '700/400' },
+    { name: 'DM Sans',          weight: '800/500' },
+    { name: 'Plus Jakarta Sans',weight: '800/500' },
+    { name: 'Outfit',           weight: '700/400' },
+    { name: 'Urbanist',         weight: '800/500' },
+    { name: 'Lexend',           weight: '700/400' },
+  ];
+
+  const grid = document.getElementById('grid');
+  const resultBar = document.getElementById('result-bar');
+
+  FONTS.forEach((f, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.setProperty('--font', `'${f.name}', sans-serif`);
+    card.innerHTML = `
+      <div class="card-label">
+        <span class="num">${i+1}</span>
+        <span class="fontname">${f.name}</span>
+      </div>
+      <div class="preview-header" style="font-family:'${f.name}', sans-serif">CrosCrow Support</div>
+      <div class="preview-sub" style="font-family:'${f.name}', sans-serif">Online · usually replies instantly</div>
+      <div class="bubble-row">
+        <div class="bubble bot" style="font-family:'${f.name}', sans-serif">Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?</div>
+        <div class="bubble user" style="font-family:'${f.name}', sans-serif">whats the status of order 2335?</div>
+        <div class="bubble bot" style="font-family:'${f.name}', sans-serif">Your order is currently <strong>on hold</strong> — you'll need to confirm it first.</div>
+      </div>
+      <button class="pick-btn">Select "${f.name}"</button>
+    `;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      resultBar.textContent = `Selected: ${f.name} — tell me this name and I'll wire it into the chat.`;
+      resultBar.classList.add('show');
+    });
+    grid.appendChild(card);
+  });
+</script>
+</body>
+</html>
