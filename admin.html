@@ -510,8 +510,41 @@
     .rich-product-val { font-size:10px; color:var(--cyan); margin-top:2px; font-weight:700; }
 
   </style>
+  <style>
+    #cc-intro { position:fixed; inset:0; z-index:999999; background:#000; }
+    #cc-intro.cc-leaving { transition:opacity .5s ease; opacity:0; pointer-events:none; }
+    #cc-intro iframe { width:100%; height:100%; border:none; display:block; }
+  </style>
 </head>
 <body>
+<div id="cc-intro"><iframe src="/intro.html?auto=1" title="intro"></iframe></div>
+<script>
+  (function(){
+    if (sessionStorage.getItem('cc_intro_played_admin')) { document.getElementById('cc-intro').remove(); return; }
+    sessionStorage.setItem('cc_intro_played_admin','1');
+    // Wait for the iframe to report its own animation actually finished
+    // (postMessage from intro.html) AND for this page to finish loading —
+    // a blind parent-side timer can fire before the iframe's JS even gets a
+    // main-thread turn while this page's huge Babel transpile is running,
+    // cutting the intro off before the tagline/animation visually completes.
+    var introDone = false, pageLoaded = false;
+    function tryDismiss() {
+      if (!introDone || !pageLoaded) return;
+      var el = document.getElementById('cc-intro');
+      if (!el) return;
+      el.classList.add('cc-leaving');
+      setTimeout(function(){ el.remove(); }, 550);
+    }
+    window.addEventListener('message', function(e){
+      if (e.data === 'cc-intro-done') { introDone = true; tryDismiss(); }
+    });
+    // Safety net in case the message never arrives for any reason.
+    setTimeout(function(){ introDone = true; tryDismiss(); }, 6000);
+    if (document.readyState === 'complete') { pageLoaded = true; }
+    else window.addEventListener('load', function(){ pageLoaded = true; tryDismiss(); });
+    tryDismiss();
+  })();
+</script>
 <div id="root"></div>
 <script type="text/babel">
   const { useState, useEffect, useCallback, useMemo, useRef } = React;

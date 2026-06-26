@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "41cce9e93a5941b631334716e8e3e51d"
-application_url = "https://dashboard.croscrow.com/vendor/shopify/app"
+application_url = "https://dashboard.croscrow.com/vendor.html"
 embedded = false
 name = "MARKETPLACE SYNC by Antortiq"
 

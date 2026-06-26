@@ -212,6 +212,21 @@
 
   document.getElementById('enterBtn').addEventListener('click', leaveIntro);
   document.getElementById('skip').addEventListener('click', leaveIntro);
+
+  // When embedded (vendor.html/admin.html load this in an iframe with
+  // ?auto=1), there's no click — tell the parent once the full visual
+  // sequence (letters → tagline → underline → enter button) has actually
+  // finished playing, instead of the parent guessing with its own timer.
+  // A blind parent-side timer can fire before this iframe's JS even gets a
+  // turn on the main thread if the parent page is busy (e.g. admin.html's
+  // large in-browser Babel transpile), cutting the animation off mid-way.
+  if (new URLSearchParams(location.search).get('auto') === '1') {
+    document.getElementById('enterBtn').style.display = 'none';
+    document.getElementById('skip').style.display = 'none';
+    setTimeout(() => {
+      try { window.parent.postMessage('cc-intro-done', '*'); } catch {}
+    }, 3100);
+  }
 </script>
 </body>
 </html>

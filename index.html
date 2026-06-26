@@ -156,8 +156,35 @@
         radial-gradient(ellipse 600px 400px at 80% 50%, rgba(255,255,255,0.04) 0%, transparent 70%);
     }
   </style>
+  <style>
+    #cc-intro { position:fixed; inset:0; z-index:999999; background:#000; }
+    #cc-intro.cc-leaving { transition:opacity .5s ease; opacity:0; pointer-events:none; }
+    #cc-intro iframe { width:100%; height:100%; border:none; display:block; }
+  </style>
 </head>
 <body>
+<div id="cc-intro"><iframe src="/intro.html?auto=1" title="intro"></iframe></div>
+<script>
+  (function(){
+    if (sessionStorage.getItem('cc_intro_played_index')) { document.getElementById('cc-intro').remove(); return; }
+    sessionStorage.setItem('cc_intro_played_index','1');
+    var introDone = false, pageLoaded = false;
+    function tryDismiss() {
+      if (!introDone || !pageLoaded) return;
+      var el = document.getElementById('cc-intro');
+      if (!el) return;
+      el.classList.add('cc-leaving');
+      setTimeout(function(){ el.remove(); }, 550);
+    }
+    window.addEventListener('message', function(e){
+      if (e.data === 'cc-intro-done') { introDone = true; tryDismiss(); }
+    });
+    setTimeout(function(){ introDone = true; tryDismiss(); }, 6000);
+    if (document.readyState === 'complete') { pageLoaded = true; }
+    else window.addEventListener('load', function(){ pageLoaded = true; tryDismiss(); });
+    tryDismiss();
+  })();
+</script>
   <div class="wrap">
     <div class="brand">
       <div class="brand-logo">C</div>
