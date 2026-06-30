@@ -2380,7 +2380,7 @@
 
         {/* Summary row — small stat cards */}
         <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
-          <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(a&&a.summary?a.summary.period.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
+          <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
           <StatCard color="cyan"   icon="₹" label={'Revenue ('+periodLabel+')'}  value={aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0)} sub={'all time: '+fmtCur(at.revenue||0)}/>
           <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
           <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
@@ -2908,7 +2908,12 @@
 
           {aLoading ? (
             <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>Loading analytics…</div>
-          ) : (!a || !a.summary) ? (
+          ) : (!a || !a.summary || !a.summary.today || !a.summary.last7d || !a.summary.period || !a.paymentSplit || !a.fulfillStats) ? (
+            // Guards every nested key the overview tab below assumes exists —
+            // a partial /admin/analytics response (slow Mongo aggregation,
+            // transient backend error) used to throw deep in this JSX with no
+            // error boundary, white-screening the whole admin panel right
+            // after login since Dashboard is the default landing view.
             <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>Analytics unavailable</div>
           ) : aTab==='overview' ? (
             <div style={{padding:16}}>
@@ -9311,6 +9316,30 @@
     );
   }
 
+  // Without this, any uncaught render-time exception (e.g. a stale-permissions
+  // race right after login) unmounts the whole tree silently, leaving a blank
+  // white page with no way to recover except guessing to hit refresh.
+  class ErrorBoundary extends React.Component {
+    constructor(props) { super(props); this.state = { error: null }; }
+    static getDerivedStateFromError(error) { return { error }; }
+    componentDidCatch(error, info) { console.error('💥 Admin panel render error:', error, info); }
+    render() {
+      if (this.state.error) {
+        return (
+          <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#0d0f1a',color:'#e2e8f0',fontFamily:'monospace',padding:24}}>
+            <div style={{maxWidth:480,textAlign:'center'}}>
+              <div style={{fontSize:32,marginBottom:12}}>⚠</div>
+              <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>Something went wrong loading the admin panel</div>
+              <div style={{fontSize:12,color:'#94a3b8',marginBottom:20,wordBreak:'break-word'}}>{this.state.error?.message || String(this.state.error)}</div>
+              <button onClick={()=>window.location.reload()} style={{padding:'10px 24px',borderRadius:8,border:'none',background:'#6366f1',color:'#fff',fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Reload</button>
+            </div>
+          </div>
+        );
+      }
+      return this.props.children;
+    }
+  }
+
   function App() {
     const [token,      setToken]      = useState(()=>ls.get('admin_token',null));
     const [role,       setRole]       = useState(()=>ls.get('admin_role','admin'));
@@ -9373,6 +9402,9 @@
     // On mount: if we have a stored token, verify it's still valid (server may have restarted)
     // /staff/me works for BOTH admin and staff tokens — tells us which role
     // this token actually is and refreshes permissions in case they changed.
+    // On mount: if we have a stored token, verify it's still valid (server may have restarted)
+    // /staff/me works for BOTH admin and staff tokens — tells us which role
+    // this token actually is and refreshes permissions in case they changed.
     useEffect(()=>{
       if (!token) return;
       fetch(`${API}/staff/me`, { headers:{ Authorization:`Bearer ${token}` } })
@@ -9416,7 +9448,17 @@
       ls.del('admin_token'); ls.del('admin_role'); ls.del('admin_permissions'); ls.del('admin_staff_name'); setToken(null);
     };
 
-    if (!token) return (
+    // Built as a value rather than an early `return` here — every hook below
+    // (the nav-redirect useEffect in particular) must still run on every
+    // render regardless of login state. An early return before a hook call
+    // makes the hook count differ between the logged-out and logged-in
+    // render, which throws "Rendered more hooks than during the previous
+    // render" the moment login() flips `token` truthy — and with no error
+    // boundary previously in place, that silently white-screened the app.
+    // (A page refresh while already logged in skips this transition entirely
+    // — token is already set on the very first render — which is why refresh
+    // "fixed" it.)
+    const loginScreen = (
       <div className="login-wrap">
         <div className="login-box">
           <div className="login-logo">A</div>
@@ -9483,6 +9525,14 @@
     const closeSidebar = () => setSidebarOpen(false);
 
     const titles = { dashboard:'Dashboard', orders:'Orders', vendors:'Vendors', jarvis:'JARVIS AI', settlements:'Settlements', settings:'Settings', audit:'Audit Log', theme:'Theme' };
+
+    // All hooks have run by this point — safe to branch on a conditional
+    // return now without ever changing the hook count between renders (that
+    // was the actual bug: this used to be an early `return` positioned
+    // before the nav-redirect useEffect below, so logging in — which flips
+    // `token` truthy mid-session — called one more hook than the previous
+    // render had, which React rejects).
+    if (!token) return loginScreen;
 
     return (
       <div className="app-shell">
@@ -10871,7 +10921,7 @@
     );
   }
 
-  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
