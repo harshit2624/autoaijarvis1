@@ -3902,7 +3902,7 @@
                        <button onClick={async()=>{
                          const r = await fetch(`${API}/vendor/agreements/${ag.id}/download`, { headers:{ Authorization:`Bearer ${token}` } });
                          const blob = await r.blob();
-                         const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='CrosCrow_Agreement.docx'; a.click(); URL.revokeObjectURL(url);
+                         const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='CrosCrow_Agreement.pdf'; a.click(); URL.revokeObjectURL(url);
                        }} style={{padding:'7px 14px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
                          📥 Download Agreement
                        </button>

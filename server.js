@@ -23,13 +23,35 @@ const multer     = require("multer");
 const { MongoClient, GridFSBucket, ObjectId } = require("mongodb");
 const { google }     = require("googleapis");
 const Razorpay       = require("razorpay");
-const {
-  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  AlignmentType, BorderStyle, WidthType, ShadingType,
-  Header, Footer, SimpleField, ImageRun, PageBreak,
-} = require('docx');
+const PdfPrinter     = require('pdfmake');
 const cookieParser   = require("cookie-parser");
 require("dotenv").config();
+
+// ── PDF generation (agreement generator) — pdfmake, not docx/LibreOffice,
+// since Render's standard Node environment has no LibreOffice binary and
+// bundling Puppeteer/Chromium just for one PDF would bloat the deploy. Uses
+// PDFKit's built-in standard fonts (no .ttf files to ship/lose on deploy).
+const pdfFonts = {
+  Helvetica: {
+    normal:      'Helvetica',
+    bold:        'Helvetica-Bold',
+    italics:     'Helvetica-Oblique',
+    bolditalics: 'Helvetica-BoldOblique',
+  },
+};
+const pdfPrinter = new PdfPrinter(pdfFonts);
+function pdfToBuffer(docDefinition) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = pdfPrinter.createPdfKitDocument(docDefinition);
+      const chunks = [];
+      doc.on('data', c => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+      doc.end();
+    } catch (e) { reject(e); }
+  });
+}
 
 // ── File uploads — all stored in MongoDB via GridFS, not on local disk ─────
 // Render's (and most PaaS) filesystems are ephemeral — anything written to
@@ -10710,10 +10732,13 @@ app.post("/admin/penalties/run-cron", requirePermission('penalties'), async (req
 // ══════════════════════════════════════════════════════════════════════════
 // AGREEMENT GENERATOR
 // ══════════════════════════════════════════════════════════════════════════
+// Builds a pdfmake docDefinition for the vendor partnership agreement.
+// Switched from the `docx` library to pdfmake — no LibreOffice/Chromium
+// dependency needed to produce a PDF directly (and PDFs render identically
+// everywhere, unlike .docx which depends on the viewer's Word version).
 function buildAgreementDoc(c, logoBuffer) {
-  const BLK='0A0A0A', DARK='1A1A1A', GRAY='555555', MGRAY='888888', LGRAY='F5F5F5', WHITE='FFFFFF', LINE='DDDDDD';
-  const nb = { style:BorderStyle.NONE, size:0, color:WHITE };
-  const noBorders = { top:nb, bottom:nb, left:nb, right:nb };
+  const BLK='#0A0A0A', DARK='#1A1A1A', GRAY='#555555', MGRAY='#888888', WHITE='#FFFFFF', LINE='#DDDDDD';
+  const PAGE_W = 515; // usable width in pt for A4 with ~40pt margins
 
   // Settlement cycle text
   const settlementText = (() => {
@@ -10726,83 +10751,77 @@ function buildAgreementDoc(c, logoBuffer) {
     c.settlementCycle === 'date' ? `Every ${c.settlementDate}${['st','nd','rd'][((c.settlementDate%100-11)%10)-1]||'th'} of month` :
     'Within '+c.prepaidSettlementDays+' business days';
 
-  const spacer = (before=200,after=0) => new Paragraph({ spacing:{ before, after }, children:[] });
-  const hr = () => new Paragraph({ border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:LINE, space:1 } }, spacing:{ before:0, after:200 }, children:[] });
-  const sectionHeading = t => new Paragraph({ spacing:{ before:360, after:140 }, border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:BLK, space:4 } }, children:[new TextRun({ text:t, bold:true, size:24, color:BLK, font:'Arial' })] });
-  const clauseTitle = t => new Paragraph({ spacing:{ before:220, after:80 }, children:[new TextRun({ text:t, bold:true, size:21, color:DARK, font:'Arial' })] });
-  const body = (t,opts={}) => new Paragraph({ spacing:{ before:60, after:100 }, children:[new TextRun({ text:t, size:21, color:GRAY, font:'Arial', ...opts })] });
+  // PDFKit's standard 14 fonts (Helvetica etc.) only support WinAnsi/Latin-1
+  // encoding — the ₹ glyph isn't in that range and renders as garbage ("1")
+  // without embedding a full Unicode TTF. Swap it for "Rs." everywhere
+  // instead of carrying a font-file dependency just for one symbol.
+  const rs = s => String(s).replace(/₹/g, 'Rs. ');
 
-  const highlight = (label, value) => new Table({
-    width:{ size:9360, type:WidthType.DXA }, columnWidths:[2800,6560],
-    rows:[new TableRow({ children:[
-      new TableCell({ borders:noBorders, shading:{ fill:'EFEFEF', type:ShadingType.CLEAR }, margins:{ top:90,bottom:90,left:140,right:100 }, width:{ size:2800, type:WidthType.DXA },
-        children:[new Paragraph({ children:[new TextRun({ text:label, bold:true, size:19, color:DARK, font:'Arial' })] })] }),
-      new TableCell({ borders:noBorders, shading:{ fill:WHITE, type:ShadingType.CLEAR }, margins:{ top:90,bottom:90,left:140,right:100 }, width:{ size:6560, type:WidthType.DXA },
-        children:[new Paragraph({ children:[new TextRun({ text:value, size:19, color:DARK, font:'Arial' })] })] })
-    ]})]
+  const spacer = (h=10) => ({ text:'', margin:[0,0,0,h] });
+  const hr = () => ({ canvas:[{ type:'line', x1:0, y1:0, x2:PAGE_W, y2:0, lineWidth:1, lineColor:LINE }], margin:[0,2,0,10] });
+  const sectionHeading = t => ({ stack:[
+    { text:rs(t), bold:true, fontSize:13, color:BLK, margin:[0,16,0,4] },
+    { canvas:[{ type:'line', x1:0, y1:0, x2:PAGE_W, y2:0, lineWidth:1.2, lineColor:BLK }], margin:[0,0,0,8] },
+  ]});
+  const clauseTitle = t => ({ text:rs(t), bold:true, fontSize:10.5, color:DARK, margin:[0,9,0,3] });
+  const body = (t,opts={}) => ({ text:rs(t), fontSize:10, color:GRAY, lineHeight:1.25, margin:[0,1,0,5], ...opts });
+
+  const highlight = (label, value) => ({
+    table:{ widths:[150,'*'], body:[[
+      { text:rs(label), bold:true, fontSize:9.5, color:DARK, fillColor:'#EFEFEF', margin:[7,5,5,5] },
+      { text:rs(value), fontSize:9.5, color:DARK, margin:[7,5,5,5] },
+    ]]},
+    layout:{ hLineWidth:()=>0, vLineWidth:()=>0, paddingLeft:()=>0, paddingRight:()=>0, paddingTop:()=>0, paddingBottom:()=>0 },
+    margin:[0,0,0,3],
   });
 
-  const sigBlock = (party,label,name,gstin,address) => {
-    const b={ style:BorderStyle.SINGLE, size:4, color:BLK };
-    const thin={ style:BorderStyle.SINGLE, size:1, color:LINE };
-    return new TableCell({
-      borders:{ top:b, bottom:thin, left:thin, right:thin },
-      margins:{ top:160,bottom:300,left:200,right:200 }, width:{ size:4440, type:WidthType.DXA },
-      children:[
-        new Paragraph({ spacing:{ before:0,after:60 }, children:[new TextRun({ text:label, size:17, color:MGRAY, font:'Arial', allCaps:true, characterSpacing:40 })] }),
-        new Paragraph({ spacing:{ before:0,after:120 }, children:[new TextRun({ text:party, bold:true, size:24, color:BLK, font:'Arial' })] }),
-        spacer(200,0),
-        new Paragraph({ spacing:{ before:0,after:60 }, children:[new TextRun({ text:'Authorized Signatory', size:17, color:MGRAY, font:'Arial' })] }),
-        new Paragraph({ border:{ bottom:{ style:BorderStyle.SINGLE, size:2, color:BLK } }, spacing:{ before:0,after:200 }, children:[new TextRun({ text:name||'________________________', size:20, font:'Arial', color:BLK })] }),
-        new Paragraph({ spacing:{ before:0,after:50 }, children:[new TextRun({ text:'GSTIN: '+gstin, size:17, color:GRAY, font:'Arial' })] }),
-        new Paragraph({ spacing:{ before:0,after:50 }, children:[new TextRun({ text:'Address: '+address, size:17, color:GRAY, font:'Arial' })] }),
-        spacer(200,0),
-        new Paragraph({ spacing:{ before:0,after:50 }, children:[new TextRun({ text:'Date:', size:17, color:MGRAY, font:'Arial' })] }),
-        new Paragraph({ border:{ bottom:{ style:BorderStyle.SINGLE, size:2, color:BLK } }, spacing:{ before:0,after:80 }, children:[new TextRun({ text:'________________________', size:20, font:'Arial', color:WHITE })] }),
-      ]
-    });
-  };
+  const sigBlock = (party,label,name,gstin,address) => ({
+    stack:[
+      { text:label.toUpperCase(), fontSize:8, color:MGRAY, margin:[0,0,0,3] },
+      { text:party, bold:true, fontSize:13, color:BLK, margin:[0,0,0,14] },
+      { text:'Authorized Signatory', fontSize:8, color:MGRAY, margin:[0,0,0,3] },
+      { text:name||' ', fontSize:10, color:BLK, margin:[0,0,0,2] },
+      { canvas:[{ type:'line', x1:0, y1:0, x2:185, y2:0, lineWidth:0.75, lineColor:BLK }], margin:[0,0,0,8] },
+      { text:'GSTIN: '+gstin, fontSize:8, color:GRAY, margin:[0,0,0,3] },
+      { text:'Address: '+address, fontSize:8, color:GRAY, margin:[0,0,0,12] },
+      { text:'Date:', fontSize:8, color:MGRAY, margin:[0,0,0,3] },
+      { canvas:[{ type:'line', x1:0, y1:0, x2:185, y2:0, lineWidth:0.75, lineColor:BLK }], margin:[0,0,0,4] },
+    ],
+    margin:[10,10,10,12],
+  });
 
-  // ── Cover page children ───────────────────────────────────────────────────
-  const coverChildren = [
-    spacer(1200, 0),
-    // Logo
-    ...(logoBuffer ? [new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, children:[new ImageRun({ data:logoBuffer, transformation:{ width:180, height:36 }, type:'png' })] })] : [
-      new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, children:[new TextRun({ text:'CROSCROW', bold:true, size:48, color:BLK, font:'Arial' })] })
-    ]),
-    spacer(600, 0),
-    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, border:{ bottom:{ style:BorderStyle.SINGLE, size:2, color:LINE } }, children:[] }),
-    spacer(400, 0),
-    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:120 }, children:[new TextRun({ text:'VENDOR PARTNERSHIP AGREEMENT', bold:true, size:32, color:BLK, font:'Arial', characterSpacing:80 })] }),
-    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:600 }, children:[new TextRun({ text:'between  '+c.partyB.name+'  and  '+c.partyA.name, size:22, color:GRAY, font:'Arial', italics:true })] }),
-    // Key info minimal block
+  // ── Cover page content ────────────────────────────────────────────────────
+  const coverContent = [
+    spacer(70),
+    logoBuffer
+      ? { image:`data:image/png;base64,${logoBuffer.toString('base64')}`, width:140, alignment:'center', margin:[0,0,0,28] }
+      : { text:'CROSCROW', bold:true, fontSize:28, color:BLK, alignment:'center', margin:[0,0,0,28] },
+    { canvas:[{ type:'line', x1:157, y1:0, x2:PAGE_W-157, y2:0, lineWidth:0.75, lineColor:LINE }], margin:[0,0,0,20] },
+    { text:'VENDOR PARTNERSHIP AGREEMENT', bold:true, fontSize:18, color:BLK, alignment:'center', characterSpacing:1, margin:[0,0,0,8] },
+    { text:'between  '+c.partyB.name+'  and  '+c.partyA.name, fontSize:11, color:GRAY, italics:true, alignment:'center', margin:[0,0,0,30] },
     ...['Effective Date: '+c.effectiveDate, 'Commission: '+c.commissionRate, 'Settlement: '+settlementLabel, 'Minimum Term: '+c.minimumTerm].map(line =>
-      new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:60 }, children:[new TextRun({ text:line, size:19, color:MGRAY, font:'Arial' })] })
+      ({ text:rs(line), fontSize:9.5, color:MGRAY, alignment:'center', margin:[0,0,0,3] })
     ),
-    spacer(800, 0),
-    new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ before:0,after:0 }, children:[new TextRun({ text:'CONFIDENTIAL', size:17, color:MGRAY, font:'Arial', characterSpacing:120, allCaps:true })] }),
-    // Page break to start agreement on new page
-    new Paragraph({ children:[new TextRun({ break:1 })] }),
+    spacer(40),
+    { text:'CONFIDENTIAL', fontSize:8.5, color:MGRAY, characterSpacing:2, alignment:'center' },
   ];
 
-  // ── Agreement content children ────────────────────────────────────────────
+  // ── Agreement content ──────────────────────────────────────────────────────
   const agreementChildren = [
-    spacer(200,0),
-    sectionHeading('AGREEMENT SUMMARY'), spacer(80,0),
-    highlight('Marketplace (Party B)', c.partyB.name), spacer(40,0),
-    highlight('Vendor (Party A)', c.partyA.name), spacer(40,0),
-    highlight('Commission Rate', c.commissionRate+' of net sale value + applicable GST'), spacer(40,0),
-    highlight('Settlement Cycle', settlementLabel), spacer(40,0),
-    highlight('COD & Settlement Cycle', settlementLabel), spacer(40,0),
-    highlight('Minimum Term', c.minimumTerm+' from date of signing'), spacer(40,0),
-    highlight('Notice Period', c.noticePeriod+' prior written notice (post lock-in)'), spacer(200,0), hr(),
+    sectionHeading('AGREEMENT SUMMARY'), spacer(4),
+    highlight('Marketplace (Party B)', c.partyB.name),
+    highlight('Vendor (Party A)', c.partyA.name),
+    highlight('Commission Rate', c.commissionRate+' of net sale value + applicable GST'),
+    highlight('Settlement Cycle', settlementLabel),
+    highlight('COD & Settlement Cycle', settlementLabel),
+    highlight('Minimum Term', c.minimumTerm+' from date of signing'),
+    highlight('Notice Period', c.noticePeriod+' prior written notice (post lock-in)'), spacer(10), hr(),
     sectionHeading('AGREEMENT'),
     body('This Vendor Partnership Agreement ("Agreement") is entered into as of the '+c.agreementDate+', by and between the parties identified below, and shall be binding upon both parties upon execution.'),
-    spacer(120,0),
+    spacer(6),
     clauseTitle('PARTY B – Marketplace'), body(c.partyB.name+', a company registered under the laws of India, having its registered office at '+c.partyB.address+', GSTIN: '+c.partyB.gstin+'.'),
-    spacer(80,0),
     clauseTitle('PARTY A – Vendor'), body(c.partyA.name+', a company registered under the laws of India, having its registered office at '+c.partyA.address+', GSTIN: '+c.partyA.gstin+'.'),
-    spacer(120,0), body('Both parties hereby agree to be bound by the following terms and conditions:', { bold:true }),
+    spacer(6), body('Both parties hereby agree to be bound by the following terms and conditions:', { bold:true }),
     sectionHeading('1. COMMISSION & SETTLEMENT'),
     clauseTitle('1.1  Commission Rate'), body('Party A agrees to pay Party B a commission of '+c.commissionRate+' on the net sale value of every order fulfilled through Party B\'s marketplace platform, plus applicable GST on the commission amount.'),
     clauseTitle('1.2  Settlement Cycle'), body('Settlements shall be processed '+settlementText+'. Party B shall deduct its commission from prepaid order proceeds prior to remittance.'),
@@ -10843,44 +10862,54 @@ function buildAgreementDoc(c, logoBuffer) {
     clauseTitle('13.1  Initial Term'), body('This Agreement shall be effective from the date of signing and shall remain in force for a minimum period of '+c.minimumTerm+' ("Lock-in Period").'),
     clauseTitle('13.2  Termination After Lock-in'), body('Upon expiry of the Lock-in Period, either party may terminate this Agreement by providing '+c.noticePeriod+' prior written notice to the other party.'),
     clauseTitle('13.3  Effect of Termination'), body('Upon termination of this Agreement: (a) all outstanding payments shall be settled within 14 business days, subject to deduction of any applicable penalties, reserves, or liabilities; (b) Party B shall delist all of Party A\'s products from its platform; and (c) the provisions relating to confidentiality, intellectual property, dispute resolution, limitation of liability, and return/quality obligations shall survive termination and remain in full force and effect.'),
-    spacer(400,0), hr(),
+    spacer(20), hr(),
     sectionHeading('SIGNATURES'),
     body('IN WITNESS WHEREOF, the parties have duly executed this Agreement as of the date first written above.'),
-    spacer(240,0),
-    new Table({
-      width:{ size:9360, type:WidthType.DXA }, columnWidths:[4440,480,4440],
-      rows:[new TableRow({ children:[
-        sigBlock(c.partyB.name,'Party B – Marketplace',c.partyB.signatory,c.partyB.gstin,c.partyB.address),
-        new TableCell({ borders:noBorders, width:{ size:480, type:WidthType.DXA }, children:[new Paragraph({ children:[] })] }),
-        sigBlock(c.partyA.name,'Party A – Vendor',c.partyA.signatory,c.partyA.gstin,c.partyA.address)
-      ]})]
-    }),
-    spacer(400,0),
-    new Paragraph({ alignment:AlignmentType.CENTER, children:[new TextRun({ text:'This document is prepared under CrosCrow Standard Policy and is legally binding upon execution.', size:17, color:MGRAY, font:'Arial', italics:true })] })
+    spacer(12),
+    {
+      columns:[
+        { width:'*', table:{ widths:['*'], body:[[ sigBlock(c.partyB.name,'Party B – Marketplace',c.partyB.signatory,c.partyB.gstin,c.partyB.address) ]] }, layout:{ hLineColor:()=>LINE, vLineColor:()=>LINE, hLineWidth:(i)=>i===0?1.5:0.75, vLineWidth:()=>0.75 } },
+        { width:24, text:'' },
+        { width:'*', table:{ widths:['*'], body:[[ sigBlock(c.partyA.name,'Party A – Vendor',c.partyA.signatory,c.partyA.gstin,c.partyA.address) ]] }, layout:{ hLineColor:()=>LINE, vLineColor:()=>LINE, hLineWidth:(i)=>i===0?1.5:0.75, vLineWidth:()=>0.75 } },
+      ],
+    },
+    spacer(20),
+    { text:'This document is prepared under CrosCrow Standard Policy and is legally binding upon execution.', fontSize:8.5, color:MGRAY, italics:true, alignment:'center' },
   ];
 
-  const pageProps = { size:{ width:11906, height:16838 }, margin:{ top:1080,right:1080,bottom:1080,left:1080 } };
-
-  return new Document({
-    styles:{ default:{ document:{ run:{ font:'Arial', size:21, color:DARK } } } },
-    sections:[
-      // ── Cover page (no header/footer) ──────────────────────────────────
-      {
-        properties:{ page:{ ...pageProps } },
-        children: coverChildren,
-      },
-      // ── Agreement body ─────────────────────────────────────────────────
-      {
-        properties:{ page:{ ...pageProps } },
-        headers:{ default: new Header({ children:[new Paragraph({ spacing:{ before:0,after:100 }, border:{ bottom:{ style:BorderStyle.SINGLE, size:4, color:LINE, space:4 } }, children:[new TextRun({ text:'CROSCROW  |  Vendor Partnership Agreement  —  '+c.partyA.name, size:17, color:MGRAY, font:'Arial' }), new TextRun({ text:'   CONFIDENTIAL', size:15, color:'888888', font:'Arial', bold:true })] })] }) },
-        footers:{ default: new Footer({ children:[new Paragraph({ spacing:{ before:100,after:0 }, border:{ top:{ style:BorderStyle.SINGLE, size:4, color:LINE, space:4 } }, children:[new TextRun({ text:"CrosCrow – India's Curated Streetwear Marketplace   |   Page ", size:16, color:MGRAY, font:'Arial' }), new TextRun({ children:[new SimpleField('PAGE')], size:16, color:MGRAY, font:'Arial' })] })] }) },
-        children: agreementChildren,
-      }
-    ]
-  });
+  return {
+    pageSize:'A4',
+    pageMargins:[40,50,40,50],
+    defaultStyle:{ font:'Helvetica', fontSize:10, color:DARK },
+    header: (currentPage) => currentPage === 1 ? null : {
+      margin:[40,18,40,0],
+      stack:[
+        { columns:[
+          { text:'CROSCROW  |  Vendor Partnership Agreement  —  '+c.partyA.name, fontSize:8, color:MGRAY },
+          { text:'CONFIDENTIAL', fontSize:7.5, color:MGRAY, bold:true, alignment:'right' },
+        ]},
+        { canvas:[{ type:'line', x1:0, y1:4, x2:PAGE_W, y2:4, lineWidth:0.75, lineColor:LINE }] },
+      ],
+    },
+    footer: (currentPage, pageCount) => currentPage === 1 ? null : {
+      margin:[40,0,40,20],
+      stack:[
+        { canvas:[{ type:'line', x1:0, y1:0, x2:PAGE_W, y2:0, lineWidth:0.75, lineColor:LINE }], margin:[0,0,0,4] },
+        { columns:[
+          { text:"CrosCrow – India's Curated Streetwear Marketplace", fontSize:7.5, color:MGRAY },
+          { text:`Page ${currentPage-1} of ${pageCount-1}`, fontSize:7.5, color:MGRAY, alignment:'right' },
+        ]},
+      ],
+    },
+    content:[
+      ...coverContent,
+      { text:'', pageBreak:'after' },
+      ...agreementChildren,
+    ],
+  };
 }
 
-// POST /admin/generate-agreement — generate and stream .docx
+// POST /admin/generate-agreement — generate and stream .pdf
 app.post('/admin/generate-agreement', adminAuth, async (req, res) => {
   try {
     const c = req.body;
@@ -10906,11 +10935,11 @@ app.post('/admin/generate-agreement', adminAuth, async (req, res) => {
     c.settlementDate  = c.settlementDate  || '';
     const logoPath = path.join(__dirname, 'croscrow-logo.png');
     const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
-    const doc    = buildAgreementDoc(c, logoBuffer);
-    const buffer = await Packer.toBuffer(doc);
-    const fname  = `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}_${(c.effectiveDate||c.agreementDate).replace(/\s+/g,'_')}.docx`;
+    const docDef = buildAgreementDoc(c, logoBuffer);
+    const buffer = await pdfToBuffer(docDef);
+    const fname  = `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}_${(c.effectiveDate||c.agreementDate).replace(/\s+/g,'_')}.pdf`;
 
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.send(buffer);
   } catch (err) {
@@ -10943,11 +10972,11 @@ app.post('/admin/agreements', adminAuth, async (req, res) => {
 
     const logoPath   = path.join(__dirname, 'croscrow-logo.png');
     const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
-    const buffer     = await Packer.toBuffer(buildAgreementDoc(c, logoBuffer));
+    const buffer     = await pdfToBuffer(buildAgreementDoc(c, logoBuffer));
 
     const id       = new ObjectId();
-    const fname    = `agreement_${id}_${c.partyA.name.replace(/\s+/g,'_')}.docx`;
-    const fileId   = await storeFileInDb(buffer, fname, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', { category: 'agreement' });
+    const fname    = `agreement_${id}_${c.partyA.name.replace(/\s+/g,'_')}.pdf`;
+    const fileId   = await storeFileInDb(buffer, fname, 'application/pdf', { category: 'agreement' });
     const fileUrl  = `/uploads/${fileId}`;
 
     // Get vendor email
@@ -10998,7 +11027,7 @@ app.post('/admin/agreements', adminAuth, async (req, res) => {
           to: vendorEmail,
           subject: `📄 Partnership Agreement — ${c.partyA.name} — CrosCrow`,
           html,
-          attachments: [{ filename: `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}.docx`, content: buffer }],
+          attachments: [{ filename: `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}.pdf`, content: buffer }],
         });
       }
     }
@@ -11017,15 +11046,23 @@ app.get('/admin/agreements', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /admin/agreements/:id/download — download the docx
+// GET /admin/agreements/:id/download — download the agreement PDF
+// Agreement files live in GridFS (see storeFileInDb), not on local disk —
+// doc.file_url is "/uploads/<gridfs id>". Reading it as a filesystem path
+// here always 404'd, which is why downloads were coming through as a tiny
+// broken file instead of the real document.
 app.get('/admin/agreements/:id/download', adminAuth, async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
     const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id) });
-    if (!doc) return res.status(404).json({ error: 'Not found' });
-    const filePath = path.join(__dirname, doc.file_url);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    res.download(filePath, `CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.docx`);
+    if (!doc?.file_url) return res.status(404).json({ error: 'Not found' });
+    const gridId = new ObjectId(doc.file_url.replace('/uploads/', ''));
+    const files = await gridFsBucket.find({ _id: gridId }).toArray();
+    if (!files.length) return res.status(404).json({ error: 'File not found' });
+    const ext = (files[0].contentType || '').includes('pdf') ? 'pdf' : 'docx';
+    res.setHeader('Content-Type', files[0].contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.${ext}"`);
+    gridFsBucket.openDownloadStream(gridId).on('error', () => res.status(404).end()).pipe(res);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -11103,10 +11140,14 @@ app.get('/vendor/agreements/:id/download', vendorAuth, async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
     const doc = await mdb.collection('vendor_agreements').findOne({ _id: new ObjectId(req.params.id), vendor_name: req.vendor });
-    if (!doc) return res.status(404).json({ error: 'Not found' });
-    const filePath = path.join(__dirname, doc.file_url);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    res.download(filePath, `CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.docx`);
+    if (!doc?.file_url) return res.status(404).json({ error: 'Not found' });
+    const gridId = new ObjectId(doc.file_url.replace('/uploads/', ''));
+    const files = await gridFsBucket.find({ _id: gridId }).toArray();
+    if (!files.length) return res.status(404).json({ error: 'File not found' });
+    const ext = (files[0].contentType || '').includes('pdf') ? 'pdf' : 'docx';
+    res.setHeader('Content-Type', files[0].contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.${ext}"`);
+    gridFsBucket.openDownloadStream(gridId).on('error', () => res.status(404).end()).pipe(res);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

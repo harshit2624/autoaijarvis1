@@ -9694,7 +9694,7 @@
                   <div style={{borderTop:'1px solid var(--border)',padding:16}} onClick={e=>e.stopPropagation()}>
                     <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14}}>
                       <a href={`${API}/admin/agreements/${ag.id}/download?token=${token}`} target="_blank"
-                        onClick={e=>{e.preventDefault();fetch(`${API}/admin/agreements/${ag.id}/download`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=`Agreement_${ag.vendor_name}.docx`;a.click();URL.revokeObjectURL(u);});}}
+                        onClick={e=>{e.preventDefault();fetch(`${API}/admin/agreements/${ag.id}/download`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=`Agreement_${ag.vendor_name}.pdf`;a.click();URL.revokeObjectURL(u);});}}
                         style={{padding:'6px 14px',borderRadius:6,background:'var(--indigo)',color:'#fff',fontWeight:600,fontSize:11,textDecoration:'none',cursor:'pointer',display:'inline-block'}}>
                         📥 Download Agreement
                       </a>
@@ -9818,7 +9818,7 @@
         if (!r.ok) { const d=await r.json(); throw new Error(d.error); }
         const blob = await r.blob();
         const url  = URL.createObjectURL(blob);
-        const a    = document.createElement('a'); a.href=url; a.download=`Preview_${form.vendorName}.docx`; a.click();
+        const a    = document.createElement('a'); a.href=url; a.download=`Preview_${form.vendorName}.pdf`; a.click();
         URL.revokeObjectURL(url);
       } catch(e) { setErr(e.message); }
       setLoading(false);
@@ -9901,12 +9901,12 @@
 
             <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 12px',background:'var(--bg-hover)',borderRadius:8}}>
               <input type="checkbox" id="send_email" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} style={{cursor:'pointer'}}/>
-              <label htmlFor="send_email" style={{fontSize:12,color:'var(--text)',cursor:'pointer'}}>Email agreement to vendor (with .docx attachment)</label>
+              <label htmlFor="send_email" style={{fontSize:12,color:'var(--text)',cursor:'pointer'}}>Email agreement to vendor (with .pdf attachment)</label>
             </div>
           </div>
           <div style={{padding:'14px 20px',borderTop:'1px solid var(--border)',display:'flex',gap:8,justifyContent:'flex-end'}}>
             <button onClick={downloadPreview} disabled={loading} style={{padding:'7px 16px',borderRadius:7,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontWeight:600,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
-              {loading?'…':'👁 Preview .docx'}
+              {loading?'…':'👁 Preview .pdf'}
             </button>
             <button onClick={submit} disabled={loading} style={{padding:'7px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
               {loading?'↻ Creating…':'✓ Create & Send'}
@@ -10003,7 +10003,7 @@
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href = url;
-        a.download = `CrosCrow_Agreement_${form.vendorName.replace(/\s+/g,'_')}.docx`;
+        a.download = `CrosCrow_Agreement_${form.vendorName.replace(/\s+/g,'_')}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
       } catch(e) { setErr(e.message); }
@@ -10026,7 +10026,7 @@
       <div className="page">
         <div style={{marginBottom:20}}>
           <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>📝 Agreement Generator</div>
-          <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Fill in the vendor details and download a ready-to-sign .docx agreement.</div>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Fill in the vendor details and download a ready-to-sign .pdf agreement.</div>
         </div>
 
         {err && <div style={{padding:'10px 14px',borderRadius:8,marginBottom:14,fontSize:12,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'var(--red)'}}>{err}</div>}
@@ -10105,7 +10105,7 @@
             fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'var(--font-family)',
             opacity:loading?0.6:1,
           }}>
-            {loading ? '↻ Generating…' : '📥 Generate & Download Agreement (.docx)'}
+            {loading ? '↻ Generating…' : '📥 Generate & Download Agreement (.pdf)'}
           </button>
           <span style={{marginLeft:14,fontSize:11,color:'var(--text-muted)'}}>File will download immediately — ready to send for signing.</span>
         </div>
