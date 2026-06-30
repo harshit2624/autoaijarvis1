@@ -9542,10 +9542,13 @@ app.get('/vendor/shopify/callback', async (req, res) => {
   const cleanShop = shop.replace(/https?:\/\//, '').replace(/\/$/, '');
 
   try {
-    // Exchange code for an expiring access token (per Shopify's docs: form-
-    // urlencoded body, expiring=1 — same fix as the embedded app's token
-    // exchange, applied here to the authorization-code grant this "Quick
-    // Install" flow uses).
+    // Standard authorization_code exchange — do NOT include expiring=1 here.
+    // expiring=1 is only valid on token-exchange grants (embedded App Bridge).
+    // On the standard code-exchange endpoint it causes Shopify to return
+    // "This request requires an active refresh_token" and reject the whole
+    // install, which was breaking every Shopify App Review installation.
+    // Shopify issues expiring tokens automatically per app config; the
+    // migration fallback below handles stores that still return non-expiring.
     const codeVerifier = req.cookies?.shopify_code_verifier || '';
     res.clearCookie('shopify_code_verifier');
     const tokenRes = await fetch(`https://${cleanShop}/admin/oauth/access_token`, {
@@ -9555,14 +9558,13 @@ app.get('/vendor/shopify/callback', async (req, res) => {
         client_id:     process.env.VENDOR_APP_CLIENT_ID,
         client_secret: process.env.VENDOR_APP_SECRET,
         code,
-        expiring:      '1',
         ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
       }),
     });
     let tokenData = await tokenRes.json();
     if (!tokenData.access_token) throw new Error(tokenData.error_description || 'Failed to get access token');
-    // Same Shopify quirk seen on the embedded-app path: expiring=1 isn't always
-    // honored on first issuance. Fall back to migrating the result if needed.
+    // If Shopify returned a non-expiring token (no refresh_token), migrate it
+    // to an expiring one so tokens auto-rotate properly going forward.
     if (!tokenData.refresh_token) {
       try { tokenData = await shopifyMigrateToExpiringToken(cleanShop, tokenData.access_token); }
       catch (e) { console.error(`⚠ Could not migrate to expiring token for ${cleanShop}:`, e.message); }
