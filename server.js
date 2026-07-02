@@ -16236,10 +16236,13 @@ app.get('/admin/pixel-tracker/summary', adminAuth, async (req, res) => {
     const byEvent = Object.fromEntries(rows.map(r => [r._id, r.count]));
     const views = byEvent.ViewContent || 0, atc = byEvent.AddToCart || 0, checkout = byEvent.InitiateCheckout || 0, purchases = byEvent.Purchase || 0;
     const purchaseValue = rows.find(r => r._id === 'Purchase')?.value || 0;
+    // "Buy Now" skips the cart so checkout can exceed atc — use effectiveAtc = max(atc, checkout)
+    // so ratios never exceed 100% and Buy Now sessions are counted as purchase intent.
+    const effectiveAtc = Math.max(atc, checkout);
     res.json({
       views, atc, checkout, purchases, purchaseValue,
-      viewToAtcRate: views ? (atc / views) * 100 : 0,
-      atcToCheckoutRate: atc ? (checkout / atc) * 100 : 0,
+      viewToAtcRate: views ? (effectiveAtc / views) * 100 : 0,
+      atcToCheckoutRate: effectiveAtc ? (checkout / effectiveAtc) * 100 : 0,
       checkoutToPurchaseRate: checkout ? (purchases / checkout) * 100 : 0,
       viewToPurchaseRate: views ? (purchases / views) * 100 : 0,
     });
@@ -16279,14 +16282,18 @@ app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
           purchases: { $sum: { $cond: [{ $eq: ['$eventName', 'Purchase'] }, 1, 0] } },
       }},
     ]).toArray();
-    const withRates = rows.filter(r => r.views >= minViews).map(r => ({
-      productName: r._id, productImage: r.image || '',
-      views: r.views, atc: r.atc, checkout: r.checkout, purchases: r.purchases,
-      viewToAtcRate: r.views ? (r.atc / r.views) * 100 : 0,
-      atcToCheckoutRate: r.atc ? (r.checkout / r.atc) * 100 : 0,
-      checkoutToPurchaseRate: r.checkout ? (r.purchases / r.checkout) * 100 : 0,
-      viewToPurchaseRate: r.views ? (r.purchases / r.views) * 100 : 0,
-    }));
+    const withRates = rows.filter(r => r.views >= minViews).map(r => {
+      // Buy Now fires checkout without ATC — effectiveAtc = max(atc, checkout) so ratios stay ≤ 100%
+      const effectiveAtc = Math.max(r.atc, r.checkout);
+      return {
+        productName: r._id, productImage: r.image || '',
+        views: r.views, atc: r.atc, checkout: r.checkout, purchases: r.purchases,
+        viewToAtcRate: r.views ? (effectiveAtc / r.views) * 100 : 0,
+        atcToCheckoutRate: effectiveAtc ? (r.checkout / effectiveAtc) * 100 : 0,
+        checkoutToPurchaseRate: r.checkout ? (r.purchases / r.checkout) * 100 : 0,
+        viewToPurchaseRate: r.views ? (r.purchases / r.views) * 100 : 0,
+      };
+    });
     const sortBy = ['viewToAtcRate','atcToCheckoutRate','checkoutToPurchaseRate','viewToPurchaseRate'].includes(req.query.sortBy) ? req.query.sortBy : 'viewToAtcRate';
     withRates.sort((a, b) => b[sortBy] - a[sortBy]);
     res.json({ products: withRates.slice(0, limit) });
