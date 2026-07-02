@@ -16114,6 +16114,18 @@ app.get('/admin/support/chats', adminAuth, async (req, res) => {
   const chats = await mdb.collection('support_chats').find({}).sort({ updated_at: -1 }).limit(200).toArray();
   res.json({ chats: await scEnrichChatsWithDispatchInfo(chats) });
 });
+app.get('/admin/support/chats/by-order/:shopifyOrderId', adminAuth, async (req, res) => {
+  try {
+    const chats = await mdb.collection('support_chats')
+      .find({ shopify_order_id: String(req.params.shopifyOrderId) })
+      .sort({ updated_at: -1 }).toArray();
+    const withMessages = await Promise.all(chats.map(async c => ({
+      ...c,
+      messages: await SC.messages(c._id),
+    })));
+    res.json({ chats: withMessages });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/admin/support/chats/:id/messages', adminAuth, async (req, res) => {
   const messages = await SC.messages(req.params.id);
   res.json({ messages });

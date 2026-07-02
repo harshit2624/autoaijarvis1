@@ -1050,6 +1050,13 @@
     const [shipRateInfo,    setShipRateInfo]    = useState(null);
     const [shipRateLoad,    setShipRateLoad]    = useState(false);
 
+    // Customer communications panel
+    const [commOpen,        setCommOpen]        = useState(false);
+    const [commChats,       setCommChats]       = useState(null); // null=not loaded, []=loaded empty
+    const [commLoading,     setCommLoading]     = useState(false);
+    const [commReply,       setCommReply]       = useState({});   // { chatId: draftText }
+    const [commReplying,    setCommReplying]    = useState({});   // { chatId: bool }
+
     const checkShipRate = async () => {
       if (!shipPartner) return;
       setShipRateLoad(true); setShipRateInfo(null);
@@ -1156,6 +1163,39 @@
           setShipItems(d.items||[]);
           setExistingShipments(d.shipments||[]);
         }).catch(()=>{});
+    };
+
+    const loadCommChats = async () => {
+      if (commLoading) return;
+      setCommLoading(true);
+      try {
+        const r = await fetch(`${API}/admin/support/chats/by-order/${order.shopifyId}`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setCommChats(d.chats || []);
+      } catch { setCommChats([]); } finally { setCommLoading(false); }
+    };
+
+    const toggleComm = () => {
+      const next = !commOpen;
+      setCommOpen(next);
+      if (next && commChats === null) loadCommChats();
+    };
+
+    const sendCommReply = async (chatId) => {
+      const text = (commReply[chatId] || '').trim();
+      if (!text) return;
+      setCommReplying(p => ({ ...p, [chatId]: true }));
+      try {
+        await fetch(`${API}/admin/support/chats/${chatId}/reply`, {
+          method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ text }),
+        });
+        setCommReply(p => ({ ...p, [chatId]: '' }));
+        // Reload chats to show new message
+        const r = await fetch(`${API}/admin/support/chats/by-order/${order.shopifyId}`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setCommChats(d.chats || []);
+      } catch {} finally { setCommReplying(p => ({ ...p, [chatId]: false })); }
     };
 
     const totalSelectedQty = Object.values(shipQty).reduce((s,v)=>s+(parseInt(v)||0),0);
@@ -1807,6 +1847,85 @@
                 </div>
               );
             })()}
+          </div>
+
+          {/* ── Customer Communications ─────────────────────────────────── */}
+          <div style={{margin:'0 0 16px 0',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+            {/* Header / toggle */}
+            <button onClick={toggleComm} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',background:'none',border:'none',color:'var(--text)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:13,fontWeight:600,letterSpacing:0.2}}>
+              <span>💬 Customer Communications</span>
+              <span style={{display:'flex',alignItems:'center',gap:10}}>
+                {order.shippingAddress?.phone && (
+                  <a
+                    href={`https://wa.me/${(order.shippingAddress.phone).replace(/\D/g,'').replace(/^0/,'91')}`}
+                    target="_blank" rel="noreferrer"
+                    onClick={e=>e.stopPropagation()}
+                    style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:700,color:'#25d366',background:'#0a1a0e',border:'1px solid #25d36644',borderRadius:6,padding:'4px 10px',textDecoration:'none'}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                    WhatsApp {(order.shippingAddress.phone).replace(/\D/g,'').slice(-10)}
+                  </a>
+                )}
+                <span style={{color:'var(--text-muted)',fontSize:12,transform:commOpen?'rotate(180deg)':'none',display:'inline-block',transition:'transform 0.2s'}}>▼</span>
+              </span>
+            </button>
+
+            {commOpen && (
+              <div style={{borderTop:'1px solid var(--border)',padding:'14px 16px'}}>
+                {commLoading && <div style={{fontSize:12,color:'var(--text-muted)',padding:'8px 0'}}>Loading chats…</div>}
+                {!commLoading && commChats !== null && commChats.length === 0 && (
+                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'8px 0'}}>No support chats found for this order.</div>
+                )}
+                {!commLoading && (commChats||[]).map(chat => (
+                  <div key={String(chat._id)} style={{marginBottom:16,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+                    {/* Chat meta bar */}
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 12px',background:'var(--bg-card2)',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>
+                        Chat · {chat.customer_email || 'Anonymous'}
+                        {chat.resolved && <span style={{marginLeft:8,color:'#10b981',fontSize:10,fontWeight:700}}>✓ Resolved</span>}
+                      </span>
+                      <span style={{fontSize:10,color:'var(--text-muted)'}}>{chat.updated_at ? new Date(chat.updated_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''}</span>
+                    </div>
+
+                    {/* Message thread */}
+                    <div style={{maxHeight:260,overflowY:'auto',padding:'10px 12px',display:'flex',flexDirection:'column',gap:8}}>
+                      {(chat.messages||[]).map((m,i) => {
+                        const isCustomer = m.sender === 'customer';
+                        const isAdmin    = m.sender === 'admin';
+                        const isVendor   = m.sender === 'vendor';
+                        const isBot      = !isCustomer && !isAdmin && !isVendor;
+                        const bubbleColor = isCustomer ? '#1a2d1a' : isAdmin ? 'var(--indigo-dim)' : isVendor ? '#1a1a2d' : 'var(--bg-card2)';
+                        const textColor   = isCustomer ? '#4ade80' : isAdmin ? 'var(--indigo)' : isVendor ? '#818cf8' : 'var(--text-muted)';
+                        const label       = isCustomer ? 'Customer' : isAdmin ? 'CrosCrow' : isVendor ? (m.sender_name||'Vendor') : 'Bot';
+                        return (
+                          <div key={i} style={{display:'flex',flexDirection:'column',alignItems:isCustomer?'flex-end':'flex-start'}}>
+                            <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2,paddingLeft:4,paddingRight:4}}>{label} · {m.created_at ? new Date(m.created_at).toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
+                            <div style={{maxWidth:'82%',background:bubbleColor,border:`1px solid ${isCustomer?'#4ade8022':isAdmin?'var(--indigo)44':isVendor?'#818cf822':'var(--border)'}`,borderRadius:isCustomer?'12px 4px 12px 12px':'4px 12px 12px 12px',padding:'7px 11px',fontSize:12,color:textColor,lineHeight:1.5,wordBreak:'break-word'}}>
+                              {m.text || (m.meta?.type ? `[${m.meta.type}]` : '')}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Reply box */}
+                    {!chat.resolved && (
+                      <div style={{display:'flex',gap:8,padding:'10px 12px',borderTop:'1px solid var(--border)'}}>
+                        <input
+                          className="form-input" style={{flex:1,fontSize:12}}
+                          placeholder="Reply as CrosCrow Support…"
+                          value={commReply[String(chat._id)]||''}
+                          onChange={e=>setCommReply(p=>({...p,[String(chat._id)]:e.target.value}))}
+                          onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&sendCommReply(String(chat._id))}
+                        />
+                        <button className="btn btn-indigo btn-sm" onClick={()=>sendCommReply(String(chat._id))} disabled={commReplying[String(chat._id)]||!commReply[String(chat._id)]?.trim()} style={{fontSize:11,whiteSpace:'nowrap'}}>
+                          {commReplying[String(chat._id)] ? '…' : 'Send'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="modal-footer">
