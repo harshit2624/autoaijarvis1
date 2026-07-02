@@ -7748,6 +7748,8 @@
     const [topProducts, setTopProducts] = useState([]);
     const [topLoading,setTopLoading]= useState(true);
     const [rankBy,    setRankBy]    = useState('viewToAtcRate');
+    const [lbLimit,   setLbLimit]   = useState(20);
+    const [topLimit,  setTopLimit]  = useState(30);
     const [leaderboard,setLeaderboard] = useState([]);
     const [lbLoading, setLbLoading] = useState(true);
     const [logs,      setLogs]      = useState([]);
@@ -7765,12 +7767,12 @@
     };
     const loadTopProducts = () => {
       setTopLoading(true);
-      fetch(`${API}/admin/pixel-tracker/top-products?metric=${topTab}&limit=30&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+      fetch(`${API}/admin/pixel-tracker/top-products?metric=${topTab}&limit=${topLimit}&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>setTopProducts(d.products||[])).catch(()=>{}).finally(()=>setTopLoading(false));
     };
     const loadLeaderboard = () => {
       setLbLoading(true);
-      fetch(`${API}/admin/pixel-tracker/leaderboard?sortBy=${rankBy}&limit=20&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+      fetch(`${API}/admin/pixel-tracker/leaderboard?sortBy=${rankBy}&limit=${lbLimit}&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>setLeaderboard(d.products||[])).catch(()=>{}).finally(()=>setLbLoading(false));
     };
     const loadLogs = () => {
@@ -7779,8 +7781,8 @@
     };
 
     useEffect(loadSummary, [period]);
-    useEffect(loadTopProducts, [period, topTab]);
-    useEffect(loadLeaderboard, [period, rankBy]);
+    useEffect(loadTopProducts, [period, topTab, topLimit]);
+    useEffect(loadLeaderboard, [period, rankBy, lbLimit]);
     useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, []);
 
     const EVENT_META = {
@@ -7860,10 +7862,15 @@
           </div>
         )}
 
-        {/* Top 30 products by metric */}
+        {/* Top N products by metric */}
         <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16,marginBottom:20}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
-            <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Top 30 Products</div>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Top Products</div>
+              <select value={topLimit} onChange={e=>{setTopLimit(Number(e.target.value));}} style={{fontSize:11,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',padding:'4px 8px',cursor:'pointer'}}>
+                {[10,20,30,50,100].map(n=><option key={n} value={n}>Top {n}</option>)}
+              </select>
+            </div>
             <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
               {PIXEL_EVENT_NAMES_FE.map(ev => (
                 <button key={ev} onClick={()=>setTopTab(ev)} style={{
@@ -7885,9 +7892,14 @@
               <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Conversion Leaderboard</div>
               <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>Ranked by your selected rate · minimum 3 views to qualify</div>
             </div>
-            <select value={rankBy} onChange={e=>setRankBy(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px'}}>
-              {RATE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <select value={lbLimit} onChange={e=>setLbLimit(Number(e.target.value))} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px',cursor:'pointer'}}>
+                {[20,30,50,100].map(n=><option key={n} value={n}>Top {n}</option>)}
+              </select>
+              <select value={rankBy} onChange={e=>setRankBy(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px'}}>
+                {RATE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+            </div>
           </div>
           {lbLoading && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>Loading…</div>}
           {!lbLoading && leaderboard.length===0 && <div style={{fontSize:12,color:'var(--text-muted)',padding:10}}>No products with enough views in this period yet.</div>}
