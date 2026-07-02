@@ -249,18 +249,17 @@
       return;
     }
     if (!chatId) {
-      const r = await fetch(`${API}/support/chat/start`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shop_domain: location.hostname, customer_email: customerEmail }) });
-      const d = await r.json();
-      chatId = d.chatId; reportChatIdToParent(chatId);
-      (d.messages||[]).forEach(addMessage);
-      lastSeenCount = (d.messages||[]).length;
+      // Don't create a chat session on page load — show welcome greeting locally
+      // and only call /support/chat/start when the customer sends their first message.
+      addMessage({ sender:'assistant', text:"Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?" });
+      lastSeenCount = 0;
     } else {
       const r = await fetch(`${API}/support/chat/${chatId}/messages`);
       const d = await r.json();
       (d.messages||[]).forEach(addMessage);
       lastSeenCount = (d.messages||[]).length;
+      pollTimer = setInterval(pollNewMessages, 4000);
     }
-    pollTimer = setInterval(pollNewMessages, 4000);
   }
 
   // ── Crow mascot ──────────────────────────────────────────────────────────
@@ -319,6 +318,13 @@
     addMessage({ sender:'customer', text });
     showTyping();
     try {
+      // Lazily create the chat session on the customer's first message
+      if (!chatId) {
+        const sr = await fetch(`${API}/support/chat/start`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shop_domain: location.hostname, customer_email: customerEmail }) });
+        const sd = await sr.json();
+        chatId = sd.chatId; reportChatIdToParent(chatId);
+        pollTimer = setInterval(pollNewMessages, 4000);
+      }
       const r = await fetch(`${API}/support/chat/${chatId}/message`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) });
       const d = await r.json();
       hideTyping();
