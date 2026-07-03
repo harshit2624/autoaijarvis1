@@ -11136,12 +11136,14 @@ app.delete('/admin/agreements/:id', adminAuth, async (req, res) => {
 // Invoices are numbered from #0050. We store a counter in a 'counters' collection
 // so it auto-increments and persists across restarts.
 async function nextInvoiceNumber() {
-  const { value } = await mdb.collection('counters').findOneAndUpdate(
+  const result = await mdb.collection('counters').findOneAndUpdate(
     { _id: 'onboarding_invoice' },
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: 'after' }
   );
-  const n = value.seq + 49; // seq starts at 1 → invoice #50
+  // MongoDB driver v4+ returns the doc directly; v3 wraps it in { value }
+  const doc = result?.value ?? result;
+  const n = (doc?.seq ?? 1) + 49; // seq starts at 1 → invoice #50
   return String(n).padStart(4, '0');
 }
 
