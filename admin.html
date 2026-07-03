@@ -9768,6 +9768,83 @@
   ══════════════════════════════════ */
   // ── Agreement Generator ───────────────────────────────────────────────
   // ── Agreement Management ──────────────────────────────────────────────
+  function OnboardingInvoiceModal({ token, vendorName, onClose }) {
+    const [amount,   setAmount]   = useState('');
+    const [gstin,    setGstin]    = useState('');
+    const [address,  setAddress]  = useState('');
+    const [date,     setDate]     = useState(new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}));
+    const [loading,  setLoading]  = useState(false);
+    const [err,      setErr]      = useState(null);
+
+    const generate = async () => {
+      if (!amount || isNaN(parseFloat(amount))) return setErr('Enter a valid total amount (GST-inclusive).');
+      setLoading(true); setErr(null);
+      try {
+        const r = await fetch(`${API}/admin/onboarding-invoice`, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+          body: JSON.stringify({ vendorName, vendorGstin: gstin, vendorAddress: address, amount, date }),
+        });
+        if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        // filename comes from Content-Disposition but blob download uses this fallback
+        a.download = `Invoice_${vendorName.replace(/\s+/g,'_')}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+        onClose();
+      } catch(e) { setErr(e.message); } finally { setLoading(false); }
+    };
+
+    return (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal" style={{maxWidth:440}}>
+          <div className="modal-header">
+            <div className="modal-title">🧾 Generate Onboarding Invoice</div>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+          <div className="modal-body" style={{display:'flex',flexDirection:'column',gap:14}}>
+            {err && <div className="alert alert-error">⚠ {err}</div>}
+
+            <div>
+              <div className="form-label">Bill To (Vendor Name)</div>
+              <input className="form-input" value={vendorName} disabled style={{opacity:0.7}}/>
+            </div>
+            <div>
+              <div className="form-label">Vendor GSTIN <span style={{color:'var(--text-muted)',fontWeight:400}}>(optional)</span></div>
+              <input className="form-input" placeholder="e.g. 07AABCU9603R1ZX" value={gstin} onChange={e=>setGstin(e.target.value)}/>
+            </div>
+            <div>
+              <div className="form-label">Vendor Address <span style={{color:'var(--text-muted)',fontWeight:400}}>(optional)</span></div>
+              <input className="form-input" placeholder="Full address for invoice" value={address} onChange={e=>setAddress(e.target.value)}/>
+            </div>
+            <div>
+              <div className="form-label">Total Amount (₹ GST-inclusive)</div>
+              <input className="form-input" placeholder="e.g. 5000" type="number" min="1" value={amount} onChange={e=>setAmount(e.target.value)}/>
+              {amount && !isNaN(parseFloat(amount)) && (
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>
+                  Base: ₹{(parseFloat(amount)/1.18).toFixed(2)} + IGST 18%: ₹{(parseFloat(amount)-parseFloat(amount)/1.18).toFixed(2)}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="form-label">Invoice Date</div>
+              <input className="form-input" value={date} onChange={e=>setDate(e.target.value)} placeholder="e.g. 17 June 2026"/>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-indigo" onClick={generate} disabled={loading||!amount}>
+              {loading ? <><span className="spin">↻</span> Generating…</> : '⬇ Download Invoice PDF'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function AgreementManagement({ token }) {
     const [list,     setList]     = useState([]);
     const [loading,  setLoading]  = useState(true);
@@ -9777,6 +9854,7 @@
     const [msg,      setMsg]      = useState(null);
     const [showCreate, setShowCreate] = useState(false);
     const [approveDate, setApproveDate] = useState('');
+    const [invoiceFor, setInvoiceFor] = useState(null); // vendor name string, opens modal
 
     const load = () => {
       setLoading(true);
@@ -9879,6 +9957,9 @@
                         style={{padding:'6px 14px',borderRadius:6,background:'var(--indigo)',color:'#fff',fontWeight:600,fontSize:11,textDecoration:'none',cursor:'pointer',display:'inline-block'}}>
                         📥 Download Agreement
                       </a>
+                      <button onClick={()=>setInvoiceFor(ag.vendor_name)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #f59e0b44',background:'rgba(245,158,11,0.08)',color:'#f59e0b',fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                        🧾 Invoice
+                      </button>
                       {ag.signed_url && (
                         <a href={ag.signed_url} target="_blank" rel="noreferrer"
                           style={{padding:'6px 14px',borderRadius:6,background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'var(--indigo)',fontWeight:600,fontSize:11,textDecoration:'none'}}>
@@ -9930,6 +10011,9 @@
 
         {/* Create new agreement modal */}
         {showCreate && <AgreementCreateModal token={token} onClose={()=>setShowCreate(false)} onCreated={()=>{load();setShowCreate(false);setMsg({type:'success',text:'Agreement created and sent to vendor.'});}}/>}
+
+        {/* Onboarding invoice modal */}
+        {invoiceFor && <OnboardingInvoiceModal token={token} vendorName={invoiceFor} onClose={()=>setInvoiceFor(null)}/>}
       </div>
     );
   }

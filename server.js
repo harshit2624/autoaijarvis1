@@ -11132,6 +11132,165 @@ app.delete('/admin/agreements/:id', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Onboarding Invoice Generator ─────────────────────────────────────────────
+// Invoices are numbered from #0050. We store a counter in a 'counters' collection
+// so it auto-increments and persists across restarts.
+async function nextInvoiceNumber() {
+  const { value } = await mdb.collection('counters').findOneAndUpdate(
+    { _id: 'onboarding_invoice' },
+    { $inc: { seq: 1 } },
+    { upsert: true, returnDocument: 'after' }
+  );
+  const n = value.seq + 49; // seq starts at 1 → invoice #50
+  return String(n).padStart(4, '0');
+}
+
+function buildOnboardingInvoiceDoc({ invoiceNo, vendorName, vendorGstin, vendorAddress, amount, date }) {
+  // amount is the total (GST-inclusive). Back-calculate base & GST.
+  const total    = parseFloat(amount) || 0;
+  const base     = parseFloat((total / 1.18).toFixed(2));
+  const gst      = parseFloat((total - base).toFixed(2));
+  const fmtDate  = date || new Date().toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' });
+  const rs = s => String(s).replace(/₹/g, 'Rs. ');
+
+  const DARK  = '#111111';
+  const LIGHT = '#666666';
+  const RULE  = '#dddddd';
+  const THEAD = '#1a1a1a';
+
+  return {
+    pageSize: 'A4',
+    pageMargins: [50, 50, 50, 50],
+    defaultStyle: { font: 'Helvetica', fontSize: 10, color: DARK, lineHeight: 1.4 },
+    content: [
+      // Header row — logo text + INVOICE title
+      {
+        columns: [
+          {
+            stack: [
+              { text: 'CROSCROW', fontSize: 22, bold: true, characterSpacing: 2 },
+            ],
+            width: '*',
+          },
+          {
+            stack: [
+              { text: 'INVOICE', fontSize: 28, bold: true, alignment: 'right' },
+              { text: `# ${invoiceNo}`, fontSize: 13, color: LIGHT, alignment: 'right', margin: [0, 2, 0, 0] },
+            ],
+            width: 'auto',
+          },
+        ],
+        margin: [0, 0, 0, 20],
+      },
+      // Horizontal rule
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 495, y2: 0, lineWidth: 1, lineColor: RULE }], margin: [0, 0, 0, 18] },
+
+      // Date / Balance Due block (right-aligned box) + CROSCROW address (left)
+      {
+        columns: [
+          {
+            stack: [
+              { text: 'CROSCROW', bold: true, fontSize: 10 },
+              { text: 'GSTIN : 08AAUFC5436G1Z4', fontSize: 9, color: LIGHT },
+              { text: 'Floor No.: KHASRA NO 3545, 3548', fontSize: 9, color: LIGHT },
+              { text: 'PLOT NO 19, C/O CHANDRA KANTA LADDHA', fontSize: 9, color: LIGHT },
+              { text: 'AJMER ROAD, Kalyan Colony', fontSize: 9, color: LIGHT },
+              { text: 'Kekri, Rajasthan - 305404', fontSize: 9, color: LIGHT },
+              { text: '', margin: [0, 12, 0, 0] },
+              { text: 'Bill To:', fontSize: 9, color: LIGHT },
+              { text: vendorName || '—', bold: true, fontSize: 10 },
+              ...(vendorGstin ? [{ text: `GSTIN: ${vendorGstin}`, fontSize: 9, color: LIGHT }] : []),
+              ...(vendorAddress ? [{ text: vendorAddress, fontSize: 9, color: LIGHT }] : []),
+            ],
+            width: '*',
+          },
+          {
+            stack: [
+              {
+                table: {
+                  widths: ['*', 'auto'],
+                  body: [
+                    [{ text: 'Date:', color: LIGHT, fontSize: 9 }, { text: fmtDate, alignment: 'right', fontSize: 9 }],
+                    [
+                      { text: 'Balance Due:', bold: true, fontSize: 10, fillColor: '#f5f5f5' },
+                      { text: rs(`Rs. ${total.toFixed(2)}`), bold: true, fontSize: 10, alignment: 'right', fillColor: '#f5f5f5' },
+                    ],
+                  ],
+                },
+                layout: { hLineColor: () => RULE, vLineColor: () => 'transparent', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 5, paddingBottom: () => 5 },
+              },
+            ],
+            width: 200,
+          },
+        ],
+        margin: [0, 0, 0, 28],
+      },
+
+      // Line items table
+      {
+        table: {
+          widths: ['*', 60, 80, 80],
+          headerRows: 1,
+          body: [
+            [
+              { text: 'Item', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10 },
+              { text: 'Quantity', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'center' },
+              { text: 'Rate', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'right' },
+              { text: 'Amount', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'right' },
+            ],
+            [
+              { text: 'ONBOARDING FEES ON CROSCROW SALES CHANNELS', bold: true, fontSize: 10, margin: [0, 4, 0, 4] },
+              { text: '1', alignment: 'center', margin: [0, 4, 0, 4] },
+              { text: rs(`Rs. ${base.toFixed(2)}`), alignment: 'right', margin: [0, 4, 0, 4] },
+              { text: rs(`Rs. ${base.toFixed(2)}`), alignment: 'right', margin: [0, 4, 0, 4] },
+            ],
+          ],
+        },
+        layout: { hLineColor: () => RULE, vLineColor: () => 'transparent', paddingLeft: () => 6, paddingRight: () => 6 },
+        margin: [0, 0, 0, 0],
+      },
+
+      // Totals block (right-aligned)
+      {
+        columns: [
+          { text: '', width: '*' },
+          {
+            table: {
+              widths: [100, 80],
+              body: [
+                [{ text: 'Subtotal:', color: LIGHT, fontSize: 9 }, { text: rs(`Rs. ${base.toFixed(2)}`), alignment: 'right', fontSize: 9 }],
+                [{ text: 'IGST (18%):', color: LIGHT, fontSize: 9 }, { text: rs(`Rs. ${gst.toFixed(2)}`), alignment: 'right', fontSize: 9 }],
+                [{ text: 'Total:', bold: true, fontSize: 10 }, { text: rs(`Rs. ${total.toFixed(2)}`), bold: true, alignment: 'right', fontSize: 10 }],
+              ],
+            },
+            layout: { hLineColor: () => RULE, vLineColor: () => 'transparent', paddingTop: () => 4, paddingBottom: () => 4, paddingLeft: () => 6, paddingRight: () => 6 },
+            width: 185,
+          },
+        ],
+        margin: [0, 0, 0, 32],
+      },
+
+      // Terms
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 495, y2: 0, lineWidth: 0.5, lineColor: RULE }], margin: [0, 0, 0, 10] },
+      { text: 'Terms:', color: LIGHT, fontSize: 9, margin: [0, 0, 0, 4] },
+      { text: 'All payments and taxes are made in compliance with applicable Indian laws.', fontSize: 9, color: LIGHT },
+    ],
+  };
+}
+
+app.post('/admin/onboarding-invoice', adminAuth, async (req, res) => {
+  try {
+    const { vendorName, vendorGstin, vendorAddress, amount, date } = req.body || {};
+    if (!vendorName || !amount) return res.status(400).json({ error: 'vendorName and amount required' });
+    const invoiceNo = await nextInvoiceNumber();
+    const docDef = buildOnboardingInvoiceDoc({ invoiceNo, vendorName, vendorGstin, vendorAddress, amount, date });
+    const buffer = await pdfToBuffer(docDef);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Invoice_${invoiceNo}_${vendorName.replace(/\s+/g,'_')}.pdf"`);
+    res.send(buffer);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /vendor/agreements — vendor sees their own agreements
 app.get('/vendor/agreements', vendorAuth, async (req, res) => {
   try {
