@@ -9768,10 +9768,10 @@
   ══════════════════════════════════ */
   // ── Agreement Generator ───────────────────────────────────────────────
   // ── Agreement Management ──────────────────────────────────────────────
-  function OnboardingInvoiceModal({ token, vendorName, onClose }) {
+  function OnboardingInvoiceModal({ token, vendorName, vendorGstinPrefill='', vendorAddressPrefill='', onClose }) {
     const [amount,   setAmount]   = useState('');
-    const [gstin,    setGstin]    = useState('');
-    const [address,  setAddress]  = useState('');
+    const [gstin,    setGstin]    = useState(vendorGstinPrefill);
+    const [address,  setAddress]  = useState(vendorAddressPrefill);
     const [date,     setDate]     = useState(new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}));
     const [loading,  setLoading]  = useState(false);
     const [err,      setErr]      = useState(null);
@@ -9854,7 +9854,7 @@
     const [msg,      setMsg]      = useState(null);
     const [showCreate, setShowCreate] = useState(false);
     const [approveDate, setApproveDate] = useState('');
-    const [invoiceFor, setInvoiceFor] = useState(null); // vendor name string, opens modal
+    const [invoiceFor, setInvoiceFor] = useState(null); // agreement object, opens modal
 
     const load = () => {
       setLoading(true);
@@ -9957,7 +9957,7 @@
                         style={{padding:'6px 14px',borderRadius:6,background:'var(--indigo)',color:'#fff',fontWeight:600,fontSize:11,textDecoration:'none',cursor:'pointer',display:'inline-block'}}>
                         📥 Download Agreement
                       </a>
-                      <button onClick={()=>setInvoiceFor(ag.vendor_name)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #f59e0b44',background:'rgba(245,158,11,0.08)',color:'#f59e0b',fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                      <button onClick={()=>setInvoiceFor(ag)} style={{padding:'6px 14px',borderRadius:6,border:'1px solid #f59e0b44',background:'rgba(245,158,11,0.08)',color:'#f59e0b',fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
                         🧾 Invoice
                       </button>
                       {ag.signed_url && (
@@ -10013,7 +10013,7 @@
         {showCreate && <AgreementCreateModal token={token} onClose={()=>setShowCreate(false)} onCreated={()=>{load();setShowCreate(false);setMsg({type:'success',text:'Agreement created and sent to vendor.'});}}/>}
 
         {/* Onboarding invoice modal */}
-        {invoiceFor && <OnboardingInvoiceModal token={token} vendorName={invoiceFor} onClose={()=>setInvoiceFor(null)}/>}
+        {invoiceFor && <OnboardingInvoiceModal token={token} vendorName={invoiceFor.vendor_name} vendorGstinPrefill={invoiceFor.vendor_gstin||''} vendorAddressPrefill={invoiceFor.vendor_address||''} onClose={()=>setInvoiceFor(null)}/>}
       </div>
     );
   }
