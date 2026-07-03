@@ -11272,6 +11272,21 @@ function buildOnboardingInvoiceDoc({ invoiceNo, vendorName, vendorGstin, vendorA
 
       // Terms
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 495, y2: 0, lineWidth: 0.5, lineColor: RULE }], margin: [0, 0, 0, 10] },
+      { text: 'Bank Details:', color: LIGHT, fontSize: 9, margin: [0, 0, 0, 4] },
+      {
+        table: {
+          widths: [80, '*'],
+          body: [
+            [{ text: 'Account Name:', color: LIGHT, fontSize: 9 }, { text: 'CROSCROW', fontSize: 9, bold: true }],
+            [{ text: 'Account No:', color: LIGHT, fontSize: 9 }, { text: '091061900001424', fontSize: 9 }],
+            [{ text: 'IFSC Code:', color: LIGHT, fontSize: 9 }, { text: 'YESB0000910', fontSize: 9 }],
+            [{ text: 'Bank:', color: LIGHT, fontSize: 9 }, { text: 'Yes Bank', fontSize: 9 }],
+          ],
+        },
+        layout: 'noBorders',
+        margin: [0, 0, 0, 14],
+      },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 495, y2: 0, lineWidth: 0.5, lineColor: RULE }], margin: [0, 0, 0, 10] },
       { text: 'Terms:', color: LIGHT, fontSize: 9, margin: [0, 0, 0, 4] },
       { text: 'All payments and taxes are made in compliance with applicable Indian laws.', fontSize: 9, color: LIGHT },
     ],
