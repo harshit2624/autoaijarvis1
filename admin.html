@@ -3240,11 +3240,12 @@
     const [period,    setPeriod]   = useState(null);
     // Bulk select
     const [selected,  setSelected]  = useState(new Set());
-    const [bulkStage, setBulkStage] = useState('');
-    const [bulkAddTag,setBulkAddTag]= useState('');
-    const [bulkRmTag, setBulkRmTag] = useState('');
-    const [bulkMsg,   setBulkMsg]   = useState(null);
-    const [bulkBusy,  setBulkBusy]  = useState(false);
+    const [bulkStage,   setBulkStage]   = useState('');
+    const [bulkAddTags, setBulkAddTags] = useState([]); // array of tag strings
+    const [bulkRmTags,  setBulkRmTags]  = useState([]); // array of tag strings
+    const [bulkMsg,     setBulkMsg]     = useState(null);
+    const [bulkBusy,    setBulkBusy]    = useState(false);
+    const [allTags,     setAllTags]     = useState([]);
     const [syncing,   setSyncing]   = useState(false);
     const [syncMsg,   setSyncMsg]   = useState(null);
     // Extra filters
@@ -3271,17 +3272,23 @@
 
     const toggleSelect = id => setSelected(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
     const toggleAll    = () => setSelected(s => s.size===rows.length ? new Set() : new Set(rows.map(o=>o.shopifyId)));
-    const clearSelect  = () => { setSelected(new Set()); setBulkMsg(null); };
+    const clearSelect  = () => { setSelected(new Set()); setBulkMsg(null); setBulkAddTags([]); setBulkRmTags([]); setBulkStage(''); };
+
+    // Fetch all Shopify order tags once when bulk bar appears
+    useEffect(() => {
+      if (selected.size > 0 && allTags.length === 0) {
+        fetch(`${API}/admin/order-tags`, { headers:{ Authorization:`Bearer ${token}` } })
+          .then(r=>r.json()).then(d=>setAllTags(d.tags||[])).catch(()=>{});
+      }
+    }, [selected.size > 0]);
 
     const applyBulk = async () => {
-      if (!bulkStage && !bulkAddTag.trim() && !bulkRmTag.trim()) { setBulkMsg({type:'error',text:'Select a stage or enter tags to add/remove.'}); return; }
+      if (!bulkStage && bulkAddTags.length === 0 && bulkRmTags.length === 0) { setBulkMsg({type:'error',text:'Select a stage or pick tags to add/remove.'}); return; }
       setBulkBusy(true); setBulkMsg(null);
-      const addTags = bulkAddTag.split(',').map(t=>t.trim()).filter(Boolean);
-      const rmTags  = bulkRmTag.split(',').map(t=>t.trim()).filter(Boolean);
       try {
         const r = await fetch(`${API}/admin/orders/bulk-update`, {
           method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-          body: JSON.stringify({ order_ids:[...selected], stage:bulkStage||undefined, add_tags:addTags, remove_tags:rmTags }),
+          body: JSON.stringify({ order_ids:[...selected], stage:bulkStage||undefined, add_tags:bulkAddTags, remove_tags:bulkRmTags }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
@@ -3561,10 +3568,56 @@
               <option value="">Set stage…</option>
               {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled','misc'].map(s=><option key={s} value={s}>{s==='misc'?'Miscellaneous':s}</option>)}
             </select>
-            {!isMobile && <>
-              <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 130px',minWidth:100}} placeholder="Add tags" value={bulkAddTag} onChange={e=>setBulkAddTag(e.target.value)}/>
-              <input className="form-input" style={{fontSize:11,padding:'5px 8px',flex:'1 1 130px',minWidth:100}} placeholder="Remove tags" value={bulkRmTag} onChange={e=>setBulkRmTag(e.target.value)}/>
-            </>}
+            {/* Add tags picker */}
+            {(() => {
+              const available = allTags.filter(t => !bulkAddTags.includes(t));
+              return (
+                <div style={{display:'flex',flexDirection:'column',gap:3,flex:'1 1 150px',minWidth:120}}>
+                  <select
+                    value=""
+                    onChange={e => { const v=e.target.value; if(v && !bulkAddTags.includes(v)) setBulkAddTags(p=>[...p,v]); }}
+                    style={{fontSize:11,padding:'5px 8px',borderRadius:6,border:'1px solid #10b98144',background:'rgba(16,185,129,0.06)',color:'#10b981',cursor:'pointer',fontFamily:'inherit'}}>
+                    <option value="">＋ Add tag…</option>
+                    {available.map(t=><option key={t} value={t}>{t}</option>)}
+                  </select>
+                  {bulkAddTags.length > 0 && (
+                    <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+                      {bulkAddTags.map(t=>(
+                        <span key={t} style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:10,padding:'2px 7px',borderRadius:99,background:'rgba(16,185,129,0.12)',border:'1px solid #10b98144',color:'#10b981'}}>
+                          {t}
+                          <button onClick={()=>setBulkAddTags(p=>p.filter(x=>x!==t))} style={{background:'none',border:'none',color:'#10b981',cursor:'pointer',fontSize:11,padding:0,lineHeight:1}}>✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {/* Remove tags picker */}
+            {(() => {
+              const available = allTags.filter(t => !bulkRmTags.includes(t));
+              return (
+                <div style={{display:'flex',flexDirection:'column',gap:3,flex:'1 1 150px',minWidth:120}}>
+                  <select
+                    value=""
+                    onChange={e => { const v=e.target.value; if(v && !bulkRmTags.includes(v)) setBulkRmTags(p=>[...p,v]); }}
+                    style={{fontSize:11,padding:'5px 8px',borderRadius:6,border:'1px solid #ef444444',background:'rgba(239,68,68,0.06)',color:'#ef4444',cursor:'pointer',fontFamily:'inherit'}}>
+                    <option value="">✕ Remove tag…</option>
+                    {available.map(t=><option key={t} value={t}>{t}</option>)}
+                  </select>
+                  {bulkRmTags.length > 0 && (
+                    <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+                      {bulkRmTags.map(t=>(
+                        <span key={t} style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:10,padding:'2px 7px',borderRadius:99,background:'rgba(239,68,68,0.1)',border:'1px solid #ef444444',color:'#ef4444'}}>
+                          {t}
+                          <button onClick={()=>setBulkRmTags(p=>p.filter(x=>x!==t))} style={{background:'none',border:'none',color:'#ef4444',cursor:'pointer',fontSize:11,padding:0,lineHeight:1}}>✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <button className="btn btn-indigo btn-sm" onClick={applyBulk} disabled={bulkBusy}>{bulkBusy?<><span className="spin">↻</span> …</>:'✓ Apply'}</button>
             <button className="btn btn-ghost btn-sm" onClick={clearSelect}>✕</button>
             {bulkMsg && <span style={{fontSize:11,color:bulkMsg.type==='success'?'var(--green)':'var(--red)',fontWeight:600}}>{bulkMsg.type==='success'?'✓':'⚠'} {bulkMsg.text}</span>}
