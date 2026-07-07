@@ -11228,48 +11228,60 @@ function buildOnboardingInvoiceDoc({ invoiceNo, vendorName, vendorGstin, vendorA
         margin: [0, 0, 0, 28],
       },
 
-      // Line items table
+      // Unified line-items + totals table (single table, colspans keep totals pinned to Amount column)
       {
         table: {
-          widths: ['*', 60, 80, 80],
+          widths: ['*', 55, 90, 90],
           headerRows: 1,
           body: [
+            // Header
             [
-              { text: 'Item', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10 },
-              { text: 'Quantity', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'center' },
-              { text: 'Rate', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'right' },
-              { text: 'Amount', bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'right' },
+              { text: 'Item',     bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, margin: [6,6,6,6] },
+              { text: 'Qty',      bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'center', margin: [4,6,4,6] },
+              { text: 'Rate',     bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'right',  margin: [4,6,6,6] },
+              { text: 'Amount',   bold: true, color: '#ffffff', fillColor: THEAD, fontSize: 10, alignment: 'right',  margin: [4,6,6,6] },
             ],
+            // Line item
             [
-              { text: 'ONBOARDING FEES ON CROSCROW SALES CHANNELS', bold: true, fontSize: 10, margin: [0, 4, 0, 4] },
-              { text: '1', alignment: 'center', margin: [0, 4, 0, 4] },
-              { text: rs(`Rs. ${base.toFixed(2)}`), alignment: 'right', margin: [0, 4, 0, 4] },
-              { text: rs(`Rs. ${base.toFixed(2)}`), alignment: 'right', margin: [0, 4, 0, 4] },
+              { text: 'ONBOARDING FEES ON CROSCROW SALES CHANNELS', bold: true, fontSize: 10, margin: [6,10,6,10] },
+              { text: '1',                                           alignment: 'center', fontSize: 10, margin: [4,10,4,10] },
+              { text: `Rs. ${base.toFixed(2)}`,                     alignment: 'right',  fontSize: 10, margin: [4,10,6,10] },
+              { text: `Rs. ${base.toFixed(2)}`,                     alignment: 'right',  fontSize: 10, margin: [4,10,6,10] },
+            ],
+            // Spacer
+            [
+              { text: '', colSpan: 4, border: [false,false,false,false], margin: [0,4,0,4] }, {},{},{}
+            ],
+            // Subtotal
+            [
+              { text: '', colSpan: 2, border: [false,false,false,false] }, {},
+              { text: 'Subtotal:', color: LIGHT, fontSize: 9, alignment: 'right', margin: [4,4,6,4], border: [false,true,false,false] },
+              { text: `Rs. ${base.toFixed(2)}`,  fontSize: 9, alignment: 'right', margin: [4,4,6,4], border: [false,true,false,false] },
+            ],
+            // IGST
+            [
+              { text: '', colSpan: 2, border: [false,false,false,false] }, {},
+              { text: 'IGST (18%):', color: LIGHT, fontSize: 9, alignment: 'right', margin: [4,4,6,4], border: [false,false,false,false] },
+              { text: `Rs. ${gst.toFixed(2)}`,   fontSize: 9, alignment: 'right', margin: [4,4,6,4], border: [false,false,false,false] },
+            ],
+            // Total
+            [
+              { text: '', colSpan: 2, border: [false,false,false,false] }, {},
+              { text: 'Total:', bold: true, fontSize: 11, alignment: 'right', margin: [4,6,6,6], fillColor: '#f5f5f5', border: [false,true,false,true] },
+              { text: `Rs. ${total.toFixed(2)}`, bold: true, fontSize: 11, alignment: 'right', margin: [4,6,6,6], fillColor: '#f5f5f5', border: [false,true,false,true] },
             ],
           ],
         },
-        layout: { hLineColor: () => RULE, vLineColor: () => 'transparent', paddingLeft: () => 6, paddingRight: () => 6 },
-        margin: [0, 0, 0, 0],
-      },
-
-      // Totals block (right-aligned)
-      {
-        columns: [
-          { text: '', width: '*' },
-          {
-            table: {
-              widths: [100, 80],
-              body: [
-                [{ text: 'Subtotal:', color: LIGHT, fontSize: 9 }, { text: rs(`Rs. ${base.toFixed(2)}`), alignment: 'right', fontSize: 9 }],
-                [{ text: 'IGST (18%):', color: LIGHT, fontSize: 9 }, { text: rs(`Rs. ${gst.toFixed(2)}`), alignment: 'right', fontSize: 9 }],
-                [{ text: 'Total:', bold: true, fontSize: 10 }, { text: rs(`Rs. ${total.toFixed(2)}`), bold: true, alignment: 'right', fontSize: 10 }],
-              ],
-            },
-            layout: { hLineColor: () => RULE, vLineColor: () => 'transparent', paddingTop: () => 4, paddingBottom: () => 4, paddingLeft: () => 6, paddingRight: () => 6 },
-            width: 185,
-          },
-        ],
-        margin: [0, 0, 0, 32],
+        layout: {
+          hLineWidth: (i, node) => (i === 0 || i === 1 || i === node.table.body.length) ? 1 : 0.5,
+          vLineWidth: () => 0,
+          hLineColor: () => RULE,
+          paddingLeft:  () => 0,
+          paddingRight: () => 0,
+          paddingTop:   () => 0,
+          paddingBottom:() => 0,
+        },
+        margin: [0, 0, 0, 28],
       },
 
       // Terms
