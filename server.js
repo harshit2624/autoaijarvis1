@@ -146,6 +146,8 @@ async function startServer() {
       mdb.collection("product_commission_rules").createIndex({ id: 1 }, { unique: true }),
       mdb.collection("order_shipments").createIndex({ shopify_id: 1 }),
       mdb.collection("order_shipments").createIndex({ "items.vendor": 1 }),
+      mdb.collection("abandoned_carts").createIndex({ received_at: -1 }),
+      mdb.collection("abandoned_carts").createIndex({ email: 1 }),
     ];
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
@@ -16522,6 +16524,76 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const logs = await mdb.collection('pixel_events').find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(limit).toArray();
     res.json({ logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ABANDONED CART WEBHOOK
+// Checkout partners (e.g. Razorpay Magic Checkout, Shiprocket Checkout)
+// POST to this URL when a cart is abandoned. We store the payload and
+// surface it in the admin panel. The webhook URL to give the partner:
+//   POST https://dashboard.croscrow.com/webhooks/abandoned-cart
+// ══════════════════════════════════════════════════════════════════════════
+
+app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' }), async (req, res) => {
+  try {
+    const payload = req.body || {};
+    // Normalise common field names across checkout providers
+    const doc = {
+      // identity
+      email:          payload.email || payload.customer_email || payload.buyer_email || '',
+      phone:          payload.phone || payload.mobile || payload.customer_phone || payload.buyer_phone || '',
+      name:           payload.name  || payload.customer_name  || payload.buyer_name  || `${payload.first_name||''} ${payload.last_name||''}`.trim() || '',
+      // cart
+      cart_id:        payload.cart_id || payload.checkout_id || payload.id || '',
+      checkout_url:   payload.checkout_url || payload.recovery_url || payload.abandon_url || '',
+      currency:       payload.currency || 'INR',
+      total:          parseFloat(payload.total || payload.total_price || payload.amount || payload.cart_value || 0),
+      items:          payload.items || payload.line_items || payload.cart_items || [],
+      // meta
+      source:         req.headers['x-source'] || req.headers['x-provider'] || payload.source || 'checkout-partner',
+      raw:            payload,
+      received_at:    new Date().toISOString(),
+      status:         'open',   // open | recovered | dismissed
+    };
+    await mdb.collection('abandoned_carts').insertOne(doc);
+    console.log(`🛒  Abandoned cart received — ${doc.email || doc.phone} · Rs. ${doc.total}`);
+    res.json({ received: true });
+  } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// GET /admin/abandoned-carts — list with filters
+app.get('/admin/abandoned-carts', adminAuth, async (req, res) => {
+  try {
+    const { status, from, to, limit: lim = 100 } = req.query;
+    const q = {};
+    if (status && status !== 'all') q.status = status;
+    if (from || to) {
+      q.received_at = {};
+      if (from) q.received_at.$gte = `${from}T00:00:00.000Z`;
+      if (to)   q.received_at.$lte = `${to}T23:59:59.999Z`;
+    }
+    const carts = await mdb.collection('abandoned_carts')
+      .find(q, { projection: { raw: 0 } })
+      .sort({ received_at: -1 })
+      .limit(Math.min(parseInt(lim) || 100, 500))
+      .toArray();
+    const total = await mdb.collection('abandoned_carts').countDocuments(q);
+    res.json({ carts: carts.map(c => ({ ...c, id: c._id.toString(), _id: undefined })), total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /admin/abandoned-carts/:id/status — mark recovered / dismissed
+app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { status } = req.body || {};
+    if (!['open','recovered','dismissed'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    await mdb.collection('abandoned_carts').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status, updated_at: new Date().toISOString() } }
+    );
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
