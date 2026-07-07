@@ -7128,6 +7128,30 @@ app.get("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
   const p = await mdb.collection('vendor_profiles').findOne({ vendor_name: name }, { projection: { _id: 0 } }) || { vendor_name: name };
   const cfg = await VC.get(name);
   if (!p.commission_pct && cfg) p.commission_pct = cfg.commission_pct;
+  // Fall back to vendor_config → vendor_onboards for vendors approved before the fix
+  if (!p.gst_no  || !p.address) {
+    if (!p.gst_no   && cfg?.gst_no)   p.gst_no   = cfg.gst_no;
+    if (!p.address  && cfg?.address)  p.address  = cfg.address;
+    if (!p.city     && cfg?.city)     p.city     = cfg.city;
+    if (!p.state    && cfg?.state)    p.state    = cfg.state;
+    if (!p.pincode  && cfg?.pincode)  p.pincode  = cfg.pincode;
+    if (!p.phone    && cfg?.phone)    p.phone    = cfg.phone;
+    // Last resort: pull from the original onboarding submission
+    if (!p.gst_no || !p.address) {
+      const ob = await mdb.collection('vendor_onboards').findOne(
+        { vendor_name: name, status: 'approved' },
+        { projection: { gst_no:1, address:1, city:1, state:1, pincode:1, phone:1, _id:0 } }
+      );
+      if (ob) {
+        if (!p.gst_no   && ob.gst_no)   p.gst_no   = ob.gst_no;
+        if (!p.address  && ob.address)  p.address  = ob.address;
+        if (!p.city     && ob.city)     p.city     = ob.city;
+        if (!p.state    && ob.state)    p.state    = ob.state;
+        if (!p.pincode  && ob.pincode)  p.pincode  = ob.pincode;
+        if (!p.phone    && ob.phone)    p.phone    = ob.phone;
+      }
+    }
+  }
   res.json(p);
 });
 app.put("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
@@ -15075,10 +15099,13 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
 
     const vendorName = (vendor_name_override && vendor_name_override.trim()) ? vendor_name_override.trim() : ob.brand_name;
 
-    // Create vendor_config entry
+    // Build full address string from onboarding fields for use in agreements/invoices
+    const fullAddress = [ob.address, ob.city, ob.state, ob.pincode].filter(Boolean).join(', ');
+
+    // Create vendor_config entry — include all onboarding fields
     await mdb.collection('vendor_config').updateOne(
       { vendor_name: vendorName },
-      { $set: { vendor_name: vendorName, commission_pct: parseFloat(commission_pct), email: ob.email, phone: ob.phone, created_at: new Date().toISOString() } },
+      { $set: { vendor_name: vendorName, commission_pct: parseFloat(commission_pct), email: ob.email, phone: ob.phone, address: fullAddress, city: ob.city||'', state: ob.state||'', pincode: ob.pincode||'', gst_no: ob.gst_no||'', website: ob.website||'', contact_name: ob.contact_name||'', created_at: new Date().toISOString() } },
       { upsert: true }
     );
 
@@ -15092,9 +15119,10 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
     } while (tries < 10);
 
     const password = DEFAULT_VENDOR_PASS;
+    // Save all onboarding details to vendor_profiles so agreements/invoices pre-fill correctly
     await mdb.collection('vendor_profiles').updateOne(
       { vendor_name: vendorName },
-      { $set: { vendor_name: vendorName, username, password_hash: hashPassword(password), email: ob.email, must_change_password: true, updated_at: new Date().toISOString() } },
+      { $set: { vendor_name: vendorName, username, password_hash: hashPassword(password), email: ob.email, phone: ob.phone||'', address: fullAddress, city: ob.city||'', state: ob.state||'', pincode: ob.pincode||'', gst_no: ob.gst_no||'', website: ob.website||'', contact_name: ob.contact_name||'', must_change_password: true, updated_at: new Date().toISOString() } },
       { upsert: true }
     );
 
