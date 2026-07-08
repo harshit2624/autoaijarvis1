@@ -17023,7 +17023,7 @@ async function waHandleVendorReply(sock, sender, text) {
 
 async function waVendorNudge(meta, customerPhone) {
   // TEST MODE: fixed vendor number — make dynamic per-vendor later
-  const VENDOR_WA = '6375668971';
+  const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '6375668971';
   if (!waSocket || !mdb) return;
   if (meta?.type !== 'tracking_card') return;
   const d = meta.data;
@@ -17364,7 +17364,7 @@ async function startBaileysBot() {
         // Resolve and cache known vendor JIDs so LID-based senders are identified correctly
         setTimeout(async () => {
           try {
-            const VENDOR_WA = '6375668971';
+            const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '6375668971';
             const [res] = await sock.onWhatsApp(`91${VENDOR_WA}`) || [];
             if (res?.jid) {
               await mdb.collection('wa_vendor_jids').updateOne(
@@ -17397,20 +17397,25 @@ async function startBaileysBot() {
 
           // ── Vendor reply handler ──────────────────────────────────────
           // Load known vendor JIDs (phone-based + LID captured at nudge/startup time)
-          const vendorJidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: '6375668971' });
-          const knownVendorJids = new Set(['916375668971@s.whatsapp.net']);
-          if (vendorJidDoc?.jid) knownVendorJids.add(vendorJidDoc.jid);
-          if (knownVendorJids.has(sender)) {
-            // Opportunistically save their JID if it's a new LID we haven't seen
-            if (!vendorJidDoc?.jid || vendorJidDoc.jid !== sender) {
-              await mdb.collection('wa_vendor_jids').updateOne(
-                { phone: '6375668971' },
-                { $set: { jid: sender, updated_at: new Date().toISOString() } },
-                { upsert: true }
-              ).catch(() => {});
+          const VENDOR_NUDGE_NO = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '';
+          const BOT_NO = (process.env.WHATSAPP_NUMBER || '').replace(/^91/, '');
+          // Skip vendor check if vendor number == bot number (avoids self-loop during testing)
+          const vendorCheckEnabled = VENDOR_NUDGE_NO && VENDOR_NUDGE_NO !== BOT_NO;
+          if (vendorCheckEnabled) {
+            const vendorJidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: VENDOR_NUDGE_NO });
+            const knownVendorJids = new Set([`91${VENDOR_NUDGE_NO}@s.whatsapp.net`]);
+            if (vendorJidDoc?.jid) knownVendorJids.add(vendorJidDoc.jid);
+            if (knownVendorJids.has(sender)) {
+              if (!vendorJidDoc?.jid || vendorJidDoc.jid !== sender) {
+                await mdb.collection('wa_vendor_jids').updateOne(
+                  { phone: VENDOR_NUDGE_NO },
+                  { $set: { jid: sender, updated_at: new Date().toISOString() } },
+                  { upsert: true }
+                ).catch(() => {});
+              }
+              await waHandleVendorReply(sock, sender, text);
+              continue;
             }
-            await waHandleVendorReply(sock, sender, text);
-            continue;
           }
 
           // Find or create chat thread
