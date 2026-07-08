@@ -16418,18 +16418,18 @@ async function scEnrichChatsWithDispatchInfo(chats) {
 // ── Admin moderation ─────────────────────────────────────────────────────
 // ── WhatsApp bot status & reset JSON APIs (used by admin panel) ──────────────
 app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
-  const connected = !!(waSocket);
   let qrDataUrl = null;
-  if (!connected && waLatestQR) {
+  if (!waConnected && waLatestQR) {
     try { qrDataUrl = await require('qrcode').toDataURL(waLatestQR, { width: 280, margin: 2 }); } catch (_) {}
   }
-  res.json({ connected, qrDataUrl });
+  res.json({ connected: waConnected, qrDataUrl });
 });
 
 app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
+  waConnected = false;
+  waLatestQR = null;
   if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
   if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
-  waLatestQR = null;
   setTimeout(() => startBaileysBot(), 2000);
   res.json({ success: true });
 });
@@ -16477,10 +16477,10 @@ img{border-radius:12px;border:2px solid #e2e8f0}</style></head>
 
 app.get('/admin/whatsapp-qr/reset', waQrAuth, async (req, res) => {
   const t = `?token=${req.waQrToken}`;
-  // Wipe the stored Baileys auth so a new QR is generated on next connect
+  waConnected = false;
+  waLatestQR = null;
   if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
   if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
-  waLatestQR = null;
   // Restart bot so it immediately generates a new QR
   setTimeout(() => startBaileysBot(), 2000);
   res.send(`<!DOCTYPE html><html><head><title>Reset</title><meta http-equiv="refresh" content="4;url=/admin/whatsapp-qr${t}">
@@ -16884,6 +16884,7 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 
 let waSocket = null;
+let waConnected = false; // true only after 'open', false on disconnect/logout/reset
 let waLatestQR = null; // latest raw QR string for /admin/whatsapp-qr
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
@@ -17351,11 +17352,13 @@ async function startBaileysBot() {
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
+        waConnected = false;
         console.log(loggedOut ? '📵 WhatsApp logged out' : '🔄 WhatsApp disconnected, reconnecting...');
         if (!loggedOut) setTimeout(startBaileysBot, 5000);
         else waSocket = null;
       }
       if (connection === 'open') {
+        waConnected = true;
         waLatestQR = null; // QR consumed — clear it
         console.log('✅ WhatsApp bot ready (Baileys)');
         // Resolve and cache known vendor JIDs so LID-based senders are identified correctly
