@@ -16706,9 +16706,61 @@ async function useMongoAuthState() {
 
 // Nudges vendor on WhatsApp when customer asks about an order stuck unshipped for 2+ days.
 // Deduped per order+vendor per 24h via wa_vendor_nudges collection.
+// ── Handle replies from the vendor WhatsApp number ────────────────────────
+// Supports two formats (case-insensitive):
+//   TRACK <order> <AWB> <courier>       → saves tracking to order_vendor_stage
+//   DELAY <order> <reason> | ETA <date> → saves delay_reason + resolution date
+async function waHandleVendorReply(sock, sender, text) {
+  if (!mdb) return;
+
+  const trackMatch = text.match(/^TRACK\s+#?(\d+)\s+(\S+)\s+(.+)/i);
+  const delayMatch = text.match(/^DELAY\s+#?(\d+)\s+(.+?)\s*\|\s*ETA\s+(.+)/i);
+
+  if (trackMatch) {
+    const [, orderNum, awb, courier] = trackMatch;
+    const orderName = `#${orderNum}`;
+    const result = await mdb.collection('order_vendor_stage').updateOne(
+      { shopify_id: orderNum },
+      { $set: { awb: awb.trim(), courier: courier.trim(), stage: 'transit', updated_at: new Date().toISOString() } }
+    );
+    if (result.matchedCount > 0) {
+      await sock.sendMessage(sender, { text: `✅ Got it! Tracking updated for order *${orderName}*.\n\nAWB: *${awb.trim()}*\nCourier: *${courier.trim()}*\n\nThe customer will be able to track their order now. Thank you! 🙏` });
+      await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${orderName}*\nAWB: ${awb.trim()}\nCourier: ${courier.trim()}`);
+      console.log(`✅ Vendor tracking saved for order ${orderName}: ${awb.trim()} / ${courier.trim()}`);
+    } else {
+      await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number and try again.` });
+    }
+    return;
+  }
+
+  if (delayMatch) {
+    const [, orderNum, reason, eta] = delayMatch;
+    const orderName = `#${orderNum}`;
+    const etaTrimmed = eta.trim();
+    const result = await mdb.collection('order_vendor_stage').updateOne(
+      { shopify_id: orderNum },
+      { $set: { delay_reason: reason.trim(), delay_resolution_date: etaTrimmed, updated_at: new Date().toISOString() } }
+    );
+    if (result.matchedCount > 0) {
+      await sock.sendMessage(sender, { text: `✅ Delay reason saved for order *${orderName}*.\n\nReason: _"${reason.trim()}"_\nExpected by: *${etaTrimmed}*\n\nWe'll relay this update to the customer in a friendly way. Thank you for updating us! 🙏` });
+      await waAdminAlert(`⏳ *Vendor Delay Submitted*\nOrder: *${orderName}*\nReason: ${reason.trim()}\nETA: ${etaTrimmed}`);
+      console.log(`✅ Vendor delay reason saved for order ${orderName}: "${reason.trim()}" | ETA ${etaTrimmed}`);
+    } else {
+      await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number and try again.` });
+    }
+    return;
+  }
+
+  // Unrecognised vendor message → send usage guide
+  await sock.sendMessage(sender, {
+    text: `Hi! 👋 To update an order, please use one of these formats:\n\n📦 *Shipped:*\nTRACK <order number> <AWB> <courier>\n_Example: TRACK 1785 1234567890 BlueDart_\n\n⏳ *Delay:*\nDELAY <order number> <reason> | ETA DD-MM-YYYY\n_Example: DELAY 1785 Fabric delay from supplier | ETA 14-07-2026_`
+  });
+}
+
 async function waVendorNudge(meta, customerPhone) {
-  const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER;
-  if (!waSocket || !VENDOR_WA || !mdb) return;
+  // TEST MODE: fixed vendor number — make dynamic per-vendor later
+  const VENDOR_WA = '6375668971';
+  if (!waSocket || !mdb) return;
   if (meta?.type !== 'tracking_card') return;
   const d = meta.data;
   if (!d.order_name) return;
@@ -16721,18 +16773,36 @@ async function waVendorNudge(meta, customerPhone) {
 
   for (const vs of vendorStages) {
     const hoursStuck = vs.stage_started_at ? (now - vs.stage_started_at) / 3600000 : 0;
-    if (hoursStuck < 48) continue;
+    if (hoursStuck < 24) continue;
     const dedupKey = `${vs.shopify_id}:${vs.vendor_name}`;
     const recent = await mdb.collection('wa_vendor_nudges').findOne({ key: dedupKey, sent_at: { $gt: now - 86400000 } });
     if (recent) continue;
 
     const days = Math.floor(hoursStuck / 24);
-    const nudgeMsg = `Hi! 👋 This is CrosCrow support.\n\nA customer is asking about order *${d.order_name}* from *${vs.vendor_name}*.\n\nIt's been *${days} day${days > 1 ? 's' : ''}* since confirmation and the order hasn't been dispatched yet.\n\nCould you please update the dispatch status or let us know if there's an issue? The customer is waiting. 🙏`;
+    const orderRef = d.order_name.replace(/^#/, '');
+    const nudgeMsg =
+`Hi! 👋 This is CrosCrow support.
+
+A customer is asking about order *${d.order_name}* from *${vs.vendor_name}*.
+
+It's been *${days} day${days > 1 ? 's' : ''}* since confirmation and the order hasn't shipped yet.
+
+Please reply with one of:
+
+📦 If already shipped — reply with:
+TRACK ${orderRef} <AWB number> <courier name>
+_Example: TRACK ${orderRef} 1234567890 BlueDart_
+
+⏳ If there's a delay — reply with:
+DELAY ${orderRef} <reason> | ETA DD-MM-YYYY
+_Example: DELAY ${orderRef} Fabric procurement delay | ETA 14-07-2026_
+
+The customer is waiting. 🙏`;
 
     try {
-      const jid = `91${VENDOR_WA.replace(/^(91|\+91)/, '')}@s.whatsapp.net`;
+      const jid = `91${VENDOR_WA}@s.whatsapp.net`;
       await waSocket.sendMessage(jid, { text: nudgeMsg });
-      await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
+      await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, shopify_id: String(d.shopify_order_id), vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
       console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
     } catch (e) {
       console.error('❌ Vendor nudge failed:', e.message);
@@ -16788,14 +16858,15 @@ async function waHoursConfirmed(shopifyOrderId) {
   return vs?.stage_started_at ? (Date.now() - vs.stage_started_at) / 3600000 : 0;
 }
 
-// ── Vendor delay reason from DB ────────────────────────────────────────────
+// ── Vendor delay reason + ETA from DB ─────────────────────────────────────
 async function waDelayReason(shopifyOrderId) {
   if (!shopifyOrderId || !mdb) return null;
   const vs = await mdb.collection('order_vendor_stage').findOne({
     shopify_id: String(shopifyOrderId),
     delay_reason: { $exists: true, $ne: '' },
   });
-  return vs?.delay_reason || null;
+  if (!vs?.delay_reason) return null;
+  return { reason: vs.delay_reason, eta: vs.delay_resolution_date || null };
 }
 
 // ── Escalate to human ──────────────────────────────────────────────────────
@@ -16870,15 +16941,16 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
 
     case 'order_confirmed_short':
       if (num === 1) {
-        const reason = await waDelayReason(d?.shopify_order_id);
-        if (reason) {
-          await sock.sendMessage(sender, { text: `Here's the update from the vendor:\n\n_"${reason}"_\n\nWe're making sure this is resolved quickly. Sorry for the wait! 🙏` });
+        const delayInfo = await waDelayReason(d?.shopify_order_id);
+        if (delayInfo) {
+          const etaLine = delayInfo.eta ? `\n\n📅 Expected by: *${delayInfo.eta}*` : '';
+          await sock.sendMessage(sender, { text: `Here's the update from the vendor:\n\n_"${delayInfo.reason}"_${etaLine}\n\nWe're making sure this is resolved quickly. Sorry for the wait! 🙏` });
         } else {
-          await sock.sendMessage(sender, { text: `The vendor hasn't shared a specific reason yet — it's likely a routine processing delay. We've pinged them to speed things up! 🔔` });
+          await sock.sendMessage(sender, { text: `The vendor hasn't shared a specific reason yet — your order was just confirmed recently so it may still be in packing. We've pinged the vendor to update us! 🔔` });
           if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
         }
       } else if (num === 2) {
-        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — confirmed but delayed <48h`);
+        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — confirmed but delayed <24h`);
         return true;
       }
       await waSessionClear(sender);
@@ -16886,11 +16958,12 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
 
     case 'order_confirmed_long':
       if (num === 1) {
-        const reason = await waDelayReason(d?.shopify_order_id);
-        if (reason) {
-          await sock.sendMessage(sender, { text: `The vendor has shared this update:\n\n_"${reason}"_\n\nWe're following up to make sure it ships ASAP. Really sorry for the inconvenience 🙏` });
+        const delayInfo = await waDelayReason(d?.shopify_order_id);
+        if (delayInfo) {
+          const etaLine = delayInfo.eta ? `\n\n📅 Expected by: *${delayInfo.eta}*` : '';
+          await sock.sendMessage(sender, { text: `The vendor has shared this update:\n\n_"${delayInfo.reason}"_${etaLine}\n\nWe're following up to make sure it ships ASAP. Really sorry for the inconvenience 🙏` });
         } else {
-          await sock.sendMessage(sender, { text: `No specific reason from the vendor yet. We've sent them a reminder right now — you should see movement soon. 🔔` });
+          await sock.sendMessage(sender, { text: `No specific reason from the vendor yet. We've sent them a reminder right now asking for an update — you should see movement soon. 🔔` });
           if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
         }
       } else if (num === 2) {
@@ -16898,7 +16971,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
         if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
         await sock.sendMessage(sender, { text: `We've escalated this to our team and nudged the vendor directly. You'll get an update within a few hours.\n\nFor urgent help:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
       } else if (num === 3) {
-        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — not shipped >48h, customer escalating`);
+        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — not shipped >24h, customer escalating`);
         return true;
       }
       await waSessionClear(sender);
@@ -16960,7 +17033,7 @@ async function waMenuForOrder(meta) {
   if (['new', 'hold'].includes(stage) && d.confirm_url) return { menu: 'order_not_confirmed', orderData: d };
   if (['confirmed', 'partial'].includes(stage)) {
     const hrs = await waHoursConfirmed(d.shopify_order_id);
-    return hrs <= 48
+    return hrs <= 24
       ? { menu: 'order_confirmed_short', orderData: d }
       : { menu: 'order_confirmed_long', orderData: d };
   }
@@ -17026,7 +17099,15 @@ async function startBaileysBot() {
 
         try {
           await sock.readMessages([msg.key]);
-          const phone = sender.replace('@s.whatsapp.net', '');
+          const phone = sender.replace('@s.whatsapp.net', '').replace(/^91/, '');
+
+          // ── Vendor reply handler ──────────────────────────────────────
+          // TEST MODE: fixed vendor number — make dynamic per-vendor later
+          const vendorJid = '916375668971@s.whatsapp.net';
+          if (vendorJid && sender === vendorJid) {
+            await waHandleVendorReply(sock, sender, text);
+            continue;
+          }
 
           // Find or create chat thread
           let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender });
@@ -17037,11 +17118,18 @@ async function startBaileysBot() {
             });
             chat = { _id: r.insertedId, whatsapp_sender: sender, customer_phone: phone };
           }
+          // Backfill: if old chat stored LID as customer_phone, fix it now
+          if (chat.customer_phone && chat.customer_phone.includes('@')) {
+            await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { customer_phone: phone } });
+            chat.customer_phone = phone;
+          }
 
           const saveAndSend = async (replyText, meta = null) => {
-            await SC.addMessage(chat._id, { sender: 'assistant', text: replyText, meta });
+            // Strip any LID/junk contact params from croscrow track URLs
+            const cleanText = replyText.replace(/contact=[^&\s"')\n]+/g, 'contact=na');
+            await SC.addMessage(chat._id, { sender: 'assistant', text: cleanText, meta });
             await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
-            await sock.sendMessage(sender, { text: replyText });
+            await sock.sendMessage(sender, { text: cleanText });
           };
 
           // ── 1. Greeting → show welcome menu ───────────────────────────
