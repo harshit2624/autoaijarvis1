@@ -16097,19 +16097,40 @@ async function scStartReturnExchange(orderName, contact) {
   };
 }
 
+async function scCheckOrderConfirmation(orderName) {
+  try {
+    const normalized = String(orderName).replace(/^#/, '').trim();
+    const name = `#${normalized}`;
+    const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=5`);
+    const order = (data.orders || [])[0];
+    if (!order) return { found: false, message: 'Order not found. Please check the order number.' };
+    const tags = (order.tags || '').split(',').map(t => t.trim().toLowerCase());
+    const confirmed = tags.includes('order confirmed');
+    return {
+      found: true,
+      order_name: order.name,
+      confirmed,
+      financial_status: order.financial_status,
+      confirm_url: confirmed ? null : `https://croscrow.com/pages/orderconfirm?o=${encodeURIComponent(order.name)}`,
+    };
+  } catch (e) { return { found: false, error: e.message }; }
+}
+
 const SUPPORT_TOOLS = [
   { type:'function', function:{ name:'search_products', description:'Search the CrosCrow catalog for products by name/keyword (e.g. "sweatpants", "waffle hoodie"). Use when the customer is browsing/shopping, not asking about an existing order.', parameters:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } } },
   { type:'function', function:{ name:'get_order_status', description:'Look up a specific order\'s live status, stage, AWB, and per-vendor shipment details. Requires the order number; ask for it if not given.', parameters:{ type:'object', properties:{ order_name:{type:'string', description:'Order number, with or without #'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'get_delay_reason', description:'Explain why an order has not shipped yet — checks if the vendor submitted a specific delay reason, otherwise gives a generic explanation.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'start_return_exchange', description:'Customer wants to return or exchange an item from an order. Returns a link to the self-serve return/exchange flow.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
+  { type:'function', function:{ name:'check_order_confirmation', description:'Check if a COD order has been confirmed (has Order Confirmed tag on Shopify). Use when customer asks about confirming their order, says they already paid ₹99, or says the confirmation link is not working.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
 ];
 
 async function scRunTool(name, args, contact) {
   switch (name) {
-    case 'search_products':        return scSearchProducts(args.query);
-    case 'get_order_status':       return scGetOrderStatus(args.order_name, contact);
-    case 'get_delay_reason':       return scGetDelayReason(args.order_name, contact);
-    case 'start_return_exchange':  return scStartReturnExchange(args.order_name, contact);
+    case 'search_products':          return scSearchProducts(args.query);
+    case 'get_order_status':         return scGetOrderStatus(args.order_name, contact);
+    case 'get_delay_reason':         return scGetDelayReason(args.order_name, contact);
+    case 'start_return_exchange':    return scStartReturnExchange(args.order_name, contact);
+    case 'check_order_confirmation': return scCheckOrderConfirmation(args.order_name);
     default: return { error: 'Unknown tool' };
   }
 }
@@ -16126,15 +16147,35 @@ Rules:
 - If something is outside what your tools can do, say you're flagging it for a human and that's fine.`;
 
 const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You're replying on WhatsApp so there are NO cards or buttons — only plain text.
-1. Find products — use search_products, then describe 2-3 best matches naturally with their prices. Links will be appended after your message automatically — just say "here are some options:" and don't mention cards.
-2. Track orders — use get_order_status. Always ask for the order number if not given. Summarize the status clearly in plain words. If a confirm_url is present (stage is new/hold/cancelled), tell them they need to confirm their order — the link will be sent after your message automatically, just say "here's your confirmation link:". For tracking, say "here's your tracking link:" — the link will follow automatically.
-3. Explain delays — use get_delay_reason. Relay the reason warmly with the ETA if available.
-4. Returns/exchanges — use start_return_exchange. Tell them the return/exchange link will follow your message.
-Rules:
-- CRITICAL: call the relevant tool again on EVERY turn that needs order/product/delay data — even if you already looked it up earlier in this conversation. Never answer from memory.
-- Keep replies short (2-4 sentences max), human, no corporate phrasing. No markdown formatting — plain text only.
-- If a customer is venting/frustrated, acknowledge it briefly before helping.
-- If something is outside what your tools can do, say you're flagging it for a human.`;
+
+TOOLS:
+1. search_products — when customer is browsing/shopping. Describe 2-3 matches naturally, links follow automatically.
+2. get_order_status — track any order. Summarize status in plain words. Links follow automatically.
+3. get_delay_reason — explain why order hasn't shipped. Relay vendor reason warmly with ETA if available.
+4. start_return_exchange — customer wants return/exchange. Link follows automatically.
+5. check_order_confirmation — use whenever customer mentions confirming order, ₹99 payment, or confirmation link.
+
+ORDER CONFIRMATION PROCESS (very important — know this well):
+- CrosCrow requires a ₹99 advance for COD orders. This is NOT an extra charge — it's adjusted in the final COD amount (customer pays total minus ₹99 at delivery).
+- Purpose: prevents fake/mistaken orders, speeds up dispatch, supports independent brands.
+- Confirmation link format: https://croscrow.com/pages/orderconfirm?o=ORDER_NAME
+- The ₹99 is collected via this link. After payment, team verifies and marks order confirmed.
+
+HOW TO HANDLE EACH CONFIRMATION SCENARIO:
+- Customer asks "how do I confirm?" or link not received → use check_order_confirmation, if not confirmed send fresh link, say: "Here's your confirmation link — pay ₹99 to get your order moving:"
+- "Link not working / payment page not opening" → say: "I've flagged this to our team right now, they'll send you an alternative shortly." (flags admin)
+- "I already paid ₹99 / sent screenshot" → say: "Thank you! Our team will verify your payment and confirm your order within a few hours. You'll receive a confirmation once done 🙏"
+- "Why do I need to pay ₹99? Other sites don't do this" → say: "The ₹99 is a small advance that gets adjusted in your final delivery amount — so you pay ₹99 less at the door. It helps us ensure orders are genuine and dispatch happens faster for everyone. It's not extra, just early 😊"
+- "I'll pay full on delivery / I don't want to pay ₹99" → say: "Noted! I've flagged this to our team and they'll manually confirm your order. Please keep the full amount ready at delivery. You should receive a confirmation message shortly." (flags admin)
+- "I already confirmed but still getting messages" → use check_order_confirmation to verify; if confirmed say "Your order is confirmed on our end — the messages may have been sent before the update. You're all good!"; if not confirmed, say "There seems to be a delay in the system — I've flagged this to our team to resolve immediately." (flags admin)
+- "I want to cancel my order" → say: "I've noted your cancellation request and flagged it to our team. They'll process it within a few hours and confirm over WhatsApp." (flags admin)
+- "How long will delivery take?" → say: "Once your order is dispatched by the vendor, delivery typically takes 3–7 days depending on your location."
+
+RULES:
+- CRITICAL: call the relevant tool on EVERY turn that needs live data. Never answer from memory.
+- No markdown. Plain text only. Short replies (2-4 sentences). Human, warm tone.
+- If customer is frustrated, acknowledge briefly first.
+- When you say you're "flagging to our team", that triggers an automatic admin alert — always say this exact phrase for the scenarios listed above.`;
 
 // Builds a plain-text links section to append to WhatsApp replies when meta has URLs
 function waLinksFromMeta(meta) {
@@ -16217,6 +16258,12 @@ async function scRunChatTurn(chat, history, customerText, { systemPrompt, forceC
         else if (tc.function.name === 'search_products' && (result.found || result.collections?.length)) { cardMeta = { type:'product_cards', data: { products: result.products, collections: result.collections || [] } }; newTags.add('Product Inquiry'); }
         else if (tc.function.name === 'start_return_exchange' && result.found) { cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } }; newTags.add('Exchange Issue'); }
         else if (tc.function.name === 'get_delay_reason') newTags.add('Delay Inquiry');
+        else if (tc.function.name === 'check_order_confirmation') {
+          newTags.add('Confirmation Query');
+          if (result.found && !result.confirmed && result.confirm_url) {
+            cardMeta = { type:'action_link', data: { label:'Confirm Your Order', url: result.confirm_url } };
+          }
+        }
         if (result.shopify_order_id) {
           await SC.update(chat._id, { order_name: result.order_name, shopify_order_id: String(result.shopify_order_id), vendor_names: result.vendor_names || [] });
         }
@@ -17279,8 +17326,12 @@ async function startBaileysBot() {
             continue;
           }
 
-          // ── 7. Bot couldn't help → offer human ────────────────────────
+          // ── 7. Needs admin alert (flagging to team / can't help) ─────
+          const needsAdmin = /flagged.*team|flagging.*team|flag.*our team|flagged this|noted.*team|cancellation request|manually confirm/i.test(reply);
           const botCantHelp = /flag.*human|connect.*team|reach out|outside.*tools|can't help|cannot help/i.test(reply);
+          if (needsAdmin) {
+            waAdminAlert(`🔔 *Action Needed*\nCustomer: +91${phone}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`).catch(() => {});
+          }
           if (botCantHelp) {
             await saveAndSend(reply, meta);
             await sock.sendMessage(sender, { text: `Need more help? Our team is here:\n\n1️⃣ Talk to a human\n\nOr call us:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
