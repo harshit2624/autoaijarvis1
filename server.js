@@ -17353,9 +17353,9 @@ async function startBaileysBot() {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         waConnected = false;
-        console.log(loggedOut ? '📵 WhatsApp logged out' : '🔄 WhatsApp disconnected, reconnecting...');
-        if (!loggedOut) setTimeout(startBaileysBot, 5000);
-        else waSocket = null;
+        console.log(loggedOut ? '📵 WhatsApp logged out — restarting for new QR…' : '🔄 WhatsApp disconnected, reconnecting...');
+        waSocket = null;
+        setTimeout(startBaileysBot, 3000);
       }
       if (connection === 'open') {
         waConnected = true;
