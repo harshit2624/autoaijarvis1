@@ -16713,47 +16713,85 @@ async function useMongoAuthState() {
 async function waHandleVendorReply(sock, sender, text) {
   if (!mdb) return;
 
-  const trackMatch = text.match(/^TRACK\s+#?(\d+)\s+(\S+)\s+(.+)/i);
-  const delayMatch = text.match(/^DELAY\s+#?(\d+)\s+(.+?)\s*\|\s*ETA\s+(.+)/i);
+  // Find the most recent unresolved nudge sent to this vendor (last 7 days)
+  const recentNudge = await mdb.collection('wa_vendor_nudges').findOne(
+    { sent_at: { $gt: Date.now() - 7 * 86400000 }, resolved: { $ne: true } },
+    { sort: { sent_at: -1 } }
+  );
 
-  if (trackMatch) {
-    const [, orderNum, awb, courier] = trackMatch;
-    const orderName = `#${orderNum}`;
+  // Use LLM to parse natural language from vendor into structured data
+  const orderContext = recentNudge ? `The vendor is likely replying about order ${recentNudge.order_name}.` : 'No recent order context found.';
+  const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  let parsed = null;
+  try {
+    const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+    const GROQ_KEY = process.env.GROQ_API_KEY;
+    const prompt = [
+      { role: 'system', content: `You are a parser for vendor WhatsApp replies to CrosCrow support nudges. Today is ${today}. ${orderContext}\n\nExtract structured info from the vendor message and reply ONLY with valid JSON, no other text.\n\nJSON schema:\n{\n  "type": "tracking" | "delay" | "unknown",\n  "awb": "<AWB/tracking number if found, else null>",\n  "courier": "<courier name if found, else null>",\n  "reason": "<delay reason in one sentence if type is delay, else null>",\n  "eta": "<expected ship/delivery date as DD-MMM-YYYY if mentioned, else null>",\n  "order_num": "<order number digits only if explicitly mentioned, else null>"\n}\n\nExamples:\n- "it will be shipped on 12th july" → {"type":"delay","awb":null,"courier":null,"reason":"Order will be shipped by 12th July","eta":"12-Jul-2026","order_num":null}\n- "4959596 bluedart" → {"type":"tracking","awb":"4959596","courier":"BlueDart","reason":null,"eta":null,"order_num":null}\n- "TRACK 2531 123456 delhivery" → {"type":"tracking","awb":"123456","courier":"Delhivery","reason":null,"eta":null,"order_num":"2531"}\n- "fabric shortage, ship by 15 july" → {"type":"delay","awb":null,"courier":null,"reason":"Fabric shortage causing delay","eta":"15-Jul-2026","order_num":null}` },
+      { role: 'user', content: text }
+    ];
+    const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+    const apiKey = DEEPSEEK_KEY || GROQ_KEY;
+    const model = DEEPSEEK_KEY ? 'deepseek-chat' : 'llama-3.3-70b-versatile';
+    const r = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, max_tokens: 200, messages: prompt }),
+    });
+    const d = await r.json();
+    const raw = d.choices?.[0]?.message?.content?.trim() || '';
+    parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```$/, '').trim());
+  } catch (e) {
+    console.error('❌ Vendor reply parse failed:', e.message);
+  }
+
+  // Determine which order to update
+  const orderNum = parsed?.order_num || (recentNudge ? recentNudge.shopify_id : null);
+  const orderName = parsed?.order_num ? `#${parsed.order_num}` : (recentNudge?.order_name || null);
+
+  if (!parsed || parsed.type === 'unknown' || !orderNum) {
+    await sock.sendMessage(sender, {
+      text: `Got your message! 👍 Could you confirm which order you're updating?\n\nFor order status updates, just reply:\n📦 *Shipped:* <AWB number> <courier name>\n⏳ *Delay:* <reason> by <expected date>\n\n_We'll handle the rest!_`
+    });
+    return;
+  }
+
+  if (parsed.type === 'tracking' && parsed.awb) {
+    const courier = parsed.courier || 'Not specified';
     const result = await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: orderNum },
-      { $set: { awb: awb.trim(), courier: courier.trim(), stage: 'transit', updated_at: new Date().toISOString() } }
+      { shopify_id: String(orderNum) },
+      { $set: { awb: parsed.awb, courier, stage: 'transit', updated_at: new Date().toISOString() } }
     );
     if (result.matchedCount > 0) {
-      await sock.sendMessage(sender, { text: `✅ Got it! Tracking updated for order *${orderName}*.\n\nAWB: *${awb.trim()}*\nCourier: *${courier.trim()}*\n\nThe customer will be able to track their order now. Thank you! 🙏` });
-      await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${orderName}*\nAWB: ${awb.trim()}\nCourier: ${courier.trim()}`);
-      console.log(`✅ Vendor tracking saved for order ${orderName}: ${awb.trim()} / ${courier.trim()}`);
+      if (recentNudge) await mdb.collection('wa_vendor_nudges').updateOne({ _id: recentNudge._id }, { $set: { resolved: true } });
+      await sock.sendMessage(sender, { text: `✅ Tracking updated for order *${orderName}*!\n\nAWB: *${parsed.awb}*\nCourier: *${courier}*\n\nCustomer will be able to track their order. Thank you! 🙏` });
+      await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${orderName}*\nAWB: ${parsed.awb}\nCourier: ${courier}`);
     } else {
-      await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number and try again.` });
+      await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number.` });
     }
     return;
   }
 
-  if (delayMatch) {
-    const [, orderNum, reason, eta] = delayMatch;
-    const orderName = `#${orderNum}`;
-    const etaTrimmed = eta.trim();
+  if (parsed.type === 'delay') {
+    const reason = parsed.reason || text;
+    const eta = parsed.eta || 'Not specified';
     const result = await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: orderNum },
-      { $set: { delay_reason: reason.trim(), delay_resolution_date: etaTrimmed, updated_at: new Date().toISOString() } }
+      { shopify_id: String(orderNum) },
+      { $set: { delay_reason: reason, delay_resolution_date: eta, updated_at: new Date().toISOString() } }
     );
     if (result.matchedCount > 0) {
-      await sock.sendMessage(sender, { text: `✅ Delay reason saved for order *${orderName}*.\n\nReason: _"${reason.trim()}"_\nExpected by: *${etaTrimmed}*\n\nWe'll relay this update to the customer in a friendly way. Thank you for updating us! 🙏` });
-      await waAdminAlert(`⏳ *Vendor Delay Submitted*\nOrder: *${orderName}*\nReason: ${reason.trim()}\nETA: ${etaTrimmed}`);
-      console.log(`✅ Vendor delay reason saved for order ${orderName}: "${reason.trim()}" | ETA ${etaTrimmed}`);
+      if (recentNudge) await mdb.collection('wa_vendor_nudges').updateOne({ _id: recentNudge._id }, { $set: { resolved: true } });
+      await sock.sendMessage(sender, { text: `✅ Update saved for order *${orderName}*!\n\nExpected by: *${eta}*\n\nWe'll let the customer know. Thank you for the update! 🙏` });
+      await waAdminAlert(`⏳ *Vendor Delay Update*\nOrder: *${orderName}*\nReason: ${reason}\nETA: ${eta}`);
     } else {
-      await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number and try again.` });
+      await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number.` });
     }
     return;
   }
 
-  // Unrecognised vendor message → send usage guide
   await sock.sendMessage(sender, {
-    text: `Hi! 👋 To update an order, please use one of these formats:\n\n📦 *Shipped:*\nTRACK <order number> <AWB> <courier>\n_Example: TRACK 1785 1234567890 BlueDart_\n\n⏳ *Delay:*\nDELAY <order number> <reason> | ETA DD-MM-YYYY\n_Example: DELAY 1785 Fabric delay from supplier | ETA 14-07-2026_`
+    text: `Got your message! 👍 Could you confirm which order you're updating?\n\nFor order status updates, just reply:\n📦 *Shipped:* <AWB number> <courier name>\n⏳ *Delay:* <reason> by <expected date>\n\n_We'll handle the rest!_`
   });
 }
 
