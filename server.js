@@ -16185,9 +16185,7 @@ async function scCallLLM(messages) {
 }
 
 async function scRunChatTurn(chat, history, customerText, { systemPrompt, forceContact } = {}) {
-  // For WhatsApp, forceContact='na' prevents LID/garbage phone leaking into track URLs
-  const rawContact = chat.customer_email || chat.customer_phone || '';
-  const contact = forceContact || (rawContact.includes('@') || rawContact.length > 13 ? 'na' : rawContact);
+  const contact = forceContact || chat.customer_email || chat.customer_phone || '';
   // Trim to last 12 messages — prevents context pollution when customer queries multiple orders
   const recentHistory = history.slice(-12);
   const messages = [
