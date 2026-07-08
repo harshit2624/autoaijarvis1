@@ -16630,126 +16630,172 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Test endpoint — send a WhatsApp message to any number directly
+// GET /admin/whatsapp-test?to=9876543210&msg=hello
+app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running (WHATSAPP_BOT_ENABLED=true required)' });
+    const to = (req.query.to || '').replace(/\D/g, '');
+    const msg = req.query.msg || 'Test message from CrosCrow bot ✅';
+    if (!to) return res.status(400).json({ error: 'to= phone number required' });
+    const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
+    await waSocket.sendMessage(jid, { text: msg });
+    res.json({ success: true, sent_to: jid, message: msg });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
-// WHATSAPP SUPPORT BOT (whatsapp-web.js — QR scan, unofficial)
+// WHATSAPP SUPPORT BOT (Baileys — no browser, session stored in MongoDB)
 // ══════════════════════════════════════════════════════════════════════════
 // Set WHATSAPP_BOT_ENABLED=true in .env to activate.
-// On first start, scan the QR code printed in the terminal with your
+// On first start a QR code prints in the terminal — scan it once with your
 // business WhatsApp → Settings → Linked Devices → Link a device.
-// The session is saved in .wwebjs_auth/ so you won't need to scan again.
-//
-// How it works: every message from a customer goes through the same
-// scRunChatTurn() function used by the website support chat, so it has
-// full order-lookup, product-search, and return/exchange tools built in.
-// Each WhatsApp number gets its own persistent chat thread in MongoDB.
+// Session is stored in MongoDB (whatsapp_auth collection) so it survives
+// Render restarts and deploys without needing to re-scan.
 // ─────────────────────────────────────────────────────────────────────────
 
-// Exposed so waVendorNudge() can send messages even after the IIFE completes
-let waClient = null;
+let waSocket = null;
 
-// Sends a WhatsApp nudge to the vendor when a customer asks about an unshipped order
-// that has been sitting in confirmed/hold/partial stage for more than 2 days.
-// Deduped per order+vendor per 24h via the wa_vendor_nudges collection.
+// MongoDB-backed auth state for Baileys — survives server restarts/redeploys
+async function useMongoAuthState() {
+  const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
+  const col = mdb.collection('whatsapp_auth');
+
+  const write = async (id, data) =>
+    col.updateOne({ _id: id }, { $set: { v: JSON.stringify(data, BufferJSON.replacer) } }, { upsert: true });
+
+  const read = async (id) => {
+    const doc = await col.findOne({ _id: id });
+    return doc ? JSON.parse(doc.v, BufferJSON.reviver) : null;
+  };
+
+  const creds = (await read('creds')) || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          await Promise.all(ids.map(async id => {
+            let val = await read(`${type}-${id}`);
+            if (type === 'app-state-sync-key' && val) val = proto.Message.AppStateSyncKeyData.fromObject(val);
+            data[id] = val;
+          }));
+          return data;
+        },
+        set: async (data) => {
+          await Promise.all(
+            Object.entries(data).flatMap(([type, ids]) =>
+              Object.entries(ids || {}).map(([id, val]) =>
+                val ? write(`${type}-${id}`, val) : col.deleteOne({ _id: `${type}-${id}` })
+              )
+            )
+          );
+        },
+      },
+    },
+    saveCreds: () => write('creds', creds),
+  };
+}
+
+// Nudges vendor on WhatsApp when customer asks about an order stuck unshipped for 2+ days.
+// Deduped per order+vendor per 24h via wa_vendor_nudges collection.
 async function waVendorNudge(meta, customerPhone) {
   const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER;
-  if (!waClient || !VENDOR_WA || !mdb) return;
+  if (!waSocket || !VENDOR_WA || !mdb) return;
   if (meta?.type !== 'tracking_card') return;
-
   const d = meta.data;
-  const orderName = d.order_name;
-  if (!orderName) return;
+  if (!d.order_name) return;
 
-  // Check which vendors are stuck (confirmed/hold/partial) for 2+ days
   const STUCK_STAGES = ['confirmed', 'hold', 'partial', 'new'];
-  const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
   const now = Date.now();
-
   const vendorStages = await mdb.collection('order_vendor_stage').find(
     { shopify_id: String(d.shopify_order_id), stage: { $in: STUCK_STAGES } }
   ).toArray();
 
   for (const vs of vendorStages) {
     const hoursStuck = vs.stage_started_at ? (now - vs.stage_started_at) / 3600000 : 0;
-    if (hoursStuck < 48) continue; // less than 2 days — don't nudge yet
-
-    // Dedup: only nudge once per order+vendor per 24h
+    if (hoursStuck < 48) continue;
     const dedupKey = `${vs.shopify_id}:${vs.vendor_name}`;
-    const recent = await mdb.collection('wa_vendor_nudges').findOne({
-      key: dedupKey,
-      sent_at: { $gt: now - 24 * 60 * 60 * 1000 },
-    });
+    const recent = await mdb.collection('wa_vendor_nudges').findOne({ key: dedupKey, sent_at: { $gt: now - 86400000 } });
     if (recent) continue;
 
-    const daysStuck = Math.floor(hoursStuck / 24);
-    const nudgeMsg = `Hi! 👋 This is CrosCrow support.\n\nA customer is asking about order *${orderName}* from *${vs.vendor_name}*.\n\nIt's been *${daysStuck} day${daysStuck > 1 ? 's' : ''}* since confirmation and the order hasn't been dispatched yet.\n\nCould you please update the dispatch status or let us know if there's an issue? The customer is waiting. 🙏`;
+    const days = Math.floor(hoursStuck / 24);
+    const nudgeMsg = `Hi! 👋 This is CrosCrow support.\n\nA customer is asking about order *${d.order_name}* from *${vs.vendor_name}*.\n\nIt's been *${days} day${days > 1 ? 's' : ''}* since confirmation and the order hasn't been dispatched yet.\n\nCould you please update the dispatch status or let us know if there's an issue? The customer is waiting. 🙏`;
 
     try {
-      const vendorJid = `91${VENDOR_WA.replace(/^(91|\+91)/, '')}@c.us`;
-      await waClient.sendMessage(vendorJid, nudgeMsg);
-      await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: orderName, vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
-      console.log(`📲 Vendor nudge sent for ${orderName} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
+      const jid = `91${VENDOR_WA.replace(/^(91|\+91)/, '')}@s.whatsapp.net`;
+      await waSocket.sendMessage(jid, { text: nudgeMsg });
+      await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
+      console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
     } catch (e) {
       console.error('❌ Vendor nudge failed:', e.message);
     }
   }
 }
 
-if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
-  (async () => {
-    try {
-      const { Client, LocalAuth } = require('whatsapp-web.js');
-      const qrcode = require('qrcode-terminal');
+async function startBaileysBot() {
+  try {
+    const { makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+    const pino = require('pino');
+    const qrcode = require('qrcode-terminal');
 
-      waClient = new Client({
-        authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
-        puppeteer: {
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        },
-      });
+    // Wait for MongoDB (bot starts before DB is always ready on cold boot)
+    const waitForMdb = () => new Promise(resolve => {
+      if (mdb) return resolve();
+      const t = setInterval(() => { if (mdb) { clearInterval(t); resolve(); } }, 500);
+    });
+    await waitForMdb();
 
-      waClient.on('qr', qr => {
+    const { state, saveCreds } = await useMongoAuthState();
+
+    const sock = makeWASocket({
+      auth: state,
+      browser: Browsers.ubuntu('Chrome'),
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      syncFullHistory: false,
+    });
+
+    waSocket = sock;
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
         console.log('\n📱 WhatsApp QR Code — scan with your phone:');
         qrcode.generate(qr, { small: true });
-      });
+      }
+      if (connection === 'close') {
+        const code = lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = code === DisconnectReason.loggedOut;
+        console.log(loggedOut ? '📵 WhatsApp logged out — clear whatsapp_auth in MongoDB to re-link' : '🔄 WhatsApp disconnected, reconnecting...');
+        if (!loggedOut) setTimeout(startBaileysBot, 5000);
+        else waSocket = null;
+      }
+      if (connection === 'open') console.log('✅ WhatsApp bot ready (Baileys)');
+    });
 
-      waClient.on('ready', () => {
-        console.log('✅ WhatsApp bot ready');
-      });
+    const waPending = new Set();
 
-      waClient.on('auth_failure', msg => {
-        console.error('❌ WhatsApp auth failure:', msg);
-      });
-
-      // Throttle: one pending reply per sender at a time
-      const waPending = new Set();
-
-      waClient.on('message', async msg => {
-        if (msg.isGroupMsg || msg.fromMe) return;
-        const sender = msg.from; // e.g. "918888888888@c.us"
-        const text = (msg.body || '').trim();
-        if (!text) return;
-        if (waPending.has(sender)) return; // ignore rapid double-sends
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        if (msg.key.fromMe) continue;
+        if (msg.key.remoteJid?.endsWith('@g.us')) continue; // skip groups
+        const sender = msg.key.remoteJid;
+        const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+        if (!text || waPending.has(sender)) continue;
         waPending.add(sender);
 
         try {
-          // Wait for MongoDB to be ready
-          if (!mdb) { await msg.reply("We're starting up — please try again in a moment!"); return; }
-
-          // Find or create a persistent chat for this WhatsApp number
-          const phone = sender.replace('@c.us', '');
+          await sock.readMessages([msg.key]);
+          const phone = sender.replace('@s.whatsapp.net', '');
           let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender });
           if (!chat) {
-            const newChat = {
-              whatsapp_sender: sender,
-              customer_phone: phone,
-              source: 'whatsapp',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
+            const newChat = { whatsapp_sender: sender, customer_phone: phone, source: 'whatsapp', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
             const r = await mdb.collection('support_chats').insertOne(newChat);
             chat = { ...newChat, _id: r.insertedId };
-            // Welcome message (stored but not sent — the LLM's first reply serves as greeting)
             await SC.addMessage(chat._id, { sender: 'assistant', text: "Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?" });
           }
 
@@ -16761,27 +16807,23 @@ if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
           const fullReply = reply + links;
 
           await SC.addMessage(chat._id, { sender: 'assistant', text: fullReply, meta });
-          await mdb.collection('support_chats').updateOne(
-            { _id: chat._id },
-            { $set: { updated_at: new Date().toISOString() } }
-          );
+          await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
+          await sock.sendMessage(sender, { text: fullReply });
 
-          await msg.reply(fullReply);
-
-          // Nudge vendor on WhatsApp if order stuck unshipped for 2+ days
           if (meta) waVendorNudge(meta, phone).catch(() => {});
         } catch (err) {
           console.error('❌ WhatsApp bot error:', err.message);
-          await msg.reply("Sorry, I hit a snag — our team has been notified. Try again in a moment!").catch(() => {});
+          await sock.sendMessage(sender, { text: "Sorry, I hit a snag — please try again in a moment!" }).catch(() => {});
         } finally {
           waPending.delete(sender);
         }
-      });
-
-      waClient.initialize();
-    } catch (err) {
-      console.error('❌ WhatsApp bot failed to start (is whatsapp-web.js installed?):', err.message);
-    }
-  })();
+      }
+    });
+  } catch (err) {
+    console.error('❌ Baileys failed to start:', err.message);
+    setTimeout(startBaileysBot, 10000);
+  }
 }
+
+if (process.env.WHATSAPP_BOT_ENABLED === 'true') startBaileysBot();
 
