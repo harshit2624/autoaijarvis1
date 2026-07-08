@@ -16760,7 +16760,7 @@ async function waSessionClear(sender) {
 // ── Alert admin on WhatsApp ────────────────────────────────────────────────
 async function waAdminAlert(message) {
   if (!waSocket) return;
-  try { await waSocket.sendMessage('918209544626@s.whatsapp.net', { text: message }); }
+  try { await waSocket.sendMessage('919079060327@s.whatsapp.net', { text: message }); }
   catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
 
