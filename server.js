@@ -16184,11 +16184,15 @@ async function scCallLLM(messages) {
   throw new Error('No AI key configured (DEEPSEEK_API_KEY or GROQ_API_KEY)');
 }
 
-async function scRunChatTurn(chat, history, customerText, { systemPrompt } = {}) {
-  const contact = chat.customer_email || chat.customer_phone || '';
+async function scRunChatTurn(chat, history, customerText, { systemPrompt, forceContact } = {}) {
+  // For WhatsApp, forceContact='na' prevents LID/garbage phone leaking into track URLs
+  const rawContact = chat.customer_email || chat.customer_phone || '';
+  const contact = forceContact || (rawContact.includes('@') || rawContact.length > 13 ? 'na' : rawContact);
+  // Trim to last 12 messages — prevents context pollution when customer queries multiple orders
+  const recentHistory = history.slice(-12);
   const messages = [
     { role:'system', content: systemPrompt || SC_SYSTEM_PROMPT },
-    ...history.map(m => ({ role: m.sender === 'customer' ? 'user' : (m.sender === 'assistant' ? 'assistant' : 'user'), content: m.sender==='vendor'||m.sender==='admin' ? `[${m.sender} note: ${m.text}]` : m.text })),
+    ...recentHistory.map(m => ({ role: m.sender === 'customer' ? 'user' : (m.sender === 'assistant' ? 'assistant' : 'user'), content: m.sender==='vendor'||m.sender==='admin' ? `[${m.sender} note: ${m.text}]` : m.text })),
     { role:'user', content: customerText },
   ];
 
@@ -17163,8 +17167,10 @@ async function startBaileysBot() {
           }
 
           const saveAndSend = async (replyText, meta = null) => {
-            // Strip any LID/junk contact params from croscrow track URLs
-            const cleanText = replyText.replace(/contact=[^&\s"')\n]+/g, 'contact=na');
+            // Fix markdown: LLM uses **bold** but WhatsApp only renders *bold*
+            let cleanText = replyText.replace(/\*\*(.+?)\*\*/g, '*$1*');
+            // Strip any LID/junk contact params from croscrow track URLs (safety net)
+            cleanText = cleanText.replace(/contact=[^&\s"')\n]+/g, 'contact=na');
             await SC.addMessage(chat._id, { sender: 'assistant', text: cleanText, meta });
             await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
             await sock.sendMessage(sender, { text: cleanText });
@@ -17198,7 +17204,7 @@ async function startBaileysBot() {
           // ── 4. LLM handles everything else ────────────────────────────
           const history = await SC.messages(chat._id);
           await SC.addMessage(chat._id, { sender: 'customer', text });
-          const { reply, meta } = await scRunChatTurn(chat, history, text, { systemPrompt: SC_WHATSAPP_SYSTEM_PROMPT });
+          const { reply, meta } = await scRunChatTurn(chat, history, text, { systemPrompt: SC_WHATSAPP_SYSTEM_PROMPT, forceContact: 'na' });
 
           // ── 5. Product search → send images + text links ──────────────
           if (meta?.type === 'product_cards') {
@@ -17214,6 +17220,8 @@ async function startBaileysBot() {
 
           // ── 6. Order found → append links + show smart quick-reply menu
           if (meta?.type === 'tracking_card') {
+            // Clear stale session from a previous order query before setting new one
+            await waSessionClear(sender);
             const links = waLinksFromMeta(meta);
             await saveAndSend(reply + links, meta);
 
