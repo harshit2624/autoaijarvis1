@@ -16125,6 +16125,39 @@ Rules:
 - If a customer is venting/frustrated, acknowledge it briefly before helping.
 - If something is outside what your tools can do, say you're flagging it for a human and that's fine.`;
 
+const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You're replying on WhatsApp so there are NO cards or buttons — only plain text.
+1. Find products — use search_products, then describe 2-3 best matches naturally with their prices. Links will be appended after your message automatically — just say "here are some options:" and don't mention cards.
+2. Track orders — use get_order_status. Always ask for the order number if not given. Summarize the status clearly in plain words. If a confirm_url is present (stage is new/hold/cancelled), tell them they need to confirm their order — the link will be sent after your message automatically, just say "here's your confirmation link:". For tracking, say "here's your tracking link:" — the link will follow automatically.
+3. Explain delays — use get_delay_reason. Relay the reason warmly with the ETA if available.
+4. Returns/exchanges — use start_return_exchange. Tell them the return/exchange link will follow your message.
+Rules:
+- CRITICAL: call the relevant tool again on EVERY turn that needs order/product/delay data — even if you already looked it up earlier in this conversation. Never answer from memory.
+- Keep replies short (2-4 sentences max), human, no corporate phrasing. No markdown formatting — plain text only.
+- If a customer is venting/frustrated, acknowledge it briefly before helping.
+- If something is outside what your tools can do, say you're flagging it for a human.`;
+
+// Builds a plain-text links section to append to WhatsApp replies when meta has URLs
+function waLinksFromMeta(meta) {
+  if (!meta) return '';
+  const lines = [];
+  if (meta.type === 'tracking_card') {
+    const d = meta.data;
+    if (d.confirm_url) lines.push(`✅ Confirm your order: ${d.confirm_url}`);
+    if (d.track_url) lines.push(`📦 Track your order: ${d.track_url}`);
+    if (d.return_requests?.length) {
+      const open = d.return_requests.find(r => !['completed','rejected','cancelled'].includes(r.status));
+      if (open?.track_url) lines.push(`🔄 Return/Exchange status: ${open.track_url}`);
+    }
+  } else if (meta.type === 'action_link') {
+    lines.push(`🔗 ${meta.data.label}: ${meta.data.url}`);
+  } else if (meta.type === 'product_cards') {
+    const { products = [], collections = [] } = meta.data;
+    products.slice(0, 3).forEach(p => lines.push(`• ${p.title}${p.price_from ? ` — ₹${p.price_from}` : ''}\n  ${p.url}`));
+    collections.slice(0, 2).forEach(c => lines.push(`🛍️ Browse ${c.title}: ${c.url}`));
+  }
+  return lines.length ? '\n\n' + lines.join('\n') : '';
+}
+
 async function scCallLLM(messages) {
   const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
   const GROQ_KEY = process.env.GROQ_API_KEY;
@@ -16146,10 +16179,10 @@ async function scCallLLM(messages) {
   throw new Error('No AI key configured (DEEPSEEK_API_KEY or GROQ_API_KEY)');
 }
 
-async function scRunChatTurn(chat, history, customerText) {
+async function scRunChatTurn(chat, history, customerText, { systemPrompt } = {}) {
   const contact = chat.customer_email || chat.customer_phone || '';
   const messages = [
-    { role:'system', content: SC_SYSTEM_PROMPT },
+    { role:'system', content: systemPrompt || SC_SYSTEM_PROMPT },
     ...history.map(m => ({ role: m.sender === 'customer' ? 'user' : (m.sender === 'assistant' ? 'assistant' : 'user'), content: m.sender==='vendor'||m.sender==='admin' ? `[${m.sender} note: ${m.text}]` : m.text })),
     { role:'user', content: customerText },
   ];
@@ -16611,13 +16644,63 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
 // Each WhatsApp number gets its own persistent chat thread in MongoDB.
 // ─────────────────────────────────────────────────────────────────────────
 
+// Exposed so waVendorNudge() can send messages even after the IIFE completes
+let waClient = null;
+
+// Sends a WhatsApp nudge to the vendor when a customer asks about an unshipped order
+// that has been sitting in confirmed/hold/partial stage for more than 2 days.
+// Deduped per order+vendor per 24h via the wa_vendor_nudges collection.
+async function waVendorNudge(meta, customerPhone) {
+  const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER;
+  if (!waClient || !VENDOR_WA || !mdb) return;
+  if (meta?.type !== 'tracking_card') return;
+
+  const d = meta.data;
+  const orderName = d.order_name;
+  if (!orderName) return;
+
+  // Check which vendors are stuck (confirmed/hold/partial) for 2+ days
+  const STUCK_STAGES = ['confirmed', 'hold', 'partial', 'new'];
+  const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  const vendorStages = await mdb.collection('order_vendor_stage').find(
+    { shopify_id: String(d.shopify_order_id), stage: { $in: STUCK_STAGES } }
+  ).toArray();
+
+  for (const vs of vendorStages) {
+    const hoursStuck = vs.stage_started_at ? (now - vs.stage_started_at) / 3600000 : 0;
+    if (hoursStuck < 48) continue; // less than 2 days — don't nudge yet
+
+    // Dedup: only nudge once per order+vendor per 24h
+    const dedupKey = `${vs.shopify_id}:${vs.vendor_name}`;
+    const recent = await mdb.collection('wa_vendor_nudges').findOne({
+      key: dedupKey,
+      sent_at: { $gt: now - 24 * 60 * 60 * 1000 },
+    });
+    if (recent) continue;
+
+    const daysStuck = Math.floor(hoursStuck / 24);
+    const nudgeMsg = `Hi! 👋 This is CrosCrow support.\n\nA customer is asking about order *${orderName}* from *${vs.vendor_name}*.\n\nIt's been *${daysStuck} day${daysStuck > 1 ? 's' : ''}* since confirmation and the order hasn't been dispatched yet.\n\nCould you please update the dispatch status or let us know if there's an issue? The customer is waiting. 🙏`;
+
+    try {
+      const vendorJid = `91${VENDOR_WA.replace(/^(91|\+91)/, '')}@c.us`;
+      await waClient.sendMessage(vendorJid, nudgeMsg);
+      await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: orderName, vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
+      console.log(`📲 Vendor nudge sent for ${orderName} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
+    } catch (e) {
+      console.error('❌ Vendor nudge failed:', e.message);
+    }
+  }
+}
+
 if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
   (async () => {
     try {
       const { Client, LocalAuth } = require('whatsapp-web.js');
       const qrcode = require('qrcode-terminal');
 
-      const waClient = new Client({
+      waClient = new Client({
         authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
         puppeteer: {
           headless: true,
@@ -16673,15 +16756,20 @@ if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
           const history = await SC.messages(chat._id);
           await SC.addMessage(chat._id, { sender: 'customer', text });
 
-          const { reply } = await scRunChatTurn(chat, history, text);
+          const { reply, meta } = await scRunChatTurn(chat, history, text, { systemPrompt: SC_WHATSAPP_SYSTEM_PROMPT });
+          const links = waLinksFromMeta(meta);
+          const fullReply = reply + links;
 
-          await SC.addMessage(chat._id, { sender: 'assistant', text: reply });
+          await SC.addMessage(chat._id, { sender: 'assistant', text: fullReply, meta });
           await mdb.collection('support_chats').updateOne(
             { _id: chat._id },
             { $set: { updated_at: new Date().toISOString() } }
           );
 
-          await msg.reply(reply);
+          await msg.reply(fullReply);
+
+          // Nudge vendor on WhatsApp if order stuck unshipped for 2+ days
+          if (meta) waVendorNudge(meta, phone).catch(() => {});
         } catch (err) {
           console.error('❌ WhatsApp bot error:', err.message);
           await msg.reply("Sorry, I hit a snag — our team has been notified. Try again in a moment!").catch(() => {});
