@@ -16417,7 +16417,17 @@ async function scEnrichChatsWithDispatchInfo(chats) {
 
 // ── Admin moderation ─────────────────────────────────────────────────────
 // ── WhatsApp QR scan page (for connecting/reconnecting the bot) ──────────────
-app.get('/admin/whatsapp-qr', adminAuth, async (req, res) => {
+const waQrAuth = async (req, res, next) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '').trim();
+  if (!token) return res.status(401).send('<h2 style="font-family:sans-serif;padding:40px">Unauthorized — add ?token=YOUR_ADMIN_TOKEN to the URL</h2>');
+  const s = await mdb.collection('admin_sessions').findOne({ token }).catch(() => null);
+  if (!s || Date.now() > s.expiresAt) return res.status(401).send('<h2 style="font-family:sans-serif;padding:40px">Invalid or expired token</h2>');
+  req.waQrToken = token;
+  next();
+};
+
+app.get('/admin/whatsapp-qr', waQrAuth, async (req, res) => {
+  const t = `?token=${req.waQrToken}`;
   if (!waLatestQR) {
     const connected = !!waSocket;
     return res.send(`<!DOCTYPE html><html><head><title>WhatsApp QR</title>
@@ -16428,13 +16438,13 @@ app.get('/admin/whatsapp-qr', adminAuth, async (req, res) => {
 ${connected
   ? '<h2 style="color:#10b981">✅ WhatsApp is connected</h2><p style="color:#64748b">The bot is live. No QR needed.</p>'
   : '<h2 style="color:#f59e0b">⏳ Waiting for QR…</h2><p style="color:#64748b">Page refreshes every 5 seconds. Make sure the server is running.</p>'}
-<p style="margin-top:24px"><a href="/admin/whatsapp-qr/reset" onclick="return confirm(\'This will log out the current WhatsApp session. Proceed?\')" style="color:#ef4444;font-size:13px">🔄 Log out &amp; generate new QR</a></p>
+<p style="margin-top:24px"><a href="/admin/whatsapp-qr/reset${t}" onclick="return confirm(\'This will log out the current WhatsApp session. Proceed?\')" style="color:#ef4444;font-size:13px">🔄 Log out &amp; generate new QR</a></p>
 </div></body></html>`);
   }
   const QRCode = require('qrcode');
   const dataUrl = await QRCode.toDataURL(waLatestQR, { width: 300, margin: 2 });
   res.send(`<!DOCTYPE html><html><head><title>Scan WhatsApp QR</title>
-<meta http-equiv="refresh" content="30">
+<meta http-equiv="refresh" content="30;url=/admin/whatsapp-qr${t}">
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
 .box{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}
 img{border-radius:12px;border:2px solid #e2e8f0}</style></head>
@@ -16443,18 +16453,19 @@ img{border-radius:12px;border:2px solid #e2e8f0}</style></head>
 <p style="color:#64748b;margin:0 0 24px;font-size:14px">Open WhatsApp → Settings → Linked Devices → Link a Device</p>
 <img src="${dataUrl}" width="280" height="280" />
 <p style="color:#94a3b8;font-size:12px;margin-top:16px">QR expires in ~60s — page auto-refreshes every 30s</p>
-<p style="margin-top:8px"><a href="/admin/whatsapp-qr/reset" onclick="return confirm(\'This will log out the current WhatsApp session. Proceed?\')" style="color:#ef4444;font-size:13px">🔄 Log out &amp; generate new QR</a></p>
+<p style="margin-top:8px"><a href="/admin/whatsapp-qr/reset${t}" onclick="return confirm(\'This will log out the current WhatsApp session. Proceed?\')" style="color:#ef4444;font-size:13px">🔄 Log out &amp; generate new QR</a></p>
 </div></body></html>`);
 });
 
-app.get('/admin/whatsapp-qr/reset', adminAuth, async (req, res) => {
+app.get('/admin/whatsapp-qr/reset', waQrAuth, async (req, res) => {
+  const t = `?token=${req.waQrToken}`;
   // Wipe the stored Baileys auth so a new QR is generated on next connect
   if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
   if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
   waLatestQR = null;
   // Restart bot so it immediately generates a new QR
   setTimeout(() => startBaileysBot(), 2000);
-  res.send(`<!DOCTYPE html><html><head><title>Reset</title><meta http-equiv="refresh" content="4;url=/admin/whatsapp-qr">
+  res.send(`<!DOCTYPE html><html><head><title>Reset</title><meta http-equiv="refresh" content="4;url=/admin/whatsapp-qr${t}">
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
 .box{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}</style></head>
 <body><div class="box"><h2>🔄 Session cleared</h2><p style="color:#64748b">Redirecting to QR page in 4 seconds…</p></div></body></html>`);
