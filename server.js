@@ -16416,6 +16416,24 @@ async function scEnrichChatsWithDispatchInfo(chats) {
 }
 
 // ── Admin moderation ─────────────────────────────────────────────────────
+// ── WhatsApp bot status & reset JSON APIs (used by admin panel) ──────────────
+app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
+  const connected = !!(waSocket);
+  let qrDataUrl = null;
+  if (!connected && waLatestQR) {
+    try { qrDataUrl = await require('qrcode').toDataURL(waLatestQR, { width: 280, margin: 2 }); } catch (_) {}
+  }
+  res.json({ connected, qrDataUrl });
+});
+
+app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
+  if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
+  if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+  waLatestQR = null;
+  setTimeout(() => startBaileysBot(), 2000);
+  res.json({ success: true });
+});
+
 // ── WhatsApp QR scan page (for connecting/reconnecting the bot) ──────────────
 const waQrAuth = async (req, res, next) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '').trim();

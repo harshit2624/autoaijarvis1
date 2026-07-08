@@ -8194,6 +8194,84 @@
   }
 
   /* ══════════════════════════════════
+     WHATSAPP BOT — Connection & Status
+  ══════════════════════════════════ */
+  function WhatsAppSettings({ token }) {
+    const [status, setStatus]   = useState(null); // null=loading, {connected, qrDataUrl}
+    const [resetting, setResetting] = useState(false);
+    const [msg, setMsg]         = useState('');
+
+    const load = async () => {
+      try {
+        const r = await fetch(`${API}/admin/whatsapp-status`, { headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        setStatus(d);
+      } catch { setStatus({ connected: false, qrDataUrl: null }); }
+    };
+
+    useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
+
+    const reset = async () => {
+      if (!confirm('This will log out the current WhatsApp session and generate a new QR code. Proceed?')) return;
+      setResetting(true); setMsg('');
+      try {
+        await fetch(`${API}/admin/whatsapp-reset`, { method:'POST', headers: { Authorization: 'Bearer '+token } });
+        setMsg('Session cleared. Waiting for new QR…');
+        setTimeout(load, 3000);
+      } catch { setMsg('Reset failed.'); }
+      setResetting(false);
+    };
+
+    const ST = { padding:'32px', maxWidth:560 };
+    return (
+      <div style={ST}>
+        <h2 style={{margin:'0 0 4px',fontSize:20,color:'var(--text)'}}>📱 WhatsApp Bot</h2>
+        <p style={{margin:'0 0 28px',fontSize:13,color:'var(--text-muted)'}}>Manage the CrosCrow WhatsApp support bot connection.</p>
+
+        {!status && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading…</div>}
+
+        {status?.connected && (
+          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.25)',borderRadius:12,padding:'20px 24px',marginBottom:24}}>
+            <div style={{fontSize:15,fontWeight:700,color:'#10b981',marginBottom:4}}>✅ Connected</div>
+            <div style={{fontSize:13,color:'var(--text-muted)'}}>The WhatsApp bot is live and receiving messages.</div>
+          </div>
+        )}
+
+        {status && !status.connected && !status.qrDataUrl && (
+          <div style={{background:'rgba(245,158,11,0.08)',border:'1px solid rgba(245,158,11,0.3)',borderRadius:12,padding:'20px 24px',marginBottom:24}}>
+            <div style={{fontSize:15,fontWeight:700,color:'#f59e0b',marginBottom:4}}>⚠️ Disconnected</div>
+            <div style={{fontSize:13,color:'var(--text-muted)'}}>Bot is not connected. Click "Generate New QR" to reconnect.</div>
+          </div>
+        )}
+
+        {status?.qrDataUrl && (
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:16,padding:'28px',marginBottom:24,textAlign:'center'}}>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text)',marginBottom:4}}>📲 Scan to Connect</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:20}}>Open WhatsApp → Settings → Linked Devices → Link a Device</div>
+            <img src={status.qrDataUrl} width={240} height={240} style={{borderRadius:12,border:'2px solid var(--border)'}} />
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:12}}>QR expires in ~60s — auto-refreshes every 15s</div>
+          </div>
+        )}
+
+        {msg && <div style={{fontSize:13,color:'var(--indigo)',marginBottom:16}}>{msg}</div>}
+
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <button className="btn btn-ghost btn-sm" onClick={load}>🔄 Refresh Status</button>
+          <button className="btn btn-sm" style={{background:'#ef4444',color:'#fff',borderColor:'#ef4444'}} onClick={reset} disabled={resetting}>
+            {resetting ? 'Resetting…' : '🔌 Log Out & Generate New QR'}
+          </button>
+        </div>
+
+        <div style={{marginTop:32,padding:'16px 20px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,fontSize:12,color:'var(--text-muted)',lineHeight:1.7}}>
+          <strong style={{color:'var(--text)'}}>How it works</strong><br/>
+          The bot uses Baileys (no phone required on server). Scan the QR once with any WhatsApp account — that number becomes the bot's sender number. The session is saved in MongoDB so it survives server restarts.<br/><br/>
+          <strong style={{color:'var(--text)'}}>To switch to a different number:</strong> click "Log Out & Generate New QR", then scan with the new number.
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      BRAINS — Pattern Intelligence
   ══════════════════════════════════ */
   function Brains({ token }) {
@@ -9701,6 +9779,7 @@
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
       { id:'brains',      icon:'🧠', label:'Brains',        section:'finance' },
       { id:'supportchats', icon:'💬', label:'Support Chats', section:'main' },
+      { id:'whatsapp',    icon:'📱', label:'WhatsApp Bot',  section:'main' },
       { id:'pixeltracker', icon:'🎯', label:'Pixel Tracker',  section:'main' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
@@ -9801,6 +9880,7 @@
           {view==='reports'     && <Reports token={token}/>}
           {view==='brains'      && <Brains token={token}/>}
           {view==='supportchats' && <SupportChats token={token}/>}
+          {view==='whatsapp'    && <WhatsAppSettings token={token}/>}
           {view==='pixeltracker' && <PixelTracker token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
