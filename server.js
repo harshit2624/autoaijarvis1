@@ -16841,7 +16841,16 @@ The customer is waiting. 🙏`;
 
     try {
       const jid = `91${VENDOR_WA}@s.whatsapp.net`;
-      await waSocket.sendMessage(jid, { text: nudgeMsg });
+      const sent = await waSocket.sendMessage(jid, { text: nudgeMsg });
+      // Capture the actual JID Baileys used — may differ from the phone JID (LID routing)
+      const actualJid = sent?.key?.remoteJid || jid;
+      if (actualJid !== jid || true) {
+        await mdb.collection('wa_vendor_jids').updateOne(
+          { phone: VENDOR_WA },
+          { $set: { phone: VENDOR_WA, jid: actualJid, updated_at: new Date().toISOString() } },
+          { upsert: true }
+        ).catch(() => {});
+      }
       await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, shopify_id: String(d.shopify_order_id), vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
       console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
     } catch (e) {
@@ -17122,7 +17131,24 @@ async function startBaileysBot() {
         if (!loggedOut) setTimeout(startBaileysBot, 5000);
         else waSocket = null;
       }
-      if (connection === 'open') console.log('✅ WhatsApp bot ready (Baileys)');
+      if (connection === 'open') {
+        console.log('✅ WhatsApp bot ready (Baileys)');
+        // Resolve and cache known vendor JIDs so LID-based senders are identified correctly
+        setTimeout(async () => {
+          try {
+            const VENDOR_WA = '6375668971';
+            const [res] = await sock.onWhatsApp(`91${VENDOR_WA}`) || [];
+            if (res?.jid) {
+              await mdb.collection('wa_vendor_jids').updateOne(
+                { phone: VENDOR_WA },
+                { $set: { phone: VENDOR_WA, jid: res.jid, updated_at: new Date().toISOString() } },
+                { upsert: true }
+              );
+              console.log(`📲 Vendor JID resolved: ${VENDOR_WA} → ${res.jid}`);
+            }
+          } catch (e) { console.error('Vendor JID resolve failed:', e.message); }
+        }, 3000);
+      }
     });
 
     const waPending = new Set();
@@ -17142,9 +17168,19 @@ async function startBaileysBot() {
           const phone = sender.replace('@s.whatsapp.net', '').replace(/^91/, '');
 
           // ── Vendor reply handler ──────────────────────────────────────
-          // TEST MODE: fixed vendor number — make dynamic per-vendor later
-          const vendorJid = '916375668971@s.whatsapp.net';
-          if (vendorJid && sender === vendorJid) {
+          // Load known vendor JIDs (phone-based + LID captured at nudge/startup time)
+          const vendorJidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: '6375668971' });
+          const knownVendorJids = new Set(['916375668971@s.whatsapp.net']);
+          if (vendorJidDoc?.jid) knownVendorJids.add(vendorJidDoc.jid);
+          if (knownVendorJids.has(sender)) {
+            // Opportunistically save their JID if it's a new LID we haven't seen
+            if (!vendorJidDoc?.jid || vendorJidDoc.jid !== sender) {
+              await mdb.collection('wa_vendor_jids').updateOne(
+                { phone: '6375668971' },
+                { $set: { jid: sender, updated_at: new Date().toISOString() } },
+                { upsert: true }
+              ).catch(() => {});
+            }
             await waHandleVendorReply(sock, sender, text);
             continue;
           }
