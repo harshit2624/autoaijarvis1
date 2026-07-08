@@ -15939,6 +15939,7 @@ const SC = {
       order_name: null, shopify_order_id: null, vendor_names: [],
       status: 'open', hidden_from_vendors: false, vendor_notified_at: null,
       tags: [], resolved: false, resolved_at: null, resolved_by: null,
+      source: 'web',
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     };
     const r = await mdb.collection('support_chats').insertOne(doc);
@@ -16416,7 +16417,10 @@ async function scEnrichChatsWithDispatchInfo(chats) {
 
 // ── Admin moderation ─────────────────────────────────────────────────────
 app.get('/admin/support/chats', adminAuth, async (req, res) => {
-  const chats = await mdb.collection('support_chats').find({}).sort({ updated_at: -1 }).limit(200).toArray();
+  const filter = {};
+  if (req.query.source === 'whatsapp') filter.source = 'whatsapp';
+  else if (req.query.source === 'web') filter.source = { $in: ['web', null] };
+  const chats = await mdb.collection('support_chats').find(filter).sort({ updated_at: -1 }).limit(200).toArray();
   res.json({ chats: await scEnrichChatsWithDispatchInfo(chats) });
 });
 app.get('/admin/support/chats/by-order/:shopifyOrderId', adminAuth, async (req, res) => {

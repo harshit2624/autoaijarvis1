@@ -8006,6 +8006,7 @@
     const [chats,      setChats]      = useState([]);
     const [loading,    setLoading]    = useState(true);
     const [tab,        setTab]        = useState('pending');
+    const [source,     setSource]     = useState('all');
     const [selectedId, setSelectedId] = useState(null);
     const [messages,   setMessages]   = useState([]);
     const [msgLoading, setMsgLoading] = useState(false);
@@ -8015,12 +8016,15 @@
 
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
 
-    const loadChats = () => {
+    const loadChats = (src) => {
       setLoading(true);
-      fetch(`${API}/admin/support/chats`, { headers: { Authorization: 'Bearer '+token } })
+      const qs = (src || source) !== 'all' ? `?source=${src || source}` : '';
+      fetch(`${API}/admin/support/chats${qs}`, { headers: { Authorization: 'Bearer '+token } })
         .then(r => r.json()).then(d => setChats(d.chats || [])).catch(()=>{}).finally(() => setLoading(false));
     };
-    useEffect(() => { loadChats(); const t = setInterval(loadChats, 15000); return () => clearInterval(t); }, []);
+    useEffect(() => { loadChats(); const t = setInterval(() => loadChats(), 15000); return () => clearInterval(t); }, [source]);
+
+    const switchSource = (s) => { setSource(s); setSelectedId(null); loadChats(s); };
 
     const loadMessages = (chatId) => {
       setMsgLoading(true);
@@ -8086,16 +8090,28 @@
     };
 
     const filtered = chats.filter(c => tab === 'pending' ? !c.resolved : c.resolved);
+    const SourceBadge = ({ src }) => src === 'whatsapp'
+      ? <span style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:99,background:'rgba(37,211,102,0.12)',color:'#25d366',letterSpacing:0.3}}>📱 WA</span>
+      : <span style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:99,background:'rgba(99,102,241,0.10)',color:'#6366f1',letterSpacing:0.3}}>💬 Web</span>;
     const SEV = { customer:'#0a0a0a', assistant:'#6366f1', vendor:'#b45309', admin:'#16a34a' };
 
     return (
       <div style={{display:'flex',gap:14,height:'calc(100vh - 140px)'}}>
         {/* Chat list */}
         <div style={{width:320,flexShrink:0,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+          <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg)'}}>
+            {[['all','All'],['web','💬 Web'],['whatsapp','📱 WA']].map(([s, label]) => (
+              <button key={s} onClick={()=>switchSource(s)} style={{
+                flex:1, padding:'8px 0', fontSize:11, fontWeight:700, letterSpacing:0.3,
+                background: source===s ? 'var(--indigo-dim)' : 'transparent', color: source===s ? 'var(--indigo)' : 'var(--text-muted)',
+                border:'none', borderBottom: source===s ? '2px solid var(--indigo)' : '2px solid transparent', cursor:'pointer', fontFamily:'var(--font-family)',
+              }}>{label}</button>
+            ))}
+          </div>
           <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
             {['pending','resolved'].map(t => (
               <button key={t} onClick={()=>setTab(t)} style={{
-                flex:1, padding:'12px 0', fontSize:12, fontWeight:700, textTransform:'uppercase', letterSpacing:0.5,
+                flex:1, padding:'10px 0', fontSize:12, fontWeight:700, textTransform:'uppercase', letterSpacing:0.5,
                 background: tab===t ? 'var(--indigo-dim)' : 'transparent', color: tab===t ? 'var(--indigo)' : 'var(--text-muted)',
                 border:'none', cursor:'pointer', fontFamily:'var(--font-family)',
               }}>{t} {tab===t && `(${filtered.length})`}</button>
@@ -8111,7 +8127,10 @@
               }}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
                   <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{c.order_name || c.customer_email || c.customer_phone || 'New chat'}</span>
-                  <span style={{fontSize:10,color:'var(--text-muted)'}}>{elapsed(c.last_message?.created_at || c.created_at)}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <SourceBadge src={c.source} />
+                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{elapsed(c.last_message?.created_at || c.created_at)}</span>
+                  </div>
                 </div>
                 {c.last_message && <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:6}}>
                   {c.last_message.sender!=='customer' ? '↩ ' : ''}{c.last_message.text}
@@ -8132,7 +8151,7 @@
             <>
               <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{selected.order_name || 'New chat'} {selected.vendor_names?.length ? `· ${selected.vendor_names.join(', ')}` : ''}</div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)',display:'flex',alignItems:'center',gap:8}}>{selected.order_name || 'New chat'} {selected.vendor_names?.length ? `· ${selected.vendor_names.join(', ')}` : ''} <SourceBadge src={selected.source} /></div>
                   <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
                     Started {elapsed(selected.created_at)}
                     {(selected.dispatch_info||[]).map(d => (
