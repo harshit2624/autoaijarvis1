@@ -16416,6 +16416,50 @@ async function scEnrichChatsWithDispatchInfo(chats) {
 }
 
 // ── Admin moderation ─────────────────────────────────────────────────────
+// ── WhatsApp QR scan page (for connecting/reconnecting the bot) ──────────────
+app.get('/admin/whatsapp-qr', adminAuth, async (req, res) => {
+  if (!waLatestQR) {
+    const connected = !!waSocket;
+    return res.send(`<!DOCTYPE html><html><head><title>WhatsApp QR</title>
+<meta http-equiv="refresh" content="5">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
+.box{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}</style></head>
+<body><div class="box">
+${connected
+  ? '<h2 style="color:#10b981">✅ WhatsApp is connected</h2><p style="color:#64748b">The bot is live. No QR needed.</p>'
+  : '<h2 style="color:#f59e0b">⏳ Waiting for QR…</h2><p style="color:#64748b">Page refreshes every 5 seconds. Make sure the server is running.</p>'}
+<p style="margin-top:24px"><a href="/admin/whatsapp-qr/reset" onclick="return confirm(\'This will log out the current WhatsApp session. Proceed?\')" style="color:#ef4444;font-size:13px">🔄 Log out &amp; generate new QR</a></p>
+</div></body></html>`);
+  }
+  const QRCode = require('qrcode');
+  const dataUrl = await QRCode.toDataURL(waLatestQR, { width: 300, margin: 2 });
+  res.send(`<!DOCTYPE html><html><head><title>Scan WhatsApp QR</title>
+<meta http-equiv="refresh" content="30">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
+.box{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}
+img{border-radius:12px;border:2px solid #e2e8f0}</style></head>
+<body><div class="box">
+<h2 style="margin:0 0 8px">📱 Scan to connect WhatsApp</h2>
+<p style="color:#64748b;margin:0 0 24px;font-size:14px">Open WhatsApp → Settings → Linked Devices → Link a Device</p>
+<img src="${dataUrl}" width="280" height="280" />
+<p style="color:#94a3b8;font-size:12px;margin-top:16px">QR expires in ~60s — page auto-refreshes every 30s</p>
+<p style="margin-top:8px"><a href="/admin/whatsapp-qr/reset" onclick="return confirm(\'This will log out the current WhatsApp session. Proceed?\')" style="color:#ef4444;font-size:13px">🔄 Log out &amp; generate new QR</a></p>
+</div></body></html>`);
+});
+
+app.get('/admin/whatsapp-qr/reset', adminAuth, async (req, res) => {
+  // Wipe the stored Baileys auth so a new QR is generated on next connect
+  if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
+  if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+  waLatestQR = null;
+  // Restart bot so it immediately generates a new QR
+  setTimeout(() => startBaileysBot(), 2000);
+  res.send(`<!DOCTYPE html><html><head><title>Reset</title><meta http-equiv="refresh" content="4;url=/admin/whatsapp-qr">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
+.box{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}</style></head>
+<body><div class="box"><h2>🔄 Session cleared</h2><p style="color:#64748b">Redirecting to QR page in 4 seconds…</p></div></body></html>`);
+});
+
 app.get('/admin/support/chats', adminAuth, async (req, res) => {
   const filter = {};
   if (req.query.source === 'whatsapp') filter.source = 'whatsapp';
@@ -16713,6 +16757,7 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 
 let waSocket = null;
+let waLatestQR = null; // latest raw QR string for /admin/whatsapp-qr
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
 async function useMongoAuthState() {
@@ -17172,7 +17217,8 @@ async function startBaileysBot() {
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
       if (qr) {
-        console.log('\n📱 WhatsApp QR Code — scan with your phone:');
+        waLatestQR = qr;
+        console.log('\n📱 WhatsApp QR Code — scan with your phone (or visit /admin/whatsapp-qr):');
         qrcode.generate(qr, { small: true });
       }
       if (connection === 'close') {
@@ -17183,6 +17229,7 @@ async function startBaileysBot() {
         else waSocket = null;
       }
       if (connection === 'open') {
+        waLatestQR = null; // QR consumed — clear it
         console.log('✅ WhatsApp bot ready (Baileys)');
         // Resolve and cache known vendor JIDs so LID-based senders are identified correctly
         setTimeout(async () => {
