@@ -16597,3 +16597,103 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// WHATSAPP SUPPORT BOT (whatsapp-web.js — QR scan, unofficial)
+// ══════════════════════════════════════════════════════════════════════════
+// Set WHATSAPP_BOT_ENABLED=true in .env to activate.
+// On first start, scan the QR code printed in the terminal with your
+// business WhatsApp → Settings → Linked Devices → Link a device.
+// The session is saved in .wwebjs_auth/ so you won't need to scan again.
+//
+// How it works: every message from a customer goes through the same
+// scRunChatTurn() function used by the website support chat, so it has
+// full order-lookup, product-search, and return/exchange tools built in.
+// Each WhatsApp number gets its own persistent chat thread in MongoDB.
+// ─────────────────────────────────────────────────────────────────────────
+
+if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
+  (async () => {
+    try {
+      const { Client, LocalAuth } = require('whatsapp-web.js');
+      const qrcode = require('qrcode-terminal');
+
+      const waClient = new Client({
+        authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
+        puppeteer: {
+          headless: true,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        },
+      });
+
+      waClient.on('qr', qr => {
+        console.log('\n📱 WhatsApp QR Code — scan with your phone:');
+        qrcode.generate(qr, { small: true });
+      });
+
+      waClient.on('ready', () => {
+        console.log('✅ WhatsApp bot ready');
+      });
+
+      waClient.on('auth_failure', msg => {
+        console.error('❌ WhatsApp auth failure:', msg);
+      });
+
+      // Throttle: one pending reply per sender at a time
+      const waPending = new Set();
+
+      waClient.on('message', async msg => {
+        if (msg.isGroupMsg || msg.fromMe) return;
+        const sender = msg.from; // e.g. "918888888888@c.us"
+        const text = (msg.body || '').trim();
+        if (!text) return;
+        if (waPending.has(sender)) return; // ignore rapid double-sends
+        waPending.add(sender);
+
+        try {
+          // Wait for MongoDB to be ready
+          if (!mdb) { await msg.reply("We're starting up — please try again in a moment!"); return; }
+
+          // Find or create a persistent chat for this WhatsApp number
+          const phone = sender.replace('@c.us', '');
+          let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender });
+          if (!chat) {
+            const newChat = {
+              whatsapp_sender: sender,
+              customer_phone: phone,
+              source: 'whatsapp',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            const r = await mdb.collection('support_chats').insertOne(newChat);
+            chat = { ...newChat, _id: r.insertedId };
+            // Welcome message (stored but not sent — the LLM's first reply serves as greeting)
+            await SC.addMessage(chat._id, { sender: 'assistant', text: "Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?" });
+          }
+
+          const history = await SC.messages(chat._id);
+          await SC.addMessage(chat._id, { sender: 'customer', text });
+
+          const { reply } = await scRunChatTurn(chat, history, text);
+
+          await SC.addMessage(chat._id, { sender: 'assistant', text: reply });
+          await mdb.collection('support_chats').updateOne(
+            { _id: chat._id },
+            { $set: { updated_at: new Date().toISOString() } }
+          );
+
+          await msg.reply(reply);
+        } catch (err) {
+          console.error('❌ WhatsApp bot error:', err.message);
+          await msg.reply("Sorry, I hit a snag — our team has been notified. Try again in a moment!").catch(() => {});
+        } finally {
+          waPending.delete(sender);
+        }
+      });
+
+      waClient.initialize();
+    } catch (err) {
+      console.error('❌ WhatsApp bot failed to start (is whatsapp-web.js installed?):', err.message);
+    }
+  })();
+}
+
