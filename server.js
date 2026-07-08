@@ -16489,6 +16489,104 @@ app.get('/admin/whatsapp-qr/reset', waQrAuth, async (req, res) => {
 <body><div class="box"><h2>🔄 Session cleared</h2><p style="color:#64748b">Redirecting to QR page in 4 seconds…</p></div></body></html>`);
 });
 
+// ── Support Insight Engine ────────────────────────────────────────────────────
+// Analyzes recent chats every 6h, flags wrong answers / frustrated customers /
+// repeated issues / unresolved escalations. Findings stored in support_insights.
+
+async function runSupportInsightAnalysis() {
+  if (!mdb) return;
+  try {
+    const since = new Date(Date.now() - 48 * 3600000).toISOString();
+    const chats = await mdb.collection('support_chats')
+      .find({ updated_at: { $gte: since } })
+      .sort({ updated_at: -1 }).limit(60).toArray();
+    if (!chats.length) return;
+
+    // Build compact summaries of each chat for the LLM
+    const summaries = await Promise.all(chats.map(async c => {
+      const msgs = await mdb.collection('support_messages')
+        .find({ chat_id: c._id }).sort({ created_at: 1 }).limit(30).toArray();
+      const transcript = msgs.map(m => `${m.sender.toUpperCase()}: ${(m.text||'').slice(0,300)}`).join('\n');
+      return { id: String(c._id), order: c.order_name || '(no order)', source: c.source || 'web', resolved: !!c.resolved, tags: c.tags || [], needs_human: !!c.needs_human, transcript };
+    }));
+
+    const GROQ_KEY = process.env.GROQ_API_KEY;
+    const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+    if (!GROQ_KEY && !DEEPSEEK_KEY) return;
+
+    const prompt = `You are a QA analyst for CrosCrow, a multi-vendor e-commerce marketplace. Review these customer support chat transcripts from the last 48 hours and identify issues that need improvement.
+
+For each issue found, output a JSON object. Return a JSON array of findings (max 15 most important). Each finding:
+{
+  "chat_id": "...",
+  "order": "...",
+  "severity": "high|medium|low",
+  "category": "wrong_answer|bot_confusion|customer_frustration|unresolved_escalation|repeated_issue|missing_info|slow_response|other",
+  "title": "Short title (max 8 words)",
+  "description": "What went wrong and why it matters (2-3 sentences)",
+  "suggestion": "Specific fix or improvement (1-2 sentences)"
+}
+
+Categories:
+- wrong_answer: bot gave factually wrong info (wrong order status, wrong tracking, wrong policy)
+- bot_confusion: bot didn't understand the question or went in circles
+- customer_frustration: customer expressed frustration, repeated themselves, or gave up
+- unresolved_escalation: chat was flagged for human/admin but may not have been handled
+- repeated_issue: same type of complaint appearing in multiple chats (mention all chat_ids)
+- missing_info: bot couldn't answer because info wasn't available (track info missing, order not found)
+- other: anything unusual worth flagging
+
+Only flag real issues. If a chat went smoothly, skip it. Output only the JSON array, no other text.
+
+CHATS:
+${JSON.stringify(summaries, null, 1)}`;
+
+    const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+    const apiKey = DEEPSEEK_KEY || GROQ_KEY;
+    const model = DEEPSEEK_KEY ? 'deepseek-chat' : 'llama-3.3-70b-versatile';
+
+    const r = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, max_tokens: 2000, temperature: 0.2, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const d = await r.json();
+    const raw = d.choices?.[0]?.message?.content || '[]';
+    let findings;
+    try {
+      const match = raw.match(/\[[\s\S]*\]/);
+      findings = JSON.parse(match ? match[0] : raw);
+    } catch { console.error('Support insight parse failed:', raw.slice(0,200)); return; }
+
+    if (!Array.isArray(findings) || !findings.length) return;
+
+    const doc = {
+      run_at: new Date().toISOString(),
+      chats_analyzed: chats.length,
+      findings,
+    };
+    await mdb.collection('support_insights').insertOne(doc);
+    console.log(`🔍 Support insight run: ${findings.length} findings from ${chats.length} chats`);
+  } catch (e) { console.error('Support insight engine error:', e.message); }
+}
+
+app.get('/admin/support/insights', adminAuth, async (req, res) => {
+  const runs = await mdb.collection('support_insights')
+    .find({}).sort({ run_at: -1 }).limit(5).toArray();
+  res.json({ runs });
+});
+
+app.post('/admin/support/insights/run', adminAuth, async (req, res) => {
+  res.json({ success: true, message: 'Analysis started' });
+  runSupportInsightAnalysis().catch(() => {});
+});
+
+// Schedule insight analysis every 6 hours
+setTimeout(() => {
+  runSupportInsightAnalysis();
+  setInterval(runSupportInsightAnalysis, 6 * 3600000);
+}, 30000); // wait 30s after boot
+
 app.get('/admin/support/chats', adminAuth, async (req, res) => {
   const filter = {};
   if (req.query.source === 'whatsapp') filter.source = 'whatsapp';

@@ -8013,6 +8013,10 @@
     const [replyText,  setReplyText]  = useState('');
     const [sending,    setSending]    = useState(false);
     const [now,        setNow]        = useState(Date.now());
+    const [mainTab,    setMainTab]    = useState('chats'); // 'chats' | 'insights'
+    const [insights,   setInsights]   = useState(null);
+    const [insightLoading, setInsightLoading] = useState(false);
+    const [insightRunning, setInsightRunning] = useState(false);
 
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
 
@@ -8025,6 +8029,19 @@
     useEffect(() => { loadChats(); const t = setInterval(() => loadChats(), 15000); return () => clearInterval(t); }, [source]);
 
     const switchSource = (s) => { setSource(s); setSelectedId(null); loadChats(s); };
+
+    const loadInsights = () => {
+      setInsightLoading(true);
+      fetch(`${API}/admin/support/insights`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).then(d => setInsights(d.runs || [])).catch(()=>setInsights([])).finally(()=>setInsightLoading(false));
+    };
+    useEffect(() => { if (mainTab === 'insights' && insights === null) loadInsights(); }, [mainTab]);
+
+    const triggerInsightRun = async () => {
+      setInsightRunning(true);
+      await fetch(`${API}/admin/support/insights/run`, { method:'POST', headers: { Authorization: 'Bearer '+token } }).catch(()=>{});
+      setTimeout(() => { loadInsights(); setInsightRunning(false); }, 8000);
+    };
 
     const loadMessages = (chatId) => {
       setMsgLoading(true);
@@ -8095,8 +8112,90 @@
       : <span style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:99,background:'rgba(99,102,241,0.10)',color:'#6366f1',letterSpacing:0.3}}>💬 Web</span>;
     const SEV = { customer:'#0a0a0a', assistant:'#6366f1', vendor:'#b45309', admin:'#16a34a' };
 
+    const SEV_COLOR = { high:'#ef4444', medium:'#f59e0b', low:'#6366f1' };
+    const CAT_LABEL = { wrong_answer:'Wrong Answer', bot_confusion:'Bot Confused', customer_frustration:'Frustrated Customer', unresolved_escalation:'Unresolved Escalation', repeated_issue:'Repeated Issue', missing_info:'Missing Info', slow_response:'Slow Response', other:'Other' };
+
+    const InsightsPanel = () => {
+      const latest = insights?.[0];
+      return (
+        <div style={{flex:1,overflowY:'auto',padding:'24px 28px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:20,flexWrap:'wrap',gap:10}}>
+            <div>
+              <h2 style={{margin:'0 0 4px',fontSize:18,color:'var(--text)'}}>🔍 Bot Quality Insights</h2>
+              <div style={{fontSize:12,color:'var(--text-muted)'}}>Auto-analyzed every 6 hours · last 48h of chats</div>
+            </div>
+            <button className="btn btn-indigo btn-sm" onClick={triggerInsightRun} disabled={insightRunning}>
+              {insightRunning ? '⏳ Analyzing…' : '▶ Run Now'}
+            </button>
+          </div>
+
+          {insightLoading && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading…</div>}
+
+          {!insightLoading && (!insights || insights.length === 0) && (
+            <div style={{textAlign:'center',padding:'48px 0',color:'var(--text-muted)',fontSize:13}}>
+              <div style={{fontSize:32,marginBottom:12}}>🤖</div>
+              No analysis runs yet. Click "Run Now" to analyze the last 48h of chats.
+            </div>
+          )}
+
+          {latest && (
+            <>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>
+                Last run: {new Date(latest.run_at).toLocaleString('en-IN')} · {latest.chats_analyzed} chats analyzed · {latest.findings?.length || 0} findings
+              </div>
+              {(!latest.findings || latest.findings.length === 0) && (
+                <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.25)',borderRadius:10,padding:'16px 20px',fontSize:13,color:'#10b981'}}>
+                  ✅ No issues found in the last 48h. Bot is performing well!
+                </div>
+              )}
+              {(latest.findings||[]).map((f,i) => (
+                <div key={i} style={{background:'var(--bg-card)',border:`1px solid var(--border)`,borderLeft:`3px solid ${SEV_COLOR[f.severity]||'#6366f1'}`,borderRadius:10,padding:'14px 18px',marginBottom:12}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
+                    <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:99,background:`${SEV_COLOR[f.severity]}22`,color:SEV_COLOR[f.severity]||'#6366f1',letterSpacing:0.5,textTransform:'uppercase'}}>{f.severity}</span>
+                    <span style={{fontSize:10,fontWeight:600,color:'var(--text-muted)',background:'var(--bg)',padding:'2px 8px',borderRadius:99,border:'1px solid var(--border)'}}>{CAT_LABEL[f.category]||f.category}</span>
+                    {f.order && f.order !== '(no order)' && <span style={{fontSize:10,color:'var(--indigo)',fontWeight:700}}>{f.order}</span>}
+                    {f.chat_id && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:'auto',cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setMainTab('chats');setSelectedId(f.chat_id);}}>View chat →</span>}
+                  </div>
+                  <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:4}}>{f.title}</div>
+                  <div style={{fontSize:12,color:'var(--text-dim)',lineHeight:1.6,marginBottom:8}}>{f.description}</div>
+                  <div style={{fontSize:12,background:'rgba(99,102,241,0.07)',padding:'8px 12px',borderRadius:7,color:'var(--indigo)',lineHeight:1.5}}>
+                    💡 <strong>Fix:</strong> {f.suggestion}
+                  </div>
+                </div>
+              ))}
+
+              {insights.length > 1 && (
+                <details style={{marginTop:24}}>
+                  <summary style={{fontSize:12,color:'var(--text-muted)',cursor:'pointer',userSelect:'none'}}>Previous runs ({insights.length - 1})</summary>
+                  {insights.slice(1).map((run,ri) => (
+                    <div key={ri} style={{marginTop:10,padding:'10px 14px',background:'var(--bg)',borderRadius:8,border:'1px solid var(--border)',fontSize:12,color:'var(--text-muted)'}}>
+                      {new Date(run.run_at).toLocaleString('en-IN')} · {run.chats_analyzed} chats · {run.findings?.length||0} findings
+                    </div>
+                  ))}
+                </details>
+              )}
+            </>
+          )}
+        </div>
+      );
+    };
+
     return (
-      <div style={{display:'flex',gap:14,height:'calc(100vh - 140px)'}}>
+      <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)'}}>
+        {/* Top tab bar: Chats | Insights */}
+        <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0}}>
+          {[['chats','💬 Chats'],['insights','🔍 Insights']].map(([id,label])=>(
+            <button key={id} onClick={()=>setMainTab(id)} style={{
+              padding:'12px 20px',fontSize:13,fontWeight:700,border:'none',cursor:'pointer',fontFamily:'var(--font-family)',
+              background:'transparent', color: mainTab===id ? 'var(--indigo)' : 'var(--text-muted)',
+              borderBottom: mainTab===id ? '2px solid var(--indigo)' : '2px solid transparent',
+            }}>{label}</button>
+          ))}
+        </div>
+
+        {mainTab === 'insights' && <InsightsPanel />}
+
+        {mainTab === 'chats' && <div style={{display:'flex',gap:14,flex:1,minHeight:0,padding:'14px 0 0'}}>
         {/* Chat list */}
         <div style={{width:320,flexShrink:0,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
           <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg)'}}>
@@ -8189,6 +8288,7 @@
             </>
           )}
         </div>
+        </div>}
       </div>
     );
   }
