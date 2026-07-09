@@ -3464,10 +3464,15 @@ async function runJarvisTool(name, args, reqCache) {
   const weekAgo  = new Date(today); weekAgo.setDate(today.getDate()-7);
   const monthAgo = new Date(today); monthAgo.setDate(today.getDate()-30);
 
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const thisWeekStart  = new Date(today); thisWeekStart.setDate(today.getDate() - today.getDay()); // Sunday
+
   function filterByPeriod(orders, period, from, to) {
-    if (period === "today")  return orders.filter(o=>new Date(o.created_at)>=today);
-    if (period === "week")   return orders.filter(o=>new Date(o.created_at)>=weekAgo);
-    if (period === "month")  return orders.filter(o=>new Date(o.created_at)>=monthAgo);
+    if (period === "today")        return orders.filter(o=>new Date(o.created_at)>=today);
+    if (period === "week")         return orders.filter(o=>new Date(o.created_at)>=weekAgo);
+    if (period === "this_week")    return orders.filter(o=>new Date(o.created_at)>=thisWeekStart);
+    if (period === "month")        return orders.filter(o=>new Date(o.created_at)>=thisMonthStart); // calendar month
+    if (period === "last_30_days") return orders.filter(o=>new Date(o.created_at)>=monthAgo);
     if (period === "custom" && from) {
       const f=new Date(from), t=to?new Date(to):now;
       return orders.filter(o=>{const d=new Date(o.created_at);return d>=f&&d<=t;});
@@ -3537,8 +3542,9 @@ async function runJarvisTool(name, args, reqCache) {
   }
 
   if (name === "get_vendor_stats") {
+    const os = filterByPeriod(allOrders, args.period||"all");
     const vendRev={}, vendOrders={}, vendRTOc={}, vendTotal={};
-    allOrders.forEach(o=>{
+    os.forEach(o=>{
       const rto = isRTO(o);
       (o.line_items||[]).forEach(li=>{
         if(!li.vendor)return;
@@ -3781,23 +3787,47 @@ async function runJarvisTool(name, args, reqCache) {
   // ── get_rto_analysis ──────────────────────────────────────────────────────
   if (name === "get_rto_analysis") {
     const os = filterByPeriod(allOrders, args.period||"all");
-    const allVS = await mdb.collection('order_vendor_stage').find({stage:'rto'},{projection:{shopify_id:1,vendor_name:1,_id:0}}).toArray();
-    const rtoOrderIds = new Set(allVS.map(r=>r.shopify_id));
+    const osIds = new Set(os.map(o => String(o.id)));
+
+    // Only count vendor-stage RTOs that belong to orders in the filtered period
+    const allVS = await mdb.collection('order_vendor_stage').find({ stage: 'rto' }, { projection: { shopify_id: 1, vendor_name: 1, _id: 0 } }).toArray();
+    const periodVS = allVS.filter(r => osIds.has(r.shopify_id));
     const rtoByVendor = {};
-    allVS.forEach(r=>{ rtoByVendor[r.vendor_name]=(rtoByVendor[r.vendor_name]||0)+1; });
+    periodVS.forEach(r => { rtoByVendor[r.vendor_name] = (rtoByVendor[r.vendor_name] || 0) + 1; });
 
-    const rtoOrders=os.filter(o=>metas[String(o.id)]?.stage==='rto'||rtoOrderIds.has(String(o.id)));
-    const cityRTO={};
-    rtoOrders.forEach(o=>{ const city=o.shipping_address?.city||'Unknown'; cityRTO[city]=(cityRTO[city]||0)+1; });
+    // Total orders per vendor in period (for per-vendor RTO rate)
+    const vendorTotal = {};
+    allVS.filter(() => true); // reset
+    const allVSPeriod = await mdb.collection('order_vendor_stage').find({ shopify_id: { $in: [...osIds] } }, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray();
+    allVSPeriod.forEach(r => { vendorTotal[r.vendor_name] = (vendorTotal[r.vendor_name] || 0) + 1; });
 
-    const dispatched=os.filter(o=>{ const s=metas[String(o.id)]?.stage; return ['ready','pickup','transit','delivered','rto'].includes(s); });
+    // Period-filtered RTO orders (by meta stage or Shopify tag)
+    const rtoOrders = os.filter(o => metas[String(o.id)]?.stage === 'rto' || (o.tags || '').includes('RTO'));
+    const cityRTO = {};
+    rtoOrders.forEach(o => { const city = o.shipping_address?.city || 'Unknown'; cityRTO[city] = (cityRTO[city] || 0) + 1; });
+
+    // Dispatched = ever left the warehouse (ready/pickup/transit/delivered/rto) in period
+    const dispatched = os.filter(o => {
+      const s = metas[String(o.id)]?.stage;
+      const vs = allVSPeriod.filter(r => r.shopify_id === String(o.id));
+      return ['ready','pickup','transit','delivered','rto'].includes(s) || vs.some(r => ['ready','pickup','transit','delivered','rto'].includes(r.stage));
+    });
+
     return {
-      period:args.period||"all",
-      total_rto:rtoOrders.length,
-      total_dispatched:dispatched.length,
-      rto_rate:`${dispatched.length>0?Math.round(rtoOrders.length/dispatched.length*100):0}%`,
-      by_vendor:Object.entries(rtoByVendor).map(([v,c])=>({vendor:v,rto_orders:c})).sort((a,b)=>b.rto_orders-a.rto_orders),
-      top_rto_cities:Object.entries(cityRTO).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([city,count])=>({city,rto_orders:count})),
+      period: args.period || "all",
+      total_orders_in_period: os.length,
+      total_rto: rtoOrders.length,
+      total_dispatched: dispatched.length,
+      rto_rate: `${dispatched.length > 0 ? Math.round(rtoOrders.length / dispatched.length * 100) : 0}%`,
+      by_vendor: Object.entries(rtoByVendor)
+        .map(([v, c]) => ({
+          vendor: v,
+          rto_orders: c,
+          total_orders: vendorTotal[v] || c,
+          rto_rate: `${Math.round(c / (vendorTotal[v] || c) * 100)}%`
+        }))
+        .sort((a, b) => b.rto_orders - a.rto_orders),
+      top_rto_cities: Object.entries(cityRTO).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([city, count]) => ({ city, rto_orders: count })),
     };
   }
 
