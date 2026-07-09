@@ -17108,6 +17108,20 @@ async function waSessionClear(sender) {
 
 // ── Alert admin on WhatsApp ────────────────────────────────────────────────
 const WA_ADMIN_NO = process.env.WHATSAPP_ADMIN_NUMBER || '8209544626';
+const WA_ADMIN_CODE = process.env.WHATSAPP_ADMIN_CODE || '4626';
+
+async function waAdminSessionSet(sender) {
+  // Admin mode stored separately with no expiry — persists until explicitly cleared
+  await mdb.collection('wa_admin_sessions').updateOne(
+    { _id: sender },
+    { $set: { active: true, set_at: new Date().toISOString() } },
+    { upsert: true }
+  );
+}
+async function waAdminSessionCheck(sender) {
+  const doc = await mdb.collection('wa_admin_sessions').findOne({ _id: sender });
+  return !!doc?.active;
+}
 
 async function waAdminAlert(message) {
   if (!waSocket) return;
@@ -17455,26 +17469,36 @@ async function startBaileysBot() {
           await sock.readMessages([msg.key]);
           const phone = sender.replace('@s.whatsapp.net', '').replace(/^91/, '');
 
-          // ── Admin query handler ───────────────────────────────────────
+          // ── Admin mode: code unlock + session check ───────────────────
           const adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO });
           const knownAdminJids = new Set([`91${WA_ADMIN_NO}@s.whatsapp.net`]);
           if (adminJidDoc?.jid) knownAdminJids.add(adminJidDoc.jid);
-          // Also capture JID if we see a new one from admin's phone
-          const isAdminByPhone = phone === WA_ADMIN_NO;
-          const isAdminByJid = knownAdminJids.has(sender);
-          // Keyword trigger: any message starting with !j is admin mode regardless of number
-          const isAdminKeyword = /^!j\b/i.test(text);
-          if (isAdminByPhone || isAdminByJid || isAdminKeyword) {
+          const isAdminByJid = knownAdminJids.has(sender) || phone === WA_ADMIN_NO;
+          const isAdminSession = await waAdminSessionCheck(sender);
+
+          // Code entry: anyone who sends the code unlocks admin mode for their number
+          if (text.trim() === WA_ADMIN_CODE) {
+            await waAdminSessionSet(sender);
+            // Save JID for future recognition
+            await mdb.collection('wa_admin_jids').updateOne(
+              { phone: WA_ADMIN_NO },
+              { $set: { phone: WA_ADMIN_NO, jid: sender, updated_at: new Date().toISOString() } },
+              { upsert: true }
+            ).catch(() => {});
+            await sock.sendMessage(sender, { text: `✅ Admin mode active. Ask me anything about CrosCrow — orders, RTO, revenue, vendors, stuck shipments.` });
+            continue;
+          }
+
+          if (isAdminByJid || isAdminSession) {
             // Save JID if newly seen
-            if ((isAdminByPhone || isAdminKeyword) && !adminJidDoc?.jid) {
+            if (isAdminByJid && !adminJidDoc?.jid) {
               await mdb.collection('wa_admin_jids').updateOne(
                 { phone: WA_ADMIN_NO },
                 { $set: { phone: WA_ADMIN_NO, jid: sender, updated_at: new Date().toISOString() } },
                 { upsert: true }
               ).catch(() => {});
             }
-            const query = isAdminKeyword ? text.replace(/^!j\s*/i, '').trim() || text : text;
-            await waHandleAdminQuery(sock, sender, query);
+            await waHandleAdminQuery(sock, sender, text);
             continue;
           }
 
