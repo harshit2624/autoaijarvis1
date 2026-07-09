@@ -17007,8 +17007,9 @@ app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 
 let waSocket = null;
-let waConnected = false; // true only after 'open', false on disconnect/logout/reset
-let waLatestQR = null; // latest raw QR string for /admin/whatsapp-qr
+let waConnected = false;
+let waLatestQR = null;
+let waStarting = false;
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
 async function useMongoAuthState() {
@@ -17499,6 +17500,8 @@ const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|ha
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
 
 async function startBaileysBot() {
+  if (waStarting) return;
+  waStarting = true;
   try {
     const { makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
     const pino = require('pino');
@@ -17532,13 +17535,18 @@ async function startBaileysBot() {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         waConnected = false;
-        console.log(loggedOut ? '📵 WhatsApp logged out — restarting for new QR…' : '🔄 WhatsApp disconnected, reconnecting...');
+        waStarting = false;
         waSocket = null;
-        setTimeout(startBaileysBot, 3000);
+        if (loggedOut) {
+          if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+        }
+        console.log(`🔄 WhatsApp disconnected (code ${code}), reconnecting in 5s…`);
+        setTimeout(startBaileysBot, 5000);
       }
       if (connection === 'open') {
         waConnected = true;
-        waLatestQR = null; // QR consumed — clear it
+        waStarting = false;
+        waLatestQR = null;
         console.log('✅ WhatsApp bot ready (Baileys)');
         // Resolve and cache vendor + admin JIDs at startup (handles LID format)
         setTimeout(async () => {
@@ -17770,6 +17778,7 @@ async function startBaileysBot() {
     });
   } catch (err) {
     console.error('❌ Baileys failed to start:', err.message);
+    waStarting = false;
     setTimeout(startBaileysBot, 10000);
   }
 }
