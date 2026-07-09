@@ -8043,6 +8043,11 @@
       setTimeout(() => { loadInsights(); setInsightRunning(false); }, 8000);
     };
 
+    const dismissFinding = async (runId, index) => {
+      await fetch(`${API}/admin/support/insights/${runId}/dismiss/${index}`, { method:'POST', headers: { Authorization: 'Bearer '+token } }).catch(()=>{});
+      loadInsights();
+    };
+
     const loadMessages = (chatId) => {
       setMsgLoading(true);
       fetch(`${API}/admin/support/chats/${chatId}/messages`, { headers: { Authorization: 'Bearer '+token } })
@@ -8153,8 +8158,12 @@
                   <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
                     <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:99,background:`${SEV_COLOR[f.severity]}22`,color:SEV_COLOR[f.severity]||'#6366f1',letterSpacing:0.5,textTransform:'uppercase'}}>{f.severity}</span>
                     <span style={{fontSize:10,fontWeight:600,color:'var(--text-muted)',background:'var(--bg)',padding:'2px 8px',borderRadius:99,border:'1px solid var(--border)'}}>{CAT_LABEL[f.category]||f.category}</span>
+                    {f.tag && <span style={{fontSize:10,color:'#f59e0b',background:'rgba(245,158,11,0.1)',padding:'2px 8px',borderRadius:99,fontWeight:600}}>{f.tag}</span>}
                     {f.order && f.order !== '(no order)' && <span style={{fontSize:10,color:'var(--indigo)',fontWeight:700}}>{f.order}</span>}
-                    {f.chat_id && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:'auto',cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setMainTab('chats');setSelectedId(f.chat_id);}}>View chat →</span>}
+                    <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
+                      {f.chat_id && <span style={{fontSize:10,color:'var(--text-muted)',cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setMainTab('chats');setSelectedId(f.chat_id);}}>View chat →</span>}
+                      <button onClick={()=>dismissFinding(latest._id,i)} style={{fontSize:10,padding:'2px 8px',borderRadius:99,border:'1px solid rgba(239,68,68,0.3)',background:'rgba(239,68,68,0.08)',color:'#ef4444',cursor:'pointer'}}>✕ Dismiss</button>
+                    </div>
                   </div>
                   <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:4}}>{f.title}</div>
                   <div style={{fontSize:12,color:'var(--text-dim)',lineHeight:1.6,marginBottom:8}}>{f.description}</div>
