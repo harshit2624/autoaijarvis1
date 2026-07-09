@@ -17537,9 +17537,15 @@ async function startBaileysBot() {
         const loggedOut = code === DisconnectReason.loggedOut;
         waConnected = false;
         waStarting = false; // allow restart
-        console.log(loggedOut ? '📵 WhatsApp logged out — restarting for new QR…' : '🔄 WhatsApp disconnected, reconnecting...');
         waSocket = null;
-        setTimeout(startBaileysBot, 5000);
+        if (loggedOut) {
+          console.log('📵 WhatsApp logged out — clearing auth, will show new QR…');
+          if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+          setTimeout(startBaileysBot, 3000);
+        } else {
+          console.log('🔄 WhatsApp disconnected, reconnecting...');
+          setTimeout(startBaileysBot, 5000);
+        }
       }
       if (connection === 'open') {
         waConnected = true;
