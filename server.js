@@ -17648,9 +17648,8 @@ async function startBaileysBot() {
     waPending.clear();
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
       for (const msg of messages) {
-        // ── Handle poll vote responses ────────────────────────────────────
+        // ── Handle poll vote responses (type can be 'append', not 'notify') ─
         if (msg.message?.pollUpdateMessage) {
           try {
             const { decryptPollVote } = require('@whiskeysockets/baileys');
@@ -17699,6 +17698,7 @@ async function startBaileysBot() {
           continue;
         }
 
+        if (type !== 'notify') continue;
         if (msg.key.fromMe) continue;
         if (msg.key.remoteJid?.endsWith('@g.us')) continue;
         const sender = msg.key.remoteJid;
