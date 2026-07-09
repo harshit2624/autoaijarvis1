@@ -16983,6 +16983,45 @@ app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /admin/whatsapp-test-list?to=  — sends a "Select Option" list message
+app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    const to = (req.query.to || '').replace(/\D/g, '');
+    if (!to) return res.status(400).json({ error: 'to required' });
+    const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
+    const { proto, generateMessageID } = require('@whiskeysockets/baileys');
+
+    const listMsg = proto.Message.ListMessage.create({
+      title: 'What would you like to do?',
+      description: 'Choose an option below 👇',
+      buttonText: 'Select Option',
+      listType: proto.Message.ListMessage.ListType.SINGLE_SELECT,
+      footerText: 'CrosCrow',
+      sections: [
+        proto.Message.ListMessage.Section.create({
+          title: 'Order Actions',
+          rows: [
+            proto.Message.ListMessage.Row.create({ title: '✅ Confirm Order', description: 'Ready to receive my order', rowId: 'confirm' }),
+            proto.Message.ListMessage.Row.create({ title: '❌ Cancel Order', description: 'I want to cancel this order', rowId: 'cancel' }),
+            proto.Message.ListMessage.Row.create({ title: '📦 Track Order', description: 'Where is my order?', rowId: 'track' }),
+          ]
+        }),
+        proto.Message.ListMessage.Section.create({
+          title: 'Support',
+          rows: [
+            proto.Message.ListMessage.Row.create({ title: '🔄 Return / Exchange', description: 'I want to return or exchange', rowId: 'return' }),
+            proto.Message.ListMessage.Row.create({ title: '💬 Talk to Agent', description: 'Connect me with support', rowId: 'agent' }),
+          ]
+        })
+      ]
+    });
+
+    await waSocket.relayMessage(jid, { listMessage: listMsg }, { messageId: generateMessageID() });
+    res.json({ success: true, sent_to: jid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /admin/whatsapp-test-poll?to=&question=&options=Yes,No
 app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
   try {
