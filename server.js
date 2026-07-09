@@ -16462,12 +16462,13 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 });
 
 app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
+  const hard = req.query.hard === 'true'; // ?hard=true wipes auth (full logout+rescan)
   waConnected = false;
   waLatestQR = null;
-  if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
-  if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+  if (waSocket) { try { waSocket.end(undefined); } catch (_) {} waSocket = null; }
+  if (hard && mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
   setTimeout(() => startBaileysBot(), 2000);
-  res.json({ success: true });
+  res.json({ success: true, hard });
 });
 
 // ── WhatsApp QR scan page (for connecting/reconnecting the bot) ──────────────
