@@ -17010,6 +17010,7 @@ let waSocket = null;
 let waConnected = false;
 let waLatestQR = null;
 let waStarting = false;
+const waPending = new Set();
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
 async function useMongoAuthState() {
@@ -17578,7 +17579,7 @@ async function startBaileysBot() {
       }
     });
 
-    const waPending = new Set();
+    waPending.clear();
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
