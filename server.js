@@ -16900,6 +16900,13 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
 // GET /admin/whatsapp-test?to=9876543210&msg=hello&image=https://...
 app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
   try {
+    // Wait up to 10s for socket to be ready (handles brief reconnect windows)
+    if (!waSocket) {
+      await new Promise(resolve => {
+        const t = setInterval(() => { if (waSocket) { clearInterval(t); resolve(); } }, 500);
+        setTimeout(() => { clearInterval(t); resolve(); }, 10000);
+      });
+    }
     if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running (WHATSAPP_BOT_ENABLED=true required)' });
     const to = (req.query.to || '').replace(/\D/g, '');
     const msg = req.query.msg || 'Test message from CrosCrow bot ✅';
@@ -17522,6 +17529,9 @@ async function startBaileysBot() {
       logger: pino({ level: 'silent' }),
       printQRInTerminal: false,
       syncFullHistory: false,
+      keepAliveIntervalMs: 15000,
+      connectTimeoutMs: 60000,
+      retryRequestDelayMs: 2000,
     });
 
     waSocket = sock;
