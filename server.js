@@ -3768,7 +3768,7 @@ async function runJarvisTool(name, args, reqCache) {
 
   // ── get_cod_outstanding ───────────────────────────────────────────────────
   if (name === "get_cod_outstanding") {
-    const os = filterByPeriod(allOrders, isCOD).filter(isCOD);
+    const os = filterByPeriod(allOrders, args.period||"all").filter(isCOD);
     const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,stage:1,awb:1,_id:0}}).toArray();
     const vsMap = Object.fromEntries(allVS.map(r=>[r.shopify_id,r]));
     let inTransit=0,inTransitAmt=0,delivered=0,deliveredAmt=0,advanceUnshipped=0,advanceUnshippedAmt=0;
