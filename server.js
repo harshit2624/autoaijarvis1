@@ -17101,10 +17101,53 @@ async function waSessionClear(sender) {
 }
 
 // ── Alert admin on WhatsApp ────────────────────────────────────────────────
+const WA_ADMIN_NO = process.env.WHATSAPP_ADMIN_NUMBER || '8209544626';
+
 async function waAdminAlert(message) {
   if (!waSocket) return;
-  try { await waSocket.sendMessage('919079060327@s.whatsapp.net', { text: message }); }
+  try { await waSocket.sendMessage(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: message }); }
   catch (e) { console.error('❌ Admin alert failed:', e.message); }
+}
+
+// ── Admin WhatsApp AI — internal business queries ─────────────────────────────
+const WA_ADMIN_SYSTEM_PROMPT = `You are JARVIS, the internal AI assistant for CrosCrow marketplace admin.
+You answer business questions concisely for the founder/admin over WhatsApp.
+
+You have access to real-time data via tools. Use them to answer questions like:
+- RTO rate, pending orders, revenue, vendor performance
+- Specific order lookups, customer issues
+- Settlement status, commission earned
+- Fulfillment stats, stuck orders
+
+Reply in plain text (no markdown bold/italic — this is WhatsApp). Keep answers short and to the point.
+If a number is asked, give the number first then context. No fluff.`;
+
+async function waHandleAdminQuery(sock, sender, text) {
+  if (!mdb) return;
+  try {
+    // Use a persistent chat thread per admin for history
+    let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender, source: 'wa_admin' });
+    if (!chat) {
+      const r = await mdb.collection('support_chats').insertOne({
+        whatsapp_sender: sender, source: 'wa_admin', customer_phone: WA_ADMIN_NO,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      });
+      chat = { _id: r.insertedId, whatsapp_sender: sender };
+    }
+    await SC.addMessage(chat._id, { sender: 'customer', text });
+    const history = (await SC.messages(chat._id)).slice(-12);
+
+    const result = await scRunChatTurn(chat, history, text, { systemPrompt: WA_ADMIN_SYSTEM_PROMPT, forceContact: 'na' });
+    let reply = (typeof result === 'string' ? result : result?.reply || '').trim();
+    reply = reply.replace(/\*\*(.+?)\*\*/g, '*$1*');
+    if (!reply) return;
+
+    await SC.addMessage(chat._id, { sender: 'assistant', text: reply });
+    await sock.sendMessage(sender, { text: reply });
+  } catch (e) {
+    console.error('❌ Admin WA query failed:', e.message);
+    await sock.sendMessage(sender, { text: 'Error fetching data. Try again.' });
+  }
 }
 
 // ── Send product images one by one ────────────────────────────────────────
@@ -17394,6 +17437,12 @@ async function startBaileysBot() {
         try {
           await sock.readMessages([msg.key]);
           const phone = sender.replace('@s.whatsapp.net', '').replace(/^91/, '');
+
+          // ── Admin query handler ───────────────────────────────────────
+          if (phone === WA_ADMIN_NO || sender === `91${WA_ADMIN_NO}@s.whatsapp.net`) {
+            await waHandleAdminQuery(sock, sender, text);
+            continue;
+          }
 
           // ── Vendor reply handler ──────────────────────────────────────
           // Load known vendor JIDs (phone-based + LID captured at nudge/startup time)
