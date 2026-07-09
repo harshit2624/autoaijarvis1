@@ -3978,17 +3978,33 @@ function buildRenderData(toolResults, query = '') {
 }
 
 // ── POST /jarvis — tool-calling AI, fetches only what it needs ───────────────
-app.post("/jarvis", async (req, res) => {
-  const { query = "", history = [] } = req.body;
+// ── Reusable Jarvis query runner (used by HTTP route + WA admin handler) ──────
+async function runJarvisQuery(query, history = [], { waMode = false } = {}) {
   const DEEPSEEK_KEY  = process.env.DEEPSEEK_API_KEY;
   const GROQ_KEY      = process.env.GROQ_API_KEY;
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!DEEPSEEK_KEY && !GROQ_KEY && !ANTHROPIC_KEY) throw new Error('No AI key configured');
 
-  if (!DEEPSEEK_KEY && !GROQ_KEY && !ANTHROPIC_KEY) {
-    return res.json({ reply: "No AI key set. Add GROQ_API_KEY (free at console.groq.com) to your .env." });
-  }
+  const today = new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 
-  const systemPrompt = `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify marketplace.
+  const systemPrompt = waMode
+    ? `You are JARVIS, the brain behind CrosCrow marketplace. You are talking to the founder/admin on WhatsApp.
+
+Answer like a sharp business consultant — direct, confident, data-first. No fluff.
+
+Format rules (WhatsApp plain text only):
+- Use plain numbers and short labels, no markdown tables
+- Bullet points with a dash: - Item: value
+- Section headers with ALL CAPS or emoji, not markdown bold
+- Never use ** or ## or | or --- separators
+- Keep total reply under 25 lines
+- Lead with the most important number/insight first
+- Flag anomalies or risks at the end if any
+
+Tools: get_order_stats, get_vendor_stats, get_delivery_stats, get_rto_analysis, get_stuck_orders, get_dispatch_rate, get_vendor_fulfillment, get_orders_list, get_cod_outstanding, get_multi_vendor_stuck, get_products, get_customers, get_city_stats, get_settlements
+
+Always use tools. Never guess numbers. Today: ${today}`
+    : `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify marketplace.
 You have tools to fetch any live store data. Always call the right tool(s) to get real data before answering.
 
 Key concepts:
@@ -4016,118 +4032,108 @@ Rules:
 - If data is zero or missing, say so clearly.
 - When calling tools, always provide valid JSON arguments matching the schema exactly.
 - If unsure which tool to use, default to get_order_stats with period="week".
-- Today's date: ${new Date().toLocaleDateString('en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}`;
+- Today's date: ${today}`;
 
   const msgs = [
-    ...history.filter(m=>m.role&&m.text).map(m=>({
-      role: m.role==="bot"?"assistant":"user",
-      content: m.text,
+    ...history.filter(m => m.role && (m.text || m.content)).map(m => ({
+      role: m.role === 'bot' ? 'assistant' : 'user',
+      content: m.text || m.content,
     })),
-    { role:"user", content: query },
+    { role: 'user', content: query },
   ];
 
-  // ── Shared OpenAI-compatible tool-calling loop (DeepSeek + Groq both use this shape) ──
   async function runOpenAICompatJarvis({ apiUrl, apiKey, model, label }) {
-    const messages = [{ role:"system", content: systemPrompt }, ...msgs];
+    const messages = [{ role: 'system', content: systemPrompt }, ...msgs];
     const reqCache = {};
-    let finalReply = "";
-    const allToolResults = []; // collect all tool results for renderData extraction
+    let finalReply = '';
+    const allToolResults = [];
 
     for (let turn = 0; turn < 5; turn++) {
       const r = await fetch(apiUrl, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model,
-          max_tokens: 1200,
-          messages,
-          tools: JARVIS_TOOLS,
-          tool_choice: "auto",
-        }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, max_tokens: 1200, messages, tools: JARVIS_TOOLS, tool_choice: 'auto' }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || `${label} ${r.status}`);
 
       const choice = d.choices?.[0];
-      const msg    = choice?.message;
+      const msg = choice?.message;
 
-      // Tool-generation failure — retry once without tools as plain chat
-      if (choice?.finish_reason === "error" || d.error?.code === "tool_use_failed") {
+      if (choice?.finish_reason === 'error' || d.error?.code === 'tool_use_failed') {
         console.warn(`⚠️ JARVIS (${label}) tool-gen failed, retrying without tools…`);
         const fallback = await fetch(apiUrl, {
-          method: "POST",
-          headers: { "Content-Type":"application/json", "Authorization":`Bearer ${apiKey}` },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
           body: JSON.stringify({ model, max_tokens: 1200, messages }),
         });
         const fd = await fallback.json();
-        finalReply = fd.choices?.[0]?.message?.content || "I ran into a processing error. Please rephrase your question.";
+        finalReply = fd.choices?.[0]?.message?.content || 'Processing error. Rephrase and try again.';
         break;
       }
 
-      if (choice?.finish_reason === "tool_calls" && msg?.tool_calls?.length) {
-        // Pre-fetch orders once before parallel tool calls to avoid 429
-        if (!reqCache.orders) reqCache.orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
-        if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
+      if (choice?.finish_reason === 'tool_calls' && msg?.tool_calls?.length) {
+        if (!reqCache.orders) reqCache.orders = await fetchAllOrders('any', '2020-01-01T00:00:00Z');
+        if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m => [m.shopify_id, m]));
         messages.push(msg);
         const toolResults = await Promise.all(msg.tool_calls.map(async tc => {
           let args = {};
-          try { args = JSON.parse(tc.function.arguments || "{}"); } catch(_){}
+          try { args = JSON.parse(tc.function.arguments || '{}'); } catch (_) {}
           console.log(`🔧 JARVIS (${label}) tool: ${tc.function.name}`, args);
           const result = await runJarvisTool(tc.function.name, args, reqCache);
           allToolResults.push({ tool: tc.function.name, args, result });
-          return { role:"tool", tool_call_id: tc.id, content: JSON.stringify(result) };
+          return { role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) };
         }));
         messages.push(...toolResults);
         continue;
       }
 
-      finalReply = msg?.content || "No response.";
+      finalReply = msg?.content || 'No response.';
       break;
     }
 
     const renderData = buildRenderData(allToolResults, query);
-    return { reply: finalReply || "No response after tool calls.", renderData };
+    return { reply: finalReply || 'No response after tool calls.', renderData };
   }
 
-  try {
-    if (DEEPSEEK_KEY) {
-      try {
-        const out = await runOpenAICompatJarvis({
-          apiUrl: "https://api.deepseek.com/chat/completions",
-          apiKey: DEEPSEEK_KEY,
-          model: "deepseek-chat",
-          label: "DeepSeek",
-        });
-        return res.json(out);
-      } catch (dsErr) {
-        console.error("❌ JARVIS DeepSeek failed, falling back to Groq:", dsErr.message);
-        if (!GROQ_KEY) throw dsErr;
-      }
+  if (DEEPSEEK_KEY) {
+    try {
+      return await runOpenAICompatJarvis({ apiUrl: 'https://api.deepseek.com/chat/completions', apiKey: DEEPSEEK_KEY, model: 'deepseek-chat', label: 'DeepSeek' });
+    } catch (e) {
+      console.error('❌ JARVIS DeepSeek failed, falling back to Groq:', e.message);
+      if (!GROQ_KEY) throw e;
     }
-
-    if (GROQ_KEY) {
-      const out = await runOpenAICompatJarvis({
-        apiUrl: "https://api.groq.com/openai/v1/chat/completions",
-        apiKey: GROQ_KEY,
-        model: "llama-3.3-70b-versatile",
-        label: "Groq",
-      });
-      return res.json(out);
-    }
-
-    // ── Anthropic fallback ─────────────────────────────────────────────────
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "x-api-key":ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
-      body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:700, system:systemPrompt, messages:msgs }),
+  }
+  if (GROQ_KEY) {
+    return await runOpenAICompatJarvis({ apiUrl: 'https://api.groq.com/openai/v1/chat/completions', apiKey: GROQ_KEY, model: 'llama-3.3-70b-versatile', label: 'Groq' });
+  }
+  if (ANTHROPIC_KEY) {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 700, system: systemPrompt, messages: msgs }),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error?.message || `Anthropic ${r.status}`);
-    return res.json({ reply: d.content?.[0]?.text || "No response." });
+    return { reply: d.content?.[0]?.text || 'No response.', renderData: null };
+  }
+}
 
-  } catch (aiErr) {
-    console.error("❌ /jarvis AI:", aiErr.message);
-    return res.status(500).json({ error: aiErr.message });
+app.post("/jarvis", async (req, res) => {
+  const { query = "", history = [] } = req.body;
+  const DEEPSEEK_KEY  = process.env.DEEPSEEK_API_KEY;
+  const GROQ_KEY      = process.env.GROQ_API_KEY;
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+
+  if (!DEEPSEEK_KEY && !GROQ_KEY && !ANTHROPIC_KEY) {
+    return res.json({ reply: "No AI key set. Add GROQ_API_KEY (free at console.groq.com) to your .env." });
+  }
+  try {
+    const out = await runJarvisQuery(query, history);
+    return res.json(out);
+  } catch (e) {
+    console.error('❌ /jarvis AI:', e.message);
+    return res.status(500).json({ error: e.message });
   }
 });
 
@@ -17109,23 +17115,12 @@ async function waAdminAlert(message) {
   catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
 
-// ── Admin WhatsApp AI — internal business queries ─────────────────────────────
-const WA_ADMIN_SYSTEM_PROMPT = `You are JARVIS, the internal AI assistant for CrosCrow marketplace admin.
-You answer business questions concisely for the founder/admin over WhatsApp.
-
-You have access to real-time data via tools. Use them to answer questions like:
-- RTO rate, pending orders, revenue, vendor performance
-- Specific order lookups, customer issues
-- Settlement status, commission earned
-- Fulfillment stats, stuck orders
-
-Reply in plain text (no markdown bold/italic — this is WhatsApp). Keep answers short and to the point.
-If a number is asked, give the number first then context. No fluff.`;
+// ── Admin WhatsApp AI — routes admin messages to Jarvis with waMode formatting ─
 
 async function waHandleAdminQuery(sock, sender, text) {
   if (!mdb) return;
   try {
-    // Use a persistent chat thread per admin for history
+    // Maintain a rolling history per admin session (last 10 exchanges)
     let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender, source: 'wa_admin' });
     if (!chat) {
       const r = await mdb.collection('support_chats').insertOne({
@@ -17135,18 +17130,26 @@ async function waHandleAdminQuery(sock, sender, text) {
       chat = { _id: r.insertedId, whatsapp_sender: sender };
     }
     await SC.addMessage(chat._id, { sender: 'customer', text });
-    const history = (await SC.messages(chat._id)).slice(-12);
 
-    const result = await scRunChatTurn(chat, history, text, { systemPrompt: WA_ADMIN_SYSTEM_PROMPT, forceContact: 'na' });
-    let reply = (typeof result === 'string' ? result : result?.reply || '').trim();
-    reply = reply.replace(/\*\*(.+?)\*\*/g, '*$1*');
+    // Build history in Jarvis format
+    const msgs = (await SC.messages(chat._id)).slice(-20);
+    const history = msgs.slice(0, -1).map(m => ({
+      role: m.sender === 'customer' ? 'user' : 'bot',
+      text: m.text,
+    }));
+
+    const result = await runJarvisQuery(text, history, { waMode: true });
+    let reply = (result?.reply || '').trim();
+    // Strip any leftover markdown bold/headers for WhatsApp
+    reply = reply.replace(/\*\*(.+?)\*\*/g, '$1').replace(/#{1,3} /g, '');
     if (!reply) return;
 
     await SC.addMessage(chat._id, { sender: 'assistant', text: reply });
+    await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
     await sock.sendMessage(sender, { text: reply });
   } catch (e) {
     console.error('❌ Admin WA query failed:', e.message);
-    await sock.sendMessage(sender, { text: 'Error fetching data. Try again.' });
+    await sock.sendMessage(sender, { text: 'Error fetching data. Try again in a moment.' });
   }
 }
 
