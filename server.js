@@ -16987,42 +16987,62 @@ app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
 app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
   try {
     if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    if (!waConnected) return res.status(503).json({ error: 'WhatsApp not connected yet' });
     const to = (req.query.to || '').replace(/\D/g, '');
     if (!to) return res.status(400).json({ error: 'to required' });
     const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
-    const { proto } = require('@whiskeysockets/baileys');
+    const { proto, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
 
-    const listMsg = proto.Message.ListMessage.create({
-      title: 'What would you like to do?',
-      description: 'Choose an option below 👇',
-      buttonText: 'Select Option',
-      listType: proto.Message.ListMessage.ListType.SINGLE_SELECT,
-      footerText: 'CrosCrow',
-      sections: [
-        proto.Message.ListMessage.Section.create({
+    const content = proto.Message.fromObject({
+      listMessage: {
+        title: 'How can we help? 👋',
+        description: 'Tap below to choose an option',
+        buttonText: 'Select Option',
+        listType: 'SINGLE_SELECT',
+        footerText: 'CrosCrow',
+        sections: [{
           title: 'Order Actions',
           rows: [
-            proto.Message.ListMessage.Row.create({ title: '✅ Confirm Order', description: 'Ready to receive my order', rowId: 'confirm' }),
-            proto.Message.ListMessage.Row.create({ title: '❌ Cancel Order', description: 'I want to cancel this order', rowId: 'cancel' }),
-            proto.Message.ListMessage.Row.create({ title: '📦 Track Order', description: 'Where is my order?', rowId: 'track' }),
+            { title: '✅ Confirm Order', description: 'I am ready to receive', rowId: 'confirm' },
+            { title: '❌ Cancel Order', description: 'I want to cancel', rowId: 'cancel' },
+            { title: '📦 Track Order', description: 'Where is my order?', rowId: 'track' },
+            { title: '🔄 Return / Exchange', description: 'I want to return or exchange', rowId: 'return' },
+            { title: '💬 Talk to Agent', description: 'Connect me with support', rowId: 'agent' },
           ]
-        }),
-        proto.Message.ListMessage.Section.create({
-          title: 'Support',
-          rows: [
-            proto.Message.ListMessage.Row.create({ title: '🔄 Return / Exchange', description: 'I want to return or exchange', rowId: 'return' }),
-            proto.Message.ListMessage.Row.create({ title: '💬 Talk to Agent', description: 'Connect me with support', rowId: 'agent' }),
-          ]
-        })
-      ]
+        }]
+      }
     });
 
-    // sendMessage doesn't have a list shorthand — use relayMessage with generateWAMessageFromContent
-    const { generateWAMessageFromContent, generateMessageID } = require('@whiskeysockets/baileys');
-    const waMsg = generateWAMessageFromContent(jid, { listMessage: listMsg }, { userJid: waSocket.user?.id });
+    const waMsg = generateWAMessageFromContent(jid, content, { userJid: waSocket.user?.id });
     await waSocket.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
     res.json({ success: true, sent_to: jid });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0,3) }); }
+});
+
+// GET /admin/whatsapp-test-btn?to=  — single button (older buttonsMessage format)
+app.get('/admin/whatsapp-test-btn', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
+    const to = (req.query.to || '').replace(/\D/g, '');
+    if (!to) return res.status(400).json({ error: 'to required' });
+    const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
+    const { proto, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
+
+    const content = proto.Message.fromObject({
+      buttonsMessage: {
+        contentText: 'Your CrosCrow order is ready! 🎉',
+        footerText: 'CrosCrow',
+        buttons: [
+          { buttonId: 'track', buttonText: { displayText: '📦 Track Order' }, type: 1 },
+        ],
+        headerType: 1,
+      }
+    });
+
+    const waMsg = generateWAMessageFromContent(jid, content, { userJid: waSocket.user?.id });
+    await waSocket.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
+    res.json({ success: true, sent_to: jid });
+  } catch (e) { res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0,3) }); }
 });
 
 // GET /admin/whatsapp-test-poll?to=&question=&options=Yes,No
