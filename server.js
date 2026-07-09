@@ -17009,6 +17009,7 @@ app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
 
 let waSocket = null;
 let waConnected = false; // true only after 'open', false on disconnect/logout/reset
+let waStarting = false;  // guard against concurrent startBaileysBot() calls
 let waLatestQR = null; // latest raw QR string for /admin/whatsapp-qr
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
@@ -17500,6 +17501,8 @@ const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|ha
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
 
 async function startBaileysBot() {
+  if (waStarting) return;
+  waStarting = true;
   try {
     const { makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
     const pino = require('pino');
@@ -17533,12 +17536,14 @@ async function startBaileysBot() {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         waConnected = false;
+        waStarting = false; // allow restart
         console.log(loggedOut ? '📵 WhatsApp logged out — restarting for new QR…' : '🔄 WhatsApp disconnected, reconnecting...');
         waSocket = null;
-        setTimeout(startBaileysBot, 3000);
+        setTimeout(startBaileysBot, 5000);
       }
       if (connection === 'open') {
         waConnected = true;
+        waStarting = false; // connected — allow future restarts if needed
         waLatestQR = null; // QR consumed — clear it
         console.log('✅ WhatsApp bot ready (Baileys)');
         // Resolve and cache vendor + admin JIDs at startup (handles LID format)
@@ -17771,6 +17776,7 @@ async function startBaileysBot() {
     });
   } catch (err) {
     console.error('❌ Baileys failed to start:', err.message);
+    waStarting = false;
     setTimeout(startBaileysBot, 10000);
   }
 }
