@@ -16944,6 +16944,45 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /admin/whatsapp-send-interactive  — send buttons or URL link buttons
+// Body: { to, body, footer, buttons: [{type:'quick_reply'|'cta_url', label, url?}] }
+app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    const { to, body = '', footer = '', buttons = [] } = req.body || {};
+    if (!to) return res.status(400).json({ error: 'to required' });
+    const jid = `91${String(to).replace(/\D/g, '').replace(/^91/, '')}@s.whatsapp.net`;
+
+    const nativeButtons = buttons.map(b => {
+      if (b.type === 'cta_url') {
+        return {
+          name: 'cta_url',
+          buttonParamsJson: JSON.stringify({ display_text: b.label, url: b.url, merchant_url: b.url })
+        };
+      }
+      // quick_reply
+      return {
+        name: 'quick_reply',
+        buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id || b.label })
+      };
+    });
+
+    const msg = {
+      interactiveMessage: {
+        body: { text: body },
+        footer: { text: footer },
+        nativeFlowMessage: {
+          buttons: nativeButtons,
+          messageVersion: 1,
+        }
+      }
+    };
+
+    await waSocket.sendMessage(jid, msg);
+    res.json({ success: true, sent_to: jid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // WHATSAPP SUPPORT BOT (Baileys — no browser, session stored in MongoDB)
 // ══════════════════════════════════════════════════════════════════════════
