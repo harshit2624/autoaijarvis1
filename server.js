@@ -16983,6 +16983,22 @@ app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /admin/whatsapp-test-poll?to=&question=&options=Yes,No
+app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    const to = (req.query.to || '').replace(/\D/g, '');
+    if (!to) return res.status(400).json({ error: 'to required' });
+    const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
+    const question = req.query.question || 'What do you think?';
+    const options = (req.query.options || 'Yes,No').split(',').map(s => s.trim());
+    await waSocket.sendMessage(jid, {
+      poll: { name: question, values: options, selectableCount: 1, messageSecret: require('crypto').randomBytes(32) }
+    });
+    res.json({ success: true, sent_to: jid, question, options });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // WHATSAPP SUPPORT BOT (Baileys — no browser, session stored in MongoDB)
 // ══════════════════════════════════════════════════════════════════════════
