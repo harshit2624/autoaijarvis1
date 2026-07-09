@@ -16908,15 +16908,34 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
     if (imageUrl) {
       const https = require('https');
       const http = require('http');
-      const fetcher = imageUrl.startsWith('https') ? https : http;
-      const imageBuffer = await new Promise((resolve, reject) => {
-        fetcher.get(imageUrl, res2 => {
-          const chunks = [];
-          res2.on('data', c => chunks.push(c));
-          res2.on('end', () => resolve(Buffer.concat(chunks)));
-          res2.on('error', reject);
-        }).on('error', reject);
-      });
+      // Resolve imgbb share pages to direct image URL
+      async function fetchUrl(url) {
+        const fetcher = url.startsWith('https') ? https : http;
+        return new Promise((resolve, reject) => {
+          fetcher.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res2 => {
+            if (res2.statusCode >= 300 && res2.statusCode < 400 && res2.headers.location) {
+              return resolve(fetchUrl(res2.headers.location));
+            }
+            const ct = res2.headers['content-type'] || '';
+            if (ct.includes('text/html')) {
+              // Extract direct image from imgbb HTML
+              let html = '';
+              res2.on('data', c => html += c);
+              res2.on('end', () => {
+                const m = html.match(/https:\/\/i\.ibb\.co\/[^"'\s]+\.(jpg|jpeg|png|gif|webp)/i);
+                if (m) return resolve(fetchUrl(m[0]));
+                reject(new Error('Could not find direct image URL on page'));
+              });
+            } else {
+              const chunks = [];
+              res2.on('data', c => chunks.push(c));
+              res2.on('end', () => resolve(Buffer.concat(chunks)));
+            }
+            res2.on('error', reject);
+          }).on('error', reject);
+        });
+      }
+      const imageBuffer = await fetchUrl(imageUrl);
       await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
     } else {
       await waSocket.sendMessage(jid, { text: msg });
