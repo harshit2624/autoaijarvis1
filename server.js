@@ -16896,16 +16896,32 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
 });
 
 // Test endpoint — send a WhatsApp message to any number directly
-// GET /admin/whatsapp-test?to=9876543210&msg=hello
+// GET /admin/whatsapp-test?to=9876543210&msg=hello&image=https://...
 app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
   try {
     if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running (WHATSAPP_BOT_ENABLED=true required)' });
     const to = (req.query.to || '').replace(/\D/g, '');
     const msg = req.query.msg || 'Test message from CrosCrow bot ✅';
+    const imageUrl = req.query.image || '';
     if (!to) return res.status(400).json({ error: 'to= phone number required' });
     const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
-    await waSocket.sendMessage(jid, { text: msg });
-    res.json({ success: true, sent_to: jid, message: msg });
+    if (imageUrl) {
+      const https = require('https');
+      const http = require('http');
+      const fetcher = imageUrl.startsWith('https') ? https : http;
+      const imageBuffer = await new Promise((resolve, reject) => {
+        fetcher.get(imageUrl, res2 => {
+          const chunks = [];
+          res2.on('data', c => chunks.push(c));
+          res2.on('end', () => resolve(Buffer.concat(chunks)));
+          res2.on('error', reject);
+        }).on('error', reject);
+      });
+      await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
+    } else {
+      await waSocket.sendMessage(jid, { text: msg });
+    }
+    res.json({ success: true, sent_to: jid, message: msg, image: imageUrl || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
