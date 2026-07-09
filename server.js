@@ -16944,45 +16944,6 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /admin/whatsapp-send-interactive  — send buttons or URL link buttons
-// Body: { to, body, footer, buttons: [{type:'quick_reply'|'url', label, url?}] }
-app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
-  try {
-    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
-    const { to, body = '', footer = '', buttons = [] } = req.body || {};
-    if (!to) return res.status(400).json({ error: 'to required' });
-    const jid = `91${String(to).replace(/\D/g, '').replace(/^91/, '')}@s.whatsapp.net`;
-    const { proto, generateMessageID } = require('@whiskeysockets/baileys');
-
-    const hydratedButtons = buttons.map((b, i) => {
-      const btn = { index: i + 1 };
-      if (b.type === 'url') {
-        btn.urlButton = proto.HydratedTemplateButton.HydratedURLButton.create({
-          displayText: b.label,
-          url: b.url,
-        });
-      } else {
-        btn.quickReplyButton = proto.HydratedTemplateButton.HydratedQuickReplyButton.create({
-          displayText: b.label,
-          id: b.id || b.label,
-        });
-      }
-      return proto.HydratedTemplateButton.create(btn);
-    });
-
-    const templateMsg = proto.Message.TemplateMessage.create({
-      hydratedTemplate: proto.Message.TemplateMessage.HydratedFourRowTemplate.create({
-        hydratedContentText: body,
-        hydratedFooterText: footer,
-        hydratedButtons,
-      })
-    });
-
-    await waSocket.relayMessage(jid, { templateMessage: templateMsg }, { messageId: generateMessageID() });
-    res.json({ success: true, sent_to: jid });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // GET /admin/whatsapp-test-list?to=  — sends a "Select Option" list message
 app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
   try {
@@ -17010,32 +16971,6 @@ app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
             { title: '💬 Talk to Agent', description: 'Connect me with support', rowId: 'agent' },
           ]
         }]
-      }
-    });
-
-    const waMsg = generateWAMessageFromContent(jid, content, { userJid: waSocket.user?.id });
-    await waSocket.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
-    res.json({ success: true, sent_to: jid });
-  } catch (e) { res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0,3) }); }
-});
-
-// GET /admin/whatsapp-test-btn?to=  — single button (older buttonsMessage format)
-app.get('/admin/whatsapp-test-btn', adminAuth, async (req, res) => {
-  try {
-    if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
-    const to = (req.query.to || '').replace(/\D/g, '');
-    if (!to) return res.status(400).json({ error: 'to required' });
-    const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
-    const { proto, generateWAMessageFromContent } = require('@whiskeysockets/baileys');
-
-    const content = proto.Message.fromObject({
-      buttonsMessage: {
-        contentText: 'Your CrosCrow order is ready! 🎉',
-        footerText: 'CrosCrow',
-        buttons: [
-          { buttonId: 'track', buttonText: { displayText: '📦 Track Order' }, type: 1 },
-        ],
-        headerType: 1,
       }
     });
 
