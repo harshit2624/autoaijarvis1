@@ -17541,9 +17541,15 @@ async function startBaileysBot() {
         waSocket = null;
         if (loggedOut) {
           console.log('📵 WhatsApp logged out — clearing auth, will show new QR…');
-          waReconnectDelay = 5000; // reset backoff
+          waReconnectDelay = 5000;
           if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
           setTimeout(startBaileysBot, 3000);
+        } else if (code === 440) {
+          // 440 = Connection Replaced — another device (phone app) opened and kicked us
+          // Don't fight it — wait 60s then try to reclaim
+          console.log('⚠️  WhatsApp bot displaced by phone app (code 440) — will retry in 60s…');
+          waReconnectDelay = 5000;
+          setTimeout(startBaileysBot, 60000);
         } else {
           // Exponential backoff: 5s → 10s → 20s → 40s → cap at 60s
           console.log(`🔄 WhatsApp disconnected (code ${code}), reconnecting in ${waReconnectDelay/1000}s…`);
