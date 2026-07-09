@@ -16462,13 +16462,12 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 });
 
 app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
-  const hard = req.query.hard === 'true'; // ?hard=true wipes auth (full logout+rescan)
   waConnected = false;
   waLatestQR = null;
-  if (waSocket) { try { waSocket.end(undefined); } catch (_) {} waSocket = null; }
-  if (hard && mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+  if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
+  if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
   setTimeout(() => startBaileysBot(), 2000);
-  res.json({ success: true, hard });
+  res.json({ success: true });
 });
 
 // ── WhatsApp QR scan page (for connecting/reconnecting the bot) ──────────────
@@ -16900,13 +16899,6 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
 // GET /admin/whatsapp-test?to=9876543210&msg=hello&image=https://...
 app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
   try {
-    // Wait up to 10s for socket to be ready (handles brief reconnect windows)
-    if (!waSocket) {
-      await new Promise(resolve => {
-        const t = setInterval(() => { if (waSocket) { clearInterval(t); resolve(); } }, 500);
-        setTimeout(() => { clearInterval(t); resolve(); }, 10000);
-      });
-    }
     if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running (WHATSAPP_BOT_ENABLED=true required)' });
     const to = (req.query.to || '').replace(/\D/g, '');
     const msg = req.query.msg || 'Test message from CrosCrow bot ✅';
@@ -17016,8 +17008,6 @@ app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
 
 let waSocket = null;
 let waConnected = false; // true only after 'open', false on disconnect/logout/reset
-let waStarting = false;  // guard against concurrent startBaileysBot() calls
-let waReconnectDelay = 5000; // exponential backoff delay in ms
 let waLatestQR = null; // latest raw QR string for /admin/whatsapp-qr
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
@@ -17509,8 +17499,6 @@ const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|ha
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
 
 async function startBaileysBot() {
-  if (waStarting) return;
-  waStarting = true;
   try {
     const { makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
     const pino = require('pino');
@@ -17529,15 +17517,12 @@ async function startBaileysBot() {
       logger: pino({ level: 'silent' }),
       printQRInTerminal: false,
       syncFullHistory: false,
-      keepAliveIntervalMs: 15000,
-      connectTimeoutMs: 60000,
-      retryRequestDelayMs: 2000,
     });
 
     waSocket = sock;
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
       if (qr) {
         waLatestQR = qr;
         console.log('\n📱 WhatsApp QR Code — scan with your phone (or visit /admin/whatsapp-qr):');
@@ -17547,24 +17532,13 @@ async function startBaileysBot() {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         waConnected = false;
-        waStarting = false;
+        console.log(loggedOut ? '📵 WhatsApp logged out — restarting for new QR…' : '🔄 WhatsApp disconnected, reconnecting...');
         waSocket = null;
-        if (loggedOut) {
-          console.log('📵 WhatsApp logged out — clearing auth, will show new QR…');
-          waReconnectDelay = 5000;
-          if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
-          setTimeout(startBaileysBot, 3000);
-        } else {
-          console.log(`🔄 WhatsApp disconnected (code ${code}), reconnecting in ${waReconnectDelay/1000}s…`);
-          setTimeout(startBaileysBot, waReconnectDelay);
-          waReconnectDelay = Math.min(waReconnectDelay * 2, 30000);
-        }
+        setTimeout(startBaileysBot, 3000);
       }
       if (connection === 'open') {
         waConnected = true;
-        waStarting = false;
-        waReconnectDelay = 5000; // reset backoff on successful connect
-        waLatestQR = null;
+        waLatestQR = null; // QR consumed — clear it
         console.log('✅ WhatsApp bot ready (Baileys)');
         // Resolve and cache vendor + admin JIDs at startup (handles LID format)
         setTimeout(async () => {
@@ -17796,7 +17770,6 @@ async function startBaileysBot() {
     });
   } catch (err) {
     console.error('❌ Baileys failed to start:', err.message);
-    waStarting = false;
     setTimeout(startBaileysBot, 10000);
   }
 }
