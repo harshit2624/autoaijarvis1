@@ -16952,33 +16952,31 @@ app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
     const { to, body = '', footer = '', buttons = [] } = req.body || {};
     if (!to) return res.status(400).json({ error: 'to required' });
     const jid = `91${String(to).replace(/\D/g, '').replace(/^91/, '')}@s.whatsapp.net`;
+    const { proto, generateMessageID } = require('@whiskeysockets/baileys');
 
     const nativeButtons = buttons.map(b => {
       if (b.type === 'cta_url') {
-        return {
+        return proto.Message.InteractiveMessage.NativeFlowMessage.NativeFlowButton.create({
           name: 'cta_url',
           buttonParamsJson: JSON.stringify({ display_text: b.label, url: b.url, merchant_url: b.url })
-        };
+        });
       }
-      // quick_reply
-      return {
+      return proto.Message.InteractiveMessage.NativeFlowMessage.NativeFlowButton.create({
         name: 'quick_reply',
         buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id || b.label })
-      };
+      });
     });
 
-    const msg = {
-      interactiveMessage: {
-        body: { text: body },
-        footer: { text: footer },
-        nativeFlowMessage: {
-          buttons: nativeButtons,
-          messageVersion: 1,
-        }
-      }
-    };
+    const interactiveMsg = proto.Message.InteractiveMessage.create({
+      body: proto.Message.InteractiveMessage.Body.create({ text: body }),
+      footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
+      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+        buttons: nativeButtons,
+        messageVersion: 1,
+      })
+    });
 
-    await waSocket.sendMessage(jid, msg);
+    await waSocket.relayMessage(jid, { interactiveMessage: interactiveMsg }, { messageId: generateMessageID() });
     res.json({ success: true, sent_to: jid });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
