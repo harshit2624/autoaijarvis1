@@ -17526,7 +17526,7 @@ async function startBaileysBot() {
     waSocket = sock;
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
       if (qr) {
         waLatestQR = qr;
         console.log('\n📱 WhatsApp QR Code — scan with your phone (or visit /admin/whatsapp-qr):');
