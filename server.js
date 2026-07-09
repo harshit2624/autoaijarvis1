@@ -17349,16 +17349,18 @@ async function waMenuForOrder(meta) {
   if (!meta || meta.type !== 'tracking_card') return null;
   const d = meta.data;
   const stage = d.stage;
-  if (['new', 'hold'].includes(stage) && d.confirm_url) return { menu: 'order_not_confirmed', orderData: d };
-  if (['confirmed', 'partial'].includes(stage)) {
+  // If AWB exists the order is effectively in transit regardless of DB stage
+  const effectiveStage = d.awb ? 'transit' : stage;
+  if (['new', 'hold'].includes(effectiveStage) && d.confirm_url) return { menu: 'order_not_confirmed', orderData: d };
+  if (['confirmed', 'partial'].includes(effectiveStage)) {
     const hrs = await waHoursConfirmed(d.shopify_order_id);
     return hrs <= 24
       ? { menu: 'order_confirmed_short', orderData: d }
       : { menu: 'order_confirmed_long', orderData: d };
   }
-  if (['transit', 'ready', 'pickup', 'ofd'].includes(stage)) return { menu: 'order_transit', orderData: d };
-  if (stage === 'delivered') return { menu: 'order_delivered', orderData: d };
-  if (stage === 'rto') return { menu: 'order_rto', orderData: d };
+  if (['transit', 'ready', 'pickup', 'ofd'].includes(effectiveStage)) return { menu: 'order_transit', orderData: d };
+  if (effectiveStage === 'delivered') return { menu: 'order_delivered', orderData: d };
+  if (effectiveStage === 'rto') return { menu: 'order_rto', orderData: d };
   return null;
 }
 
@@ -17537,9 +17539,15 @@ async function startBaileysBot() {
             continue;
           }
 
-          // ── 6. Order found → append links + show smart quick-reply menu
+          // ── 6. Check if reply needs admin alert (cancellation / escalation) ──
+          const needsAdmin = /flagged.*team|flagging.*team|flag.*our team|flagged this|noted.*team|cancellation request|manually confirm/i.test(reply);
+          const botCantHelp = /flag.*human|connect.*team|reach out|outside.*tools|can't help|cannot help/i.test(reply);
+          if (needsAdmin) {
+            waAdminAlert(`🔔 *Action Needed*\nCustomer: +91${phone}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`).catch(() => {});
+          }
+
+          // ── 7. Order found → append links + show smart quick-reply menu ──
           if (meta?.type === 'tracking_card') {
-            // Clear stale session from a previous order query before setting new one
             await waSessionClear(sender);
             const links = waLinksFromMeta(meta);
             await saveAndSend(reply + links, meta);
@@ -17549,11 +17557,18 @@ async function startBaileysBot() {
 
             // Auto-alert admin if order stuck >3 days
             const hrs = await waHoursConfirmed(meta.data?.shopify_order_id);
-            if (hrs > 72 && ['confirmed','partial','hold'].includes(meta.data?.stage)) {
+            if (hrs > 72 && ['confirmed','partial','hold'].includes(meta.data?.stage) && !meta.data?.awb) {
               waAdminAlert(`⏰ *Stuck Order Alert*\nOrder *${meta.data.order_name}* — ${Math.round(hrs)}h since confirmation, still not shipped.\nCustomer: +91${phone}`).catch(() => {});
             }
 
-            // Show appropriate quick-reply menu
+            // If bot flagged escalation (cancellation etc), skip order menu → offer human only
+            if (needsAdmin || botCantHelp) {
+              await sock.sendMessage(sender, { text: `Our team has been notified and will reach out to you shortly on WhatsApp. 🙏` });
+              await waSessionSet(sender, { menu: 'offer_human' });
+              continue;
+            }
+
+            // Show appropriate quick-reply menu based on real stage
             const menuInfo = await waMenuForOrder(meta);
             if (menuInfo) {
               const menuFn = WA_MENUS[menuInfo.menu];
@@ -17564,12 +17579,6 @@ async function startBaileysBot() {
             continue;
           }
 
-          // ── 7. Needs admin alert (flagging to team / can't help) ─────
-          const needsAdmin = /flagged.*team|flagging.*team|flag.*our team|flagged this|noted.*team|cancellation request|manually confirm/i.test(reply);
-          const botCantHelp = /flag.*human|connect.*team|reach out|outside.*tools|can't help|cannot help/i.test(reply);
-          if (needsAdmin) {
-            waAdminAlert(`🔔 *Action Needed*\nCustomer: +91${phone}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`).catch(() => {});
-          }
           if (botCantHelp) {
             await saveAndSend(reply, meta);
             await sock.sendMessage(sender, { text: `Need more help? Our team is here:\n\n1️⃣ Talk to a human\n\nOr call us:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
