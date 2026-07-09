@@ -16945,7 +16945,7 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
 });
 
 // POST /admin/whatsapp-send-interactive  — send buttons or URL link buttons
-// Body: { to, body, footer, buttons: [{type:'quick_reply'|'cta_url', label, url?}] }
+// Body: { to, body, footer, buttons: [{type:'quick_reply'|'url', label, url?}] }
 app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
   try {
     if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
@@ -16954,29 +16954,31 @@ app.post('/admin/whatsapp-send-interactive', adminAuth, async (req, res) => {
     const jid = `91${String(to).replace(/\D/g, '').replace(/^91/, '')}@s.whatsapp.net`;
     const { proto, generateMessageID } = require('@whiskeysockets/baileys');
 
-    const nativeButtons = buttons.map(b => {
-      if (b.type === 'cta_url') {
-        return proto.Message.InteractiveMessage.NativeFlowMessage.NativeFlowButton.create({
-          name: 'cta_url',
-          buttonParamsJson: JSON.stringify({ display_text: b.label, url: b.url, merchant_url: b.url })
+    const hydratedButtons = buttons.map((b, i) => {
+      const btn = { index: i + 1 };
+      if (b.type === 'url') {
+        btn.urlButton = proto.HydratedTemplateButton.HydratedURLButton.create({
+          displayText: b.label,
+          url: b.url,
+        });
+      } else {
+        btn.quickReplyButton = proto.HydratedTemplateButton.HydratedQuickReplyButton.create({
+          displayText: b.label,
+          id: b.id || b.label,
         });
       }
-      return proto.Message.InteractiveMessage.NativeFlowMessage.NativeFlowButton.create({
-        name: 'quick_reply',
-        buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id || b.label })
-      });
+      return proto.HydratedTemplateButton.create(btn);
     });
 
-    const interactiveMsg = proto.Message.InteractiveMessage.create({
-      body: proto.Message.InteractiveMessage.Body.create({ text: body }),
-      footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
-      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-        buttons: nativeButtons,
-        messageVersion: 1,
+    const templateMsg = proto.Message.TemplateMessage.create({
+      hydratedTemplate: proto.Message.TemplateMessage.HydratedFourRowTemplate.create({
+        hydratedContentText: body,
+        hydratedFooterText: footer,
+        hydratedButtons,
       })
     });
 
-    await waSocket.relayMessage(jid, { interactiveMessage: interactiveMsg }, { messageId: generateMessageID() });
+    await waSocket.relayMessage(jid, { templateMessage: templateMsg }, { messageId: generateMessageID() });
     res.json({ success: true, sent_to: jid });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
