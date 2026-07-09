@@ -16098,7 +16098,7 @@ async function scGetOrderStatus(orderName, contact) {
     // Orders stuck in new/hold, or cancelled before confirmation, need the
     // customer to actively confirm them — surface that link directly so the
     // bot can offer it instead of just explaining the order isn't moving.
-    const CONFIRMABLE_STAGES = ['new', 'hold', 'cancelled'];
+    const CONFIRMABLE_STAGES = ['new', 'hold'];
     const confirm_url = CONFIRMABLE_STAGES.includes(payload.stage)
       ? `${SERVER_URL}/confirm-order?o=${encodeURIComponent(payload.order_name.replace(/^#/, ''))}`
       : null;
@@ -16212,7 +16212,12 @@ RULES:
 - CRITICAL: call the relevant tool on EVERY turn that needs live data. Never answer from memory.
 - No markdown. Plain text only. Short replies (2-4 sentences). Human, warm tone.
 - If customer is frustrated, acknowledge briefly first.
-- When you say you're "flagging to our team", that triggers an automatic admin alert — always say this exact phrase for the scenarios listed above.`;
+- When you say you're "flagging to our team", that triggers an automatic admin alert — always say this exact phrase for the scenarios listed above.
+- NEVER mention rate limits, API errors, or technical issues. If something fails just say "Give me a moment, trying again!" or similar.
+- NEVER include direct courier tracking URLs (delhivery.com, shiprocket.com etc.) — the croscrow track link is appended automatically and is enough.
+- If the customer asks to call them, says "call me", or needs something only a human can handle, say: "I can't make calls, but I'm connecting you with our team right now — someone will reach out to you on WhatsApp shortly 🙏" (this flags admin).
+- For multi-vendor orders where items haven't shipped yet: modifications or cancellations ARE possible before dispatch. Say "Since the order hasn't shipped yet, I've flagged this to our team and they can make the change for you." (flags admin). Don't say items can't be separated — that's the vendor's call, not yours.
+- For cancelled orders: never show a confirm link. Just explain the order is cancelled and ask if they'd like to place a fresh one.`;
 
 // Builds a plain-text links section to append to WhatsApp replies when meta has URLs
 function waLinksFromMeta(meta) {
@@ -16558,6 +16563,7 @@ For each issue found, output a JSON object. Return a JSON array of findings (max
   "order": "...",
   "severity": "high|medium|low",
   "category": "wrong_answer|bot_confusion|customer_frustration|unresolved_escalation|repeated_issue|missing_info|slow_response|other",
+  "tag": "/wrong reply/|/bad response/|/not related/|/bot confused/|/needs human/|/missing info/|/repeated issue/",
   "title": "Short title (max 8 words)",
   "description": "What went wrong and why it matters (2-3 sentences)",
   "suggestion": "Specific fix or improvement (1-2 sentences)"
@@ -16609,7 +16615,35 @@ ${JSON.stringify(summaries, null, 1)}`;
 app.get('/admin/support/insights', adminAuth, async (req, res) => {
   const runs = await mdb.collection('support_insights')
     .find({}).sort({ run_at: -1 }).limit(5).toArray();
+  // Auto-remove unresolved_escalation findings where the chat is now resolved
+  for (const run of runs) {
+    if (!run.findings) continue;
+    const before = run.findings.length;
+    const filtered = [];
+    for (const f of run.findings) {
+      if (f.category === 'unresolved_escalation' && f.chat_id) {
+        const chat = await mdb.collection('support_chats').findOne({ _id: new (require('mongodb').ObjectId)(f.chat_id) }).catch(() => null);
+        if (chat?.status === 'resolved') continue;
+      }
+      filtered.push(f);
+    }
+    if (filtered.length !== before) {
+      await mdb.collection('support_insights').updateOne({ _id: run._id }, { $set: { findings: filtered } }).catch(() => {});
+      run.findings = filtered;
+    }
+  }
   res.json({ runs });
+});
+
+// Mark a single insight finding as done
+app.post('/admin/support/insights/:runId/dismiss/:findingIndex', adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const run = await mdb.collection('support_insights').findOne({ _id: new ObjectId(req.params.runId) }).catch(() => null);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  const idx = parseInt(req.params.findingIndex);
+  const findings = (run.findings || []).filter((_, i) => i !== idx);
+  await mdb.collection('support_insights').updateOne({ _id: run._id }, { $set: { findings } });
+  res.json({ success: true, remaining: findings.length });
 });
 
 app.post('/admin/support/insights/run', adminAuth, async (req, res) => {
@@ -17169,24 +17203,21 @@ async function waVendorNudge(meta, customerPhone) {
 
     const days = Math.floor(hoursStuck / 24);
     const orderRef = d.order_name.replace(/^#/, '');
+    const customerName = d.customer_name || '';
+    const customerMobile = customerPhone ? `+91${customerPhone}` : '';
+    const productNames = (d.items || []).filter(i => !i.vendor || i.vendor === vs.vendor_name).map(i => i.title || i.name).filter(Boolean).join(', ') || 'your item';
     const nudgeMsg =
-`Hi! 👋 This is CrosCrow support.
+`📦 *Order ${d.order_name} — Action Needed*
 
-A customer is asking about order *${d.order_name}* from *${vs.vendor_name}*.
+Customer: ${customerName}${customerMobile ? ` (${customerMobile})` : ''}
+Product: ${productNames}
+Stuck: *${days} day${days > 1 ? 's' : ''}* unshipped
 
-It's been *${days} day${days > 1 ? 's' : ''}* since confirmation and the order hasn't shipped yet.
+If shipped, reply:
+TRACK ${orderRef} <AWB> <courier>
 
-Please reply with one of:
-
-📦 If already shipped — reply with:
-TRACK ${orderRef} <AWB number> <courier name>
-_Example: TRACK ${orderRef} 1234567890 BlueDart_
-
-⏳ If there's a delay — reply with:
-DELAY ${orderRef} <reason> | ETA DD-MM-YYYY
-_Example: DELAY ${orderRef} Fabric procurement delay | ETA 14-07-2026_
-
-The customer is waiting. 🙏`;
+If delayed, reply:
+DELAY ${orderRef} <reason> | ETA DD-MM-YYYY`;
 
     try {
       const jid = `91${VENDOR_WA}@s.whatsapp.net`;
@@ -17593,7 +17624,16 @@ async function startBaileysBot() {
 
         try {
           await sock.readMessages([msg.key]);
-          const phone = sender.replace('@s.whatsapp.net', '').replace(/^91/, '');
+          // Extract phone — sender may be a LID (@lid suffix) if WA uses new device IDs
+          // Fall back to stored chat phone if LID can't be resolved to a real number
+          let phone = sender.includes('@s.whatsapp.net')
+            ? sender.replace('@s.whatsapp.net', '').replace(/^91/, '')
+            : null;
+          if (!phone || phone.includes('@')) {
+            // LID — look up stored chat for real phone
+            const existingChat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender });
+            phone = existingChat?.customer_phone || sender.split('@')[0].replace(/^91/, '');
+          }
 
           // ── Admin mode: code unlock + session check ───────────────────
           const adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO });
