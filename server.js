@@ -17010,6 +17010,7 @@ app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
 let waSocket = null;
 let waConnected = false; // true only after 'open', false on disconnect/logout/reset
 let waStarting = false;  // guard against concurrent startBaileysBot() calls
+let waReconnectDelay = 5000; // exponential backoff delay in ms
 let waLatestQR = null; // latest raw QR string for /admin/whatsapp-qr
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
@@ -17536,21 +17537,25 @@ async function startBaileysBot() {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         waConnected = false;
-        waStarting = false; // allow restart
+        waStarting = false;
         waSocket = null;
         if (loggedOut) {
           console.log('📵 WhatsApp logged out — clearing auth, will show new QR…');
+          waReconnectDelay = 5000; // reset backoff
           if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
           setTimeout(startBaileysBot, 3000);
         } else {
-          console.log('🔄 WhatsApp disconnected, reconnecting...');
-          setTimeout(startBaileysBot, 5000);
+          // Exponential backoff: 5s → 10s → 20s → 40s → cap at 60s
+          console.log(`🔄 WhatsApp disconnected (code ${code}), reconnecting in ${waReconnectDelay/1000}s…`);
+          setTimeout(startBaileysBot, waReconnectDelay);
+          waReconnectDelay = Math.min(waReconnectDelay * 2, 60000);
         }
       }
       if (connection === 'open') {
         waConnected = true;
-        waStarting = false; // connected — allow future restarts if needed
-        waLatestQR = null; // QR consumed — clear it
+        waStarting = false;
+        waReconnectDelay = 5000; // reset backoff on successful connect
+        waLatestQR = null;
         console.log('✅ WhatsApp bot ready (Baileys)');
         // Resolve and cache vendor + admin JIDs at startup (handles LID format)
         setTimeout(async () => {
