@@ -17033,6 +17033,38 @@ app.get('/admin/whatsapp-test-poll', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /admin/whatsapp-confirm-poll?to=8209544626&order=2304
+// Sends a Yes/No poll to customer asking them to confirm their order
+app.get('/admin/whatsapp-confirm-poll', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    const to = (req.query.to || '').replace(/\D/g, '');
+    const orderNum = (req.query.order || '').replace(/^#/, '').trim();
+    if (!to || !orderNum) return res.status(400).json({ error: 'to and order required' });
+    const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
+    const messageSecret = require('crypto').randomBytes(32);
+    const sent = await waSocket.sendMessage(jid, {
+      poll: {
+        name: `Confirm your order #${orderNum}?`,
+        values: ['✅ Yes, confirm', '❌ No, cancel'],
+        selectableCount: 1,
+        messageSecret,
+      }
+    });
+    // Store poll metadata so we can act on the vote
+    await mdb.collection('wa_confirm_polls').insertOne({
+      msg_id: sent.key.id,
+      jid,
+      order_name: `#${orderNum}`,
+      message_secret: messageSecret.toString('hex'),
+      bot_jid: waSocket.user?.id,
+      created_at: new Date(),
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+    res.json({ success: true, sent_to: jid, order: `#${orderNum}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // WHATSAPP SUPPORT BOT (Baileys — no browser, session stored in MongoDB)
 // ══════════════════════════════════════════════════════════════════════════
@@ -17618,6 +17650,55 @@ async function startBaileysBot() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
+        // ── Handle poll vote responses ────────────────────────────────────
+        if (msg.message?.pollUpdateMessage) {
+          try {
+            const { decryptPollVote } = require('@whiskeysockets/baileys');
+            const update = msg.message.pollUpdateMessage;
+            const pollMsgId = update.pollCreationMessageKey?.id;
+            const voterJid = msg.key.participant || msg.key.remoteJid;
+            const poll = await mdb.collection('wa_confirm_polls').findOne({ msg_id: pollMsgId });
+            if (!poll) continue;
+            const secret = Buffer.from(poll.message_secret, 'hex');
+            const vote = update.vote;
+            const decrypted = decryptPollVote(vote, {
+              pollCreatorJid: poll.bot_jid,
+              pollMsgId,
+              pollEncKey: secret,
+              voterJid,
+            });
+            const selected = (decrypted.selectedOptions || []).map(o => Buffer.from(o).toString('utf8'));
+            const confirmed = selected.some(s => s.includes('Yes'));
+            const orderName = poll.order_name;
+            const orderNum = orderName.replace(/^#/, '');
+            if (confirmed) {
+              // Add "order confirmed" tag on Shopify
+              const orders = await shopifyREST(`/orders.json?name=${encodeURIComponent(orderName)}&status=any&limit=1`);
+              const order = (orders.orders || [])[0];
+              if (order) {
+                const existingTags = (order.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+                if (!existingTags.includes('order confirmed')) {
+                  existingTags.push('order confirmed');
+                  await shopifyREST(`/orders/${order.id}.json`, 'PUT', { order: { id: order.id, tags: existingTags.join(', ') } });
+                }
+              }
+              await sock.sendMessage(poll.jid, { text: `✅ Thank you! Your order ${orderName} has been confirmed. We'll start processing it right away 🚀` });
+              await waAdminAlert(`✅ *Order Confirmed via Poll*\nOrder: *${orderName}*\nCustomer: ${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}`);
+            } else {
+              // Add "cancelled" tag on Shopify
+              const orders = await shopifyREST(`/orders.json?name=${encodeURIComponent(orderName)}&status=any&limit=1`);
+              const order = (orders.orders || [])[0];
+              if (order) {
+                await shopifyREST(`/orders/${order.id}/cancel.json`, 'POST', {});
+              }
+              await sock.sendMessage(poll.jid, { text: `❌ Got it — your order ${orderName} has been cancelled. If you change your mind, feel free to place a fresh order anytime 😊` });
+              await waAdminAlert(`❌ *Order Cancelled via Poll*\nOrder: *${orderName}*\nCustomer: ${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}`);
+            }
+            await mdb.collection('wa_confirm_polls').deleteOne({ _id: poll._id });
+          } catch (e) { console.error('Poll vote handler error:', e.message); }
+          continue;
+        }
+
         if (msg.key.fromMe) continue;
         if (msg.key.remoteJid?.endsWith('@g.us')) continue;
         const sender = msg.key.remoteJid;
