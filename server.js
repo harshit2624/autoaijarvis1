@@ -16230,8 +16230,11 @@ function waLinksFromMeta(meta) {
     const trackUrl = d.order_name
       ? `https://dashboard.croscrow.com/track?order=${encodeURIComponent(d.order_name)}&contact=na`
       : d.track_url;
-    if (d.confirm_url) lines.push(`✅ Confirm your order: ${d.confirm_url}`);
-    if (trackUrl) lines.push(`📦 Track your order: ${trackUrl}`);
+    if (d.confirm_url) {
+      lines.push(`✅ Confirm your order: ${d.confirm_url}`);
+    } else if (trackUrl) {
+      lines.push(`📦 Track your order: ${trackUrl}`);
+    }
     if (d.return_requests?.length) {
       const open = d.return_requests.find(r => !['completed','rejected','cancelled'].includes(r.status));
       if (open?.track_url) lines.push(`🔄 Return/Exchange status: ${open.track_url}`);
