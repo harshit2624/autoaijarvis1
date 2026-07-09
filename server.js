@@ -16990,7 +16990,7 @@ app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
     const to = (req.query.to || '').replace(/\D/g, '');
     if (!to) return res.status(400).json({ error: 'to required' });
     const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
-    const { proto, generateMessageID } = require('@whiskeysockets/baileys');
+    const { proto } = require('@whiskeysockets/baileys');
 
     const listMsg = proto.Message.ListMessage.create({
       title: 'What would you like to do?',
@@ -17017,7 +17017,10 @@ app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
       ]
     });
 
-    await waSocket.relayMessage(jid, { listMessage: listMsg }, { messageId: generateMessageID() });
+    // sendMessage doesn't have a list shorthand — use relayMessage with generateWAMessageFromContent
+    const { generateWAMessageFromContent, generateMessageID } = require('@whiskeysockets/baileys');
+    const waMsg = generateWAMessageFromContent(jid, { listMessage: listMsg }, { userJid: waSocket.user?.id });
+    await waSocket.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
     res.json({ success: true, sent_to: jid });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
