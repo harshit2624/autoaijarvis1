@@ -17409,20 +17409,32 @@ async function startBaileysBot() {
         waConnected = true;
         waLatestQR = null; // QR consumed — clear it
         console.log('✅ WhatsApp bot ready (Baileys)');
-        // Resolve and cache known vendor JIDs so LID-based senders are identified correctly
+        // Resolve and cache vendor + admin JIDs at startup (handles LID format)
         setTimeout(async () => {
           try {
             const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '6375668971';
-            const [res] = await sock.onWhatsApp(`91${VENDOR_WA}`) || [];
-            if (res?.jid) {
+            const [vRes] = await sock.onWhatsApp(`91${VENDOR_WA}`) || [];
+            if (vRes?.jid) {
               await mdb.collection('wa_vendor_jids').updateOne(
                 { phone: VENDOR_WA },
-                { $set: { phone: VENDOR_WA, jid: res.jid, updated_at: new Date().toISOString() } },
+                { $set: { phone: VENDOR_WA, jid: vRes.jid, updated_at: new Date().toISOString() } },
                 { upsert: true }
               );
-              console.log(`📲 Vendor JID resolved: ${VENDOR_WA} → ${res.jid}`);
+              console.log(`📲 Vendor JID resolved: ${VENDOR_WA} → ${vRes.jid}`);
             }
           } catch (e) { console.error('Vendor JID resolve failed:', e.message); }
+
+          try {
+            const [aRes] = await sock.onWhatsApp(`91${WA_ADMIN_NO}`) || [];
+            if (aRes?.jid) {
+              await mdb.collection('wa_admin_jids').updateOne(
+                { phone: WA_ADMIN_NO },
+                { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
+                { upsert: true }
+              );
+              console.log(`📲 Admin JID resolved: ${WA_ADMIN_NO} → ${aRes.jid}`);
+            }
+          } catch (e) { console.error('Admin JID resolve failed:', e.message); }
         }, 3000);
       }
     });
@@ -17444,8 +17456,25 @@ async function startBaileysBot() {
           const phone = sender.replace('@s.whatsapp.net', '').replace(/^91/, '');
 
           // ── Admin query handler ───────────────────────────────────────
-          if (phone === WA_ADMIN_NO || sender === `91${WA_ADMIN_NO}@s.whatsapp.net`) {
-            await waHandleAdminQuery(sock, sender, text);
+          const adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO });
+          const knownAdminJids = new Set([`91${WA_ADMIN_NO}@s.whatsapp.net`]);
+          if (adminJidDoc?.jid) knownAdminJids.add(adminJidDoc.jid);
+          // Also capture JID if we see a new one from admin's phone
+          const isAdminByPhone = phone === WA_ADMIN_NO;
+          const isAdminByJid = knownAdminJids.has(sender);
+          // Keyword trigger: any message starting with !j is admin mode regardless of number
+          const isAdminKeyword = /^!j\b/i.test(text);
+          if (isAdminByPhone || isAdminByJid || isAdminKeyword) {
+            // Save JID if newly seen
+            if ((isAdminByPhone || isAdminKeyword) && !adminJidDoc?.jid) {
+              await mdb.collection('wa_admin_jids').updateOne(
+                { phone: WA_ADMIN_NO },
+                { $set: { phone: WA_ADMIN_NO, jid: sender, updated_at: new Date().toISOString() } },
+                { upsert: true }
+              ).catch(() => {});
+            }
+            const query = isAdminKeyword ? text.replace(/^!j\s*/i, '').trim() || text : text;
+            await waHandleAdminQuery(sock, sender, query);
             continue;
           }
 
