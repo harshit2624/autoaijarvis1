@@ -14222,29 +14222,59 @@ function renderPatternReportHtml({ findings, period }) {
   </body></html>`;
 }
 
-async function generateAndSendPatternReport({ currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS, sendEmail = true } = {}) {
-  const { findings, period } = await runPatternAnalysis(currentDays, baselineDays);
-  const html = renderPatternReportHtml({ findings, period });
+// How long to suppress a repeated finding before re-alerting it (full digest)
+const PI_DIGEST_DEDUPE_DAYS = 7;
 
-  await mdb.collection('pattern_reports').insertOne({ ...period, findings, emailed_skipped: !sendEmail, created_at: new Date().toISOString() });
+async function generateAndSendPatternReport({ currentDays = PI_CURRENT_DAYS, baselineDays = PI_BASELINE_DAYS, sendEmail = true } = {}) {
+  const { findings: allFindings, period } = await runPatternAnalysis(currentDays, baselineDays);
+
+  // Deduplicate: for emailed digests, filter findings already sent in last PI_DIGEST_DEDUPE_DAYS
+  // Always store all findings in the DB so the UI can show them, but only email new ones.
+  let emailFindings = allFindings;
+  if (sendEmail) {
+    const cutoff = new Date(Date.now() - PI_DIGEST_DEDUPE_DAYS * 24 * 3600 * 1000).toISOString();
+    const newOnes = [];
+    for (const f of allFindings) {
+      const fp = `digest::${piFindingFingerprint(f)}`;
+      const existing = await mdb.collection('pattern_alerts_fired').findOne({ _id: fp });
+      if (!existing || existing.fired_at < cutoff) newOnes.push(f);
+    }
+    emailFindings = newOnes;
+  }
+
+  await mdb.collection('pattern_reports').insertOne({ ...period, findings: allFindings, emailed_skipped: !sendEmail, created_at: new Date().toISOString() });
   await mdb.collection('pattern_reports').deleteMany({ created_at: { $lt: new Date(Date.now() - 180*24*3600*1000).toISOString() } });
 
-  if (!sendEmail) { console.log('🧠 Pattern Intelligence: analysis run without emailing (manual preview run)'); return { findings, period, emailed: 0 }; }
+  if (!sendEmail) { console.log('🧠 Pattern Intelligence: analysis run without emailing (manual preview run)'); return { findings: allFindings, period, emailed: 0 }; }
 
   const cfg = await getSmtpConfig();
-  if (!cfg?.host) { console.log('⚠️  Pattern report: SMTP not configured, skipped email'); return { findings, period, emailed: 0 }; }
+  if (!cfg?.host) { console.log('⚠️  Pattern report: SMTP not configured, skipped email'); return { findings: allFindings, period, emailed: 0 }; }
+
+  if (!emailFindings.length) {
+    console.log('🧠 Pattern Intelligence: all findings already reported in last 7d — digest skipped');
+    return { findings: allFindings, period, emailed: 0 };
+  }
+
+  const html = renderPatternReportHtml({ findings: emailFindings, period });
   const settings = await RS.get();
   const recipients = [cfg.adminEmail, ...(settings.staff_emails || '').split(',').map(e=>e.trim())].filter(Boolean);
   let emailed = 0;
   for (const to of recipients) {
     try {
-      await sendEmail({ to, subject: `🧠 Pattern Intelligence Report — ${findings.filter(f=>f.severity==='red').length} red flag${findings.filter(f=>f.severity==='red').length===1?'':'s'}`, html, shopifyId: 'pattern_report', trigger: 'pattern_intelligence' });
+      await sendEmail({ to, subject: `🧠 Pattern Intelligence — ${emailFindings.filter(f=>f.severity==='red').length} red flag${emailFindings.filter(f=>f.severity==='red').length===1?'':'s'}, ${emailFindings.length} total new findings`, html, shopifyId: 'pattern_report', trigger: 'pattern_intelligence' });
       emailed++;
     } catch (e) { console.error('Pattern report email failed:', to, e.message); }
   }
+
+  // Mark emailed findings so they don't repeat for PI_DIGEST_DEDUPE_DAYS
+  for (const f of emailFindings) {
+    const fp = `digest::${piFindingFingerprint(f)}`;
+    await mdb.collection('pattern_alerts_fired').updateOne({ _id: fp }, { $set: { fired_at: new Date().toISOString(), title: f.title, severity: f.severity } }, { upsert: true });
+  }
+
   await mdb.collection('global_config').updateOne({ _id: 'pattern_intelligence' }, { $set: { last_sent_at: new Date().toISOString() } }, { upsert: true });
-  console.log(`🧠 Pattern Intelligence report sent to ${emailed} recipients — ${findings.length} findings`);
-  return { findings, period, emailed };
+  console.log(`🧠 Pattern Intelligence digest: ${emailFindings.length} new findings emailed to ${emailed} recipients (${allFindings.length - emailFindings.length} suppressed as duplicates)`);
+  return { findings: allFindings, period, emailed };
 }
 
 async function patternIntelligenceCronJob() {

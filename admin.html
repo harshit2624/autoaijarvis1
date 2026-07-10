@@ -8389,22 +8389,24 @@
       { label:'14d vs 60d', current:14, baseline:60 },
       { label:'30d vs 90d', current:30, baseline:90 },
     ];
-    const [findings, setFindings] = useState(null);
-    const [period,   setPeriod]   = useState(null);
-    const [history,  setHistory]  = useState([]);
-    const [loading,  setLoading]  = useState(false);
-    const [running,  setRunning]  = useState(false);
-    const [msg,       setMsg]     = useState('');
-    const [viewingPast, setViewingPast] = useState(null); // index into history, or null = live preview
-    const [windowSel, setWindowSel] = useState(WINDOW_PRESETS[0]);
+    const [findings,    setFindings]    = useState(null);
+    const [period,      setPeriod]      = useState(null);
+    const [history,     setHistory]     = useState([]);
+    const [loading,     setLoading]     = useState(false);
+    const [running,     setRunning]     = useState(false);
+    const [msg,         setMsg]         = useState('');
+    const [viewingPast, setViewingPast] = useState(null);
+    const [windowSel,   setWindowSel]   = useState(WINDOW_PRESETS[0]);
     const [customCurrent,  setCustomCurrent]  = useState('');
     const [customBaseline, setCustomBaseline] = useState('');
-    const [sendEmail, setSendEmail] = useState(false); // manual runs default to NOT emailing — explicit opt-in
+    const [sendEmail,   setSendEmail]   = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
+    const [collapsed,   setCollapsed]   = useState({});
 
     const SEV = {
-      red:   { color:'#ef4444', bg:'rgba(239,68,68,0.08)',  label:'🔴 RED FLAG' },
-      amber: { color:'#f59e0b', bg:'rgba(245,158,11,0.08)', label:'🟡 WATCH'   },
-      info:  { color:'#6366f1', bg:'rgba(99,102,241,0.08)', label:'🔵 NOTICED' },
+      red:   { color:'#ef4444', border:'rgba(239,68,68,0.25)',  bg:'rgba(239,68,68,0.06)',  label:'🔴 Red Flag',  section:'🔴 Red Flags — Act Now' },
+      amber: { color:'#f59e0b', border:'rgba(245,158,11,0.25)', bg:'rgba(245,158,11,0.06)', label:'🟡 Watch',     section:'🟡 Watch — Needs Attention' },
+      info:  { color:'#6366f1', border:'rgba(99,102,241,0.25)', bg:'rgba(99,102,241,0.06)', label:'🔵 Noticed',   section:'🔵 Noticed — Good to Know' },
     };
 
     const activeWindow = () => {
@@ -8449,8 +8451,8 @@
         else {
           setFindings(d.findings); setPeriod(d.period);
           setMsg(sendEmail
-            ? `✅ Analysis run complete — emailed to ${d.emailed} recipient${d.emailed!==1?'s':''}`
-            : `✅ Analysis run complete — not emailed (checkbox off)`);
+            ? `✅ Done — emailed to ${d.emailed} recipient${d.emailed!==1?'s':''}`
+            : `✅ Analysis complete — not emailed`);
           loadHistory();
         }
       } catch (e) { setMsg('❌ ' + e.message); }
@@ -8458,121 +8460,151 @@
     };
 
     const showHistoryItem = (i) => {
-      setViewingPast(i);
-      setFindings(history[i].findings);
-      setPeriod(history[i]);
+      setViewingPast(i); setFindings(history[i].findings); setPeriod(history[i]);
     };
 
-    const shown = findings || [];
-    const counts = { red: shown.filter(f=>f.severity==='red').length, amber: shown.filter(f=>f.severity==='amber').length, info: shown.filter(f=>f.severity==='info').length };
+    const shown   = findings || [];
+    const reds    = shown.filter(f => f.severity === 'red');
+    const ambers  = shown.filter(f => f.severity === 'amber');
+    const infos   = shown.filter(f => f.severity === 'info');
+
+    const FindingCard = ({ f }) => {
+      const s = SEV[f.severity] || SEV.info;
+      return (
+        <div style={{background:'var(--bg-card)',border:`1px solid ${s.border}`,borderLeft:`3px solid ${s.color}`,borderRadius:10,padding:'13px 16px',marginBottom:8,display:'flex',gap:12,alignItems:'flex-start'}}>
+          {f.image && <img src={f.image} alt="" style={{width:44,height:44,borderRadius:6,objectFit:'cover',flexShrink:0,border:'1px solid var(--border)'}}/>}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <span style={{fontSize:9,fontWeight:800,color:s.color,letterSpacing:1,textTransform:'uppercase'}}>{f.category}</span>
+            </div>
+            <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:4,lineHeight:1.4}}>{f.title}</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.6}} dangerouslySetInnerHTML={{__html:f.detail}}/>
+          </div>
+        </div>
+      );
+    };
+
+    const SeveritySection = ({ sev, items }) => {
+      const s = SEV[sev];
+      const key = sev;
+      const open = !collapsed[key];
+      if (!items.length) return null;
+      return (
+        <div style={{marginBottom:20}}>
+          <button onClick={() => setCollapsed(c => ({...c, [key]: !c[key]}))} style={{
+            display:'flex', alignItems:'center', gap:10, width:'100%', background:'transparent',
+            border:'none', cursor:'pointer', padding:'8px 0', marginBottom: open ? 10 : 0,
+          }}>
+            <span style={{fontSize:14,fontWeight:800,color:s.color}}>{s.section}</span>
+            <span style={{
+              background:s.bg, color:s.color, border:`1px solid ${s.border}`,
+              borderRadius:20, padding:'1px 10px', fontSize:11, fontWeight:800,
+            }}>{items.length}</span>
+            <span style={{marginLeft:'auto',fontSize:12,color:'var(--text-muted)'}}>{open ? '▲' : '▼'}</span>
+          </button>
+          {open && items.map((f, i) => <FindingCard key={i} f={f} />)}
+        </div>
+      );
+    };
 
     return (
       <div>
+        {/* Header */}
         <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16,flexWrap:'wrap'}}>
           <span style={{fontSize:24}}>🧠</span>
           <div style={{flex:1}}>
             <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>Brains — Pattern Intelligence</h2>
-            <div style={{fontSize:12,color:'var(--text-muted)'}}>Autonomous anomaly detection across regions, vendors, products &amp; RTOs. Full digest every 3 days · urgent red flags alerted within hours.</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>
+              {period && !viewingPast
+                ? `Analyzing last ${period.current_days||7} days vs ${period.baseline_days||30}d baseline · ${period.current_orders} orders · ${shown.length} findings`
+                : viewingPast !== null
+                  ? `Viewing past report — ${new Date(period?.created_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}`
+                  : 'Auto-detecting anomalies across products, vendors, regions & RTOs'}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {viewingPast !== null && (
+              <button className="btn btn-sm btn-ghost" onClick={loadPreview} style={{fontSize:11}}>← Live View</button>
+            )}
+            <button className="btn btn-sm btn-ghost" onClick={()=>setShowSettings(s=>!s)} style={{fontSize:11}}>⚙ Settings</button>
+            <button className="btn btn-ghost btn-sm" onClick={loadPreview} disabled={loading}>{loading?'Loading…':'↻ Refresh'}</button>
+            <button className="btn btn-indigo btn-sm" onClick={runNow} disabled={running}>{running?'Running…':'⚡ Run & Save'}</button>
           </div>
         </div>
 
-        {/* Window selector + send-email toggle */}
-        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:14,marginBottom:16,display:'flex',gap:14,alignItems:'center',flexWrap:'wrap'}}>
-          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-            {WINDOW_PRESETS.map(p => (
-              <button key={p.label} className="btn btn-sm" onClick={()=>{ setWindowSel(p); setCustomCurrent(''); setCustomBaseline(''); }}
-                style={{
-                  background: (!customCurrent && !customBaseline && windowSel.label===p.label) ? 'var(--indigo-dim)' : 'transparent',
-                  border:'1px solid var(--border)', color: (!customCurrent && !customBaseline && windowSel.label===p.label) ? 'var(--indigo)' : 'var(--text-muted)',
-                }}>{p.label}</button>
-            ))}
+        {/* Settings panel — collapsed by default */}
+        {showSettings && (
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:14,marginBottom:16,display:'flex',gap:14,alignItems:'center',flexWrap:'wrap'}}>
+            <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:600}}>Analysis window:</span>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {WINDOW_PRESETS.map(p => (
+                <button key={p.label} className="btn btn-sm" onClick={()=>{ setWindowSel(p); setCustomCurrent(''); setCustomBaseline(''); }}
+                  style={{
+                    background: (!customCurrent && !customBaseline && windowSel.label===p.label) ? 'var(--indigo-dim)' : 'transparent',
+                    border:'1px solid var(--border)', color: (!customCurrent && !customBaseline && windowSel.label===p.label) ? 'var(--indigo)' : 'var(--text-muted)',
+                    fontSize:11,
+                  }}>{p.label}</button>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+              <input type="number" min="1" placeholder="current days" value={customCurrent} onChange={e=>setCustomCurrent(e.target.value)} className="form-input" style={{width:90,fontSize:11,padding:'4px 7px'}}/>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>vs</span>
+              <input type="number" min="1" placeholder="baseline days" value={customBaseline} onChange={e=>setCustomBaseline(e.target.value)} className="form-input" style={{width:90,fontSize:11,padding:'4px 7px'}}/>
+            </div>
+            <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:11,color:'var(--text-muted)'}}>
+              <input type="checkbox" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} style={{width:13,height:13,accentColor:'#6366f1'}}/>
+              Email on next run
+            </label>
           </div>
-          <div style={{display:'flex',gap:6,alignItems:'center'}}>
-            <span style={{fontSize:11,color:'var(--text-muted)'}}>Custom:</span>
-            <input type="number" min="1" placeholder="current days" value={customCurrent} onChange={e=>setCustomCurrent(e.target.value)} className="form-input" style={{width:100,fontSize:12,padding:'5px 8px'}}/>
-            <span style={{fontSize:11,color:'var(--text-muted)'}}>vs</span>
-            <input type="number" min="1" placeholder="baseline days" value={customBaseline} onChange={e=>setCustomBaseline(e.target.value)} className="form-input" style={{width:100,fontSize:12,padding:'5px 8px'}}/>
-          </div>
-          <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',marginLeft:'auto',fontSize:12,color:'var(--text-muted)'}}>
-            <input type="checkbox" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} style={{width:14,height:14,accentColor:'#6366f1'}}/>
-            Email this report to admin/staff
-          </label>
-          <button className="btn btn-ghost btn-sm" onClick={loadPreview} disabled={loading}>{loading?'Loading…':'↻ Preview'}</button>
-          <button className="btn btn-indigo btn-sm" onClick={runNow} disabled={running}>{running?'Running…':(sendEmail?'⚡ Run & Email':'⚡ Run (no email)')}</button>
-        </div>
+        )}
 
-        {msg && <div style={{marginBottom:16,fontSize:13,color: msg.startsWith('✅')?'#10b981':'#ef4444',fontWeight:600}}>{msg}</div>}
+        {msg && <div style={{marginBottom:14,fontSize:13,color: msg.startsWith('✅')?'#10b981':'#ef4444',fontWeight:600}}>{msg}</div>}
 
-        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,alignItems:'start'}}>
-          {/* Findings */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 220px',gap:16,alignItems:'start'}}>
+          {/* Main findings — 3 severity sections */}
           <div>
-            {period && (
-              <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}}>
-                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px'}}>
-                  <div style={{fontSize:20,fontWeight:800,color:'#ef4444'}}>{counts.red}</div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,letterSpacing:0.5}}>RED FLAGS</div>
-                </div>
-                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px'}}>
-                  <div style={{fontSize:20,fontWeight:800,color:'#f59e0b'}}>{counts.amber}</div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,letterSpacing:0.5}}>WATCHING</div>
-                </div>
-                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px'}}>
-                  <div style={{fontSize:20,fontWeight:800,color:'#6366f1'}}>{counts.info}</div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:600,letterSpacing:0.5}}>NOTICED</div>
-                </div>
-                {viewingPast===null && period.current_orders!=null && (
-                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px',marginLeft:'auto'}}>
-                    <div style={{fontSize:11,color:'var(--text-muted)'}}>Analyzed <strong style={{color:'var(--text)'}}>{period.current_orders}</strong> orders ({period.current_days||7}d) vs <strong style={{color:'var(--text)'}}>{period.baseline_orders}</strong> baseline ({period.baseline_days||30}d)</div>
-                  </div>
-                )}
-                {viewingPast!==null && (
-                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 16px',marginLeft:'auto',fontSize:11,color:'var(--text-muted)'}}>
-                    Viewing past report from {new Date(period.created_at).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'})}
-                  </div>
-                )}
-              </div>
-            )}
+            {loading && <div style={{textAlign:'center',padding:'40px 0',color:'var(--text-muted)',fontSize:13}}>Analyzing patterns…</div>}
 
-            {shown.length === 0 && !loading && (
+            {!loading && shown.length === 0 && (
               <div style={{textAlign:'center',padding:'40px 20px',color:'#10b981',fontWeight:700,fontSize:14,background:'var(--bg-card)',borderRadius:12,border:'1px solid var(--border)'}}>
-                ✅ No significant anomalies found. Everything's tracking within normal range.
+                ✅ No anomalies detected. Everything is tracking within normal range.
               </div>
             )}
 
-            {shown.map((f, i) => {
-              const s = SEV[f.severity] || SEV.info;
-              return (
-                <div key={i} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderLeft:`4px solid ${s.color}`,borderRadius:10,padding:'14px 18px',marginBottom:10,display:'flex',gap:12,alignItems:'flex-start'}}>
-                  {f.image && <img src={f.image} alt="" style={{width:48,height:48,borderRadius:6,objectFit:'cover',flexShrink:0,border:'1px solid var(--border)'}}/>}
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-                      <span style={{fontSize:10,fontWeight:800,color:s.color,letterSpacing:1}}>{s.label}</span>
-                      <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:600}}>{f.category}</span>
-                    </div>
-                    <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:4,lineHeight:1.4}}>{f.title}</div>
-                    <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6}} dangerouslySetInnerHTML={{__html:f.detail}}/>
-                  </div>
-                </div>
-              );
-            })}
+            {!loading && shown.length > 0 && (
+              <>
+                <SeveritySection sev="red"   items={reds}   />
+                <SeveritySection sev="amber" items={ambers} />
+                <SeveritySection sev="info"  items={infos}  />
+              </>
+            )}
           </div>
 
           {/* History sidebar */}
-          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16}}>
-            <div style={{fontWeight:700,color:'var(--text)',marginBottom:12,fontSize:13}}>📜 Past Reports</div>
-            {history.length === 0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>No reports run yet.</div>}
-            {history.map((h, i) => {
-              const red = (h.findings||[]).filter(f=>f.severity==='red').length;
-              return (
-                <button key={i} onClick={()=>showHistoryItem(i)} style={{
-                  display:'block', width:'100%', textAlign:'left', background: viewingPast===i?'var(--indigo-dim)':'transparent',
-                  border:'1px solid var(--border)', borderRadius:8, padding:'8px 10px', marginBottom:6, cursor:'pointer', fontFamily:'var(--font-family)',
-                }}>
-                  <div style={{fontSize:11,color:'var(--text)',fontWeight:600}}>{new Date(h.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
-                  <div style={{fontSize:10,color:'var(--text-muted)'}}>{(h.findings||[]).length} findings{red>0?` · ${red} red`:''}</div>
-                </button>
-              );
-            })}
+          <div>
+            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:14}}>
+              <div style={{fontWeight:700,color:'var(--text)',marginBottom:10,fontSize:12,letterSpacing:0.5,textTransform:'uppercase'}}>Past Reports</div>
+              {history.length === 0 && <div style={{fontSize:11,color:'var(--text-muted)'}}>No reports saved yet.</div>}
+              {history.map((h, i) => {
+                const red = (h.findings||[]).filter(f=>f.severity==='red').length;
+                const amb = (h.findings||[]).filter(f=>f.severity==='amber').length;
+                return (
+                  <button key={i} onClick={()=>showHistoryItem(i)} style={{
+                    display:'block', width:'100%', textAlign:'left',
+                    background: viewingPast===i ? 'var(--indigo-dim)' : 'transparent',
+                    border:'1px solid var(--border)', borderRadius:8, padding:'8px 10px',
+                    marginBottom:6, cursor:'pointer', fontFamily:'var(--font-family)',
+                  }}>
+                    <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginBottom:2}}>{new Date(h.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'2-digit'})}</div>
+                    <div style={{display:'flex',gap:6}}>
+                      {red > 0 && <span style={{fontSize:10,color:'#ef4444',fontWeight:700}}>{red} 🔴</span>}
+                      {amb > 0 && <span style={{fontSize:10,color:'#f59e0b',fontWeight:700}}>{amb} 🟡</span>}
+                      {!red && !amb && <span style={{fontSize:10,color:'var(--text-muted)'}}>✅ clean</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
