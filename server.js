@@ -12071,7 +12071,8 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
             const waMsg = `✅ *Payment Confirmed — Order ${orderName}*\n\nYou've converted to *Fully Prepaid* and saved *₹${savings}* 🎉\n\nYou paid: *₹${discountedTotal}*\nOriginal total: ₹${total.toFixed(0)}\n\n${items}\n\nNo payment needed at delivery. Your order is confirmed and will be packed soon. Thank you! 🙏`;
             await waSendToCustomer(customerPhone, waMsg);
           } else {
-            const waMsg = `✅ *Advance Received — Order ${orderName}*\n\nWe've received your advance payment of *₹${CONFIRM_FEE}* 🎉\n\n${items}\n\nYour order is now confirmed and will be handed to our vendor to pack. Remaining amount is *cash on delivery* at your door.\n\nThank you for confirming! 🙏`;
+            const remaining = Math.max(0, total - CONFIRM_FEE);
+            const waMsg = `✅ *Advance Received — Order ${orderName}*\n\nWe've received your advance payment of *₹${CONFIRM_FEE}* 🎉\n\n${items}\n\nOrder total: ₹${total.toFixed(0)}\nAdvance paid: ₹${CONFIRM_FEE}\nRemaining on delivery: *₹${remaining.toFixed(0)} (Cash)*\n\nYour order is now confirmed and will be packed soon. Thank you! 🙏`;
             await waSendToCustomer(customerPhone, waMsg);
           }
         }
