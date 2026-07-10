@@ -2432,6 +2432,22 @@
       }
     };
 
+    const removeSizeChart = async (pid) => {
+      if (!confirm('Remove size chart from this product?')) return;
+      setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),uploading:true,error:null}}));
+      try {
+        const r = await fetch(`${API}/vendor/products/${pid}/size-chart`, {
+          method:'DELETE', headers:{Authorization:`Bearer ${token}`}
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error||'Remove failed');
+        setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),uploading:false,data:null}}));
+        setMsg({type:'success',text:'Size chart removed.'});
+      } catch(e) {
+        setSizeChart(s=>({...s,[pid]:{...(s[pid]||{}),uploading:false,error:e.message}}));
+      }
+    };
+
     return (
       <div className="page">
         {msg && <div style={{marginBottom:12,padding:'10px 14px',borderRadius:7,fontSize:12,
@@ -2552,8 +2568,13 @@
                           {!sc.loading && !sc.error && sc.data?.image_url && (
                             <div style={{marginBottom:8}}>
                               <img src={sc.data.image_url} alt="Size Chart"
-                                style={{maxWidth:'100%',maxHeight:220,borderRadius:6,border:'1px solid var(--border)',objectFit:'contain'}}/>
+                                style={{maxWidth:'100%',maxHeight:220,borderRadius:6,border:'1px solid var(--border)',objectFit:'contain'}}
+                                onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='block';}}/>
+                              <div style={{display:'none',fontSize:11,color:'#f59e0b',padding:'8px',background:'rgba(245,158,11,0.1)',borderRadius:6}}>⚠️ Image failed to load — please re-upload a smaller image (under 25MP).</div>
                             </div>
+                          )}
+                          {!sc.loading && !sc.error && sc.data && !sc.data.image_url && (
+                            <div style={{fontSize:11,color:'#f59e0b',padding:'8px',background:'rgba(245,158,11,0.1)',borderRadius:6,marginBottom:8}}>⚠️ Previous upload failed (image too large). Please re-upload.</div>
                           )}
                           {!sc.loading && !sc.error && !sc.data && (
                             <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>No size chart set yet.</div>
@@ -2562,8 +2583,14 @@
                             <button onClick={()=>{ if (!scFileRefs.current[p.id]) return; scFileRefs.current[p.id].value=''; scFileRefs.current[p.id].click(); }}
                               disabled={sc.uploading}
                               style={{fontSize:10,padding:'4px 11px',borderRadius:4,border:'1px solid var(--accent)',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600}}>
-                              {sc.uploading ? '↻ Uploading…' : sc.data?.image_url ? '↑ Replace Image' : '↑ Upload Image'}
+                              {sc.uploading ? '↻ Uploading…' : sc.data ? '↑ Re-upload' : '↑ Upload Image'}
                             </button>
+                            {sc.data && (
+                              <button onClick={()=>removeSizeChart(p.id)} disabled={sc.uploading}
+                                style={{fontSize:10,padding:'4px 11px',borderRadius:4,border:'1px solid rgba(239,68,68,0.4)',background:'transparent',color:'#ef4444',cursor:'pointer',fontWeight:600}}>
+                                🗑 Remove
+                              </button>
+                            )}
                             <span style={{fontSize:10,color:'var(--text-muted)'}}>PNG, JPG, WEBP · max 10MB</span>
                             <input ref={el=>scFileRefs.current[p.id]=el} type="file" accept=".png,.jpg,.jpeg,.webp,.gif"
                               style={{display:'none'}} onChange={e=>uploadSizeChart(p.id, e.target.files[0])}/>

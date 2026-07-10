@@ -5061,6 +5061,26 @@ app.post("/vendor/products/:productId/size-chart", vendorAuth, sizeChartUpload.s
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── DELETE /vendor/products/:productId/size-chart ─────────────────────────
+app.delete("/vendor/products/:productId/size-chart", vendorAuth, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const pd = await shopifyREST(`/products/${productId}.json?fields=id,vendor`);
+    if ((pd.product?.vendor || '').toLowerCase() !== req.vendor.toLowerCase())
+      return res.status(403).json({ error: "Not your product." });
+    const mfData = await shopifyREST(`/products/${productId}/metafields.json`);
+    const SC_KEYS = ['sizechart', 'size_chart', 'size-chart', 'size chart'];
+    const mf = (mfData.metafields || []).find(m => SC_KEYS.includes((m.key || '').toLowerCase().trim()));
+    if (!mf) return res.json({ success: true, message: 'No size chart found' });
+    const token = await getAccessToken();
+    await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/metafields/${mf.id}.json`, {
+      method: 'DELETE', headers: { 'X-Shopify-Access-Token': token }
+    });
+    auditLog("vendor", "size_chart_delete", productId, { vendor: req.vendor });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── POST /vendor/orders/:shopifyId/fulfill ────────────────────────────────
 // Partially fulfills ONLY this vendor's line items — not the whole order
 app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
