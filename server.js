@@ -3268,13 +3268,14 @@ const JARVIS_TOOLS = [
     type: "function",
     function: {
       name: "get_products",
-      description: "Get product performance data. Use for: top selling products, slow movers, units sold, revenue by product.",
+      description: "Get product performance data. Use for: top selling products, slow movers, units sold, revenue by product. Can filter by vendor.",
       parameters: {
         type: "object",
         properties: {
           sort_by: { type: "string", enum: ["units","revenue"], description: "Sort by units sold or revenue" },
           limit: { type: "string", description: "Max results as a number string e.g. '10'" },
           period: { type: "string", enum: ["today","week","month","all"], description: "Time period (default all)" },
+          vendor: { type: "string", description: "Filter by vendor name (optional)" },
         },
         required: ["sort_by"],
       },
@@ -3527,9 +3528,11 @@ async function runJarvisTool(name, args, reqCache) {
 
   if (name === "get_products") {
     const os = filterByPeriod(allOrders, args.period||"all");
-    const lim = args.limit || 10;
+    const lim = parseInt(args.limit) || 10;
+    const vendorFilter = args.vendor?.toLowerCase();
     const tally = {};
     os.forEach(o=>(o.line_items||[]).forEach(li=>{
+      if(vendorFilter && (li.vendor||'').toLowerCase() !== vendorFilter) return;
       if(!tally[li.title]) tally[li.title]={name:li.title, vendor:li.vendor, units:0, revenue:0};
       tally[li.title].units   += li.quantity||1;
       tally[li.title].revenue += parseFloat(li.price||0)*(li.quantity||1);
