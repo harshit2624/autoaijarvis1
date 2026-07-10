@@ -4966,6 +4966,20 @@ app.post("/vendor/products/:productId/size-chart", vendorAuth, sizeChartUpload.s
     const allowedTypes = ['image/png','image/jpeg','image/jpg','image/webp','image/gif'];
     if (!allowedTypes.includes(req.file.mimetype)) return res.status(400).json({ error: 'Only PNG, JPG, WEBP or GIF allowed.' });
 
+    // Auto-resize if image exceeds Shopify's 25MP limit (cap at 4000px wide)
+    let fileBuffer = req.file.buffer;
+    let fileMime = req.file.mimetype;
+    try {
+      const sharp = require('sharp');
+      const meta = await sharp(fileBuffer).metadata();
+      const mp = (meta.width * meta.height) / 1_000_000;
+      if (mp > 20) {
+        fileBuffer = await sharp(fileBuffer).resize({ width: 4000, withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+        fileMime = 'image/jpeg';
+        req.file.originalname = req.file.originalname.replace(/\.[^.]+$/, '.jpg');
+      }
+    } catch (e) { console.error('Sharp resize failed, uploading original:', e.message); }
+
     const token = await getAccessToken();
 
     // Step 1: Get a staged upload URL from Shopify Files API
@@ -4982,9 +4996,9 @@ app.post("/vendor/products/:productId/size-chart", vendorAuth, sizeChartUpload.s
         variables: {
           input: [{
             filename: req.file.originalname || 'size_chart.jpg',
-            mimeType: req.file.mimetype,
+            mimeType: fileMime,
             resource: 'FILE',
-            fileSize: String(req.file.size),
+            fileSize: String(fileBuffer.length),
             httpMethod: 'POST',
           }],
         },
@@ -4997,7 +5011,7 @@ app.post("/vendor/products/:productId/size-chart", vendorAuth, sizeChartUpload.s
     // Step 2: Upload the file to the staged URL
     const formData = new (require('form-data'))();
     (target.parameters || []).forEach(p => formData.append(p.name, p.value));
-    formData.append('file', req.file.buffer, { filename: req.file.originalname || 'size_chart.jpg', contentType: req.file.mimetype });
+    formData.append('file', fileBuffer, { filename: req.file.originalname || 'size_chart.jpg', contentType: fileMime });
     const uploadRes = await fetch(target.url, { method: 'POST', body: formData, headers: formData.getHeaders() });
     if (!uploadRes.ok) throw new Error(`Staged upload failed: ${uploadRes.status}`);
 
