@@ -12054,6 +12054,30 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
       }
     } catch (e) { console.error('confirm-payment-verify email error:', e.message); }
 
+    // WhatsApp confirmation to customer
+    try {
+      const od2 = await shopifyREST(`/orders/${sid}.json?fields=name,total_price,line_items,billing_address,shipping_address,phone`);
+      const order2 = od2?.order;
+      if (order2) {
+        const customerPhone = (order2.billing_address?.phone || order2.shipping_address?.phone || order2.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+        const orderName = order2.name;
+        const total = parseFloat(order2.total_price);
+        const items = (order2.line_items || []).map(li => `• ${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} × ${li.quantity}`).join('\n');
+
+        if (customerPhone) {
+          if (isPrepaidConvert) {
+            const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+            const savings = Math.round(total - discountedTotal);
+            const waMsg = `✅ *Payment Confirmed — Order ${orderName}*\n\nYou've converted to *Fully Prepaid* and saved *₹${savings}* 🎉\n\nYou paid: *₹${discountedTotal}*\nOriginal total: ₹${total.toFixed(0)}\n\n${items}\n\nNo payment needed at delivery. Your order is confirmed and will be packed soon. Thank you! 🙏`;
+            await waSendToCustomer(customerPhone, waMsg);
+          } else {
+            const waMsg = `✅ *Advance Received — Order ${orderName}*\n\nWe've received your advance payment of *₹${CONFIRM_FEE}* 🎉\n\n${items}\n\nYour order is now confirmed and will be handed to our vendor to pack. Remaining amount is *cash on delivery* at your door.\n\nThank you for confirming! 🙏`;
+            await waSendToCustomer(customerPhone, waMsg);
+          }
+        }
+      }
+    } catch (e) { console.error('confirm-payment-verify WA error:', e.message); }
+
     res.json({ verified: true, payment_id: razorpay_payment_id });
   } catch (err) {
     console.error("❌ /track/confirm-payment-verify:", err.message);
@@ -17421,6 +17445,16 @@ async function waAdminAlert(message) {
   if (!waSocket) return;
   try { await waSocket.sendMessage(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: message }); }
   catch (e) { console.error('❌ Admin alert failed:', e.message); }
+}
+
+// Send a WhatsApp message to a customer by their phone number (Indian, 10-digit)
+async function waSendToCustomer(phone, message) {
+  if (!waSocket || !waConnected) return;
+  if (!phone) return;
+  const digits = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10) return;
+  try { await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: message }); }
+  catch (e) { console.error('❌ waSendToCustomer failed:', e.message); }
 }
 
 // ── Admin WhatsApp AI — routes admin messages to Jarvis with waMode formatting ─
