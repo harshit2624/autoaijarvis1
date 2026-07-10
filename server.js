@@ -10291,6 +10291,32 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
     const newProduct = created.product;
     if (!newProduct) throw new Error("Failed to create product on CrosCrow store.");
 
+    // Publish to all sales channels via GraphQL publishablePublish
+    try {
+      const _pubToken = await getAccessToken();
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/graphql.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': _pubToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
+            publishablePublish(id: $id, input: $input) { userErrors { field message } }
+          }`,
+          variables: {
+            id: `gid://shopify/Product/${newProduct.id}`,
+            input: [
+              { publicationId: 'gid://shopify/Publication/159426838659' }, // Online Store
+              { publicationId: 'gid://shopify/Publication/159426904195' }, // Point of Sale
+              { publicationId: 'gid://shopify/Publication/160690405507' }, // Facebook & Instagram
+              { publicationId: 'gid://shopify/Publication/161506197635' }, // Pinterest
+              { publicationId: 'gid://shopify/Publication/162034155651' }, // Google & YouTube
+              { publicationId: 'gid://shopify/Publication/164952572035' }, // croscrowofficial<>fastrr
+              { publicationId: 'gid://shopify/Publication/167064567939' }, // Inbox
+            ]
+          }
+        })
+      });
+    } catch (e) { console.error('Sales channel publish error:', e.message); }
+
     // Save mappings for each variant
     for (let i = 0; i < vProduct.variants.length; i++) {
       const vVariant = vProduct.variants[i];
@@ -16691,6 +16717,22 @@ app.post('/admin/support/insights/run', adminAuth, async (req, res) => {
   runSupportInsightAnalysis().catch(() => {});
 });
 
+// ── Bot confusion log ──────────────────────────────────────────────────────
+app.get('/admin/support/confusion-log', adminAuth, async (req, res) => {
+  const logs = await mdb.collection('wa_confusion_log')
+    .find({}).sort({ logged_at: -1 }).limit(100).toArray();
+
+  // Aggregate by trigger rule and keyword
+  const byRule = {};
+  const byKeyword = {};
+  for (const l of logs) {
+    byRule[l.trigger_rule] = (byRule[l.trigger_rule] || 0) + 1;
+    if (l.repeated_keyword) byKeyword[l.repeated_keyword] = (byKeyword[l.repeated_keyword] || 0) + 1;
+  }
+
+  res.json({ total: logs.length, by_rule: byRule, by_keyword: byKeyword, recent: logs.slice(0, 20) });
+});
+
 // Schedule insight analysis every 6 hours
 setTimeout(() => {
   runSupportInsightAnalysis();
@@ -17424,14 +17466,42 @@ async function waDelayReason(shopifyOrderId) {
   return { reason: vs.delay_reason, eta: vs.delay_resolution_date || null };
 }
 
-// ── Escalate to human ──────────────────────────────────────────────────────
+// ── Escalate to human + pause bot for 12 hours ────────────────────────────
 async function waTalkToHuman(sock, sender, chat, phone, context) {
   await waAdminAlert(`👤 *Human Support Requested*\n\nCustomer: +91${phone}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
   const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
   await sock.sendMessage(sender, { text: msg });
   await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
-  await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { needs_human: true, updated_at: new Date().toISOString() } });
+  const pauseUntil = Date.now() + 12 * 60 * 60 * 1000;
+  await mdb.collection('support_chats').updateOne(
+    { _id: chat._id },
+    { $set: { needs_human: true, bot_paused_until: pauseUntil, confused_count: 0, updated_at: new Date().toISOString() } }
+  );
   await waSessionClear(sender);
+}
+
+// ── Log bot confusion insight for analysis ────────────────────────────────
+async function waLogConfusionInsight(chat, phone, customerText, botReply, triggerRule, stats) {
+  if (!mdb) return;
+  try {
+    await mdb.collection('wa_confusion_log').insertOne({
+      chat_id: String(chat._id),
+      customer_phone: phone,
+      trigger_rule: triggerRule,          // 'message_count' | 'repeated_keyword' | 'time_limit'
+      repeated_keyword: stats.repeatedKeyword || null,
+      customer_text: customerText.slice(0, 300),
+      bot_reply_preview: botReply.slice(0, 300),
+      bot_message_count: stats.botMessages,
+      customer_message_count: stats.customerMessages,
+      chat_age_minutes: stats.chatAgeMinutes,
+      logged_at: new Date().toISOString(),
+    });
+    // Also tag the support chat so it shows in insights panel
+    await mdb.collection('support_chats').updateOne(
+      { _id: chat._id },
+      { $addToSet: { tags: 'bot_confused' }, $set: { updated_at: new Date().toISOString() } }
+    );
+  } catch (e) { console.error('waLogConfusionInsight error:', e.message); }
 }
 
 // ── Quick reply menus ──────────────────────────────────────────────────────
@@ -17574,6 +17644,13 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       }
       await waSessionClear(sender);
       return true;
+
+    case 'offer_human':
+      if (num === 1) {
+        await waTalkToHuman(sock, sender, chat, phone, 'Customer pressed 1 to talk to human');
+        return true;
+      }
+      return false;
 
     default:
       return false; // no active menu — let LLM handle it
@@ -17827,6 +17904,31 @@ async function startBaileysBot() {
             chat.customer_phone = phone;
           }
 
+          // ── Bot pause check (12h after human handoff) ─────────────────
+          const RESUME_KEYWORDS = /\b(track|return|exchange|order|status)\b/i;
+          const pauseUntil = chat.bot_paused_until || 0;
+          if (pauseUntil > Date.now()) {
+            if (!RESUME_KEYWORDS.test(text)) {
+              // Still paused — silently ignore
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              continue;
+            }
+            // Resume bot on core keyword
+            await mdb.collection('support_chats').updateOne(
+              { _id: chat._id },
+              { $unset: { bot_paused_until: '' }, $set: { updated_at: new Date().toISOString() } }
+            );
+            chat.bot_paused_until = 0;
+          }
+
+          // ── "Talk to human" explicit request ─────────────────────────
+          const HUMAN_REQUEST = /\b(talk to human|human|agent|real person|speak to (someone|a person)|customer care|support team)\b/i;
+          if (HUMAN_REQUEST.test(text)) {
+            await SC.addMessage(chat._id, { sender: 'customer', text });
+            await waTalkToHuman(sock, sender, chat, phone, `Customer explicitly asked: "${text.slice(0, 100)}"`);
+            continue;
+          }
+
           const saveAndSend = async (replyText, meta = null) => {
             // Fix markdown: LLM uses **bold** but WhatsApp only renders *bold*
             let cleanText = replyText.replace(/\*\*(.+?)\*\*/g, '*$1*');
@@ -17926,9 +18028,46 @@ async function startBaileysBot() {
             continue;
           }
 
-          // ── 8. Default: send LLM reply + links ────────────────────────
+          // ── 8. Default: send LLM reply + Safety Net (A + B + D) ──────
           const links = waLinksFromMeta(meta);
           await saveAndSend(reply + links, meta);
+
+          // Reload fresh chat state for accurate counts
+          const freshChat = await mdb.collection('support_chats').findOne({ _id: chat._id });
+          const allMessages = await SC.messages(chat._id);
+          const botMessages = allMessages.filter(m => m.sender === 'assistant');
+          const customerMessages = allMessages.filter(m => m.sender === 'customer');
+          const chatStartedAt = new Date(freshChat.created_at || Date.now()).getTime();
+          const chatAgeMinutes = (Date.now() - chatStartedAt) / 60000;
+
+          // Rule B: customer repeated same keyword twice with no resolution
+          const lastTwoCustomer = customerMessages.slice(-2).map(m => (m.text || '').toLowerCase());
+          const STICKY_KEYWORDS = ['refund', 'return', 'exchange', 'cancel', 'size', 'wrong', 'damaged', 'missing', 'delay', 'not received', 'not delivered'];
+          const repeatedKeyword = STICKY_KEYWORDS.find(kw =>
+            lastTwoCustomer.length === 2 && lastTwoCustomer.every(t => t.includes(kw))
+          );
+
+          // Rule A: 4+ bot messages sent and no resolution (no tracking_card, no resolved tag)
+          const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved');
+          const rulA = botMessages.length >= 4 && noResolution;
+
+          // Rule D: 5+ minutes in chat, 3+ messages, no order found yet
+          const ruleD = chatAgeMinutes >= 5 && botMessages.length >= 3 && noResolution && !freshChat.tags?.includes('order_found');
+
+          const safetyNetTrigger = repeatedKeyword ? 'repeated_keyword' : rulA ? 'message_count' : ruleD ? 'time_limit' : null;
+
+          if (safetyNetTrigger) {
+            // Log confusion insight before handing off
+            await waLogConfusionInsight(chat, phone, text, reply, safetyNetTrigger, {
+              botMessages: botMessages.length,
+              customerMessages: customerMessages.length,
+              chatAgeMinutes: Math.round(chatAgeMinutes),
+              repeatedKeyword: repeatedKeyword || null,
+            });
+
+            await sock.sendMessage(sender, { text: `If I'm not being helpful enough, press *1* to connect with our support team directly 👇\n\n1️⃣ Talk to a human\n\nOr call us: 📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
+            await waSessionSet(sender, { menu: 'offer_human' });
+          }
 
         } catch (err) {
           console.error('❌ WhatsApp bot error:', err.message);
