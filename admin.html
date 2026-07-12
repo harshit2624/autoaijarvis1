@@ -4746,12 +4746,15 @@
     const [gstTo,       setGstTo]       = useState('');
     const [gstLoading,  setGstLoading]  = useState(false);
     const [gstMsg,      setGstMsg]      = useState(null);
+    const [invVendorFilter, setInvVendorFilter] = useState('');
+    const [invStatusFilter, setInvStatusFilter] = useState('');
 
-    const loadSummary = (period) => {
+    const loadSummary = (period, forceRefresh) => {
       setSumLoading(true);
       const p = period !== undefined ? period : sumPeriod;
-      const qs = p ? `?from=${p.from}&to=${p.to}` : '';
-      fetch(`${API}/admin/delivered-summary${qs}`,{headers:{Authorization:`Bearer ${token}`}})
+      let qs = p ? `?from=${p.from}&to=${p.to}` : '?';
+      if (forceRefresh) qs += (qs==='?'?'':'&') + 'refresh=1';
+      fetch(`${API}/admin/delivered-summary${qs.replace(/^\?$/,'')}`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setSummary(d)).catch(()=>{}).finally(()=>setSumLoading(false));
     };
 
@@ -4870,40 +4873,75 @@
                   <input className="form-input" type="date" style={{fontSize:11,padding:'4px 8px',width:130}}
                     value={sumPeriod?.to||''} onChange={e=>{ const p={from:sumPeriod?.from||daysAgo(29),to:e.target.value}; setSumPeriod(p); loadSummary(p); }}
                     placeholder="To"/>
-                  <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod)} style={{fontSize:11}} disabled={sumLoading}>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod)} style={{fontSize:11}} disabled={sumLoading} title="Reload (cached for 5 min)">
                     {sumLoading?<span className="spin">↻</span>:'↻'}
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod,true)} style={{fontSize:11,color:'var(--orange)'}} disabled={sumLoading} title="Force refresh (bypasses cache)">
+                    ⟳ Live
                   </button>
                   {sumPeriod && <span style={{fontSize:10,color:'var(--text-muted)'}}>{sumPeriod.from} → {sumPeriod.to}</span>}
                 </div>
               );
             })()}
 
-            {/* Summary stat cards */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
-              {[
-                {label:'Gross Sales',              value:fmt(t.gross),              color:'indigo'},
-                {label:'Prepaid Discount',         value:fmt(t.prepaidDiscount),    color:'yellow'},
-                {label:'Commissionable',           value:fmt(t.commissionableSale), color:'text'},
-                {label:'Commission',               value:fmt(t.commission),         color:'orange'},
-                {label:'GST (18%)',                value:fmt(t.gst),                color:'orange'},
-                {label:'Advance Adjusted',         value:fmt(t.advance),            color:'green'},
-                {label:'Prepaid Collected by CC',  value:fmt(t.prepaidCollected),   color:'cyan'},
-                {label:'COD Commission Due to CC', value:fmt(t.codCommission),      color:'yellow'},
-                {label:'Total Settled',            value:fmt(t.totalSettled),       color:'green'},
-                {label:'Pending Settlement',       value:fmt(t.pendingSettlement),  color: (t.pendingSettlement||0)<0?'green':'red'},
-              ].map(c=>(
-                <div key={c.label} className="card" style={{padding:'12px 14px'}}>
-                  <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{c.label}</div>
-                  <div style={{fontSize:17,fontWeight:700,color:`var(--${c.color})`}}>{sumLoading?'…':c.value}</div>
+            {/* ── Financial Command Center ── */}
+            {(()=>{
+              const collectFromVendors = (summary?.vendors||[]).filter(v=>v.pendingSettlement>0).reduce((s,v)=>s+v.pendingSettlement,0);
+              const payToVendors       = (summary?.vendors||[]).filter(v=>v.pendingSettlement<0).reduce((s,v)=>s+Math.abs(v.pendingSettlement),0);
+              const netPos             = collectFromVendors - payToVendors;
+              return (
+                <div style={{marginBottom:20}}>
+                  {/* Top action row: what you need to DO */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:12}}>
+                    <div className="card" style={{padding:'16px 18px',borderLeft:'3px solid #ef4444',background:'rgba(239,68,68,0.04)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:6}}>Collect from Vendors</div>
+                      <div style={{fontSize:24,fontWeight:800,color:'#ef4444',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':`₹${collectFromVendors.toFixed(2)}`}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>
+                        {sumLoading?'…':`${(summary?.vendors||[]).filter(v=>v.pendingSettlement>0).length} vendors owe you`}
+                      </div>
+                    </div>
+                    <div className="card" style={{padding:'16px 18px',borderLeft:'3px solid var(--green)',background:'rgba(16,185,129,0.04)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:6}}>Pay to Vendors</div>
+                      <div style={{fontSize:24,fontWeight:800,color:'var(--green)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':`₹${payToVendors.toFixed(2)}`}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>
+                        {sumLoading?'…':`${(summary?.vendors||[]).filter(v=>v.pendingSettlement<0).length} vendors waiting for payment`}
+                      </div>
+                    </div>
+                    <div className="card" style={{padding:'16px 18px',borderLeft:`3px solid ${netPos>=0?'#ef4444':'var(--green)'}`,background:netPos>=0?'rgba(239,68,68,0.04)':'rgba(16,185,129,0.04)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:6}}>Net Position</div>
+                      <div style={{fontSize:24,fontWeight:800,color:netPos>=0?'#ef4444':'var(--green)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':`${netPos>=0?'+':'-'}₹${Math.abs(netPos).toFixed(2)}`}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>{netPos>=0?'Net inflow expected':'Net outflow expected'}</div>
+                    </div>
+                  </div>
+                  {/* Revenue & earnings breakdown */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10}}>
+                    {[
+                      {label:'Gross Sales',              value:fmt(t.gross),              color:'indigo', tip:'Total revenue from all delivered orders'},
+                      {label:'Commission Earned',        value:fmt(t.commission),         color:'orange', tip:'CrosCrow commission on all delivered orders'},
+                      {label:'GST on Commission',        value:fmt(t.gst),                color:'orange', tip:'18% GST on commission (your tax liability)'},
+                      {label:'Prepaid Collected by CC',  value:fmt(t.prepaidCollected),   color:'cyan',   tip:'Prepaid order money sitting with CrosCrow'},
+                      {label:'COD Commission Due',       value:fmt(t.codCommission),      color:'yellow', tip:'Commission + GST to collect on delivery for COD orders'},
+                      {label:'Advance Adjusted',         value:fmt(t.advance),            color:'green',  tip:'₹99 advances collected, deducted from vendor dues'},
+                      {label:'Total Settled (Paid)',     value:fmt(t.totalSettled),       color:'green',  tip:'Amount already paid/settled via invoices'},
+                    ].map(c=>(
+                      <div key={c.label} className="card" style={{padding:'10px 12px'}} title={c.tip}>
+                        <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:4,lineHeight:1.3}}>{c.label}</div>
+                        <div style={{fontSize:15,fontWeight:700,color:`var(--${c.color})`,fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':c.value}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })()}
 
             {/* Per-vendor table */}
             <div className="card">
               <div className="card-header">
                 <span className="card-title">Per-Vendor Breakdown</span>
-                <button className="btn btn-ghost btn-sm" onClick={loadSummary}>↻ Refresh</button>
+                <div style={{display:'flex',gap:6}}>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary()} style={{fontSize:11}}>↻ Refresh</button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod,true)} style={{fontSize:11,color:'var(--orange)'}}>⟳ Live</button>
+                </div>
               </div>
               <div className="tbl-wrap">
                 <table>
@@ -5043,9 +5081,32 @@
               </div>
             </div>
 
-            <div style={{marginTop:10,fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>
-              Live calculation from all delivered orders. Totals update when order stages change.
-              To generate an invoice, switch to the Settlement Invoices tab.
+            <div style={{marginTop:16,display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:4}}>
+              <div className="card" style={{padding:'12px 16px',borderLeft:'3px solid var(--cyan)'}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>Prepaid Orders</div>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Money with CrosCrow</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--cyan)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.prepaidCollected)}</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Prepaid Discount Given</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--yellow)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.prepaidDiscount)}</span>
+                </div>
+              </div>
+              <div className="card" style={{padding:'12px 16px',borderLeft:'3px solid var(--green)'}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--green)',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>COD Orders</div>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Commission to collect on delivery</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--yellow)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.codCommission)}</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Advance payments collected</span>
+                  <span style={{fontSize:13,fontWeight:700,color:'var(--green)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.advance)}</span>
+                </div>
+              </div>
+            </div>
+            <div style={{marginTop:8,fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>
+              Live calculation from all delivered orders. Totals update when order stages change. • Cached for 5 min — use ⟳ Live to force refresh.
             </div>
           </div>
         )}
@@ -5185,16 +5246,48 @@
             </div>
 
             <div className="card">
-              <div className="card-header"><span className="card-title">All Invoices</span><button className="btn btn-ghost btn-sm" onClick={loadInvoices}>↻ Refresh</button></div>
+              <div className="card-header">
+                <span className="card-title">All Invoices</span>
+                <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                  <select className="form-select" style={{fontSize:11,padding:'4px 8px',height:30,minWidth:150}}
+                    value={invVendorFilter} onChange={e=>setInvVendorFilter(e.target.value)}>
+                    <option value="">All Vendors</option>
+                    {[...new Set(settlements.map(s=>s.vendor_name))].sort().map(v=>(
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <select className="form-select" style={{fontSize:11,padding:'4px 8px',height:30,minWidth:110}}
+                    value={invStatusFilter} onChange={e=>setInvStatusFilter(e.target.value)}>
+                    <option value="">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                  <button className="btn btn-ghost btn-sm" onClick={loadInvoices} style={{fontSize:11}}>↻ Refresh</button>
+                </div>
+              </div>
+              {/* Invoice summary for filtered view */}
+              {(()=>{
+                const filtered = settlements.filter(s=>(!invVendorFilter||s.vendor_name===invVendorFilter)&&(!invStatusFilter||s.status===invStatusFilter));
+                const pendingTotal = filtered.filter(s=>s.status==='pending').reduce((a,s)=>a+(s.net_payable||0),0);
+                const paidTotal    = filtered.filter(s=>s.status==='paid').reduce((a,s)=>a+(s.net_payable||0),0);
+                if (!filtered.length) return null;
+                return (
+                  <div style={{display:'flex',gap:16,padding:'10px 16px',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
+                    <span style={{fontSize:11,color:'var(--text-muted)'}}>Showing <strong style={{color:'var(--text)'}}>{filtered.length}</strong> invoice{filtered.length!==1?'s':''}</span>
+                    {filtered.filter(s=>s.status==='pending').length>0 && <span style={{fontSize:11}}><span style={{color:'var(--yellow)',fontWeight:700}}>Pending: ₹{Math.abs(pendingTotal).toFixed(2)}</span> <span style={{color:'var(--text-muted)',fontSize:10}}>across {filtered.filter(s=>s.status==='pending').length} invoice{filtered.filter(s=>s.status==='pending').length!==1?'s':''}</span></span>}
+                    {filtered.filter(s=>s.status==='paid').length>0 && <span style={{fontSize:11}}><span style={{color:'var(--green)',fontWeight:700}}>Settled: ₹{Math.abs(paidTotal).toFixed(2)}</span></span>}
+                  </div>
+                );
+              })()}
               <div className="tbl-wrap">
                 <table>
                   <thead><tr><th>Invoice No</th><th>Vendor</th><th>Period</th><th>Orders</th><th>Commission</th><th>GST</th><th>Adjustments</th><th>Net Payable</th><th>Status</th><th>Actions</th></tr></thead>
                   <tbody>
                     {invLoading ? Array.from({length:6}).map((_,i)=><SkelRow key={i} cols={10}/>) :
-                     settlements.length===0 ? (
-                       <tr><td colSpan={10}><div className="empty"><div className="empty-icon">🧾</div><div className="empty-title">No invoices yet</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Generate your first invoice above.</div></div></td></tr>
+                     settlements.filter(s=>(!invVendorFilter||s.vendor_name===invVendorFilter)&&(!invStatusFilter||s.status===invStatusFilter)).length===0 ? (
+                       <tr><td colSpan={10}><div className="empty"><div className="empty-icon">🧾</div><div className="empty-title">No invoices{invVendorFilter?` for ${invVendorFilter}`:''}</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Generate your first invoice above.</div></div></td></tr>
                      ) :
-                     settlements.map(s=>{
+                     settlements.filter(s=>(!invVendorFilter||s.vendor_name===invVendorFilter)&&(!invStatusFilter||s.status===invStatusFilter)).map(s=>{
                        const isCredit = s.net_payable < 0;
                        const hasAdj   = (s.extra_discount||0)+(s.shipping_adjustment||0)+(s.extra_advance||0) !== 0;
                        return (

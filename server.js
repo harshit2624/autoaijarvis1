@@ -6658,20 +6658,51 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/delivered-summary ─────────────────────────────────────────
+const _delivSummaryCache = {}; // { key: { data, ts } }
 app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
   try {
-    const { from, to } = req.query;
+    const { from, to, refresh } = req.query;
+    const cacheKey = `${from||''}__${to||''}`;
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+    if (!refresh && _delivSummaryCache[cacheKey] && (Date.now() - _delivSummaryCache[cacheKey].ts) < CACHE_TTL) {
+      return res.json(_delivSummaryCache[cacheKey].data);
+    }
     // Filter by order creation date — period represents when orders were placed
-    const allOrders = await fetchAllOrders("any", from ? from + "T00:00:00Z" : "2020-01-01T00:00:00Z", to ? to + "T23:59:59Z" : null);
-    const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const [allOrders, metas, vProfiles, vConfigs, allProductRules] = await Promise.all([
+      fetchAllOrders("any", from ? from + "T00:00:00Z" : "2020-01-01T00:00:00Z", to ? to + "T23:59:59Z" : null),
+      mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
+      VC.all(),
+      mdb.collection('product_commission_rules').find({}, { projection: { _id: 0 } }).toArray(),
+    ]);
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray();
-    const vConfigs  = await VC.all();
     const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
     const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+    // Build in-memory product rules lookup: { vendor_name: { by_product_id: {}, by_sku: {} } }
+    const productRulesMap = {};
+    for (const r of allProductRules) {
+      if (!productRulesMap[r.vendor_name]) productRulesMap[r.vendor_name] = { byProduct: {}, bySku: {} };
+      if (r.product_id) productRulesMap[r.vendor_name].byProduct[String(r.product_id)] = r;
+      if (r.sku)        productRulesMap[r.vendor_name].bySku[r.sku] = r;
+    }
+    const findProductRuleFast = (vendor, product_id, sku) => {
+      const vm = productRulesMap[vendor];
+      if (!vm) return null;
+      if (product_id && vm.byProduct[String(product_id)]) return vm.byProduct[String(product_id)];
+      if (sku && vm.bySku[sku]) return vm.bySku[sku];
+      return null;
+    };
+
+    // Load all settlement data + penalties + vendor stages in parallel
+    const [allSettlDocs, allSettlOrders, allConfirmedPenalties, invoicedPenIds, allVendorStages] = await Promise.all([
+      mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, _id: 0 } }).toArray(),
+      mdb.collection('settlement_orders').find({}, { projection: { settlement_id: 1, shopify_order_id: 1, _id: 0 } }).toArray(),
+      mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray().then(r => new Set(r.map(p => p.penalty_id))),
+      mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray(),
+    ]);
 
     // Aggregate settled amounts per vendor from paid invoices
-    const allSettlDocs = await mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, _id: 0 } }).toArray();
     const settledMapRaw = {};
     const settlByIdMap = {}; // { settlId: { vendor_name, invoice_no, status } }
     allSettlDocs.forEach(s => {
@@ -6679,7 +6710,6 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       settlByIdMap[s.id] = { vendor_name: s.vendor_name, invoice_no: s.invoice_no, status: s.status };
     });
     // Build per-vendor, per-order invoice lookup from settlement_orders
-    const allSettlOrders = await mdb.collection('settlement_orders').find({}, { projection: { settlement_id: 1, shopify_order_id: 1, _id: 0 } }).toArray();
     const invoiceOrderMap = {}; // { vendor: { orderId: { invoice_no, status } } }
     allSettlOrders.forEach(so => {
       const s = settlByIdMap[so.settlement_id];
@@ -6689,21 +6719,15 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     });
     const settledMap = Object.fromEntries(Object.entries(settledMapRaw).map(([k,v]) => [k, parseFloat(v.toFixed(2))]));
 
-    // Load confirmed penalties per vendor (not yet invoiced = not in any settlement_penalties)
-    const invoicedPenaltyIds = new Set(
-      (await mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray()).map(p => p.penalty_id)
-    );
-    const allConfirmedPenalties = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray();
-    const pendingPenaltyMap = {}; // { vendor_name: totalPendingPenalty }
+    // Pending penalties per vendor (confirmed but not yet invoiced)
+    const pendingPenaltyMap = {};
     allConfirmedPenalties.forEach(p => {
-      if (!invoicedPenaltyIds.has(p.id)) {
+      if (!invoicedPenIds.has(p.id)) {
         pendingPenaltyMap[p.vendor_name] = (pendingPenaltyMap[p.vendor_name] || 0) + (p.penalty_amount || 0);
       }
     });
 
     const vendorMap = {};
-    // Load all per-vendor stage overrides (include updated_at for date filtering)
-    const allVendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
     const allVendorStageMap = {}; // { shopify_id: { vendor_name: { stage, updated_at } } }
     allVendorStages.forEach(r => {
       if (!allVendorStageMap[r.shopify_id]) allVendorStageMap[r.shopify_id] = {};
@@ -6748,8 +6772,8 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
         vendorMap[vendor].orderDetails[String(o.id)].items.push(`${li.name} x${li.quantity||1}`);
         const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
 
-        // Check for product-level commission rule
-        const productRule = await findProductRule(vendor, li.product_id, li.sku);
+        // Check for product-level commission rule (in-memory, no DB query per item)
+        const productRule = findProductRuleFast(vendor, li.product_id, li.sku);
         let calc;
         if (productRule) {
           calc = calcProductCommission(productRule, li.price, li.quantity || 1, payType);
@@ -6827,7 +6851,9 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
 
     Object.keys(totals).forEach(k => { if (typeof totals[k] === 'number') totals[k] = parseFloat(totals[k].toFixed(2)); });
 
-    res.json({ vendors, totals });
+    const result = { vendors, totals };
+    _delivSummaryCache[cacheKey] = { data: result, ts: Date.now() };
+    res.json(result);
   } catch (err) {
     console.error("❌ /admin/delivered-summary:", err.message);
     res.status(500).json({ error: err.message });
