@@ -12827,13 +12827,14 @@ async function applyShipSagarTag(shopifyId, desc) {
 function shipsagarStatusToStage(desc) {
   if (!desc) return null;
   const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
-  if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated') || s.includes('delivered seller') || s.includes('delivered to seller')) return 'rto';
+  // RTO — check before 'delivered' to avoid DELIVERED_SELLER false positive
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
-  if (s.includes('out for delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held')) return 'ofd';
-  if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed')) return 'transit';
+  if (s.includes('out for delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held') || s.includes('otp not shared') || s.includes('cancelled by consignee')) return 'ofd';
+  if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed') || s.includes('delivery delayed') || s.includes('reached dest')) return 'transit';
   if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting')) return 'transit';
-  if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received')) return 'pickup';
+  if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received') || s === 'pickup' || s.includes('waiting pickup') || s.includes('waiting for pickup') || s.includes('out to p') || s.includes('not picked')) return 'pickup';
   return null;
 }
 
