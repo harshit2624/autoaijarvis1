@@ -233,12 +233,15 @@ const OM = {
 };
 
 const OVS = {
-  async upsert(shopify_id, vendor_name, fields) {
+  async upsert(shopify_id, vendor_name, fields, { respectManualOverride = false } = {}) {
     const sid = String(shopify_id);
     const existing = await mdb.collection('order_vendor_stage').findOne(
       { shopify_id: sid, vendor_name },
-      { projection: { stage: 1, dispatched_at: 1, stage_history: 1, _id: 0 } }
+      { projection: { stage: 1, dispatched_at: 1, stage_history: 1, manually_overridden: 1, _id: 0 } }
     );
+
+    // If admin has manually locked this vendor's stage, automated systems must not overwrite it
+    if (respectManualOverride && existing?.manually_overridden) return;
 
     // Capture dispatch timestamp the first time an order moves from a
     // pre-dispatch stage (new/confirmed/partial) into a dispatched stage.
@@ -5289,21 +5292,15 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
     const awb = vs?.awb || '';
     if (!awb) return res.json({ status: '', awb: '', message: 'No AWB found for your shipment.' });
 
-    const ss = await shipsagarTrackShipment(awb);
-    if (!ss) return res.json({ status: '', awb, message: 'Tracking not configured.' });
+    const result = await syncShipSagarStage(shopifyId, req.vendor, awb);
+    if (!result) return res.json({ status: '', awb, message: 'Tracking not configured.' });
 
-    if (ss.found && ss.history?.length) {
-      const latest = ss.history[ss.history.length - 1];
-      const status = latest.ActionDescription || '';
-      const newStage = shipsagarStatusToStage(status);
-      const now = new Date().toISOString();
-      if (newStage) await OVS.upsert(shopifyId, req.vendor, { stage: newStage, updated_at: now });
-      await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: now });
-      applyShipSagarTag(shopifyId, status).catch(() => {});
-      return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+    if (result.history?.length) {
+      const status = result.desc;
+      return res.json({ status, awb, source: 'shipsagar', history: result.history.slice(-5), tag: shipsagarDescToTag(status) });
     }
 
-    if (ss.found) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
+    if (result !== null) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
 
     // Not on ShipSagar — push it
     const [soData] = await Promise.all([
@@ -6150,7 +6147,7 @@ app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res)
       const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
       const newWarning   = fulfilledStages.includes(stage) ? 0 : (existing?.warning_sent || 0);
       const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
-      await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty });
+      await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty, manually_overridden: true });
     }
   } catch(e) { console.error('vendor stage sync error:', e.message); }
 
@@ -6269,7 +6266,7 @@ app.put("/admin/orders/:id/vendor-stage", requirePermission('orders'), async (re
   const newWarning   = fulfilledStages.includes(stage) ? 0 : (['confirmed','partial'].includes(stage) ? 0 : (existing?.warning_sent || 0));
   const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
 
-  await OVS.upsert(id, vendor_name, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty });
+  await OVS.upsert(id, vendor_name, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty, manually_overridden: true });
   auditLog("admin", "vendor_stage_change", id, { vendor_name, stage });
   res.json({ success: true, vendor_name, stage });
 });
@@ -8914,20 +8911,13 @@ app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'),
     const so2 = soData2?.order || {};
 
     for (const vs of allVendorStages) {
-      const ss = await shipsagarTrackShipment(vs.awb);
-      if (ss?.found && ss.history?.length) {
-        const latest = ss.history[ss.history.length - 1];
-        const status = latest.ActionDescription || '';
-        const newStage = shipsagarStatusToStage(status);
-        if (newStage && vs.stage !== newStage) {
-          await OVS.upsert(shopifyId, vs.vendor_name, { stage: newStage, updated_at: now });
-        }
-        await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: now });
-        applyShipSagarTag(shopifyId, status).catch(() => {});
+      const result = await syncShipSagarStage(shopifyId, vs.vendor_name, vs.awb);
+      if (result?.history?.length) {
+        const status = result.desc;
         latestOverallStatus = status;
         latestOverallTag = shipsagarDescToTag(status);
-        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status, stage: newStage || vs.stage, history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
-      } else if (ss?.found) {
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status, stage: result.newStage || vs.stage, history: result.history.slice(-5), tag: shipsagarDescToTag(status) });
+      } else if (result) {
         vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'No events yet.' });
       } else {
         shipsagarPushShipment({ awb: vs.awb, courierCode: vs.courier || '', orderNo: so2.name || shopifyId, customerName: ((so2.shipping_address?.first_name||'') + ' ' + (so2.shipping_address?.last_name||'')).trim(), email: so2.email || '', mobileNo: (so2.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
@@ -12934,16 +12924,46 @@ async function shipsagarTrackShipment(awb) {
   } catch { return { found: false }; }
 }
 
+// ── Single source of truth for ShipSagar → OVS sync ─────────────────────
+// Call this from anywhere (cron, admin refresh, vendor track, public track).
+// ShipSagar is authoritative for delivery status — if it says delivered, OVS
+// becomes delivered regardless of what Shopify shows.
+// Respects manually_overridden: admin-locked stages are never overwritten.
+async function syncShipSagarStage(shopifyId, vendorName, awb) {
+  const sid = String(shopifyId);
+  const ss = await shipsagarTrackShipment(awb);
+  if (!ss?.found || !ss.history?.length) return null;
+
+  const latest = ss.history[ss.history.length - 1];
+  const desc = latest.ActionDescription || ss.currentStatus || '';
+  const newStage = shipsagarStatusToStage(desc);
+  const now = new Date().toISOString();
+
+  // Always update delivery_status on order_meta — no lock needed here, it's just display
+  await OM.upsert(sid, { delivery_status: desc, delivery_status_updated_at: now });
+
+  // Apply ShipSagar tag to Shopify order
+  if (desc) applyShipSagarTag(sid, desc).catch(() => {});
+
+  // Write to OVS — ShipSagar wins over Shopify, but not over a manual admin override
+  if (newStage) {
+    await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true });
+    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage });
+  }
+
+  return { desc, newStage, history: ss.history };
+}
+
 async function shipsagarTrackingCron() {
   const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [] };
   try {
     const creds = await getShipSagarCreds();
     if (!creds?.api_key) { runLog.message = 'ShipSagar not configured.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
 
-    // Only orders with AWB updated/created after 3 May 2026
-    const TRACK_FROM = new Date('2026-05-03T00:00:00.000Z').toISOString();
+    // All OVS records with an AWB that aren't in a terminal stage — no date gate,
+    // catches all historical orders that may have been missed by earlier cron runs
     const activeStages = await mdb.collection('order_vendor_stage').find(
-      { stage: { $nin: ['new', 'cancelled'] }, awb: { $exists: true, $ne: '' }, updated_at: { $gte: TRACK_FROM } },
+      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'new'] }, awb: { $exists: true, $ne: '' }, manually_overridden: { $ne: true } },
       { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
     ).toArray();
 
@@ -12960,28 +12980,17 @@ async function shipsagarTrackingCron() {
 
     for (const rec of toCheck) {
       try {
-        const ss = await shipsagarTrackShipment(rec.awb);
-        if (!ss?.found || !ss.history?.length) { runLog.skipped++; continue; }
+        const prevStage = rec.stage;
+        const result = await syncShipSagarStage(rec.shopify_id, rec.vendor_name, rec.awb);
+        if (!result) { runLog.skipped++; continue; }
 
-        const latest = ss.history[ss.history.length - 1];
-        const desc = latest.ActionDescription || '';
+        const { desc, newStage } = result;
         const tag = shipsagarDescToTag(desc);
-        const newStage = shipsagarStatusToStage(desc);
-        const now = new Date().toISOString();
+        if (tag) runLog.tagged++;
 
-        // Always update delivery_status and apply tag
-        await OM.upsert(rec.shopify_id, { delivery_status: desc, delivery_status_updated_at: now });
-        if (tag) {
-          applyShipSagarTag(rec.shopify_id, desc).catch(() => {});
-          runLog.tagged++;
-        }
-
-        // Update stage only if it changed
-        if (newStage && rec.stage !== newStage) {
-          await OVS.upsert(rec.shopify_id, rec.vendor_name, { stage: newStage, updated_at: now });
-          auditLog('cron', 'shipsagar_stage_update', rec.shopify_id, { vendor: rec.vendor_name, awb: rec.awb, desc, newStage });
+        if (newStage && prevStage !== newStage) {
           runLog.updated++;
-          runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: rec.stage, to: newStage, desc, tag });
+          runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: prevStage, to: newStage, desc, tag });
           console.log(`  ✓ ${rec.shopify_id} ${rec.awb}: ${rec.stage}→${newStage} "${desc}" ${tag||''}`);
 
           // Send vendor + admin OFD notification email
@@ -14935,26 +14944,21 @@ app.get("/track/shipment-status", async (req, res) => {
     const { shopify_order_id, awb, vendor_name } = req.query;
     if (!awb) return res.status(400).json({ error: 'awb required' });
 
-    const ss = await shipsagarTrackShipment(awb);
-    if (!ss) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
-
-    if (ss.found && ss.history?.length) {
-      const latest = ss.history[ss.history.length - 1];
-      const status = latest.ActionDescription || '';
-      const newStage = shipsagarStatusToStage(status);
-      const now = new Date().toISOString();
-
-      // Update vendor-level stage if vendor and order are known
-      if (shopify_order_id && vendor_name && newStage) {
-        await OVS.upsert(String(shopify_order_id), vendor_name, { stage: newStage, updated_at: now });
+    if (shopify_order_id && vendor_name) {
+      const result = await syncShipSagarStage(shopify_order_id, vendor_name, awb);
+      if (!result) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
+      if (result.history?.length) {
+        return res.json({ status: result.desc, awb, source: 'shipsagar', history: result.history.slice(-5), tag: shipsagarDescToTag(result.desc), stage: result.newStage });
       }
-      // Update order-level delivery status
-      if (shopify_order_id && newStage) {
-        await OM.upsert(String(shopify_order_id), { delivery_status: status, delivery_status_updated_at: now });
-        applyShipSagarTag(String(shopify_order_id), status).catch(() => {});
+    } else {
+      // No order context — just track and return, no DB writes
+      const ss = await shipsagarTrackShipment(awb);
+      if (!ss) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
+      if (ss.found && ss.history?.length) {
+        const latest = ss.history[ss.history.length - 1];
+        const status = latest.ActionDescription || '';
+        return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status), stage: shipsagarStatusToStage(status) });
       }
-
-      return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status), stage: newStage });
     }
 
     if (ss.found && !ss.history?.length) {
