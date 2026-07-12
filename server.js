@@ -6482,36 +6482,58 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       existingSettlOrders.forEach(so => alreadyInvoicedOrders.add(String(so.shopify_order_id)));
     }
 
-    // Fetch orders created in the period — invoice is per creation date, not delivery date
-    const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
+    // Fetch ALL orders ever (from 2020) up to period_end — filter by delivery date, not creation date
+    // Previously used period_start which caused orders created before the period to be silently missed
+    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z", period_end + "T23:59:59Z");
     const vName  = vendor_name.toLowerCase();
     const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, _id: 0 } });
     const vConfig  = await VC.get(vendor_name);
     const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
     const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    // Fetch stages case-insensitively (handles "Odd Affair" vs "ODD AFFAIR" duplicates)
+    // Fetch stages with updated_at so we can filter by delivery date
     const vendorStages = await mdb.collection('order_vendor_stage').find(
       { vendor_name: { $regex: new RegExp('^' + vendor_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
-      { projection: { shopify_id: 1, stage: 1, _id: 0 } }
+      { projection: { shopify_id: 1, stage: 1, updated_at: 1, stage_history: 1, _id: 0 } }
     ).toArray();
     // Merge duplicates — keep the highest stage across all case variants
-    const vendorStageMap = {};
+    const vendorStageMap = {}; // { shopify_id: { stage, deliveredAt } }
     for (const r of vendorStages) {
-      vendorStageMap[r.shopify_id] = higherStage(vendorStageMap[r.shopify_id] || 'new', r.stage || 'new');
+      const existing = vendorStageMap[r.shopify_id];
+      const merged = higherStage(existing?.stage || 'new', r.stage || 'new');
+      // Use stage_history to find when it was marked delivered; fall back to updated_at
+      const deliveredEntry = (r.stage_history || []).find(h => h.stage === 'delivered');
+      const deliveredAt = deliveredEntry ? new Date(deliveredEntry.at).toISOString() : (r.updated_at || null);
+      vendorStageMap[r.shopify_id] = { stage: merged, deliveredAt: existing?.deliveredAt || deliveredAt };
     }
 
-    // Only include delivered orders that have NOT been invoiced before
+    const periodStartTs = new Date(period_start + 'T00:00:00Z').getTime();
+    const periodEndTs   = new Date(period_end   + 'T23:59:59Z').getTime();
+
+    // Only include delivered orders that:
+    // 1. Were NOT already invoiced
+    // 2. Have vendor line items
+    // 3. Delivery date falls within the period (not order creation date)
     const vendorDelivered = allOrders.filter(o => {
       const sid = String(o.id);
-      if (alreadyInvoicedOrders.has(sid)) return false; // skip already-invoiced
-      const dbStage = higherStage(vendorStageMap[sid] || 'new', metaMap[sid]?.stage || 'new');
+      if (alreadyInvoicedOrders.has(sid)) return false;
+      if (!(o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName)) return false;
+      // Use ONLY order_vendor_stage for settlement — global order_meta.stage must not override
+      // per-vendor delivery status (e.g. order_meta='rto' but vendor delivered correctly)
+      const vendorDbStage = vendorStageMap[sid]?.stage || 'new';
       const shopifyStages = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || []);
-      // Check shopifyStages case-insensitively too
       const sfStage = Object.entries(shopifyStages).find(([k]) => k.toLowerCase() === vName)?.[1] || null;
-      const effectiveStage = higherStage(dbStage, sfStage);
-      return effectiveStage === "delivered" &&
-        (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName);
+      const effectiveStage = higherStage(vendorDbStage, sfStage);
+      if (effectiveStage !== "delivered") return false;
+      // Filter by delivery date within period
+      const deliveredAt = vendorStageMap[sid]?.deliveredAt;
+      if (deliveredAt) {
+        const dTs = new Date(deliveredAt).getTime();
+        return dTs >= periodStartTs && dTs <= periodEndTs;
+      }
+      // No delivery timestamp — fall back to order creation date within period
+      const createdTs = o.created_at ? new Date(o.created_at).getTime() : 0;
+      return createdTs >= periodStartTs && createdTs <= periodEndTs;
     });
 
     if (vendorDelivered.length === 0)
@@ -6767,9 +6789,11 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
         const vendor = li.vendor;
         if (!vendor) continue;
         const vendorEntry = allVendorStageMap[String(o.id)]?.[vendor];
-        const dbStage = higherStage(vendorEntry?.stage || 'new', orderStage);
+        // Use only order_vendor_stage — do not merge with order_meta.stage
+        // order_meta.stage='rto' must not override a vendor's confirmed delivery
+        const vendorDbStage = vendorEntry?.stage || 'new';
         const shopifyStage = shopifyVendorStages[vendor] || null;
-        const effectiveStage = higherStage(dbStage, shopifyStage);
+        const effectiveStage = higherStage(vendorDbStage, shopifyStage);
         if (effectiveStage !== "delivered") continue;
         deliveredVendorsInOrder.add(vendor);
         if (!vendorMap[vendor]) vendorMap[vendor] = { orders: new Set(), orderDetails: {}, gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, net: 0, prepaidCollected: 0, codCommission: 0 };
