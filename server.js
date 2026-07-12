@@ -233,7 +233,7 @@ const OM = {
 };
 
 const OVS = {
-  async upsert(shopify_id, vendor_name, fields, { respectManualOverride = false } = {}) {
+  async upsert(shopify_id, vendor_name, fields, { respectManualOverride = false, respectStageOrder = false } = {}) {
     const sid = String(shopify_id);
     const existing = await mdb.collection('order_vendor_stage').findOne(
       { shopify_id: sid, vendor_name },
@@ -242,6 +242,12 @@ const OVS = {
 
     // If admin has manually locked this vendor's stage, automated systems must not overwrite it
     if (respectManualOverride && existing?.manually_overridden) return;
+
+    // Automated syncs must never downgrade a stage — e.g. a NOT_PICKED event after
+    // a transit scan should not rewind the stage back to pickup.
+    if (fields.stage && respectStageOrder && existing?.stage) {
+      fields = { ...fields, stage: higherStage(existing.stage, fields.stage) };
+    }
 
     // Capture dispatch timestamp the first time an order moves from a
     // pre-dispatch stage (new/confirmed/partial) into a dispatched stage.
@@ -12948,7 +12954,7 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
 
   // Write to OVS — ShipSagar wins over Shopify, but not over a manual admin override
   if (newStage) {
-    await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true });
+    await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
     auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage });
   }
 
