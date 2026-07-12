@@ -5222,12 +5222,14 @@
             {(()=>{
               const prepComm        = parseFloat(((t.commission||0) * (t.prepaidCollected||0) / Math.max(t.gross||1,1)).toFixed(2));
               const prepVendorShare = Math.max(0, (t.prepaidCollected||0) - (t.prepaidDiscount||0) - prepComm);
-              const prepSettled     = Math.max(0, (t.totalSettled||0));
-              const prepYetToSend   = Math.max(0, prepVendorShare - prepSettled);
+              // totalSettled is a signed sum (negative = CC paid vendors, positive = vendors paid CC)
+              // Split from per-vendor data: settledOut = total CC paid to vendors, settledIn = total vendors paid CC
+              const settledOut = (summary?.vendors||[]).reduce((s,v) => s + Math.max(0, -(v.totalSettled||0)), 0); // CC → vendors (prepaid side)
+              const settledIn  = (summary?.vendors||[]).reduce((s,v) => s + Math.max(0,  (v.totalSettled||0)), 0); // vendors → CC (COD side)
+              const prepYetToSend   = Math.max(0, prepVendorShare - settledOut);
               const codGross        = Math.max(0, (t.gross||0) - (t.prepaidCollected||0));
               const codComm         = t.codCommission || 0;
-              const codReceived     = Math.max(0, (t.totalSettled||0) - prepSettled);
-              const codYetToReceive = Math.max(0, codComm - codReceived);
+              const codYetToReceive = Math.max(0, codComm - settledIn);
               const Row = ({label, value, color, bold, indent}) => (
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid var(--border)',marginLeft:indent?12:0}}>
                   <span style={{fontSize:11,color:bold?'var(--text)':'var(--text-muted)',fontWeight:bold?600:400}}>{label}</span>
@@ -5244,7 +5246,7 @@
                     <Row label="− Our commission"           value={`− ${fmt(prepComm)}`} indent color="var(--orange)"/>
                     <Row label="= To be sent to vendors"    value={fmt(prepVendorShare)} bold color="var(--text)"/>
                     <div style={{height:6}}/>
-                    <Row label="Already sent to vendors"    value={fmt(prepSettled)} color="var(--green)"/>
+                    <Row label="Already sent to vendors"    value={fmt(settledOut)} color="var(--green)"/>
                     <Row label="Yet to send to vendors"     value={fmt(prepYetToSend)} bold color={prepYetToSend>0?'#ef4444':'var(--green)'}/>
                   </div>
                   {/* COD */}
@@ -5254,7 +5256,7 @@
                     <Row label="Our commission + GST"       value={fmt(codComm)} indent color="var(--orange)"/>
                     <Row label="Vendor keeps rest on delivery" value={fmt(Math.max(0,codGross-codComm))} indent color="var(--text-muted)"/>
                     <div style={{height:6}}/>
-                    <Row label="Commission received so far" value={fmt(codReceived)} color="var(--green)"/>
+                    <Row label="Commission received so far" value={fmt(settledIn)} color="var(--green)"/>
                     <Row label="Yet to receive from vendors" value={fmt(codYetToReceive)} bold color={codYetToReceive>0?'#ef4444':'var(--green)'}/>
                   </div>
                 </div>
