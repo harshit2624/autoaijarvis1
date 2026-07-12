@@ -16738,6 +16738,230 @@ ${JSON.stringify(summaries, null, 1)}`;
   } catch (e) { console.error('Support insight engine error:', e.message); }
 }
 
+// ── WhatsApp Daily & Weekly Bot Report ────────────────────────────────────
+
+async function buildWaChatSummaryForPeriod(fromMs, toMs) {
+  const fromISO = new Date(fromMs).toISOString();
+  const toISO   = new Date(toMs).toISOString();
+
+  const chats = await mdb.collection('support_chats').find({
+    source: 'whatsapp',
+    updated_at: { $gte: fromISO, $lte: toISO },
+  }, { projection: { _id: 1, customer_phone: 1, tags: 1, needs_human: 1, resolved: 1 } }).toArray();
+
+  if (!chats.length) return null;
+
+  // Pull messages for each chat
+  const chatSummaries = [];
+  for (const chat of chats) {
+    const msgs = await SC.messages(chat._id);
+    if (!msgs.length) continue;
+    const customerMsgs = msgs.filter(m => m.sender === 'customer').map(m => m.text);
+    const botMsgs      = msgs.filter(m => m.sender === 'assistant').map(m => m.text);
+    if (!customerMsgs.length) continue;
+    chatSummaries.push({
+      phone: chat.customer_phone || '—',
+      tags: (chat.tags || []).join(', '),
+      needs_human: !!chat.needs_human,
+      resolved: !!chat.resolved,
+      bot_confused: (chat.tags || []).includes('bot_confused'),
+      customer_messages: customerMsgs,
+      bot_replies: botMsgs,
+    });
+  }
+  return chatSummaries;
+}
+
+async function generateWaDailyReport() {
+  if (!mdb || !waSocket || !waConnected) return;
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) return;
+
+  const now   = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const label = now.getHours() >= 18 ? 'Evening (Today)' : 'Morning (Today)';
+  const fromMs = new Date(now.toDateString()).getTime(); // midnight IST today
+  const toMs   = Date.now();
+
+  const chatSummaries = await buildWaChatSummaryForPeriod(fromMs, toMs);
+  if (!chatSummaries || !chatSummaries.length) {
+    await waAdminAlert(`🤖 *WhatsApp Bot Daily Report — ${label}*\n\nNo customer chats today so far. All quiet! ✅`);
+    return;
+  }
+
+  const confused  = chatSummaries.filter(c => c.bot_confused).length;
+  const escalated = chatSummaries.filter(c => c.needs_human).length;
+  const resolved  = chatSummaries.filter(c => c.resolved).length;
+  const total     = chatSummaries.length;
+
+  // Build compact chat digest for Claude
+  const digest = chatSummaries.slice(0, 30).map((c, i) => {
+    const q = c.customer_messages.slice(0, 3).join(' / ');
+    const a = c.bot_replies[0]?.slice(0, 100) || '—';
+    const flags = [c.bot_confused && '⚠️ confused', c.needs_human && '👤 escalated', c.resolved && '✅ resolved'].filter(Boolean).join(' ');
+    return `${i+1}. Customer: "${q.slice(0,120)}" → Bot: "${a}..." ${flags}`;
+  }).join('\n');
+
+  const prompt = `You are analyzing CrosCrow's WhatsApp support bot performance for today (${now.toDateString()}, ${label}).
+
+Here are ${total} customer chats (condensed):
+${digest}
+
+Stats: ${total} total chats, ${confused} bot confused, ${escalated} escalated to human, ${resolved} resolved.
+
+Write a WhatsApp report for the founder/admin. Keep it tight and useful. Format:
+
+📊 *Daily Bot Report — ${label}*
+
+*Overview:* [1-2 sentences on volume and quality]
+
+*Chat Highlights:*
+[3-5 most notable chats with what was asked and what happened — short bullet points]
+
+*Bot Issues Noticed:*
+[Any patterns where bot underperformed, confused, or gave wrong answers — be specific]
+
+*Customer Problem Hotspots:*
+[What customers struggled with most today — group by theme]
+
+*Quick Action:*
+[1-2 things to fix or watch based on today]
+
+Keep each section 2-4 lines max. Use WhatsApp formatting (*bold*). No fluff.`;
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 800, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const d = await r.json();
+    const report = d.content?.[0]?.text || 'Report generation failed.';
+    await waAdminAlert(report);
+    console.log('📊 WA daily report sent');
+  } catch (e) { console.error('WA daily report error:', e.message); }
+}
+
+async function generateWaWeeklyReport() {
+  if (!mdb || !waSocket || !waConnected) return;
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) return;
+
+  const fromMs = Date.now() - 7 * 24 * 3600 * 1000;
+  const toMs   = Date.now();
+  const chatSummaries = await buildWaChatSummaryForPeriod(fromMs, toMs);
+
+  // Pull confusion log
+  const confusionLogs = await mdb.collection('wa_confusion_log')
+    .find({ logged_at: { $gte: new Date(fromMs).toISOString() } })
+    .toArray();
+  const byRule    = {};
+  const byKeyword = {};
+  confusionLogs.forEach(l => {
+    byRule[l.trigger_rule] = (byRule[l.trigger_rule] || 0) + 1;
+    if (l.repeated_keyword) byKeyword[l.repeated_keyword] = (byKeyword[l.repeated_keyword] || 0) + 1;
+  });
+
+  const total      = chatSummaries?.length || 0;
+  const confused   = chatSummaries?.filter(c => c.bot_confused).length || 0;
+  const escalated  = chatSummaries?.filter(c => c.needs_human).length || 0;
+  const resolved   = chatSummaries?.filter(c => c.resolved).length || 0;
+
+  const allCustomerTexts = (chatSummaries || []).flatMap(c => c.customer_messages).slice(0, 100).join('\n');
+  const confusionSummary = Object.entries(byKeyword).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>`${k}(${v})`).join(', ');
+
+  const prompt = `You are analyzing CrosCrow's WhatsApp support bot performance for the past 7 days.
+
+Weekly stats:
+- Total chats: ${total}
+- Bot confused (safety net triggered): ${confused} (${total ? Math.round(confused/total*100) : 0}%)
+- Escalated to human: ${escalated}
+- Resolved: ${resolved}
+- Confusion triggers by rule: ${JSON.stringify(byRule)}
+- Top repeated keywords that confused bot: ${confusionSummary || 'none'}
+
+Sample customer messages (${Math.min(100, allCustomerTexts.split('\n').length)} messages):
+${allCustomerTexts.slice(0, 2000)}
+
+Write a detailed WhatsApp weekly report for the founder. Format:
+
+📅 *Weekly Bot Report — Last 7 Days*
+
+*Performance Summary:*
+[Key numbers and overall health — 2-3 lines]
+
+*What Customers Asked Most:*
+[Top 5-7 question themes with rough frequency — be specific]
+
+*Questions Bot Couldn't Answer Well:*
+[Specific topics where bot failed or got confused — these need to be added to bot knowledge]
+
+*Bot Brain Improvements Needed:*
+[Concrete suggestions: what info to add, what flows to fix, what to train on]
+
+*Escalation Analysis:*
+[Why customers needed humans — patterns]
+
+*This Week's Win:*
+[Something the bot handled well]
+
+*Priority Actions for Next Week:*
+[Top 3 things to fix, numbered]
+
+Use WhatsApp *bold* formatting. Keep it thorough but scannable.`;
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const d = await r.json();
+    const report = d.content?.[0]?.text || 'Weekly report generation failed.';
+    await waAdminAlert(report);
+    console.log('📅 WA weekly report sent');
+  } catch (e) { console.error('WA weekly report error:', e.message); }
+}
+
+// ── WA Report Cron — runs every 30 min, fires at 2pm and 10pm IST daily,
+//    and Sunday 9pm IST for weekly
+async function waReportCron() {
+  try {
+    if (!mdb) return;
+    const now  = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const hour = now.getHours();
+    const min  = now.getMinutes();
+    if (min > 30) return; // only fire in first 30 min of the hour
+
+    const cfg = await mdb.collection('global_config').findOne({ _id: 'wa_report' }) || {};
+    const lastDaily  = cfg.last_daily_at  ? new Date(cfg.last_daily_at).getTime()  : 0;
+    const lastWeekly = cfg.last_weekly_at ? new Date(cfg.last_weekly_at).getTime() : 0;
+    const debounce   = 4 * 3600 * 1000; // 4h gap between same report type
+
+    // Daily: 2pm (14) and 10pm (22) IST
+    if ((hour === 14 || hour === 22) && Date.now() - lastDaily > debounce) {
+      await generateWaDailyReport();
+      await mdb.collection('global_config').updateOne({ _id: 'wa_report' }, { $set: { last_daily_at: new Date().toISOString() } }, { upsert: true });
+    }
+
+    // Weekly: Sunday 9pm IST
+    if (now.getDay() === 0 && hour === 21 && Date.now() - lastWeekly > 6 * 3600 * 1000) {
+      await generateWaWeeklyReport();
+      await mdb.collection('global_config').updateOne({ _id: 'wa_report' }, { $set: { last_weekly_at: new Date().toISOString() } }, { upsert: true });
+    }
+  } catch (e) { console.error('WA report cron error:', e.message); }
+}
+setInterval(waReportCron, 30 * 60 * 1000); // check every 30 min
+
+// Manual trigger endpoints
+app.post('/admin/wa-report/daily', adminAuth, async (req, res) => {
+  res.json({ success: true, message: 'Generating daily report…' });
+  generateWaDailyReport().catch(e => console.error('Manual daily WA report error:', e.message));
+});
+app.post('/admin/wa-report/weekly', adminAuth, async (req, res) => {
+  res.json({ success: true, message: 'Generating weekly report…' });
+  generateWaWeeklyReport().catch(e => console.error('Manual weekly WA report error:', e.message));
+});
+
 app.get('/admin/support/insights', adminAuth, async (req, res) => {
   const runs = await mdb.collection('support_insights')
     .find({}).sort({ run_at: -1 }).limit(5).toArray();

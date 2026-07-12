@@ -8043,6 +8043,14 @@
       setTimeout(() => { loadInsights(); setInsightRunning(false); }, 8000);
     };
 
+    const [waReportMsg, setWaReportMsg] = React.useState('');
+    const triggerWaReport = async (type) => {
+      setWaReportMsg('Sending to WhatsApp…');
+      await fetch(`${API}/admin/wa-report/${type}`, { method:'POST', headers: { Authorization: 'Bearer '+token } }).catch(()=>{});
+      setWaReportMsg(`✅ ${type === 'daily' ? 'Daily' : 'Weekly'} report sent to your WhatsApp!`);
+      setTimeout(() => setWaReportMsg(''), 5000);
+    };
+
     const dismissFinding = async (runId, index) => {
       await fetch(`${API}/admin/support/insights/${runId}/dismiss/${index}`, { method:'POST', headers: { Authorization: 'Bearer '+token } }).catch(()=>{});
       loadInsights();
@@ -8129,11 +8137,16 @@
               <h2 style={{margin:'0 0 4px',fontSize:18,color:'var(--text)'}}>🔍 Bot Quality Insights</h2>
               <div style={{fontSize:12,color:'var(--text-muted)'}}>Auto-analyzed every 6 hours · last 48h of chats</div>
             </div>
-            <button className="btn btn-indigo btn-sm" onClick={triggerInsightRun} disabled={insightRunning}>
-              {insightRunning ? '⏳ Analyzing…' : '▶ Run Now'}
-            </button>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <button className="btn btn-indigo btn-sm" onClick={triggerInsightRun} disabled={insightRunning}>
+                {insightRunning ? '⏳ Analyzing…' : '▶ Run Now'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>triggerWaReport('daily')} title="Send today's chat summary to your WhatsApp">📲 WA Daily</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>triggerWaReport('weekly')} title="Send 7-day analysis to your WhatsApp">📊 WA Weekly</button>
+            </div>
           </div>
 
+          {waReportMsg && <div style={{fontSize:13,color:'#10b981',fontWeight:600,marginBottom:8}}>{waReportMsg}</div>}
           {insightLoading && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading…</div>}
 
           {!insightLoading && (!insights || insights.length === 0) && (
