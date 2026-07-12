@@ -5218,30 +5218,47 @@
               </div>
             </div>
 
-            <div style={{marginTop:16,display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:4}}>
-              <div className="card" style={{padding:'12px 16px',borderLeft:'3px solid var(--cyan)'}}>
-                <div style={{fontSize:10,fontWeight:700,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>Prepaid Orders</div>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Money with CrosCrow</span>
-                  <span style={{fontSize:13,fontWeight:700,color:'var(--cyan)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.prepaidCollected)}</span>
+            {(()=>{
+              const prepComm        = parseFloat(((t.commission||0) * (t.prepaidCollected||0) / Math.max(t.gross||1,1)).toFixed(2));
+              const prepVendorShare = Math.max(0, (t.prepaidCollected||0) - (t.prepaidDiscount||0) - prepComm);
+              const prepSettled     = Math.max(0, (t.totalSettled||0));
+              const prepYetToSend   = Math.max(0, prepVendorShare - prepSettled);
+              const codGross        = Math.max(0, (t.gross||0) - (t.prepaidCollected||0));
+              const codComm         = t.codCommission || 0;
+              const codReceived     = Math.max(0, (t.totalSettled||0) - prepSettled);
+              const codYetToReceive = Math.max(0, codComm - codReceived);
+              const Row = ({label, value, color, bold, indent}) => (
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid var(--border)',marginLeft:indent?12:0}}>
+                  <span style={{fontSize:11,color:bold?'var(--text)':'var(--text-muted)',fontWeight:bold?600:400}}>{label}</span>
+                  <span style={{fontSize:bold?13:12,fontWeight:bold?700:600,color:color||'var(--text)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':value}</span>
                 </div>
-                <div style={{display:'flex',justifyContent:'space-between'}}>
-                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Prepaid Discount Given</span>
-                  <span style={{fontSize:13,fontWeight:700,color:'var(--yellow)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.prepaidDiscount)}</span>
+              );
+              return (
+                <div style={{marginTop:16,display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:4}}>
+                  {/* Prepaid */}
+                  <div className="card" style={{padding:'14px 16px',borderLeft:'3px solid var(--cyan)'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:10}}>Prepaid Orders — Money Flow</div>
+                    <Row label="Total Prepaid Collected"    value={fmt(t.prepaidCollected)} bold color="var(--cyan)"/>
+                    <Row label="− Discount given to customers" value={`− ${fmt(t.prepaidDiscount)}`} indent color="var(--yellow)"/>
+                    <Row label="− Our commission"           value={`− ${fmt(prepComm)}`} indent color="var(--orange)"/>
+                    <Row label="= To be sent to vendors"    value={fmt(prepVendorShare)} bold color="var(--text)"/>
+                    <div style={{height:6}}/>
+                    <Row label="Already sent to vendors"    value={fmt(prepSettled)} color="var(--green)"/>
+                    <Row label="Yet to send to vendors"     value={fmt(prepYetToSend)} bold color={prepYetToSend>0?'#ef4444':'var(--green)'}/>
+                  </div>
+                  {/* COD */}
+                  <div className="card" style={{padding:'14px 16px',borderLeft:'3px solid var(--green)'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--green)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:10}}>COD Orders — Money Flow</div>
+                    <Row label="Total COD Sales"            value={fmt(codGross)} bold color="var(--green)"/>
+                    <Row label="Our commission + GST"       value={fmt(codComm)} indent color="var(--orange)"/>
+                    <Row label="Vendor keeps rest on delivery" value={fmt(Math.max(0,codGross-codComm))} indent color="var(--text-muted)"/>
+                    <div style={{height:6}}/>
+                    <Row label="Commission received so far" value={fmt(codReceived)} color="var(--green)"/>
+                    <Row label="Yet to receive from vendors" value={fmt(codYetToReceive)} bold color={codYetToReceive>0?'#ef4444':'var(--green)'}/>
+                  </div>
                 </div>
-              </div>
-              <div className="card" style={{padding:'12px 16px',borderLeft:'3px solid var(--green)'}}>
-                <div style={{fontSize:10,fontWeight:700,color:'var(--green)',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>COD Orders</div>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Commission to collect on delivery</span>
-                  <span style={{fontSize:13,fontWeight:700,color:'var(--yellow)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.codCommission)}</span>
-                </div>
-                <div style={{display:'flex',justifyContent:'space-between'}}>
-                  <span style={{fontSize:11,color:'var(--text-muted)'}}>Advance payments collected</span>
-                  <span style={{fontSize:13,fontWeight:700,color:'var(--green)',fontVariantNumeric:'tabular-nums'}}>{sumLoading?'…':fmt(t.advance)}</span>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
             <div style={{marginTop:8,fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>
               Live calculation from all delivered orders. Totals update when order stages change. • Cached for 5 min — use ⟳ Live to force refresh.
             </div>
