@@ -4727,6 +4727,7 @@
     const [expandedV,   setExpandedV]   = useState(null);
     const [expandedVFilter, setExpandedVFilter] = useState({}); // { vendorName: 'all'|'unsettled'|'invoiced'|'paid' }
     const [sumPeriod,   setSumPeriod]   = useState(null); // null = all time
+    const [vendorSettleFilter, setVendorSettleFilter] = useState('all'); // 'all'|'owe_me'|'i_owe'
     // ── Tab 2: Settlement Invoices ─────────────────────────────────────────
     const [settlements, setSettlements] = useState([]);
     const [invLoading,  setInvLoading]  = useState(true);
@@ -4938,7 +4939,19 @@
             <div className="card">
               <div className="card-header">
                 <span className="card-title">Per-Vendor Breakdown</span>
-                <div style={{display:'flex',gap:6}}>
+                <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+                  {[
+                    {key:'all',    label:'All',         color:'var(--text-muted)', bg:'transparent'},
+                    {key:'owe_me', label:'🔴 Owe Me',   color:'#ef4444',           bg:'rgba(239,68,68,0.1)'},
+                    {key:'i_owe',  label:'🟢 I Owe',    color:'var(--green)',       bg:'rgba(16,185,129,0.1)'},
+                  ].map(f=>(
+                    <button key={f.key} onClick={()=>setVendorSettleFilter(f.key)}
+                      style={{fontSize:11,padding:'3px 10px',borderRadius:5,border:`1px solid ${vendorSettleFilter===f.key?f.color:'var(--border)'}`,cursor:'pointer',fontWeight:vendorSettleFilter===f.key?700:400,
+                        background:vendorSettleFilter===f.key?f.bg:'transparent',color:vendorSettleFilter===f.key?f.color:'var(--text-muted)',transition:'all 0.15s'}}>
+                      {f.label}
+                    </button>
+                  ))}
+                  <div style={{width:1,height:16,background:'var(--border)',margin:'0 2px'}}/>
                   <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary()} style={{fontSize:11}}>↻ Refresh</button>
                   <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod,true)} style={{fontSize:11,color:'var(--orange)'}}>⟳ Live</button>
                 </div>
@@ -4953,11 +4966,15 @@
                     <th>Net Payable</th><th>Settled</th><th>Pending</th>
                   </tr></thead>
                   <tbody>
-                    {sumLoading ? Array.from({length:5}).map((_,i)=><SkelRow key={i} cols={12}/>) :
-                     !summary?.vendors?.length ? (
-                       <tr><td colSpan={15}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No delivered orders found</div><div className="empty-sub">Orders marked as Delivered will appear here automatically.</div></div></td></tr>
-                     ) :
-                     summary.vendors.map(v=>{
+                    {(()=>{
+                      if (sumLoading) return Array.from({length:5}).map((_,i)=><SkelRow key={i} cols={12}/>);
+                      if (!summary?.vendors?.length) return <tr><td colSpan={15}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No delivered orders found</div><div className="empty-sub">Orders marked as Delivered will appear here automatically.</div></div></td></tr>;
+                      const filtered = summary.vendors.filter(v =>
+                        vendorSettleFilter==='owe_me' ? v.pendingSettlement > 0 :
+                        vendorSettleFilter==='i_owe'  ? v.pendingSettlement < 0 : true
+                      );
+                      if (!filtered.length) return <tr><td colSpan={15}><div className="empty"><div className="empty-icon">{vendorSettleFilter==='owe_me'?'🔴':'🟢'}</div><div className="empty-title">No vendors in this category</div></div></td></tr>;
+                      return filtered.map(v=>{
                        const isPayout = v.netPayable < 0;
                        const isPend   = v.pendingSettlement < 0;
                        const isExp    = expandedV === v.vendor;
@@ -5213,7 +5230,8 @@
                            })()}
                          </React.Fragment>
                        );
-                     })}
+                     });
+                    })()}
                   </tbody>
                 </table>
               </div>
