@@ -6578,15 +6578,19 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         : ruleLabels.size === 1 && !hasDefaultRule ? [...ruleLabels][0]
         : [...ruleLabels].join(' + ') + (hasDefaultRule ? ` + ${config.commission_pct}%` : '');
       const advancePaid = meta.advance_paid || 0;
-      // Fold advance into net (reduces what vendor owes)
-      const calcNet = parseFloat((totalItemNet - advancePaid).toFixed(2));
+      // For COD: advance reduces what vendor owes. For PREPAID: advance is tracked separately,
+      // not applied to per-order net (matches original invoice behavior).
+      const calcNet = isCod
+        ? parseFloat((totalItemNet - advancePaid).toFixed(2))
+        : totalItemNet;
       const calc = {
         commission: parseFloat(totalItemComm.toFixed(2)),
         gst:        parseFloat(totalItemGst.toFixed(2)),
         net:        calcNet,
       };
 
-      // Shipping: read from Shopify shipping_lines, split by unique vendor count in order
+      // Shipping: read from Shopify shipping_lines, split by unique vendor count in order.
+      // Tracked in totalShipping and added to netPayable at summary level — NOT per-order NET.
       const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
       const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
       const shippingSplit = isCod && ordVendors.size > 0 ? parseFloat((orderShipping / ordVendors.size).toFixed(2)) : 0;
@@ -6596,7 +6600,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       totalGst      += calc.gst;
       totalAdv      += (meta.advance_paid || 0);
       totalShipping += shippingSplit;
-      totalNet      += calc.net + shippingSplit; // shipping vendor collected → owes CrosCrow (COD only)
+      totalNet      += calc.net; // shipping added separately at summary level
 
       const hasPriceOverride = myItems.some(li => orderOverrides[String(li.id)] !== undefined);
       orderDetails.push({
@@ -6609,7 +6613,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         gst:              calc.gst,
         advance_paid:     meta.advance_paid || 0,
         shipping_charge:  shippingSplit,
-        net:              parseFloat((calc.net + shippingSplit).toFixed(2)),
+        net:              calc.net,
         has_product_rule: hasProductRule,
         rule_label:       ruleLabel,
         has_price_override: hasPriceOverride,
