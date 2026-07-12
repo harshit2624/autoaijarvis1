@@ -1008,8 +1008,8 @@ app.get("/orders", async (req, res) => {
       status:    mapStatus(o.fulfillment_status),
       financial: o.financial_status ?? "—",
       date:      (o.created_at ?? "").split("T")[0],
-      city:      o.shipping_address?.city ?? "—",
-      country:   o.shipping_address?.country_code ?? "—",
+      city:      o.shipping_address?.city ?? o.billing_address?.city ?? "—",
+      country:   o.shipping_address?.country_code ?? o.billing_address?.country_code ?? "—",
     }));
 
     res.json({ orders, total: orders.length });
@@ -1064,8 +1064,8 @@ app.get("/orders/export", async (req, res) => {
         o.fulfillment_status ?? "unfulfilled",
         o.financial_status ?? "—",
         (o.created_at ?? "").split("T")[0],
-        o.shipping_address?.city ?? "—",
-        o.shipping_address?.country_code ?? "—",
+        o.shipping_address?.city ?? o.billing_address?.city ?? "—",
+        o.shipping_address?.country_code ?? o.billing_address?.country_code ?? "—",
       ]);
     });
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
@@ -3507,7 +3507,7 @@ async function runJarvisTool(name, args, reqCache) {
     allOrders.forEach(o=>{
       const email = o.email || o.customer?.email;
       const name  = o.billing_address?.name || `${o.customer?.first_name||""} ${o.customer?.last_name||""}`.trim() || email || "Unknown";
-      const city  = o.shipping_address?.city || "Unknown";
+      const city  = o.shipping_address?.city || o.billing_address?.city || "Unknown";
       if (!email) return;
       if (!map[email]) map[email] = { email, name, city, orders:0, revenue:0, lastOrder: o.created_at };
       map[email].orders++;
@@ -3607,7 +3607,7 @@ async function runJarvisTool(name, args, reqCache) {
       id: o.id,
       name: o.name,
       customer: o.billing_address?.name || o.email,
-      city: o.shipping_address?.city,
+      city: o.shipping_address?.city || o.billing_address?.city,
       total: parseFloat(o.total_price||0),
       payment: isCOD(o)?"COD":"Prepaid",
       status: o.fulfillment_status||"unfulfilled",
@@ -3625,8 +3625,8 @@ async function runJarvisTool(name, args, reqCache) {
     const lim = args.limit || 10;
     const cities = {}, states = {};
     os.forEach(o=>{
-      const city  = o.shipping_address?.city||"Unknown";
-      const state = o.shipping_address?.province||"Unknown";
+      const city  = o.shipping_address?.city||o.billing_address?.city||"Unknown";
+      const state = o.shipping_address?.province||o.billing_address?.province||"Unknown";
       cities[city]  = (cities[city]||0)+1;
       states[state] = (states[state]||0)+1;
     });
@@ -4410,7 +4410,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           shopifyId:    String(o.id),
           customer:     o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "Guest",
           email:        o.email        ?? "",
-          phone:        o.shipping_address?.phone ?? o.customer?.phone ?? "",
+          phone:        o.shipping_address?.phone ?? o.billing_address?.phone ?? o.customer?.phone ?? "",
           date:         (o.created_at ?? "").split("T")[0],
           status:       mapStatus(o.fulfillment_status),
           stage:        deriveVendorStage(o, req.vendor, vStageMap, metaMap),
@@ -4466,16 +4466,21 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
               url:      f.tracking_url     || "",
               date:     (f.created_at || "").split("T")[0],
             })),
-          shippingAddress: o.shipping_address ? {
-            name:    o.shipping_address.name    || "",
-            line1:   o.shipping_address.address1 || "",
-            line2:   o.shipping_address.address2 || "",
-            city:    o.shipping_address.city     || "",
-            state:   o.shipping_address.province || "",
-            zip:     o.shipping_address.zip      || "",
-            country: o.shipping_address.country  || "",
-            phone:   o.shipping_address.phone    || "",
-          } : null,
+          shippingAddress: (() => {
+            // Some orders (e.g. digital/custom) come in with null shipping_address — fall back to billing
+            const addr = o.shipping_address || o.billing_address;
+            if (!addr) return null;
+            return {
+              name:    addr.name     || "",
+              line1:   addr.address1 || "",
+              line2:   addr.address2 || "",
+              city:    addr.city     || "",
+              state:   addr.province || "",
+              zip:     addr.zip      || "",
+              country: addr.country  || "",
+              phone:   addr.phone    || o.shipping_address?.phone || "",
+            };
+          })(),
           ccStock: (()=>{
             const matches = myItems.map(li => vCCInvMap[String(li.variant_id)]).filter(Boolean);
             return matches.length ? matches : null;
