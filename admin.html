@@ -5037,11 +5037,12 @@
                                      {[
                                        {label:'Gross Sales',     val:`₹${v.gross.toFixed(2)}`,           color:'var(--indigo)'},
                                        {label:'Commission Earned',val:`₹${(v.commission+v.gst).toFixed(2)}`,color:'var(--orange)',sub:`₹${v.commission.toFixed(2)} + ₹${v.gst.toFixed(2)} GST`},
+                                       (v.invoicedPenalty||0)>0 ? {label:'Penalties (invoiced)',val:`₹${(v.invoicedPenalty||0).toFixed(2)}`,color:'#ef4444',sub:'Added to vendor dues'} : null,
                                        {label:'Total Settled',   val:`₹${v.totalSettled.toFixed(2)}`,    color:'var(--green)',  sub:`${paidInvoices.length} invoice${paidInvoices.length!==1?'s':''} paid`},
                                        {label:'Settlement Pending',val:v.pendingSettlement>0?`₹${v.pendingSettlement.toFixed(2)}`:`₹${Math.abs(v.pendingSettlement).toFixed(2)}`,
                                         color:v.pendingSettlement>0?'#ef4444':'var(--green)',
                                         sub:v.pendingSettlement===0?'Fully settled':v.pendingSettlement>0?'Vendor owes CC':'CC owes vendor'},
-                                     ].map(m=>(
+                                     ].filter(Boolean).map(m=>(
                                        <div key={m.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px'}}>
                                          <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:5}}>{m.label}</div>
                                          <div style={{fontSize:16,fontWeight:800,color:m.color,fontVariantNumeric:'tabular-nums'}}>{m.val}</div>

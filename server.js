@@ -6694,13 +6694,14 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     };
 
     // Load all settlement data + penalties + vendor stages in parallel
-    const [allSettlDocs, allSettlOrders, allConfirmedPenalties, invoicedPenIds, allVendorStages] = await Promise.all([
-      mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, _id: 0 } }).toArray(),
+    const [allSettlDocs, allSettlOrders, allConfirmedPenalties, allSettlPenalties, allVendorStages] = await Promise.all([
+      mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, penalty_deduction: 1, _id: 0 } }).toArray(),
       mdb.collection('settlement_orders').find({}, { projection: { settlement_id: 1, shopify_order_id: 1, _id: 0 } }).toArray(),
       mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
-      mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray().then(r => new Set(r.map(p => p.penalty_id))),
+      mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, amount: 1, settlement_id: 1, _id: 0 } }).toArray(),
       mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray(),
     ]);
+    const invoicedPenIds = new Set(allSettlPenalties.map(p => p.penalty_id));
 
     // Aggregate settled amounts per vendor from paid invoices
     const settledMapRaw = {};
@@ -6725,6 +6726,15 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       if (!invoicedPenIds.has(p.id)) {
         pendingPenaltyMap[p.vendor_name] = (pendingPenaltyMap[p.vendor_name] || 0) + (p.penalty_amount || 0);
       }
+    });
+
+    // Invoiced penalty total per vendor (penalties already locked into invoices)
+    // Used to adjust live netPayable so it matches invoice totals
+    const invoicedPenaltyByVendor = {};
+    const settlIdToVendor = Object.fromEntries(allSettlDocs.map(s => [s.id, s.vendor_name]));
+    allSettlPenalties.forEach(sp => {
+      const vendor = settlIdToVendor[sp.settlement_id];
+      if (vendor) invoicedPenaltyByVendor[vendor] = (invoicedPenaltyByVendor[vendor] || 0) + (sp.amount || 0);
     });
 
     const vendorMap = {};
@@ -6820,14 +6830,17 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       const gst = parseFloat(d.gst.toFixed(2));
       const advance = parseFloat(d.advance.toFixed(2));
       const shipping = parseFloat(d.shipping.toFixed(2));
-      const netPayable = parseFloat(d.net.toFixed(2));
+      const rawNetPayable = parseFloat(d.net.toFixed(2));
+      // Add invoiced penalties to live calc so it matches locked invoice amounts
+      const invoicedPenalty = parseFloat((invoicedPenaltyByVendor[name] || 0).toFixed(2));
+      const netPayable = parseFloat((rawNetPayable + invoicedPenalty).toFixed(2));
       const totalSettled = parseFloat((settledMap[name] || 0).toFixed(2));
       const pendingSettlement = parseFloat((netPayable - totalSettled).toFixed(2));
       const prepaidCollected = parseFloat(d.prepaidCollected.toFixed(2));
       const codCommission = parseFloat(d.codCommission.toFixed(2));
       const pendingPenalty = parseFloat((pendingPenaltyMap[name] || 0).toFixed(2));
       const ordersList = Object.values(d.orderDetails || {}).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
-      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement, prepaidCollected, codCommission, pendingPenalty, ordersList };
+      return { vendor: name, totalOrders: d.orders.size, gross, prepaidDiscount, commissionableSale, commissionPct: commPct, commission, gst, advance, shipping, netPayable, totalSettled, pendingSettlement, prepaidCollected, codCommission, pendingPenalty, invoicedPenalty, ordersList };
     }).sort((a, b) => b.gross - a.gross);
 
     // Overall totals
