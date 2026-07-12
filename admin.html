@@ -5003,71 +5003,208 @@
                              const unsettledCount = allOrds.filter(o=>!o.invoiceNo).length;
                              const invoicedCount  = allOrds.filter(o=>o.invoiceNo && o.invoiceStatus!=='paid').length;
                              const paidCount      = allOrds.filter(o=>o.invoiceStatus==='paid').length;
+                             // vendor invoices from settlements state (already loaded)
+                             const vendorInvoices = settlements.filter(s=>s.vendor_name===v.vendor).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+                             const pendingInvoices = vendorInvoices.filter(s=>s.status==='pending');
+                             const paidInvoices    = vendorInvoices.filter(s=>s.status==='paid');
+                             const totalInvoiced   = vendorInvoices.reduce((s,i)=>s+(i.net_payable||0),0);
+                             const totalPaidInv    = paidInvoices.reduce((s,i)=>s+(i.net_payable||0),0);
+                             const codOrds  = allOrds.filter(o=>o.paymentType==='cod'||o.paymentType==='advance');
+                             const prepOrds = allOrds.filter(o=>o.paymentType==='prepaid');
+                             const codRev   = codOrds.reduce((s,o)=>s+(o.revenue||0),0);
+                             const prepRev  = prepOrds.reduce((s,o)=>s+(o.revenue||0),0);
+                             const isPayout = v.netPayable < 0;
                              return (
                              <tr>
-                               <td colSpan={15} style={{padding:0,background:'var(--bg)'}}>
-                                 <div style={{padding:'10px 16px 14px'}}>
-                                   {/* Header + filter tabs */}
-                                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:8}}>
-                                     <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',letterSpacing:'0.05em',textTransform:'uppercase'}}>
-                                       Delivered Orders — {v.vendor}
+                               <td colSpan={15} style={{padding:0,background:'var(--bg)',borderTop:'2px solid var(--indigo)'}}>
+                                 <div style={{padding:'18px 20px 20px'}}>
+
+                                   {/* ── Vendor name header ── */}
+                                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:8}}>
+                                     <div>
+                                       <div style={{fontSize:15,fontWeight:800,color:'var(--text)',letterSpacing:'-0.01em'}}>{v.vendor}</div>
+                                       <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{v.commissionPct}% commission · {v.totalOrders} delivered orders</div>
                                      </div>
-                                     <div style={{display:'flex',gap:4}}>
-                                       {[
-                                         {key:'all',      label:`All (${allOrds.length})`},
-                                         {key:'unsettled',label:`⚪ Unsettled (${unsettledCount})`},
-                                         {key:'invoiced', label:`🟡 Invoiced (${invoicedCount})`},
-                                         {key:'paid',     label:`🟢 Settled (${paidCount})`},
-                                       ].map(tab=>(
-                                         <button key={tab.key} onClick={e=>{e.stopPropagation();setVf(tab.key);}}
-                                           style={{fontSize:10,padding:'3px 9px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',
-                                             background:vf===tab.key?'var(--indigo)':'transparent',
-                                             color:vf===tab.key?'#fff':'var(--text-muted)',fontWeight:vf===tab.key?600:400}}>
-                                           {tab.label}
-                                         </button>
-                                       ))}
+                                     <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                                       <span style={{fontSize:11,padding:'4px 10px',borderRadius:6,fontWeight:700,background:v.pendingSettlement>0?'rgba(239,68,68,0.12)':'rgba(16,185,129,0.12)',color:v.pendingSettlement>0?'#ef4444':'var(--green)'}}>
+                                         {v.pendingSettlement>0?`₹${v.pendingSettlement.toFixed(2)} pending collection`:`₹${Math.abs(v.pendingSettlement).toFixed(2)} to pay out`}
+                                       </span>
                                      </div>
                                    </div>
-                                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                                     <thead>
-                                       <tr style={{color:'var(--text-muted)',fontSize:10,borderBottom:'1px solid var(--border)'}}>
-                                         <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Order</th>
-                                         <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Customer</th>
-                                         <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Date</th>
-                                         <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Payment</th>
-                                         <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Status</th>
-                                         <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Items</th>
-                                         <th style={{textAlign:'right',padding:'4px 8px',fontWeight:500}}>Revenue</th>
-                                       </tr>
-                                     </thead>
-                                     <tbody>
-                                       {filtered.length===0 ? (
-                                         <tr><td colSpan={7} style={{padding:'12px 8px',textAlign:'center',color:'var(--text-muted)',fontSize:11}}>No orders in this filter</td></tr>
-                                       ) : filtered.map(ord=>(
-                                         <tr key={ord.orderId} style={{borderBottom:'1px solid var(--border)'}}>
-                                           <td style={{padding:'6px 8px',fontWeight:600,color:'var(--indigo)'}}>{ord.orderName}</td>
-                                           <td style={{padding:'6px 8px',color:'var(--text)'}}>{ord.customer||'—'}</td>
-                                           <td style={{padding:'6px 8px',color:'var(--text-muted)',fontSize:11}}>{ord.createdAt?new Date(ord.createdAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'—'}</td>
-                                           <td style={{padding:'6px 8px'}}>
-                                             <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:ord.paymentType==='prepaid'?'rgba(99,102,241,0.15)':ord.paymentType==='advance'?'rgba(245,158,11,0.15)':'rgba(16,185,129,0.15)',color:ord.paymentType==='prepaid'?'var(--indigo)':ord.paymentType==='advance'?'var(--yellow)':'var(--green)'}}>
-                                               {ord.paymentType==='prepaid'?'Prepaid':ord.paymentType==='advance'?'Advance':'COD'}
-                                             </span>
-                                           </td>
-                                           <td style={{padding:'6px 8px'}}>
-                                             {ord.invoiceStatus==='paid' ? (
-                                               <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(16,185,129,0.15)',color:'var(--green)',fontWeight:600}}>✓ Settled · {ord.invoiceNo}</span>
-                                             ) : ord.invoiceNo ? (
-                                               <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(245,158,11,0.15)',color:'var(--yellow)',fontWeight:600}}>🧾 {ord.invoiceNo}</span>
-                                             ) : (
-                                               <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'var(--surface)',color:'var(--text-muted)'}}>Not invoiced</span>
-                                             )}
-                                           </td>
-                                           <td style={{padding:'6px 8px',color:'var(--text-muted)',fontSize:11,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(ord.items||[]).join(', ')}</td>
-                                           <td style={{padding:'6px 8px',textAlign:'right',fontWeight:600}}>₹{(ord.revenue||0).toFixed(2)}</td>
-                                         </tr>
-                                       ))}
-                                     </tbody>
-                                   </table>
+
+                                   {/* ── Row 1: 4 key financial metrics ── */}
+                                   <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:14}}>
+                                     {[
+                                       {label:'Gross Sales',     val:`₹${v.gross.toFixed(2)}`,           color:'var(--indigo)'},
+                                       {label:'Commission Earned',val:`₹${(v.commission+v.gst).toFixed(2)}`,color:'var(--orange)',sub:`₹${v.commission.toFixed(2)} + ₹${v.gst.toFixed(2)} GST`},
+                                       {label:'Total Settled',   val:`₹${v.totalSettled.toFixed(2)}`,    color:'var(--green)',  sub:`${paidInvoices.length} invoice${paidInvoices.length!==1?'s':''} paid`},
+                                       {label:'Settlement Pending',val:v.pendingSettlement>0?`₹${v.pendingSettlement.toFixed(2)}`:`₹${Math.abs(v.pendingSettlement).toFixed(2)}`,
+                                        color:v.pendingSettlement>0?'#ef4444':'var(--green)',
+                                        sub:v.pendingSettlement>0?`${isPayout?'CC owes vendor':'Vendor owes CC'}`:'Fully settled'},
+                                     ].map(m=>(
+                                       <div key={m.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px'}}>
+                                         <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:5}}>{m.label}</div>
+                                         <div style={{fontSize:16,fontWeight:800,color:m.color,fontVariantNumeric:'tabular-nums'}}>{m.val}</div>
+                                         {m.sub && <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>{m.sub}</div>}
+                                       </div>
+                                     ))}
+                                   </div>
+
+                                   {/* ── Row 2: COD vs Prepaid + Invoice history ── */}
+                                   <div style={{display:'grid',gridTemplateColumns:'1fr 1.6fr',gap:12,marginBottom:14}}>
+
+                                     {/* COD vs Prepaid split */}
+                                     <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                                       <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Order Mix</div>
+                                       <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                           <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                             <span style={{width:8,height:8,borderRadius:2,background:'var(--green)',display:'inline-block'}}/>
+                                             <span style={{fontSize:11,color:'var(--text)'}}>COD</span>
+                                             <span style={{fontSize:10,color:'var(--text-muted)'}}>({codOrds.length} orders)</span>
+                                           </div>
+                                           <span style={{fontSize:12,fontWeight:700,color:'var(--green)',fontVariantNumeric:'tabular-nums'}}>₹{codRev.toFixed(2)}</span>
+                                         </div>
+                                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                                           <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                             <span style={{width:8,height:8,borderRadius:2,background:'var(--indigo)',display:'inline-block'}}/>
+                                             <span style={{fontSize:11,color:'var(--text)'}}>Prepaid</span>
+                                             <span style={{fontSize:10,color:'var(--text-muted)'}}>({prepOrds.length} orders)</span>
+                                           </div>
+                                           <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)',fontVariantNumeric:'tabular-nums'}}>₹{prepRev.toFixed(2)}</span>
+                                         </div>
+                                         {v.advance>0 && <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:6,borderTop:'1px solid var(--border)'}}>
+                                           <span style={{fontSize:10,color:'var(--text-muted)'}}>Advances adjusted</span>
+                                           <span style={{fontSize:11,fontWeight:600,color:'var(--yellow)',fontVariantNumeric:'tabular-nums'}}>₹{v.advance.toFixed(2)}</span>
+                                         </div>}
+                                         {v.pendingPenalty>0 && <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:6,borderTop:'1px solid var(--border)'}}>
+                                           <span style={{fontSize:10,color:'#ef4444'}}>Penalties pending</span>
+                                           <span style={{fontSize:11,fontWeight:700,color:'#ef4444',fontVariantNumeric:'tabular-nums'}}>₹{v.pendingPenalty.toFixed(2)}</span>
+                                         </div>}
+                                         {/* Mini bar */}
+                                         {(codRev+prepRev)>0 && (()=>{
+                                           const codPct = Math.round(codRev/(codRev+prepRev)*100);
+                                           return (
+                                             <div style={{marginTop:6}}>
+                                               <div style={{height:5,borderRadius:3,background:'var(--border)',overflow:'hidden',display:'flex'}}>
+                                                 <div style={{width:`${codPct}%`,background:'var(--green)',transition:'width 0.4s'}}/>
+                                                 <div style={{flex:1,background:'var(--indigo)'}}/>
+                                               </div>
+                                               <div style={{display:'flex',justifyContent:'space-between',marginTop:3,fontSize:9,color:'var(--text-muted)'}}>
+                                                 <span>COD {codPct}%</span><span>Prepaid {100-codPct}%</span>
+                                               </div>
+                                             </div>
+                                           );
+                                         })()}
+                                       </div>
+                                     </div>
+
+                                     {/* Invoice history */}
+                                     <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                                       <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>
+                                         Invoice History
+                                         <span style={{marginLeft:8,fontWeight:400,textTransform:'none',letterSpacing:0}}>
+                                           {pendingInvoices.length>0 && <span style={{color:'var(--yellow)',marginRight:6}}>{pendingInvoices.length} pending</span>}
+                                           {paidInvoices.length>0 && <span style={{color:'var(--green)'}}>{paidInvoices.length} paid</span>}
+                                         </span>
+                                       </div>
+                                       {vendorInvoices.length===0 ? (
+                                         <div style={{fontSize:11,color:'var(--text-muted)',textAlign:'center',padding:'14px 0'}}>No invoices generated yet</div>
+                                       ) : (
+                                         <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:160,overflowY:'auto'}}>
+                                           {vendorInvoices.map(inv=>(
+                                             <div key={inv.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 8px',borderRadius:6,background:'var(--bg)',border:'1px solid var(--border)'}}>
+                                               <div style={{minWidth:0}}>
+                                                 <div style={{fontSize:11,fontWeight:600,color:'var(--text)',fontFamily:'monospace'}}>{inv.invoice_no}</div>
+                                                 <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{inv.period_start} → {inv.period_end} · {inv.total_orders} orders</div>
+                                               </div>
+                                               <div style={{textAlign:'right',flexShrink:0,marginLeft:12}}>
+                                                 <div style={{fontSize:12,fontWeight:700,color:inv.net_payable<0?'var(--green)':'#ef4444',fontVariantNumeric:'tabular-nums'}}>
+                                                   {inv.net_payable<0?'↑':'↓'} ₹{Math.abs(inv.net_payable||0).toFixed(2)}
+                                                 </div>
+                                                 <span style={{fontSize:9,padding:'1px 6px',borderRadius:3,fontWeight:700,
+                                                   background:inv.status==='paid'?'rgba(16,185,129,0.15)':'rgba(245,158,11,0.15)',
+                                                   color:inv.status==='paid'?'var(--green)':'var(--yellow)'}}>
+                                                   {inv.status==='paid'?'✓ PAID':'PENDING'}
+                                                 </span>
+                                               </div>
+                                             </div>
+                                           ))}
+                                         </div>
+                                       )}
+                                       {vendorInvoices.length>0 && (
+                                         <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)',display:'flex',justifyContent:'space-between',fontSize:10}}>
+                                           <span style={{color:'var(--text-muted)'}}>Total invoiced: <strong style={{color:'var(--text)'}}>{vendorInvoices.length}</strong></span>
+                                           <span style={{color:'var(--text-muted)'}}>Net settled: <strong style={{color:'var(--green)'}}>₹{Math.abs(totalPaidInv).toFixed(2)}</strong></span>
+                                         </div>
+                                       )}
+                                     </div>
+                                   </div>
+
+                                   {/* ── Orders list with filter tabs ── */}
+                                   <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                                     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:8}}>
+                                       <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1}}>Delivered Orders</div>
+                                       <div style={{display:'flex',gap:4}}>
+                                         {[
+                                           {key:'all',      label:`All (${allOrds.length})`},
+                                           {key:'unsettled',label:`⚪ Unsettled (${unsettledCount})`},
+                                           {key:'invoiced', label:`🟡 Invoiced (${invoicedCount})`},
+                                           {key:'paid',     label:`🟢 Settled (${paidCount})`},
+                                         ].map(tab=>(
+                                           <button key={tab.key} onClick={e=>{e.stopPropagation();setVf(tab.key);}}
+                                             style={{fontSize:10,padding:'3px 9px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',
+                                               background:vf===tab.key?'var(--indigo)':'transparent',
+                                               color:vf===tab.key?'#fff':'var(--text-muted)',fontWeight:vf===tab.key?600:400}}>
+                                             {tab.label}
+                                           </button>
+                                         ))}
+                                       </div>
+                                     </div>
+                                     <div style={{overflowX:'auto'}}>
+                                       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                                         <thead>
+                                           <tr style={{color:'var(--text-muted)',fontSize:10,borderBottom:'1px solid var(--border)'}}>
+                                             <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Order</th>
+                                             <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Customer</th>
+                                             <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Date</th>
+                                             <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Payment</th>
+                                             <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Invoice Status</th>
+                                             <th style={{textAlign:'left',padding:'4px 8px',fontWeight:500}}>Items</th>
+                                             <th style={{textAlign:'right',padding:'4px 8px',fontWeight:500}}>Revenue</th>
+                                           </tr>
+                                         </thead>
+                                         <tbody>
+                                           {filtered.length===0 ? (
+                                             <tr><td colSpan={7} style={{padding:'12px 8px',textAlign:'center',color:'var(--text-muted)',fontSize:11}}>No orders in this filter</td></tr>
+                                           ) : filtered.map(ord=>(
+                                             <tr key={ord.orderId} style={{borderBottom:'1px solid var(--border)'}}>
+                                               <td style={{padding:'6px 8px',fontWeight:600,color:'var(--indigo)'}}>{ord.orderName}</td>
+                                               <td style={{padding:'6px 8px',color:'var(--text)'}}>{ord.customer||'—'}</td>
+                                               <td style={{padding:'6px 8px',color:'var(--text-muted)',fontSize:11}}>{ord.createdAt?new Date(ord.createdAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'—'}</td>
+                                               <td style={{padding:'6px 8px'}}>
+                                                 <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:ord.paymentType==='prepaid'?'rgba(99,102,241,0.15)':ord.paymentType==='advance'?'rgba(245,158,11,0.15)':'rgba(16,185,129,0.15)',color:ord.paymentType==='prepaid'?'var(--indigo)':ord.paymentType==='advance'?'var(--yellow)':'var(--green)'}}>
+                                                   {ord.paymentType==='prepaid'?'Prepaid':ord.paymentType==='advance'?'Advance':'COD'}
+                                                 </span>
+                                               </td>
+                                               <td style={{padding:'6px 8px'}}>
+                                                 {ord.invoiceStatus==='paid' ? (
+                                                   <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(16,185,129,0.15)',color:'var(--green)',fontWeight:600}}>✓ Settled · {ord.invoiceNo}</span>
+                                                 ) : ord.invoiceNo ? (
+                                                   <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'rgba(245,158,11,0.15)',color:'var(--yellow)',fontWeight:600}}>🧾 {ord.invoiceNo}</span>
+                                                 ) : (
+                                                   <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'var(--surface)',color:'var(--text-muted)'}}>Not invoiced</span>
+                                                 )}
+                                               </td>
+                                               <td style={{padding:'6px 8px',color:'var(--text-muted)',fontSize:11,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(ord.items||[]).join(', ')}</td>
+                                               <td style={{padding:'6px 8px',textAlign:'right',fontWeight:600}}>₹{(ord.revenue||0).toFixed(2)}</td>
+                                             </tr>
+                                           ))}
+                                         </tbody>
+                                       </table>
+                                     </div>
+                                   </div>
+
                                  </div>
                                </td>
                              </tr>
