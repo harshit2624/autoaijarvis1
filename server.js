@@ -6047,12 +6047,22 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
             const metaIsBeyondReady = BEYOND_READY.includes(metaStage);
             const isSingleVendor = vendors.length === 1;
+            // Terminal stages must come from order_vendor_stage (OVS), not inferred from Shopify
+            // fulfillments. If Shopify says 'delivered'/'rto'/'cancelled' but OVS hasn't confirmed
+            // that stage, showing it in the UI would contradict what the settlement includes.
+            const TERMINAL = ['delivered', 'rto', 'cancelled'];
+            const safeStage = (stored, shopifyDerived) => {
+              if (!shopifyDerived) return stored;
+              // Don't let Shopify terminal override a non-terminal OVS stage
+              if (TERMINAL.includes(shopifyDerived) && !TERMINAL.includes(stored)) return stored;
+              return higherStage(stored, shopifyDerived);
+            };
             if (vendors.length > 1) {
-              // Multi-vendor: each vendor stage is independent, don't suppress based on overall stage
+              // Multi-vendor: each vendor stage is independent
               return Object.fromEntries(vendors.map(v => {
                 const stored = vsMap[String(o.id)]?.[v] || 'new';
                 const shopifyDerived = shopifyMap[v];
-                return [v, shopifyDerived ? higherStage(stored, shopifyDerived) : stored];
+                return [v, safeStage(stored, shopifyDerived)];
               }));
             } else {
               // Single-vendor: suppress shopify 'ready' if order_meta is already past ready
@@ -6060,7 +6070,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
               for (const [v, s] of Object.entries(shopifyMap)) {
                 if (s === 'ready' && isSingleVendor && metaIsBeyondReady)
                   m[v] = higherStage(m[v] || metaStage, metaStage);
-                else m[v] = higherStage(m[v], s);
+                else m[v] = safeStage(m[v] || 'new', s);
               }
               return m;
             }
@@ -12820,8 +12830,8 @@ async function applyShipSagarTag(shopifyId, desc) {
 function shipsagarStatusToStage(desc) {
   if (!desc) return null;
   const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated') || s.includes('delivered seller') || s.includes('delivered to seller')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
-  if (s.includes('rto') || s.includes('return to origin') || s.includes('return initiated')) return 'rto';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
   if (s.includes('out for delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held')) return 'ofd';
   if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed')) return 'transit';
