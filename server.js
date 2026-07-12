@@ -6656,8 +6656,6 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     }
 
     // Include confirmed penalties for this vendor in the settlement period
-    const periodStartTs = new Date(period_start + 'T00:00:00Z').getTime();
-    const periodEndTs   = new Date(period_end   + 'T23:59:59Z').getTime();
     const confirmedPenalties = await mdb.collection('order_penalties').find(
       { vendor_name, status: 'confirmed', triggered_at: { $gte: periodStartTs, $lte: periodEndTs } },
       { projection: { _id: 0 } }
