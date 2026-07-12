@@ -6482,9 +6482,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       existingSettlOrders.forEach(so => alreadyInvoicedOrders.add(String(so.shopify_order_id)));
     }
 
-    // Fetch ALL orders ever (from 2020) up to period_end — filter by delivery date, not creation date
-    // Previously used period_start which caused orders created before the period to be silently missed
-    const allOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z", period_end + "T23:59:59Z");
+    // Fetch orders created within the period (use period_start, not 2020 — avoid pulling in all history)
+    const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
     const vName  = vendor_name.toLowerCase();
     const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, _id: 0 } });
     const vConfig  = await VC.get(vendor_name);
@@ -6513,27 +6512,16 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     // Only include delivered orders that:
     // 1. Were NOT already invoiced
     // 2. Have vendor line items
-    // 3. Delivery date falls within the period (not order creation date)
+    // 3. Were created within the period
+    // 4. Stage is delivered per order_vendor_stage (not overridden by order_meta)
     const vendorDelivered = allOrders.filter(o => {
       const sid = String(o.id);
       if (alreadyInvoicedOrders.has(sid)) return false;
       if (!(o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName)) return false;
-      // Use ONLY order_vendor_stage for settlement — global order_meta.stage must not override
-      // per-vendor delivery status (e.g. order_meta='rto' but vendor delivered correctly)
+      // Use ONLY order_vendor_stage — order_meta.stage must NOT override per-vendor delivery status
       const vendorDbStage = vendorStageMap[sid]?.stage || 'new';
-      const shopifyStages = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || []);
-      const sfStage = Object.entries(shopifyStages).find(([k]) => k.toLowerCase() === vName)?.[1] || null;
-      const effectiveStage = higherStage(vendorDbStage, sfStage);
-      if (effectiveStage !== "delivered") return false;
-      // Filter by delivery date within period
-      const deliveredAt = vendorStageMap[sid]?.deliveredAt;
-      if (deliveredAt) {
-        const dTs = new Date(deliveredAt).getTime();
-        return dTs >= periodStartTs && dTs <= periodEndTs;
-      }
-      // No delivery timestamp — fall back to order creation date within period
-      const createdTs = o.created_at ? new Date(o.created_at).getTime() : 0;
-      return createdTs >= periodStartTs && createdTs <= periodEndTs;
+      if (vendorDbStage !== 'delivered') return false;
+      return true;
     });
 
     if (vendorDelivered.length === 0)
