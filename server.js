@@ -6524,13 +6524,20 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     // 2. Have vendor line items
     // 3. Were created within the period
     // 4. Stage is delivered per order_vendor_stage (not overridden by order_meta)
+    const INVOICE_TERMINAL = ['delivered', 'rto', 'cancelled'];
     const vendorDelivered = allOrders.filter(o => {
       const sid = String(o.id);
       if (alreadyInvoicedOrders.has(sid)) return false;
       if (!(o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName)) return false;
-      // Use ONLY order_vendor_stage — order_meta.stage must NOT override per-vendor delivery status
+      // Merge OVS stage with Shopify fulfillment stage (same logic as vendor stat card).
+      // Guard: Shopify terminal stages only count if OVS isn't a conflicting terminal
+      // (prevents DELIVERED_SELLER-type false positives from overriding a known RTO).
       const vendorDbStage = vendorStageMap[sid]?.stage || 'new';
-      if (vendorDbStage !== 'delivered') return false;
+      const shopifyFulfillmentStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor_name] || null;
+      const effectiveStage = (shopifyFulfillmentStage && INVOICE_TERMINAL.includes(shopifyFulfillmentStage) && INVOICE_TERMINAL.includes(vendorDbStage) && vendorDbStage !== 'delivered')
+        ? vendorDbStage  // OVS says rto/cancelled — don't override with shopify delivered
+        : higherStage(vendorDbStage, shopifyFulfillmentStage || 'new');
+      if (effectiveStage !== 'delivered') return false;
       return true;
     });
 
