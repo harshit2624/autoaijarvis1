@@ -615,15 +615,18 @@ function calcProductCommission(rule, sellingPrice, qty, paymentType) {
   }
 
   if (rule.mode === 'margin' || rule.mode === 'mixed') {
-    const marginBase = (rule.vendor_cost || 0) * (qty || 1);
-    const pct = (rule.margin_pct || 0) / 100;
-    const commOnBase = parseFloat((marginBase * pct).toFixed(2));
+    // Commission = (selling_price − vendor_cost) × margin_pct%.
+    // margin_pct defaults to 100 when not set — meaning CC keeps 100% of the margin.
+    const vendorCostTotal = (rule.vendor_cost || 0) * (qty || 1);
+    const grossMargin     = totalPrice - vendorCostTotal; // what CC earns above cost
+    const pct = (rule.margin_pct > 0 ? rule.margin_pct : 100) / 100;
+    const commOnMargin = parseFloat((grossMargin * pct).toFixed(2));
     if (rule.margin_gst_inclusive) {
-      gst        += parseFloat((commOnBase * 18 / 118).toFixed(2));
-      commission += parseFloat((commOnBase * 100 / 118).toFixed(2));
+      gst        += parseFloat((commOnMargin * 18 / 118).toFixed(2));
+      commission += parseFloat((commOnMargin * 100 / 118).toFixed(2));
     } else {
-      commission += commOnBase;
-      gst        += parseFloat((commOnBase * GST_RATE).toFixed(2));
+      commission += commOnMargin;
+      gst        += parseFloat((commOnMargin * GST_RATE).toFixed(2));
     }
   }
 
