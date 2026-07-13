@@ -6552,6 +6552,18 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
 
     // Load all price overrides for orders in this settlement batch
     const batchOrderIds = vendorDelivered.map(o => String(o.id));
+
+    // For multi-vendor orders, advance must be split equally among delivered vendors.
+    // Fetch count of OVS-delivered vendors per order so each vendor's invoice only
+    // credits them their proportional share of the advance collected for that order.
+    const allOvsForBatch = await mdb.collection('order_vendor_stage').find(
+      { shopify_id: { $in: batchOrderIds }, stage: 'delivered' },
+      { projection: { shopify_id: 1, _id: 0 } }
+    ).toArray();
+    const deliveredVendorCountMap = {};
+    for (const r of allOvsForBatch) {
+      deliveredVendorCountMap[r.shopify_id] = (deliveredVendorCountMap[r.shopify_id] || 0) + 1;
+    }
     const priceOverrideDocs = await mdb.collection('order_price_overrides').find({ shopify_order_id: { $in: batchOrderIds } }, { projection: { _id: 0 } }).toArray();
     // Map: { shopify_order_id -> { line_item_id -> overridden_price } }
     const priceOverrideMap = {};
@@ -6597,30 +6609,38 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       const ruleLabel = ruleLabels.size === 0 ? null
         : ruleLabels.size === 1 && !hasDefaultRule ? [...ruleLabels][0]
         : [...ruleLabels].join(' + ') + (hasDefaultRule ? ` + ${config.commission_pct}%` : '');
-      const advancePaid = meta.advance_paid || 0;
-      // For COD: advance reduces what vendor owes. For PREPAID: advance is tracked separately,
-      // not applied to per-order net (matches original invoice behavior).
+      // For multi-vendor orders, split advance equally among delivered vendors only.
+      // This matches the dashboard stat card behaviour and prevents double-crediting
+      // the same advance against multiple vendors' invoices.
+      const deliveredVendorCount = deliveredVendorCountMap[String(o.id)] || 1;
+      const fullAdvance = meta.advance_paid || 0;
+      const advancePaid = isCod ? parseFloat((fullAdvance / deliveredVendorCount).toFixed(2)) : 0;
+
+      // COD net: vendor owes CC (commission+gst) minus advance already collected.
+      // Prepaid net: CC owes vendor (base - commission - gst) — negative value.
       const calcNet = isCod
         ? parseFloat((totalItemNet - advancePaid).toFixed(2))
         : totalItemNet;
-      const calc = {
-        commission: parseFloat(totalItemComm.toFixed(2)),
-        gst:        parseFloat(totalItemGst.toFixed(2)),
-        net:        calcNet,
-      };
 
-      // Shipping: read from Shopify shipping_lines, split by unique vendor count in order.
-      // Tracked in totalShipping and added to netPayable at summary level — NOT per-order NET.
+      // COD shipping: vendor collects shipping cash from customer at doorstep,
+      // so vendor owes CC that shipping amount back. Split by vendor count in order.
+      // Prepaid shipping: CC collects it and keeps it — not part of vendor settlement.
       const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
       const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
       const shippingSplit = isCod && ordVendors.size > 0 ? parseFloat((orderShipping / ordVendors.size).toFixed(2)) : 0;
 
+      const calc = {
+        commission: parseFloat(totalItemComm.toFixed(2)),
+        gst:        parseFloat(totalItemGst.toFixed(2)),
+        net:        parseFloat((calcNet + shippingSplit).toFixed(2)), // shipping included in per-order net
+      };
+
       totalRev      += myRev;
       totalComm     += calc.commission;
       totalGst      += calc.gst;
-      totalAdv      += (meta.advance_paid || 0);
+      totalAdv      += advancePaid; // track split advance (not full order advance)
       totalShipping += shippingSplit;
-      totalNet      += calc.net; // shipping added separately at summary level
+      totalNet      += calc.net; // already includes shipping
 
       const hasPriceOverride = myItems.some(li => orderOverrides[String(li.id)] !== undefined);
       orderDetails.push({
