@@ -615,12 +615,13 @@ function calcProductCommission(rule, sellingPrice, qty, paymentType) {
   }
 
   if (rule.mode === 'margin' || rule.mode === 'mixed') {
-    // Commission = (selling_price − vendor_cost) × margin_pct%.
-    // margin_pct defaults to 100 when not set — meaning CC keeps 100% of the margin.
-    const vendorCostTotal = (rule.vendor_cost || 0) * (qty || 1);
-    const grossMargin     = totalPrice - vendorCostTotal; // what CC earns above cost
-    const pct = (rule.margin_pct > 0 ? rule.margin_pct : 100) / 100;
-    const commOnMargin = parseFloat((grossMargin * pct).toFixed(2));
+    // CC always keeps full margin (selling_price − vendor_cost).
+    // Additionally, margin_pct% is charged on vendor cost (e.g. 20% on ₹1200 = ₹240 extra).
+    // When margin_pct is 0/unset, only the margin is taken (no extra commission on cost).
+    const vendorCostTotal  = (rule.vendor_cost || 0) * (qty || 1);
+    const grossMargin      = totalPrice - vendorCostTotal;
+    const commissionOnCost = vendorCostTotal * ((rule.margin_pct || 0) / 100);
+    const commOnMargin     = parseFloat((grossMargin + commissionOnCost).toFixed(2));
     if (rule.margin_gst_inclusive) {
       gst        += parseFloat((commOnMargin * 18 / 118).toFixed(2));
       commission += parseFloat((commOnMargin * 100 / 118).toFixed(2));
