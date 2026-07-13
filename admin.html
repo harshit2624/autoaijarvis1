@@ -10209,6 +10209,7 @@
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
       { id:'abandonedcarts',   icon:'🛒', label:'Abandoned Carts',    section:'main' },
       { id:'techbrain',        icon:'🧠', label:'Tech Brain',          section:'main' },
+      { id:'opsmap',           icon:'🗺️', label:'Live Ops Map',         section:'main' },
       { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
       { id:'agreements',       icon:'📝', label:'Agreements',          section:'finance' },
       { id:'theme',            icon:'🎨', label:'Theme',               section:'finance' },
@@ -10311,6 +10312,7 @@
           {view==='commissionrules' && <CommissionRules  token={token}/>}
           {view==='abandonedcarts' && <AbandonedCarts token={token}/>}
           {view==='techbrain'      && <TechBrain token={token}/>}
+          {view==='opsmap'         && <OpsMap token={token}/>}
           {view==='onboarding'     && <VendorOnboarding token={token}/>}
           {view==='agreements'     && <AgreementManagement token={token}/>}
           {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
@@ -12191,6 +12193,347 @@
           <span style={{fontSize:10,letterSpacing:3,color:'#3d6282',textTransform:'uppercase'}}><span style={{color:'#00e5ff'}}>JARVIS</span> // CrosCrow Intelligence Core</span>
           <span style={{fontSize:9,letterSpacing:2,color:'#1a3a5c',textTransform:'uppercase'}}>Built with Claude · Live System</span>
         </div>
+      </div>
+    );
+  }
+
+  // ── LIVE OPS MAP ──────────────────────────────────────────────────────────
+  function OpsMap({ token }) {
+    const [data,        setData]        = React.useState(null);
+    const [loading,     setLoading]     = React.useState(true);
+    const [hovered,     setHovered]     = React.useState(null);
+    const [mouse,       setMouse]       = React.useState({ x: 0, y: 0 });
+    const [days,        setDays]        = React.useState(90);
+    const [scanY,       setScanY]       = React.useState(0);
+    const wrapRef = React.useRef(null);
+
+    const load = React.useCallback((d) => {
+      setLoading(true);
+      fetch(`/admin/ops-map?days=${d}`, { headers: { Authorization: token } })
+        .then(r => r.json()).then(d => { setData(d); setLoading(false); })
+        .catch(() => setLoading(false));
+    }, [token]);
+
+    React.useEffect(() => { load(days); }, [days]);
+
+    // Scan line animation
+    React.useEffect(() => {
+      const t = setInterval(() => setScanY(y => (y + 1.2) % 580), 16);
+      return () => clearInterval(t);
+    }, []);
+
+    // City lat/lon lookup
+    const CITY_LL = {
+      'Mumbai':[19.07,72.87],'Delhi':[28.61,77.21],'Bengaluru':[12.97,77.59],
+      'Bangalore':[12.97,77.59],'Chennai':[13.08,80.27],'Hyderabad':[17.38,78.48],
+      'Kolkata':[22.57,88.36],'Pune':[18.52,73.85],'Ahmedabad':[23.02,72.57],
+      'Jaipur':[26.91,75.79],'Lucknow':[26.85,80.95],'Surat':[21.17,72.83],
+      'Chandigarh':[30.73,76.78],'Bhopal':[23.26,77.41],'Indore':[22.71,75.85],
+      'Patna':[25.59,85.13],'Nagpur':[21.14,79.08],'Coimbatore':[11.01,76.97],
+      'Kochi':[9.93,76.26],'Visakhapatnam':[17.68,83.21],'Guwahati':[26.18,91.74],
+      'Rajkot':[22.30,70.80],'Vadodara':[22.30,73.20],'Nashik':[19.99,73.79],
+      'Agra':[27.18,78.01],'Varanasi':[25.32,82.97],'Jodhpur':[26.29,73.02],
+      'Noida':[28.54,77.39],'Gurugram':[28.46,77.03],'Gurgaon':[28.46,77.03],
+      'Faridabad':[28.41,77.31],'Thane':[19.21,72.97],'Navi mumbai':[19.03,73.02],
+      'Meerut':[28.98,77.71],'Amritsar':[31.63,74.87],'Ludhiana':[30.90,75.85],
+      'Jalandhar':[31.33,75.58],'Dehradun':[30.32,78.03],'Kanpur':[26.46,80.35],
+      'Prayagraj':[25.45,81.84],'Allahabad':[25.45,81.84],'Madurai':[9.92,78.12],
+      'Thiruvananthapuram':[8.52,76.94],'Trivandrum':[8.52,76.94],
+      'Mangalore':[12.87,74.84],'Mysore':[12.30,76.65],'Mysuru':[12.30,76.65],
+      'Tiruchirappalli':[10.79,78.70],'Kozhikode':[11.25,75.78],'Calicut':[11.25,75.78],
+      'Raipur':[21.25,81.63],'Ranchi':[23.35,85.33],'Bhubaneswar':[20.30,85.82],
+      'Cuttack':[20.47,85.88],'Gwalior':[26.23,78.17],'Jabalpur':[23.18,79.94],
+      'Srinagar':[34.08,74.80],'Shimla':[31.10,77.17],'Udaipur':[24.58,73.69],
+      'Siliguri':[26.71,88.43],'Durgapur':[23.55,87.32],'Asansol':[23.68,86.98],
+      'New delhi':[28.61,77.21],'Navi mumbai':[19.03,73.02],'Greater noida':[28.47,77.50],
+      'Ernakulam':[9.98,76.30],'Vijayawada':[16.51,80.63],'Guntur':[16.30,80.44],
+      'Tirupati':[13.63,79.42],'Anand':[22.56,72.95],'Bhavnagar':[21.77,72.15],
+      'Jamnagar':[22.47,70.07],'Gandhinagar':[23.22,72.68],'Bharuch':[21.70,72.99],
+      'Kolhapur':[16.70,74.24],'Aurangabad':[19.88,75.34],'Solapur':[17.69,75.91],
+      'Amravati':[20.94,77.78],'Nanded':[19.16,77.31],'Latur':[18.40,76.56],
+      'Jodhpur':[26.29,73.02],'Bikaner':[28.02,73.32],'Ajmer':[26.45,74.64],
+      'Kota':[25.18,75.85],'Alwar':[27.56,76.62],'Bhilwara':[25.35,74.64],
+      'Salem':[11.67,78.15],'Erode':[11.34,77.73],'Vellore':[12.92,79.13],
+      'Tirunelveli':[8.73,77.69],'Pondicherry':[11.93,79.83],'Puducherry':[11.93,79.83],
+      'Belgaum':[15.86,74.50],'Bellary':[15.14,76.93],'Davangere':[14.47,75.92],
+      'Shivamogga':[13.93,75.54],'Tumkur':[13.34,77.11],'Dharwad':[15.46,75.01],
+      'Warangal':[17.98,79.60],'Nizamabad':[18.67,78.10],'Karimnagar':[18.43,79.13],
+      'Khammam':[17.25,80.15],'Rajahmundry':[17.00,81.78],'Nellore':[14.44,79.99],
+      'Kakinada':[16.96,82.24],'Eluru':[16.71,81.10],'Tiruppur':[11.11,77.34],
+    };
+
+    // Project lat/lon → SVG coords (viewBox 500×570)
+    const project = (lat, lon) => [
+      Math.round((lon - 68) / 30 * 500),
+      Math.round((37 - lat) / 30 * 570),
+    ];
+
+    // Lookup city coords (case-insensitive)
+    const findCoords = (city) => {
+      const key = Object.keys(CITY_LL).find(k => k.toLowerCase() === city.toLowerCase());
+      return key ? project(...CITY_LL[key]) : null;
+    };
+
+    // Map cities to SVG positions
+    const maxOrders = Math.max(...(data?.cities || []).map(c => c.orders), 1);
+    const plotted = (data?.cities || []).map((c, i) => {
+      const xy = findCoords(c.city);
+      if (!xy) return null;
+      return { ...c, x: xy[0], y: xy[1], rank: i };
+    }).filter(Boolean);
+
+    // Risk colour
+    const riskColor = (pct) => pct >= 25 ? '#ff4560' : pct >= 12 ? '#ffbe0b' : '#00f593';
+    const riskLabel = (pct) => pct >= 25 ? 'HIGH' : pct >= 12 ? 'MEDIUM' : 'LOW';
+
+    // Marker size: 4–20px based on orders
+    const markerR = (orders) => 4 + Math.round((orders / maxOrders) * 16);
+
+    // India SVG outline path (equirectangular projection, viewBox 0 0 500 570)
+    const INDIA_PATH = `M 108,5 L 142,13 L 158,35 L 175,45 L 192,55 L 220,100 L 250,130
+      L 283,145 L 317,152 L 342,158
+      L 358,158 L 400,152 L 450,148 L 458,162
+      L 433,178 L 417,198 L 408,218 L 395,238 L 375,252 L 355,262 L 342,265
+      L 325,285 L 295,320 L 258,358 L 225,400 L 207,428 L 203,450 L 197,475 L 185,510
+      L 165,540 L 145,520 L 135,495 L 125,470 L 113,445 L 105,420 L 95,393
+      L 85,358 L 80,330 L 78,303 L 70,283 L 65,263
+      L 53,272 L 38,268 L 22,258 L 12,245 L 8,228
+      L 17,215 L 32,200 L 45,183 L 55,163 L 72,140 L 88,115 L 100,97 Z`;
+
+    const handleMouseMove = (e) => {
+      const rect = wrapRef.current?.getBoundingClientRect();
+      if (rect) setMouse({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    };
+
+    // Hover card position — keep inside viewport
+    const cardW = 230, cardH = 200;
+    const cardLeft = mouse.x + 16 + cardW > (wrapRef.current?.offsetWidth || 800)
+      ? mouse.x - cardW - 12 : mouse.x + 16;
+    const cardTop  = mouse.y + cardH > (wrapRef.current?.offsetHeight || 600)
+      ? mouse.y - cardH - 8  : mouse.y + 8;
+
+    const fmt = n => n >= 100000 ? `₹${(n/100000).toFixed(1)}L` : n >= 1000 ? `₹${(n/1000).toFixed(1)}K` : `₹${n}`;
+
+    const S = {
+      wrap: { background:'#020c1b', minHeight:'100vh', color:'#b8d8f5', fontFamily:"'Courier New',monospace", position:'relative', overflow:'hidden' },
+      grid: { position:'absolute', inset:0, backgroundImage:'linear-gradient(rgba(0,229,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,0.02) 1px,transparent 1px)', backgroundSize:'48px 48px', pointerEvents:'none' },
+      header: { padding:'20px 28px 16px', borderBottom:'1px solid rgba(0,229,255,0.08)', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 },
+      title: { fontSize:18, fontWeight:700, color:'#fff', textTransform:'uppercase', letterSpacing:2, textShadow:'0 0 20px rgba(0,229,255,0.4)' },
+      sub: { fontSize:9, letterSpacing:3, color:'#3d6282', textTransform:'uppercase', marginTop:3 },
+      body: { display:'grid', gridTemplateColumns:'1fr 280px', height:'calc(100vh - 80px)', overflow:'hidden' },
+      mapArea: { position:'relative', overflow:'hidden', cursor:'crosshair' },
+      sidebar: { borderLeft:'1px solid rgba(0,229,255,0.08)', background:'rgba(6,22,38,0.6)', overflowY:'auto', padding:20 },
+      card: { position:'absolute', zIndex:20, background:'#06121f', border:'1px solid rgba(0,229,255,0.3)', padding:'14px 16px', width:cardW, pointerEvents:'none', boxShadow:'0 0 30px rgba(0,229,255,0.15)' },
+      cardCity: { fontSize:13, fontWeight:700, color:'#fff', textTransform:'uppercase', letterSpacing:1, marginBottom:10, borderBottom:'1px solid rgba(0,229,255,0.1)', paddingBottom:8 },
+      row: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 },
+      rowLabel: { fontSize:9, letterSpacing:2, color:'#3d6282', textTransform:'uppercase' },
+      rowVal: { fontSize:12, fontWeight:700, color:'#00e5ff' },
+      pill: (pct) => ({ fontSize:8, letterSpacing:2, padding:'2px 7px', background:`${riskColor(pct)}18`, border:`1px solid ${riskColor(pct)}50`, color:riskColor(pct), textTransform:'uppercase', fontWeight:700 }),
+      rankItem: { padding:'10px 12px', borderBottom:'1px solid rgba(0,229,255,0.06)', display:'flex', alignItems:'center', gap:10, cursor:'pointer' },
+      rankNum: { fontSize:10, color:'#1a3a5c', fontVariantNumeric:'tabular-nums', width:18, textAlign:'right', flexShrink:0 },
+      rankName: { fontSize:11, fontWeight:700, color:'#fff', flex:1, textTransform:'uppercase', letterSpacing:0.5 },
+      rankOrders: { fontSize:10, color:'#00e5ff', flexShrink:0 },
+    };
+
+    return (
+      <div style={S.wrap} ref={wrapRef} onMouseMove={handleMouseMove}>
+        <div style={S.grid}/>
+        {/* Header */}
+        <div style={S.header}>
+          <div>
+            <div style={S.title}>🗺️ Live Ops Map</div>
+            <div style={S.sub}>{loading ? 'Loading...' : `${data?.total || 0} orders · ${plotted.length} cities plotted · last ${days} days`}</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {[30,90,180].map(d=>(
+              <button key={d} onClick={()=>setDays(d)} style={{fontSize:9,letterSpacing:2,padding:'5px 12px',border:`1px solid ${days===d?'rgba(0,229,255,0.5)':'rgba(0,229,255,0.12)'}`,background:days===d?'rgba(0,229,255,0.08)':'transparent',color:days===d?'#00e5ff':'#3d6282',cursor:'pointer',textTransform:'uppercase',fontFamily:"'Courier New',monospace"}}>
+                {d}D
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={S.body}>
+          {/* Map area */}
+          <div style={S.mapArea}>
+            {loading && (
+              <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:12}}>
+                <div style={{fontSize:10,letterSpacing:4,color:'#3d6282',textTransform:'uppercase',animation:'pulse 1.5s ease-in-out infinite'}}>Fetching order data...</div>
+              </div>
+            )}
+            <svg viewBox="0 0 500 570" style={{width:'100%',height:'100%',display:'block'}} preserveAspectRatio="xMidYMid meet">
+              <defs>
+                <filter id="om-glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                <filter id="om-softglow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                <radialGradient id="india-fill" cx="45%" cy="50%">
+                  <stop offset="0%" stopColor="rgba(0,229,255,0.05)"/>
+                  <stop offset="100%" stopColor="rgba(0,229,255,0.01)"/>
+                </radialGradient>
+                <clipPath id="india-clip"><path d={INDIA_PATH}/></clipPath>
+              </defs>
+
+              {/* India fill */}
+              <path d={INDIA_PATH} fill="url(#india-fill)" stroke="rgba(0,229,255,0.35)" strokeWidth="1.5" filter="url(#om-glow)"/>
+              {/* India inner glow edge */}
+              <path d={INDIA_PATH} fill="none" stroke="rgba(0,229,255,0.12)" strokeWidth="6"/>
+
+              {/* Scan line clipped to India */}
+              <g clipPath="url(#india-clip)">
+                <line x1="0" y1={scanY} x2="500" y2={scanY} stroke="rgba(0,229,255,0.18)" strokeWidth="1.5"/>
+                <line x1="0" y1={scanY-1} x2="500" y2={scanY-1} stroke="rgba(0,229,255,0.06)" strokeWidth="4"/>
+              </g>
+
+              {/* City markers */}
+              {!loading && plotted.map((c, i) => {
+                const r = markerR(c.orders);
+                const color = riskColor(c.rto_pct);
+                const isTop5 = c.rank < 5;
+                const isHov = hovered?.city === c.city;
+                return (
+                  <g key={c.city}
+                    onMouseEnter={() => setHovered(c)}
+                    onMouseLeave={() => setHovered(null)}
+                    style={{cursor:'pointer'}}>
+                    {/* Outer pulse ring (top 5 cities) */}
+                    {isTop5 && (
+                      <circle cx={c.x} cy={c.y} r={r+8} fill="none" stroke={color} strokeWidth="1" opacity="0.3">
+                        <animate attributeName="r" values={`${r+6};${r+18};${r+6}`} dur={`${2+i*0.3}s`} repeatCount="indefinite"/>
+                        <animate attributeName="opacity" values="0.3;0;0.3" dur={`${2+i*0.3}s`} repeatCount="indefinite"/>
+                      </circle>
+                    )}
+                    {/* Second ring on hover/top5 */}
+                    {(isTop5 || isHov) && (
+                      <circle cx={c.x} cy={c.y} r={r+4} fill="none" stroke={color} strokeWidth="0.8" opacity={isHov?0.6:0.25}/>
+                    )}
+                    {/* Main dot */}
+                    <circle cx={c.x} cy={c.y} r={isHov ? r+2 : r}
+                      fill={isHov ? color : `${color}cc`}
+                      stroke={color} strokeWidth={isHov ? 2 : 1}
+                      filter={isTop5 || isHov ? "url(#om-glow)" : undefined}
+                      style={{transition:'r 0.2s'}}/>
+                    {/* City label for top 8 or hovered */}
+                    {(c.rank < 8 || isHov) && (
+                      <text x={c.x + r + 4} y={c.y + 3}
+                        fontSize="8" fill={isHov ? '#fff' : '#b8d8f5'}
+                        fontFamily="Courier New" letterSpacing="0.5"
+                        style={{pointerEvents:'none', textTransform:'uppercase'}}>
+                        {c.city}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Legend */}
+              <g transform="translate(10,530)">
+                {[['#00f593','<12% RTO'],['#ffbe0b','12–25% RTO'],['#ff4560','>25% RTO']].map(([c,l],i)=>(
+                  <g key={l} transform={`translate(${i*120},0)`}>
+                    <circle cx="5" cy="5" r="4" fill={c} opacity="0.8"/>
+                    <text x="13" y="9" fontSize="8" fill="#3d6282" fontFamily="Courier New" letterSpacing="1">{l}</text>
+                  </g>
+                ))}
+              </g>
+            </svg>
+
+            {/* Hover card */}
+            {hovered && (
+              <div style={{...S.card, left:cardLeft, top:cardTop}}>
+                <div style={{...S.cardCity, color:riskColor(hovered.rto_pct)}}>{hovered.city}</div>
+                {[
+                  ['Orders', hovered.orders, '#00e5ff'],
+                  ['GMV', fmt(hovered.gmv), '#00f593'],
+                  ['Delivered', `${hovered.delivered} (${hovered.orders?Math.round(hovered.delivered/hovered.orders*100):0}%)`, '#00f593'],
+                  ['RTO', `${hovered.rto} (${hovered.rto_pct}%)`, riskColor(hovered.rto_pct)],
+                  ['Active', hovered.active, '#00e5ff'],
+                ].map(([label, val, col]) => (
+                  <div key={label} style={S.row}>
+                    <span style={S.rowLabel}>{label}</span>
+                    <span style={{...S.rowVal, color:col}}>{val}</span>
+                  </div>
+                ))}
+                <div style={{marginTop:10, paddingTop:8, borderTop:'1px solid rgba(0,229,255,0.1)', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                  <span style={{fontSize:8,letterSpacing:2,color:'#3d6282',textTransform:'uppercase'}}>RTO Risk</span>
+                  <span style={S.pill(hovered.rto_pct)}>{riskLabel(hovered.rto_pct)}</span>
+                </div>
+                {/* Mini bar: delivered vs rto vs active */}
+                <div style={{marginTop:10}}>
+                  <div style={{display:'flex',height:4,borderRadius:2,overflow:'hidden',gap:1}}>
+                    <div style={{flex:hovered.delivered,background:'#00f593'}}/>
+                    <div style={{flex:hovered.active,background:'#00e5ff'}}/>
+                    <div style={{flex:hovered.rto||0.1,background:'#ff4560'}}/>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
+                    {[['Delivered','#00f593'],['Active','#00e5ff'],['RTO','#ff4560']].map(([l,c])=>(
+                      <span key={l} style={{fontSize:7,color:c,letterSpacing:1,textTransform:'uppercase'}}>{l}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar — ranked cities */}
+          <div style={S.sidebar}>
+            <div style={{fontSize:9,letterSpacing:4,color:'#00e5ff',textTransform:'uppercase',marginBottom:16,paddingBottom:8,borderBottom:'1px solid rgba(0,229,255,0.1)'}}>Top Cities</div>
+
+            {/* Quick stats */}
+            {data && (
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:20}}>
+                {[
+                  ['Total Orders', data.total],
+                  ['Cities', data.cities?.length || 0],
+                  ['Plotted', plotted.length],
+                  ['Since', data.since],
+                ].map(([l,v])=>(
+                  <div key={l} style={{background:'rgba(0,229,255,0.04)',border:'1px solid rgba(0,229,255,0.08)',padding:'8px 10px'}}>
+                    <div style={{fontSize:12,fontWeight:700,color:'#00e5ff'}}>{v}</div>
+                    <div style={{fontSize:8,letterSpacing:1,color:'#3d6282',textTransform:'uppercase',marginTop:2}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* City list */}
+            {plotted.slice(0, 25).map((c, i) => (
+              <div key={c.city} style={{...S.rankItem, background:hovered?.city===c.city?'rgba(0,229,255,0.06)':'transparent'}}
+                onMouseEnter={() => setHovered(c)}
+                onMouseLeave={() => setHovered(null)}>
+                <span style={S.rankNum}>{i+1}</span>
+                <div style={{flex:1}}>
+                  <div style={S.rankName}>{c.city}</div>
+                  <div style={{height:2,background:'rgba(0,229,255,0.08)',borderRadius:1,marginTop:3}}>
+                    <div style={{height:'100%',width:`${Math.round(c.orders/maxOrders*100)}%`,background:riskColor(c.rto_pct),borderRadius:1,transition:'width 0.5s'}}/>
+                  </div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={S.rankOrders}>{c.orders}</div>
+                  <div style={{fontSize:8,color:riskColor(c.rto_pct),letterSpacing:1}}>{c.rto_pct}% RTO</div>
+                </div>
+              </div>
+            ))}
+
+            {/* Cities not mapped */}
+            {data && (() => {
+              const unmapped = data.cities.filter(c => !findCoords(c.city));
+              if (!unmapped.length) return null;
+              return (
+                <div style={{marginTop:20,paddingTop:12,borderTop:'1px solid rgba(0,229,255,0.06)'}}>
+                  <div style={{fontSize:8,letterSpacing:3,color:'#3d6282',textTransform:'uppercase',marginBottom:8}}>Unmapped ({unmapped.length})</div>
+                  {unmapped.slice(0,10).map(c=>(
+                    <div key={c.city} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:10,color:'#3d6282'}}>
+                      <span style={{textTransform:'capitalize'}}>{c.city}</span>
+                      <span style={{color:'#1a3a5c'}}>{c.orders}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        <style>{`
+          @keyframes pulse { 0%,100%{opacity:0.3} 50%{opacity:1} }
+        `}</style>
       </div>
     );
   }

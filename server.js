@@ -17074,6 +17074,50 @@ app.post('/admin/wa-report/weekly', adminAuth, async (req, res) => {
   generateWaWeeklyReport().catch(e => console.error('Manual weekly WA report error:', e.message));
 });
 
+// ── GET /admin/ops-map — city-level order heatmap data ─────────────────────
+app.get('/admin/ops-map', adminAuth, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 90;
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const allOrders = await fetchAllOrders('any', since, null);
+
+    // Get stages from order_meta
+    const ids = allOrders.map(o => String(o.id));
+    const metas = await mdb.collection('order_meta').find(
+      { shopify_id: { $in: ids } },
+      { projection: { shopify_id: 1, stage: 1, _id: 0 } }
+    ).toArray();
+    const metaMap = {};
+    metas.forEach(m => { metaMap[m.shopify_id] = m.stage; });
+
+    // Aggregate by city
+    const cityMap = {};
+    for (const o of allOrders) {
+      const raw = (o.shipping_address?.city || '').trim();
+      if (!raw) continue;
+      const city = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+      const stage = metaMap[String(o.id)] || 'new';
+      if (!cityMap[city]) cityMap[city] = { city, orders: 0, rto: 0, delivered: 0, active: 0, gmv: 0 };
+      const c = cityMap[city];
+      c.orders++;
+      c.gmv += parseFloat(o.total_price || 0);
+      if (stage === 'rto') c.rto++;
+      else if (stage === 'delivered') c.delivered++;
+      else c.active++;
+    }
+
+    const cities = Object.values(cityMap)
+      .sort((a, b) => b.orders - a.orders)
+      .slice(0, 80)
+      .map(c => ({ ...c, gmv: Math.round(c.gmv), rto_pct: c.orders ? Math.round(c.rto / c.orders * 100) : 0 }));
+
+    res.json({ ok: true, cities, total: allOrders.length, since: since.slice(0, 10) });
+  } catch (e) {
+    console.error('ops-map error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/admin/support/insights', adminAuth, async (req, res) => {
   const runs = await mdb.collection('support_insights')
     .find({}).sort({ run_at: -1 }).limit(5).toArray();
