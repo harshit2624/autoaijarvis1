@@ -5536,8 +5536,11 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
       // Single stageMap — one entry per unique order, stage = higherStage of meta + all vendor stages
       const stageMap = {};
+      // confirmedTagMap: for not-confirmed stages, count orders that carry the "Order Confirmed" tag
+      const confirmedTagMap = { hold: 0, cancelled: 0, new: 0, misc: 0 };
       let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0, revNotConfirmed=0;
       const IN_TRANSIT_SET = new Set(['ready','pickup','transit']);
+      const NOT_CONFIRMED_SET = new Set(['hold','cancelled','new','misc']);
 
       ordersMain.forEach(o => {
         const sid    = String(o.id);
@@ -5545,6 +5548,16 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         const vStages = vsMapPeriod[sid] || [];
         const stage  = vStages.reduce((best, s) => higherStage(best, s), base);
         stageMap[stage] = (stageMap[stage] || 0) + 1;
+        // Track "Order Confirmed" tag on not-confirmed orders
+        if (NOT_CONFIRMED_SET.has(stage)) {
+          const tagList = (o.tags || '').split(',').map(t => t.trim().toLowerCase());
+          const wasConfirmed = tagList.some(t =>
+            t.includes('order confirmed') ||   // ✅ Order Confirmed
+            t.includes('confirmed on call') || // confirmed on call ✅
+            t.includes('prepaid')              // prepaid💰
+          );
+          if (wasConfirmed) confirmedTagMap[stage] = (confirmedTagMap[stage] || 0) + 1;
+        }
 
         const price = parseFloat(o.total_price || 0);
         if (DISPATCHED_SET.has(stage)) {
@@ -5570,7 +5583,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const delivered  = stageMap.delivered || 0;
       const rto        = stageMap.rto || 0;
       const cancelled  = stageMap.cancelled || 0;
-      const notConfirmed = (stageMap.new||0) + (stageMap.hold||0) + cancelled;
+      const notConfirmed = (stageMap.new||0) + (stageMap.hold||0) + cancelled + (stageMap.misc||0);
 
       const dispatch_rate  = active     > 0 ? Math.round(dispatched / active     * 100) : 0;
       const delivery_rate  = dispatched > 0 ? Math.round(delivered  / dispatched * 100) : 0;
@@ -5579,7 +5592,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       return {
         total, active, dispatched, pending, delivered, rto, cancelled, notConfirmed,
         dispatch_rate, delivery_rate, overall_rate,
-        stageMap,      // { new, confirmed, partial, ready, pickup, transit, delivered, rto, hold, cancelled }
+        stageMap,         // { new, confirmed, partial, ready, pickup, transit, delivered, rto, hold, cancelled, misc }
+        confirmedTagMap,  // per not-confirmed stage: count that had a confirmed tag before falling off
         stageBreakdown: stageMap,  // alias — some frontend code uses this name
         revDispatched:    parseFloat(revDispatched.toFixed(2)),
         revPending:       parseFloat(revPending.toFixed(2)),
