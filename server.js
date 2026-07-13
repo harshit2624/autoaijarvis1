@@ -6651,7 +6651,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         commission_pct:   config.commission_pct,
         commission:       calc.commission,
         gst:              calc.gst,
-        advance_paid:     meta.advance_paid || 0,
+        advance_paid:     advancePaid,
         shipping_charge:  shippingSplit,
         net:              calc.net,
         has_product_rule: hasProductRule,
@@ -7125,10 +7125,14 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   if (custom_commission_pct != null && parseFloat(custom_commission_pct) !== (s.custom_commission_pct || 0)) {
     newCommission = 0; newGst = 0;
     for (const o of orders) {
+      // advance_paid in settlement_orders is already the split amount (set at generation time)
       const calc = calcCommission(o.my_revenue, o.payment_type, parseFloat(custom_commission_pct), o.advance_paid);
+      // shipping_charge is COD-only and must be added back — calcCommission doesn't know about shipping
+      const shippingCharge = o.payment_type !== 'prepaid' ? (o.shipping_charge || 0) : 0;
+      const newNet = parseFloat((calc.net + shippingCharge).toFixed(2));
       newCommission += calc.commission;
       newGst        += calc.gst;
-      await mdb.collection('settlement_orders').updateOne({ id: o.id }, { $set: { commission_pct: parseFloat(custom_commission_pct), commission: calc.commission, gst: calc.gst, net: calc.net } });
+      await mdb.collection('settlement_orders').updateOne({ id: o.id }, { $set: { commission_pct: parseFloat(custom_commission_pct), commission: calc.commission, gst: calc.gst, net: newNet } });
     }
     orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
     newCommission = parseFloat(newCommission.toFixed(2));
