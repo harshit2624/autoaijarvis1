@@ -10208,6 +10208,7 @@
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
       { id:'abandonedcarts',   icon:'🛒', label:'Abandoned Carts',    section:'main' },
+      { id:'techbrain',        icon:'🧠', label:'Tech Brain',          section:'main' },
       { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
       { id:'agreements',       icon:'📝', label:'Agreements',          section:'finance' },
       { id:'theme',            icon:'🎨', label:'Theme',               section:'finance' },
@@ -10309,6 +10310,7 @@
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
           {view==='commissionrules' && <CommissionRules  token={token}/>}
           {view==='abandonedcarts' && <AbandonedCarts token={token}/>}
+          {view==='techbrain'      && <TechBrain token={token}/>}
           {view==='onboarding'     && <VendorOnboarding token={token}/>}
           {view==='agreements'     && <AgreementManagement token={token}/>}
           {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
@@ -11881,6 +11883,313 @@
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── TECH BRAIN ────────────────────────────────────────────────────────────
+  function TechBrain() {
+    const [clock, setClock] = React.useState('');
+    const [counted, setCounted] = React.useState(false);
+    const [counts, setCounts] = React.useState({ orders:0, vendors:0, modules:0, gaps:0 });
+
+    React.useEffect(() => {
+      const tick = () => {
+        const now = new Date().toLocaleString('en-IN', { timeZone:'Asia/Kolkata', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        const date = new Date().toLocaleDateString('en-IN', { timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric' });
+        setClock(`IST ${now}  ·  ${date}`);
+      };
+      tick(); const t = setInterval(tick, 1000); return () => clearInterval(t);
+    }, []);
+
+    React.useEffect(() => {
+      if (counted) return;
+      setCounted(true);
+      const targets = { orders:2400, vendors:60, modules:9, gaps:8 };
+      const duration = 1800;
+      const start = performance.now();
+      const frame = ts => {
+        const p = Math.min((ts - start) / duration, 1);
+        const e = 1 - Math.pow(1 - p, 3);
+        setCounts({ orders:Math.floor(e*targets.orders), vendors:Math.floor(e*targets.vendors), modules:Math.floor(e*targets.modules), gaps:Math.floor(e*targets.gaps) });
+        if (p < 1) requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }, []);
+
+    const TB = {
+      wrap: { fontFamily:"'Courier New','Lucida Console',monospace", background:'#020c1b', minHeight:'100vh', color:'#b8d8f5', position:'relative', overflow:'hidden' },
+      grid: { position:'absolute', inset:0, backgroundImage:'linear-gradient(rgba(0,229,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,0.02) 1px,transparent 1px)', backgroundSize:'60px 60px', pointerEvents:'none' },
+      hero: { position:'relative', padding:'64px 32px 48px', textAlign:'center', borderBottom:'1px solid rgba(0,229,255,0.08)' },
+      eyebrow: { fontSize:9, letterSpacing:5, color:'#00e5ff', textTransform:'uppercase', marginBottom:16, opacity:0.8 },
+      title: { fontSize:'clamp(40px,6vw,80px)', fontWeight:900, textTransform:'uppercase', letterSpacing:-1, color:'#fff', textShadow:'0 0 40px rgba(0,229,255,0.5)', marginBottom:6, lineHeight:1 },
+      sub: { fontSize:11, letterSpacing:3, color:'#3d6282', textTransform:'uppercase', marginBottom:40 },
+      statsRow: { display:'flex', gap:48, flexWrap:'wrap', justifyContent:'center', marginBottom:32 },
+      statNum: { fontSize:34, fontWeight:700, color:'#00e5ff', textShadow:'0 0 20px rgba(0,229,255,0.4)', display:'block' },
+      statLabel: { fontSize:9, letterSpacing:3, color:'#3d6282', textTransform:'uppercase', marginTop:4 },
+      clockEl: { display:'inline-block', fontSize:10, letterSpacing:2, color:'#3d6282', border:'1px solid rgba(0,229,255,0.1)', padding:'5px 14px' },
+      sec: { padding:'52px 32px' },
+      secEye: { fontSize:9, letterSpacing:5, color:'#00e5ff', textTransform:'uppercase', display:'flex', alignItems:'center', gap:12, marginBottom:8 },
+      secEyeLine: { width:28, height:1, background:'#00e5ff', opacity:0.4 },
+      secTitle: { fontSize:'clamp(18px,2.5vw,26px)', fontWeight:700, color:'#fff', textTransform:'uppercase', letterSpacing:1, marginBottom:6 },
+      secDesc: { fontSize:11, color:'#3d6282', letterSpacing:1, marginBottom:36, lineHeight:1.7 },
+    };
+
+    const NODE_CARDS = [
+      { status:'live', name:'Order Engine', desc:'Shopify webhook intake, order_meta, OVS stage management with higherStage() and manual override protection.', m1:'2,400+', m1k:'Orders', m2:'99.8%', m2k:'Uptime', m2c:'g', tag:'Stage-locked', tc:'live' },
+      { status:'warn', name:'WhatsApp Bot', desc:'Claude-powered support. Handles tracking, returns, exchanges. Admin alerts now include customer name, order no, phone.', m1:'Claude', m1c:'v', m1k:'AI Engine', m2:'Daily', m2k:'Reports', tag:'Improving', tc:'warn' },
+      { status:'warn', name:'Settlement Engine', desc:'Invoice gen, advance split by delivered vendor count, COD shipping in vendor obligation. 3 invoices pending regeneration.', m1:'60+', m1k:'Vendors', m2:'3', m2c:'a', m2k:'Pending Regen', tag:'Regen Needed', tc:'warn' },
+      { status:'live', name:'Commission Brain', desc:'Flat / Margin+% / Mixed modes. Margin formula: CC keeps full gross margin + optional % on vendor cost. GST incl/excl.', m1:'3', m1k:'Modes', m2:'Fixed', m2c:'g', m2k:'Jul 14', tag:'Formula Correct', tc:'live' },
+      { status:'live', name:'ShipSagar Sync', desc:'28-status mapping covering RETURNED, NOT_PICKED, WAITING_PICKUP. respectStageOrder prevents stage downgrades.', m1:'28', m1k:'Status Maps', m2:'Protected', m2c:'g', m2k:'No Downgrade', tag:'Stage-protected', tc:'live' },
+      { status:'warn', name:'Vendor Portal', desc:'Onboarding, tracking submit, delay notes, AWB input. Working but manual-heavy. No vendor self-analytics.', m1:'60+', m1k:'Vendors', m2:'Manual', m2c:'a', m2k:'Heavy', tag:'Self-service Gaps', tc:'warn' },
+      { status:'dead', name:'Analytics Core', desc:'No trend dashboard, no order velocity, no cohort charts. All data lives in MongoDB — zero visual layer on top.', m1:'0', m1c:'r', m1k:'Dashboards', m2:'0', m2c:'r', m2k:'Trend Views', tag:'Critical Gap', tc:'dead' },
+      { status:'off', name:'Retention Engine', desc:'No win-back flows, no repeat purchase triggers, no post-delivery review nudge. Every order treated as first order.', m1:'0', m1c:'r', m1k:'Campaigns', m2:'0', m2c:'r', m2k:'LTV Tracked', tag:'Opportunity', tc:'off' },
+      { status:'off', name:'RTO Predictor', desc:'Platform has rich city × vendor × product RTO data but zero prediction layer. Reactive when it could be proactive.', m1:'0', m1c:'r', m1k:'Predictions', m2:'Rich', m1k2:'Data Available', tag:'AI-Ready', tc:'new' },
+    ];
+
+    const GAPS = [
+      { rank:'01', title:'Zero Analytics Layer', body:'You operate on gut feel. No daily order velocity chart, no vendor trend, no commission revenue over time. Data lives in Mongo — no one is looking at it.', impact:'Impact: Blind to problems until they are crises' },
+      { rank:'02', title:'No Vendor Auto-Scoring', body:'RTO rate, dispatch latency, complaint frequency — you have all this data but no vendor scorecard. Underperformers get the same treatment as top vendors.', impact:'Impact: Bad vendors drag platform reputation' },
+      { rank:'03', title:'No Customer Retention', body:'No win-back flows, no repeat purchase triggers, no post-delivery review ask. No LTV calculation. Customers buy once and vanish with zero automated touchpoint.', impact:'Impact: CAC never amortised, repeat rate unknown' },
+      { rank:'04', title:'Reactive RTO Handling', body:'You know which city + vendor combos have 40%+ RTO. That pattern should block COD at checkout or flag for prepaid-only before dispatch.', impact:'Impact: Losing ~₹200+ per RTO on preventable cases' },
+      { rank:'05', title:'Manual Vendor Comms', body:'Delay nudges, dispatch reminders, vendor performance conversations — all manual. This breaks at 100+ vendors.', impact:'Impact: Ops time scales linearly with vendor count' },
+      { rank:'06', title:'No Inventory Intelligence', body:'No visibility into which products are selling fast, which vendors are consistently OOS, or what to restock. Demand signals are invisible.', impact:'Impact: Lost GMV from stockouts you do not see' },
+    ];
+
+    const LAB = [
+      { badge:'AI-Ready', icon:'🏆', title:'Neural Vendor Score', desc:'Weekly AI vendor report card — RTO%, dispatch latency, complaint rate, commission compliance. Score auto-sent to vendor every Monday via WhatsApp.', impact:92, tags:['Claude','Automated','Vendor Mgmt'] },
+      { badge:'Data-Ready', icon:'🛡️', title:'RTO Shield', desc:'At dispatch, score RTO probability using city × vendor × product × time patterns. Above 40% risk → suggest prepaid incentive. Could save thousands/month.', impact:88, tags:['ML Model','COD Risk','Checkout'] },
+      { badge:'Novel', icon:'🛒', title:'Commerce in Chat', desc:'Full purchase flow inside WhatsApp. Customer says "sweatpants size L" → bot shows options → picks → payment link → order placed. No app needed.', impact:95, tags:['WhatsApp','Shopify API','Conversion'] },
+      { badge:'Quick Win', icon:'🔁', title:'Cohort Re-Engagement', desc:'Segment customers: 1-time, lapsed 60d, loyal 3+. Auto WhatsApp at day 45 of inactivity. "Hey Rahul, the hoodie you liked is back in stock."', impact:80, tags:['Retention','WhatsApp','Segments'] },
+      { badge:'Automation', icon:'⚡', title:'Auto-Escalation Chain', desc:'Order stuck 24h → vendor nudge. 48h → admin alert. 72h → auto customer ETA message. Zero manual monitoring needed.', impact:85, tags:['Cron','WhatsApp','Ops Auto'] },
+      { badge:'Delight', icon:'📋', title:'Vendor Battle Card', desc:'Monthly auto-generated PDF: vendor GMV, RTO vs platform avg, top SKUs, commission paid, one AI recommendation to improve.', impact:75, tags:['PDF Gen','Claude','Vendor Trust'] },
+      { badge:'Infra', icon:'🗺️', title:'Live Ops Map', desc:'Geographic heatmap on admin — orders in transit, RTOs, stuck orders — plotted by city. Click a city to see the orders.', impact:70, tags:['Map API','Admin Panel','Ops Visibility'] },
+      { badge:'Growth', icon:'📊', title:'Dynamic Commission', desc:'AI surfaces commission adjustment suggestions. Low-RTO vendor with high GMV? Suggest lower rate to retain. High-RTO new vendor? Flag to increase or remove COD.', impact:78, tags:['Claude','Commission','Negotiation'] },
+    ];
+
+    const QUEUE = [
+      { n:'01', name:'Auto-Escalation Chain', why:'All data in DB. Just cron + WA triggers. Eliminates the biggest daily ops pain: manually chasing stuck orders.', effort:'Low', ec:'g' },
+      { n:'02', name:'Analytics Dashboard', why:'Order velocity, GMV trend, vendor RTO chart — 1 admin page using existing MongoDB data. Huge visibility gain immediately.', effort:'Medium', ec:'a' },
+      { n:'03', name:'Cohort Re-Engagement', why:'Pull lapsed buyers from Shopify, fire WA at day 45. Even 5% reactivation pays for itself in week one. Uses existing WA infra.', effort:'Low', ec:'g' },
+      { n:'04', name:'Neural Vendor Score', why:'Weekly Claude call reading OVS data, generates scorecard, sends via WA to each vendor. Creates accountability without manual effort.', effort:'Low', ec:'g' },
+      { n:'05', name:'RTO Shield', why:'Score COD orders using city × vendor history. Offer ₹30 prepaid discount above 35% risk. One interceptor in the order webhook.', effort:'Medium', ec:'a' },
+      { n:'06', name:'Commerce in Chat', why:'Full buy flow in WhatsApp. Biggest conversion unlock possible. Requires Shopify cart API + payment link + multi-turn bot flow.', effort:'High', ec:'r' },
+    ];
+
+    const statusColor = s => ({ live:'#00f593', warn:'#ffbe0b', dead:'#ff4560', off:'#3d6282', new:'#9d4edd' }[s] || '#3d6282');
+    const statusLabel = s => ({ live:'Operational', warn:'Improving', dead:'Not Built', off:'Not Built', new:'Not Built' }[s] || s);
+    const metricColor = c => ({ g:'#00f593', a:'#ffbe0b', r:'#ff4560', v:'#9d4edd' }[c] || '#00e5ff');
+    const tagBg = tc => ({ live:'rgba(0,245,147,0.08)', warn:'rgba(255,190,11,0.08)', dead:'rgba(255,69,96,0.1)', off:'rgba(61,98,130,0.1)', new:'rgba(157,78,221,0.1)' }[tc] || 'transparent');
+    const tagColor = tc => ({ live:'#00f593', warn:'#ffbe0b', dead:'#ff4560', off:'#3d6282', new:'#9d4edd' }[tc] || '#3d6282');
+
+    return (
+      <div style={TB.wrap}>
+        <div style={TB.grid}/>
+
+        {/* ── HERO ── */}
+        <div style={TB.hero}>
+          <p style={TB.eyebrow}>CrosCrow · Operational Intelligence · v2.1</p>
+          <h1 style={TB.title}>JAR<span style={{color:'#00e5ff'}}>VIS</span></h1>
+          <p style={TB.sub}>Tech Brain · Pipeline Status · Feature Lab</p>
+          <div style={TB.statsRow}>
+            {[{id:'orders',v:counts.orders,s:'+',l:'Orders Processed'},{id:'vendors',v:counts.vendors,s:'+',l:'Active Vendors'},{id:'modules',v:counts.modules,s:'',l:'System Modules'},{id:'gaps',v:counts.gaps,s:'',l:'Gap Opportunities'}].map(c=>(
+              <div key={c.id} style={{textAlign:'center'}}>
+                <span style={TB.statNum}>{c.v}{c.s}</span>
+                <span style={TB.statLabel}>{c.l}</span>
+              </div>
+            ))}
+          </div>
+          <div style={TB.clockEl}>{clock}</div>
+        </div>
+
+        {/* ── PIPELINE SVG ── */}
+        <div style={{...TB.sec, background:'rgba(6,22,38,0.5)'}}>
+          <div style={TB.secEye}><span style={TB.secEyeLine}/> Live Architecture</div>
+          <h2 style={TB.secTitle}>Data Pipeline</h2>
+          <p style={TB.secDesc}>Real-time flows powering every order, conversation, and settlement across the platform.</p>
+          <div style={{overflowX:'auto',paddingBottom:12}}>
+            <svg viewBox="0 0 1060 420" height="380" style={{display:'block',minWidth:900}} xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <filter id="tb-gc"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                <filter id="tb-gv"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                <filter id="tb-ga"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+              </defs>
+              {/* Row labels */}
+              {[['ORDER','#00e5ff',84],['BOT','#9d4edd',214],['COURIER','#ffbe0b',344]].map(([l,c,y])=>(
+                <text key={l} x="12" y={y} fill={c} fontSize="8" letterSpacing="2" fontFamily="Courier New" opacity="0.5" textAnchor="start">{l}</text>
+              ))}
+              {/* Row 1 paths */}
+              {[[125,215],[295,385],[465,555],[635,725],[805,895]].map(([x1,x2],i)=>(
+                <g key={i}>
+                  <path d={`M ${x1} 75 L ${x2} 75`} stroke="#00e5ff" strokeWidth="1.5" strokeDasharray="6 4" fill="none" opacity="0.6"/>
+                  <circle r="3" fill="#00e5ff" filter="url(#tb-gc)"><animateMotion dur="1.8s" begin={`${i*0.4}s`} repeatCount="indefinite" path={`M ${x1} 75 L ${x2} 75`}/></circle>
+                  <circle r="2" fill="#00e5ff" opacity="0.4"><animateMotion dur="1.8s" begin={`${i*0.4+0.9}s`} repeatCount="indefinite" path={`M ${x1} 75 L ${x2} 75`}/></circle>
+                </g>
+              ))}
+              {/* Row 2 paths */}
+              {[[125,215],[295,385],[465,555],[635,725],[805,895]].map(([x1,x2],i)=>(
+                <g key={i}>
+                  <path d={`M ${x1} 205 L ${x2} 205`} stroke="#9d4edd" strokeWidth="1.5" strokeDasharray="6 4" fill="none" opacity="0.6"/>
+                  <circle r="3" fill="#9d4edd" filter="url(#tb-gv)"><animateMotion dur="2.2s" begin={`${i*0.5}s`} repeatCount="indefinite" path={`M ${x1} 205 L ${x2} 205`}/></circle>
+                </g>
+              ))}
+              {/* Row 3 paths */}
+              {[[125,215],[295,385],[465,555],[635,725]].map(([x1,x2],i)=>(
+                <g key={i}>
+                  <path d={`M ${x1} 335 L ${x2} 335`} stroke="#ffbe0b" strokeWidth="1.5" strokeDasharray="6 4" fill="none" opacity="0.6"/>
+                  <circle r="3" fill="#ffbe0b" filter="url(#tb-ga)"><animateMotion dur="2.5s" begin={`${i*0.6}s`} repeatCount="indefinite" path={`M ${x1} 335 L ${x2} 335`}/></circle>
+                </g>
+              ))}
+              {/* Row 1 nodes */}
+              {[
+                [75, '🛍️','SHOPIFY','',  '#00e5ff'],
+                [255,'⚙️','ORDER','ENGINE','#00e5ff'],
+                [425,'📊','VENDOR','OVS','#00e5ff'],
+                [595,'💰','SETTLE','ENGINE','#ffbe0b'],
+                [765,'📄','INVOICE','GEN','#00f593'],
+                [935,'🧮','COMMIS','BRAIN','#00f593'],
+              ].map(([cx,em,l1,l2,stroke])=>(
+                <g key={cx}>
+                  <circle cx={cx} cy={75} r={38} fill="rgba(0,229,255,0.03)" stroke={stroke} strokeWidth="1.5"/>
+                  <circle cx={cx} cy={75} r={38} fill="none" stroke={stroke} strokeWidth="1" opacity="0.15">
+                    <animate attributeName="r" values="38;50;38" dur="3s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="0.15;0;0.15" dur="3s" repeatCount="indefinite"/>
+                  </circle>
+                  <text x={cx} y={70} textAnchor="middle" fontSize="16" fill={stroke}>{em}</text>
+                  <text x={cx} y={82} textAnchor="middle" fontSize="7" letterSpacing="1" fill="#b8d8f5">{l1}</text>
+                  {l2 && <text x={cx} y={91} textAnchor="middle" fontSize="7" letterSpacing="1" fill="#b8d8f5">{l2}</text>}
+                </g>
+              ))}
+              {/* Row 2 nodes */}
+              {[
+                [75, '💬','CUSTOMER','','#9d4edd'],
+                [255,'🤖','WA','BOT','#9d4edd'],
+                [425,'🧠','CLAUDE','AI','#c77dff'],
+                [595,'📲','ADMIN','ALERT','#9d4edd'],
+                [765,'✅','RESOLUTION','','#00f593'],
+                [935,'🔮','RETENTION','— MISSING','#ff4560'],
+              ].map(([cx,em,l1,l2,stroke])=>(
+                <g key={cx}>
+                  <circle cx={cx} cy={205} r={38} fill="rgba(157,78,221,0.04)" stroke={stroke} strokeWidth={stroke==='#ff4560'?'1':'1.5'} strokeDasharray={stroke==='#ff4560'?'4 4':undefined}/>
+                  {stroke!=='#ff4560' && <circle cx={cx} cy={205} r={38} fill="none" stroke={stroke} strokeWidth="1" opacity="0.15"><animate attributeName="r" values="38;50;38" dur="2.8s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.15;0;0.15" dur="2.8s" repeatCount="indefinite"/></circle>}
+                  <text x={cx} y={200} textAnchor="middle" fontSize="16" fill={stroke}>{em}</text>
+                  <text x={cx} y={212} textAnchor="middle" fontSize="7" letterSpacing="1" fill={stroke==='#ff4560'?'#ff4560':'#b8d8f5'}>{l1}</text>
+                  {l2 && <text x={cx} y={221} textAnchor="middle" fontSize="7" letterSpacing="1" fill={stroke==='#ff4560'?'#ff4560':'#b8d8f5'}>{l2}</text>}
+                </g>
+              ))}
+              {/* Row 3 nodes */}
+              {[
+                [75, '🚚','SHIPSAGAR','','#ffbe0b'],
+                [255,'🔄','STAGE','MAPPER','#ffbe0b'],
+                [425,'📡','OVS','SYNC','#ffbe0b'],
+                [595,'📍','DELIVERY','STATUS','#00f593'],
+                [765,'⚡','RTO','DETECT','#ff4560'],
+                [935,'🎯','RTO PREDICT','— MISSING','#ff4560'],
+              ].map(([cx,em,l1,l2,stroke])=>(
+                <g key={cx}>
+                  <circle cx={cx} cy={335} r={38} fill="rgba(255,190,11,0.03)" stroke={stroke} strokeWidth="1.5" strokeDasharray={stroke==='#ff4560'?'4 4':undefined}/>
+                  {stroke!=='#ff4560' && <circle cx={cx} cy={335} r={38} fill="none" stroke={stroke} strokeWidth="1" opacity="0.15"><animate attributeName="r" values="38;50;38" dur="3.5s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.15;0;0.15" dur="3.5s" repeatCount="indefinite"/></circle>}
+                  <text x={cx} y={330} textAnchor="middle" fontSize="16" fill={stroke}>{em}</text>
+                  <text x={cx} y={342} textAnchor="middle" fontSize="7" letterSpacing="1" fill={stroke==='#ff4560'?'#ff4560':'#b8d8f5'}>{l1}</text>
+                  {l2 && <text x={cx} y={351} textAnchor="middle" fontSize="7" letterSpacing="1" fill={stroke==='#ff4560'?'#ff4560':'#b8d8f5'}>{l2}</text>}
+                </g>
+              ))}
+            </svg>
+          </div>
+        </div>
+
+        {/* ── SYSTEM STATUS ── */}
+        <div style={TB.sec}>
+          <div style={TB.secEye}><span style={TB.secEyeLine}/> Module Health</div>
+          <h2 style={TB.secTitle}>System Status</h2>
+          <p style={TB.secDesc}>Every active module, its operational state, and what was recently changed.</p>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(270px,1fr))',gap:16}}>
+            {NODE_CARDS.map(n=>(
+              <div key={n.name} style={{background:'rgba(6,22,38,0.8)',border:'1px solid rgba(0,229,255,0.1)',padding:20,clipPath:'polygon(12px 0,100% 0,100% 100%,0 100%,0 12px)',transition:'border-color 0.2s'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+                  <span style={{width:7,height:7,borderRadius:'50%',background:statusColor(n.status),boxShadow:`0 0 8px ${statusColor(n.status)}`,flexShrink:0,display:'inline-block'}}/>
+                  <span style={{fontSize:9,letterSpacing:3,textTransform:'uppercase',color:statusColor(n.status)}}>{statusLabel(n.status)}</span>
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:'#fff',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>{n.name}</div>
+                <div style={{fontSize:10,color:'#3d6282',lineHeight:1.6,marginBottom:14}}>{n.desc}</div>
+                <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:10}}>
+                  <div><span style={{fontSize:16,fontWeight:700,color:metricColor(n.m1c),display:'block'}}>{n.m1}</span><span style={{fontSize:8,color:'#3d6282',letterSpacing:1,textTransform:'uppercase'}}>{n.m1k}</span></div>
+                  <div><span style={{fontSize:16,fontWeight:700,color:metricColor(n.m2c),display:'block'}}>{n.m2}</span><span style={{fontSize:8,color:'#3d6282',letterSpacing:1,textTransform:'uppercase'}}>{n.m2k}</span></div>
+                </div>
+                <span style={{fontSize:8,letterSpacing:2,padding:'2px 8px',border:`1px solid ${tagColor(n.tc)}40`,color:tagColor(n.tc),background:tagBg(n.tc),textTransform:'uppercase'}}>{n.tag}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── GAPS ── */}
+        <div style={{...TB.sec, background:'rgba(255,69,96,0.03)', borderTop:'1px solid rgba(255,69,96,0.08)', borderBottom:'1px solid rgba(255,69,96,0.08)'}}>
+          <div style={{...TB.secEye, color:'#ff4560'}}><span style={{...TB.secEyeLine, background:'#ff4560'}}/> Intelligence Audit</div>
+          <h2 style={TB.secTitle}>Where You're Bleeding</h2>
+          <p style={TB.secDesc}>Ranked by revenue & operational impact. These aren't nice-to-haves — they're active cost centres.</p>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(250px,1fr))',gap:14}}>
+            {GAPS.map(g=>(
+              <div key={g.rank} style={{border:'1px solid rgba(255,69,96,0.2)',background:'rgba(255,69,96,0.05)',padding:18,clipPath:'polygon(12px 0,100% 0,100% 100%,0 100%,0 12px)'}}>
+                <div style={{fontSize:9,color:'#ff4560',letterSpacing:3,marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
+                  GAP {g.rank}<span style={{flex:1,height:1,background:'rgba(255,69,96,0.2)',display:'inline-block'}}/>
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:'#fff',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{g.title}</div>
+                <div style={{fontSize:10,color:'#3d6282',lineHeight:1.6,marginBottom:10}}>{g.body}</div>
+                <div style={{fontSize:9,letterSpacing:2,color:'#ff4560',textTransform:'uppercase'}}>{g.impact}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── FEATURE LAB ── */}
+        <div style={TB.sec}>
+          <div style={{...TB.secEye, color:'#9d4edd'}}><span style={{...TB.secEyeLine, background:'#9d4edd'}}/> Feature Lab</div>
+          <h2 style={TB.secTitle}>Out of the Box</h2>
+          <p style={TB.secDesc}>Features no typical marketplace has — built on the data CrosCrow already generates.</p>
+          <div style={{display:'flex',gap:16,overflowX:'auto',paddingBottom:12}}>
+            {LAB.map(l=>(
+              <div key={l.title} style={{flexShrink:0,width:280,background:'rgba(6,22,38,0.9)',border:'1px solid rgba(157,78,221,0.2)',padding:24,clipPath:'polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)',transition:'all 0.2s'}}>
+                <span style={{fontSize:8,letterSpacing:3,padding:'3px 8px',border:'1px solid rgba(157,78,221,0.4)',color:'#9d4edd',textTransform:'uppercase',display:'inline-block',marginBottom:14,background:'rgba(157,78,221,0.08)'}}>{l.badge}</span>
+                <div style={{fontSize:24,marginBottom:10}}>{l.icon}</div>
+                <div style={{fontSize:12,fontWeight:700,color:'#fff',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{l.title}</div>
+                <div style={{fontSize:10,color:'#3d6282',lineHeight:1.7,marginBottom:14}}>{l.desc}</div>
+                <div style={{fontSize:9,letterSpacing:2,color:'#9d4edd',textTransform:'uppercase',marginBottom:6}}>Potential Impact</div>
+                <div style={{height:3,background:'rgba(255,255,255,0.05)',borderRadius:2,marginBottom:12}}><div style={{width:`${l.impact}%`,height:'100%',background:'linear-gradient(90deg,#9d4edd,#00e5ff)',borderRadius:2}}/></div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {l.tags.map(t=><span key={t} style={{fontSize:8,letterSpacing:1,color:'#3d6282',padding:'2px 6px',border:'1px solid rgba(0,229,255,0.1)'}}>{t}</span>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── BUILD QUEUE ── */}
+        <div style={{...TB.sec, background:'rgba(6,22,38,0.5)'}}>
+          <div style={TB.secEye}><span style={TB.secEyeLine}/> Next Build</div>
+          <h2 style={TB.secTitle}>Prioritised Queue</h2>
+          <p style={TB.secDesc}>Ranked by impact-to-effort ratio. Low effort = days not weeks.</p>
+          <div style={{display:'flex',flexDirection:'column',gap:10,maxWidth:760}}>
+            {QUEUE.map(q=>(
+              <div key={q.n} style={{display:'grid',gridTemplateColumns:'44px 1fr auto',gap:16,alignItems:'center',padding:'14px 18px',border:'1px solid rgba(0,229,255,0.1)',background:'rgba(6,22,38,0.8)',clipPath:'polygon(10px 0,100% 0,100% 100%,0 100%,0 10px)'}}>
+                <span style={{fontSize:22,fontWeight:700,color:'#1a3a5c',fontVariantNumeric:'tabular-nums'}}>{q.n}</span>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#fff',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{q.name}</div>
+                  <div style={{fontSize:10,color:'#3d6282',lineHeight:1.5}}>{q.why}</div>
+                </div>
+                <div style={{textAlign:'right',flexShrink:0}}>
+                  <div style={{fontSize:8,letterSpacing:2,color:'#3d6282',textTransform:'uppercase',marginBottom:4}}>Effort</div>
+                  <div style={{fontSize:11,fontWeight:700,color:metricColor(q.ec),textTransform:'uppercase',letterSpacing:1}}>{q.effort}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── FOOTER ── */}
+        <div style={{padding:'28px 32px',borderTop:'1px solid rgba(0,229,255,0.08)',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+          <span style={{fontSize:10,letterSpacing:3,color:'#3d6282',textTransform:'uppercase'}}><span style={{color:'#00e5ff'}}>JARVIS</span> // CrosCrow Intelligence Core</span>
+          <span style={{fontSize:9,letterSpacing:2,color:'#1a3a5c',textTransform:'uppercase'}}>Built with Claude · Live System</span>
         </div>
       </div>
     );
