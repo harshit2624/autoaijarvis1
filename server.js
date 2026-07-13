@@ -16856,7 +16856,7 @@ async function buildWaChatSummaryForPeriod(fromMs, toMs) {
   const chats = await mdb.collection('support_chats').find({
     source: 'whatsapp',
     updated_at: { $gte: fromISO, $lte: toISO },
-  }, { projection: { _id: 1, customer_phone: 1, tags: 1, needs_human: 1, resolved: 1 } }).toArray();
+  }, { projection: { _id: 1, customer_phone: 1, customer_name: 1, order_name: 1, tags: 1, needs_human: 1, resolved: 1 } }).toArray();
 
   if (!chats.length) return null;
 
@@ -16870,6 +16870,8 @@ async function buildWaChatSummaryForPeriod(fromMs, toMs) {
     if (!customerMsgs.length) continue;
     chatSummaries.push({
       phone: chat.customer_phone || '—',
+      customer_name: chat.customer_name || '',
+      order_name: chat.order_name || '',
       tags: (chat.tags || []).join(', '),
       needs_human: !!chat.needs_human,
       resolved: !!chat.resolved,
@@ -16907,7 +16909,8 @@ async function generateWaDailyReport() {
     const q = c.customer_messages.slice(0, 3).join(' / ');
     const a = c.bot_replies[0]?.slice(0, 100) || '—';
     const flags = [c.bot_confused && '⚠️ confused', c.needs_human && '👤 escalated', c.resolved && '✅ resolved'].filter(Boolean).join(' ');
-    return `${i+1}. Customer: "${q.slice(0,120)}" → Bot: "${a}..." ${flags}`;
+    const who = [c.customer_name && `*${c.customer_name}*`, c.order_name && `Order ${c.order_name}`, `+91${c.phone}`].filter(Boolean).join(' | ');
+    return `${i+1}. [${who}]\n   Q: "${q.slice(0,120)}" → Bot: "${a}..." ${flags}`;
   }).join('\n');
 
   const prompt = `You are analyzing CrosCrow's WhatsApp support bot performance for today (${now.toDateString()}, ${label}).
@@ -17786,6 +17789,18 @@ async function waAdminAlert(message) {
   catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
 
+// Look up customer name + most recent order name from order_meta by phone
+async function waLookupCustomer(phone) {
+  if (!mdb || !phone) return { name: '', order_name: '' };
+  const digits = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10) return { name: '', order_name: '' };
+  const meta = await mdb.collection('order_meta').findOne(
+    { customer_phone: { $regex: digits } },
+    { projection: { customer_name: 1, order_name: 1, _id: 0 }, sort: { created_at: -1 } }
+  );
+  return { name: meta?.customer_name || '', order_name: meta?.order_name || '' };
+}
+
 // Send a WhatsApp message to a customer by their phone number (Indian, 10-digit)
 async function waSendToCustomer(phone, message) {
   if (!waSocket || !waConnected) return;
@@ -17871,7 +17886,8 @@ async function waDelayReason(shopifyOrderId) {
 
 // ── Escalate to human + pause bot for 12 hours ────────────────────────────
 async function waTalkToHuman(sock, sender, chat, phone, context) {
-  await waAdminAlert(`👤 *Human Support Requested*\n\nCustomer: +91${phone}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
+  const _hci = await waLookupCustomer(phone);
+  await waAdminAlert(`👤 *Human Support Requested*\n${_hci.name ? `Name: *${_hci.name}*\n` : ''}Phone: +91${phone}${_hci.order_name ? `\nOrder: *${_hci.order_name}*` : ''}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
   const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
   await sock.sendMessage(sender, { text: msg });
   await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
@@ -17995,7 +18011,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
           if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
         }
       } else if (num === 2) {
-        await waAdminAlert(`🚨 *Escalation Needed*\nOrder *${d?.order_name}* hasn't shipped.\nCustomer: +91${phone}\nPlease follow up with the vendor immediately.`);
+        await waAdminAlert(`🚨 *Escalation Needed*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}\nHashn't shipped — follow up with vendor immediately.`);
         if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
         await sock.sendMessage(sender, { text: `We've escalated this to our team and nudged the vendor directly. You'll get an update within a few hours.\n\nFor urgent help:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
       } else if (num === 3) {
@@ -18024,7 +18040,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       } else if (num === 2) {
         await sock.sendMessage(sender, { text: `Start your exchange here 👇\n\n🔗 ${trackUrl}\n\nChoose the item, pick your new size/colour, and we'll handle the rest!` });
       } else if (num === 3) {
-        await waAdminAlert(`⚠️ *Issue with delivered order*\nOrder: *${d?.order_name}*\nCustomer: +91${phone}\nReported: wrong / damaged item.`);
+        await waAdminAlert(`⚠️ *Issue with delivered order*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}\nReported: wrong / damaged item.`);
         await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} delivered — issue reported`);
         return true;
       } else if (num === 4) {
@@ -18036,10 +18052,10 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
 
     case 'order_rto':
       if (num === 1) {
-        await waAdminAlert(`📦 *Re-delivery Request*\nOrder: *${d?.order_name}*\nCustomer: +91${phone}`);
+        await waAdminAlert(`📦 *Re-delivery Request*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}`);
         await sock.sendMessage(sender, { text: `Re-delivery flagged! Our team will coordinate within 24 hours.\n\nFor urgent help:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
       } else if (num === 2) {
-        await waAdminAlert(`💰 *Refund Request (RTO)*\nOrder: *${d?.order_name}*\nCustomer: +91${phone}`);
+        await waAdminAlert(`💰 *Refund Request (RTO)*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}`);
         await sock.sendMessage(sender, { text: `Refund request noted! It'll be processed within 3-5 business days once the item is received at our warehouse. We'll update you on this number 🙏` });
       } else if (num === 3) {
         await waTalkToHuman(sock, sender, chat, phone, `RTO order ${d?.order_name} — needs resolution`);
@@ -18364,7 +18380,8 @@ async function startBaileysBot() {
           // ── 3. Escalation keywords → admin alert + human ──────────────
           if (WA_ESCALATION.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
-            await waAdminAlert(`🚨 *Angry Customer*\n+91${phone}\nMessage: "${text.slice(0, 200)}"`);
+            const _ac = await waLookupCustomer(phone);
+            await waAdminAlert(`🚨 *Angry Customer*\n${_ac.name ? `Name: *${_ac.name}*\n` : ''}Phone: +91${phone}${_ac.order_name ? `\nOrder: *${_ac.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"`);
           }
 
           // ── 4. LLM handles everything else ────────────────────────────
@@ -18388,7 +18405,7 @@ async function startBaileysBot() {
           const needsAdmin = /flagged.*team|flagging.*team|flag.*our team|flagged this|noted.*team|cancellation request|manually confirm/i.test(reply);
           const botCantHelp = /flag.*human|connect.*team|reach out|outside.*tools|can't help|cannot help/i.test(reply);
           if (needsAdmin) {
-            waAdminAlert(`🔔 *Action Needed*\nCustomer: +91${phone}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`).catch(() => {});
+            waLookupCustomer(phone).then(ci => waAdminAlert(`🔔 *Action Needed*\n${ci.name ? `Name: *${ci.name}*\n` : ''}Phone: +91${phone}${ci.order_name ? `\nOrder: *${ci.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`)).catch(() => {});
           }
 
           // ── 7. Order found → append links + show smart quick-reply menu ──
@@ -18403,7 +18420,7 @@ async function startBaileysBot() {
             // Auto-alert admin if order stuck >3 days
             const hrs = await waHoursConfirmed(meta.data?.shopify_order_id);
             if (hrs > 72 && ['confirmed','partial','hold'].includes(meta.data?.stage) && !meta.data?.awb) {
-              waAdminAlert(`⏰ *Stuck Order Alert*\nOrder *${meta.data.order_name}* — ${Math.round(hrs)}h since confirmation, still not shipped.\nCustomer: +91${phone}`).catch(() => {});
+              waAdminAlert(`⏰ *Stuck Order Alert*\nOrder: *${meta.data.order_name}*${meta.data.customer_name ? `\nCustomer: *${meta.data.customer_name}*` : ''}\nPhone: +91${phone}\n${Math.round(hrs)}h since confirmation, still not shipped.`).catch(() => {});
             }
 
             // If bot flagged escalation (cancellation etc), skip order menu → offer human only
