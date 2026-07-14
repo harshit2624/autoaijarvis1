@@ -4033,10 +4033,112 @@ async function runJarvisQuery(query, history = [], { waMode = false } = {}) {
 
   const today = new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 
+  const PLATFORM_KNOWLEDGE = `
+=== CROSCROW PLATFORM KNOWLEDGE BASE ===
+
+WHAT IS CROSCROW:
+CrosCrow is a multi-vendor Shopify marketplace. Vendors (independent clothing brands) list products on a shared store. CrosCrow collects payment, coordinates fulfillment, and settles vendor share after deducting commission + GST. CrosCrow does NOT hold inventory and does NOT pay logistics — vendors ship at their own cost.
+
+ORDER STAGES (new → confirmed → partial → ready → pickup → transit → delivered/rto/cancelled/hold/misc):
+- new: placed, vendor not yet confirmed
+- confirmed: vendor confirmed, 48hr SLA clock starts
+- partial: multi-vendor order, some confirmed some not
+- hold: paused (customer unreachable, address issue)
+- ready: vendor packed, awaiting courier pickup
+- pickup: courier picked up
+- transit: AWB entered, in transit
+- delivered: delivery confirmed
+- rto: failed delivery, returning to vendor
+- cancelled: cancelled before fulfillment
+- misc: edge case/uncategorized
+
+PENALTY SYSTEM:
+- 24hr after confirmation → warning email + WhatsApp nudge (1=delay 2=shipped)
+- 48hr after confirmation → penalty auto-triggers (deducted from next settlement)
+- Exception: if vendor submits delay remark with future ETA before 48hr, penalty holds until ETA date
+- If vendor misses their committed ETA → penalty triggers on ETA breach
+- Penalty amounts: ₹200–₹500 per breach (configurable per vendor)
+- Admin can manually cancel penalty before settlement
+- Confirmed penalties deducted from vendor settlement invoice
+
+COMMISSION CALCULATION:
+- Default rate: 20% (configurable per vendor)
+- COD: Commission = myRevenue × 20%; GST = Commission × 18%; Total deduction = Commission + GST
+- Prepaid: Base = myRevenue × 90% (10% discount incentive); then same formula
+- myRevenue = vendor's product price only (no shipping charge)
+- Commission charged ONLY on delivered orders, never on RTO/cancelled
+
+SETTLEMENT FLOW:
+- Runs monthly or on-demand per vendor
+- Includes only delivered orders in the period
+- Invoice = all delivered orders' (myRevenue - commission - GST - penalties + advance_received)
+- Positive = CrosCrow pays vendor; Negative = vendor owes CrosCrow
+- COD orders: vendor collects cash, owes CC commission+GST from that cash
+- Prepaid orders: CC collected from customer, owes vendor (myRevenue - commission - GST)
+- Advance/partial: customer paid partial upfront → reduces what CC owes vendor at settlement
+- Invoice number format: CC-[VENDORCODE]-[YYYYMM]-[ORDERID]
+- Settlement statuses: unsettled → invoiced → paid
+
+NOT-CONFIRMED BREAKDOWN (dashboard card):
+- Shows orders in hold/cancelled/new/misc stages
+- Amber portion = orders that were once confirmed (had tags: "order confirmed", "confirmed on call ✅", "prepaid 💰") but still didn't get fulfilled — key ops metric
+- 4 sub-stages: Hold, Cancelled, New, Misc
+
+VENDOR WA NUDGE FLOW:
+- Orders stuck 24hr+ in confirmed/partial/hold/new → auto WhatsApp to vendor
+- Message shows order details + options: 1=delay, 2=shipped
+- Reply 1 → bot asks for delay reason + ETA (free text, LLM parses)
+- Reply 2 → bot asks for AWB + courier (free text, LLM parses)
+- Delay saved to delay_remarks (visible in admin order page, triggers penalty if ETA missed)
+- AWB saved to order_vendor_stage, stage → transit
+- Deduped per order+vendor per 24hr
+- Sessions stored 4hr TTL so vendor can reply later
+
+DELIVERY RATE vs DISPATCH RATE:
+- Delivery rate = delivered ÷ (delivered + rto) — completed orders only
+- Dispatch rate = orders with AWB or in ready/pickup/transit/delivered ÷ active confirmed orders
+- RTO only wastes CAC already spent — CrosCrow doesn't pay logistics
+
+FINANCIAL MODEL:
+- Revenue = commission on delivered orders
+- No logistics cost (vendors pay shipping)
+- RTO impact = lost CAC (marketing spend on that customer was wasted)
+- Net per order ≈ ₹170–₹240 commission after GST
+- Target delivery rate 65%+
+
+COD OUTSTANDING:
+- COD orders where vendor collected cash but commission not yet settled
+- Tracked per vendor, reconciled at settlement
+
+VENDOR PANEL (/vendor.html):
+- Vendors see their own orders, stages, AWB entry, delay filing
+- View settlements, invoices, commission breakdown
+- Connect courier accounts (Delhivery/Shiprocket)
+
+SUPPORT BOT:
+- Customer WA → order status, tracking, cancel/return requests
+- All chats stored in support_chats + support_messages
+- Vendor WA chats stored in vendor_wa_chats + vendor_wa_messages (Admin → Support → Vendor WA tab)
+- AI insights tab analyzes recent chats for patterns/anomalies
+
+ADMIN PANEL SECTIONS:
+Dashboard → Orders → Vendors → Settlements → Support → Returns → Live Ops Map → Tech Brain → Settings
+
+LIVE OPS MAP SCENARIOS:
+- Simulates: marketingSpend/CAC = paidOrders; net = (total × DR × AOV × commPct%) - spend
+- Matrix: 6 delivery rates × 7 spend levels → net profit grid
+
+=== END KNOWLEDGE BASE ===
+`;
+
   const systemPrompt = waMode
     ? `You are JARVIS, the brain behind CrosCrow marketplace. You are talking to the founder/admin on WhatsApp.
 
+${PLATFORM_KNOWLEDGE}
+
 Answer like a sharp business consultant — direct, confident, data-first. No fluff.
+For questions about HOW THE SYSTEM WORKS (penalties, settlements, commission, stages, flows) — answer directly from your knowledge above. No tool needed.
+For questions about LIVE DATA (how many orders today, which vendor is stuck, current dispatch rate) — use tools to fetch real data.
 
 Format rules (WhatsApp plain text only):
 - Use plain numbers and short labels, no markdown tables
@@ -4049,12 +4151,15 @@ Format rules (WhatsApp plain text only):
 
 Tools: get_order_stats, get_vendor_stats, get_delivery_stats, get_rto_analysis, get_stuck_orders, get_dispatch_rate, get_vendor_fulfillment, get_orders_list, get_cod_outstanding, get_multi_vendor_stuck, get_products, get_customers, get_city_stats, get_settlements
 
-Always use tools. Never guess numbers. Today: ${today}`
+Today: ${today}`
     : `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify marketplace.
-You have tools to fetch any live store data. Always call the right tool(s) to get real data before answering.
+
+${PLATFORM_KNOWLEDGE}
+
+You have tools to fetch any live store data. For questions about HOW THE SYSTEM WORKS — answer from knowledge above. For live data questions — always use tools.
 
 Key concepts:
-- Stage = internal fulfillment stage tracked in our DB: new → confirmed → partial → ready → pickup → transit → delivered / rto / cancelled / hold
+- Stage = internal fulfillment stage: new → confirmed → partial → ready → pickup → transit → delivered / rto / cancelled / hold
 - Dispatched = orders with AWB saved OR stage is ready/pickup/transit/delivered
 - Dispatch rate = dispatched orders / total active (confirmed+above) orders
 - Multi-vendor orders = single customer order with products from multiple vendors — each vendor fulfills independently
@@ -4072,12 +4177,10 @@ Tools available:
 - get_order_stats, get_vendor_stats, get_delivery_stats, get_products, get_customers, get_city_stats, get_settlements
 
 Rules:
-- ALWAYS use tools. Never guess or make up numbers.
+- For system/flow questions: answer from knowledge base above, no tool needed.
+- For live data: ALWAYS use tools. Never guess numbers.
 - Be concise — bullet points preferred. Flag risks and anomalies proactively.
 - Currency is INR (₹). Format large numbers with commas.
-- If data is zero or missing, say so clearly.
-- When calling tools, always provide valid JSON arguments matching the schema exactly.
-- If unsure which tool to use, default to get_order_stats with period="week".
 - Today's date: ${today}`;
 
   const msgs = [
@@ -12603,6 +12706,35 @@ _Ship now to avoid penalty — CrosCrow Ops_`;
 }
 
 setInterval(penaltyCronJob, PENALTY_CHECK_MS);
+
+// ── Anomaly detector: runs every 30 min, alerts admin if same bot message ──
+// going to many customers (routing bug) or bot keeps failing same way
+const ANOMALY_CHECK_MS = 30 * 60 * 1000;
+async function runAnomalyCheck() {
+  if (!mdb || !waSocket || !waConnected) return;
+  try {
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // last 1 hour
+    const msgs = await mdb.collection('support_messages').find({
+      sender: { $in: ['assistant', 'bot'] },
+      created_at: { $gt: since }
+    }).toArray();
+    if (msgs.length < 3) return;
+
+    // Count exact or near-duplicate bot messages
+    const textCounts = {};
+    for (const m of msgs) {
+      const key = (m.text || '').slice(0, 80).trim().toLowerCase();
+      textCounts[key] = (textCounts[key] || 0) + 1;
+    }
+    const anomalies = Object.entries(textCounts).filter(([, count]) => count >= 4);
+    if (anomalies.length === 0) return;
+
+    const lines = anomalies.map(([t, c]) => `- "${t.slice(0,60)}…" → sent ${c}x`).join('\n');
+    await waAdminAlert(`🚨 *Bot Anomaly Detected*\n\nSame message sent to ${anomalies[0][1]}+ customers in last 1hr:\n${lines}\n\nCheck Support → chats for misrouted messages.`);
+    console.log('⚠️ Anomaly alert sent:', anomalies.length, 'patterns');
+  } catch (e) { console.error('Anomaly check error:', e.message); }
+}
+setInterval(runAnomalyCheck, ANOMALY_CHECK_MS);
 
 // ══════════════════════════════════════════════════════════════════════════
 //  AUTO-HOLD: orders stuck in "new" for 7 days → move to hold + tag Shopify
