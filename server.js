@@ -10807,6 +10807,41 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
     `);
     await sendEmail({ to: vcfg.email, subject: `⚠️ Penalty Applied: ${orderName || shopifyId}`, html, shopifyId, trigger: 'penalty_triggered' });
   }
+
+  // WA penalty notification
+  if (waSocket && waConnected) {
+    try {
+      const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1, _id: 0 } });
+      const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (rawPhone.length === 10) {
+        const jid = `91${rawPhone}@s.whatsapp.net`;
+        const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : 'Manual penalty by admin';
+        const penaltyMsg =
+`🚨 *Penalty Triggered — Order ${orderName || shopifyId}*
+
+Hi ${vendorName},
+
+A penalty has been applied to your account.
+
+*Reason:* ${reasonLabel}
+
+This will be deducted from your next settlement.
+
+To dispute, reply here or contact CrosCrow ops immediately.
+
+*Still not shipped?* Reply now:
+*1️⃣* — Delay reason + ETA
+*2️⃣* — Already shipped (AWB + courier)
+
+_CrosCrow Operations_`;
+        const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
+        const actualJid = sent?.key?.remoteJid || jid;
+        await waSessionSet(actualJid, { type: 'vendor_menu', order_name: orderName || shopifyId, shopify_id: String(shopifyId), orderRef: String(shopifyId).replace(/^#/, ''), vendor: vendorName });
+        await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
+        console.log(`📲 WA penalty notification sent: ${orderName} / ${vendorName}`);
+      }
+    } catch (e) { console.error('❌ WA penalty notification failed:', e.message); }
+  }
 }
 
 // ── Warning email template ────────────────────────────────────────────────
@@ -12495,6 +12530,41 @@ async function penaltyCronJob() {
           const ord = { name: orderName || sid };
           const html = templateFulfilmentWarning({ order: ord, vendorName: vendor, hoursElapsed: Math.floor(elapsed / 3600000), delayLink });
           await sendEmail({ to: vcfg.email, subject: `⚠️ 24hr Warning: Fulfil ${orderName || sid} Now`, html, shopifyId: sid, trigger: 'penalty_warning' });
+        }
+        // WA warning nudge
+        if (waSocket && waConnected) {
+          try {
+            const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendor }, { projection: { phone: 1, _id: 0 } });
+            const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+            if (rawPhone.length === 10) {
+              const hoursLeft = Math.max(0, 48 - Math.floor(elapsed / 3600000));
+              const jid = `91${rawPhone}@s.whatsapp.net`;
+              const dedupKey = `warn:${sid}:${vendor}`;
+              const recentWarn = await mdb.collection('wa_vendor_nudges').findOne({ key: dedupKey, sent_at: { $gt: now - 86400000 } });
+              if (!recentWarn) {
+                const warnMsg =
+`⏰ *24hr Warning — Order ${orderName || sid}*
+
+Hi ${vendor},
+
+This order has been confirmed but not yet shipped.
+
+You have *${hoursLeft} hours left* before a penalty is applied.
+
+Reply with:
+*1️⃣* — Order is delayed (share reason + ETA)
+*2️⃣* — Already shipped (share AWB + courier)
+
+_Ship now to avoid penalty — CrosCrow Ops_`;
+                const sent = await waSocket.sendMessage(jid, { text: warnMsg });
+                const actualJid = sent?.key?.remoteJid || jid;
+                await waSessionSet(actualJid, { type: 'vendor_menu', order_name: orderName || sid, shopify_id: String(sid), orderRef: String(sid).replace(/^#/, ''), vendor });
+                await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
+                await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: orderName || sid, shopify_id: String(sid), vendor, sent_at: now });
+                console.log(`📲 WA 24hr warning sent: ${orderName} / ${vendor}`);
+              }
+            }
+          } catch (e) { console.error('❌ WA 24hr warning failed:', e.message); }
         }
         await OVS.upsert(sid, vendor, { warning_sent: 1 });
         console.log(`📧  24hr warning sent: ${orderName} / ${vendor}`);
