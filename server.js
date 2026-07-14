@@ -17282,6 +17282,26 @@ app.get('/admin/support/chats/by-order/:shopifyOrderId', adminAuth, async (req, 
     res.json({ chats: withMessages });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ── Vendor WA chats (admin) ───────────────────────────────────────────────
+app.get('/admin/vendor-chats', adminAuth, async (req, res) => {
+  try {
+    const chats = await mdb.collection('vendor_wa_chats').find({}).sort({ updated_at: -1 }).limit(100).toArray();
+    res.json({ chats });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/admin/vendor-chats/:vendorName/messages', adminAuth, async (req, res) => {
+  try {
+    const chat = await mdb.collection('vendor_wa_chats').findOne({ vendor_name: req.params.vendorName });
+    if (!chat) return res.json({ messages: [] });
+    const messages = await mdb.collection('vendor_wa_messages')
+      .find({ chat_id: String(chat._id) })
+      .sort({ created_at: 1 })
+      .limit(200)
+      .toArray();
+    res.json({ messages });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/support/chats/:id/messages', adminAuth, async (req, res) => {
   const messages = await SC.messages(req.params.id);
   res.json({ messages });
@@ -17808,6 +17828,12 @@ async function waHandleVendorReply(sock, sender, text) {
 
   const trimmed = text.trim();
 
+  // Helper to send + log bot reply
+  const sendAndLog = async (msg, vendorNameHint) => {
+    await sock.sendMessage(sender, { text: msg });
+    await waLogVendorMessage(sender, vendorNameHint || sender, 'bot', msg).catch(() => {});
+  };
+
   // Check session for pending menu interaction
   const session = await waSessionGet(sender);
 
@@ -17816,13 +17842,13 @@ async function waHandleVendorReply(sock, sender, text) {
 
     if (trimmed === '1') {
       await waSessionSet(sender, { type: 'vendor_delay', order_name, shopify_id, orderRef, vendor });
-      await sock.sendMessage(sender, { text: `📝 *Order ${order_name} — Delay Update*\n\nPlease share the reason and when you'll ship it. Just reply naturally, for example:\n\n_Slightly delayed due to stitching, will ship by 16 July_\n_Stock issue, dispatching by 18 Jul_\n_Courier pickup delayed, shipping tomorrow_\n\nJust type your message 👇` });
+      await sendAndLog(`📝 *Order ${order_name} — Delay Update*\n\nPlease share the reason and when you'll ship it. Just reply naturally, for example:\n\n_Slightly delayed due to stitching, will ship by 16 July_\n_Stock issue, dispatching by 18 Jul_\n_Courier pickup delayed, shipping tomorrow_\n\nJust type your message 👇`, vendor);
       return;
     }
 
     if (trimmed === '2') {
       await waSessionSet(sender, { type: 'vendor_tracking', order_name, shopify_id, orderRef, vendor });
-      await sock.sendMessage(sender, { text: `📦 *Order ${order_name} — Tracking Update*\n\nPlease share the AWB number and courier. Just reply naturally, for example:\n\n_123456789 Delhivery_\n_Shipped via Shiprocket, AWB 9876543210_\n_Bluedart 445566778_\n\nJust type your message 👇` });
+      await sendAndLog(`📦 *Order ${order_name} — Tracking Update*\n\nPlease share the AWB number and courier. Just reply naturally, for example:\n\n_123456789 Delhivery_\n_Shipped via Shiprocket, AWB 9876543210_\n_Bluedart 445566778_\n\nJust type your message 👇`, vendor);
       return;
     }
   }
@@ -17853,13 +17879,13 @@ async function waHandleVendorReply(sock, sender, text) {
     await OVS.upsert(shopify_id, vendor, { delay_reason: reason, delay_resolution_date: etaDisplay, updated_at: new Date().toISOString() });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
     await waSessionClear(sender);
-    await sock.sendMessage(sender, { text: `✅ Delay recorded for *${order_name}*\n\nReason: ${reason}\nExpected by: *${etaDisplay}*\n\nWe'll update the customer. Thank you! 🙏` });
+    await sendAndLog(`✅ Delay recorded for *${order_name}*\n\nReason: ${reason}\nExpected by: *${etaDisplay}*\n\nWe'll update the customer. Thank you! 🙏`, vendor);
     await waAdminAlert(`⏳ *Vendor Delay (via WA)*\nOrder: *${order_name}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaDisplay}`);
     return;
   }
 
   if (session?.type === 'vendor_tracking') {
-    const { order_name, shopify_id } = session;
+    const { order_name, shopify_id, vendor: vendorT } = session;
     // Parse AWB + courier from free text via LLM
     let awb = null, courier = 'Not specified';
     try {
@@ -17877,7 +17903,7 @@ async function waHandleVendorReply(sock, sender, text) {
       if (parsed.courier) courier = parsed.courier;
     } catch (_) {}
     if (!awb) {
-      await sock.sendMessage(sender, { text: `⚠️ Couldn't read the AWB. Please send it in this format:\n_123456789 Delhivery_` });
+      await sendAndLog(`⚠️ Couldn't read the AWB. Please send it in this format:\n_123456789 Delhivery_`, vendorT);
       return;
     }
     await mdb.collection('order_vendor_stage').updateOne(
@@ -17886,7 +17912,7 @@ async function waHandleVendorReply(sock, sender, text) {
     );
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
     await waSessionClear(sender);
-    await sock.sendMessage(sender, { text: `✅ Tracking updated for *${order_name}*!\n\nAWB: *${awb}*\nCourier: *${courier}*\n\nThank you! 🙏` });
+    await sendAndLog(`✅ Tracking updated for *${order_name}*!\n\nAWB: *${awb}*\nCourier: *${courier}*\n\nThank you! 🙏`, vendorT);
     await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${order_name}*\nAWB: ${awb}\nCourier: ${courier}`);
     return;
   }
@@ -18047,7 +18073,36 @@ _CrosCrow Operations Team_`;
   }
 }
 
-// ── Session state per sender (30 min TTL) ─────────────────────────────────
+// ── Vendor WA chat logger ──────────────────────────────────────────────────
+async function waLogVendorMessage(senderJid, vendorName, role, text) {
+  if (!mdb) return;
+  const now = new Date().toISOString();
+  // Upsert a chat thread per vendor
+  const existing = await mdb.collection('vendor_wa_chats').findOne({ vendor_name: vendorName });
+  let chatId;
+  if (existing) {
+    chatId = existing._id;
+    await mdb.collection('vendor_wa_chats').updateOne(
+      { _id: chatId },
+      { $set: { updated_at: now, last_message: text, last_message_from: role },
+        $inc: { [role === 'vendor' ? 'vendor_msg_count' : 'bot_msg_count']: 1 } }
+    );
+  } else {
+    const r = await mdb.collection('vendor_wa_chats').insertOne({
+      vendor_name: vendorName, jid: senderJid,
+      created_at: now, updated_at: now,
+      last_message: text, last_message_from: role,
+      vendor_msg_count: role === 'vendor' ? 1 : 0,
+      bot_msg_count: role === 'bot' ? 1 : 0,
+    });
+    chatId = r.insertedId;
+  }
+  await mdb.collection('vendor_wa_messages').insertOne({
+    chat_id: String(chatId), vendor_name: vendorName, role, text, created_at: now
+  });
+}
+
+// ── Session state per sender (4 hour TTL) ─────────────────────────────────
 async function waSessionGet(sender) {
   const doc = await mdb.collection('whatsapp_sessions').findOne({ _id: sender });
   if (!doc || Date.now() > doc.expiresAt) return {};
@@ -18656,6 +18711,11 @@ async function startBaileysBot() {
                   { $set: { jid: sender, updated_at: new Date().toISOString() } }
                 ).catch(() => {});
               }
+              // Log vendor message to vendor_wa_chats for admin visibility
+              const vendorName = matchedVendor?.phone
+                ? (await mdb.collection('vendor_profiles').findOne({ phone: { $regex: matchedVendor.phone } }, { projection: { vendor_name: 1 } }))?.vendor_name || matchedVendor.phone
+                : (senderSession?.vendor || 'Unknown Vendor');
+              await waLogVendorMessage(sender, vendorName, 'vendor', text).catch(() => {});
               await waHandleVendorReply(sock, sender, text);
               continue;
             }
