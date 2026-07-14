@@ -17749,8 +17749,6 @@ async function waHandleVendorReply(sock, sender, text) {
 }
 
 async function waVendorNudge(meta, customerPhone) {
-  // TEST MODE: fixed vendor number — make dynamic per-vendor later
-  const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '6375668971';
   if (!waSocket || !mdb) return;
   if (meta?.type !== 'tracking_card') return;
   const d = meta.data;
@@ -17768,6 +17766,19 @@ async function waVendorNudge(meta, customerPhone) {
     const dedupKey = `${vs.shopify_id}:${vs.vendor_name}`;
     const recent = await mdb.collection('wa_vendor_nudges').findOne({ key: dedupKey, sent_at: { $gt: now - 86400000 } });
     if (recent) continue;
+
+    // Fetch vendor's phone from their profile (set in Settings → Vendor Profiles)
+    const vendorProfile = await mdb.collection('vendor_profiles').findOne(
+      { vendor_name: vs.vendor_name },
+      { projection: { phone: 1, _id: 0 } }
+    );
+    const rawVendorPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    const VENDOR_WA = rawVendorPhone.length === 10 ? rawVendorPhone
+                    : (process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '');
+    if (!VENDOR_WA) {
+      console.log(`⚠️  No WhatsApp number for vendor "${vs.vendor_name}" — skipping nudge`);
+      continue;
+    }
 
     const days = Math.floor(hoursStuck / 24);
     const orderRef = d.order_name.replace(/^#/, '');
@@ -18210,15 +18221,25 @@ async function startBaileysBot() {
         // Resolve and cache vendor + admin JIDs at startup (handles LID format)
         setTimeout(async () => {
           try {
-            const VENDOR_WA = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '6375668971';
-            const [vRes] = await sock.onWhatsApp(`91${VENDOR_WA}`) || [];
-            if (vRes?.jid) {
-              await mdb.collection('wa_vendor_jids').updateOne(
-                { phone: VENDOR_WA },
-                { $set: { phone: VENDOR_WA, jid: vRes.jid, updated_at: new Date().toISOString() } },
-                { upsert: true }
-              );
-              console.log(`📲 Vendor JID resolved: ${VENDOR_WA} → ${vRes.jid}`);
+            // Resolve JIDs for all vendors that have a phone number in their profile
+            const vendorProfiles = await mdb.collection('vendor_profiles').find(
+              { phone: { $exists: true, $ne: '' } },
+              { projection: { vendor_name: 1, phone: 1, _id: 0 } }
+            ).toArray();
+            for (const vp of vendorProfiles) {
+              const digits = (vp.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (digits.length !== 10) continue;
+              try {
+                const [vRes] = await sock.onWhatsApp(`91${digits}`) || [];
+                if (vRes?.jid) {
+                  await mdb.collection('wa_vendor_jids').updateOne(
+                    { phone: digits },
+                    { $set: { phone: digits, vendor_name: vp.vendor_name, jid: vRes.jid, updated_at: new Date().toISOString() } },
+                    { upsert: true }
+                  );
+                  console.log(`📲 Vendor JID resolved: ${vp.vendor_name} (${digits}) → ${vRes.jid}`);
+                }
+              } catch (_) {}
             }
           } catch (e) { console.error('Vendor JID resolve failed:', e.message); }
 
@@ -18353,21 +18374,22 @@ async function startBaileysBot() {
           }
 
           // ── Vendor reply handler ──────────────────────────────────────
-          // Load known vendor JIDs (phone-based + LID captured at nudge/startup time)
-          const VENDOR_NUDGE_NO = process.env.WHATSAPP_VENDOR_NUDGE_NUMBER || '';
-          const BOT_NO = (process.env.WHATSAPP_NUMBER || '').replace(/^91/, '');
-          // Skip vendor check if vendor number == bot number (avoids self-loop during testing)
-          const vendorCheckEnabled = VENDOR_NUDGE_NO && VENDOR_NUDGE_NO !== BOT_NO;
-          if (vendorCheckEnabled) {
-            const vendorJidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: VENDOR_NUDGE_NO });
-            const knownVendorJids = new Set([`91${VENDOR_NUDGE_NO}@s.whatsapp.net`]);
-            if (vendorJidDoc?.jid) knownVendorJids.add(vendorJidDoc.jid);
-            if (knownVendorJids.has(sender)) {
-              if (!vendorJidDoc?.jid || vendorJidDoc.jid !== sender) {
+          // Match sender against ALL vendor JIDs stored in wa_vendor_jids
+          {
+            const BOT_NO = (process.env.WHATSAPP_NUMBER || '').replace(/^91/, '');
+            const allVendorJids = await mdb.collection('wa_vendor_jids').find({}).toArray();
+            const matchedVendor = allVendorJids.find(v =>
+              v.phone && v.phone !== BOT_NO && (
+                sender === `91${v.phone}@s.whatsapp.net` ||
+                (v.jid && sender === v.jid)
+              )
+            );
+            if (matchedVendor) {
+              // Update cached JID if it changed (LID rotation)
+              if (matchedVendor.jid !== sender) {
                 await mdb.collection('wa_vendor_jids').updateOne(
-                  { phone: VENDOR_NUDGE_NO },
-                  { $set: { jid: sender, updated_at: new Date().toISOString() } },
-                  { upsert: true }
+                  { phone: matchedVendor.phone },
+                  { $set: { jid: sender, updated_at: new Date().toISOString() } }
                 ).catch(() => {});
               }
               await waHandleVendorReply(sock, sender, text);
