@@ -7986,7 +7986,7 @@
       { id:'shorts',   label:'🩲 Shorts' },
     ];
     const [activecat, setActivecat] = React.useState('tees');
-    const [catData, setCatData] = React.useState({}); // { [catId]: Product[] }
+    const [catData, setCatData] = React.useState({}); // { [catId]: { mode, collection_url, products } }
     const [searchQ, setSearchQ] = React.useState('');
     const [searchResults, setSearchResults] = React.useState([]);
     const [searching, setSearching] = React.useState(false);
@@ -7998,12 +7998,17 @@
       fetch(`${API}/admin/wa-featured-products`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>{
           const map = {};
-          (d.categories||[]).forEach(c => { map[c.category] = c.products || []; });
+          (d.categories||[]).forEach(c => { map[c.category] = { mode: c.mode || 'products', collection_url: c.collection_url || '', products: c.products || [] }; });
           setCatData(map);
         }).catch(()=>{}).finally(()=>setLoading(false));
     }, []);
 
-    const currentProducts = catData[activecat] || [];
+    const currentCat = catData[activecat] || { mode: 'products', collection_url: '', products: [] };
+    const currentMode = currentCat.mode;
+    const currentProducts = currentCat.products;
+
+    const setCatMode = (mode) => setCatData(prev => ({ ...prev, [activecat]: { ...( prev[activecat] || { mode:'products', collection_url:'', products:[] }), mode } }));
+    const setCatUrl = (url) => setCatData(prev => ({ ...prev, [activecat]: { ...(prev[activecat] || { mode:'url', collection_url:'', products:[] }), collection_url: url } }));
 
     const doSearch = async () => {
       if (!searchQ.trim()) return;
@@ -8018,36 +8023,41 @@
 
     const addProduct = (p) => {
       setCatData(prev => {
-        const cur = prev[activecat] || [];
-        if (cur.find(x => x.handle === p.handle)) return prev;
-        return { ...prev, [activecat]: [...cur, p] };
+        const cur = prev[activecat] || { mode:'products', collection_url:'', products:[] };
+        if (cur.products.find(x => x.handle === p.handle)) return prev;
+        return { ...prev, [activecat]: { ...cur, products: [...cur.products, p] } };
       });
       setSearchResults(r => r.filter(x => x.handle !== p.handle));
     };
 
     const removeProduct = (handle) => {
-      setCatData(prev => ({ ...prev, [activecat]: (prev[activecat]||[]).filter(p => p.handle !== handle) }));
+      setCatData(prev => {
+        const cur = prev[activecat] || { mode:'products', collection_url:'', products:[] };
+        return { ...prev, [activecat]: { ...cur, products: cur.products.filter(p => p.handle !== handle) } };
+      });
     };
 
     const moveProduct = (handle, dir) => {
       setCatData(prev => {
-        const arr = [...(prev[activecat]||[])];
+        const cur = prev[activecat] || { mode:'products', collection_url:'', products:[] };
+        const arr = [...cur.products];
         const i = arr.findIndex(p => p.handle === handle);
         if (i < 0) return prev;
         const j = i + dir;
         if (j < 0 || j >= arr.length) return prev;
         [arr[i], arr[j]] = [arr[j], arr[i]];
-        return { ...prev, [activecat]: arr };
+        return { ...prev, [activecat]: { ...cur, products: arr } };
       });
     };
 
     const saveCategory = async () => {
       setSaving(true); setSaved('');
       try {
+        const cur = catData[activecat] || { mode:'products', collection_url:'', products:[] };
         await fetch(`${API}/admin/wa-featured-products/${activecat}`, {
           method:'PUT',
           headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
-          body: JSON.stringify({ products: catData[activecat] || [] }),
+          body: JSON.stringify({ mode: cur.mode, collection_url: cur.collection_url, products: cur.products }),
         });
         setSaved('Saved!');
         setTimeout(()=>setSaved(''), 2000);
@@ -8067,79 +8077,113 @@
 
         {/* Category tabs */}
         <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
-          {CATEGORIES.map(c => (
-            <button key={c.id} onClick={()=>{ setActivecat(c.id); setSearchQ(''); setSearchResults([]); }}
-              style={{padding:'6px 14px',borderRadius:20,border:'1px solid var(--border)',cursor:'pointer',
-                background: activecat===c.id ? 'var(--indigo)' : 'var(--card)',
-                color: activecat===c.id ? '#fff' : 'var(--text)',fontSize:13,fontWeight:activecat===c.id?600:400}}>
-              {c.label}
-              {(catData[c.id]||[]).length > 0 && <span style={{marginLeft:6,background:activecat===c.id?'rgba(255,255,255,0.3)':'var(--indigo)',color:'#fff',borderRadius:10,padding:'1px 6px',fontSize:11}}>{(catData[c.id]||[]).length}</span>}
+          {CATEGORIES.map(c => {
+            const cd = catData[c.id];
+            const badge = cd?.mode === 'url' ? '🔗' : cd?.products?.length > 0 ? String(cd.products.length) : null;
+            return (
+              <button key={c.id} onClick={()=>{ setActivecat(c.id); setSearchQ(''); setSearchResults([]); }}
+                style={{padding:'6px 14px',borderRadius:20,border:'1px solid var(--border)',cursor:'pointer',
+                  background: activecat===c.id ? 'var(--indigo)' : 'var(--card)',
+                  color: activecat===c.id ? '#fff' : 'var(--text)',fontSize:13,fontWeight:activecat===c.id?600:400}}>
+                {c.label}
+                {badge && <span style={{marginLeft:6,background:activecat===c.id?'rgba(255,255,255,0.3)':'var(--indigo)',color:'#fff',borderRadius:10,padding:'1px 6px',fontSize:11}}>{badge}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Mode toggle + Save */}
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20,padding:'12px 16px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:10}}>
+          <span style={{fontSize:13,fontWeight:600,color:'var(--text)',marginRight:4}}>Bot behaviour for this category:</span>
+          {[{id:'products',label:'📦 Show Products',desc:'Bot shows your curated product list'},{id:'url',label:'🔗 Send Collection URL',desc:'Bot sends a direct link to a collection page'}].map(m=>(
+            <button key={m.id} onClick={()=>setCatMode(m.id)}
+              title={m.desc}
+              style={{padding:'6px 16px',borderRadius:8,border:`2px solid ${currentMode===m.id?'var(--indigo)':'var(--border)'}`,cursor:'pointer',
+                background:currentMode===m.id?'rgba(99,102,241,0.12)':'var(--bg)',color:currentMode===m.id?'var(--indigo)':'var(--text-muted)',fontSize:13,fontWeight:currentMode===m.id?700:400}}>
+              {m.label}
             </button>
           ))}
+          <div style={{flex:1}}/>
+          <button onClick={saveCategory} disabled={saving}
+            style={{padding:'7px 22px',background:'var(--green,#22c55e)',color:'#fff',border:'none',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:700}}>
+            {saving ? 'Saving…' : saved || 'Save'}
+          </button>
         </div>
 
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
-          {/* Left: current pinned products */}
-          <div>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-              <h3 style={{margin:0,fontSize:15,fontWeight:600}}>Pinned Products <span style={{color:'var(--text-muted)',fontWeight:400,fontSize:13}}>({currentProducts.length})</span></h3>
-              <button onClick={saveCategory} disabled={saving}
-                style={{padding:'6px 16px',background:'var(--green,#22c55e)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontSize:13,fontWeight:600}}>
-                {saving ? 'Saving…' : saved || 'Save'}
-              </button>
+        {/* URL mode panel */}
+        {currentMode === 'url' ? (
+          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,padding:20}}>
+            <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>🔗 Collection URL</div>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:12}}>
+              When a customer asks about this category on WhatsApp, the bot will send this URL directly instead of listing products.
             </div>
-            {loading ? <p style={{color:'var(--text-muted)'}}>Loading…</p> :
-             currentProducts.length === 0 ? (
-              <div style={{...card, justifyContent:'center', color:'var(--text-muted)', fontSize:13}}>
-                No products pinned for this category yet.<br/>Search and add from the right →
+            <input value={currentCat.collection_url} onChange={e=>setCatUrl(e.target.value)}
+              placeholder="e.g. https://croscrow.com/collections/hoodies"
+              style={{width:'100%',boxSizing:'border-box',padding:'10px 14px',border:'1px solid var(--border)',borderRadius:8,background:'var(--bg)',color:'var(--text)',fontSize:13}}/>
+            {currentCat.collection_url && (
+              <div style={{marginTop:10,fontSize:12,color:'var(--text-muted)'}}>
+                Bot will say: <em>"Here's our full collection — browse and pick what you like 👇"</em> and append the URL above.
               </div>
-            ) : currentProducts.map((p,i) => (
-              <div key={p.handle} style={card}>
-                {p.image ? <img src={p.image} alt="" style={imgStyle}/> : <div style={{...imgStyle,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>👕</div>}
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>₹{p.price_from?.toLocaleString('en-IN') || '—'}</div>
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                  <button onClick={()=>moveProduct(p.handle,-1)} disabled={i===0} style={{border:'1px solid var(--border)',background:'var(--bg)',borderRadius:5,cursor:'pointer',padding:'2px 7px',fontSize:12}}>↑</button>
-                  <button onClick={()=>moveProduct(p.handle,1)} disabled={i===currentProducts.length-1} style={{border:'1px solid var(--border)',background:'var(--bg)',borderRadius:5,cursor:'pointer',padding:'2px 7px',fontSize:12}}>↓</button>
-                </div>
-                <button onClick={()=>removeProduct(p.handle)} style={{border:'none',background:'none',cursor:'pointer',color:'var(--red,#ef4444)',fontSize:18,padding:'0 4px'}}>×</button>
-              </div>
-            ))}
-          </div>
-
-          {/* Right: search & add */}
-          <div>
-            <h3 style={{margin:'0 0 10px',fontSize:15,fontWeight:600}}>Search Shopify Products</h3>
-            <div style={{display:'flex',gap:8,marginBottom:12}}>
-              <input value={searchQ} onChange={e=>setSearchQ(e.target.value)}
-                onKeyDown={e=>e.key==='Enter'&&doSearch()}
-                placeholder="Search by name…" style={{flex:1,padding:'8px 12px',border:'1px solid var(--border)',borderRadius:7,background:'var(--bg)',color:'var(--text)',fontSize:13}}/>
-              <button onClick={doSearch} disabled={searching}
-                style={{padding:'8px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontSize:13}}>
-                {searching ? '…' : 'Search'}
-              </button>
-            </div>
-            {searchResults.map(p => (
-              <div key={p.handle} style={card}>
-                {p.image ? <img src={p.image} alt="" style={imgStyle}/> : <div style={{...imgStyle,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>👕</div>}
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>₹{p.price_from?.toLocaleString('en-IN') || '—'}</div>
-                </div>
-                <button onClick={()=>addProduct(p)}
-                  disabled={!!(catData[activecat]||[]).find(x=>x.handle===p.handle)}
-                  style={{padding:'5px 12px',background:(catData[activecat]||[]).find(x=>x.handle===p.handle)?'var(--bg)':'var(--indigo)',color:(catData[activecat]||[]).find(x=>x.handle===p.handle)?'var(--text-muted)':'#fff',border:'1px solid var(--border)',borderRadius:7,cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>
-                  {(catData[activecat]||[]).find(x=>x.handle===p.handle) ? '✓ Added' : '+ Add'}
-                </button>
-              </div>
-            ))}
-            {searchResults.length === 0 && searchQ && !searching && (
-              <p style={{color:'var(--text-muted)',fontSize:13}}>No results. Try a different keyword.</p>
             )}
           </div>
-        </div>
+        ) : (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+            {/* Left: pinned products */}
+            <div>
+              <h3 style={{margin:'0 0 10px',fontSize:15,fontWeight:600}}>Pinned Products <span style={{color:'var(--text-muted)',fontWeight:400,fontSize:13}}>({currentProducts.length})</span></h3>
+              {loading ? <p style={{color:'var(--text-muted)'}}>Loading…</p> :
+               currentProducts.length === 0 ? (
+                <div style={{...card, justifyContent:'center', color:'var(--text-muted)', fontSize:13}}>
+                  No products pinned yet. Search and add from the right →
+                </div>
+              ) : currentProducts.map((p,i) => (
+                <div key={p.handle} style={card}>
+                  {p.image ? <img src={p.image} alt="" style={imgStyle}/> : <div style={{...imgStyle,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>👕</div>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>₹{p.price_from?.toLocaleString('en-IN') || '—'}</div>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                    <button onClick={()=>moveProduct(p.handle,-1)} disabled={i===0} style={{border:'1px solid var(--border)',background:'var(--bg)',borderRadius:5,cursor:'pointer',padding:'2px 7px',fontSize:12}}>↑</button>
+                    <button onClick={()=>moveProduct(p.handle,1)} disabled={i===currentProducts.length-1} style={{border:'1px solid var(--border)',background:'var(--bg)',borderRadius:5,cursor:'pointer',padding:'2px 7px',fontSize:12}}>↓</button>
+                  </div>
+                  <button onClick={()=>removeProduct(p.handle)} style={{border:'none',background:'none',cursor:'pointer',color:'var(--red,#ef4444)',fontSize:18,padding:'0 4px'}}>×</button>
+                </div>
+              ))}
+            </div>
+
+            {/* Right: search & add */}
+            <div>
+              <h3 style={{margin:'0 0 10px',fontSize:15,fontWeight:600}}>Search Shopify Products</h3>
+              <div style={{display:'flex',gap:8,marginBottom:12}}>
+                <input value={searchQ} onChange={e=>setSearchQ(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&doSearch()}
+                  placeholder="Search by name…" style={{flex:1,padding:'8px 12px',border:'1px solid var(--border)',borderRadius:7,background:'var(--bg)',color:'var(--text)',fontSize:13}}/>
+                <button onClick={doSearch} disabled={searching}
+                  style={{padding:'8px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontSize:13}}>
+                  {searching ? '…' : 'Search'}
+                </button>
+              </div>
+              {searchResults.map(p => (
+                <div key={p.handle} style={card}>
+                  {p.image ? <img src={p.image} alt="" style={imgStyle}/> : <div style={{...imgStyle,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>👕</div>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>₹{p.price_from?.toLocaleString('en-IN') || '—'}</div>
+                  </div>
+                  <button onClick={()=>addProduct(p)}
+                    disabled={!!currentProducts.find(x=>x.handle===p.handle)}
+                    style={{padding:'5px 12px',background:currentProducts.find(x=>x.handle===p.handle)?'var(--bg)':'var(--indigo)',color:currentProducts.find(x=>x.handle===p.handle)?'var(--text-muted)':'#fff',border:'1px solid var(--border)',borderRadius:7,cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>
+                    {currentProducts.find(x=>x.handle===p.handle) ? '✓ Added' : '+ Add'}
+                  </button>
+                </div>
+              ))}
+              {searchResults.length === 0 && searchQ && !searching && (
+                <p style={{color:'var(--text-muted)',fontSize:13}}>No results. Try a different keyword.</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -16486,6 +16486,11 @@ async function scSearchProducts(query) {
       }
       if (matchedCategory) {
         const doc = await mdb.collection('wa_featured_products').findOne({ category: matchedCategory });
+        if (doc?.mode === 'url' && doc?.collection_url) {
+          // URL mode — return the collection link directly, no product cards
+          const catLabels = { tees:'Tees', hoodies:'Hoodies', shirts:'Shirts', jeans:'Jeans / Denim', joggers:'Joggers', coords:'Co-ords & Sets', jackets:'Jackets', shorts:'Shorts' };
+          return { found: 0, products: [], collections: [{ title: catLabels[matchedCategory] || matchedCategory, url: doc.collection_url }], curated_url: true };
+        }
         if (doc?.products?.length) {
           return { found: doc.products.length, products: doc.products.slice(0, 8), collections: [], curated: true };
         }
@@ -16627,7 +16632,7 @@ async function scCheckOrderConfirmation(orderName) {
 }
 
 const SUPPORT_TOOLS = [
-  { type:'function', function:{ name:'search_products', description:'Search the CrosCrow catalog for products by name/keyword (e.g. "sweatpants", "waffle hoodie"). Use when the customer is browsing/shopping, not asking about an existing order.', parameters:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } } },
+  { type:'function', function:{ name:'search_products', description:'Search the CrosCrow catalog for products by name/keyword (e.g. "sweatpants", "waffle hoodie"). Use when the customer is browsing/shopping, not asking about an existing order. If the result has curated_url=true and no products but has a collections entry, reply with "Here\'s our [category] collection — browse and pick what you like:" and the link is appended automatically. Do NOT say the link is below your message in this case — just use a natural sentence.', parameters:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } } },
   { type:'function', function:{ name:'get_order_status', description:'Look up a specific order\'s live status, stage, AWB, and per-vendor shipment details. Requires the order number; ask for it if not given.', parameters:{ type:'object', properties:{ order_name:{type:'string', description:'Order number, with or without #'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'get_delay_reason', description:'Explain why an order has not shipped yet — checks if the vendor submitted a specific delay reason, otherwise gives a generic explanation.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'start_return_exchange', description:'Customer wants to return or exchange an item from an order. Returns a link to the self-serve return/exchange flow.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
@@ -16659,7 +16664,9 @@ Rules:
 const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You're replying on WhatsApp so there are NO cards or buttons — only plain text.
 
 TOOLS:
-1. search_products — when customer is browsing/shopping. Describe 2-3 matches naturally, links follow automatically.
+1. search_products — when customer is browsing/shopping. Two possible results:
+   • If result has products: describe 2-3 matches naturally ("We have X, Y and Z — here are the links:"). Links follow automatically.
+   • If result has curated_url=true (no products, just a collections entry): say something like "Here's our full [category] collection — browse and pick what you like 👇" and the link is appended automatically. Keep it short.
 2. get_order_status — track any order. Summarize status in plain words. Links follow automatically. If order not found, ask them to double-check — our order numbers are 4-digit numbers like 1994 or 2101 (never suggest #CR or #CC prefixes).
 3. get_delay_reason — explain why order hasn't shipped. Relay vendor reason warmly with ETA if available.
 4. start_return_exchange — customer wants return/exchange. Link follows automatically.
@@ -17456,10 +17463,10 @@ app.get('/admin/wa-featured-products', adminAuth, async (req, res) => {
 app.put('/admin/wa-featured-products/:category', adminAuth, async (req, res) => {
   try {
     const { category } = req.params;
-    const { products } = req.body; // array of { handle, title, url, image, price_from }
+    const { products, mode, collection_url } = req.body;
     await mdb.collection('wa_featured_products').updateOne(
       { category },
-      { $set: { category, products: products || [], updated_at: new Date().toISOString() } },
+      { $set: { category, mode: mode || 'products', collection_url: collection_url || '', products: products || [], updated_at: new Date().toISOString() } },
       { upsert: true }
     );
     res.json({ ok: true });
