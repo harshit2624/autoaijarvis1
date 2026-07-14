@@ -10836,7 +10836,7 @@ To dispute, reply here or contact CrosCrow ops immediately.
 _CrosCrow Operations_`;
         const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
         const actualJid = sent?.key?.remoteJid || jid;
-        await waSessionSet(actualJid, { type: 'vendor_menu', order_name: orderName || shopifyId, shopify_id: String(shopifyId), orderRef: String(shopifyId).replace(/^#/, ''), vendor: vendorName });
+        await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || shopifyId, shopify_id: String(shopifyId), orderRef: String(shopifyId).replace(/^#/, ''), vendor: vendorName });
         await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
         console.log(`📲 WA penalty notification sent: ${orderName} / ${vendorName}`);
       }
@@ -12558,7 +12558,7 @@ Reply with:
 _Ship now to avoid penalty — CrosCrow Ops_`;
                 const sent = await waSocket.sendMessage(jid, { text: warnMsg });
                 const actualJid = sent?.key?.remoteJid || jid;
-                await waSessionSet(actualJid, { type: 'vendor_menu', order_name: orderName || sid, shopify_id: String(sid), orderRef: String(sid).replace(/^#/, ''), vendor });
+                await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || sid, shopify_id: String(sid), orderRef: String(sid).replace(/^#/, ''), vendor });
                 await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
                 await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: orderName || sid, shopify_id: String(sid), vendor, sent_at: now });
                 console.log(`📲 WA 24hr warning sent: ${orderName} / ${vendor}`);
@@ -17745,7 +17745,7 @@ _CrosCrow Operations Team_`;
     const actualJid = sent?.key?.remoteJid || jid;
 
     // Store session so vendor's 1/2 reply maps to this order
-    await waSessionSet(actualJid, { type: 'vendor_menu', order_name: orderName, shopify_id: String(shopifyId), orderRef, vendor: vendorName });
+    await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName, shopify_id: String(shopifyId), orderRef, vendor: vendorName });
 
     // Cache JID
     await mdb.collection('wa_vendor_jids').updateOne(
@@ -18064,7 +18064,7 @@ _CrosCrow Operations Team_`;
         ).catch(() => {});
       }
       // Store session so vendor's "1" or "2" reply maps to this order
-      await waSessionSet(actualJid, { type: 'vendor_menu', order_name: d.order_name, shopify_id: String(d.shopify_order_id), orderRef, vendor: vs.vendor_name });
+      await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: d.order_name, shopify_id: String(d.shopify_order_id), orderRef, vendor: vs.vendor_name });
       await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, shopify_id: String(d.shopify_order_id), vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
       console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
     } catch (e) {
@@ -18114,6 +18114,15 @@ async function waSessionSet(sender, data) {
     { $set: { data, expiresAt: Date.now() + 4 * 60 * 60 * 1000 } }, // 4 hour TTL
     { upsert: true }
   );
+}
+// Store vendor session under both the actual JID and the plain phone JID so LID replies match
+async function waVendorSessionSet(actualJid, phoneJid, data) {
+  await waSessionSet(actualJid, data);
+  if (phoneJid && phoneJid !== actualJid) await waSessionSet(phoneJid, data);
+  // Also store under any cached LID for this vendor phone
+  const phone = phoneJid.replace('91','').replace('@s.whatsapp.net','');
+  const cached = await mdb.collection('wa_vendor_jids').findOne({ phone }).catch(()=>null);
+  if (cached?.jid && cached.jid !== actualJid && cached.jid !== phoneJid) await waSessionSet(cached.jid, data);
 }
 async function waSessionClear(sender) {
   await mdb.collection('whatsapp_sessions').deleteOne({ _id: sender });
@@ -18669,38 +18678,8 @@ async function startBaileysBot() {
                 (v.jid && sender === v.jid)
               )
             );
-            // Also check if this sender has an active vendor session (catches same-JID case)
-            let senderSession = !matchedVendor ? await waSessionGet(sender) : null;
-
-            // LID fallback: if sender is a @lid JID with no session, scan all active vendor sessions
-            // and check if any vendor's phone JID matches a stored session (handles WA LID rerouting)
-            if (!matchedVendor && !senderSession?.type && sender.includes('@lid')) {
-              const allVendorSessions = await mdb.collection('whatsapp_sessions').find({
-                'data.type': { $in: ['vendor_menu','vendor_delay','vendor_tracking'] },
-                expiresAt: { $gt: Date.now() }
-              }).sort({ expiresAt: -1 }).limit(10).toArray();
-              if (allVendorSessions.length > 0) {
-                // Find session whose stored JID belongs to a vendor whose LID might be this sender
-                // Use the most recent active vendor session as context
-                const bestSession = allVendorSessions[0];
-                senderSession = bestSession.data;
-                // Store this LID → vendor session mapping for future messages
-                await mdb.collection('whatsapp_sessions').updateOne(
-                  { _id: sender },
-                  { $set: { data: senderSession, expiresAt: Date.now() + 30 * 60 * 1000 } },
-                  { upsert: true }
-                ).catch(() => {});
-                // Also cache this LID in wa_vendor_jids if we know the vendor phone
-                const vendorJidEntry = await mdb.collection('wa_vendor_jids').findOne({ vendor_name: senderSession.vendor });
-                if (!vendorJidEntry?.jid || vendorJidEntry.jid !== sender) {
-                  await mdb.collection('wa_vendor_jids').updateOne(
-                    { phone: vendorJidEntry?.phone || '' },
-                    { $set: { jid: sender, updated_at: new Date().toISOString() } }
-                  ).catch(() => {});
-                }
-              }
-            }
-
+            // Check if this exact sender JID has an active vendor session
+            const senderSession = !matchedVendor ? await waSessionGet(sender) : null;
             const hasVendorSession = senderSession && ['vendor_menu','vendor_delay','vendor_tracking'].includes(senderSession.type);
 
             if (matchedVendor || hasVendorSession) {
