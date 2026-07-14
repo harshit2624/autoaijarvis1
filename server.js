@@ -17944,8 +17944,9 @@ async function waDelayReason(shopifyOrderId) {
 
 // ── Escalate to human + pause bot for 12 hours ────────────────────────────
 async function waTalkToHuman(sock, sender, chat, phone, context) {
-  const _hci = await waLookupCustomer(phone);
-  await waAdminAlert(`👤 *Human Support Requested*\n${_hci.name ? `Name: *${_hci.name}*\n` : ''}Phone: +91${phone}${_hci.order_name ? `\nOrder: *${_hci.order_name}*` : ''}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
+  const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
+  const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID (see Order: ${_hci.order_name})` : 'Unknown — LID sender');
+  await waAdminAlert(`👤 *Human Support Requested*\n${_hci.name ? `Name: *${_hci.name}*\n` : ''}Phone: ${_hPhone}${_hci.order_name ? `\nOrder: *${_hci.order_name}*` : ''}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
   const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
   await sock.sendMessage(sender, { text: msg });
   await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
@@ -18300,14 +18301,22 @@ async function startBaileysBot() {
         try {
           await sock.readMessages([msg.key]);
           // Extract phone — sender may be a LID (@lid suffix) if WA uses new device IDs
-          // Fall back to stored chat phone if LID can't be resolved to a real number
-          let phone = sender.includes('@s.whatsapp.net')
-            ? sender.replace('@s.whatsapp.net', '').replace(/^91/, '')
-            : null;
-          if (!phone || phone.includes('@')) {
-            // LID — look up stored chat for real phone
+          const isValidPhone = (p) => { const d = String(p||'').replace(/\D/g,'').replace(/^91/,'').slice(-10); return d.length===10 && /^[6-9]/.test(d) ? d : null; };
+          let phone = null;
+          if (sender.includes('@s.whatsapp.net')) {
+            phone = isValidPhone(sender.replace('@s.whatsapp.net','').replace(/^91/,''));
+          }
+          if (!phone) {
+            // LID or unresolvable — look up stored chat for real phone
             const existingChat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender });
-            phone = existingChat?.customer_phone || sender.split('@')[0].replace(/^91/, '');
+            phone = isValidPhone(existingChat?.customer_phone)
+                 || isValidPhone(existingChat?.shipping_phone)
+                 || null;
+          }
+          if (!phone) {
+            // Last resort: search order_meta for this sender stored as whatsapp_sender
+            const metaByJid = await mdb.collection('order_meta').findOne({ whatsapp_sender: sender }, { projection:{ customer_phone:1,_id:0 } });
+            phone = isValidPhone(metaByJid?.customer_phone) || 'unknown';
           }
 
           // ── Admin mode: code unlock + session check ───────────────────
@@ -18375,10 +18384,13 @@ async function startBaileysBot() {
             });
             chat = { _id: r.insertedId, whatsapp_sender: sender, customer_phone: phone };
           }
-          // Backfill: if old chat stored LID as customer_phone, fix it now
-          if (chat.customer_phone && chat.customer_phone.includes('@')) {
-            await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { customer_phone: phone } });
-            chat.customer_phone = phone;
+          // Backfill: if old chat stored LID as customer_phone, fix it now (only write valid phone)
+          if (chat.customer_phone && (chat.customer_phone.includes('@') || !isValidPhone(chat.customer_phone))) {
+            const fixPhone = phone !== 'unknown' ? phone : null;
+            if (fixPhone) {
+              await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { customer_phone: fixPhone } });
+              chat.customer_phone = fixPhone;
+            }
           }
 
           // ── Bot pause check (12h after human handoff) ─────────────────
@@ -18438,8 +18450,9 @@ async function startBaileysBot() {
           // ── 3. Escalation keywords → admin alert + human ──────────────
           if (WA_ESCALATION.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
-            const _ac = await waLookupCustomer(phone);
-            await waAdminAlert(`🚨 *Angry Customer*\n${_ac.name ? `Name: *${_ac.name}*\n` : ''}Phone: +91${phone}${_ac.order_name ? `\nOrder: *${_ac.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"`);
+            const _ac = await waLookupCustomer(phone === 'unknown' ? '' : phone);
+            const _acPhone = phone !== 'unknown' ? `+91${phone}` : (_ac.order_name ? `LID (see Order: ${_ac.order_name})` : 'Unknown — LID sender');
+            await waAdminAlert(`🚨 *Angry Customer*\n${_ac.name ? `Name: *${_ac.name}*\n` : ''}Phone: ${_acPhone}${_ac.order_name ? `\nOrder: *${_ac.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"`);
           }
 
           // ── 4. LLM handles everything else ────────────────────────────
@@ -18463,7 +18476,10 @@ async function startBaileysBot() {
           const needsAdmin = /flagged.*team|flagging.*team|flag.*our team|flagged this|noted.*team|cancellation request|manually confirm/i.test(reply);
           const botCantHelp = /flag.*human|connect.*team|reach out|outside.*tools|can't help|cannot help/i.test(reply);
           if (needsAdmin) {
-            waLookupCustomer(phone).then(ci => waAdminAlert(`🔔 *Action Needed*\n${ci.name ? `Name: *${ci.name}*\n` : ''}Phone: +91${phone}${ci.order_name ? `\nOrder: *${ci.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`)).catch(() => {});
+            waLookupCustomer(phone === 'unknown' ? '' : phone).then(ci => {
+              const _ph = phone !== 'unknown' ? `+91${phone}` : (ci.order_name ? `LID (see Order: ${ci.order_name})` : 'Unknown — LID sender');
+              waAdminAlert(`🔔 *Action Needed*\n${ci.name ? `Name: *${ci.name}*\n` : ''}Phone: ${_ph}${ci.order_name ? `\nOrder: *${ci.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`)
+            }).catch(() => {});
           }
 
           // ── 7. Order found → append links + show smart quick-reply menu ──
