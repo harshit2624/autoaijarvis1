@@ -1056,6 +1056,23 @@
     const [commLoading,     setCommLoading]     = useState(false);
     const [commReply,       setCommReply]       = useState({});   // { chatId: draftText }
     const [commReplying,    setCommReplying]    = useState({});   // { chatId: bool }
+    const [nudging,         setNudging]         = useState({});   // { vendorName: bool }
+    const [nudgeMsg,        setNudgeMsg]        = useState({});   // { vendorName: 'sent'|'error' }
+
+    const sendVendorNudge = async (vendorName) => {
+      setNudging(p=>({...p,[vendorName]:true}));
+      setNudgeMsg(p=>({...p,[vendorName]:null}));
+      try {
+        const r = await fetch(`${API}/admin/vendor-nudge-test/${order.id.replace(/^#/,'')}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ vendor_name: vendorName, customer_name: order.customer, customer_phone: (order.phone||'').replace(/\D/g,'').replace(/^91/,'').slice(-10), products: (order.lineItems||[]).filter(i=>i.vendor===vendorName).map(i=>`${i.title}${i.variant?' ('+i.variant+')':''}`).join(', ') || 'your item', days: 1 }),
+        });
+        const d = await r.json();
+        setNudgeMsg(p=>({...p,[vendorName]: d.success ? 'sent' : (d.error||'error')}));
+      } catch(e) { setNudgeMsg(p=>({...p,[vendorName]:'error'})); }
+      setNudging(p=>({...p,[vendorName]:false}));
+    };
 
     const checkShipRate = async () => {
       if (!shipPartner) return;
@@ -1512,7 +1529,13 @@
                               onClick={()=>saveVendorStage(v)} disabled={savingVS[v]}>
                               {savingVS[v]?'…':'Save'}
                             </button>
+                            <button className="btn btn-ghost" style={{fontSize:10,padding:'4px 10px',whiteSpace:'nowrap',border:'1px solid #f59e0b',color:'#f59e0b'}}
+                              onClick={()=>sendVendorNudge(v)} disabled={nudging[v]}
+                              title="Send WhatsApp nudge to vendor">
+                              {nudging[v]?'…':nudgeMsg[v]==='sent'?'✓ Sent':'📲 Nudge'}
+                            </button>
                           </div>
+                          {nudgeMsg[v] && nudgeMsg[v]!=='sent' && <div style={{marginLeft:108,fontSize:10,color:'#ef4444',marginBottom:4}}>{nudgeMsg[v]}</div>}
                           {/* Per-vendor tracking + fulfill */}
                           {vendorTracking[v] ? (
                             <div style={{marginLeft:108,marginBottom:10,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',fontSize:11}}>
@@ -1930,6 +1953,16 @@
 
           <div className="modal-footer">
             <button className="btn btn-ghost" onClick={onClose}>Close</button>
+            {(order.vendors||[]).length === 1 && (
+              <button className="btn btn-ghost" style={{border:'1px solid #f59e0b',color:'#f59e0b'}}
+                onClick={()=>sendVendorNudge(order.vendors[0])} disabled={nudging[order.vendors[0]]}
+                title="Send WhatsApp action-required message to vendor">
+                {nudging[order.vendors[0]]?'Sending…':nudgeMsg[order.vendors[0]]==='sent'?'✓ Nudge Sent':'📲 Nudge Vendor'}
+              </button>
+            )}
+            {nudgeMsg[order.vendors?.[0]] && nudgeMsg[order.vendors[0]]!=='sent' && (order.vendors||[]).length===1 && (
+              <span style={{fontSize:11,color:'#ef4444',alignSelf:'center'}}>{nudgeMsg[order.vendors[0]]}</span>
+            )}
             {(order.vendors||[]).length <= 1 && (
               <button className="btn btn-indigo" onClick={save} disabled={saving}>
                 {saving ? <><span className="spin">↻</span> Saving…</> : '✓ Save Changes'}

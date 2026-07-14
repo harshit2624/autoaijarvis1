@@ -17601,6 +17601,13 @@ app.get('/admin/whatsapp-confirm-poll', adminAuth, async (req, res) => {
 // POST /admin/vendor-nudge-test/:orderId — send test penalty nudge to vendor
 app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
   try {
+    // Wait up to 15s for WA to connect (handles post-deploy reconnect delay)
+    if (!waSocket || !waConnected) {
+      await new Promise(resolve => {
+        const deadline = Date.now() + 15000;
+        const check = setInterval(() => { if ((waSocket && waConnected) || Date.now() > deadline) { clearInterval(check); resolve(); } }, 500);
+      });
+    }
     if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp bot not connected', connected: waConnected, socket: !!waSocket });
     const orderName = `#${req.params.orderId.replace(/^#/, '')}`;
     const shopifyId = req.params.orderId.replace(/^#/, '');
