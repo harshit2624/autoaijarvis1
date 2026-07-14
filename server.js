@@ -17605,16 +17605,20 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
     const orderName = `#${req.params.orderId.replace(/^#/, '')}`;
     const shopifyId = req.params.orderId.replace(/^#/, '');
 
-    // Fetch order details from order_meta (primary order store)
-    const orderDoc = await mdb.collection('order_meta').findOne({
-      $or: [{ order_name: orderName }, { shopify_id: String(shopifyId) }]
-    });
-    if (!orderDoc) return res.status(404).json({ error: `Order ${orderName} not found in DB` });
+    // Try to find order by shopify_id (long ID) or by wa_vendor_nudges/order_vendor_stage
+    // For test purposes, allow passing vendor_name + phone directly in body
+    let vendorName = req.body?.vendor_name;
+    let customerName = req.body?.customer_name || '';
+    let customerPhone = (req.body?.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    let productNames = req.body?.products || 'your item';
 
-    // Get vendor stage
-    const vendorStage = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(shopifyId) });
-    const vendorName = vendorStage?.vendor_name || req.body?.vendor_name;
-    if (!vendorName) return res.status(400).json({ error: 'No vendor found for this order. Pass vendor_name in body.' });
+    // Auto-lookup vendor from order_vendor_stage if not provided
+    if (!vendorName) {
+      // Try order_vendor_stage with the raw orderId as shopify_id
+      const vendorStage = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(shopifyId) });
+      vendorName = vendorStage?.vendor_name;
+    }
+    if (!vendorName) return res.status(400).json({ error: 'No vendor found for this order. Pass vendor_name in body, or ensure order_vendor_stage has a record with this shopify_id.' });
 
     // Get vendor phone
     const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName });
@@ -17622,9 +17626,6 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
     if (rawPhone.length !== 10) return res.status(400).json({ error: `No valid phone for vendor "${vendorName}"` });
 
     const jid = `91${rawPhone}@s.whatsapp.net`;
-    const customerName = orderDoc.customer_name || orderDoc.shipping_address?.name || '';
-    const customerPhone = (orderDoc.shipping_phone || orderDoc.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-    const productNames = (orderDoc.line_items || []).filter(i => !i.vendor || i.vendor === vendorName).map(i => i.name || i.title).filter(Boolean).join(', ') || 'your item';
     const days = req.body?.days || 3;
     const orderRef = shopifyId;
 
