@@ -16467,6 +16467,31 @@ function verifySupportToken(token) {
 // ── Support bot tools ───────────────────────────────────────────────────────
 async function scSearchProducts(query) {
   try {
+    // Check if any curated category matches the query — use those first
+    if (mdb) {
+      const normalised = query.toLowerCase();
+      const CATEGORY_KEYWORDS = {
+        tees: ['tee','tees','t-shirt','tshirt','t shirt'],
+        hoodies: ['hoodie','hoodies','sweatshirt'],
+        shirts: ['shirt','shirts','oxford','formal shirt'],
+        jeans: ['jeans','denim','denims'],
+        joggers: ['jogger','joggers','track pant'],
+        coords: ['coord','co-ord','co ord','coords','set'],
+        jackets: ['jacket','jackets','bomber'],
+        shorts: ['short','shorts'],
+      };
+      let matchedCategory = null;
+      for (const [cat, kws] of Object.entries(CATEGORY_KEYWORDS)) {
+        if (kws.some(kw => normalised.includes(kw))) { matchedCategory = cat; break; }
+      }
+      if (matchedCategory) {
+        const doc = await mdb.collection('wa_featured_products').findOne({ category: matchedCategory });
+        if (doc?.products?.length) {
+          return { found: doc.products.length, products: doc.products.slice(0, 8), collections: [], curated: true };
+        }
+      }
+    }
+
     // Shopify's REST /products.json?title= is an EXACT match, not a substring
     // search — "boxy fit" finds nothing even when "MOCKING BIRD BOXY FIT
     // SHIRT" exists. GraphQL's query syntax supports real wildcard search,
@@ -17420,6 +17445,47 @@ app.get('/admin/support/chats/by-order/:shopifyOrderId', adminAuth, async (req, 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // ── Vendor WA chats (admin) ───────────────────────────────────────────────
+// ── WA Featured Products (curated per category for support bot) ──────────────
+app.get('/admin/wa-featured-products', adminAuth, async (req, res) => {
+  try {
+    const docs = await mdb.collection('wa_featured_products').find({}).toArray();
+    res.json({ categories: docs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/admin/wa-featured-products/:category', adminAuth, async (req, res) => {
+  try {
+    const { category } = req.params;
+    const { products } = req.body; // array of { handle, title, url, image, price_from }
+    await mdb.collection('wa_featured_products').updateOne(
+      { category },
+      { $set: { category, products: products || [], updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Shopify product search proxy (for admin UI product picker)
+app.get('/admin/shopify-product-search', adminAuth, async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (!q) return res.json({ products: [] });
+    const data = await shopifyGQL(`{ products(first: 12, query: "status:active AND title:*${q.replace(/"/g, '')}*") {
+      edges { node { title handle featuredImage { url }
+        variants(first: 5) { edges { node { price availableForSale } } } } } } }`);
+    const edges = data.data?.products?.edges || [];
+    const products = edges.map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale)).map(p => ({
+      handle: p.handle,
+      title: p.title,
+      url: `${STOREFRONT_URL}/products/${p.handle}`,
+      image: p.featuredImage?.url || null,
+      price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
+    }));
+    res.json({ products });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/vendor-chats', adminAuth, async (req, res) => {
   try {
     const chats = await mdb.collection('vendor_wa_chats').find({}).sort({ updated_at: -1 }).limit(100).toArray();

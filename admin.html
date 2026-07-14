@@ -7972,6 +7972,178 @@
   ══════════════════════════════════ */
   // Only permissions wired up to an actual backend check belong here —
   // showing a checkbox that doesn't gate anything would be misleading.
+  // ── Marketing: WA Featured Products curator ──────────────────────────────
+  function Marketing({ token }) {
+    const API = window.API_BASE || '';
+    const CATEGORIES = [
+      { id:'tees',     label:'👕 Tees / T-Shirts' },
+      { id:'hoodies',  label:'🧥 Hoodies / Sweatshirts' },
+      { id:'shirts',   label:'👔 Shirts' },
+      { id:'jeans',    label:'👖 Jeans / Denim' },
+      { id:'joggers',  label:'🩳 Joggers / Track Pants' },
+      { id:'coords',   label:'👗 Co-ords / Sets' },
+      { id:'jackets',  label:'🧣 Jackets / Bombers' },
+      { id:'shorts',   label:'🩲 Shorts' },
+    ];
+    const [activecat, setActivecat] = React.useState('tees');
+    const [catData, setCatData] = React.useState({}); // { [catId]: Product[] }
+    const [searchQ, setSearchQ] = React.useState('');
+    const [searchResults, setSearchResults] = React.useState([]);
+    const [searching, setSearching] = React.useState(false);
+    const [saving, setSaving] = React.useState(false);
+    const [saved, setSaved] = React.useState('');
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+      fetch(`${API}/admin/wa-featured-products`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{
+          const map = {};
+          (d.categories||[]).forEach(c => { map[c.category] = c.products || []; });
+          setCatData(map);
+        }).catch(()=>{}).finally(()=>setLoading(false));
+    }, []);
+
+    const currentProducts = catData[activecat] || [];
+
+    const doSearch = async () => {
+      if (!searchQ.trim()) return;
+      setSearching(true);
+      try {
+        const r = await fetch(`${API}/admin/shopify-product-search?q=${encodeURIComponent(searchQ)}`, { headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        setSearchResults(d.products || []);
+      } catch(e) { setSearchResults([]); }
+      setSearching(false);
+    };
+
+    const addProduct = (p) => {
+      setCatData(prev => {
+        const cur = prev[activecat] || [];
+        if (cur.find(x => x.handle === p.handle)) return prev;
+        return { ...prev, [activecat]: [...cur, p] };
+      });
+      setSearchResults(r => r.filter(x => x.handle !== p.handle));
+    };
+
+    const removeProduct = (handle) => {
+      setCatData(prev => ({ ...prev, [activecat]: (prev[activecat]||[]).filter(p => p.handle !== handle) }));
+    };
+
+    const moveProduct = (handle, dir) => {
+      setCatData(prev => {
+        const arr = [...(prev[activecat]||[])];
+        const i = arr.findIndex(p => p.handle === handle);
+        if (i < 0) return prev;
+        const j = i + dir;
+        if (j < 0 || j >= arr.length) return prev;
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+        return { ...prev, [activecat]: arr };
+      });
+    };
+
+    const saveCategory = async () => {
+      setSaving(true); setSaved('');
+      try {
+        await fetch(`${API}/admin/wa-featured-products/${activecat}`, {
+          method:'PUT',
+          headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+          body: JSON.stringify({ products: catData[activecat] || [] }),
+        });
+        setSaved('Saved!');
+        setTimeout(()=>setSaved(''), 2000);
+      } catch(e) { setSaved('Error saving'); }
+      setSaving(false);
+    };
+
+    const card = { background:'var(--card)', border:'1px solid var(--border)', borderRadius:10, padding:14, marginBottom:10, display:'flex', alignItems:'center', gap:12 };
+    const imgStyle = { width:52, height:52, objectFit:'cover', borderRadius:6, background:'var(--bg)', flexShrink:0 };
+
+    return (
+      <div style={{padding:'20px 24px', maxWidth:900}}>
+        <h2 style={{margin:'0 0 4px',fontSize:20,fontWeight:700}}>🎯 Marketing</h2>
+        <p style={{margin:'0 0 20px',color:'var(--text-muted)',fontSize:13}}>
+          Curate featured products per category — these appear first when customers ask the WA support bot about tees, hoodies, etc.
+        </p>
+
+        {/* Category tabs */}
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
+          {CATEGORIES.map(c => (
+            <button key={c.id} onClick={()=>{ setActivecat(c.id); setSearchQ(''); setSearchResults([]); }}
+              style={{padding:'6px 14px',borderRadius:20,border:'1px solid var(--border)',cursor:'pointer',
+                background: activecat===c.id ? 'var(--indigo)' : 'var(--card)',
+                color: activecat===c.id ? '#fff' : 'var(--text)',fontSize:13,fontWeight:activecat===c.id?600:400}}>
+              {c.label}
+              {(catData[c.id]||[]).length > 0 && <span style={{marginLeft:6,background:activecat===c.id?'rgba(255,255,255,0.3)':'var(--indigo)',color:'#fff',borderRadius:10,padding:'1px 6px',fontSize:11}}>{(catData[c.id]||[]).length}</span>}
+            </button>
+          ))}
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+          {/* Left: current pinned products */}
+          <div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+              <h3 style={{margin:0,fontSize:15,fontWeight:600}}>Pinned Products <span style={{color:'var(--text-muted)',fontWeight:400,fontSize:13}}>({currentProducts.length})</span></h3>
+              <button onClick={saveCategory} disabled={saving}
+                style={{padding:'6px 16px',background:'var(--green,#22c55e)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontSize:13,fontWeight:600}}>
+                {saving ? 'Saving…' : saved || 'Save'}
+              </button>
+            </div>
+            {loading ? <p style={{color:'var(--text-muted)'}}>Loading…</p> :
+             currentProducts.length === 0 ? (
+              <div style={{...card, justifyContent:'center', color:'var(--text-muted)', fontSize:13}}>
+                No products pinned for this category yet.<br/>Search and add from the right →
+              </div>
+            ) : currentProducts.map((p,i) => (
+              <div key={p.handle} style={card}>
+                {p.image ? <img src={p.image} alt="" style={imgStyle}/> : <div style={{...imgStyle,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>👕</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>₹{p.price_from?.toLocaleString('en-IN') || '—'}</div>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  <button onClick={()=>moveProduct(p.handle,-1)} disabled={i===0} style={{border:'1px solid var(--border)',background:'var(--bg)',borderRadius:5,cursor:'pointer',padding:'2px 7px',fontSize:12}}>↑</button>
+                  <button onClick={()=>moveProduct(p.handle,1)} disabled={i===currentProducts.length-1} style={{border:'1px solid var(--border)',background:'var(--bg)',borderRadius:5,cursor:'pointer',padding:'2px 7px',fontSize:12}}>↓</button>
+                </div>
+                <button onClick={()=>removeProduct(p.handle)} style={{border:'none',background:'none',cursor:'pointer',color:'var(--red,#ef4444)',fontSize:18,padding:'0 4px'}}>×</button>
+              </div>
+            ))}
+          </div>
+
+          {/* Right: search & add */}
+          <div>
+            <h3 style={{margin:'0 0 10px',fontSize:15,fontWeight:600}}>Search Shopify Products</h3>
+            <div style={{display:'flex',gap:8,marginBottom:12}}>
+              <input value={searchQ} onChange={e=>setSearchQ(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&doSearch()}
+                placeholder="Search by name…" style={{flex:1,padding:'8px 12px',border:'1px solid var(--border)',borderRadius:7,background:'var(--bg)',color:'var(--text)',fontSize:13}}/>
+              <button onClick={doSearch} disabled={searching}
+                style={{padding:'8px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:7,cursor:'pointer',fontSize:13}}>
+                {searching ? '…' : 'Search'}
+              </button>
+            </div>
+            {searchResults.map(p => (
+              <div key={p.handle} style={card}>
+                {p.image ? <img src={p.image} alt="" style={imgStyle}/> : <div style={{...imgStyle,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>👕</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>₹{p.price_from?.toLocaleString('en-IN') || '—'}</div>
+                </div>
+                <button onClick={()=>addProduct(p)}
+                  disabled={!!(catData[activecat]||[]).find(x=>x.handle===p.handle)}
+                  style={{padding:'5px 12px',background:(catData[activecat]||[]).find(x=>x.handle===p.handle)?'var(--bg)':'var(--indigo)',color:(catData[activecat]||[]).find(x=>x.handle===p.handle)?'var(--text-muted)':'#fff',border:'1px solid var(--border)',borderRadius:7,cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>
+                  {(catData[activecat]||[]).find(x=>x.handle===p.handle) ? '✓ Added' : '+ Add'}
+                </button>
+              </div>
+            ))}
+            {searchResults.length === 0 && searchQ && !searching && (
+              <p style={{color:'var(--text-muted)',fontSize:13}}>No results. Try a different keyword.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const STAFF_PERMISSIONS = [
     { id:'orders', label:'Orders', desc:'Full access to the Orders page — tags, stage changes, fulfillment, timeline notes, bulk actions. Settlements stays admin-only.' },
     { id:'penalties', label:'Penalties', desc:'Full access to the Penalties page — view, edit, waive/confirm, bulk actions, and the test/cron tools.' },
@@ -10340,6 +10512,7 @@
       { id:'theme',            icon:'🎨', label:'Theme',               section:'finance' },
       { id:'announcements',    icon:'📢', label:'Announcements',       section:'finance', external:'/announce.html' },
       { id:'staffaccounts',    icon:'🔐', label:'Staff Accounts',      section:'finance', adminOnly:true },
+      { id:'marketing',        icon:'🎯', label:'Marketing',           section:'main' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
@@ -10442,6 +10615,7 @@
           {view==='agreements'     && <AgreementManagement token={token}/>}
           {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
           {view==='staffaccounts'  && <StaffAccounts token={token}/>}
+          {view==='marketing'      && <Marketing token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}
