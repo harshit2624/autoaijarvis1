@@ -17816,13 +17816,13 @@ async function waHandleVendorReply(sock, sender, text) {
 
     if (trimmed === '1') {
       await waSessionSet(sender, { type: 'vendor_delay', order_name, shopify_id, orderRef, vendor });
-      await sock.sendMessage(sender, { text: `📝 *Order ${order_name}*\n\nPlease share the delay reason and expected shipping date.\n\nExample:\n_Fabric not arrived, will ship by 20 Jul_` });
+      await sock.sendMessage(sender, { text: `📝 *Order ${order_name} — Delay Update*\n\nPlease share the reason and when you'll ship it. Just reply naturally, for example:\n\n_Slightly delayed due to stitching, will ship by 16 July_\n_Stock issue, dispatching by 18 Jul_\n_Courier pickup delayed, shipping tomorrow_\n\nJust type your message 👇` });
       return;
     }
 
     if (trimmed === '2') {
       await waSessionSet(sender, { type: 'vendor_tracking', order_name, shopify_id, orderRef, vendor });
-      await sock.sendMessage(sender, { text: `📦 *Order ${order_name}*\n\nPlease share the AWB number and courier name.\n\nExample:\n_123456789 Delhivery_` });
+      await sock.sendMessage(sender, { text: `📦 *Order ${order_name} — Tracking Update*\n\nPlease share the AWB number and courier. Just reply naturally, for example:\n\n_123456789 Delhivery_\n_Shipped via Shiprocket, AWB 9876543210_\n_Bluedart 445566778_\n\nJust type your message 👇` });
       return;
     }
   }
@@ -18603,6 +18603,7 @@ async function startBaileysBot() {
 
           // ── Vendor reply handler ──────────────────────────────────────
           // Match sender against ALL vendor JIDs stored in wa_vendor_jids
+          // OR if sender has an active vendor session (handles JID mismatch / new vendors)
           {
             const BOT_NO = (process.env.WHATSAPP_NUMBER || '').replace(/^91/, '');
             const allVendorJids = await mdb.collection('wa_vendor_jids').find({}).toArray();
@@ -18612,9 +18613,13 @@ async function startBaileysBot() {
                 (v.jid && sender === v.jid)
               )
             );
-            if (matchedVendor) {
+            // Also check if this sender has an active vendor session (catches JID mismatches)
+            const senderSession = !matchedVendor ? await waSessionGet(sender) : null;
+            const hasVendorSession = senderSession && ['vendor_menu','vendor_delay','vendor_tracking'].includes(senderSession.type);
+
+            if (matchedVendor || hasVendorSession) {
               // Update cached JID if it changed (LID rotation)
-              if (matchedVendor.jid !== sender) {
+              if (matchedVendor && matchedVendor.jid !== sender) {
                 await mdb.collection('wa_vendor_jids').updateOne(
                   { phone: matchedVendor.phone },
                   { $set: { jid: sender, updated_at: new Date().toISOString() } }
