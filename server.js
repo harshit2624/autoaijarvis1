@@ -17828,32 +17828,33 @@ async function waHandleVendorReply(sock, sender, text) {
   }
 
   if (session?.type === 'vendor_delay') {
-    const { order_name, shopify_id } = session;
+    const { order_name, shopify_id, vendor } = session;
     // Parse via LLM to extract reason + ETA
-    let reason = trimmed, eta = 'Not specified';
+    let reason = trimmed, etaDisplay = 'Not specified', etaIso = null;
     try {
       const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
       const GROQ_KEY = process.env.GROQ_API_KEY;
       const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
       const prompt = [
-        { role: 'system', content: `Extract delay reason and ETA from vendor message. Today is ${today}. Reply ONLY with JSON: {"reason":"...","eta":"DD-MMM-YYYY or null"}` },
+        { role: 'system', content: `Extract delay reason and ETA from vendor message. Today is ${today}. Reply ONLY with JSON: {"reason":"one sentence","eta_display":"DD-MMM-YYYY or null","eta_iso":"YYYY-MM-DD or null"}` },
         { role: 'user', content: trimmed }
       ];
       const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
-      const r = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY || GROQ_KEY}` }, body: JSON.stringify({ model: DEEPSEEK_KEY ? 'deepseek-chat' : 'llama-3.3-70b-versatile', max_tokens: 100, messages: prompt }) });
+      const r = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY || GROQ_KEY}` }, body: JSON.stringify({ model: DEEPSEEK_KEY ? 'deepseek-chat' : 'llama-3.3-70b-versatile', max_tokens: 150, messages: prompt }) });
       const d = await r.json();
-      const parsed = JSON.parse(d.choices?.[0]?.message?.content?.trim() || '{}');
+      const parsed = JSON.parse((d.choices?.[0]?.message?.content?.trim() || '{}').replace(/^```json\s*/i,'').replace(/```$/,''));
       if (parsed.reason) reason = parsed.reason;
-      if (parsed.eta && parsed.eta !== 'null') eta = parsed.eta;
+      if (parsed.eta_display && parsed.eta_display !== 'null') etaDisplay = parsed.eta_display;
+      if (parsed.eta_iso && parsed.eta_iso !== 'null') etaIso = parsed.eta_iso;
     } catch (_) {}
-    await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: String(shopify_id) },
-      { $set: { delay_reason: reason, delay_resolution_date: eta, updated_at: new Date().toISOString() } }
-    );
+    // Save to delay_remarks (shown in admin order page, used by penalty cron for ETA breach)
+    await DR.insert(shopify_id, vendor, reason, etaIso);
+    // Also update order_vendor_stage for quick display
+    await OVS.upsert(shopify_id, vendor, { delay_reason: reason, delay_resolution_date: etaDisplay, updated_at: new Date().toISOString() });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
     await waSessionClear(sender);
-    await sock.sendMessage(sender, { text: `✅ Delay noted for *${order_name}*\n\nExpected by: *${eta}*\n\nThank you for the update! 🙏` });
-    await waAdminAlert(`⏳ *Vendor Delay Update*\nOrder: *${order_name}*\nReason: ${reason}\nETA: ${eta}`);
+    await sock.sendMessage(sender, { text: `✅ Delay recorded for *${order_name}*\n\nReason: ${reason}\nExpected by: *${etaDisplay}*\n\nWe'll update the customer. Thank you! 🙏` });
+    await waAdminAlert(`⏳ *Vendor Delay (via WA)*\nOrder: *${order_name}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaDisplay}`);
     return;
   }
 
