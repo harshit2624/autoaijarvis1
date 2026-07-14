@@ -16701,14 +16701,19 @@ async function scCallLLM(messages) {
   const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
   const GROQ_KEY = process.env.GROQ_API_KEY;
   const attempt = async (apiUrl, apiKey, model) => {
-    const r = await fetch(apiUrl, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
-      body: JSON.stringify({ model, max_tokens:500, messages, tools: SUPPORT_TOOLS, tool_choice:'auto' }),
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || `${model} ${r.status}`);
-    return d;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000); // 25s timeout
+    try {
+      const r = await fetch(apiUrl, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
+        body: JSON.stringify({ model, max_tokens:500, messages, tools: SUPPORT_TOOLS, tool_choice:'auto' }),
+        signal: controller.signal,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error?.message || `${model} ${r.status}`);
+      return d;
+    } finally { clearTimeout(timer); }
   };
   if (DEEPSEEK_KEY) {
     try { return await attempt('https://api.deepseek.com/chat/completions', DEEPSEEK_KEY, 'deepseek-chat'); }
@@ -18744,6 +18749,8 @@ async function startBaileysBot() {
         if (!text || waPending.has(sender)) continue;
         waPending.add(sender);
 
+        let _chatRef = null; // hoisted so catch block can save error to DB
+
         try {
           await sock.readMessages([msg.key]);
           // Extract phone — sender may be a LID (@lid suffix) if WA uses new device IDs
@@ -18841,6 +18848,7 @@ async function startBaileysBot() {
             });
             chat = { _id: r.insertedId, whatsapp_sender: sender, customer_phone: phone };
           }
+          _chatRef = chat; // expose to catch block
           // Backfill: if old chat stored LID as customer_phone, fix it now (only write valid phone)
           if (chat.customer_phone && (chat.customer_phone.includes('@') || !isValidPhone(chat.customer_phone))) {
             const fixPhone = phone !== 'unknown' ? phone : null;
@@ -19021,8 +19029,13 @@ async function startBaileysBot() {
           }
 
         } catch (err) {
-          console.error('❌ WhatsApp bot error:', err.message);
-          await sock.sendMessage(sender, { text: "Sorry, I hit a snag — please try again in a moment!" }).catch(() => {});
+          console.error('❌ WhatsApp bot error:', err.message, err.stack?.split('\n')[1] || '');
+          const errReply = "Sorry, I hit a snag — please try again in a moment!";
+          await sock.sendMessage(sender, { text: errReply }).catch(() => {});
+          // Save error reply to DB so admin can see it in Support section
+          if (_chatRef?._id) {
+            await SC.addMessage(_chatRef._id, { sender: 'assistant', text: `[bot-error] ${err.message}` }).catch(() => {});
+          }
         } finally {
           waPending.delete(sender);
         }
