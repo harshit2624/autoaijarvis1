@@ -18055,7 +18055,7 @@ async function waSessionGet(sender) {
 async function waSessionSet(sender, data) {
   await mdb.collection('whatsapp_sessions').updateOne(
     { _id: sender },
-    { $set: { data, expiresAt: Date.now() + 30 * 60 * 1000 } },
+    { $set: { data, expiresAt: Date.now() + 4 * 60 * 60 * 1000 } }, // 4 hour TTL
     { upsert: true }
   );
 }
@@ -18613,8 +18613,38 @@ async function startBaileysBot() {
                 (v.jid && sender === v.jid)
               )
             );
-            // Also check if this sender has an active vendor session (catches JID mismatches)
-            const senderSession = !matchedVendor ? await waSessionGet(sender) : null;
+            // Also check if this sender has an active vendor session (catches same-JID case)
+            let senderSession = !matchedVendor ? await waSessionGet(sender) : null;
+
+            // LID fallback: if sender is a @lid JID with no session, scan all active vendor sessions
+            // and check if any vendor's phone JID matches a stored session (handles WA LID rerouting)
+            if (!matchedVendor && !senderSession?.type && sender.includes('@lid')) {
+              const allVendorSessions = await mdb.collection('whatsapp_sessions').find({
+                'data.type': { $in: ['vendor_menu','vendor_delay','vendor_tracking'] },
+                expiresAt: { $gt: Date.now() }
+              }).sort({ expiresAt: -1 }).limit(10).toArray();
+              if (allVendorSessions.length > 0) {
+                // Find session whose stored JID belongs to a vendor whose LID might be this sender
+                // Use the most recent active vendor session as context
+                const bestSession = allVendorSessions[0];
+                senderSession = bestSession.data;
+                // Store this LID → vendor session mapping for future messages
+                await mdb.collection('whatsapp_sessions').updateOne(
+                  { _id: sender },
+                  { $set: { data: senderSession, expiresAt: Date.now() + 30 * 60 * 1000 } },
+                  { upsert: true }
+                ).catch(() => {});
+                // Also cache this LID in wa_vendor_jids if we know the vendor phone
+                const vendorJidEntry = await mdb.collection('wa_vendor_jids').findOne({ vendor_name: senderSession.vendor });
+                if (!vendorJidEntry?.jid || vendorJidEntry.jid !== sender) {
+                  await mdb.collection('wa_vendor_jids').updateOne(
+                    { phone: vendorJidEntry?.phone || '' },
+                    { $set: { jid: sender, updated_at: new Date().toISOString() } }
+                  ).catch(() => {});
+                }
+              }
+            }
+
             const hasVendorSession = senderSession && ['vendor_menu','vendor_delay','vendor_tracking'].includes(senderSession.type);
 
             if (matchedVendor || hasVendorSession) {
