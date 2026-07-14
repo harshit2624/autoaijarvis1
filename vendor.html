@@ -4804,52 +4804,73 @@
                 { n:1, label:'Create a custom app', body: <span>Shopify Admin → <strong>Settings</strong> → <strong>Apps and sales channels</strong> → <strong>Develop apps</strong> → <strong>Create an app</strong></span> },
                 { n:2, label:'Enable scopes', body: (
                   <span>
-                    Open the app → <strong>Configuration</strong> → <strong>Scopes</strong><br/>
-                    <span style={{display:'inline-block',marginTop:6,background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px',lineHeight:2}}>
-                      <span style={{fontSize:10,color:'var(--green)',fontWeight:700}}>💡 Use the search box — search each word &amp; select all:</span><br/>
-                      {['product','inventory','location','file'].map(k=>(
-                        <span key={k} style={{marginRight:10}}>
-                          <code style={{background:'rgba(0,0,0,0.25)',padding:'1px 6px',borderRadius:4,fontSize:10,color:'#a5f3fc'}}>{k}</code>
-                          <span style={{fontSize:10,color:'var(--text-muted)'}}> → select all</span>
+                    Open the app → <strong>Configuration</strong> → <strong>Scopes</strong> → paste the exact string below into the scopes field:<br/>
+                    {(()=>{
+                      const SCOPES = 'read_files,write_files,write_inventory,read_inventory,write_inventory_shipments,read_inventory_shipments,write_inventory_shipments_received_items,read_inventory_shipments_received_items,write_inventory_transfers,read_inventory_transfers,write_locations,read_locations,read_product_feeds,write_product_feeds,read_product_listings,write_product_listings,read_products,write_products,unauthenticated_read_product_pickup_locations,unauthenticated_read_product_inventory,unauthenticated_read_product_listings,unauthenticated_read_product_tags';
+                      const [copied, setCopied] = React.useState(false);
+                      return (
+                        <span style={{display:'flex',alignItems:'flex-start',gap:8,marginTop:8}}>
+                          <code style={{flex:1,display:'block',background:'rgba(0,0,0,0.3)',border:'1px solid var(--border)',padding:'8px 10px',borderRadius:6,fontSize:9.5,color:'#a5f3fc',wordBreak:'break-all',lineHeight:1.8,fontFamily:'monospace'}}>{SCOPES}</code>
+                          <button onClick={()=>{navigator.clipboard.writeText(SCOPES);setCopied(true);setTimeout(()=>setCopied(false),2000);}}
+                            style={{flexShrink:0,fontSize:11,padding:'5px 12px',borderRadius:5,border:'1px solid var(--border)',background:copied?'rgba(16,185,129,0.2)':'rgba(99,102,241,0.15)',color:copied?'var(--green)':'var(--indigo)',cursor:'pointer',fontFamily:'inherit',fontWeight:600,whiteSpace:'nowrap',marginTop:2}}>
+                            {copied ? '✓ Copied' : 'Copy'}
+                          </button>
                         </span>
-                      ))}
-                    </span>
-                    <details style={{marginTop:8}}>
-                      <summary style={{fontSize:10,color:'var(--text-muted)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:4}}>
-                        <span style={{fontSize:10}}>▸</span> View all required scopes
-                      </summary>
-                      <div style={{marginTop:8,display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px 12px'}}>
-                        {[
-                          {label:'Products',color:'var(--indigo)',scopes:['read_products','write_products','read_product_listings','write_product_listings','read_product_feeds','write_product_feeds','unauthenticated_read_product_listings','unauthenticated_read_product_tags']},
-                          {label:'Inventory',color:'var(--green)',scopes:['read_inventory','write_inventory','read_inventory_shipments','write_inventory_shipments','write_inventory_shipments_received_items','read_inventory_shipments_received_items','read_inventory_transfers','write_inventory_transfers','unauthenticated_read_product_inventory','unauthenticated_read_product_pickup_locations']},
-                          {label:'Files',color:'#f59e0b',scopes:['read_files','write_files']},
-                          {label:'Locations',color:'#8b5cf6',scopes:['read_locations','write_locations']},
-                        ].map(({label,color,scopes})=>(
-                          <div key={label} style={{background:'rgba(255,255,255,0.03)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px'}}>
-                            <div style={{fontSize:10,fontWeight:700,color,marginBottom:4}}>{label}</div>
-                            {scopes.map(s=><div key={s} style={{fontFamily:'monospace',fontSize:9,color:'var(--text-muted)',lineHeight:1.9}}>{s}</div>)}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
+                      );
+                    })()}
                   </span>
                 )},
-                { n:3, label:'Add Redirect URLs', body: (
+                { n:3, label:'Add App URL', body: (
                   <span>
-                    Still in <strong>Configuration</strong> → <strong>Allowed redirection URL(s)</strong> → add all 4 URLs below (copy &amp; paste each one):<br/>
-                    {[
-                      'https://autoaijarvis1.onrender.com/vendor/shopify/callback',
-                      'https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback',
-                      'https://dashboard.croscrow.com/vendor/shopify/callback',
-                      'https://dashboard.croscrow.com/vendor/shopify/manual-callback',
-                    ].map(url => (
-                      <span key={url} style={{display:'flex',alignItems:'center',gap:6,marginTop:6}}>
-                        <code style={{flex:1,display:'inline-block',background:'rgba(0,0,0,0.25)',border:'1px solid var(--border)',padding:'4px 10px',borderRadius:5,fontSize:10,color:'#a5f3fc',wordBreak:'break-all'}}>{url}</code>
-                        <button onClick={()=>navigator.clipboard.writeText(url)}
-                          style={{flexShrink:0,fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'rgba(99,102,241,0.15)',color:'var(--indigo)',cursor:'pointer',fontFamily:'inherit'}}>Copy</button>
-                      </span>
-                    ))}
-                    <br/><span style={{fontSize:10,color:'var(--text-muted)'}}>Add all 4 and save before continuing.</span>
+                    Still in <strong>Configuration</strong> → <strong>App URL</strong> → paste:<br/>
+                    {(()=>{
+                      const APP_URL = 'https://dashboard.croscrow.com/vendor.html';
+                      const [copied, setCopied] = React.useState(false);
+                      return (
+                        <span style={{display:'flex',alignItems:'center',gap:8,marginTop:8}}>
+                          <code style={{flex:1,display:'inline-block',background:'rgba(0,0,0,0.3)',border:'1px solid var(--border)',padding:'6px 10px',borderRadius:5,fontSize:10,color:'#a5f3fc',wordBreak:'break-all',fontFamily:'monospace'}}>{APP_URL}</code>
+                          <button onClick={()=>{navigator.clipboard.writeText(APP_URL);setCopied(true);setTimeout(()=>setCopied(false),2000);}}
+                            style={{flexShrink:0,fontSize:11,padding:'5px 12px',borderRadius:5,border:'1px solid var(--border)',background:copied?'rgba(16,185,129,0.2)':'rgba(99,102,241,0.15)',color:copied?'var(--green)':'var(--indigo)',cursor:'pointer',fontFamily:'inherit',fontWeight:600,whiteSpace:'nowrap'}}>
+                            {copied ? '✓ Copied' : 'Copy'}
+                          </button>
+                        </span>
+                      );
+                    })()}
+                  </span>
+                )},
+                { n:4, label:'Add Redirect URLs', body: (
+                  <span>
+                    <strong>Allowed redirection URL(s)</strong> → add all 4 URLs (one per line):<br/>
+                    {(()=>{
+                      const URLS = [
+                        'https://autoaijarvis1.onrender.com/vendor/shopify/callback',
+                        'https://autoaijarvis1.onrender.com/vendor/shopify/manual-callback',
+                        'https://dashboard.croscrow.com/vendor/shopify/callback',
+                        'https://dashboard.croscrow.com/vendor/shopify/manual-callback',
+                      ];
+                      const [copiedAll, setCopiedAll] = React.useState(false);
+                      const [copiedUrl, setCopiedUrl] = React.useState(null);
+                      return (
+                        <span>
+                          {URLS.map(url => (
+                            <span key={url} style={{display:'flex',alignItems:'center',gap:6,marginTop:6}}>
+                              <code style={{flex:1,display:'inline-block',background:'rgba(0,0,0,0.25)',border:'1px solid var(--border)',padding:'4px 10px',borderRadius:5,fontSize:10,color:'#a5f3fc',wordBreak:'break-all',fontFamily:'monospace'}}>{url}</code>
+                              <button onClick={()=>{navigator.clipboard.writeText(url);setCopiedUrl(url);setTimeout(()=>setCopiedUrl(null),2000);}}
+                                style={{flexShrink:0,fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:copiedUrl===url?'rgba(16,185,129,0.2)':'rgba(99,102,241,0.15)',color:copiedUrl===url?'var(--green)':'var(--indigo)',cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>
+                                {copiedUrl===url ? '✓' : 'Copy'}
+                              </button>
+                            </span>
+                          ))}
+                          <span style={{display:'flex',alignItems:'center',gap:8,marginTop:10}}>
+                            <button onClick={()=>{navigator.clipboard.writeText(URLS.join('\n'));setCopiedAll(true);setTimeout(()=>setCopiedAll(false),2000);}}
+                              style={{fontSize:11,padding:'5px 14px',borderRadius:5,border:'1px solid var(--border)',background:copiedAll?'rgba(16,185,129,0.2)':'rgba(99,102,241,0.15)',color:copiedAll?'var(--green)':'var(--indigo)',cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>
+                              {copiedAll ? '✓ Copied All' : '📋 Copy All 4 URLs'}
+                            </button>
+                            <span style={{fontSize:10,color:'var(--text-muted)'}}>Add all 4 and save before continuing.</span>
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </span>
                 )},
               ].map(({n,label,body})=>(
@@ -4862,9 +4883,9 @@
                 </div>
               ))}
 
-              {/* Step 4 — credentials */}
+              {/* Step 5 — credentials */}
               <div style={{display:'flex',gap:12,marginBottom:14}}>
-                <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(99,102,241,0.15)',color:'var(--indigo)',fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>4</div>
+                <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(99,102,241,0.15)',color:'var(--indigo)',fontSize:11,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}>5</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginBottom:8}}>Enter credentials &amp; connect</div>
                   <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Go to <strong>API credentials</strong> in your app and copy the Client ID &amp; Secret.</div>
