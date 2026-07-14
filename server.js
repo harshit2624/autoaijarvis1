@@ -17605,15 +17605,9 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
     const orderName = `#${req.params.orderId.replace(/^#/, '')}`;
     const shopifyId = req.params.orderId.replace(/^#/, '');
 
-    // Fetch order details from MongoDB
-    const orderDoc = await mdb.collection('orders').findOne({
-      $or: [
-        { name: orderName },
-        { name: shopifyId },
-        { order_number: parseInt(shopifyId) },
-        { shopify_id: String(shopifyId) },
-        { id: parseInt(shopifyId) }
-      ]
+    // Fetch order details from order_meta (primary order store)
+    const orderDoc = await mdb.collection('order_meta').findOne({
+      $or: [{ order_name: orderName }, { shopify_id: String(shopifyId) }]
     });
     if (!orderDoc) return res.status(404).json({ error: `Order ${orderName} not found in DB` });
 
@@ -17628,9 +17622,9 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
     if (rawPhone.length !== 10) return res.status(400).json({ error: `No valid phone for vendor "${vendorName}"` });
 
     const jid = `91${rawPhone}@s.whatsapp.net`;
-    const customerName = orderDoc.shipping_address?.name || orderDoc.shippingAddress?.name || orderDoc.customer?.first_name || orderDoc.customer_name || '';
-    const customerPhone = ((orderDoc.shipping_address?.phone || orderDoc.shippingAddress?.phone || orderDoc.phone || '')).replace(/\D/g, '').replace(/^91/, '').slice(-10);
-    const productNames = (orderDoc.line_items || orderDoc.lineItems || []).filter(i => !i.vendor || i.vendor === vendorName).map(i => i.name || i.title).filter(Boolean).join(', ') || 'your item';
+    const customerName = orderDoc.customer_name || orderDoc.shipping_address?.name || '';
+    const customerPhone = (orderDoc.shipping_phone || orderDoc.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    const productNames = (orderDoc.line_items || []).filter(i => !i.vendor || i.vendor === vendorName).map(i => i.name || i.title).filter(Boolean).join(', ') || 'your item';
     const days = req.body?.days || 3;
     const orderRef = shopifyId;
 
