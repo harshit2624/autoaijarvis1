@@ -17598,6 +17598,66 @@ app.get('/admin/whatsapp-confirm-poll', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /admin/vendor-nudge-test/:orderId — send test penalty nudge to vendor
+app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    const orderName = `#${req.params.orderId.replace(/^#/, '')}`;
+    const shopifyId = req.params.orderId.replace(/^#/, '');
+
+    // Fetch order details from MongoDB
+    const orderDoc = await mdb.collection('orders').findOne({ name: orderName });
+    if (!orderDoc) return res.status(404).json({ error: `Order ${orderName} not found in DB` });
+
+    // Get vendor stage
+    const vendorStage = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(shopifyId) });
+    const vendorName = vendorStage?.vendor_name || req.body?.vendor_name;
+    if (!vendorName) return res.status(400).json({ error: 'No vendor found for this order. Pass vendor_name in body.' });
+
+    // Get vendor phone
+    const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName });
+    const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (rawPhone.length !== 10) return res.status(400).json({ error: `No valid phone for vendor "${vendorName}"` });
+
+    const jid = `91${rawPhone}@s.whatsapp.net`;
+    const customerName = orderDoc.shipping_address?.name || orderDoc.customer?.first_name || '';
+    const customerPhone = (orderDoc.shipping_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    const productNames = (orderDoc.line_items || []).filter(i => !i.vendor || i.vendor === vendorName).map(i => i.name || i.title).filter(Boolean).join(', ') || 'your item';
+    const days = req.body?.days || 3;
+    const orderRef = shopifyId;
+
+    const nudgeMsg =
+`⚠️ *Action Required — ${orderName}*
+
+Hi ${vendorName},
+
+Customer: ${customerName}${customerPhone ? ` (+91${customerPhone})` : ''}
+Product: ${productNames}
+Status: *Not shipped for ${days} day${days > 1 ? 's' : ''}* _(Test Warning)_
+
+Please reply with:
+*1️⃣* — Order is delayed (share reason + ETA)
+*2️⃣* — Already shipped (share AWB + courier)
+
+_CrosCrow Operations Team_`;
+
+    const sent = await waSocket.sendMessage(jid, { text: nudgeMsg });
+    const actualJid = sent?.key?.remoteJid || jid;
+
+    // Store session so vendor's 1/2 reply maps to this order
+    await waSessionSet(actualJid, { type: 'vendor_menu', order_name: orderName, shopify_id: String(shopifyId), orderRef, vendor: vendorName });
+
+    // Cache JID
+    await mdb.collection('wa_vendor_jids').updateOne(
+      { phone: rawPhone },
+      { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } },
+      { upsert: true }
+    ).catch(() => {});
+
+    res.json({ success: true, sent_to: jid, order: orderName, vendor: vendorName });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // WHATSAPP SUPPORT BOT (Baileys — no browser, session stored in MongoDB)
 // ══════════════════════════════════════════════════════════════════════════
@@ -17666,7 +17726,91 @@ async function useMongoAuthState() {
 async function waHandleVendorReply(sock, sender, text) {
   if (!mdb) return;
 
-  // Find the most recent unresolved nudge sent to this vendor (last 7 days)
+  const trimmed = text.trim();
+
+  // Check session for pending menu interaction
+  const session = await waSessionGet(sender);
+
+  if (session?.type === 'vendor_menu') {
+    const { order_name, shopify_id, orderRef, vendor } = session;
+
+    if (trimmed === '1') {
+      await waSessionSet(sender, { type: 'vendor_delay', order_name, shopify_id, orderRef, vendor });
+      await sock.sendMessage(sender, { text: `📝 *Order ${order_name}*\n\nPlease share the delay reason and expected shipping date.\n\nExample:\n_Fabric not arrived, will ship by 20 Jul_` });
+      return;
+    }
+
+    if (trimmed === '2') {
+      await waSessionSet(sender, { type: 'vendor_tracking', order_name, shopify_id, orderRef, vendor });
+      await sock.sendMessage(sender, { text: `📦 *Order ${order_name}*\n\nPlease share the AWB number and courier name.\n\nExample:\n_123456789 Delhivery_` });
+      return;
+    }
+  }
+
+  if (session?.type === 'vendor_delay') {
+    const { order_name, shopify_id } = session;
+    // Parse via LLM to extract reason + ETA
+    let reason = trimmed, eta = 'Not specified';
+    try {
+      const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+      const GROQ_KEY = process.env.GROQ_API_KEY;
+      const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      const prompt = [
+        { role: 'system', content: `Extract delay reason and ETA from vendor message. Today is ${today}. Reply ONLY with JSON: {"reason":"...","eta":"DD-MMM-YYYY or null"}` },
+        { role: 'user', content: trimmed }
+      ];
+      const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+      const r = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY || GROQ_KEY}` }, body: JSON.stringify({ model: DEEPSEEK_KEY ? 'deepseek-chat' : 'llama-3.3-70b-versatile', max_tokens: 100, messages: prompt }) });
+      const d = await r.json();
+      const parsed = JSON.parse(d.choices?.[0]?.message?.content?.trim() || '{}');
+      if (parsed.reason) reason = parsed.reason;
+      if (parsed.eta && parsed.eta !== 'null') eta = parsed.eta;
+    } catch (_) {}
+    await mdb.collection('order_vendor_stage').updateOne(
+      { shopify_id: String(shopify_id) },
+      { $set: { delay_reason: reason, delay_resolution_date: eta, updated_at: new Date().toISOString() } }
+    );
+    await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
+    await waSessionClear(sender);
+    await sock.sendMessage(sender, { text: `✅ Delay noted for *${order_name}*\n\nExpected by: *${eta}*\n\nThank you for the update! 🙏` });
+    await waAdminAlert(`⏳ *Vendor Delay Update*\nOrder: *${order_name}*\nReason: ${reason}\nETA: ${eta}`);
+    return;
+  }
+
+  if (session?.type === 'vendor_tracking') {
+    const { order_name, shopify_id } = session;
+    // Parse AWB + courier from free text via LLM
+    let awb = null, courier = 'Not specified';
+    try {
+      const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+      const GROQ_KEY = process.env.GROQ_API_KEY;
+      const prompt = [
+        { role: 'system', content: 'Extract AWB tracking number and courier name. Reply ONLY with JSON: {"awb":"...","courier":"..."}' },
+        { role: 'user', content: trimmed }
+      ];
+      const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+      const r = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY || GROQ_KEY}` }, body: JSON.stringify({ model: DEEPSEEK_KEY ? 'deepseek-chat' : 'llama-3.3-70b-versatile', max_tokens: 100, messages: prompt }) });
+      const d = await r.json();
+      const parsed = JSON.parse(d.choices?.[0]?.message?.content?.trim() || '{}');
+      if (parsed.awb) awb = parsed.awb;
+      if (parsed.courier) courier = parsed.courier;
+    } catch (_) {}
+    if (!awb) {
+      await sock.sendMessage(sender, { text: `⚠️ Couldn't read the AWB. Please send it in this format:\n_123456789 Delhivery_` });
+      return;
+    }
+    await mdb.collection('order_vendor_stage').updateOne(
+      { shopify_id: String(shopify_id) },
+      { $set: { awb, courier, stage: 'transit', updated_at: new Date().toISOString() } }
+    );
+    await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
+    await waSessionClear(sender);
+    await sock.sendMessage(sender, { text: `✅ Tracking updated for *${order_name}*!\n\nAWB: *${awb}*\nCourier: *${courier}*\n\nThank you! 🙏` });
+    await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${order_name}*\nAWB: ${awb}\nCourier: ${courier}`);
+    return;
+  }
+
+  // No session — find the most recent unresolved nudge sent to this vendor (last 7 days)
   const recentNudge = await mdb.collection('wa_vendor_nudges').findOne(
     { sent_at: { $gt: Date.now() - 7 * 86400000 }, resolved: { $ne: true } },
     { sort: { sent_at: -1 } }
@@ -17786,17 +17930,19 @@ async function waVendorNudge(meta, customerPhone) {
     const customerMobile = customerPhone ? `+91${customerPhone}` : '';
     const productNames = (d.items || []).filter(i => !i.vendor || i.vendor === vs.vendor_name).map(i => i.title || i.name).filter(Boolean).join(', ') || 'your item';
     const nudgeMsg =
-`📦 *Order ${d.order_name} — Action Needed*
+`⚠️ *Action Required — Order ${d.order_name}*
+
+Hi ${vs.vendor_name},
 
 Customer: ${customerName}${customerMobile ? ` (${customerMobile})` : ''}
 Product: ${productNames}
-Stuck: *${days} day${days > 1 ? 's' : ''}* unshipped
+Status: *Not shipped for ${days} day${days > 1 ? 's' : ''}*
 
-If shipped, reply:
-TRACK ${orderRef} <AWB> <courier>
+Please reply with:
+*1️⃣* — Order is delayed (share reason + ETA)
+*2️⃣* — Already shipped (share AWB + courier)
 
-If delayed, reply:
-DELAY ${orderRef} <reason> | ETA DD-MM-YYYY`;
+_CrosCrow Operations Team_`;
 
     try {
       const jid = `91${VENDOR_WA}@s.whatsapp.net`;
@@ -17810,6 +17956,8 @@ DELAY ${orderRef} <reason> | ETA DD-MM-YYYY`;
           { upsert: true }
         ).catch(() => {});
       }
+      // Store session so vendor's "1" or "2" reply maps to this order
+      await waSessionSet(actualJid, { type: 'vendor_menu', order_name: d.order_name, shopify_id: String(d.shopify_order_id), orderRef, vendor: vs.vendor_name });
       await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, shopify_id: String(d.shopify_order_id), vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
       console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
     } catch (e) {
