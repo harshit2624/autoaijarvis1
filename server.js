@@ -17601,7 +17601,7 @@ app.get('/admin/whatsapp-confirm-poll', adminAuth, async (req, res) => {
 // POST /admin/vendor-nudge-test/:orderId — send test penalty nudge to vendor
 app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
   try {
-    if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running' });
+    if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp bot not connected', connected: waConnected, socket: !!waSocket });
     const orderName = `#${req.params.orderId.replace(/^#/, '')}`;
     const shopifyId = req.params.orderId.replace(/^#/, '');
 
