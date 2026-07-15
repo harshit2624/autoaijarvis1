@@ -7973,6 +7973,153 @@
   // Only permissions wired up to an actual backend check belong here —
   // showing a checkbox that doesn't gate anything would be misleading.
 
+  // ── MetaAds: Meta Marketing API performance dashboard ────────────────────
+  function MetaAds({ token }) {
+    const API = window.API_BASE || '';
+    const [period, setPeriod]   = React.useState('last_30d');
+    const [data, setData]       = React.useState(null);
+    const [loading, setLoading] = React.useState(false);
+    const [tab, setTab]         = React.useState('region');
+
+    const load = async (p = period) => {
+      setLoading(true); setData(null);
+      try {
+        const r = await fetch(`${API}/admin/meta-ads/insights?period=${p}`, { headers: { Authorization: `Bearer ${token}` } });
+        const d = await r.json();
+        setData(d);
+      } catch { setData({ error: 'Request failed' }); }
+      setLoading(false);
+    };
+
+    React.useEffect(() => { load(); }, []);
+
+    const fmt = (n, prefix='₹') => n >= 1000 ? `${prefix}${(n/1000).toFixed(1)}K` : `${prefix}${parseFloat(n||0).toFixed(0)}`;
+    const fmtRoas = r => r ? `${parseFloat(r).toFixed(2)}x` : '—';
+    const roasColor = r => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#ef4444' : 'var(--text-dim)';
+
+    const PERIODS = [
+      { v:'last_7d', l:'7 Days' }, { v:'last_30d', l:'30 Days' },
+      { v:'last_90d', l:'90 Days' }, { v:'this_month', l:'This Month' }, { v:'last_month', l:'Last Month' },
+    ];
+
+    const o = data?.overview || {};
+
+    const StatCard = ({ label, value, sub, color }) =>
+      React.createElement('div', { style:{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px', minWidth:120 } },
+        React.createElement('div', { style:{ fontSize:11, color:'var(--text-dim)', marginBottom:4 } }, label),
+        React.createElement('div', { style:{ fontSize:22, fontWeight:700, color: color||'var(--text)' } }, value),
+        sub && React.createElement('div', { style:{ fontSize:11, color:'var(--text-dim)', marginTop:2 } }, sub),
+      );
+
+    const cols = { th: { padding:'8px 10px', fontSize:11, color:'var(--text-dim)', fontWeight:600, textAlign:'left', whiteSpace:'nowrap', borderBottom:'1px solid var(--border)' }, td: { padding:'8px 10px', fontSize:13, borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' } };
+
+    return React.createElement('div', { style:{ maxWidth:1100, margin:'0 auto', paddingBottom:40 } },
+      // Header
+      React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:10 } },
+        React.createElement('div', null,
+          React.createElement('h2', { style:{ fontSize:20, fontWeight:700, margin:0 } }, '📊 Meta Ads Performance'),
+          React.createElement('p', { style:{ color:'var(--text-dim)', fontSize:13, margin:'4px 0 0' } }, 'ROAS, audience breakdown, top regions — from your Meta ad account'),
+        ),
+        React.createElement('div', { style:{ display:'flex', gap:6, flexWrap:'wrap' } },
+          PERIODS.map(p => React.createElement('button', { key:p.v, onClick:()=>{ setPeriod(p.v); load(p.v); },
+            style:{ padding:'6px 12px', borderRadius:6, border:'1px solid var(--border)', background: period===p.v ? 'var(--indigo)' : 'var(--bg-card2)', color: period===p.v ? '#fff' : 'var(--text)', fontSize:12, cursor:'pointer', fontWeight:500 } }, p.l)),
+        ),
+      ),
+
+      loading && React.createElement('div', { style:{ textAlign:'center', padding:60, color:'var(--text-dim)' } }, '⏳ Fetching from Meta…'),
+      data?.error && React.createElement('div', { style:{ padding:16, background:'#fee2e2', borderRadius:8, color:'#991b1b', fontSize:13 } },
+        '❌ ', data.error,
+        data.error.includes('env vars') && React.createElement('div', { style:{ marginTop:8 } }, 'Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to your Render environment variables.'),
+      ),
+
+      !loading && data && !data.error && React.createElement(React.Fragment, null,
+        // Summary row
+        React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:10, marginBottom:20 } },
+          React.createElement(StatCard, { label:'Total Spend',    value: fmt(o.spend),       sub: `${o.date_start} → ${o.date_stop}` }),
+          React.createElement(StatCard, { label:'Revenue',        value: fmt(o.revenue),      color:'#10b981' }),
+          React.createElement(StatCard, { label:'ROAS',           value: fmtRoas(o.roas),     color: roasColor(o.roas) }),
+          React.createElement(StatCard, { label:'Purchases',      value: o.purchases||0 }),
+          React.createElement(StatCard, { label:'Impressions',    value: o.impressions >= 1000 ? `${(o.impressions/1000).toFixed(0)}K` : o.impressions }),
+          React.createElement(StatCard, { label:'Clicks',         value: o.clicks||0,         sub:`CTR ${parseFloat(o.ctr||0).toFixed(2)}%` }),
+          React.createElement(StatCard, { label:'CPM',            value: fmt(o.cpm),          sub:'per 1K impressions' }),
+          React.createElement(StatCard, { label:'CPC',            value: fmt(o.cpc),          sub:'per click' }),
+        ),
+
+        // Tabs
+        React.createElement('div', { style:{ display:'flex', gap:4, marginBottom:14, borderBottom:'1px solid var(--border)', paddingBottom:0 } },
+          [['region','🗺️ By Region'],['age','👥 By Age & Gender'],['campaign','📣 By Campaign']].map(([t,l])=>
+            React.createElement('button', { key:t, onClick:()=>setTab(t),
+              style:{ padding:'8px 14px', border:'none', borderBottom: tab===t ? '2px solid var(--indigo)' : '2px solid transparent', background:'none', color: tab===t ? 'var(--indigo)' : 'var(--text-dim)', cursor:'pointer', fontSize:13, fontWeight:600, marginBottom:'-1px' } }, l)
+          ),
+        ),
+
+        // Region table
+        tab === 'region' && React.createElement('div', { style:{ overflowX:'auto' } },
+          data.byRegion?.length === 0
+            ? React.createElement('div', { style:{ padding:30, textAlign:'center', color:'var(--text-dim)' } }, 'No regional data for this period')
+            : React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
+              React.createElement('thead', null, React.createElement('tr', null,
+                ['Region','Spend','Revenue','ROAS','Purchases','Impressions','Clicks','CTR'].map(h=>React.createElement('th',{key:h,style:cols.th},h))
+              )),
+              React.createElement('tbody', null,
+                (data.byRegion||[]).map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},
+                  React.createElement('td',{style:{...cols.td,fontWeight:600}},r.region||'—'),
+                  React.createElement('td',{style:cols.td},fmt(r.spend)),
+                  React.createElement('td',{style:{...cols.td,color:'#10b981',fontWeight:600}},fmt(r.revenue)),
+                  React.createElement('td',{style:{...cols.td,color:roasColor(r.roas),fontWeight:700}},fmtRoas(r.roas)),
+                  React.createElement('td',{style:cols.td},r.purchases),
+                  React.createElement('td',{style:cols.td},r.impressions>=1000?`${(r.impressions/1000).toFixed(0)}K`:r.impressions),
+                  React.createElement('td',{style:cols.td},r.clicks),
+                  React.createElement('td',{style:cols.td},`${parseFloat(r.ctr||0).toFixed(2)}%`),
+                ))
+              )
+            )
+        ),
+
+        // Age × Gender table
+        tab === 'age' && React.createElement('div', { style:{ overflowX:'auto' } },
+          React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
+            React.createElement('thead', null, React.createElement('tr', null,
+              ['Age','Gender','Spend','Revenue','ROAS','Purchases','Clicks','CTR'].map(h=>React.createElement('th',{key:h,style:cols.th},h))
+            )),
+            React.createElement('tbody', null,
+              (data.byAge||[]).sort((a,b)=>b.roas-a.roas).map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},
+                React.createElement('td',{style:{...cols.td,fontWeight:600}},r.age||'—'),
+                React.createElement('td',{style:cols.td},r.gender||'—'),
+                React.createElement('td',{style:cols.td},fmt(r.spend)),
+                React.createElement('td',{style:{...cols.td,color:'#10b981',fontWeight:600}},fmt(r.revenue)),
+                React.createElement('td',{style:{...cols.td,color:roasColor(r.roas),fontWeight:700}},fmtRoas(r.roas)),
+                React.createElement('td',{style:cols.td},r.purchases),
+                React.createElement('td',{style:cols.td},r.clicks),
+                React.createElement('td',{style:cols.td},`${parseFloat(r.ctr||0).toFixed(2)}%`),
+              ))
+            )
+          )
+        ),
+
+        // Campaign table
+        tab === 'campaign' && React.createElement('div', { style:{ overflowX:'auto' } },
+          React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
+            React.createElement('thead', null, React.createElement('tr', null,
+              ['Campaign','Spend','Revenue','ROAS','Purchases','Impressions','Clicks'].map(h=>React.createElement('th',{key:h,style:cols.th},h))
+            )),
+            React.createElement('tbody', null,
+              (data.byCampaign||[]).map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},
+                React.createElement('td',{style:{...cols.td,fontWeight:600,maxWidth:260,overflow:'hidden',textOverflow:'ellipsis'}},r.campaign||'—'),
+                React.createElement('td',{style:cols.td},fmt(r.spend)),
+                React.createElement('td',{style:{...cols.td,color:'#10b981',fontWeight:600}},fmt(r.revenue)),
+                React.createElement('td',{style:{...cols.td,color:roasColor(r.roas),fontWeight:700}},fmtRoas(r.roas)),
+                React.createElement('td',{style:cols.td},r.purchases),
+                React.createElement('td',{style:cols.td},r.impressions>=1000?`${(r.impressions/1000).toFixed(0)}K`:r.impressions),
+                React.createElement('td',{style:cols.td},r.clicks),
+              ))
+            )
+          )
+        ),
+      ),
+    );
+  }
+
   // ── MetafieldAudit: warn about missing required product metafields ────────
   function MetafieldAudit({ token }) {
     const API = window.API_BASE || '';
@@ -10695,6 +10842,7 @@
       { id:'staffaccounts',    icon:'🔐', label:'Staff Accounts',      section:'finance', adminOnly:true },
       { id:'marketing',        icon:'🎯', label:'Marketing',           section:'main' },
       { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
+      { id:'metaads',          icon:'📊', label:'Meta Ads',             section:'main' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
@@ -10799,6 +10947,7 @@
           {view==='staffaccounts'  && <StaffAccounts token={token}/>}
           {view==='marketing'      && <Marketing token={token}/>}
           {view==='metafieldaudit' && <MetafieldAudit token={token}/>}
+          {view==='metaads'       && <MetaAds token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}

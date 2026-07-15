@@ -16497,6 +16497,74 @@ app.put("/admin/metafield-audit/:productId", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Meta Ads: helper ─────────────────────────────────────────────────────────
+const META_TOKEN   = process.env.META_ACCESS_TOKEN  || '';
+const META_ACCOUNT = process.env.META_AD_ACCOUNT_ID || ''; // e.g. act_123456789
+const META_API     = 'https://graph.facebook.com/v21.0';
+
+async function metaGet(path, params = {}) {
+  const qs = new URLSearchParams({ access_token: META_TOKEN, ...params }).toString();
+  const r = await fetch(`${META_API}${path}?${qs}`);
+  const d = await r.json();
+  if (d.error) throw new Error(`Meta API: ${d.error.message}`);
+  return d;
+}
+
+// ── GET /admin/meta-ads/insights ─────────────────────────────────────────────
+app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
+  if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
+  const { period = 'last_30d' } = req.query;
+  const datePresets = { last_7d:'last_7_d', last_30d:'last_30_d', last_90d:'last_90_d', this_month:'this_month', last_month:'last_month' };
+  const date_preset = datePresets[period] || 'last_30_d';
+  const baseFields = 'spend,impressions,clicks,ctr,cpm,cpc,actions,action_values,purchase_roas';
+
+  try {
+    const [overview, byRegion, byAge, byCampaign] = await Promise.all([
+      // Overall summary
+      metaGet(`/${META_ACCOUNT}/insights`, { fields: baseFields, date_preset }),
+
+      // By region (city/state)
+      metaGet(`/${META_ACCOUNT}/insights`, { fields: 'spend,impressions,clicks,actions,action_values,purchase_roas', date_preset, breakdowns: 'region', limit: 50 }),
+
+      // By age + gender
+      metaGet(`/${META_ACCOUNT}/insights`, { fields: 'spend,impressions,clicks,actions,action_values,purchase_roas', date_preset, breakdowns: 'age,gender', limit: 100 }),
+
+      // By campaign
+      metaGet(`/${META_ACCOUNT}/insights`, { fields: 'campaign_name,spend,impressions,clicks,actions,action_values,purchase_roas', date_preset, level: 'campaign', limit: 50 }),
+    ]);
+
+    // Helper: extract purchase count + revenue from actions/action_values
+    const extractPurchases = (item) => {
+      const purchases = (item.actions || []).find(a => a.action_type === 'purchase')?.value || 0;
+      const revenue   = (item.action_values || []).find(a => a.action_type === 'purchase')?.value || 0;
+      const roas      = item.purchase_roas?.[0]?.value || (revenue && item.spend ? (parseFloat(revenue)/parseFloat(item.spend)).toFixed(2) : 0);
+      return { purchases: parseInt(purchases), revenue: parseFloat(revenue), roas: parseFloat(roas) };
+    };
+
+    const formatRow = (item) => {
+      const { purchases, revenue, roas } = extractPurchases(item);
+      return {
+        spend:       parseFloat(item.spend || 0),
+        impressions: parseInt(item.impressions || 0),
+        clicks:      parseInt(item.clicks || 0),
+        ctr:         parseFloat(item.ctr || 0),
+        cpm:         parseFloat(item.cpm || 0),
+        cpc:         parseFloat(item.cpc || 0),
+        purchases, revenue, roas,
+      };
+    };
+
+    res.json({
+      ok: true,
+      period,
+      overview:   { ...formatRow((overview.data || [])[0] || {}), date_start: overview.data?.[0]?.date_start, date_stop: overview.data?.[0]?.date_stop },
+      byRegion:   (byRegion.data   || []).map(r  => ({ region:   r.region,   ...formatRow(r) })).sort((a,b) => b.roas - a.roas),
+      byAge:      (byAge.data      || []).map(r  => ({ age:      r.age,      gender: r.gender, ...formatRow(r) })),
+      byCampaign: (byCampaign.data || []).map(r  => ({ campaign: r.campaign_name, ...formatRow(r) })).sort((a,b) => b.roas - a.roas),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET CC inventory alerts (new orders matching CC stock)
 app.get("/admin/cc-inventory/alerts", adminAuth, async (req, res) => {
   try {
