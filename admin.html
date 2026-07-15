@@ -7977,16 +7977,28 @@
   function MetaAds({ token }) {
     const API = window.API_BASE || '';
     const [period, setPeriod]     = React.useState('last_30d');
+    const [since, setSince]       = React.useState('');
+    const [until, setUntil]       = React.useState('');
+    const [useCustom, setUseCustom] = React.useState(false);
     const [data, setData]         = React.useState(null);
     const [audData, setAudData]   = React.useState(null);
     const [loading, setLoading]   = React.useState(false);
     const [audLoading, setAudLoading] = React.useState(false);
     const [tab, setTab]           = React.useState('region');
 
-    const load = async (p = period) => {
+    const buildUrl = (p, s, u, custom) => {
+      if (custom && s && u) return `${API}/admin/meta-ads/insights?since=${s}&until=${u}`;
+      return `${API}/admin/meta-ads/insights?period=${p}`;
+    };
+    const buildAudUrl = (p, s, u, custom) => {
+      if (custom && s && u) return `${API}/admin/meta-ads/audiences?since=${s}&until=${u}`;
+      return `${API}/admin/meta-ads/audiences?period=${p}`;
+    };
+
+    const load = async (p = period, s = since, u = until, custom = useCustom) => {
       setLoading(true); setData(null);
       try {
-        const r = await fetch(`${API}/admin/meta-ads/insights?period=${p}`, { headers: { Authorization: `Bearer ${token}` } });
+        const r = await fetch(buildUrl(p, s, u, custom), { headers: { Authorization: `Bearer ${token}` } });
         const d = await r.json();
         setData(d);
       } catch { setData({ error: 'Request failed' }); }
@@ -7995,10 +8007,10 @@
 
     React.useEffect(() => { load(); }, []);
 
-    const loadAudiences = async (p = period) => {
+    const loadAudiences = async (p = period, s = since, u = until, custom = useCustom) => {
       setAudLoading(true); setAudData(null);
       try {
-        const r = await fetch(`${API}/admin/meta-ads/audiences?period=${p}`, { headers: { Authorization: `Bearer ${token}` } });
+        const r = await fetch(buildAudUrl(p, s, u, custom), { headers: { Authorization: `Bearer ${token}` } });
         const d = await r.json();
         setAudData(d);
       } catch { setAudData({ error: 'Request failed' }); }
@@ -8011,11 +8023,15 @@
     const rClr   = r => r>=4?'#10b981':r>=2?'#22c55e':r>=1?'#f59e0b':r>0?'#ef4444':'var(--text-dim)';
     const fqClr  = f => f>=4?'#ef4444':f>=2.5?'#f59e0b':'#10b981';
 
-    const PERIODS = [{v:'last_7d',l:'7D'},{v:'last_30d',l:'30D'},{v:'last_90d',l:'90D'},{v:'this_month',l:'This Month'},{v:'last_month',l:'Last Month'}];
+    const PRESETS = [
+      { group:'Short',   items:[{v:'today',l:'Today'},{v:'yesterday',l:'Yesterday'},{v:'last_7d',l:'Last 7 Days'},{v:'last_14d',l:'Last 14 Days'}] },
+      { group:'Monthly', items:[{v:'last_28d',l:'Last 28 Days'},{v:'last_30d',l:'Last 30 Days'},{v:'this_month',l:'This Month'},{v:'last_month',l:'Last Month'}] },
+      { group:'Long',    items:[{v:'this_week',l:'This Week'},{v:'last_week',l:'Last Week'},{v:'this_quarter',l:'This Quarter'},{v:'last_quarter',l:'Last Quarter'},{v:'this_year',l:'This Year'},{v:'last_year',l:'Last Year'}] },
+    ];
     const TABS = [
       ['region','🗺️ Region'],['age','👥 Age × Gender'],['campaign','📣 Campaigns'],
       ['adset','🎯 Ad Sets'],['platform','📱 Platform'],['funnel','🔽 Funnel'],
-      ...(period==='last_7d'?[['hour','⏰ By Hour']]:[]),
+      ...((useCustom ? (since && until && (new Date(until)-new Date(since))/86400000<=7) : ['today','yesterday','last_7d'].includes(period)) ? [['hour','⏰ By Hour']] : []),
       ['audience','🎯 Interest Audiences'],
     ];
 
@@ -8039,16 +8055,44 @@
           )
     );
 
+    const applyCustom = () => { if (!since || !until) return; setUseCustom(true); load(period, since, until, true); };
+    const selectPreset = (v) => { setPeriod(v); setUseCustom(false); load(v, since, until, false); };
+    const activeLabel = useCustom && since && until ? `${since} → ${until}` : (PRESETS.flatMap(g=>g.items).find(p=>p.v===period)?.l || period);
+
     return React.createElement('div',{style:{maxWidth:1160,margin:'0 auto',paddingBottom:40}},
       // Header
-      React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}},
-        React.createElement('div',null,
-          React.createElement('h2',{style:{fontSize:20,fontWeight:700,margin:0}},'📊 Meta Ads Intelligence'),
-          React.createElement('p',{style:{color:'var(--text-dim)',fontSize:13,margin:'4px 0 0'}},'ROAS · funnel · audience · platform · frequency — live from Meta'),
+      React.createElement('div',{style:{marginBottom:20}},
+        React.createElement('div',{style:{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:14}},
+          React.createElement('div',null,
+            React.createElement('h2',{style:{fontSize:20,fontWeight:700,margin:0}},'📊 Meta Ads Intelligence'),
+            React.createElement('p',{style:{color:'var(--text-dim)',fontSize:13,margin:'4px 0 0'}},'ROAS · funnel · audience · platform · frequency — live from Meta'),
+          ),
+          React.createElement('div',{style:{fontSize:12,color:'var(--text-dim)',padding:'4px 10px',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:6}},
+            '📅 ', activeLabel,
+          ),
         ),
-        React.createElement('div',{style:{display:'flex',gap:5,flexWrap:'wrap'}},
-          PERIODS.map(p=>React.createElement('button',{key:p.v,onClick:()=>{setPeriod(p.v);load(p.v);},
-            style:{padding:'6px 11px',borderRadius:6,border:'1px solid var(--border)',background:period===p.v?'var(--indigo)':'var(--bg-card2)',color:period===p.v?'#fff':'var(--text)',fontSize:12,cursor:'pointer',fontWeight:500}},p.l))
+        // Preset groups
+        React.createElement('div',{style:{display:'flex',gap:16,flexWrap:'wrap',alignItems:'flex-start'}},
+          PRESETS.map(g=>React.createElement('div',{key:g.group},
+            React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)',marginBottom:4,fontWeight:600,letterSpacing:.5,textTransform:'uppercase'}},g.group),
+            React.createElement('div',{style:{display:'flex',gap:4,flexWrap:'wrap'}},
+              g.items.map(p=>React.createElement('button',{key:p.v,onClick:()=>selectPreset(p.v),
+                style:{padding:'5px 10px',borderRadius:6,border:'1px solid var(--border)',background:!useCustom&&period===p.v?'var(--indigo)':'var(--bg-card2)',color:!useCustom&&period===p.v?'#fff':'var(--text)',fontSize:11,cursor:'pointer',fontWeight:500,whiteSpace:'nowrap'}},p.l))
+            ),
+          )),
+          // Custom date range picker
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)',marginBottom:4,fontWeight:600,letterSpacing:.5,textTransform:'uppercase'}},'Custom Range'),
+            React.createElement('div',{style:{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}},
+              React.createElement('input',{type:'date',value:since,onChange:e=>setSince(e.target.value),
+                style:{padding:'5px 8px',borderRadius:6,border:`1px solid ${useCustom?'var(--indigo)':'var(--border)'}`,background:'var(--bg-card2)',color:'var(--text)',fontSize:11,cursor:'pointer'}}),
+              React.createElement('span',{style:{fontSize:11,color:'var(--text-dim)'}},'→'),
+              React.createElement('input',{type:'date',value:until,onChange:e=>setUntil(e.target.value),
+                style:{padding:'5px 8px',borderRadius:6,border:`1px solid ${useCustom?'var(--indigo)':'var(--border)'}`,background:'var(--bg-card2)',color:'var(--text)',fontSize:11,cursor:'pointer'}}),
+              React.createElement('button',{onClick:applyCustom,disabled:!since||!until,
+                style:{padding:'5px 12px',borderRadius:6,border:'none',background:useCustom?'var(--indigo)':'var(--bg-hover)',color:useCustom?'#fff':'var(--text)',fontSize:11,cursor:'pointer',fontWeight:600,opacity:since&&until?1:0.5}},'Apply'),
+            ),
+          ),
         ),
       ),
 
@@ -8215,7 +8259,7 @@
         tab==='audience'&&React.createElement('div',null,
           !audData&&!audLoading&&React.createElement('div',{style:{textAlign:'center',padding:30}},
             React.createElement('p',{style:{color:'var(--text-dim)',marginBottom:12,fontSize:13}},'Fetches your ad set targeting specs and maps interest performance. Click to load.'),
-            React.createElement('button',{onClick:()=>loadAudiences(period),style:{padding:'8px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',cursor:'pointer',fontSize:13,fontWeight:600}},'Load Interest Audience Data'),
+            React.createElement('button',{onClick:()=>loadAudiences(period,since,until,useCustom),style:{padding:'8px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',cursor:'pointer',fontSize:13,fontWeight:600}},'Load Interest Audience Data'),
           ),
           audLoading&&React.createElement('div',{style:{textAlign:'center',padding:40,color:'var(--text-dim)'}},'⏳ Analysing ad set targeting…'),
           audData?.error&&React.createElement('div',{style:{padding:14,background:'#fee2e2',borderRadius:8,color:'#991b1b',fontSize:13}},'❌ ',audData.error),

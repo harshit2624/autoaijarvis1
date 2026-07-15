@@ -16513,10 +16513,29 @@ async function metaGet(path, params = {}) {
 // ── GET /admin/meta-ads/insights ─────────────────────────────────────────────
 app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
   if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
-  const { period = 'last_30d' } = req.query;
-  const datePresets = { last_7d:'last_7_d', last_30d:'last_30_d', last_90d:'last_90_d', this_month:'this_month', last_month:'last_month' };
-  const date_preset = datePresets[period] || 'last_30_d';
-  const baseFields  = 'spend,impressions,clicks,ctr,cpm,cpc,reach,frequency,actions,action_values,purchase_roas,cost_per_action_type';
+  const { period = 'last_30d', since, until } = req.query;
+
+  // All Meta-supported date presets
+  const PRESET_MAP = {
+    today:'today', yesterday:'yesterday',
+    last_7d:'last_7_d', last_14d:'last_14_d', last_28d:'last_28_d', last_30d:'last_30_d',
+    this_week:'this_week_mon_today', last_week:'last_week_mon_sun',
+    this_month:'this_month', last_month:'last_month',
+    this_quarter:'this_quarter', last_quarter:'last_quarter',
+    this_year:'this_year', last_year:'last_year',
+  };
+
+  // Build time params: custom range takes priority over preset
+  const timeParams = (since && until)
+    ? { time_range: JSON.stringify({ since, until }) }
+    : { date_preset: PRESET_MAP[period] || 'last_30_d' };
+
+  // Hourly breakdown only valid for ranges ≤ 7 days
+  const isShortRange = (since && until)
+    ? (new Date(until) - new Date(since)) / 86400000 <= 7
+    : ['today','yesterday','last_7d'].includes(period);
+
+  const baseFields    = 'spend,impressions,clicks,ctr,cpm,cpc,reach,frequency,actions,action_values,purchase_roas,cost_per_action_type';
   const insightFields = 'spend,impressions,clicks,reach,frequency,actions,action_values,purchase_roas';
 
   // Helper: extract purchase metrics from Meta insight row
@@ -16552,22 +16571,22 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
     const safe = (p) => p.catch(e => ({ data: [], _err: e.message }));
 
     const [overview, byRegion, byAge, byCampaign, byAdset, byDevice, byPublisher, byHour] = await Promise.all([
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: baseFields, date_preset })),
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'region', limit:50 })),
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'age,gender', limit:100 })),
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_name,${insightFields}`, date_preset, level:'campaign', limit:50 })),
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_name,adset_name,${insightFields}`, date_preset, level:'adset', limit:50 })),
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'device_platform', limit:20 })),
-      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'publisher_platform', limit:20 })),
-      // Hourly only works for short ranges; skip gracefully
-      period === 'last_7d'
-        ? safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:'spend,impressions,clicks,actions,action_values', date_preset, breakdowns:'hourly_stats_aggregated_by_advertiser_time_zone', limit:24 }))
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: baseFields, ...timeParams })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, ...timeParams, breakdowns:'region', limit:50 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, ...timeParams, breakdowns:'age,gender', limit:100 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_name,${insightFields}`, ...timeParams, level:'campaign', limit:50 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_name,adset_name,${insightFields}`, ...timeParams, level:'adset', limit:50 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, ...timeParams, breakdowns:'device_platform', limit:20 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, ...timeParams, breakdowns:'publisher_platform', limit:20 })),
+      isShortRange
+        ? safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:'spend,impressions,clicks,actions,action_values', ...timeParams, breakdowns:'hourly_stats_aggregated_by_advertiser_time_zone', limit:24 }))
         : Promise.resolve({ data: [] }),
     ]);
 
     res.json({
       ok:          true,
-      period,
+      period: since && until ? `custom` : period,
+      since: since || null, until: until || null,
       overview:    { ...formatRow((overview.data||[])[0]||{}), date_start:overview.data?.[0]?.date_start, date_stop:overview.data?.[0]?.date_stop },
       byRegion:    (byRegion.data||[]).map(r=>({ region:r.region, ...formatRow(r) })).sort((a,b)=>b.roas-a.roas),
       byAge:       (byAge.data||[]).map(r=>({ age:r.age, gender:r.gender, ...formatRow(r) })).sort((a,b)=>b.roas-a.roas),
@@ -16585,9 +16604,9 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
 // then joins with insights so you can compare ROAS per interest audience.
 app.get('/admin/meta-ads/audiences', adminAuth, async (req, res) => {
   if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
-  const { period = 'last_30d' } = req.query;
-  const datePresets = { last_7d:'last_7_d', last_30d:'last_30_d', last_90d:'last_90_d', this_month:'this_month', last_month:'last_month' };
-  const date_preset = datePresets[period] || 'last_30_d';
+  const { period = 'last_30d', since, until } = req.query;
+  const PRESET_MAP = { today:'today', yesterday:'yesterday', last_7d:'last_7_d', last_14d:'last_14_d', last_28d:'last_28_d', last_30d:'last_30_d', this_week:'this_week_mon_today', last_week:'last_week_mon_sun', this_month:'this_month', last_month:'last_month', this_quarter:'this_quarter', last_quarter:'last_quarter', this_year:'this_year', last_year:'last_year' };
+  const timeParams = (since && until) ? { time_range: JSON.stringify({ since, until }) } : { date_preset: PRESET_MAP[period] || 'last_30_d' };
 
   try {
     // Fetch all ad sets with their targeting spec
@@ -16600,7 +16619,7 @@ app.get('/admin/meta-ads/audiences', adminAuth, async (req, res) => {
     // Fetch insights for all ad sets in one call
     const insightData = await metaGet(`/${META_ACCOUNT}/insights`, {
       fields: 'adset_id,adset_name,spend,impressions,clicks,reach,actions,action_values,purchase_roas',
-      date_preset,
+      ...timeParams,
       level: 'adset',
       limit: 200,
     });
