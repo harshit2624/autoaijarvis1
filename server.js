@@ -18533,8 +18533,24 @@ async function waAdminSessionCheck(sender) {
 
 async function waAdminAlert(message) {
   if (!waSocket) return;
-  try { await waSocket.sendMessage(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: message }); }
-  catch (e) { console.error('❌ Admin alert failed:', e.message); }
+  try {
+    // Prefer the resolved JID from DB (handles LID-based accounts on newer WA)
+    let adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
+    if (!adminJidDoc?.jid) {
+      // Live-resolve the JID and cache it for next time
+      const [aRes] = await waSocket.onWhatsApp(`91${WA_ADMIN_NO}`).catch(() => []) || [];
+      if (aRes?.jid) {
+        await mdb.collection('wa_admin_jids').updateOne(
+          { phone: WA_ADMIN_NO },
+          { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
+          { upsert: true }
+        ).catch(() => {});
+        adminJidDoc = { jid: aRes.jid };
+      }
+    }
+    const jid = adminJidDoc?.jid || `91${WA_ADMIN_NO}@s.whatsapp.net`;
+    await waSocket.sendMessage(jid, { text: message });
+  } catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
 
 // Look up customer name + most recent order name from order_meta by phone
