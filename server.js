@@ -19283,6 +19283,18 @@ async function startBaileysBot() {
           const knownAdminJids = new Set([`91${WA_ADMIN_NO}@s.whatsapp.net`]);
           if (adminJidDoc?.jid) knownAdminJids.add(adminJidDoc.jid);
           const isAdminByJid = knownAdminJids.has(sender) || phone === WA_ADMIN_NO;
+
+          // Always capture admin JID on any message from admin phone — even if they're
+          // not yet in admin session (phone match is enough to know it's them).
+          // This populates wa_admin_jids so waAdminAlert can use the correct LID JID.
+          if (phone === WA_ADMIN_NO && sender !== `91${WA_ADMIN_NO}@s.whatsapp.net` && !adminJidDoc?.jid) {
+            await mdb.collection('wa_admin_jids').updateOne(
+              { phone: WA_ADMIN_NO },
+              { $set: { phone: WA_ADMIN_NO, jid: sender, updated_at: new Date().toISOString() } },
+              { upsert: true }
+            ).catch(() => {});
+            console.log(`📲 Admin JID captured from incoming message: ${sender}`);
+          }
           const isAdminSession = await waAdminSessionCheck(sender);
 
           // Code entry: anyone who sends the code unlocks admin mode for their number
