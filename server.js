@@ -19179,17 +19179,28 @@ async function startBaileysBot() {
             }
           } catch (e) { console.error('Vendor JID resolve failed:', e.message); }
 
-          try {
-            const [aRes] = await sock.onWhatsApp(`91${WA_ADMIN_NO}`) || [];
-            if (aRes?.jid) {
-              await mdb.collection('wa_admin_jids').updateOne(
-                { phone: WA_ADMIN_NO },
-                { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
-                { upsert: true }
-              );
-              console.log(`📲 Admin JID resolved: ${WA_ADMIN_NO} → ${aRes.jid}`);
+          // Retry admin JID resolution with backoff — connection may not be fully ready at 3s
+          const resolveAdminJid = async (attempt = 1) => {
+            try {
+              const existing = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
+              if (existing?.jid) { console.log(`📲 Admin JID already stored: ${existing.jid}`); return; }
+              const [aRes] = await sock.onWhatsApp(`91${WA_ADMIN_NO}`) || [];
+              if (aRes?.jid) {
+                await mdb.collection('wa_admin_jids').updateOne(
+                  { phone: WA_ADMIN_NO },
+                  { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
+                  { upsert: true }
+                );
+                console.log(`📲 Admin JID resolved: ${WA_ADMIN_NO} → ${aRes.jid}`);
+              } else if (attempt < 5) {
+                setTimeout(() => resolveAdminJid(attempt + 1), attempt * 5000);
+              }
+            } catch (e) {
+              console.error(`Admin JID resolve failed (attempt ${attempt}): ${e.message}`);
+              if (attempt < 5) setTimeout(() => resolveAdminJid(attempt + 1), attempt * 5000);
             }
-          } catch (e) { console.error('Admin JID resolve failed:', e.message); }
+          };
+          resolveAdminJid();
         }, 3000);
       }
     });
