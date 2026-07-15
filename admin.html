@@ -9396,6 +9396,18 @@
       setResetting(false);
     };
 
+    const [testing, setTesting] = useState(false);
+    const testAlert = async () => {
+      setTesting(true); setMsg('');
+      try {
+        const r = await fetch(`${API}/admin/whatsapp-test-alert`, { method:'POST', headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        if (d.ok) setMsg(`✅ Test message sent! JID used: ${d.jid}`);
+        else setMsg(`❌ ${d.error}`);
+      } catch (e) { setMsg('❌ Request failed: ' + e.message); }
+      setTesting(false);
+    };
+
     const ST = { padding:'32px', maxWidth:560 };
     return (
       <div style={ST}>
@@ -9431,6 +9443,11 @@
 
         <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
           <button className="btn btn-ghost btn-sm" onClick={load}>🔄 Refresh Status</button>
+          {status?.connected && (
+            <button className="btn btn-sm" style={{background:'#10b981',color:'#fff',borderColor:'#10b981'}} onClick={testAlert} disabled={testing}>
+              {testing ? 'Sending…' : '📩 Send Test Alert to Admin'}
+            </button>
+          )}
           <button className="btn btn-sm" style={{background:'#ef4444',color:'#fff',borderColor:'#ef4444'}} onClick={reset} disabled={resetting}>
             {resetting ? 'Resetting…' : '🔌 Log Out & Generate New QR'}
           </button>

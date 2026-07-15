@@ -17330,6 +17330,28 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
   res.json({ connected: waConnected, qrDataUrl });
 });
 
+app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
+  if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
+  try {
+    // Show exactly what JID will be used before sending
+    const adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
+    let jid = adminJidDoc?.jid || null;
+    if (!jid) {
+      const [aRes] = await waSocket.onWhatsApp(`91${WA_ADMIN_NO}`).catch(() => []) || [];
+      jid = aRes?.jid || `91${WA_ADMIN_NO}@s.whatsapp.net`;
+      if (aRes?.jid) {
+        await mdb.collection('wa_admin_jids').updateOne(
+          { phone: WA_ADMIN_NO }, { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } }, { upsert: true }
+        ).catch(() => {});
+      }
+    }
+    await waSocket.sendMessage(jid, { text: `🧪 *CrosCrow Test Alert*\n\nAdmin WA is working ✅\nSent at: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\nJID used: ${jid}` });
+    res.json({ ok: true, jid, stored_jid: adminJidDoc?.jid || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
   waConnected = false;
   waLatestQR = null;
