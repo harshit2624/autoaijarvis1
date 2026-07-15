@@ -6200,12 +6200,23 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             }
           })(),
         stage:          (() => {
-            // Use the already-guarded vendorStages (not raw Shopify) so stage and
-            // vendorStages always agree — prevents orders from appearing in two stage
-            // buckets simultaneously (e.g. both confirmed and delivered).
             const base = meta.stage || 'new';
-            const guardedStages = Object.values(vsMap[String(o.id)] || {});
-            return guardedStages.reduce((best, s) => higherStage(best, s), base);
+            const allVS = vsMap[String(o.id)] || {};
+            const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+            // Apply the same terminal-stage guard used in vendorStages:
+            // Shopify can signal non-terminal stages (transit, ready) but cannot
+            // override a non-terminal OVS stage with a terminal one (delivered/rto/cancelled).
+            // This prevents dual-bucket: an order appearing in both 'confirmed' and 'delivered'.
+            const TERMINAL = ['delivered', 'rto', 'cancelled'];
+            const allStages = [
+              ...Object.values(allVS),
+              ...Object.entries(shopifyMap).map(([v, shopifyDerived]) => {
+                const stored = allVS[v] || base;
+                if (TERMINAL.includes(shopifyDerived) && !TERMINAL.includes(stored)) return stored;
+                return shopifyDerived;
+              }),
+            ];
+            return allStages.reduce((best, s) => higherStage(best, s), base);
           })(),
         vendorTracking:        vtMap[String(o.id)] || {},
         vendorPenalty:         vpMap[String(o.id)] || {},
