@@ -10702,6 +10702,9 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
       const ccLocationId = ccLocData.locations?.[0]?.id;
       if (!ccLocationId) continue;
 
+      // Track which CC products have had their image synced this run (one image upload per product)
+      const ccImageSyncedProducts = new Set();
+
       for (const m of vMappings) {
         try {
           // Get vendor variant (price + inventory_item_id)
@@ -10743,6 +10746,28 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
               if (!setRes.ok) throw new Error(`inventory set failed: ${JSON.stringify(setData.errors)}`);
               console.log(`✅ Synced ${vName} variant ${m.vendor_variant_id} → CC ${m.croscrow_variant_id} qty=${qty}`);
             }
+          }
+
+          // Sync vendor image to CC product (once per product, if sync_images not disabled and vendor has an image)
+          if (m.sync_images !== false && m.vendor_image && m.croscrow_product_id && !ccImageSyncedProducts.has(String(m.croscrow_product_id))) {
+            try {
+              // Check existing CC product images to avoid duplicates
+              const ccImagesRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${m.croscrow_product_id}/images.json?fields=id,src`, { headers: { 'X-Shopify-Access-Token': ccToken } });
+              const ccImagesData = await ccImagesRes.json();
+              const existingImages = ccImagesData.images || [];
+              // Compare by src basename to detect duplicates even if query params differ
+              const vendorImgBase = m.vendor_image.split('?')[0].split('/').pop();
+              const alreadyExists = existingImages.some(img => img.src.split('?')[0].split('/').pop() === vendorImgBase);
+              if (!alreadyExists) {
+                await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${m.croscrow_product_id}/images.json`, {
+                  method: 'POST',
+                  headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ image: { src: m.vendor_image, position: (existingImages.length || 0) + 1 } }),
+                });
+                console.log(`🖼️ Synced image for CC product ${m.croscrow_product_id} from ${vName}`);
+              }
+              ccImageSyncedProducts.add(String(m.croscrow_product_id));
+            } catch (imgErr) { console.warn(`⚠️ Image sync failed for CC product ${m.croscrow_product_id}: ${imgErr.message}`); }
           }
 
           await VPM.updateSynced(m.vendor_name, m.vendor_variant_id);
@@ -10824,6 +10849,68 @@ app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
         { $set: { status: 'approved', action: 'smart_mapped', updated_at: new Date().toISOString() } }
       );
     } catch {}
+  }
+
+  // Immediately sync price, stock, and image for the just-mapped variants
+  // so admin doesn't need to hit "Sync Stock" manually after mapping.
+  if (conn && mappings.some(m => m.action !== 'skip')) {
+    try {
+      const ccToken = await getAccessToken();
+      const locData = await vendorShopifyRESTByConn(conn, '/locations.json').catch(() => ({}));
+      const locationId = locData.locations?.[0]?.id;
+      const ccLocData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/locations.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json()).catch(() => ({}));
+      const ccLocationId = ccLocData.locations?.[0]?.id;
+
+      let imageUploaded = false;
+      for (const m of mappings) {
+        if (m.action === 'skip') continue;
+        const vVariant = vendorVariantMap[String(m.vendor_variant_id)] || {};
+        const ccVariantId = results.find(r => r.vendor_variant_id === m.vendor_variant_id)?.cc_variant_id || m.croscrow_variant_id;
+        if (!ccVariantId) continue;
+        try {
+          // Price sync
+          if (vVariant.price) {
+            await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${ccVariantId}.json`, {
+              method: 'PUT',
+              headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ variant: { id: ccVariantId, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
+            }).catch(() => {});
+          }
+          // Stock sync
+          if (locationId && ccLocationId && vVariant.inventory_management === 'shopify') {
+            const qty = parseInt(vVariant.inventory_quantity ?? 0);
+            const ccVarRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${ccVariantId}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json()).catch(() => ({}));
+            const ccInvItemId = ccVarRes.variant?.inventory_item_id;
+            if (ccInvItemId) {
+              await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_items/${ccInvItemId}.json`, {
+                method: 'PUT', headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inventory_item: { id: ccInvItemId, tracked: true } }),
+              }).catch(() => {});
+              await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+                method: 'POST', headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+              }).catch(() => {});
+            }
+          }
+        } catch {}
+      }
+      // Image sync — once per CC product
+      if (vendorImage && croscrow_product_id) {
+        try {
+          const ccImagesData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images.json?fields=id,src`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json()).catch(() => ({ images: [] }));
+          const existingImages = ccImagesData.images || [];
+          const vendorImgBase = vendorImage.split('?')[0].split('/').pop();
+          const alreadyExists = existingImages.some(img => img.src.split('?')[0].split('/').pop() === vendorImgBase);
+          if (!alreadyExists) {
+            await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images.json`, {
+              method: 'POST', headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: { src: vendorImage, position: (existingImages.length || 0) + 1 } }),
+            }).catch(() => {});
+            console.log(`🖼️ Post-map image sync for CC product ${croscrow_product_id} from ${vendor_name}`);
+          }
+        } catch {}
+      }
+    } catch (syncErr) { console.warn(`⚠️ Post-map auto-sync failed for ${vendor_name}: ${syncErr.message}`); }
   }
 
   const errors = results.filter(r => r.action === 'error');
