@@ -7976,10 +7976,12 @@
   // ── MetaAds: Meta Marketing API performance dashboard ────────────────────
   function MetaAds({ token }) {
     const API = window.API_BASE || '';
-    const [period, setPeriod]   = React.useState('last_30d');
-    const [data, setData]       = React.useState(null);
-    const [loading, setLoading] = React.useState(false);
-    const [tab, setTab]         = React.useState('region');
+    const [period, setPeriod]     = React.useState('last_30d');
+    const [data, setData]         = React.useState(null);
+    const [audData, setAudData]   = React.useState(null);
+    const [loading, setLoading]   = React.useState(false);
+    const [audLoading, setAudLoading] = React.useState(false);
+    const [tab, setTab]           = React.useState('region');
 
     const load = async (p = period) => {
       setLoading(true); setData(null);
@@ -7993,17 +7995,28 @@
 
     React.useEffect(() => { load(); }, []);
 
+    const loadAudiences = async (p = period) => {
+      setAudLoading(true); setAudData(null);
+      try {
+        const r = await fetch(`${API}/admin/meta-ads/audiences?period=${p}`, { headers: { Authorization: `Bearer ${token}` } });
+        const d = await r.json();
+        setAudData(d);
+      } catch { setAudData({ error: 'Request failed' }); }
+      setAudLoading(false);
+    };
+
     const fmt    = (n, pre='₹') => { const v=parseFloat(n||0); return v>=100000?`${pre}${(v/100000).toFixed(1)}L`:v>=1000?`${pre}${(v/1000).toFixed(1)}K`:`${pre}${v.toFixed(0)}`; };
     const fmtN   = n => { const v=parseInt(n||0); return v>=1000000?`${(v/1000000).toFixed(1)}M`:v>=1000?`${(v/1000).toFixed(0)}K`:`${v}`; };
     const fmtR   = r => r ? `${parseFloat(r).toFixed(2)}x` : '—';
     const rClr   = r => r>=4?'#10b981':r>=2?'#22c55e':r>=1?'#f59e0b':r>0?'#ef4444':'var(--text-dim)';
-    const fqClr  = f => f>=4?'#ef4444':f>=2.5?'#f59e0b':'#10b981'; // frequency: high = audience fatigue
+    const fqClr  = f => f>=4?'#ef4444':f>=2.5?'#f59e0b':'#10b981';
 
     const PERIODS = [{v:'last_7d',l:'7D'},{v:'last_30d',l:'30D'},{v:'last_90d',l:'90D'},{v:'this_month',l:'This Month'},{v:'last_month',l:'Last Month'}];
     const TABS = [
       ['region','🗺️ Region'],['age','👥 Age × Gender'],['campaign','📣 Campaigns'],
       ['adset','🎯 Ad Sets'],['platform','📱 Platform'],['funnel','🔽 Funnel'],
       ...(period==='last_7d'?[['hour','⏰ By Hour']]:[]),
+      ['audience','🎯 Interest Audiences'],
     ];
 
     const o = data?.overview || {};
@@ -8197,6 +8210,71 @@
           ],
           rows:data.byHour||[],
         }),
+
+        // Interest Audiences
+        tab==='audience'&&React.createElement('div',null,
+          !audData&&!audLoading&&React.createElement('div',{style:{textAlign:'center',padding:30}},
+            React.createElement('p',{style:{color:'var(--text-dim)',marginBottom:12,fontSize:13}},'Fetches your ad set targeting specs and maps interest performance. Click to load.'),
+            React.createElement('button',{onClick:()=>loadAudiences(period),style:{padding:'8px 20px',borderRadius:7,border:'none',background:'var(--indigo)',color:'#fff',cursor:'pointer',fontSize:13,fontWeight:600}},'Load Interest Audience Data'),
+          ),
+          audLoading&&React.createElement('div',{style:{textAlign:'center',padding:40,color:'var(--text-dim)'}},'⏳ Analysing ad set targeting…'),
+          audData?.error&&React.createElement('div',{style:{padding:14,background:'#fee2e2',borderRadius:8,color:'#991b1b',fontSize:13}},'❌ ',audData.error),
+          audData&&!audData.error&&React.createElement(React.Fragment,null,
+            // Interest rollup
+            React.createElement('h4',{style:{margin:'0 0 12px',fontSize:14}},'📊 Performance by Interest — ranked by ROAS'),
+            (audData.byInterest||[]).length===0
+              ? React.createElement('div',{style:{padding:20,color:'var(--text-dim)',fontSize:13}},'No interest targeting found — you may be using Advantage+ audiences (Meta picks targeting automatically). Check the Ad Sets tab below to see what Meta assigned.')
+              : React.createElement(React.Fragment,null,
+                  // Visual ranking cards
+                  React.createElement('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:10,marginBottom:20}},
+                    (audData.byInterest||[]).slice(0,20).map((r,i)=>React.createElement('div',{key:i,style:{background:'var(--bg-card)',border:`1px solid ${i===0?'#10b981':i===1?'#22c55e':i===2?'#f59e0b':'var(--border)'}`,borderRadius:10,padding:'12px 14px',position:'relative'}},
+                      i<3&&React.createElement('div',{style:{position:'absolute',top:10,right:12,fontSize:18}},i===0?'🥇':i===1?'🥈':'🥉'),
+                      React.createElement('div',{style:{fontWeight:700,fontSize:14,marginBottom:6,paddingRight:28}},r.interest),
+                      React.createElement('div',{style:{display:'flex',gap:16,flexWrap:'wrap'}},
+                        React.createElement('div',null,React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)'}},'ROAS'),React.createElement('div',{style:{fontSize:18,fontWeight:700,color:rClr(r.roas)}},fmtR(r.roas))),
+                        React.createElement('div',null,React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)'}},'REVENUE'),React.createElement('div',{style:{fontSize:15,fontWeight:600,color:'#10b981'}},fmt(r.revenue))),
+                        React.createElement('div',null,React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)'}},'SPEND'),React.createElement('div',{style:{fontSize:15,fontWeight:600}},fmt(r.spend))),
+                        React.createElement('div',null,React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)'}},'CPP'),React.createElement('div',{style:{fontSize:14}},fmt(r.cpp))),
+                        React.createElement('div',null,React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)'}},'PURCHASES'),React.createElement('div',{style:{fontSize:14}},r.purchases)),
+                      ),
+                      r.adsets>1&&React.createElement('div',{style:{fontSize:11,color:'var(--text-dim)',marginTop:6}},`Across ${r.adsets} ad sets · CTR ${r.ctr}%`),
+                    ))
+                  ),
+                  // Full table
+                  React.createElement(Table,{
+                    cols:[
+                      {h:'#',render:(_,i)=>TD(i+1,{color:'var(--text-dim)',width:28})},
+                      {h:'Interest',render:r=>TD(r.interest,{fontWeight:600})},
+                      {h:'Ad Sets',render:r=>TD(r.adsets,{textAlign:'center'})},
+                      {h:'Spend',render:r=>TD(fmt(r.spend))},
+                      {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+                      {h:'ROAS',render:r=>RoasTD(r.roas)},
+                      {h:'Purchases',render:r=>TD(r.purchases)},
+                      {h:'CPP',render:r=>TD(fmt(r.cpp))},
+                      {h:'Impressions',render:r=>TD(fmtN(r.impressions))},
+                      {h:'CTR',render:r=>TD(`${r.ctr}%`)},
+                    ],
+                    rows:audData.byInterest||[],
+                  }),
+                ),
+            // Per-adset detail with interests shown
+            React.createElement('h4',{style:{margin:'24px 0 12px',fontSize:14}},'🎯 Ad Set Detail — interests + performance'),
+            React.createElement(Table,{
+              cols:[
+                {h:'Ad Set',render:r=>TD(r.adset||'—',{fontWeight:600,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'})},
+                {h:'Interests',render:r=>TD(r.interests?.length?r.interests.join(', '):'(none / Advantage+)',{fontSize:11,color:r.interests?.length?'var(--text)':'var(--text-dim)',maxWidth:220,overflow:'hidden',textOverflow:'ellipsis'})},
+                {h:'Age',render:r=>TD(r.age||'All',{fontSize:12})},
+                {h:'Gender',render:r=>TD(r.gender||'All',{fontSize:12})},
+                {h:'Spend',render:r=>TD(r.has_data?fmt(r.spend):'—',{color:r.has_data?'var(--text)':'var(--text-dim)'})},
+                {h:'Revenue',render:r=>TD(r.has_data?fmt(r.revenue):'—',{color:'#10b981',fontWeight:600})},
+                {h:'ROAS',render:r=>r.has_data?RoasTD(r.roas):TD('—',{color:'var(--text-dim)'})},
+                {h:'Purchases',render:r=>TD(r.has_data?r.purchases:'—')},
+                {h:'Status',render:r=>TD(r.status||'—',{fontSize:11,color:r.status==='ACTIVE'?'#10b981':'#f59e0b'})},
+              ],
+              rows:audData.byAdset||[],
+            }),
+          ),
+        ),
       ),
     );
   }

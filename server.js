@@ -16580,6 +16580,123 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /admin/meta-ads/audiences — interest audience performance ─────────────
+// Fetches all active ad sets, extracts their interest targets from targeting spec,
+// then joins with insights so you can compare ROAS per interest audience.
+app.get('/admin/meta-ads/audiences', adminAuth, async (req, res) => {
+  if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
+  const { period = 'last_30d' } = req.query;
+  const datePresets = { last_7d:'last_7_d', last_30d:'last_30_d', last_90d:'last_90_d', this_month:'this_month', last_month:'last_month' };
+  const date_preset = datePresets[period] || 'last_30_d';
+
+  try {
+    // Fetch all ad sets with their targeting spec
+    const adsetData = await metaGet(`/${META_ACCOUNT}/adsets`, {
+      fields: 'id,name,status,targeting',
+      limit: 200,
+    });
+    const adsets = adsetData.data || [];
+
+    // Fetch insights for all ad sets in one call
+    const insightData = await metaGet(`/${META_ACCOUNT}/insights`, {
+      fields: 'adset_id,adset_name,spend,impressions,clicks,reach,actions,action_values,purchase_roas',
+      date_preset,
+      level: 'adset',
+      limit: 200,
+    });
+    const insightMap = {};
+    for (const row of (insightData.data || [])) {
+      const purchases = parseFloat((row.actions||[]).find(a=>a.action_type==='purchase')?.value||0);
+      const revenue   = parseFloat((row.action_values||[]).find(a=>a.action_type==='purchase')?.value||0);
+      const roas      = row.purchase_roas?.[0]?.value ? parseFloat(row.purchase_roas[0].value) : (revenue && row.spend ? parseFloat(revenue)/parseFloat(row.spend) : 0);
+      const cpp       = purchases > 0 ? parseFloat((parseFloat(row.spend||0)/purchases).toFixed(2)) : 0;
+      insightMap[row.adset_id] = {
+        spend: parseFloat(row.spend||0), impressions: parseInt(row.impressions||0),
+        clicks: parseInt(row.clicks||0), reach: parseInt(row.reach||0),
+        purchases, revenue, roas, cpp,
+      };
+    }
+
+    // Extract interest names from targeting spec
+    const extractInterests = (targeting) => {
+      if (!targeting) return [];
+      const interests = [];
+      // flexible_spec: [{interests:[{id,name},...]}]
+      const flexSpec = targeting.flexible_spec || [];
+      for (const group of flexSpec) {
+        for (const interest of (group.interests || [])) {
+          if (interest.name) interests.push(interest.name);
+        }
+        // behaviors
+        for (const b of (group.behaviors || [])) {
+          if (b.name) interests.push(b.name);
+        }
+      }
+      // Also check top-level interests (older format)
+      for (const interest of (targeting.interests || [])) {
+        if (interest.name && !interests.includes(interest.name)) interests.push(interest.name);
+      }
+      return interests;
+    };
+
+    // Build per-adset result with interests + performance
+    const rows = [];
+    const interestRollup = {}; // aggregate across adsets sharing an interest
+
+    for (const adset of adsets) {
+      const perf = insightMap[adset.id] || null;
+      const interests = extractInterests(adset.targeting);
+      const targeting = adset.targeting || {};
+      const ageMin = targeting.age_min || null;
+      const ageMax = targeting.age_max || null;
+      const genders = (targeting.genders || []).map(g => g===1?'Male':g===2?'Female':'All').join(', ') || 'All';
+
+      rows.push({
+        adset_id:  adset.id,
+        adset:     adset.name,
+        status:    adset.status,
+        interests,
+        age:       ageMin && ageMax ? `${ageMin}–${ageMax}` : ageMin ? `${ageMin}+` : 'All',
+        gender:    genders,
+        ...(perf || { spend:0, impressions:0, clicks:0, reach:0, purchases:0, revenue:0, roas:0, cpp:0 }),
+        has_data:  !!perf,
+      });
+
+      // Roll up by individual interest
+      for (const name of interests) {
+        if (!interestRollup[name]) interestRollup[name] = { interest:name, adsets:0, spend:0, revenue:0, purchases:0, impressions:0, clicks:0, reach:0, roas_sum:0, roas_count:0 };
+        const r = interestRollup[name];
+        r.adsets++;
+        if (perf) {
+          r.spend       += perf.spend;
+          r.revenue     += perf.revenue;
+          r.purchases   += perf.purchases;
+          r.impressions += perf.impressions;
+          r.clicks      += perf.clicks;
+          r.reach       += perf.reach;
+          if (perf.roas > 0) { r.roas_sum += perf.roas; r.roas_count++; }
+        }
+      }
+    }
+
+    // Compute aggregate ROAS per interest
+    const byInterest = Object.values(interestRollup).map(r => ({
+      interest:    r.interest,
+      adsets:      r.adsets,
+      spend:       parseFloat(r.spend.toFixed(2)),
+      revenue:     parseFloat(r.revenue.toFixed(2)),
+      roas:        r.roas_count > 0 ? parseFloat((r.roas_sum / r.roas_count).toFixed(2)) : (r.revenue && r.spend ? parseFloat((r.revenue/r.spend).toFixed(2)) : 0),
+      purchases:   r.purchases,
+      cpp:         r.purchases > 0 ? parseFloat((r.spend/r.purchases).toFixed(2)) : 0,
+      impressions: r.impressions,
+      clicks:      r.clicks,
+      ctr:         r.impressions > 0 ? parseFloat(((r.clicks/r.impressions)*100).toFixed(2)) : 0,
+    })).sort((a,b) => b.roas - a.roas);
+
+    res.json({ ok:true, period, byInterest, byAdset: rows.sort((a,b) => b.roas - a.roas) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET CC inventory alerts (new orders matching CC stock)
 app.get("/admin/cc-inventory/alerts", adminAuth, async (req, res) => {
   try {
