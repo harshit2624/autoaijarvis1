@@ -16417,6 +16417,86 @@ app.get("/admin/products/search", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /admin/metafield-audit — check all products for missing required metafields ─
+// Fetches all active products via GraphQL with pagination, checks 3 required metafields.
+// Returns products that are missing at least one field.
+app.get("/admin/metafield-audit", adminAuth, async (req, res) => {
+  const REQUIRED = [
+    { key: 'morefromvendor',        label: 'More From Vendor',       type: 'text' },
+    { key: 'return_exchange_vendor',label: 'Return & Exchange',       type: 'text' },
+    { key: 'sizechart',             label: 'Size Chart',             type: 'file' },
+  ];
+  const GQL = (cursor) => `{
+    products(first: 250${cursor ? `, after: "${cursor}"` : ''}, query: "status:active") {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id legacyResourceId title handle status
+        images(first:1) { edges { node { url } } }
+        morefromvendor:        metafield(namespace:"custom", key:"morefromvendor")        { value }
+        return_exchange_vendor: metafield(namespace:"custom", key:"return_exchange_vendor") { value }
+        sizechart:             metafield(namespace:"custom", key:"sizechart")             { value }
+      }}
+    }
+  }`;
+  try {
+    const incomplete = [];
+    let cursor = null, hasNext = true;
+    while (hasNext) {
+      const data = await shopifyGQL(GQL(cursor));
+      const page = data?.data?.products;
+      if (!page) break;
+      hasNext = page.pageInfo.hasNextPage;
+      cursor  = page.pageInfo.endCursor;
+      for (const { node: p } of (page.edges || [])) {
+        const missing = REQUIRED.filter(f => !p[f.key]?.value?.trim());
+        if (missing.length > 0) {
+          incomplete.push({
+            id:       p.legacyResourceId,
+            title:    p.title,
+            handle:   p.handle,
+            image:    p.images?.edges?.[0]?.node?.url || null,
+            missing:  missing.map(f => f.key),
+            values: {
+              morefromvendor:         p.morefromvendor?.value || '',
+              return_exchange_vendor: p.return_exchange_vendor?.value || '',
+              sizechart:              p.sizechart?.value || '',
+            },
+          });
+        }
+      }
+    }
+    res.json({ ok: true, fields: REQUIRED, incomplete, total_checked: incomplete.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PUT /admin/metafield-audit/:productId — set a single text metafield ─────
+app.put("/admin/metafield-audit/:productId", adminAuth, async (req, res) => {
+  const { productId } = req.params;
+  const { key, value } = req.body || {};
+  const ALLOWED_KEYS = ['morefromvendor', 'return_exchange_vendor'];
+  if (!ALLOWED_KEYS.includes(key)) return res.status(400).json({ error: 'Key not allowed via this endpoint' });
+  try {
+    const token = await getAccessToken();
+    // Upsert via REST metafields endpoint
+    const existing = await shopifyREST(`/products/${productId}/metafields.json`);
+    const mf = (existing.metafields || []).find(m => m.namespace === 'custom' && m.key === key);
+    if (mf) {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/metafields/${mf.id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metafield: { id: mf.id, value, type: 'single_line_text_field' } }),
+      });
+    } else {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${productId}/metafields.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metafield: { namespace: 'custom', key, value, type: 'single_line_text_field' } }),
+      });
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET CC inventory alerts (new orders matching CC stock)
 app.get("/admin/cc-inventory/alerts", adminAuth, async (req, res) => {
   try {

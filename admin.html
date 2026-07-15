@@ -7972,6 +7972,143 @@
   ══════════════════════════════════ */
   // Only permissions wired up to an actual backend check belong here —
   // showing a checkbox that doesn't gate anything would be misleading.
+
+  // ── MetafieldAudit: warn about missing required product metafields ────────
+  function MetafieldAudit({ token }) {
+    const API = window.API_BASE || '';
+    const [loading, setLoading]     = React.useState(false);
+    const [data, setData]           = React.useState(null);
+    const [filter, setFilter]       = React.useState('all');    // 'all' | metafield key
+    const [editing, setEditing]     = React.useState({});       // { productId_key: value }
+    const [saving, setSaving]       = React.useState({});       // { productId_key: bool }
+    const [saved, setSaved]         = React.useState({});       // { productId_key: bool }
+    const SHOP_DOMAIN = 'croscrow.myshopify.com';
+
+    const load = async () => {
+      setLoading(true); setData(null);
+      try {
+        const r = await fetch(`${API}/admin/metafield-audit`, { headers: { Authorization: `Bearer ${token}` } });
+        const d = await r.json();
+        setData(d);
+      } catch { setData({ error: 'Failed to load' }); }
+      setLoading(false);
+    };
+
+    React.useEffect(() => { load(); }, []);
+
+    const saveField = async (productId, key) => {
+      const ek = `${productId}_${key}`;
+      const value = editing[ek];
+      if (!value?.trim()) return;
+      setSaving(s => ({ ...s, [ek]: true }));
+      try {
+        await fetch(`${API}/admin/metafield-audit/${productId}`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value }),
+        });
+        setSaved(s => ({ ...s, [ek]: true }));
+        setTimeout(() => setSaved(s => ({ ...s, [ek]: false })), 2500);
+        // Update local data so row clears
+        setData(d => ({
+          ...d,
+          incomplete: d.incomplete.map(p => {
+            if (p.id !== productId) return p;
+            const newVals = { ...p.values, [key]: value };
+            const newMissing = p.missing.filter(k => k !== key);
+            return { ...p, values: newVals, missing: newMissing };
+          }).filter(p => p.missing.length > 0),
+        }));
+      } catch {}
+      setSaving(s => ({ ...s, [ek]: false }));
+    };
+
+    const FIELD_META = {
+      morefromvendor:          { label: 'More From Vendor', color: '#f59e0b', editable: true  },
+      return_exchange_vendor:  { label: 'Return & Exchange', color: '#ef4444', editable: true  },
+      sizechart:               { label: 'Size Chart',        color: '#8b5cf6', editable: false },
+    };
+
+    const items = data?.incomplete || [];
+    const filtered = filter === 'all' ? items : items.filter(p => p.missing.includes(filter));
+    const counts = {};
+    (data?.fields || []).forEach(f => { counts[f.key] = items.filter(p => p.missing.includes(f.key)).length; });
+
+    return React.createElement('div', { style: { maxWidth: 960, margin: '0 auto', padding: '0 0 40px' } },
+      React.createElement('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, gap:12, flexWrap:'wrap' } },
+        React.createElement('div', null,
+          React.createElement('h2', { style:{ fontSize:20, fontWeight:700, margin:0 } }, '⚠️ Product Metafield Audit'),
+          React.createElement('p', { style:{ color:'var(--text-dim)', fontSize:13, margin:'4px 0 0' } }, 'Products missing required metafields — fix inline or open in Shopify'),
+        ),
+        React.createElement('button', { onClick:load, disabled:loading, style:{ padding:'7px 14px', borderRadius:7, border:'1px solid var(--border)', background:'var(--bg-card2)', color:'var(--text)', cursor:'pointer', fontSize:13, fontWeight:500 } }, loading ? '…' : '↻ Refresh'),
+      ),
+
+      // Summary cards
+      !loading && data && !data.error && React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:10, marginBottom:20 } },
+        React.createElement('div', {
+          onClick: () => setFilter('all'),
+          style:{ padding:'14px 16px', borderRadius:10, background:'var(--bg-card)', border:`2px solid ${filter==='all'?'var(--indigo)':'var(--border)'}`, cursor:'pointer' }
+        },
+          React.createElement('div', { style:{ fontSize:24, fontWeight:700 } }, items.length),
+          React.createElement('div', { style:{ fontSize:12, color:'var(--text-dim)', marginTop:2 } }, 'Products with issues'),
+        ),
+        ...(data.fields || []).map(f => React.createElement('div', {
+          key: f.key,
+          onClick: () => setFilter(f.key),
+          style:{ padding:'14px 16px', borderRadius:10, background:'var(--bg-card)', border:`2px solid ${filter===f.key ? FIELD_META[f.key]?.color||'var(--indigo)' : 'var(--border)'}`, cursor:'pointer' }
+        },
+          React.createElement('div', { style:{ fontSize:24, fontWeight:700, color: FIELD_META[f.key]?.color } }, counts[f.key] || 0),
+          React.createElement('div', { style:{ fontSize:12, color:'var(--text-dim)', marginTop:2 } }, FIELD_META[f.key]?.label || f.label),
+        )),
+      ),
+
+      loading && React.createElement('div', { style:{ textAlign:'center', padding:40, color:'var(--text-dim)' } }, 'Scanning all products…'),
+      data?.error && React.createElement('div', { style:{ padding:16, background:'#fee2e2', borderRadius:8, color:'#991b1b' } }, data.error),
+
+      !loading && data && !data.error && items.length === 0 &&
+        React.createElement('div', { style:{ textAlign:'center', padding:60, color:'#10b981', fontSize:16 } }, '✅ All products have required metafields filled in!'),
+
+      !loading && filtered.length > 0 && React.createElement('div', { style:{ display:'flex', flexDirection:'column', gap:10 } },
+        filtered.map(p => React.createElement('div', { key:p.id, style:{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:16, display:'flex', gap:14, alignItems:'flex-start' } },
+          p.image && React.createElement('img', { src:p.image, style:{ width:56, height:56, borderRadius:7, objectFit:'cover', flexShrink:0 }, onError:e=>e.target.style.display='none' }),
+          !p.image && React.createElement('div', { style:{ width:56, height:56, borderRadius:7, background:'var(--bg-hover)', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 } }, '📦'),
+          React.createElement('div', { style:{ flex:1, minWidth:0 } },
+            React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:8 } },
+              React.createElement('span', { style:{ fontWeight:600, fontSize:14 } }, p.title),
+              React.createElement('a', { href:`https://${SHOP_DOMAIN}/admin/products/${p.id}`, target:'_blank', style:{ fontSize:11, color:'var(--indigo)', textDecoration:'none', border:'1px solid var(--indigo)', borderRadius:4, padding:'1px 6px' } }, 'Open in Shopify ↗'),
+            ),
+            React.createElement('div', { style:{ display:'flex', flexDirection:'column', gap:8 } },
+              p.missing.map(key => {
+                const fm = FIELD_META[key] || {};
+                const ek = `${p.id}_${key}`;
+                return React.createElement('div', { key, style:{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' } },
+                  React.createElement('span', { style:{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:4, background: fm.color+'22', color: fm.color, whiteSpace:'nowrap' } }, '● ' + (fm.label || key)),
+                  fm.editable
+                    ? React.createElement(React.Fragment, null,
+                        React.createElement('input', {
+                          type:'text',
+                          placeholder: `Enter ${fm.label} value…`,
+                          value: editing[ek] ?? '',
+                          onChange: e => setEditing(ed => ({ ...ed, [ek]: e.target.value })),
+                          onKeyDown: e => e.key === 'Enter' && saveField(p.id, key),
+                          style:{ flex:1, minWidth:160, padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)', background:'var(--bg-input,var(--bg))', color:'var(--text)', fontSize:13, outline:'none' },
+                        }),
+                        React.createElement('button', {
+                          onClick: () => saveField(p.id, key),
+                          disabled: saving[ek] || !editing[ek]?.trim(),
+                          style:{ padding:'5px 12px', borderRadius:6, border:'none', background: saved[ek]?'#10b981':'var(--indigo)', color:'#fff', fontSize:12, cursor:'pointer', whiteSpace:'nowrap', opacity: editing[ek]?.trim() ? 1 : 0.5 }
+                        }, saving[ek] ? '…' : saved[ek] ? '✓ Saved' : 'Save'),
+                      )
+                    : React.createElement('span', { style:{ fontSize:12, color:'var(--text-dim)' } }, 'Upload via Shopify admin → Metafields'),
+                );
+              }),
+            ),
+          ),
+        )),
+      ),
+    );
+  }
+
   // ── Marketing: WA Featured Products curator ──────────────────────────────
   function Marketing({ token }) {
     const API = window.API_BASE || '';
@@ -10557,6 +10694,7 @@
       { id:'announcements',    icon:'📢', label:'Announcements',       section:'finance', external:'/announce.html' },
       { id:'staffaccounts',    icon:'🔐', label:'Staff Accounts',      section:'finance', adminOnly:true },
       { id:'marketing',        icon:'🎯', label:'Marketing',           section:'main' },
+      { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
@@ -10660,6 +10798,7 @@
           {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
           {view==='staffaccounts'  && <StaffAccounts token={token}/>}
           {view==='marketing'      && <Marketing token={token}/>}
+          {view==='metafieldaudit' && <MetafieldAudit token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}
