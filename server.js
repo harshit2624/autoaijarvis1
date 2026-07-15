@@ -18843,7 +18843,7 @@ async function waHandleAdminQuery(sock, sender, text) {
     let reply = (result?.reply || '').trim();
     // Strip any leftover markdown bold/headers for WhatsApp
     reply = reply.replace(/\*\*(.+?)\*\*/g, '$1').replace(/#{1,3} /g, '');
-    if (!reply) return;
+    if (!reply) reply = "I didn't get a response — try asking again or check the dashboard.";
 
     await SC.addMessage(chat._id, { sender: 'assistant', text: reply });
     await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
@@ -19308,6 +19308,8 @@ async function startBaileysBot() {
           }
           const isAdminSession = await waAdminSessionCheck(sender);
 
+          console.log(`📨 WA msg: sender=${sender} phone=${phone} isAdminByJid=${isAdminByJid} isAdminSession=${isAdminSession} text="${text.slice(0,30)}"`);
+
           // Code entry: anyone who sends the code unlocks admin mode for their number
           if (text.trim() === WA_ADMIN_CODE) {
             await waAdminSessionSet(sender);
@@ -19413,6 +19415,7 @@ async function startBaileysBot() {
           if (HUMAN_REQUEST.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
             await waTalkToHuman(sock, sender, chat, phone, `Customer explicitly asked: "${text.slice(0, 100)}"`);
+            waPending.delete(sender);
             continue;
           }
 
@@ -19431,6 +19434,7 @@ async function startBaileysBot() {
             await SC.addMessage(chat._id, { sender: 'customer', text });
             await saveAndSend(WA_MENUS.welcome);
             await waSessionSet(sender, { menu: 'welcome' });
+            waPending.delete(sender);
             continue;
           }
 
@@ -19441,7 +19445,7 @@ async function startBaileysBot() {
             if (session.menu) {
               await SC.addMessage(chat._id, { sender: 'customer', text });
               const handled = await waHandleMenuReply(sock, sender, chat, phone, num, session);
-              if (handled) continue;
+              if (handled) { waPending.delete(sender); continue; }
             }
           }
 
@@ -19467,6 +19471,7 @@ async function startBaileysBot() {
               await sock.sendMessage(sender, { text: collections.slice(0, 2).map(c => `🛍️ Browse ${c.title}: ${c.url}`).join('\n') });
             }
             await waSessionClear(sender);
+            waPending.delete(sender);
             continue;
           }
 
@@ -19499,6 +19504,7 @@ async function startBaileysBot() {
             if (needsAdmin || botCantHelp) {
               await sock.sendMessage(sender, { text: `Our team has been notified and will reach out to you shortly on WhatsApp. 🙏` });
               await waSessionSet(sender, { menu: 'offer_human' });
+              waPending.delete(sender);
               continue;
             }
 
@@ -19510,6 +19516,7 @@ async function startBaileysBot() {
               await sock.sendMessage(sender, { text: menuText });
               await waSessionSet(sender, menuInfo);
             }
+            waPending.delete(sender);
             continue;
           }
 
@@ -19517,6 +19524,7 @@ async function startBaileysBot() {
             await saveAndSend(reply, meta);
             await sock.sendMessage(sender, { text: `Need more help? Our team is here:\n\n1️⃣ Talk to a human\n\nOr call us:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
             await waSessionSet(sender, { menu: 'offer_human' });
+            waPending.delete(sender);
             continue;
           }
 
