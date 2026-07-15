@@ -18406,37 +18406,49 @@ async function useMongoAuthState() {
   const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
   const col = mdb.collection('whatsapp_auth');
 
-  const write = async (id, data) =>
-    col.updateOne({ _id: id }, { $set: { v: JSON.stringify(data, BufferJSON.replacer) } }, { upsert: true });
+  // Load ALL auth keys into memory at startup — one bulk read instead of
+  // per-key round-trips during every handshake. Writes go to memory first
+  // and flush to MongoDB in the background. This matches the speed of
+  // file-based auth while keeping MongoDB as the durable backing store.
+  const cache = new Map();
+  const allDocs = await col.find({}).toArray().catch(() => []);
+  for (const doc of allDocs) {
+    try { cache.set(doc._id, JSON.parse(doc.v, BufferJSON.reviver)); } catch {}
+  }
 
-  const read = async (id) => {
-    const doc = await col.findOne({ _id: id });
-    return doc ? JSON.parse(doc.v, BufferJSON.reviver) : null;
+  const write = (id, data) => {
+    cache.set(id, data);
+    // Fire-and-forget persist — doesn't block the handshake
+    col.updateOne({ _id: id }, { $set: { v: JSON.stringify(data, BufferJSON.replacer) } }, { upsert: true }).catch(() => {});
   };
 
-  const creds = (await read('creds')) || initAuthCreds();
+  const del = (id) => {
+    cache.delete(id);
+    col.deleteOne({ _id: id }).catch(() => {});
+  };
+
+  const creds = cache.get('creds') || initAuthCreds();
 
   return {
     state: {
       creds,
       keys: {
-        get: async (type, ids) => {
+        get: (type, ids) => {
           const data = {};
-          await Promise.all(ids.map(async id => {
-            let val = await read(`${type}-${id}`);
+          for (const id of ids) {
+            let val = cache.get(`${type}-${id}`) ?? null;
             if (type === 'app-state-sync-key' && val) val = proto.Message.AppStateSyncKeyData.fromObject(val);
             data[id] = val;
-          }));
+          }
           return data;
         },
-        set: async (data) => {
-          await Promise.all(
-            Object.entries(data).flatMap(([type, ids]) =>
-              Object.entries(ids || {}).map(([id, val]) =>
-                val ? write(`${type}-${id}`, val) : col.deleteOne({ _id: `${type}-${id}` })
-              )
-            )
-          );
+        set: (data) => {
+          for (const [type, ids] of Object.entries(data)) {
+            for (const [id, val] of Object.entries(ids || {})) {
+              if (val) write(`${type}-${id}`, val);
+              else del(`${type}-${id}`);
+            }
+          }
         },
       },
     },
