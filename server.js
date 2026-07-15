@@ -19038,6 +19038,7 @@ async function startBaileysBot() {
               { upsert: true }
             ).catch(() => {});
             await sock.sendMessage(sender, { text: `✅ Admin mode active. Ask me anything about CrosCrow — orders, RTO, revenue, vendors, stuck shipments.` });
+            waPending.delete(sender); // must clear before continue — finally block is not reached by continue
             continue;
           }
 
@@ -19051,6 +19052,7 @@ async function startBaileysBot() {
               ).catch(() => {});
             }
             await waHandleAdminQuery(sock, sender, text);
+            waPending.delete(sender); // must clear before continue — finally block is not reached by continue
             continue;
           }
 
@@ -19084,6 +19086,7 @@ async function startBaileysBot() {
                 : (senderSession?.vendor || 'Unknown Vendor');
               await waLogVendorMessage(sender, vendorName, 'vendor', text).catch(() => {});
               await waHandleVendorReply(sock, sender, text);
+              waPending.delete(sender); // must clear before continue — finally block is not reached by continue
               continue;
             }
           }
@@ -19114,6 +19117,7 @@ async function startBaileysBot() {
             if (!RESUME_KEYWORDS.test(text)) {
               // Still paused — silently ignore
               await SC.addMessage(chat._id, { sender: 'customer', text });
+              waPending.delete(sender); // must clear before continue — finally block is not reached by continue
               continue;
             }
             // Resume bot on core keyword
