@@ -7993,129 +7993,210 @@
 
     React.useEffect(() => { load(); }, []);
 
-    const fmt = (n, prefix='₹') => n >= 1000 ? `${prefix}${(n/1000).toFixed(1)}K` : `${prefix}${parseFloat(n||0).toFixed(0)}`;
-    const fmtRoas = r => r ? `${parseFloat(r).toFixed(2)}x` : '—';
-    const roasColor = r => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#ef4444' : 'var(--text-dim)';
+    const fmt    = (n, pre='₹') => { const v=parseFloat(n||0); return v>=100000?`${pre}${(v/100000).toFixed(1)}L`:v>=1000?`${pre}${(v/1000).toFixed(1)}K`:`${pre}${v.toFixed(0)}`; };
+    const fmtN   = n => { const v=parseInt(n||0); return v>=1000000?`${(v/1000000).toFixed(1)}M`:v>=1000?`${(v/1000).toFixed(0)}K`:`${v}`; };
+    const fmtR   = r => r ? `${parseFloat(r).toFixed(2)}x` : '—';
+    const rClr   = r => r>=4?'#10b981':r>=2?'#22c55e':r>=1?'#f59e0b':r>0?'#ef4444':'var(--text-dim)';
+    const fqClr  = f => f>=4?'#ef4444':f>=2.5?'#f59e0b':'#10b981'; // frequency: high = audience fatigue
 
-    const PERIODS = [
-      { v:'last_7d', l:'7 Days' }, { v:'last_30d', l:'30 Days' },
-      { v:'last_90d', l:'90 Days' }, { v:'this_month', l:'This Month' }, { v:'last_month', l:'Last Month' },
+    const PERIODS = [{v:'last_7d',l:'7D'},{v:'last_30d',l:'30D'},{v:'last_90d',l:'90D'},{v:'this_month',l:'This Month'},{v:'last_month',l:'Last Month'}];
+    const TABS = [
+      ['region','🗺️ Region'],['age','👥 Age × Gender'],['campaign','📣 Campaigns'],
+      ['adset','🎯 Ad Sets'],['platform','📱 Platform'],['funnel','🔽 Funnel'],
+      ...(period==='last_7d'?[['hour','⏰ By Hour']]:[]),
     ];
 
     const o = data?.overview || {};
+    const SC = ({label,value,sub,color,warn}) => React.createElement('div',{style:{background:'var(--bg-card)',border:`1px solid ${warn?'#f59e0b':'var(--border)'}`,borderRadius:10,padding:'12px 14px'}},
+      React.createElement('div',{style:{fontSize:10,color:'var(--text-dim)',marginBottom:3,textTransform:'uppercase',letterSpacing:.5}},label),
+      React.createElement('div',{style:{fontSize:20,fontWeight:700,color:color||'var(--text)',lineHeight:1.2}},value),
+      sub&&React.createElement('div',{style:{fontSize:11,color:warn?'#f59e0b':'var(--text-dim)',marginTop:3}},sub),
+    );
 
-    const StatCard = ({ label, value, sub, color }) =>
-      React.createElement('div', { style:{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px', minWidth:120 } },
-        React.createElement('div', { style:{ fontSize:11, color:'var(--text-dim)', marginBottom:4 } }, label),
-        React.createElement('div', { style:{ fontSize:22, fontWeight:700, color: color||'var(--text)' } }, value),
-        sub && React.createElement('div', { style:{ fontSize:11, color:'var(--text-dim)', marginTop:2 } }, sub),
-      );
+    const TH = s => React.createElement('th',{style:{padding:'8px 10px',fontSize:11,color:'var(--text-dim)',fontWeight:600,textAlign:'left',whiteSpace:'nowrap',borderBottom:'1px solid var(--border)',background:'var(--bg-card2)'}},s);
+    const TD = (v,extra={}) => React.createElement('td',{style:{padding:'8px 10px',fontSize:13,borderBottom:'1px solid var(--border)',whiteSpace:'nowrap',...extra}},v);
+    const RoasTD = r => TD(fmtR(r),{color:rClr(r),fontWeight:700});
 
-    const cols = { th: { padding:'8px 10px', fontSize:11, color:'var(--text-dim)', fontWeight:600, textAlign:'left', whiteSpace:'nowrap', borderBottom:'1px solid var(--border)' }, td: { padding:'8px 10px', fontSize:13, borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' } };
+    const Table = ({cols,rows}) => React.createElement('div',{style:{overflowX:'auto',borderRadius:8,border:'1px solid var(--border)'}},
+      rows.length===0
+        ? React.createElement('div',{style:{padding:30,textAlign:'center',color:'var(--text-dim)',fontSize:13}},'No data for this period')
+        : React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:13}},
+            React.createElement('thead',null,React.createElement('tr',null,...cols.map(c=>TH(c.h)))),
+            React.createElement('tbody',null,...rows.map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},...cols.map(c=>c.render(r)))))
+          )
+    );
 
-    return React.createElement('div', { style:{ maxWidth:1100, margin:'0 auto', paddingBottom:40 } },
+    return React.createElement('div',{style:{maxWidth:1160,margin:'0 auto',paddingBottom:40}},
       // Header
-      React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:10 } },
-        React.createElement('div', null,
-          React.createElement('h2', { style:{ fontSize:20, fontWeight:700, margin:0 } }, '📊 Meta Ads Performance'),
-          React.createElement('p', { style:{ color:'var(--text-dim)', fontSize:13, margin:'4px 0 0' } }, 'ROAS, audience breakdown, top regions — from your Meta ad account'),
+      React.createElement('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}},
+        React.createElement('div',null,
+          React.createElement('h2',{style:{fontSize:20,fontWeight:700,margin:0}},'📊 Meta Ads Intelligence'),
+          React.createElement('p',{style:{color:'var(--text-dim)',fontSize:13,margin:'4px 0 0'}},'ROAS · funnel · audience · platform · frequency — live from Meta'),
         ),
-        React.createElement('div', { style:{ display:'flex', gap:6, flexWrap:'wrap' } },
-          PERIODS.map(p => React.createElement('button', { key:p.v, onClick:()=>{ setPeriod(p.v); load(p.v); },
-            style:{ padding:'6px 12px', borderRadius:6, border:'1px solid var(--border)', background: period===p.v ? 'var(--indigo)' : 'var(--bg-card2)', color: period===p.v ? '#fff' : 'var(--text)', fontSize:12, cursor:'pointer', fontWeight:500 } }, p.l)),
+        React.createElement('div',{style:{display:'flex',gap:5,flexWrap:'wrap'}},
+          PERIODS.map(p=>React.createElement('button',{key:p.v,onClick:()=>{setPeriod(p.v);load(p.v);},
+            style:{padding:'6px 11px',borderRadius:6,border:'1px solid var(--border)',background:period===p.v?'var(--indigo)':'var(--bg-card2)',color:period===p.v?'#fff':'var(--text)',fontSize:12,cursor:'pointer',fontWeight:500}},p.l))
         ),
       ),
 
-      loading && React.createElement('div', { style:{ textAlign:'center', padding:60, color:'var(--text-dim)' } }, '⏳ Fetching from Meta…'),
-      data?.error && React.createElement('div', { style:{ padding:16, background:'#fee2e2', borderRadius:8, color:'#991b1b', fontSize:13 } },
-        '❌ ', data.error,
-        data.error.includes('env vars') && React.createElement('div', { style:{ marginTop:8 } }, 'Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to your Render environment variables.'),
+      loading && React.createElement('div',{style:{textAlign:'center',padding:60,color:'var(--text-dim)'}},'⏳ Fetching from Meta…'),
+      data?.error && React.createElement('div',{style:{padding:16,background:'#fee2e2',borderRadius:8,color:'#991b1b',fontSize:13}},
+        '❌ ',data.error,
+        data.error.includes('env vars')&&React.createElement('div',{style:{marginTop:6,fontSize:12}},'Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to Render environment variables.')
       ),
 
-      !loading && data && !data.error && React.createElement(React.Fragment, null,
-        // Summary row
-        React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:10, marginBottom:20 } },
-          React.createElement(StatCard, { label:'Total Spend',    value: fmt(o.spend),       sub: `${o.date_start} → ${o.date_stop}` }),
-          React.createElement(StatCard, { label:'Revenue',        value: fmt(o.revenue),      color:'#10b981' }),
-          React.createElement(StatCard, { label:'ROAS',           value: fmtRoas(o.roas),     color: roasColor(o.roas) }),
-          React.createElement(StatCard, { label:'Purchases',      value: o.purchases||0 }),
-          React.createElement(StatCard, { label:'Impressions',    value: o.impressions >= 1000 ? `${(o.impressions/1000).toFixed(0)}K` : o.impressions }),
-          React.createElement(StatCard, { label:'Clicks',         value: o.clicks||0,         sub:`CTR ${parseFloat(o.ctr||0).toFixed(2)}%` }),
-          React.createElement(StatCard, { label:'CPM',            value: fmt(o.cpm),          sub:'per 1K impressions' }),
-          React.createElement(StatCard, { label:'CPC',            value: fmt(o.cpc),          sub:'per click' }),
+      !loading&&data&&!data.error&&React.createElement(React.Fragment,null,
+        // KPI cards
+        React.createElement('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8,marginBottom:20}},
+          React.createElement(SC,{label:'Spend',       value:fmt(o.spend),      sub:`${o.date_start||''} → ${o.date_stop||''}`}),
+          React.createElement(SC,{label:'Revenue',     value:fmt(o.revenue),    color:'#10b981'}),
+          React.createElement(SC,{label:'ROAS',        value:fmtR(o.roas),      color:rClr(o.roas)}),
+          React.createElement(SC,{label:'Purchases',   value:o.purchases||0,    sub:`₹${o.cpp||0} / purchase`}),
+          React.createElement(SC,{label:'Add to Cart', value:o.addtocart||0}),
+          React.createElement(SC,{label:'Checkout',    value:o.initcheckout||0}),
+          React.createElement(SC,{label:'Reach',       value:fmtN(o.reach)}),
+          React.createElement(SC,{label:'Frequency',   value:parseFloat(o.frequency||0).toFixed(2), color:fqClr(o.frequency), warn:o.frequency>=3.5, sub:o.frequency>=3.5?'⚠️ Audience fatigue':o.frequency>=2?'Monitor closely':'Healthy'}),
+          React.createElement(SC,{label:'Impressions', value:fmtN(o.impressions)}),
+          React.createElement(SC,{label:'Clicks',      value:fmtN(o.clicks),   sub:`CTR ${parseFloat(o.ctr||0).toFixed(2)}%`}),
+          React.createElement(SC,{label:'CPM',         value:fmt(o.cpm),        sub:'per 1K imp'}),
+          React.createElement(SC,{label:'CPC',         value:fmt(o.cpc)}),
         ),
 
         // Tabs
-        React.createElement('div', { style:{ display:'flex', gap:4, marginBottom:14, borderBottom:'1px solid var(--border)', paddingBottom:0 } },
-          [['region','🗺️ By Region'],['age','👥 By Age & Gender'],['campaign','📣 By Campaign']].map(([t,l])=>
-            React.createElement('button', { key:t, onClick:()=>setTab(t),
-              style:{ padding:'8px 14px', border:'none', borderBottom: tab===t ? '2px solid var(--indigo)' : '2px solid transparent', background:'none', color: tab===t ? 'var(--indigo)' : 'var(--text-dim)', cursor:'pointer', fontSize:13, fontWeight:600, marginBottom:'-1px' } }, l)
+        React.createElement('div',{style:{display:'flex',gap:0,marginBottom:16,borderBottom:'1px solid var(--border)',overflowX:'auto'}},
+          TABS.map(([t,l])=>React.createElement('button',{key:t,onClick:()=>setTab(t),
+            style:{padding:'8px 13px',border:'none',borderBottom:tab===t?'2px solid var(--indigo)':'2px solid transparent',background:'none',color:tab===t?'var(--indigo)':'var(--text-dim)',cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap',marginBottom:'-1px'}},l))
+        ),
+
+        // Region
+        tab==='region'&&React.createElement(Table,{
+          cols:[
+            {h:'#',render:(_,i)=>TD(i+1,{color:'var(--text-dim)',width:30})},
+            {h:'Region',render:r=>TD(r.region||'—',{fontWeight:600})},
+            {h:'Spend',render:r=>TD(fmt(r.spend))},
+            {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+            {h:'ROAS',render:r=>RoasTD(r.roas)},
+            {h:'Purchases',render:r=>TD(r.purchases)},
+            {h:'CPP',render:r=>TD(fmt(r.cpp))},
+            {h:'Reach',render:r=>TD(fmtN(r.reach))},
+            {h:'CTR',render:r=>TD(`${parseFloat(r.ctr||0).toFixed(2)}%`)},
+          ],
+          rows:data.byRegion||[],
+        }),
+
+        // Age × Gender
+        tab==='age'&&React.createElement(Table,{
+          cols:[
+            {h:'Age',render:r=>TD(r.age||'—',{fontWeight:600})},
+            {h:'Gender',render:r=>TD(r.gender||'—')},
+            {h:'Spend',render:r=>TD(fmt(r.spend))},
+            {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+            {h:'ROAS',render:r=>RoasTD(r.roas)},
+            {h:'Purchases',render:r=>TD(r.purchases)},
+            {h:'CPP',render:r=>TD(fmt(r.cpp))},
+            {h:'Add to Cart',render:r=>TD(r.addtocart||0)},
+            {h:'CTR',render:r=>TD(`${parseFloat(r.ctr||0).toFixed(2)}%`)},
+          ],
+          rows:data.byAge||[],
+        }),
+
+        // Campaigns
+        tab==='campaign'&&React.createElement(Table,{
+          cols:[
+            {h:'Campaign',render:r=>TD(r.campaign||'—',{fontWeight:600,maxWidth:240,overflow:'hidden',textOverflow:'ellipsis'})},
+            {h:'Spend',render:r=>TD(fmt(r.spend))},
+            {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+            {h:'ROAS',render:r=>RoasTD(r.roas)},
+            {h:'Purchases',render:r=>TD(r.purchases)},
+            {h:'CPP',render:r=>TD(fmt(r.cpp))},
+            {h:'Reach',render:r=>TD(fmtN(r.reach))},
+            {h:'Freq',render:r=>TD(parseFloat(r.frequency||0).toFixed(1),{color:fqClr(r.frequency)})},
+            {h:'CTR',render:r=>TD(`${parseFloat(r.ctr||0).toFixed(2)}%`)},
+          ],
+          rows:data.byCampaign||[],
+        }),
+
+        // Ad Sets
+        tab==='adset'&&React.createElement(Table,{
+          cols:[
+            {h:'Ad Set',render:r=>TD(r.adset||'—',{fontWeight:600,maxWidth:220,overflow:'hidden',textOverflow:'ellipsis'})},
+            {h:'Campaign',render:r=>TD(r.campaign||'—',{color:'var(--text-dim)',fontSize:11,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis'})},
+            {h:'Spend',render:r=>TD(fmt(r.spend))},
+            {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+            {h:'ROAS',render:r=>RoasTD(r.roas)},
+            {h:'Purchases',render:r=>TD(r.purchases)},
+            {h:'CPP',render:r=>TD(fmt(r.cpp))},
+            {h:'CTR',render:r=>TD(`${parseFloat(r.ctr||0).toFixed(2)}%`)},
+          ],
+          rows:data.byAdset||[],
+        }),
+
+        // Platform (FB vs IG vs Audience Network)
+        tab==='platform'&&React.createElement('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:16}},
+          React.createElement('div',null,
+            React.createElement('h4',{style:{margin:'0 0 10px',fontSize:13,color:'var(--text-dim)'}},'By Publisher Platform'),
+            React.createElement(Table,{
+              cols:[
+                {h:'Platform',render:r=>TD(r.publisher||'—',{fontWeight:600,textTransform:'capitalize'})},
+                {h:'Spend',render:r=>TD(fmt(r.spend))},
+                {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+                {h:'ROAS',render:r=>RoasTD(r.roas)},
+                {h:'Purchases',render:r=>TD(r.purchases)},
+                {h:'CTR',render:r=>TD(`${parseFloat(r.ctr||0).toFixed(2)}%`)},
+              ],
+              rows:data.byPublisher||[],
+            }),
+          ),
+          React.createElement('div',null,
+            React.createElement('h4',{style:{margin:'0 0 10px',fontSize:13,color:'var(--text-dim)'}},'By Device'),
+            React.createElement(Table,{
+              cols:[
+                {h:'Device',render:r=>TD(r.device||'—',{fontWeight:600,textTransform:'capitalize'})},
+                {h:'Spend',render:r=>TD(fmt(r.spend))},
+                {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+                {h:'ROAS',render:r=>RoasTD(r.roas)},
+                {h:'Purchases',render:r=>TD(r.purchases)},
+                {h:'CTR',render:r=>TD(`${parseFloat(r.ctr||0).toFixed(2)}%`)},
+              ],
+              rows:data.byDevice||[],
+            }),
           ),
         ),
 
-        // Region table
-        tab === 'region' && React.createElement('div', { style:{ overflowX:'auto' } },
-          data.byRegion?.length === 0
-            ? React.createElement('div', { style:{ padding:30, textAlign:'center', color:'var(--text-dim)' } }, 'No regional data for this period')
-            : React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
-              React.createElement('thead', null, React.createElement('tr', null,
-                ['Region','Spend','Revenue','ROAS','Purchases','Impressions','Clicks','CTR'].map(h=>React.createElement('th',{key:h,style:cols.th},h))
-              )),
-              React.createElement('tbody', null,
-                (data.byRegion||[]).map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},
-                  React.createElement('td',{style:{...cols.td,fontWeight:600}},r.region||'—'),
-                  React.createElement('td',{style:cols.td},fmt(r.spend)),
-                  React.createElement('td',{style:{...cols.td,color:'#10b981',fontWeight:600}},fmt(r.revenue)),
-                  React.createElement('td',{style:{...cols.td,color:roasColor(r.roas),fontWeight:700}},fmtRoas(r.roas)),
-                  React.createElement('td',{style:cols.td},r.purchases),
-                  React.createElement('td',{style:cols.td},r.impressions>=1000?`${(r.impressions/1000).toFixed(0)}K`:r.impressions),
-                  React.createElement('td',{style:cols.td},r.clicks),
-                  React.createElement('td',{style:cols.td},`${parseFloat(r.ctr||0).toFixed(2)}%`),
-                ))
-              )
-            )
+        // Funnel
+        tab==='funnel'&&React.createElement('div',{style:{maxWidth:500}},
+          React.createElement('h4',{style:{margin:'0 0 16px',fontSize:14,color:'var(--text)'}},'Conversion Funnel — Overall'),
+          [
+            {label:'Impressions',   value:fmtN(o.impressions), pct:null,          color:'#6366f1'},
+            {label:'Reach',         value:fmtN(o.reach),       pct:null,          color:'#8b5cf6'},
+            {label:'Clicks',        value:fmtN(o.clicks),      pct:`CTR ${parseFloat(o.ctr||0).toFixed(2)}%`, color:'#f59e0b'},
+            {label:'Landing Views', value:fmtN(o.landingviews),pct:o.clicks>0?`${((o.landingviews/o.clicks)*100).toFixed(0)}% of clicks`:null, color:'#f97316'},
+            {label:'Add to Cart',   value:fmtN(o.addtocart),   pct:o.landingviews>0?`${((o.addtocart/(o.landingviews||1))*100).toFixed(0)}% of views`:null, color:'#ec4899'},
+            {label:'Checkout',      value:fmtN(o.initcheckout),pct:o.addtocart>0?`${((o.initcheckout/(o.addtocart||1))*100).toFixed(0)}% of cart`:null, color:'#14b8a6'},
+            {label:'Purchases',     value:fmtN(o.purchases),   pct:o.initcheckout>0?`${((o.purchases/(o.initcheckout||1))*100).toFixed(0)}% of checkout`:null, color:'#10b981'},
+          ].map((s,i)=>React.createElement('div',{key:i,style:{marginBottom:10}},
+            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:4}},
+              React.createElement('span',{style:{fontSize:13,fontWeight:600}},s.label),
+              React.createElement('span',{style:{fontSize:13,color:'var(--text-dim)'}},`${s.value}${s.pct?' · '+s.pct:''}`),
+            ),
+            React.createElement('div',{style:{height:8,borderRadius:4,background:'var(--bg-hover)'}},
+              React.createElement('div',{style:{height:8,borderRadius:4,background:s.color,width:`${Math.min(100,Math.max(2,(parseInt(s.value.replace(/[KML]/,''))||0)/(parseInt(fmtN(o.impressions).replace(/[KML]/,''))||1)*100))}%`}})
+            ),
+          )),
         ),
 
-        // Age × Gender table
-        tab === 'age' && React.createElement('div', { style:{ overflowX:'auto' } },
-          React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
-            React.createElement('thead', null, React.createElement('tr', null,
-              ['Age','Gender','Spend','Revenue','ROAS','Purchases','Clicks','CTR'].map(h=>React.createElement('th',{key:h,style:cols.th},h))
-            )),
-            React.createElement('tbody', null,
-              (data.byAge||[]).sort((a,b)=>b.roas-a.roas).map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},
-                React.createElement('td',{style:{...cols.td,fontWeight:600}},r.age||'—'),
-                React.createElement('td',{style:cols.td},r.gender||'—'),
-                React.createElement('td',{style:cols.td},fmt(r.spend)),
-                React.createElement('td',{style:{...cols.td,color:'#10b981',fontWeight:600}},fmt(r.revenue)),
-                React.createElement('td',{style:{...cols.td,color:roasColor(r.roas),fontWeight:700}},fmtRoas(r.roas)),
-                React.createElement('td',{style:cols.td},r.purchases),
-                React.createElement('td',{style:cols.td},r.clicks),
-                React.createElement('td',{style:cols.td},`${parseFloat(r.ctr||0).toFixed(2)}%`),
-              ))
-            )
-          )
-        ),
-
-        // Campaign table
-        tab === 'campaign' && React.createElement('div', { style:{ overflowX:'auto' } },
-          React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:13 } },
-            React.createElement('thead', null, React.createElement('tr', null,
-              ['Campaign','Spend','Revenue','ROAS','Purchases','Impressions','Clicks'].map(h=>React.createElement('th',{key:h,style:cols.th},h))
-            )),
-            React.createElement('tbody', null,
-              (data.byCampaign||[]).map((r,i)=>React.createElement('tr',{key:i,style:{background:i%2?'var(--bg-hover)':''}},
-                React.createElement('td',{style:{...cols.td,fontWeight:600,maxWidth:260,overflow:'hidden',textOverflow:'ellipsis'}},r.campaign||'—'),
-                React.createElement('td',{style:cols.td},fmt(r.spend)),
-                React.createElement('td',{style:{...cols.td,color:'#10b981',fontWeight:600}},fmt(r.revenue)),
-                React.createElement('td',{style:{...cols.td,color:roasColor(r.roas),fontWeight:700}},fmtRoas(r.roas)),
-                React.createElement('td',{style:cols.td},r.purchases),
-                React.createElement('td',{style:cols.td},r.impressions>=1000?`${(r.impressions/1000).toFixed(0)}K`:r.impressions),
-                React.createElement('td',{style:cols.td},r.clicks),
-              ))
-            )
-          )
-        ),
+        // Hourly (7 days only)
+        tab==='hour'&&React.createElement(Table,{
+          cols:[
+            {h:'Hour',render:r=>TD(r.hour||'—',{fontWeight:600,fontSize:12})},
+            {h:'Spend',render:r=>TD(fmt(r.spend))},
+            {h:'Revenue',render:r=>TD(fmt(r.revenue),{color:'#10b981',fontWeight:600})},
+            {h:'ROAS',render:r=>RoasTD(r.roas)},
+            {h:'Purchases',render:r=>TD(r.purchases)},
+            {h:'Clicks',render:r=>TD(r.clicks)},
+          ],
+          rows:data.byHour||[],
+        }),
       ),
     );
   }

@@ -16516,51 +16516,66 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
   const { period = 'last_30d' } = req.query;
   const datePresets = { last_7d:'last_7_d', last_30d:'last_30_d', last_90d:'last_90_d', this_month:'this_month', last_month:'last_month' };
   const date_preset = datePresets[period] || 'last_30_d';
-  const baseFields = 'spend,impressions,clicks,ctr,cpm,cpc,actions,action_values,purchase_roas';
+  const baseFields  = 'spend,impressions,clicks,ctr,cpm,cpc,reach,frequency,actions,action_values,purchase_roas,cost_per_action_type';
+  const insightFields = 'spend,impressions,clicks,reach,frequency,actions,action_values,purchase_roas';
+
+  // Helper: extract purchase metrics from Meta insight row
+  const extractPurchases = (item) => {
+    const purchases  = parseFloat((item.actions||[]).find(a=>a.action_type==='purchase')?.value||0);
+    const revenue    = parseFloat((item.action_values||[]).find(a=>a.action_type==='purchase')?.value||0);
+    const addtocart  = parseFloat((item.actions||[]).find(a=>a.action_type==='add_to_cart')?.value||0);
+    const initcheckout = parseFloat((item.actions||[]).find(a=>a.action_type==='initiate_checkout')?.value||0);
+    const landingviews = parseFloat((item.actions||[]).find(a=>a.action_type==='landing_page_view')?.value||0);
+    const roas       = item.purchase_roas?.[0]?.value
+      ? parseFloat(item.purchase_roas[0].value)
+      : (revenue && item.spend ? parseFloat((parseFloat(revenue)/parseFloat(item.spend)).toFixed(2)) : 0);
+    const cpp        = purchases > 0 ? parseFloat((parseFloat(item.spend||0)/purchases).toFixed(2)) : 0; // cost per purchase
+    return { purchases, revenue, roas, cpp, addtocart, initcheckout, landingviews };
+  };
+
+  const formatRow = (item) => {
+    const p = extractPurchases(item);
+    return {
+      spend:       parseFloat(item.spend||0),
+      impressions: parseInt(item.impressions||0),
+      clicks:      parseInt(item.clicks||0),
+      reach:       parseInt(item.reach||0),
+      frequency:   parseFloat(parseFloat(item.frequency||0).toFixed(2)),
+      ctr:         parseFloat(item.ctr||0),
+      cpm:         parseFloat(item.cpm||0),
+      cpc:         parseFloat(item.cpc||0),
+      ...p,
+    };
+  };
 
   try {
-    const [overview, byRegion, byAge, byCampaign] = await Promise.all([
-      // Overall summary
-      metaGet(`/${META_ACCOUNT}/insights`, { fields: baseFields, date_preset }),
+    const safe = (p) => p.catch(e => ({ data: [], _err: e.message }));
 
-      // By region (city/state)
-      metaGet(`/${META_ACCOUNT}/insights`, { fields: 'spend,impressions,clicks,actions,action_values,purchase_roas', date_preset, breakdowns: 'region', limit: 50 }),
-
-      // By age + gender
-      metaGet(`/${META_ACCOUNT}/insights`, { fields: 'spend,impressions,clicks,actions,action_values,purchase_roas', date_preset, breakdowns: 'age,gender', limit: 100 }),
-
-      // By campaign
-      metaGet(`/${META_ACCOUNT}/insights`, { fields: 'campaign_name,spend,impressions,clicks,actions,action_values,purchase_roas', date_preset, level: 'campaign', limit: 50 }),
+    const [overview, byRegion, byAge, byCampaign, byAdset, byDevice, byPublisher, byHour] = await Promise.all([
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: baseFields, date_preset })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'region', limit:50 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'age,gender', limit:100 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_name,${insightFields}`, date_preset, level:'campaign', limit:50 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_name,adset_name,${insightFields}`, date_preset, level:'adset', limit:50 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'device_platform', limit:20 })),
+      safe(metaGet(`/${META_ACCOUNT}/insights`, { fields: insightFields, date_preset, breakdowns:'publisher_platform', limit:20 })),
+      // Hourly only works for short ranges; skip gracefully
+      period === 'last_7d'
+        ? safe(metaGet(`/${META_ACCOUNT}/insights`, { fields:'spend,impressions,clicks,actions,action_values', date_preset, breakdowns:'hourly_stats_aggregated_by_advertiser_time_zone', limit:24 }))
+        : Promise.resolve({ data: [] }),
     ]);
 
-    // Helper: extract purchase count + revenue from actions/action_values
-    const extractPurchases = (item) => {
-      const purchases = (item.actions || []).find(a => a.action_type === 'purchase')?.value || 0;
-      const revenue   = (item.action_values || []).find(a => a.action_type === 'purchase')?.value || 0;
-      const roas      = item.purchase_roas?.[0]?.value || (revenue && item.spend ? (parseFloat(revenue)/parseFloat(item.spend)).toFixed(2) : 0);
-      return { purchases: parseInt(purchases), revenue: parseFloat(revenue), roas: parseFloat(roas) };
-    };
-
-    const formatRow = (item) => {
-      const { purchases, revenue, roas } = extractPurchases(item);
-      return {
-        spend:       parseFloat(item.spend || 0),
-        impressions: parseInt(item.impressions || 0),
-        clicks:      parseInt(item.clicks || 0),
-        ctr:         parseFloat(item.ctr || 0),
-        cpm:         parseFloat(item.cpm || 0),
-        cpc:         parseFloat(item.cpc || 0),
-        purchases, revenue, roas,
-      };
-    };
-
     res.json({
-      ok: true,
+      ok:          true,
       period,
-      overview:   { ...formatRow((overview.data || [])[0] || {}), date_start: overview.data?.[0]?.date_start, date_stop: overview.data?.[0]?.date_stop },
-      byRegion:   (byRegion.data   || []).map(r  => ({ region:   r.region,   ...formatRow(r) })).sort((a,b) => b.roas - a.roas),
-      byAge:      (byAge.data      || []).map(r  => ({ age:      r.age,      gender: r.gender, ...formatRow(r) })),
-      byCampaign: (byCampaign.data || []).map(r  => ({ campaign: r.campaign_name, ...formatRow(r) })).sort((a,b) => b.roas - a.roas),
+      overview:    { ...formatRow((overview.data||[])[0]||{}), date_start:overview.data?.[0]?.date_start, date_stop:overview.data?.[0]?.date_stop },
+      byRegion:    (byRegion.data||[]).map(r=>({ region:r.region, ...formatRow(r) })).sort((a,b)=>b.roas-a.roas),
+      byAge:       (byAge.data||[]).map(r=>({ age:r.age, gender:r.gender, ...formatRow(r) })).sort((a,b)=>b.roas-a.roas),
+      byCampaign:  (byCampaign.data||[]).map(r=>({ campaign:r.campaign_name, ...formatRow(r) })).sort((a,b)=>b.roas-a.roas),
+      byAdset:     (byAdset.data||[]).map(r=>({ campaign:r.campaign_name, adset:r.adset_name, ...formatRow(r) })).sort((a,b)=>b.roas-a.roas),
+      byDevice:    (byDevice.data||[]).map(r=>({ device:r.device_platform, ...formatRow(r) })),
+      byPublisher: (byPublisher.data||[]).map(r=>({ publisher:r.publisher_platform, ...formatRow(r) })),
+      byHour:      (byHour.data||[]).map(r=>({ hour:r.hourly_stats_aggregated_by_advertiser_time_zone, ...formatRow(r) })),
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
