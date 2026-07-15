@@ -6200,14 +6200,12 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             }
           })(),
         stage:          (() => {
+            // Use the already-guarded vendorStages (not raw Shopify) so stage and
+            // vendorStages always agree — prevents orders from appearing in two stage
+            // buckets simultaneously (e.g. both confirmed and delivered).
             const base = meta.stage || 'new';
-            const allVS = vsMap[String(o.id)] || {};
-            const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
-            const allStages = [
-              ...Object.values(allVS),
-              ...Object.values(shopifyMap),
-            ];
-            return allStages.reduce((best, s) => higherStage(best, s), base);
+            const guardedStages = Object.values(vsMap[String(o.id)] || {});
+            return guardedStages.reduce((best, s) => higherStage(best, s), base);
           })(),
         vendorTracking:        vtMap[String(o.id)] || {},
         vendorPenalty:         vpMap[String(o.id)] || {},
