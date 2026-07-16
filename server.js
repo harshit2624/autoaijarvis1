@@ -11196,6 +11196,253 @@ app.post("/vendor/delay-remark", async (req, res) => {
   res.json({ success: true });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// NEURAL VENDOR SCORE SYSTEM
+// Scores each vendor 0–100 across 4 pillars: Dispatch Speed, RTO Rate,
+// Penalty & Compliance, Escalation Rate. Claude generates personalized
+// WhatsApp report cards sent every Monday 9 AM IST.
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function computeVendorScores(windowDays = 30) {
+  const since = new Date(Date.now() - windowDays * 86400000).toISOString();
+
+  // Pull all raw data in parallel
+  const [allStages, allPenalties, allDelays, allVendors, allChats] = await Promise.all([
+    mdb.collection('order_vendor_stage').find({}).toArray(),
+    mdb.collection('order_penalties').find({ status: 'confirmed', created_at: { $gte: since } }).toArray().catch(() => []),
+    mdb.collection('delay_remarks').find({ submitted_at: { $gte: since } }).toArray().catch(() => []),
+    mdb.collection('vendor_profiles').find({}, { projection: { vendor_name: 1, phone: 1, email: 1, commission_rate: 1 } }).toArray(),
+    mdb.collection('support_chats').find({ needs_human: true, created_at: { $gte: since } }).toArray().catch(() => []),
+  ]);
+
+  // Group by vendor
+  const vendorMap = {};
+  for (const v of allVendors) {
+    vendorMap[v.vendor_name] = {
+      name: v.vendor_name, phone: v.phone, email: v.email, commission_rate: v.commission_rate,
+      total: 0, rto: 0, delivered: 0, penalties: 0, warnings: 0, delays: 0, escalations: 0,
+      stageBreakdown: {},
+    };
+  }
+
+  for (const s of allStages) {
+    const v = vendorMap[s.vendor_name];
+    if (!v) continue;
+    v.total++;
+    if (s.stage === 'rto') v.rto++;
+    if (s.stage === 'delivered') v.delivered++;
+    if (s.penalty_triggered) v.penalties++;
+    if (s.warning_sent) v.warnings++;
+    v.stageBreakdown[s.stage] = (v.stageBreakdown[s.stage] || 0) + 1;
+  }
+
+  for (const p of allPenalties) {
+    if (vendorMap[p.vendor_name]) vendorMap[p.vendor_name].penalties = Math.max(vendorMap[p.vendor_name].penalties, 0) + 0; // already counted above via penalty_triggered
+  }
+
+  for (const d of allDelays) {
+    if (vendorMap[d.vendor_name]) vendorMap[d.vendor_name].delays++;
+  }
+
+  // Count escalations from support chats tagged to vendor orders
+  for (const chat of allChats) {
+    if (!chat.order_name) continue;
+    // Find which vendor had this order
+    const vs = allStages.find(s => chat.order_name && allStages.some(x => x.shopify_id === String(chat.shopify_order_id)));
+    if (vs && vendorMap[vs.vendor_name]) vendorMap[vs.vendor_name].escalations++;
+  }
+
+  // Score each vendor
+  const scores = [];
+  for (const v of Object.values(vendorMap)) {
+    if (v.total === 0) continue;
+
+    const rtoBase = v.rto + v.delivered > 0 ? v.rto / (v.rto + v.delivered) : 0;
+    const rtoRate = Math.round(rtoBase * 100);
+
+    // Pillar 1: Dispatch Speed (25pts) — proxy via warning/penalty rates
+    const warningRate = v.total > 0 ? v.warnings / v.total : 0;
+    const penaltyRate = v.total > 0 ? v.penalties / v.total : 0;
+    let dispatchScore = 25;
+    dispatchScore -= Math.round(warningRate * 20);  // warnings drag
+    dispatchScore -= Math.round(penaltyRate * 30);  // penalties drag more
+    dispatchScore = Math.max(0, Math.min(25, dispatchScore));
+
+    // Pillar 2: RTO Rate (25pts)
+    let rtoScore = rtoRate <= 5 ? 25 : rtoRate <= 10 ? 20 : rtoRate <= 15 ? 14 : rtoRate <= 25 ? 7 : 0;
+
+    // Pillar 3: Penalty & Compliance (25pts)
+    let complianceScore = v.penalties === 0 ? 25 : v.penalties === 1 ? 19 : v.penalties === 2 ? 12 : v.penalties === 3 ? 6 : 0;
+
+    // Pillar 4: Escalation Rate (25pts)
+    let escalationScore = v.escalations === 0 ? 25 : v.escalations <= 2 ? 18 : v.escalations <= 5 ? 10 : 3;
+
+    const total = dispatchScore + rtoScore + complianceScore + escalationScore;
+    const grade = total >= 85 ? 'A' : total >= 70 ? 'B' : total >= 55 ? 'C' : total >= 35 ? 'D' : 'F';
+    const tier  = total >= 85 ? 'Elite' : total >= 70 ? 'Good' : total >= 55 ? 'Average' : total >= 35 ? 'At Risk' : 'Critical';
+
+    scores.push({
+      vendor: v.name, phone: v.phone, email: v.email, commission_rate: v.commission_rate,
+      score: total, grade, tier,
+      pillars: { dispatch: dispatchScore, rto: rtoScore, compliance: complianceScore, escalation: escalationScore },
+      stats: {
+        total_orders: v.total, rto_count: v.rto, delivered: v.delivered,
+        rto_rate: rtoRate, penalty_count: v.penalties, warning_count: v.warnings,
+        delay_count: v.delays, escalation_count: v.escalations,
+      },
+      stage_breakdown: v.stageBreakdown,
+    });
+  }
+
+  scores.sort((a, b) => b.score - a.score);
+  const ranked = scores.map((s, i) => ({ ...s, rank: i + 1 }));
+
+  // Platform averages
+  const avg = (key) => ranked.length ? Math.round(ranked.reduce((s, v) => s + v.score, 0) / ranked.length) : 0;
+  const platform_avg_score = avg('score');
+  const grade_dist = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+  for (const v of ranked) grade_dist[v.grade]++;
+
+  return { vendors: ranked, platform_avg_score, grade_dist, window_days: windowDays, generated_at: new Date().toISOString() };
+}
+
+// Generate AI narrative for a vendor using Claude
+async function generateVendorNarrative(vendor, rank, totalVendors) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const prompt = `You are CrosCrow's operations AI writing a WhatsApp vendor report card.
+
+Vendor: ${vendor.vendor}
+Score: ${vendor.score}/100 (Grade ${vendor.grade} — ${vendor.tier})
+Rank: #${rank} of ${totalVendors} vendors
+
+Metrics (last 30 days):
+- Total orders: ${vendor.stats.total_orders}
+- RTO rate: ${vendor.stats.rto_rate}% (${vendor.stats.rto_count} returned)
+- Penalty count: ${vendor.stats.penalty_count}
+- Warning count (slow dispatch): ${vendor.stats.warning_count}
+- Delay submissions: ${vendor.stats.delay_count}
+- Customer escalations: ${vendor.stats.escalation_count}
+
+Pillar scores: Dispatch ${vendor.pillars.dispatch}/25 | RTO ${vendor.pillars.rto}/25 | Compliance ${vendor.pillars.compliance}/25 | Escalations ${vendor.pillars.escalation}/25
+
+Write a short, direct WhatsApp message (no markdown, plain text, max 200 words). Be honest but constructive. Mention the score, grade, their #1 strength, their biggest area to improve, and one specific action they should take this week. Use a professional but warm tone — like a mentor, not a robot. End with a motivating line. No bullet points — flowing paragraphs only. Do NOT use asterisks or markdown.`;
+
+  try {
+    const msg = await client.messages.create({
+      model: 'claude-opus-4-8',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return msg.content[0]?.text?.trim() || null;
+  } catch (e) {
+    console.error('❌ Vendor narrative AI failed:', e.message);
+    return null;
+  }
+}
+
+// Send a vendor's score card via WhatsApp
+async function sendVendorScoreCard(vendor, rank, totalVendors) {
+  if (!waSocket || !waConnected) return { sent: false, reason: 'bot_offline' };
+  const rawPhone = (vendor.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (rawPhone.length !== 10) return { sent: false, reason: 'no_phone' };
+
+  // Resolve JID (prefer cached LID)
+  const jidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: rawPhone }).catch(() => null);
+  const jid = jidDoc?.jid || `91${rawPhone}@s.whatsapp.net`;
+
+  const narrative = await generateVendorNarrative(vendor, rank, totalVendors);
+
+  const gradeEmoji = { A: '🏆', B: '✅', C: '⚠️', D: '🔴', F: '🚨' }[vendor.grade] || '📊';
+  const barOf = (n, max) => '█'.repeat(Math.round((n / max) * 10)).padEnd(10, '░');
+
+  const header =
+`${gradeEmoji} CrosCrow Vendor Report Card
+━━━━━━━━━━━━━━━━━━━━━
+${vendor.vendor}
+Score: ${vendor.score}/100  |  Grade: ${vendor.grade}  |  Rank: #${rank}/${totalVendors}
+Tier: ${vendor.tier}
+
+PILLAR BREAKDOWN
+Dispatch Speed  ${barOf(vendor.pillars.dispatch,25)} ${vendor.pillars.dispatch}/25
+RTO Performance ${barOf(vendor.pillars.rto,25)} ${vendor.pillars.rto}/25
+Compliance      ${barOf(vendor.pillars.compliance,25)} ${vendor.pillars.compliance}/25
+Escalations     ${barOf(vendor.pillars.escalation,25)} ${vendor.pillars.escalation}/25
+
+30-DAY STATS
+Orders: ${vendor.stats.total_orders}  |  RTO: ${vendor.stats.rto_rate}%  |  Penalties: ${vendor.stats.penalty_count}
+━━━━━━━━━━━━━━━━━━━━━`;
+
+  const body = narrative || `Your performance score this week is ${vendor.score}/100 (${vendor.grade}). Keep shipping fast and keeping your RTO rate low to improve your standing.`;
+
+  const footer = `\n━━━━━━━━━━━━━━━━━━━━━\nReply to this message if you have questions.\n_CrosCrow Operations_`;
+
+  const fullMsg = `${header}\n\n${body}${footer}`;
+
+  try {
+    await waSocket.sendMessage(jid, { text: fullMsg });
+    await mdb.collection('vendor_score_sends').insertOne({
+      vendor: vendor.vendor, score: vendor.score, grade: vendor.grade,
+      jid, sent_at: new Date().toISOString(),
+    }).catch(() => {});
+    return { sent: true, jid, score: vendor.score, grade: vendor.grade };
+  } catch (e) {
+    console.error(`❌ Score card send failed (${vendor.vendor}):`, e.message);
+    return { sent: false, reason: e.message };
+  }
+}
+
+// Weekly cron — every Monday 9 AM IST
+async function vendorScoreCron() {
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  if (now.getDay() !== 1 || now.getHours() !== 9) return; // Monday 9 AM IST only
+
+  const already = await mdb.collection('vendor_score_sends')
+    .findOne({ sent_at: { $gte: new Date(now.toDateString()).toISOString() } }).catch(() => null);
+  if (already) return; // already sent today
+
+  console.log('📊 Running weekly vendor score cron...');
+  try {
+    const { vendors } = await computeVendorScores(30);
+    let sent = 0;
+    for (const v of vendors) {
+      const r = await sendVendorScoreCard(v, v.rank, vendors.length);
+      if (r.sent) { sent++; await new Promise(res => setTimeout(res, 2000)); }
+    }
+    await waAdminAlert(`📊 *Weekly Vendor Scores Sent*\nDelivered to ${sent}/${vendors.length} vendors.\nPlatform avg score: ${Math.round(vendors.reduce((s,v)=>s+v.score,0)/(vendors.length||1))}/100`);
+    console.log(`✅ Vendor score cron done: ${sent}/${vendors.length} sent`);
+  } catch (e) { console.error('❌ Vendor score cron failed:', e.message); }
+}
+setInterval(vendorScoreCron, 60 * 60 * 1000); // check every hour
+
+// GET /admin/vendor-scores — compute live scores
+app.get('/admin/vendor-scores', requirePermission('vendors'), async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+    const data = await computeVendorScores(days);
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /admin/vendor-scores/send — send score card to one or all vendors
+app.post('/admin/vendor-scores/send', requirePermission('vendors'), async (req, res) => {
+  try {
+    const { vendor: targetVendor, send_all } = req.body;
+    const { vendors } = await computeVendorScores(30);
+    const targets = send_all ? vendors : vendors.filter(v => v.vendor === targetVendor);
+    if (!targets.length) return res.status(404).json({ error: 'Vendor not found' });
+
+    const results = [];
+    for (const v of targets) {
+      const r = await sendVendorScoreCard(v, v.rank, vendors.length);
+      results.push({ vendor: v.vendor, ...r });
+      if (targets.length > 1) await new Promise(res => setTimeout(res, 1500));
+    }
+    res.json({ results, total: targets.length, sent: results.filter(r => r.sent).length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin penalty endpoints ────────────────────────────────────────────────
 // ── Force-run penalty cron now (for testing) ──────────────────────────────
 app.post("/admin/penalties/run-cron", requirePermission('penalties'), async (req, res) => {

@@ -7973,6 +7973,269 @@
   // Only permissions wired up to an actual backend check belong here —
   // showing a checkbox that doesn't gate anything would be misleading.
 
+  // ── VendorScores: Neural Vendor Score System ─────────────────────────────
+  function VendorScores({ token }) {
+    const [data, setData] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [days, setDays] = React.useState(30);
+    const [selected, setSelected] = React.useState(null);
+    const [sending, setSending] = React.useState({});
+    const [sendAll, setSendAll] = React.useState(false);
+    const [filter, setFilter] = React.useState('all');
+    const [toast, setToast] = React.useState(null);
+
+    const showToast = (msg, type='success') => {
+      setToast({ msg, type });
+      setTimeout(() => setToast(null), 3500);
+    };
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`/admin/vendor-scores?days=${days}`, { headers: { Authorization: `Bearer ${token}` } });
+        const d = await r.json();
+        setData(d);
+        if (d.vendors?.length) setSelected(d.vendors[0]);
+      } catch(e) { showToast('Failed to load scores', 'error'); }
+      setLoading(false);
+    };
+
+    React.useEffect(() => { load(); }, [days]);
+
+    const sendScore = async (vendor, all=false) => {
+      const key = all ? '__all__' : vendor;
+      setSending(s => ({ ...s, [key]: true }));
+      try {
+        const r = await fetch('/admin/vendor-scores/send', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(all ? { send_all: true } : { vendor }),
+        });
+        const d = await r.json();
+        if (all) showToast(`✅ Sent to ${d.sent}/${d.total} vendors`);
+        else showToast(d.results?.[0]?.sent ? `✅ Report sent to ${vendor}` : `❌ Send failed: ${d.results?.[0]?.reason}`);
+      } catch(e) { showToast('Send failed', 'error'); }
+      setSending(s => ({ ...s, [key]: false }));
+    };
+
+    const GRADE_COLOR = { A:'#10b981', B:'#3b82f6', C:'#f59e0b', D:'#f97316', F:'#ef4444' };
+    const GRADE_BG    = { A:'#ecfdf5', B:'#eff6ff', C:'#fffbeb', D:'#fff7ed', F:'#fef2f2' };
+    const PILLAR_COLOR = ['#6366f1','#10b981','#f59e0b','#ef4444'];
+
+    const ScoreRing = ({ score, grade, size=80 }) => {
+      const r = size/2 - 6, circ = 2*Math.PI*r;
+      const pct = score/100, dash = pct*circ, gap = circ - dash;
+      const col = GRADE_COLOR[grade] || '#6366f1';
+      return React.createElement('svg', { width: size, height: size, style: { transform:'rotate(-90deg)' } },
+        React.createElement('circle', { cx:size/2, cy:size/2, r, fill:'none', stroke:'#e5e7eb', strokeWidth:6 }),
+        React.createElement('circle', { cx:size/2, cy:size/2, r, fill:'none', stroke:col, strokeWidth:6,
+          strokeDasharray:`${dash} ${gap}`, strokeLinecap:'round',
+          style:{ transition:'stroke-dasharray 0.8s cubic-bezier(.4,0,.2,1)' } }),
+        React.createElement('text', { x:size/2, y:size/2+1, textAnchor:'middle', dominantBaseline:'middle',
+          style:{ transform:'rotate(90deg)', transformOrigin:`${size/2}px ${size/2}px`, fontSize:size>60?18:13, fontWeight:700, fill:col } },
+          score),
+      );
+    };
+
+    const PillarBar = ({ label, val, max=25, color }) => {
+      const pct = Math.round((val/max)*100);
+      return React.createElement('div', { style:{ marginBottom:8 } },
+        React.createElement('div', { style:{ display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:3 } },
+          React.createElement('span', { style:{ color:'#6b7280' } }, label),
+          React.createElement('span', { style:{ fontWeight:700, color } }, `${val}/${max}`),
+        ),
+        React.createElement('div', { style:{ background:'#f3f4f6', borderRadius:99, height:6, overflow:'hidden' } },
+          React.createElement('div', { style:{ width:`${pct}%`, background:color, height:'100%', borderRadius:99,
+            transition:'width 0.7s ease' } }),
+        ),
+      );
+    };
+
+    const filtered = !data ? [] : data.vendors.filter(v =>
+      filter === 'all' ? true :
+      filter === 'elite' ? v.grade === 'A' :
+      filter === 'risk'  ? ['D','F'].includes(v.grade) : true
+    );
+
+    if (loading) return React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'center', height:300 } },
+      React.createElement('div', { style:{ textAlign:'center' } },
+        React.createElement('div', { style:{ fontSize:32, marginBottom:12 } }, '⚙️'),
+        React.createElement('div', { style:{ color:'#6b7280', fontWeight:600 } }, 'Computing vendor scores…'),
+      )
+    );
+
+    return React.createElement('div', { style:{ padding:'0 0 40px' } },
+      // Toast
+      toast && React.createElement('div', { style:{ position:'fixed', top:24, right:24, zIndex:9999,
+        background: toast.type==='error'?'#fef2f2':'#f0fdf4',
+        border:`1px solid ${toast.type==='error'?'#fca5a5':'#86efac'}`, borderRadius:10, padding:'12px 20px',
+        color: toast.type==='error'?'#dc2626':'#16a34a', fontWeight:600, fontSize:14, boxShadow:'0 4px 20px rgba(0,0,0,.12)' } },
+        toast.msg
+      ),
+
+      // Header
+      React.createElement('div', { style:{ marginBottom:28 } },
+        React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 } },
+          React.createElement('div', null,
+            React.createElement('h2', { style:{ fontSize:22, fontWeight:800, margin:'0 0 4px', color:'#111' } }, '🏆 Neural Vendor Scores'),
+            React.createElement('p', { style:{ margin:0, color:'#6b7280', fontSize:14 } }, 'AI-powered performance ranking across dispatch, RTO, compliance & escalations'),
+          ),
+          React.createElement('div', { style:{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' } },
+            React.createElement('select', { value:days, onChange:e=>setDays(+e.target.value),
+              style:{ border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 10px', fontSize:13, background:'#fff', cursor:'pointer' } },
+              React.createElement('option', { value:7 }, 'Last 7 days'),
+              React.createElement('option', { value:14 }, 'Last 14 days'),
+              React.createElement('option', { value:30 }, 'Last 30 days'),
+              React.createElement('option', { value:60 }, 'Last 60 days'),
+              React.createElement('option', { value:90 }, 'Last 90 days'),
+            ),
+            React.createElement('button', { onClick: load,
+              style:{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 14px', fontSize:13, cursor:'pointer', fontWeight:600 } },
+              '↻ Refresh'
+            ),
+            React.createElement('button', { onClick: () => sendScore(null, true), disabled: sending['__all__'],
+              style:{ background:'#6366f1', color:'#fff', border:'none', borderRadius:8, padding:'7px 16px',
+                fontSize:13, cursor:'pointer', fontWeight:700, opacity: sending['__all__']?0.6:1 } },
+              sending['__all__'] ? '⏳ Sending…' : '📲 Send All Reports'
+            ),
+          ),
+        ),
+      ),
+
+      // Platform summary cards
+      data && React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:14, marginBottom:28 } },
+        [
+          { label:'Platform Avg', value:`${data.platform_avg_score}/100`, icon:'📊', color:'#6366f1' },
+          { label:'Elite (A)', value:data.grade_dist.A, icon:'🏆', color:'#10b981' },
+          { label:'Good (B)', value:data.grade_dist.B, icon:'✅', color:'#3b82f6' },
+          { label:'Average (C)', value:data.grade_dist.C, icon:'⚠️', color:'#f59e0b' },
+          { label:'At Risk (D+F)', value:(data.grade_dist.D||0)+(data.grade_dist.F||0), icon:'🚨', color:'#ef4444' },
+          { label:'Total Vendors', value:data.vendors.length, icon:'🏪', color:'#8b5cf6' },
+        ].map(({ label, value, icon, color }) =>
+          React.createElement('div', { key:label, style:{ background:'#fff', border:'1px solid #f0f0f0', borderRadius:12,
+            padding:'16px', boxShadow:'0 1px 6px rgba(0,0,0,.06)' } },
+            React.createElement('div', { style:{ fontSize:20, marginBottom:4 } }, icon),
+            React.createElement('div', { style:{ fontSize:22, fontWeight:800, color } }, value),
+            React.createElement('div', { style:{ fontSize:11, color:'#9ca3af', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.05em' } }, label),
+          )
+        )
+      ),
+
+      // Filter tabs
+      React.createElement('div', { style:{ display:'flex', gap:8, marginBottom:20 } },
+        [['all','All Vendors'],['elite','Elite Only'],['risk','At Risk']].map(([val, lbl]) =>
+          React.createElement('button', { key:val, onClick:()=>setFilter(val),
+            style:{ padding:'6px 16px', borderRadius:99, fontSize:13, fontWeight:600, cursor:'pointer', border:'1.5px solid',
+              borderColor: filter===val?'#6366f1':'#e5e7eb',
+              background: filter===val?'#6366f1':'#fff',
+              color: filter===val?'#fff':'#6b7280' } }, lbl)
+        )
+      ),
+
+      // Main layout: vendor list + detail panel
+      React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'1fr 360px', gap:20, alignItems:'start' } },
+
+        // Left: vendor cards
+        React.createElement('div', { style:{ display:'flex', flexDirection:'column', gap:12 } },
+          filtered.map(v =>
+            React.createElement('div', { key:v.vendor, onClick:()=>setSelected(v),
+              style:{ background:'#fff', border:`2px solid ${selected?.vendor===v.vendor?'#6366f1':'#f0f0f0'}`,
+                borderRadius:14, padding:'16px 20px', cursor:'pointer', boxShadow:'0 1px 6px rgba(0,0,0,.05)',
+                transition:'border-color 0.15s, box-shadow 0.15s',
+                boxShadow: selected?.vendor===v.vendor ? '0 4px 20px rgba(99,102,241,.15)' : '0 1px 6px rgba(0,0,0,.05)' } },
+              React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:16 } },
+                // Rank badge
+                React.createElement('div', { style:{ width:32, height:32, borderRadius:99, background: v.rank<=3?'#fef3c7':'#f3f4f6',
+                  display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:800,
+                  color: v.rank<=3?'#d97706':'#6b7280', flexShrink:0 } },
+                  v.rank <= 3 ? ['🥇','🥈','🥉'][v.rank-1] : `#${v.rank}`
+                ),
+                // Score ring
+                React.createElement('div', { style:{ flexShrink:0 } }, React.createElement(ScoreRing, { score:v.score, grade:v.grade, size:56 })),
+                // Info
+                React.createElement('div', { style:{ flex:1, minWidth:0 } },
+                  React.createElement('div', { style:{ fontWeight:700, fontSize:15, marginBottom:2, color:'#111' } }, v.vendor),
+                  React.createElement('div', { style:{ fontSize:12, color:'#9ca3af' } },
+                    `${v.stats.total_orders} orders · RTO ${v.stats.rto_rate}% · ${v.stats.penalty_count} penalties`
+                  ),
+                ),
+                // Grade badge
+                React.createElement('div', { style:{ background: GRADE_BG[v.grade], border:`1.5px solid ${GRADE_COLOR[v.grade]}`,
+                  borderRadius:8, padding:'4px 12px', fontWeight:800, fontSize:16, color: GRADE_COLOR[v.grade], flexShrink:0 } },
+                  v.grade
+                ),
+                // Tier
+                React.createElement('div', { style:{ fontSize:11, fontWeight:700, color: GRADE_COLOR[v.grade],
+                  background: GRADE_BG[v.grade], borderRadius:99, padding:'3px 10px', whiteSpace:'nowrap', flexShrink:0 } },
+                  v.tier
+                ),
+              ),
+            )
+          ),
+          !filtered.length && React.createElement('div', { style:{ textAlign:'center', padding:40, color:'#9ca3af' } }, 'No vendors match this filter.'),
+        ),
+
+        // Right: detail panel (sticky)
+        selected && React.createElement('div', { style:{ position:'sticky', top:80, background:'#fff', borderRadius:16,
+          border:'1px solid #f0f0f0', boxShadow:'0 4px 24px rgba(0,0,0,.08)', overflow:'hidden' } },
+          // Grade header
+          React.createElement('div', { style:{ background: GRADE_BG[selected.grade], borderBottom:`3px solid ${GRADE_COLOR[selected.grade]}`,
+            padding:'20px 24px', textAlign:'center' } },
+            React.createElement('div', null, React.createElement(ScoreRing, { score:selected.score, grade:selected.grade, size:88 })),
+            React.createElement('div', { style:{ fontWeight:800, fontSize:18, color:'#111', marginTop:8 } }, selected.vendor),
+            React.createElement('div', { style:{ display:'flex', justifyContent:'center', gap:8, marginTop:6 } },
+              React.createElement('span', { style:{ background: GRADE_COLOR[selected.grade], color:'#fff',
+                borderRadius:8, padding:'3px 14px', fontWeight:800, fontSize:15 } }, `Grade ${selected.grade}`),
+              React.createElement('span', { style:{ background:'#f3f4f6', color:'#6b7280',
+                borderRadius:8, padding:'3px 14px', fontWeight:700, fontSize:13 } }, `#${selected.rank} of ${data.vendors.length}`),
+            ),
+          ),
+          // Pillars
+          React.createElement('div', { style:{ padding:'20px 24px', borderBottom:'1px solid #f3f4f6' } },
+            React.createElement('div', { style:{ fontSize:11, fontWeight:700, color:'#9ca3af', textTransform:'uppercase',
+              letterSpacing:'0.08em', marginBottom:14 } }, 'Score Breakdown'),
+            React.createElement(PillarBar, { label:'🚀 Dispatch Speed', val:selected.pillars.dispatch, color:PILLAR_COLOR[0] }),
+            React.createElement(PillarBar, { label:'📦 RTO Performance', val:selected.pillars.rto, color:PILLAR_COLOR[1] }),
+            React.createElement(PillarBar, { label:'⚖️ Compliance', val:selected.pillars.compliance, color:PILLAR_COLOR[2] }),
+            React.createElement(PillarBar, { label:'🎧 Escalations', val:selected.pillars.escalation, color:PILLAR_COLOR[3] }),
+          ),
+          // Stats grid
+          React.createElement('div', { style:{ padding:'16px 24px', borderBottom:'1px solid #f3f4f6' } },
+            React.createElement('div', { style:{ fontSize:11, fontWeight:700, color:'#9ca3af', textTransform:'uppercase',
+              letterSpacing:'0.08em', marginBottom:12 } }, `Stats — Last ${days} Days`),
+            React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 } },
+              [
+                { l:'Total Orders', v:selected.stats.total_orders, icon:'📋' },
+                { l:'RTO Rate', v:`${selected.stats.rto_rate}%`, icon:'↩️' },
+                { l:'Delivered', v:selected.stats.delivered, icon:'✅' },
+                { l:'Penalties', v:selected.stats.penalty_count, icon:'🚨' },
+                { l:'Slow Dispatch', v:selected.stats.warning_count, icon:'⏰' },
+                { l:'Delay Submits', v:selected.stats.delay_count, icon:'📝' },
+              ].map(({ l, v, icon }) =>
+                React.createElement('div', { key:l, style:{ background:'#f9fafb', borderRadius:10, padding:'10px 12px' } },
+                  React.createElement('div', { style:{ fontSize:11, color:'#9ca3af', marginBottom:2 } }, `${icon} ${l}`),
+                  React.createElement('div', { style:{ fontWeight:800, fontSize:16, color:'#111' } }, v),
+                )
+              )
+            ),
+          ),
+          // Send button
+          React.createElement('div', { style:{ padding:'16px 24px' } },
+            React.createElement('button', { onClick:()=>sendScore(selected.vendor), disabled:!!sending[selected.vendor],
+              style:{ width:'100%', background:'#6366f1', color:'#fff', border:'none', borderRadius:10,
+                padding:'12px', fontSize:14, fontWeight:700, cursor:'pointer',
+                opacity: sending[selected.vendor]?0.6:1 } },
+              sending[selected.vendor] ? '⏳ Generating & Sending…' : '📲 Send Score Card via WhatsApp'
+            ),
+            React.createElement('div', { style:{ fontSize:11, color:'#9ca3af', textAlign:'center', marginTop:6 } },
+              'Claude writes a personalized report & sends it via WhatsApp'
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ── MetaAds: Meta Marketing API performance dashboard ────────────────────
   function MetaAds({ token }) {
     const API = window.API_BASE || '';
@@ -11063,6 +11326,7 @@
       { id:'marketing',        icon:'🎯', label:'Marketing',           section:'main' },
       { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
       { id:'metaads',          icon:'📊', label:'Meta Ads',             section:'main' },
+      { id:'vendorscores',     icon:'🏆', label:'Vendor Scores',        section:'vendors' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
@@ -11168,6 +11432,7 @@
           {view==='marketing'      && <Marketing token={token}/>}
           {view==='metafieldaudit' && <MetafieldAudit token={token}/>}
           {view==='metaads'       && <MetaAds token={token}/>}
+          {view==='vendorscores'  && <VendorScores token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}
