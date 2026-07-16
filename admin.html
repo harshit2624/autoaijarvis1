@@ -7982,6 +7982,7 @@
     const [sending, setSending] = React.useState({});
     const [sendAll, setSendAll] = React.useState(false);
     const [filter, setFilter] = React.useState('all');
+    const [sortBy, setSortBy] = React.useState('score');
     const [toast, setToast] = React.useState(null);
 
     const showToast = (msg, type='success') => {
@@ -8051,11 +8052,23 @@
       );
     };
 
-    const filtered = !data ? [] : data.vendors.filter(v =>
-      filter === 'all' ? true :
-      filter === 'elite' ? v.grade === 'A' :
-      filter === 'risk'  ? ['D','F'].includes(v.grade) : true
-    );
+    const SORT_FNS = {
+      score:      (a,b) => b.score - a.score,
+      score_asc:  (a,b) => a.score - b.score,
+      orders:     (a,b) => b.stats.total_orders - a.stats.total_orders,
+      orders_asc: (a,b) => a.stats.total_orders - b.stats.total_orders,
+      rto:        (a,b) => b.stats.rto_rate - a.stats.rto_rate,
+      rto_asc:    (a,b) => a.stats.rto_rate - b.stats.rto_rate,
+      penalties:  (a,b) => b.stats.penalty_count - a.stats.penalty_count,
+      dispatch:   (a,b) => b.pillars.dispatch - a.pillars.dispatch,
+    };
+    const filtered = !data ? [] : data.vendors
+      .filter(v =>
+        filter === 'all'   ? true :
+        filter === 'elite' ? v.grade === 'A' :
+        filter === 'risk'  ? ['D','F'].includes(v.grade) : true
+      )
+      .sort(SORT_FNS[sortBy] || SORT_FNS.score);
 
     if (loading) return React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'center', height:300 } },
       React.createElement('div', { style:{ textAlign:'center' } },
@@ -8121,15 +8134,32 @@
         )
       ),
 
-      // Filter tabs
-      React.createElement('div', { style:{ display:'flex', gap:8, marginBottom:20 } },
-        [['all','All Vendors'],['elite','Elite Only'],['risk','At Risk']].map(([val, lbl]) =>
-          React.createElement('button', { key:val, onClick:()=>setFilter(val),
-            style:{ padding:'6px 16px', borderRadius:99, fontSize:13, fontWeight:600, cursor:'pointer', border:'1.5px solid',
-              borderColor: filter===val?'#6366f1':'#e5e7eb',
-              background: filter===val?'#6366f1':'#fff',
-              color: filter===val?'#fff':'#6b7280' } }, lbl)
-        )
+      // Filter + Sort row
+      React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:10 } },
+        React.createElement('div', { style:{ display:'flex', gap:8 } },
+          [['all','All Vendors'],['elite','Elite Only'],['risk','At Risk']].map(([val, lbl]) =>
+            React.createElement('button', { key:val, onClick:()=>setFilter(val),
+              style:{ padding:'6px 16px', borderRadius:99, fontSize:13, fontWeight:600, cursor:'pointer', border:'1.5px solid',
+                borderColor: filter===val?'#6366f1':'#e5e7eb',
+                background: filter===val?'#6366f1':'#fff',
+                color: filter===val?'#fff':'#6b7280' } }, lbl)
+          )
+        ),
+        React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:8 } },
+          React.createElement('span', { style:{ fontSize:12, color:'#9ca3af', fontWeight:600 } }, 'Sort by'),
+          React.createElement('select', { value:sortBy, onChange:e=>setSortBy(e.target.value),
+            style:{ border:'1px solid #e5e7eb', borderRadius:8, padding:'6px 10px', fontSize:13, background:'#fff', cursor:'pointer', fontWeight:600 } },
+            React.createElement('option', { value:'score' },        '⭐ Score: High → Low'),
+            React.createElement('option', { value:'score_asc' },    '⭐ Score: Low → High'),
+            React.createElement('option', { value:'orders' },       '📋 Orders: High → Low'),
+            React.createElement('option', { value:'orders_asc' },   '📋 Orders: Low → High'),
+            React.createElement('option', { value:'rto' },          '↩️ RTO Rate: Worst First'),
+            React.createElement('option', { value:'rto_asc' },      '↩️ RTO Rate: Best First'),
+            React.createElement('option', { value:'penalties' },    '🚨 Penalties: Most First'),
+            React.createElement('option', { value:'dispatch' },     '🚀 Dispatch: Best First'),
+          ),
+          React.createElement('span', { style:{ fontSize:12, color:'#9ca3af' } }, `${filtered.length} vendors`),
+        ),
       ),
 
       // Main layout: vendor list + detail panel
