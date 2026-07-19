@@ -16720,27 +16720,118 @@ app.get("/admin/metafield-audit", adminAuth, async (req, res) => {
 app.put("/admin/metafield-audit/:productId", adminAuth, async (req, res) => {
   const { productId } = req.params;
   const { key, value } = req.body || {};
-  const ALLOWED_KEYS = ['morefromvendor', 'return_exchange_vendor'];
+  const FIELD_TYPES = {
+    morefromvendor:         'collection_reference',
+    return_exchange_vendor: 'single_line_text_field',
+  };
+  const ALLOWED_KEYS = Object.keys(FIELD_TYPES);
   if (!ALLOWED_KEYS.includes(key)) return res.status(400).json({ error: 'Key not allowed via this endpoint' });
   try {
     const token = await getAccessToken();
-    // Upsert via REST metafields endpoint
+    const mfType = FIELD_TYPES[key];
     const existing = await shopifyREST(`/products/${productId}/metafields.json`);
     const mf = (existing.metafields || []).find(m => m.namespace === 'custom' && m.key === key);
     if (mf) {
       await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/metafields/${mf.id}.json`, {
         method: 'PUT',
         headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metafield: { id: mf.id, value, type: 'single_line_text_field' } }),
+        body: JSON.stringify({ metafield: { id: mf.id, value, type: mfType } }),
       });
     } else {
       await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${productId}/metafields.json`, {
         method: 'POST',
         headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metafield: { namespace: 'custom', key, value, type: 'single_line_text_field' } }),
+        body: JSON.stringify({ metafield: { namespace: 'custom', key, value, type: mfType } }),
       });
     }
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── GET /admin/collections-list — for the morefromvendor collection picker ──
+app.get("/admin/collections-list", adminAuth, async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    // Fetch all custom collections + smart collections
+    const [custom, smart] = await Promise.all([
+      shopifyREST('/custom_collections.json?limit=250&fields=id,title'),
+      shopifyREST('/smart_collections.json?limit=250&fields=id,title'),
+    ]);
+    const all = [
+      ...(custom.custom_collections || []),
+      ...(smart.smart_collections || []),
+    ].map(c => ({ id: c.id, gid: `gid://shopify/Collection/${c.id}`, title: c.title }))
+     .sort((a, b) => a.title.localeCompare(b.title));
+    res.json({ collections: all });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/metafield-audit/:productId/sizechart — upload size chart image ──
+const adminSizeChartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+app.post("/admin/metafield-audit/:productId/sizechart", adminAuth, adminSizeChartUpload.single('image'), async (req, res) => {
+  try {
+    const { productId } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'Image file required.' });
+    const allowedTypes = ['image/png','image/jpeg','image/jpg','image/webp'];
+    if (!allowedTypes.includes(req.file.mimetype)) return res.status(400).json({ error: 'Only PNG, JPG, or WEBP allowed.' });
+
+    let fileBuffer = req.file.buffer;
+    let fileMime   = req.file.mimetype;
+    let fileName   = req.file.originalname || 'sizechart.jpg';
+    try {
+      const sharp = require('sharp');
+      const meta  = await sharp(fileBuffer).metadata();
+      if ((meta.width * meta.height) / 1_000_000 > 20) {
+        fileBuffer = await sharp(fileBuffer).resize({ width: 4000, withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+        fileMime   = 'image/jpeg';
+        fileName   = fileName.replace(/\.[^.]+$/, '.jpg');
+      }
+    } catch {}
+
+    const token = await getAccessToken();
+    const gqlUrl = `https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`;
+    const gqlHeaders = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
+
+    // Stage upload
+    const stageData = await fetch(gqlUrl, { method:'POST', headers: gqlHeaders, body: JSON.stringify({
+      query:`mutation stagedUploadsCreate($input:[StagedUploadInput!]!){stagedUploadsCreate(input:$input){stagedTargets{url resourceUrl parameters{name value}}userErrors{message}}}`,
+      variables:{ input:[{ filename: fileName, mimeType: fileMime, resource:'FILE', fileSize: String(fileBuffer.length), httpMethod:'POST' }] },
+    }) }).then(r=>r.json());
+    const target = stageData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
+    if (!target) throw new Error('Staged upload failed: ' + JSON.stringify(stageData?.data?.stagedUploadsCreate?.userErrors));
+
+    // Upload file
+    const formData = new (require('form-data'))();
+    (target.parameters||[]).forEach(p => formData.append(p.name, p.value));
+    formData.append('file', fileBuffer, { filename: fileName, contentType: fileMime });
+    const uploadRes = await fetch(target.url, { method:'POST', body: formData, headers: formData.getHeaders() });
+    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
+
+    // Create file in Shopify
+    const fileData = await fetch(gqlUrl, { method:'POST', headers: gqlHeaders, body: JSON.stringify({
+      query:`mutation fileCreate($files:[FileCreateInput!]!){fileCreate(files:$files){files{id ...on MediaImage{image{url}}}userErrors{message}}}`,
+      variables:{ files:[{ originalSource: target.resourceUrl, contentType:'IMAGE' }] },
+    }) }).then(r=>r.json());
+    const fileId   = fileData?.data?.fileCreate?.files?.[0]?.id;
+    const imageUrl = fileData?.data?.fileCreate?.files?.[0]?.image?.url;
+    if (!fileId) throw new Error('File create failed: ' + JSON.stringify(fileData?.data?.fileCreate?.userErrors));
+
+    // Upsert sizechart metafield
+    const mfData   = await shopifyREST(`/products/${productId}/metafields.json`);
+    const existing = (mfData.metafields||[]).find(m => ['sizechart','size_chart'].includes((m.key||'').toLowerCase()));
+    if (existing) {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/metafields/${existing.id}.json`, {
+        method:'PUT', headers: gqlHeaders,
+        body: JSON.stringify({ metafield:{ id: existing.id, value: fileId, type:'file_reference' } }),
+      });
+    } else {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${productId}/metafields.json`, {
+        method:'POST', headers: gqlHeaders,
+        body: JSON.stringify({ metafield:{ namespace:'custom', key:'sizechart', value: fileId, type:'file_reference' } }),
+      });
+    }
+
+    res.json({ ok: true, image_url: imageUrl, file_id: fileId });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

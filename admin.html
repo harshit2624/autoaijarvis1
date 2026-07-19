@@ -8625,7 +8625,16 @@
     const [editing, setEditing]     = React.useState({});       // { productId_key: value }
     const [saving, setSaving]       = React.useState({});       // { productId_key: bool }
     const [saved, setSaved]         = React.useState({});       // { productId_key: bool }
+    const [scUploading, setScUploading] = React.useState({});  // { productId: bool }
+    const [scPreview, setScPreview]     = React.useState({});  // { productId: url }
+    const [scError, setScError]         = React.useState({});  // { productId: msg }
+    const [collections, setCollections] = React.useState([]);  // [{ id, gid, title }]
     const SHOP_DOMAIN = 'croscrow.myshopify.com';
+
+    React.useEffect(() => {
+      fetch(`${API}/admin/collections-list`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => setCollections(d.collections || [])).catch(() => {});
+    }, []);
 
     const load = async () => {
       setLoading(true); setData(null);
@@ -8666,10 +8675,38 @@
       setSaving(s => ({ ...s, [ek]: false }));
     };
 
+    const uploadSizeChart = async (productId, file) => {
+      if (!file) return;
+      setScUploading(s => ({ ...s, [productId]: true }));
+      setScError(s => ({ ...s, [productId]: null }));
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        const r = await fetch(`${API}/admin/metafield-audit/${productId}/sizechart`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Upload failed');
+        setScPreview(s => ({ ...s, [productId]: d.image_url }));
+        // Remove sizechart from missing list
+        setData(dd => ({
+          ...dd,
+          incomplete: dd.incomplete.map(p => {
+            if (p.id !== productId) return p;
+            const newMissing = p.missing.filter(k => k !== 'sizechart');
+            return { ...p, missing: newMissing };
+          }).filter(p => p.missing.length > 0),
+        }));
+      } catch(e) { setScError(s => ({ ...s, [productId]: e.message })); }
+      setScUploading(s => ({ ...s, [productId]: false }));
+    };
+
     const FIELD_META = {
-      morefromvendor:          { label: 'More From Vendor', color: '#f59e0b', editable: true  },
-      return_exchange_vendor:  { label: 'Return & Exchange', color: '#ef4444', editable: true  },
-      sizechart:               { label: 'Size Chart',        color: '#8b5cf6', editable: false },
+      morefromvendor:          { label: 'More From Vendor', color: '#f59e0b', editable: true,  inputType: 'collection' },
+      return_exchange_vendor:  { label: 'Return & Exchange', color: '#ef4444', editable: true,  inputType: 'text' },
+      sizechart:               { label: 'Size Chart',        color: '#8b5cf6', editable: false, inputType: 'image' },
     };
 
     const items = data?.incomplete || [];
@@ -8728,21 +8765,45 @@
                   React.createElement('span', { style:{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:4, background: fm.color+'22', color: fm.color, whiteSpace:'nowrap' } }, '● ' + (fm.label || key)),
                   fm.editable
                     ? React.createElement(React.Fragment, null,
-                        React.createElement('input', {
-                          type:'text',
-                          placeholder: `Enter ${fm.label} value…`,
-                          value: editing[ek] ?? '',
-                          onChange: e => setEditing(ed => ({ ...ed, [ek]: e.target.value })),
-                          onKeyDown: e => e.key === 'Enter' && saveField(p.id, key),
-                          style:{ flex:1, minWidth:160, padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)', background:'var(--bg-input,var(--bg))', color:'var(--text)', fontSize:13, outline:'none' },
-                        }),
+                        fm.inputType === 'collection'
+                          ? React.createElement('select', {
+                              value: editing[ek] ?? '',
+                              onChange: e => setEditing(ed => ({ ...ed, [ek]: e.target.value })),
+                              style:{ flex:1, minWidth:200, padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)', background:'var(--bg-input,var(--bg))', color:'var(--text)', fontSize:13 },
+                            },
+                              React.createElement('option', { value:'' }, '— Select a collection —'),
+                              collections.map(c => React.createElement('option', { key:c.gid, value:c.gid }, c.title)),
+                            )
+                          : React.createElement('input', {
+                              type:'text',
+                              placeholder: `Enter ${fm.label} value…`,
+                              value: editing[ek] ?? '',
+                              onChange: e => setEditing(ed => ({ ...ed, [ek]: e.target.value })),
+                              onKeyDown: e => e.key === 'Enter' && saveField(p.id, key),
+                              style:{ flex:1, minWidth:160, padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)', background:'var(--bg-input,var(--bg))', color:'var(--text)', fontSize:13, outline:'none' },
+                            }),
                         React.createElement('button', {
                           onClick: () => saveField(p.id, key),
                           disabled: saving[ek] || !editing[ek]?.trim(),
                           style:{ padding:'5px 12px', borderRadius:6, border:'none', background: saved[ek]?'#10b981':'var(--indigo)', color:'#fff', fontSize:12, cursor:'pointer', whiteSpace:'nowrap', opacity: editing[ek]?.trim() ? 1 : 0.5 }
                         }, saving[ek] ? '…' : saved[ek] ? '✓ Saved' : 'Save'),
                       )
-                    : React.createElement('span', { style:{ fontSize:12, color:'var(--text-dim)' } }, 'Upload via Shopify admin → Metafields'),
+                    : React.createElement('label', { style:{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', flexWrap:'wrap' } },
+                        React.createElement('input', {
+                          type: 'file', accept: 'image/png,image/jpeg,image/webp',
+                          style: { display:'none' },
+                          onChange: e => { const f = e.target.files?.[0]; if (f) uploadSizeChart(p.id, f); e.target.value=''; },
+                        }),
+                        React.createElement('span', {
+                          style:{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:6,
+                            border:`1.5px dashed ${scUploading[p.id] ? '#9ca3af' : '#8b5cf6'}`,
+                            background: scUploading[p.id] ? '#f3f4f6' : '#faf5ff',
+                            color: scUploading[p.id] ? '#9ca3af' : '#8b5cf6',
+                            fontSize:12, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+                        }, scUploading[p.id] ? '⏳ Uploading…' : '📤 Upload Size Chart'),
+                        scPreview[p.id] && React.createElement('img', { src: scPreview[p.id], style:{ height:32, borderRadius:4, border:'1px solid #e5e7eb' } }),
+                        scError[p.id]   && React.createElement('span', { style:{ fontSize:11, color:'#ef4444' } }, scError[p.id]),
+                      ),
                 );
               }),
             ),
