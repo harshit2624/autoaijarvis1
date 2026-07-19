@@ -1,4 +1,4 @@
-/* CrosCrow Support Widget embed script.
+/* CROSCROW Support Widget embed script.
    Two ways to use it:
 
    1. Plain drop-in (own floating button + iframe):
@@ -46,7 +46,7 @@
     if (params.length) src += '?' + params.join('&');
     var frame = document.createElement('iframe');
     frame.src = src;
-    frame.title = 'CrosCrow Support';
+    frame.title = 'CROSCROW Support';
     frame.style.width = '100%';
     frame.style.height = '100%';
     frame.style.border = 'none';

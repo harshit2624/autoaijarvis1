@@ -152,7 +152,7 @@ async function main() {
     ['FROZEN NOCTURNAL GRAPHIC TEE', 126, 4, 2, 2, 41.1],
   ];
 
-  console.log(`\n🚀 CrosCrow Ads Collection Creator`);
+  console.log(`\n🚀 CROSCROW Ads Collection Creator`);
   console.log(`   Products to match: ${pixelRanked.length}`);
 
   const products = await fetchAllProducts();
@@ -190,8 +190,8 @@ async function main() {
   console.log(`\n🏗️  Creating Shopify collection...`);
   const collRes = await shopifyPOST('/custom_collections.json', {
     custom_collection: {
-      title: 'CrosCrow Ads Collection',
-      body_html: 'Top-performing products selected by CrosCrow pixel tracker analytics for paid advertising.',
+      title: 'CROSCROW Ads Collection',
+      body_html: 'Top-performing products selected by CROSCROW pixel tracker analytics for paid advertising.',
       published: true,
     }
   });

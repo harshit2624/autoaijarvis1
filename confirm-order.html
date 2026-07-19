@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Confirm Your Order — CrosCrow</title>
+  <title>Confirm Your Order — CROSCROW</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -328,7 +328,7 @@
           key: orderData.key,
           amount: orderData.amount * 100,
           currency: 'INR',
-          name: 'CrosCrow',
+          name: 'CROSCROW',
           description: mode === 'prepaid' ? `Full Prepaid Order — ${order.order_name}` : `Order Confirmation — ${order.order_name}`,
           order_id: orderData.order_id,
           prefill: { name: order.customer_name || '' },
@@ -512,7 +512,7 @@
 
         <div className="footer-note">
           Need help? Reach out to our support team with your order number.<br/>
-          CrosCrow · Secure payments powered by Razorpay
+          CROSCROW · Secure payments powered by Razorpay
         </div>
       </div>
     );

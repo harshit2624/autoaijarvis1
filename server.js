@@ -152,7 +152,7 @@ async function startServer() {
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
     // Ensure croscrow_profile doc exists
-    await mdb.collection('croscrow_profile').updateOne({ id: 1 }, { $setOnInsert: { id: 1, company_name: 'CrosCrow Marketplace', email:'',phone:'',address:'',city:'',state:'',pincode:'',gst_no:'',pan_no:'',bank_name:'',account_no:'',ifsc:'',website:'' } }, { upsert: true });
+    await mdb.collection('croscrow_profile').updateOne({ id: 1 }, { $setOnInsert: { id: 1, company_name: 'CROSCROW Marketplace', email:'',phone:'',address:'',city:'',state:'',pincode:'',gst_no:'',pan_no:'',bank_name:'',account_no:'',ifsc:'',website:'' } }, { upsert: true });
   } catch (err) {
     console.error("❌  MongoDB connection failed — cannot start:", err.message);
     process.exit(1);
@@ -205,7 +205,7 @@ const ES = {
 
 const EA = {
   async get() {
-    return (await mdb.collection('email_ads').findOne({}, { projection: { _id: 0 } })) || { enabled: false, headline: 'Shop More at CrosCrow', products: [] };
+    return (await mdb.collection('email_ads').findOne({}, { projection: { _id: 0 } })) || { enabled: false, headline: 'Shop More at CROSCROW', products: [] };
   },
   async save(fields) {
     await mdb.collection('email_ads').updateOne({}, { $set: { ...fields, _updated: new Date() } }, { upsert: true });
@@ -583,11 +583,11 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
   const invoice    = parseFloat((commission + gst).toFixed(2));
 
   if (paymentType === "prepaid") {
-    // CrosCrow collected full amount → pays vendor (base - commission - gst)
+    // CROSCROW collected full amount → pays vendor (base - commission - gst)
     const vendorNet = parseFloat((base - commission - gst).toFixed(2));
     return { base, commission, gst, invoice, net: -vendorNet, type: "payout" };
   }
-  // COD / partial → vendor pays CrosCrow
+  // COD / partial → vendor pays CROSCROW
   const net = parseFloat((invoice - (advancePaid || 0)).toFixed(2));
   return { base, commission, gst, invoice, advancePaid: advancePaid || 0, net, type: "receivable" };
 }
@@ -599,7 +599,7 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
 function calcProductCommission(rule, sellingPrice, qty, paymentType) {
   const unitPrice = parseFloat(sellingPrice);
   const totalPrice = unitPrice * (qty || 1);
-  // For prepaid: CrosCrow gives vendor 10% discount (same as standard calc)
+  // For prepaid: CROSCROW gives vendor 10% discount (same as standard calc)
   const base = paymentType === 'prepaid' ? totalPrice * 0.9 : totalPrice;
   let commission = 0, gst = 0;
 
@@ -636,11 +636,11 @@ function calcProductCommission(rule, sellingPrice, qty, paymentType) {
   const invoice = parseFloat((commission + gst).toFixed(2));
 
   if (paymentType === 'prepaid') {
-    // CrosCrow collected from customer → pays vendor (base - commission - gst)
+    // CROSCROW collected from customer → pays vendor (base - commission - gst)
     const vendorNet = parseFloat((base - commission - gst).toFixed(2));
     return { base, commission, gst, invoice, net: -vendorNet, type: 'payout', isProductRule: true };
   }
-  // COD: vendor owes commission+gst to CrosCrow
+  // COD: vendor owes commission+gst to CROSCROW
   return { base, commission, gst, invoice, net: invoice, type: 'receivable', isProductRule: true };
 }
 
@@ -729,7 +729,7 @@ async function applyTagMappings(orderId, tags, financialStatus) {
 }
 
 // ── Admin auth ────────────────────────────────────────────────────────────
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CrosCrowAdmin@00";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CROSCROWAdmin@00";
 // Admin sessions stored in MongoDB — survives server restarts/redeploys
 async function adminAuth(req, res, next) {
   const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
@@ -1495,7 +1495,7 @@ function emailBase(title, accentColor, bodyHtml) {
     <div class="title">${title}</div>
     ${bodyHtml}
   </div>
-  <div class="footer">© CrosCrow · This is an automated notification · Do not reply to this email</div>
+  <div class="footer">© CROSCROW · This is an automated notification · Do not reply to this email</div>
 </div></body></html>`;
 }
 
@@ -1653,7 +1653,7 @@ function templateRRDeliveredCustomer({ req: rr }) {
     <div class="subtitle" style="color:#10b981;font-weight:600;">${completedMsg}</div>
     ${rrInfoBox(rr)}
     ${rr.admin_note ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:20px;font-size:13px;color:#065f46;"><strong>Note:</strong> ${rr.admin_note}</div>` : ''}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Thank you for shopping with CrosCrow. If you have any questions, please contact us with your Request ID: <strong>${rr.request_id}</strong>.</p>
+    <p style="font-size:13px;color:#6b7280;line-height:1.7">Thank you for shopping with CROSCROW. If you have any questions, please contact us with your Request ID: <strong>${rr.request_id}</strong>.</p>
   `;
   return emailBase(`${typeLabel} Request Complete ✓`, '#10b981', body);
 }
@@ -1727,11 +1727,11 @@ async function sendProductRequestEmail({ type, vendorName, productTitle, product
     // Vendor email for actions that affect them
     if (vcfg?.email && ['imported','mapped','rejected','updated','approved_removal'].includes(type)) {
       const vendorMsg = {
-        imported:         'Your product has been imported to CrosCrow store and is now live.',
-        mapped:           'Your product has been mapped to an existing CrosCrow product. Inventory sync is now active.',
-        rejected:         'Your product request has been reviewed and was not approved at this time. Please contact CrosCrow for more details.',
-        updated:          'Your product changes have been synced to the CrosCrow store.',
-        approved_removal: 'Your removal request has been approved. The product has been deleted from the CrosCrow store.',
+        imported:         'Your product has been imported to CROSCROW store and is now live.',
+        mapped:           'Your product has been mapped to an existing CROSCROW product. Inventory sync is now active.',
+        rejected:         'Your product request has been reviewed and was not approved at this time. Please contact CROSCROW for more details.',
+        updated:          'Your product changes have been synced to the CROSCROW store.',
+        approved_removal: 'Your removal request has been approved. The product has been deleted from the CROSCROW store.',
       };
       const vendorHtml = productRequestEmailHtml({ title: heading, accentColor: t.accent, heading, rows: [['Product', productTitle||'—'], ...extraRows], image: productImage, note: vendorMsg[type], footerNote: 'View your products in the Vendor Panel → My Products.' });
       await sendEmail({ to: vcfg.email, subject: `${t.emoji} ${t.label} — ${productTitle}`, html: vendorHtml });
@@ -1740,8 +1740,8 @@ async function sendProductRequestEmail({ type, vendorName, productTitle, product
     // Vendor confirmation email when they submit a request
     if (vcfg?.email && ['upload','mapping','removal'].includes(type)) {
       const confirmMsg = {
-        upload:  'Your request to add a new product to CrosCrow has been received. Admin will review and import it shortly.',
-        mapping: 'Your mapping request has been received. Admin will link your product to the appropriate CrosCrow listing.',
+        upload:  'Your request to add a new product to CROSCROW has been received. Admin will review and import it shortly.',
+        mapping: 'Your mapping request has been received. Admin will link your product to the appropriate CROSCROW listing.',
         removal: 'Your removal request has been received. Admin will review and process it.',
       };
       const vendorHtml = productRequestEmailHtml({ title: `${t.emoji} Request Received`, accentColor: t.accent, heading: `${t.emoji} Request Received`, rows: [['Product', productTitle||'—'], ...extraRows], image: productImage, note: confirmMsg[type], footerNote: 'You can track your request status in Vendor Panel → My Products.' });
@@ -1763,17 +1763,17 @@ async function sendShopifyConnectedEmails(vendorName, shopDomain, method) {
     const vendorEmail = vendorProfile?.email || null;
 
     const vendorHtml = emailBase('Shopify Store Connected ✓', '#10b981', `
-      <div class="subtitle">Your Shopify store has been successfully connected to CrosCrow.</div>
+      <div class="subtitle">Your Shopify store has been successfully connected to CROSCROW.</div>
       <div class="info-box">
         <div class="info-row"><span class="info-label">Store</span><span class="info-val"><strong>${shopDomain}</strong></span></div>
         <div class="info-row"><span class="info-label">Method</span><span class="info-val">${methodLabel}</span></div>
         ${vendorName ? `<div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendorName}</span></div>` : ''}
       </div>
-      <p style="font-size:13px;color:#6b7280;line-height:1.7">CrosCrow admin can now sync your products and inventory. If you did not perform this action, please contact support immediately.</p>
+      <p style="font-size:13px;color:#6b7280;line-height:1.7">CROSCROW admin can now sync your products and inventory. If you did not perform this action, please contact support immediately.</p>
     `);
 
     const adminHtml = emailBase('New Shopify Store Connected', '#6366f1', `
-      <div class="subtitle">A vendor has connected their Shopify store to CrosCrow.</div>
+      <div class="subtitle">A vendor has connected their Shopify store to CROSCROW.</div>
       <div class="info-box">
         <div class="info-row"><span class="info-label">Store</span><span class="info-val"><strong>${shopDomain}</strong></span></div>
         <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendorName || 'Unclaimed'}</span></div>
@@ -1783,7 +1783,7 @@ async function sendShopifyConnectedEmails(vendorName, shopDomain, method) {
     `);
 
     if (vendorEmail) {
-      await sendEmail({ to: vendorEmail, subject: '✅ Your Shopify Store is Connected to CrosCrow', html: vendorHtml, shopifyId: '', trigger: 'shopify_connected_vendor' });
+      await sendEmail({ to: vendorEmail, subject: '✅ Your Shopify Store is Connected to CROSCROW', html: vendorHtml, shopifyId: '', trigger: 'shopify_connected_vendor' });
     }
     await sendEmail({ to: adminEmail, subject: `🔗 New Shopify Store Connected — ${shopDomain}`, html: adminHtml, shopifyId: '', trigger: 'shopify_connected_admin' });
   } catch(e) { console.error('Shopify connect email error:', e.message); }
@@ -1794,7 +1794,7 @@ async function sendShopifyConnectedEmails(vendorName, shopDomain, method) {
 async function sendRREmail(type, rr) {
   try {
     const cfg = await mdb.collection('email_settings').findOne({}) || {};
-    const from = `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`;
+    const from = `"${cfg.fromName || 'CROSCROW'}" <${cfg.fromEmail || cfg.user}>`;
     const adminEmail = 'harshitvj24@gmail.com';
 
     const vendorCfg = await mdb.collection('vendor_config').findOne({ vendor_name: rr.vendor_name }) || {};
@@ -1852,7 +1852,7 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
 <div style="max-width:620px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">60+ BRANDS &nbsp;|&nbsp; ONE STOP</div>
       <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">ORDER<br>CONFIRMED.</div>
@@ -1933,9 +1933,9 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
 
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -1975,7 +1975,7 @@ const WA_ICON = `<svg width="36" height="36" viewBox="0 0 40 40" fill="none" xml
 function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
   const isPrepaid = order.financial_status === 'paid';
   const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
-  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
+  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CROSCROW. Please proceed.')}` : '#';
   const items  = order.line_items || [];
   const total  = parseFloat(order.total_price || 0);
   const addr   = order.shipping_address;
@@ -1990,7 +1990,7 @@ function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
 
   <!-- HERO IMAGE -->
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <!-- Dark overlay text on image -->
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">60+ BRANDS &nbsp;|&nbsp; ONE STOP</div>
@@ -2097,9 +2097,9 @@ function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
   <!-- FOOTER -->
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -2109,7 +2109,7 @@ function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
 function templateNewOrderCustomer({ order }) {
   const isPrepaid = order.financial_status === 'paid';
   const waNum = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
-  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
+  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I confirm my order ' + order.name + ' placed on CROSCROW. Please proceed.')}` : '#';
   const body = `
     <div class="subtitle">Thank you for your order! We've received it and it's pending confirmation.</div>
 
@@ -2148,9 +2148,9 @@ function templateNewOrderVendor({ order, vendorName }) {
   const myItems = (order.line_items || []).filter(li => li.vendor === vendorName);
   const subTotal = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
   const body = `
-    <div class="subtitle">A new order has been placed on CrosCrow that includes your products.</div>
+    <div class="subtitle">A new order has been placed on CROSCROW that includes your products.</div>
     <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#0c4a6e;line-height:1.7;">
-      <strong>Please note —</strong> this is an early notification. Your order will be formally confirmed by the CrosCrow team shortly.
+      <strong>Please note —</strong> this is an early notification. Your order will be formally confirmed by the CROSCROW team shortly.
       You will receive a separate confirmation email once the order is verified and approved. <strong>Do not dispatch yet.</strong>
     </div>
     <div class="info-box">
@@ -2162,7 +2162,7 @@ function templateNewOrderVendor({ order, vendorName }) {
     ${itemsTableHtml(myItems)}
     <div style="background:#f8fafc;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:12px;color:#6b7280;line-height:1.8;">
       <strong style="color:#374151;">What happens next?</strong><br>
-      1. CrosCrow reviews and confirms the order with the customer.<br>
+      1. CROSCROW reviews and confirms the order with the customer.<br>
       2. You receive a <strong>Confirmation Email</strong> with full dispatch instructions.<br>
       3. Pack and ship within 24–48 hours of the confirmation email.
     </div>
@@ -2175,11 +2175,11 @@ function templateNewOrderVendor({ order, vendorName }) {
 
 function templateVendorWelcome({ vendorName, username, password }) {
   const loginUrl = 'https://autoaijarvis1.onrender.com/vendor.html';
-  return emailBase(`Welcome to the All-New CrosCrow Vendor Panel 🚀`, '#6366f1', `
+  return emailBase(`Welcome to the All-New CROSCROW Vendor Panel 🚀`, '#6366f1', `
     <!-- Hero greeting -->
     <div style="text-align:center;padding:8px 0 28px">
       <div style="display:inline-block;background:linear-gradient(135deg,#4338ca,#7c3aed);border-radius:12px;padding:14px 28px;margin-bottom:16px">
-        <div style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#c4b5fd;margin-bottom:4px">CrosCrow Vendor Portal</div>
+        <div style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#c4b5fd;margin-bottom:4px">CROSCROW Vendor Portal</div>
         <div style="font-size:22px;font-weight:900;color:#ffffff;letter-spacing:-0.5px">Welcome aboard, ${vendorName}!</div>
       </div>
       <div style="font-size:14px;color:#94a3b8;max-width:440px;margin:0 auto;line-height:1.7">
@@ -2251,7 +2251,7 @@ function templateVendorWelcome({ vendorName, username, password }) {
       <div style="font-size:20px;font-weight:900;color:#ffffff;line-height:1.5;letter-spacing:-0.3px">
         "If You help us grow,<br>we'll help your brand steal the show."
       </div>
-      <div style="font-size:11px;color:#64748b;margin-top:10px;letter-spacing:2px;text-transform:uppercase">— CrosCrow Team</div>
+      <div style="font-size:11px;color:#64748b;margin-top:10px;letter-spacing:2px;text-transform:uppercase">— CROSCROW Team</div>
     </div>
 
     <div style="text-align:center;margin-top:20px">
@@ -2271,7 +2271,7 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const addr        = order.shipping_address;
 
   const body = `
-    <div class="subtitle">Order <strong>${order.name}</strong> has been confirmed by CrosCrow. Please prepare and dispatch immediately.</div>
+    <div class="subtitle">Order <strong>${order.name}</strong> has been confirmed by CROSCROW. Please prepare and dispatch immediately.</div>
 
     ${isPrepaid
       ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">PREPAID — Payment collected. Do not collect cash on delivery.</div>`
@@ -2307,7 +2307,7 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
     </div>
 
     <div style="text-align:center;margin-bottom:12px;">
-      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name}`)}"
+      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I need help with order ${order.name}`)}"
          style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
         Need help? Reach us on WhatsApp
@@ -2320,7 +2320,7 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
 }
 
-// Build a track button HTML block — uses trackingUrl or CrosCrow track page fallback
+// Build a track button HTML block — uses trackingUrl or CROSCROW track page fallback
 function trackButton(trackingUrl, awb, courier, label = 'Track Your Order →') {
   const c = (courier || '').toLowerCase();
   const fallback = awb ? (
@@ -2357,7 +2357,7 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
 <div style="max-width:620px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">SHIPPED &nbsp;|&nbsp; ON THE MOVE</div>
       <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS ON ITS WAY.</div>
@@ -2441,9 +2441,9 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
 
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -2467,7 +2467,7 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
 
   <!-- HERO IMAGE -->
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">OUT FOR DELIVERY &nbsp;|&nbsp; TODAY</div>
       <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">GET READY TO<br>DRIP HARD TODAY.</div>
@@ -2580,9 +2580,9 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
   <!-- FOOTER -->
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -2602,7 +2602,7 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
 <div style="max-width:620px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">SHIPPED &nbsp;|&nbsp; ON THE WAY</div>
       <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR ITEMS<br>ARE SHIPPED.</div>
@@ -2677,9 +2677,9 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
 
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -2688,7 +2688,7 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
 
 function templateAdminFulfilledVendor({ order, vendorName, items, awb, courier }) {
   const body = `
-    <div class="subtitle">Heads up — CrosCrow has fulfilled the following item(s) from order <strong>${order.name}</strong> on your behalf. No action needed from you for these items.</div>
+    <div class="subtitle">Heads up — CROSCROW has fulfilled the following item(s) from order <strong>${order.name}</strong> on your behalf. No action needed from you for these items.</div>
 
     <div class="info-box">
       <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
@@ -2700,14 +2700,14 @@ function templateAdminFulfilledVendor({ order, vendorName, items, awb, courier }
     ${itemsTableHtml(items)}
 
     <div style="background:#f0fdf4;border-left:4px solid #10b981;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
-      <div style="font-size:12px;color:#065f46;line-height:1.7;">These item(s) have already been packed and shipped by CrosCrow — no need to dispatch them yourself. Any remaining items still pending from you (if any) should be fulfilled as usual.</div>
+      <div style="font-size:12px;color:#065f46;line-height:1.7;">These item(s) have already been packed and shipped by CROSCROW — no need to dispatch them yourself. Any remaining items still pending from you (if any) should be fulfilled as usual.</div>
     </div>
 
     <div style="text-align:center;margin-bottom:8px;">
       <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
     </div>
   `;
-  return emailBase(`Order ${order.name} — Item(s) Fulfilled by CrosCrow`, '#10b981', body);
+  return emailBase(`Order ${order.name} — Item(s) Fulfilled by CROSCROW`, '#10b981', body);
 }
 
 function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', forRole = 'customer', adsStrip = '' }) {
@@ -2743,7 +2743,7 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
 <div style="max-width:620px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">DELIVERED &nbsp;|&nbsp; THANK YOU</div>
       <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
@@ -2810,9 +2810,9 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
 
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -2885,7 +2885,7 @@ function templatePartialAdvanceCustomer({ order, meta = {}, adsStrip = '' }) {
 <div style="max-width:620px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">ADVANCE RECEIVED &nbsp;|&nbsp; ORDER SECURED</div>
       <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOU'RE<br>LOCKED IN.</div>
@@ -2973,9 +2973,9 @@ function templatePartialAdvanceCustomer({ order, meta = {}, adsStrip = '' }) {
 
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -2998,7 +2998,7 @@ function templateConvertedToPrepaidCustomer({ order, meta = {}, adsStrip = '' })
 <div style="max-width:620px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">FULLY PAID &nbsp;|&nbsp; NO COD</div>
       <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOU'RE<br>ALL SET.</div>
@@ -3070,9 +3070,9 @@ function templateConvertedToPrepaidCustomer({ order, meta = {}, adsStrip = '' })
 
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -3144,7 +3144,7 @@ async function sendEmail({ to, subject, html, shopifyId, trigger }) {
   }
   try {
     const transporter = createTransporter(cfg);
-    await transporter.sendMail({ from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`, to, subject, html });
+    await transporter.sendMail({ from: `"${cfg.fromName || 'CROSCROW'}" <${cfg.fromEmail || cfg.user}>`, to, subject, html });
     logEmail(shopifyId, trigger, to, subject, 'sent');
     console.log(`📧 Email sent [${trigger}] → ${to}`);
   } catch (err) {
@@ -4037,7 +4037,7 @@ async function runJarvisQuery(query, history = [], { waMode = false } = {}) {
 === CROSCROW PLATFORM KNOWLEDGE BASE ===
 
 WHAT IS CROSCROW:
-CrosCrow is a multi-vendor Shopify marketplace. Vendors (independent clothing brands) list products on a shared store. CrosCrow collects payment, coordinates fulfillment, and settles vendor share after deducting commission + GST. CrosCrow does NOT hold inventory and does NOT pay logistics — vendors ship at their own cost.
+CROSCROW is a multi-vendor Shopify marketplace. Vendors (independent clothing brands) list products on a shared store. CROSCROW collects payment, coordinates fulfillment, and settles vendor share after deducting commission + GST. CROSCROW does NOT hold inventory and does NOT pay logistics — vendors ship at their own cost.
 
 ORDER STAGES (new → confirmed → partial → ready → pickup → transit → delivered/rto/cancelled/hold/misc):
 - new: placed, vendor not yet confirmed
@@ -4072,7 +4072,7 @@ SETTLEMENT FLOW:
 - Runs monthly or on-demand per vendor
 - Includes only delivered orders in the period
 - Invoice = all delivered orders' (myRevenue - commission - GST - penalties + advance_received)
-- Positive = CrosCrow pays vendor; Negative = vendor owes CrosCrow
+- Positive = CROSCROW pays vendor; Negative = vendor owes CROSCROW
 - COD orders: vendor collects cash, owes CC commission+GST from that cash
 - Prepaid orders: CC collected from customer, owes vendor (myRevenue - commission - GST)
 - Advance/partial: customer paid partial upfront → reduces what CC owes vendor at settlement
@@ -4097,7 +4097,7 @@ VENDOR WA NUDGE FLOW:
 DELIVERY RATE vs DISPATCH RATE:
 - Delivery rate = delivered ÷ (delivered + rto) — completed orders only
 - Dispatch rate = orders with AWB or in ready/pickup/transit/delivered ÷ active confirmed orders
-- RTO only wastes CAC already spent — CrosCrow doesn't pay logistics
+- RTO only wastes CAC already spent — CROSCROW doesn't pay logistics
 
 FINANCIAL MODEL:
 - Revenue = commission on delivered orders
@@ -4132,7 +4132,7 @@ LIVE OPS MAP SCENARIOS:
 `;
 
   const systemPrompt = waMode
-    ? `You are JARVIS, the brain behind CrosCrow marketplace. You are talking to the founder/admin on WhatsApp.
+    ? `You are JARVIS, the brain behind CROSCROW marketplace. You are talking to the founder/admin on WhatsApp.
 
 ${PLATFORM_KNOWLEDGE}
 
@@ -4152,7 +4152,7 @@ Format rules (WhatsApp plain text only):
 Tools: get_order_stats, get_vendor_stats, get_delivery_stats, get_rto_analysis, get_stuck_orders, get_dispatch_rate, get_vendor_fulfillment, get_orders_list, get_cod_outstanding, get_multi_vendor_stuck, get_products, get_customers, get_city_stats, get_settlements
 
 Today: ${today}`
-    : `You are JARVIS, a razor-sharp e-commerce operations assistant for CrosCrow — a multi-vendor Shopify marketplace.
+    : `You are JARVIS, a razor-sharp e-commerce operations assistant for CROSCROW — a multi-vendor Shopify marketplace.
 
 ${PLATFORM_KNOWLEDGE}
 
@@ -5421,7 +5421,7 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
     ]);
     const so = soData?.order || {};
     await shipsagarPushShipment({ awb, courierCode: vs?.courier || '', orderNo: so.name || shopifyId, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) });
-    return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
+    return res.json({ status: '', awb, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -6790,7 +6790,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       });
     }
 
-    // netPayable: positive = vendor pays CrosCrow, negative = CrosCrow pays vendor
+    // netPayable: positive = vendor pays CROSCROW, negative = CROSCROW pays vendor
     let netPayable = parseFloat(totalNet.toFixed(2));
     const invoiceNo  = `CC-${vendor_name.toUpperCase().replace(/\s+/g,"").slice(0,6)}-${period_start.slice(0,7).replace("-","")}-${String(Date.now()).slice(-4)}`;
 
@@ -7161,7 +7161,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const totalGst       = parseFloat((d.gst + shippingGst).toFixed(2));
       const hsnCode        = '998599';
 
-      // IGST if inter-state (CrosCrow = Rajasthan, state code 08). Same state → SGST+CGST
+      // IGST if inter-state (CROSCROW = Rajasthan, state code 08). Same state → SGST+CGST
       const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
       const isIGST = !vendorStateCode || vendorStateCode !== '08';
       const igst = isIGST ? totalGst : 0;
@@ -7201,7 +7201,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     ].map(escCsv).join(',');
 
     const csv = [headers.join(','), ...rows, totalsRow].join('\r\n');
-    const filename = `CrosCrow_GST_${from}_to_${to}.csv`;
+    const filename = `CROSCROW_GST_${from}_to_${to}.csv`;
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
@@ -7424,7 +7424,7 @@ app.get("/admin/croscrow-profile", adminAuth, async (req, res) => {
 });
 app.put("/admin/croscrow-profile", adminAuth, async (req, res) => {
   const f = req.body || {};
-  await mdb.collection('croscrow_profile').updateOne({ id: 1 }, { $set: { id: 1, company_name: f.company_name||'CrosCrow Marketplace', email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', website: f.website||'' } }, { upsert: true });
+  await mdb.collection('croscrow_profile').updateOne({ id: 1 }, { $set: { id: 1, company_name: f.company_name||'CROSCROW Marketplace', email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', website: f.website||'' } }, { upsert: true });
   auditLog("admin","profile_update","croscrow",{});
   res.json({ success:true });
 });
@@ -7516,9 +7516,9 @@ app.post("/admin/email-settings/test", adminAuth, async (req, res) => {
   try {
     const transporter = createTransporter(cfg);
     await transporter.sendMail({
-      from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`,
-      to, subject: 'CrosCrow SMTP Test ✅',
-      html: emailBase('SMTP is working!', '#10b981', '<p style="color:#6b7280;font-size:14px">Your email configuration is correct. CrosCrow will now send order notifications automatically.</p>'),
+      from: `"${cfg.fromName || 'CROSCROW'}" <${cfg.fromEmail || cfg.user}>`,
+      to, subject: 'CROSCROW SMTP Test ✅',
+      html: emailBase('SMTP is working!', '#10b981', '<p style="color:#6b7280;font-size:14px">Your email configuration is correct. CROSCROW will now send order notifications automatically.</p>'),
     });
     res.json({ ok: true, message: `Test email sent to ${to}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -7549,7 +7549,7 @@ function buildDemoTemplates(to, adsStrip = '') {
     created_at: new Date(Date.now() - 86400000).toISOString(),
   };
   return {
-    vendor_welcome:  { subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
+    vendor_welcome:  { subject: `Welcome to the All-New CROSCROW Vendor Panel 🚀`, html: templateVendorWelcome({ vendorName: 'Demo Vendor', username: 'demovendor47', password: 'Croscrow@00' }) },
     vendor_shipped:  { subject: `Your Items from Demo Vendor Have Shipped! 🚚`, html: templateVendorShipped({ order: demoOrder, vendorName: 'Demo Vendor', items: demoOrder.line_items, awb: '1234567890', courier: 'Delhivery', trackingUrl: '', adsStrip }) },
     new_order:  { subject: `Your Order ${demoOrder.name} is In`, html: templateNewOrderCustomerSky({ order: demoOrder, adsStrip }) },
     confirmed_customer: { subject: `[TEST] Order Confirmed: ${demoOrder.name} ✅`, html: templateOrderConfirmedCustomer({ order: demoOrder, adsStrip }) },
@@ -7599,7 +7599,7 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
 
   try {
     const transporter = createTransporter(cfg);
-    await transporter.sendMail({ from: `"${cfg.fromName || 'CrosCrow'}" <${cfg.fromEmail || cfg.user}>`, to, subject: tpl.subject, html: tpl.html });
+    await transporter.sendMail({ from: `"${cfg.fromName || 'CROSCROW'}" <${cfg.fromEmail || cfg.user}>`, to, subject: tpl.subject, html: tpl.html });
     res.json({ ok: true, message: `Test "${template}" sent to ${to}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7612,7 +7612,7 @@ app.get("/admin/email-settings/ads", adminAuth, async (req, res) => {
 app.put("/admin/email-settings/ads", adminAuth, async (req, res) => {
   try {
     const { enabled, headline, products } = req.body || {};
-    await EA.save({ enabled: !!enabled, headline: headline || 'Shop More at CrosCrow', products: products || [] });
+    await EA.save({ enabled: !!enabled, headline: headline || 'Shop More at CROSCROW', products: products || [] });
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -7804,7 +7804,7 @@ async function getEmailAdsStrip() {
     const ads = await EA.get();
     if (!ads.enabled || !ads.products?.length) return '';
     const products = ads.products.slice(0, 10);
-    const headline = ads.headline || 'Shop More at CrosCrow';
+    const headline = ads.headline || 'Shop More at CROSCROW';
     const cells = products.map(p => `
       <td style="padding:0 8px 0 0;vertical-align:top;min-width:130px;max-width:140px;">
         <a href="${p.link || '#'}" target="_blank" style="text-decoration:none;display:block;">
@@ -7844,7 +7844,7 @@ app.post("/admin/vendors/send-credentials", adminAuth, async (req, res) => {
       try {
         await sendEmail({
           to: doc.email,
-          subject: `Welcome to the All-New CrosCrow Vendor Panel 🚀`,
+          subject: `Welcome to the All-New CROSCROW Vendor Panel 🚀`,
           html: templateVendorWelcome({ vendorName: doc.vendor_name, username: doc.username, password: 'Croscrow@00' }),
           trigger: 'vendor_welcome',
         });
@@ -8820,7 +8820,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
             if (vendorRow?.email) {
               await sendEmail({
                 to: vendorRow.email,
-                subject: `Order ${shopifyOrder.name} — Item(s) Fulfilled by CrosCrow`,
+                subject: `Order ${shopifyOrder.name} — Item(s) Fulfilled by CROSCROW`,
                 html: templateAdminFulfilledVendor({ order: shopifyOrder, vendorName: vendor, items: vendorItems, awb: result.awb, courier: courierName }),
                 shopifyId: sid, trigger: 'admin_fulfilled_vendor',
               });
@@ -9057,7 +9057,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'),
       }
       if (ss?.found) return res.json({ status: cached?.delivery_status || '', awb, message: 'No events yet.' });
       { const soData = await shopifyREST(`/orders/${shopifyId}.json?fields=name,email,shipping_address`).catch(() => null); const so = soData?.order || {}; shipsagarPushShipment({ awb, courierCode: courier, orderNo: so.name || shopifyId, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {}); }
-      return res.json({ status: cached?.delivery_status || '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
+      return res.json({ status: cached?.delivery_status || '', awb, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
     }
 
     if (!ssCreds?.api_key) return res.json({ status: cached?.delivery_status || '', message: 'ShipSagar not configured', vendors: [] });
@@ -9081,7 +9081,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'),
         vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'No events yet.' });
       } else {
         shipsagarPushShipment({ awb: vs.awb, courierCode: vs.courier || '', orderNo: so2.name || shopifyId, customerName: ((so2.shipping_address?.first_name||'') + ' ' + (so2.shipping_address?.last_name||'')).trim(), email: so2.email || '', mobileNo: (so2.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
-        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
       }
     }
 
@@ -9208,7 +9208,7 @@ async function vendorShopifyREST(shopDomain, accessToken, path) {
   return res.json();
 }
 
-// Helper: call CrosCrow main store REST with write access
+// Helper: call CROSCROW main store REST with write access
 async function croscrowShopifyWrite(path, method, body) {
   const token = await getAccessToken();
   const url = `https://${SHOP}.myshopify.com/admin/api/2024-01${path}`;
@@ -9217,7 +9217,7 @@ async function croscrowShopifyWrite(path, method, body) {
     headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`CrosCrow Shopify write error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`CROSCROW Shopify write error ${res.status}: ${await res.text()}`);
   return res.json();
 }
 
@@ -9280,7 +9280,7 @@ app.delete("/vendor/shopify/disconnect", vendorAuth, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// SHOPIFY APP OAUTH — Install flow for CrosCrow Sync app
+// SHOPIFY APP OAUTH — Install flow for CROSCROW Sync app
 // ══════════════════════════════════════════════════════════════════════════
 
 const SHOPIFY_APP_SCOPES = 'read_files,write_files,write_inventory,read_inventory,write_inventory_shipments,read_inventory_shipments,write_inventory_shipments_received_items,read_inventory_shipments_received_items,write_inventory_transfers,read_inventory_transfers,write_locations,read_locations,read_orders,write_orders,read_product_feeds,write_product_feeds,read_product_listings,write_product_listings,read_products,write_products,unauthenticated_read_product_pickup_locations,unauthenticated_read_product_inventory,unauthenticated_read_product_listings,unauthenticated_read_product_tags';
@@ -9407,13 +9407,13 @@ app.get('/privacy', (req, res) => {
   <h1>MARKETPLACE SYNC by Antortiq — Privacy Policy</h1>
   <p>Last updated: ${new Date().toLocaleDateString('en-IN')}</p>
   <h2>Data We Collect</h2>
-  <p>MARKETPLACE SYNC by Antortiq collects your Shopify store domain, product catalog, inventory levels, and location data solely to sync inventory between your store and the CrosCrow marketplace.</p>
+  <p>MARKETPLACE SYNC by Antortiq collects your Shopify store domain, product catalog, inventory levels, and location data solely to sync inventory between your store and the CROSCROW marketplace.</p>
   <h2>How We Use Your Data</h2>
   <p>Your data is used exclusively to provide inventory synchronization services. We do not sell or share your data with third parties.</p>
   <h2>Data Storage</h2>
-  <p>Access tokens and store data are stored securely on CrosCrow servers and are deleted upon app uninstallation.</p>
+  <p>Access tokens and store data are stored securely on CROSCROW servers and are deleted upon app uninstallation.</p>
   <h2>Contact</h2>
-  <p>CrosCrow Team: <a href="mailto:croscrowteam@gmail.com">croscrowteam@gmail.com</a></p>
+  <p>CROSCROW Team: <a href="mailto:croscrowteam@gmail.com">croscrowteam@gmail.com</a></p>
   <p>Developer (Antortiq): <a href="mailto:antortiq@gmail.com">antortiq@gmail.com</a></p>
   <p>Phone: <a href="tel:+918209544626">+91 8209544626</a></p>
   </body></html>`);
@@ -9515,7 +9515,7 @@ app.get('/vendor/shopify/app', async (req, res) => {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>CrosCrow</title>
+  <title>CROSCROW</title>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${process.env.VENDOR_APP_CLIENT_ID}"></script>
   <style>
@@ -9550,7 +9550,7 @@ app.get('/vendor/shopify/app', async (req, res) => {
 </head>
 <body>
   <div class="header">
-    <div class="logo"><img src="https://i.ibb.co/b5Hhd9zD/Untitled-design-36.png" alt="CrosCrow"/></div>
+    <div class="logo"><img src="https://i.ibb.co/b5Hhd9zD/Untitled-design-36.png" alt="CROSCROW"/></div>
     <span class="sep">/</span>
     <span class="vname" id="vendor-label">···</span>
   </div>
@@ -9724,7 +9724,7 @@ app.post('/vendor/shopify/ensure-connection', async (req, res) => {
     // re-runs on every embed load to keep the token fresh, so don't re-send
     // the "connected" email on every page view.
     if (wasNew) {
-      console.log(`✅ CrosCrow Sync installed via token exchange: ${shop}`);
+      console.log(`✅ CROSCROW Sync installed via token exchange: ${shop}`);
       auditLog('shopify_app', 'install_token_exchange', shop, { scope: tokenData.scope });
       sendShopifyConnectedEmails(existing?.vendor_name || null, shop, 'token_exchange');
     }
@@ -9922,7 +9922,7 @@ app.get('/vendor/shopify/callback', async (req, res) => {
     // Register webhooks on their store
     await registerShopifyAppWebhooks(cleanShop, accessToken);
 
-    console.log(`✅ CrosCrow Sync installed: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
+    console.log(`✅ CROSCROW Sync installed: ${cleanShop} (vendor: ${vendorName || 'unclaimed'})`);
     auditLog('shopify_app', 'install', cleanShop, { vendor: vendorName, scope: tokenData.scope });
     sendShopifyConnectedEmails(vendorName, cleanShop, 'quick_install');
 
@@ -10250,7 +10250,7 @@ app.post('/vendor/shopify/webhook/uninstalled', express.json({ type: '*/*' }), a
       { shop_domain: shop },
       { $set: { access_token: null, sync_enabled: 0, uninstalled_at: new Date().toISOString() } }
     );
-    console.log(`⚠️  CrosCrow Sync uninstalled from: ${shop}`);
+    console.log(`⚠️  CROSCROW Sync uninstalled from: ${shop}`);
     auditLog('shopify_app', 'uninstall', shop, {});
   } catch(e) { console.error('uninstall webhook error:', e.message); }
 });
@@ -10470,7 +10470,7 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Admin: import vendor product as NEW product on CrosCrow store ──────────
+// ── Admin: import vendor product as NEW product on CROSCROW store ──────────
 app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id, sync_inventory = true } = req.body || {};
   if (!vendor_name || !vendor_product_id) return res.status(400).json({ error: "vendor_name and vendor_product_id required." });
@@ -10484,7 +10484,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
     const vProduct = vData.product;
     if (!vProduct) throw new Error("Product not found in vendor store.");
 
-    // Build product payload for CrosCrow store
+    // Build product payload for CROSCROW store
     const productPayload = {
       product: {
         title: vProduct.title,
@@ -10514,7 +10514,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
 
     const created = await croscrowShopifyWrite('/products.json', 'POST', productPayload);
     const newProduct = created.product;
-    if (!newProduct) throw new Error("Failed to create product on CrosCrow store.");
+    if (!newProduct) throw new Error("Failed to create product on CROSCROW store.");
 
     // Publish to all sales channels via GraphQL publishablePublish
     try {
@@ -10574,7 +10574,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
   }
 });
 
-// ── Admin: map vendor variant to existing CrosCrow variant ────────────────
+// ── Admin: map vendor variant to existing CROSCROW variant ────────────────
 app.post("/admin/vendor-sync/map", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id, vendor_variant_id, croscrow_product_id, croscrow_variant_id, sync_inventory = true } = req.body || {};
   if (!vendor_name || !vendor_variant_id || !croscrow_product_id || !croscrow_variant_id)
@@ -10697,7 +10697,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
       const locationId = locData.locations?.[0]?.id;
       if (!locationId) continue;
 
-      // Get CrosCrow primary location
+      // Get CROSCROW primary location
       const ccLocData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/locations.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
       const ccLocationId = ccLocData.locations?.[0]?.id;
       if (!ccLocationId) continue;
@@ -10712,7 +10712,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
           const vVariant = varData.variant;
           if (!vVariant) continue;
 
-          // Sync price on CrosCrow variant (skip if sync_price disabled)
+          // Sync price on CROSCROW variant (skip if sync_price disabled)
           if (m.sync_price !== false) {
             await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/variants/${m.croscrow_variant_id}.json`, {
               method: 'PUT',
@@ -10726,7 +10726,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
           if (invItemId && vVariant.inventory_management === 'shopify') {
             const qty = parseInt(vVariant.inventory_quantity ?? 0);
 
-            // Enable inventory tracking on CrosCrow variant first
+            // Enable inventory tracking on CROSCROW variant first
             const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${m.croscrow_variant_id}.json`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json());
             const ccInvItemId = ccVarData.variant?.inventory_item_id;
             if (ccInvItemId) {
@@ -10780,7 +10780,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
   res.json({ success: true, synced, errors });
 });
 
-// ── Admin: search CrosCrow products (for mapping UI) ─────────────────────
+// ── Admin: search CROSCROW products (for mapping UI) ─────────────────────
 // ── Admin: smart batch map vendor variants → CC variants (with optional create) ─
 app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id, croscrow_product_id, mappings, upload_request_id } = req.body || {};
@@ -10997,7 +10997,7 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
         If you believe this is an error, please contact us immediately on WhatsApp.
       </p>
       <div style="text-align:center">
-        <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I want to dispute the penalty for order ${orderName || shopifyId}`)}"
+        <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I want to dispute the penalty for order ${orderName || shopifyId}`)}"
            style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
           <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
           Dispute on WhatsApp
@@ -11026,13 +11026,13 @@ A penalty has been applied to your account.
 
 This will be deducted from your next settlement.
 
-To dispute, reply here or contact CrosCrow ops immediately.
+To dispute, reply here or contact CROSCROW ops immediately.
 
 *Still not shipped?* Reply now:
 *1️⃣* — Delay reason + ETA
 *2️⃣* — Already shipped (AWB + courier)
 
-_CrosCrow Operations_`;
+_CROSCROW Operations_`;
         const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
         const actualJid = sent?.key?.remoteJid || jid;
         await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || shopifyId, shopify_id: String(shopifyId), orderRef: String(shopifyId).replace(/^#/, ''), vendor: vendorName });
@@ -11081,7 +11081,7 @@ function templateFulfilmentWarning({ order, vendorName, hoursElapsed, delayLink 
     </div>
 
     <div style="text-align:center;margin-bottom:12px;">
-      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I need help with order ${order.name} (${vendorName})`)}"
+      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I need help with order ${order.name} (${vendorName})`)}"
          style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
         Contact Support on WhatsApp
@@ -11102,7 +11102,7 @@ app.get("/vendor/delay-remark", async (req, res) => {
   }
   const existing = await DR.latest(order, vendor);
   res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Delay Remark — CrosCrow</title>
+<title>Delay Remark — CROSCROW</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:20px;display:flex;align-items:center;justify-content:center;min-height:100vh}
   .card{background:#1e293b;border-radius:16px;padding:32px;max-width:480px;width:100%;box-shadow:0 4px 32px rgba(0,0,0,.5)}
@@ -11311,7 +11311,7 @@ async function generateVendorNarrative(vendor, rank, totalVendors) {
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const prompt = `You are CrosCrow's operations AI writing a WhatsApp vendor report card.
+  const prompt = `You are CROSCROW's operations AI writing a WhatsApp vendor report card.
 
 Vendor: ${vendor.vendor}
 Score: ${vendor.score}/100 (Grade ${vendor.grade} — ${vendor.tier})
@@ -11358,7 +11358,7 @@ async function sendVendorScoreCard(vendor, rank, totalVendors) {
   const barOf = (n, max) => '█'.repeat(Math.round((n / max) * 10)).padEnd(10, '░');
 
   const header =
-`${gradeEmoji} CrosCrow Vendor Report Card
+`${gradeEmoji} CROSCROW Vendor Report Card
 ━━━━━━━━━━━━━━━━━━━━━
 ${vendor.vendor}
 Score: ${vendor.score}/100  |  Grade: ${vendor.grade}  |  Rank: #${rank}/${totalVendors}
@@ -11376,7 +11376,7 @@ Orders: ${vendor.stats.total_orders}  |  RTO: ${vendor.stats.rto_rate}%  |  Pena
 
   const body = narrative || `Your performance score this week is ${vendor.score}/100 (${vendor.grade}). Keep shipping fast and keeping your RTO rate low to improve your standing.`;
 
-  const footer = `\n━━━━━━━━━━━━━━━━━━━━━\nReply to this message if you have questions.\n_CrosCrow Operations_`;
+  const footer = `\n━━━━━━━━━━━━━━━━━━━━━\nReply to this message if you have questions.\n_CROSCROW Operations_`;
 
   const fullMsg = `${header}\n\n${body}${footer}`;
 
@@ -11584,7 +11584,7 @@ function buildAgreementDoc(c, logoBuffer) {
     clauseTitle('13.2  Logistics Costs'), body('Party A shall bear all logistics costs associated with the fulfilment of orders placed through Party B\'s platform, including but not limited to forward shipping and handling charges, save as expressly provided in Clause 13.3.'),
     clauseTitle('13.3  Return & Exchange Logistics Fee'), body('Where Party B facilitates return or exchange logistics on behalf of Party A, the standard return/exchange fee charged by Party B (currently Rs. 199 per order) shall be passed on to Party A to cover such logistics. Any logistics cost actually incurred in excess of this standard fee shall be borne solely by Party A.'),
     sectionHeading('14. GRANT OF SELLING RIGHTS'),
-    clauseTitle('14.1  Authorisation to Sell'), body('By executing this Agreement, Party A grants Party B the right to list, market, advertise, and sell Party A\'s products through CrosCrow\'s platform and all associated sales channels, together with all rights reasonably necessary to give effect to such sale, including the use of Party A\'s product images, descriptions, pricing, and brand assets for such purpose, for the duration of this Agreement and subject to the terms herein.'),
+    clauseTitle('14.1  Authorisation to Sell'), body('By executing this Agreement, Party A grants Party B the right to list, market, advertise, and sell Party A\'s products through CROSCROW\'s platform and all associated sales channels, together with all rights reasonably necessary to give effect to such sale, including the use of Party A\'s product images, descriptions, pricing, and brand assets for such purpose, for the duration of this Agreement and subject to the terms herein.'),
     sectionHeading('15. TERM & TERMINATION'),
     clauseTitle('15.1  Initial Term'), body('This Agreement shall be effective from the date of signing and shall remain in force for a minimum period of '+c.minimumTerm+' ("Lock-in Period").'),
     clauseTitle('15.2  Termination After Lock-in'), body('Upon expiry of the Lock-in Period, either party may terminate this Agreement by providing '+c.noticePeriod+' prior written notice to the other party.'),
@@ -11601,7 +11601,7 @@ function buildAgreementDoc(c, logoBuffer) {
       ],
     },
     spacer(20),
-    { text:'This document is prepared under CrosCrow Standard Policy and is legally binding upon execution.', fontSize:8.5, color:MGRAY, italics:true, alignment:'center' },
+    { text:'This document is prepared under CROSCROW Standard Policy and is legally binding upon execution.', fontSize:8.5, color:MGRAY, italics:true, alignment:'center' },
   ];
 
   return {
@@ -11623,7 +11623,7 @@ function buildAgreementDoc(c, logoBuffer) {
       stack:[
         { canvas:[{ type:'line', x1:0, y1:0, x2:PAGE_W, y2:0, lineWidth:0.75, lineColor:LINE }], margin:[0,0,0,4] },
         { columns:[
-          { text:"CrosCrow – India's Curated Streetwear Marketplace", fontSize:7.5, color:MGRAY },
+          { text:"CROSCROW – India's Curated Streetwear Marketplace", fontSize:7.5, color:MGRAY },
           { text:`Page ${currentPage-1} of ${pageCount-1}`, fontSize:7.5, color:MGRAY, alignment:'right' },
         ]},
       ],
@@ -11664,7 +11664,7 @@ app.post('/admin/generate-agreement', adminAuth, async (req, res) => {
     const logoBuffer = fs.existsSync(logoPath) ? fs.readFileSync(logoPath) : null;
     const docDef = buildAgreementDoc(c, logoBuffer);
     const buffer = await pdfToBuffer(docDef);
-    const fname  = `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}_${(c.effectiveDate||c.agreementDate).replace(/\s+/g,'_')}.pdf`;
+    const fname  = `CROSCROW_Agreement_${c.partyA.name.replace(/\s+/g,'_')}_${(c.effectiveDate||c.agreementDate).replace(/\s+/g,'_')}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
@@ -11736,7 +11736,7 @@ app.post('/admin/agreements', adminAuth, async (req, res) => {
       if (smtpCfg) {
         const panelUrl = `${SERVER_URL}/vendor.html`;
         const html = emailBase(`📄 Vendor Partnership Agreement — ${c.partyA.name}`, '#0A0A0A', `
-          <div class="subtitle">Please find your CrosCrow Vendor Partnership Agreement attached. Review, sign, and upload your signed copy via the vendor panel.</div>
+          <div class="subtitle">Please find your CROSCROW Vendor Partnership Agreement attached. Review, sign, and upload your signed copy via the vendor panel.</div>
           <div class="info-box">
             <div class="info-row"><span class="info-label">Vendor</span><span class="info-val"><strong>${c.partyA.name}</strong></span></div>
             <div class="info-row"><span class="info-label">Effective Date</span><span class="info-val">${c.effectiveDate}</span></div>
@@ -11749,12 +11749,12 @@ app.post('/admin/agreements', adminAuth, async (req, res) => {
         const adminEmail = 'harshitvj24@gmail.com';
         const transporter = require('nodemailer').createTransport({ host:smtpCfg.host, port:parseInt(smtpCfg.port)||587, secure:parseInt(smtpCfg.port)===465, auth:{ user:smtpCfg.user, pass:smtpCfg.pass } });
         await transporter.sendMail({
-          from: `"${smtpCfg.fromName||'CrosCrow'}" <${smtpCfg.fromEmail||smtpCfg.user}>`,
+          from: `"${smtpCfg.fromName||'CROSCROW'}" <${smtpCfg.fromEmail||smtpCfg.user}>`,
           replyTo: adminEmail,
           to: vendorEmail,
-          subject: `📄 Partnership Agreement — ${c.partyA.name} — CrosCrow`,
+          subject: `📄 Partnership Agreement — ${c.partyA.name} — CROSCROW`,
           html,
-          attachments: [{ filename: `CrosCrow_Agreement_${c.partyA.name.replace(/\s+/g,'_')}.pdf`, content: buffer }],
+          attachments: [{ filename: `CROSCROW_Agreement_${c.partyA.name.replace(/\s+/g,'_')}.pdf`, content: buffer }],
         });
       }
     }
@@ -11788,7 +11788,7 @@ app.get('/admin/agreements/:id/download', adminAuth, async (req, res) => {
     if (!files.length) return res.status(404).json({ error: 'File not found' });
     const ext = (files[0].contentType || '').includes('pdf') ? 'pdf' : 'docx';
     res.setHeader('Content-Type', files[0].contentType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.${ext}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="CROSCROW_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.${ext}"`);
     gridFsBucket.openDownloadStream(gridId).on('error', () => res.status(404).end()).pipe(res);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -11823,16 +11823,16 @@ app.post('/admin/agreements/:id/approve', adminAuth, async (req, res) => {
     if (doc.vendor_email) {
       const smtpCfg = await getSmtpConfig();
       if (smtpCfg) {
-        const html = emailBase('✅ Agreement Approved — CrosCrow', '#0A0A0A', `
-          <div class="subtitle">Your signed Vendor Partnership Agreement has been reviewed and approved by CrosCrow.</div>
+        const html = emailBase('✅ Agreement Approved — CROSCROW', '#0A0A0A', `
+          <div class="subtitle">Your signed Vendor Partnership Agreement has been reviewed and approved by CROSCROW.</div>
           <div class="info-box">
             <div class="info-row"><span class="info-label">Vendor</span><span class="info-val"><strong>${doc.vendor_name}</strong></span></div>
             <div class="info-row"><span class="info-label">Approved On</span><span class="info-val">${new Date().toLocaleDateString('en-IN')}</span></div>
             ${(valid_till||doc.valid_till) ? `<div class="info-row"><span class="info-label">Agreement Valid Till</span><span class="info-val"><strong>${valid_till||doc.valid_till}</strong></span></div>` : ''}
           </div>
-          <p style="font-size:13px;color:#6b7280;line-height:1.7">Your partnership with CrosCrow is now officially active. Thank you for completing the onboarding process.</p>
+          <p style="font-size:13px;color:#6b7280;line-height:1.7">Your partnership with CROSCROW is now officially active. Thank you for completing the onboarding process.</p>
         `);
-        await sendEmail({ to: doc.vendor_email, subject: '✅ Your CrosCrow Agreement is Approved', html, shopifyId:'', trigger:'agreement_approved' });
+        await sendEmail({ to: doc.vendor_email, subject: '✅ Your CROSCROW Agreement is Approved', html, shopifyId:'', trigger:'agreement_approved' });
       }
     }
     res.json({ success: true });
@@ -12061,7 +12061,7 @@ app.get('/vendor/agreements/:id/download', vendorAuth, async (req, res) => {
     if (!files.length) return res.status(404).json({ error: 'File not found' });
     const ext = (files[0].contentType || '').includes('pdf') ? 'pdf' : 'docx';
     res.setHeader('Content-Type', files[0].contentType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="CrosCrow_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.${ext}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="CROSCROW_Agreement_${doc.vendor_name.replace(/\s+/g,'_')}.${ext}"`);
     gridFsBucket.openDownloadStream(gridId).on('error', () => res.status(404).end()).pipe(res);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -12114,15 +12114,15 @@ async function agreementExpiryCron() {
       if (!smtpCfg) continue;
       const urgency = daysLeft <= 7 ? '🔴 Urgent' : '🟡 Reminder';
       const html = emailBase(`${urgency}: Agreement Expiring in ${daysLeft} Days`, '#0A0A0A', `
-        <div class="subtitle">Your CrosCrow Vendor Partnership Agreement is expiring soon.</div>
+        <div class="subtitle">Your CROSCROW Vendor Partnership Agreement is expiring soon.</div>
         <div class="info-box">
           <div class="info-row"><span class="info-label">Vendor</span><span class="info-val"><strong>${ag.vendor_name}</strong></span></div>
           <div class="info-row"><span class="info-label">Expires On</span><span class="info-val"><strong>${ag.valid_till}</strong></span></div>
           <div class="info-row"><span class="info-label">Days Remaining</span><span class="info-val">${daysLeft} days</span></div>
         </div>
-        <p style="font-size:13px;color:#6b7280;line-height:1.7">Please contact CrosCrow to initiate a renewal. A new agreement will be sent to you shortly.</p>
+        <p style="font-size:13px;color:#6b7280;line-height:1.7">Please contact CROSCROW to initiate a renewal. A new agreement will be sent to you shortly.</p>
       `);
-      if (ag.vendor_email) await sendEmail({ to: ag.vendor_email, subject: `${urgency}: Your CrosCrow Agreement Expires in ${daysLeft} Days`, html, shopifyId:'', trigger:'agreement_expiry' });
+      if (ag.vendor_email) await sendEmail({ to: ag.vendor_email, subject: `${urgency}: Your CROSCROW Agreement Expires in ${daysLeft} Days`, html, shopifyId:'', trigger:'agreement_expiry' });
       await sendEmail({ to: 'harshitvj24@gmail.com', subject: `${urgency}: Agreement Expiring — ${ag.vendor_name} (${daysLeft}d left)`, html, shopifyId:'', trigger:'agreement_expiry_admin' });
       const flag = daysLeft <= 7 ? { reminded_7d: true } : { reminded_30d: true };
       await mdb.collection('vendor_agreements').updateOne({ _id: ag._id }, { $set: flag });
@@ -12176,7 +12176,7 @@ app.delete("/admin/penalties/:id", requirePermission('penalties'), async (req, r
         html: emailBase(
           'Penalty Waived',
           '#10b981',
-          `<div class="subtitle">Good news! The penalty raised for order <strong>${p.order_name}</strong> has been waived off by CrosCrow. No amount will be deducted from your settlement.</div>
+          `<div class="subtitle">Good news! The penalty raised for order <strong>${p.order_name}</strong> has been waived off by CROSCROW. No amount will be deducted from your settlement.</div>
            <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
              <tr><td style="padding:8px;color:#94a3b8;width:130px">Order</td><td style="padding:8px;color:#e2e8f0;font-weight:600">${p.order_name}</td></tr>
              <tr style="background:#0f1f2e"><td style="padding:8px;color:#94a3b8">Original Reason</td><td style="padding:8px;color:#f59e0b">${p.trigger_reason==='48hr_breach'?'48hr fulfilment breach':p.trigger_reason==='eta_breach'?'ETA date missed':p.trigger_reason}</td></tr>
@@ -12276,10 +12276,10 @@ app.put("/admin/penalties/:id", requirePermission('penalties'), async (req, res)
         ${admin_note ? `<div class="info-row"><span class="info-label">Admin Note</span><span class="info-val">${admin_note}</span></div>` : ''}
       </div>
       ${isConfirm ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">This amount will appear in your next settlement invoice. To dispute, contact us on WhatsApp.</p>
-      <div style="text-align:center"><a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CrosCrow, I want to dispute the penalty for order ${p.order_name}`)}"
+      <div style="text-align:center"><a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I want to dispute the penalty for order ${p.order_name}`)}"
          style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp"> Dispute on WhatsApp</a></div>`
-      : `<p style="font-size:13px;color:#6b7280;line-height:1.7">No action is required from your side. Thank you for your continued partnership with CrosCrow.</p>`}
+      : `<p style="font-size:13px;color:#6b7280;line-height:1.7">No action is required from your side. Thank you for your continued partnership with CROSCROW.</p>`}
     `);
     await sendEmail({ to: vcfg.email, subject: isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: `penalty_${status}` });
   }
@@ -13001,7 +13001,7 @@ Reply with:
 *1️⃣* — Order is delayed (share reason + ETA)
 *2️⃣* — Already shipped (share AWB + courier)
 
-_Ship now to avoid penalty — CrosCrow Ops_`;
+_Ship now to avoid penalty — CROSCROW Ops_`;
                 const sent = await waSocket.sendMessage(jid, { text: warnMsg });
                 const actualJid = sent?.key?.remoteJid || jid;
                 await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || sid, shopify_id: String(sid), orderRef: String(sid).replace(/^#/, ''), vendor });
@@ -13087,7 +13087,7 @@ const AUTO_HOLD_TAG  = '🫲 On Hold';
 
 function templateOrderOnHoldCustomer({ order, adsStrip = '' }) {
   const waNum  = (process.env.WHATSAPP_NUMBER || '').replace(/\D/g, '');
-  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I want to confirm my order ' + order.name + ' placed on CrosCrow. Please proceed.')}` : '#';
+  const waLink = waNum ? `https://wa.me/${waNum}?text=${encodeURIComponent('Hi! I want to confirm my order ' + order.name + ' placed on CROSCROW. Please proceed.')}` : '#';
   const items  = order.line_items || [];
   const total  = parseFloat(order.total_price || 0);
   const shipping = parseFloat(order.shipping_lines?.[0]?.price || 0);
@@ -13106,7 +13106,7 @@ function templateOrderOnHoldCustomer({ order, adsStrip = '' }) {
 
   <!-- HERO IMAGE -->
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CrosCrow" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
+    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">ORDER UPDATE &nbsp;|&nbsp; ACTION REQUIRED</div>
       <div style="font-size:28px;font-weight:900;color:#f59e0b;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">ORDER<br>ON HOLD.</div>
@@ -13211,9 +13211,9 @@ function templateOrderOnHoldCustomer({ order, adsStrip = '' }) {
   <!-- FOOTER -->
   ${adsStrip}
   <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CrosCrow" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
+    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
     <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CrosCrow &middot; Automated Notification &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
   </div>
 
 </div>
@@ -13473,7 +13473,7 @@ async function shipsagarPushShipment({ awb, courierCode = '', orderNo = '', cust
         MobileNo:     mobileNo || adminPhone,
         ShipmentType: 'surface',
         CountryName:  'India',
-        CompanyName:  'CrosCrow',
+        CompanyName:  'CROSCROW',
       }),
     }).then(r => r.json());
     console.log(`📦 ShipSagar push AWB ${awb}: ${res.status} — ${res.message}`);
@@ -13902,7 +13902,7 @@ function templateAdminReport({ data, period }) {
 
   const body = `
     <div style="text-align:center;margin-bottom:24px">
-      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">CrosCrow Order Report</div>
+      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">CROSCROW Order Report</div>
       <div style="font-size:20px;font-weight:800;color:#f8fafc;margin-top:4px">${period.from} → ${period.to}</div>
     </div>
 
@@ -13966,7 +13966,7 @@ function templateAdminReport({ data, period }) {
       </table>
     </div>` : ''}
 
-    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Generated by CrosCrow JARVIS • ${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}</p>
+    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Generated by CROSCROW JARVIS • ${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}</p>
   `;
   return emailBase(`📊 Order Report: ${period.from} → ${period.to}`, '#6366f1', body);
 }
@@ -13988,7 +13988,7 @@ function templateVendorReport({ vendorName, data, period }) {
 
   const body = `
     <div style="text-align:center;margin-bottom:24px">
-      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your CrosCrow Performance Report</div>
+      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your CROSCROW Performance Report</div>
       <div style="font-size:20px;font-weight:800;color:#f8fafc;margin-top:4px">${period.from} → ${period.to}</div>
     </div>
 
@@ -14030,7 +14030,7 @@ function templateVendorReport({ vendorName, data, period }) {
       </table>
     </div>` : `<div style="text-align:center;padding:20px;color:#10b981;font-weight:700;font-size:14px">🎉 All your orders are fulfilled — great work, ${vendorName}!</div>`}
 
-    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Keep up the great work! Fast fulfilment earns seller rewards on CrosCrow.</p>
+    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Keep up the great work! Fast fulfilment earns seller rewards on CROSCROW.</p>
 
     <div style="text-align:center;margin-top:4px;margin-bottom:8px;">
       <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
@@ -14052,7 +14052,7 @@ async function sendReport(fromDate, toDate) {
   const adminHtml = templateAdminReport({ data, period: { from: fromDate, to: toDate } });
   for (const email of adminEmails) {
     try {
-      await sendEmail({ to: email, subject: `📊 CrosCrow Order Report: ${fromDate} → ${toDate}`, html: adminHtml, shopifyId: 'report', trigger: 'weekly_report_admin' });
+      await sendEmail({ to: email, subject: `📊 CROSCROW Order Report: ${fromDate} → ${toDate}`, html: adminHtml, shopifyId: 'report', trigger: 'weekly_report_admin' });
       sent++;
     } catch (e) { errors.push(`${email}: ${e.message}`); }
   }
@@ -14064,7 +14064,7 @@ async function sendReport(fromDate, toDate) {
       if (!vc.email) continue;
       const vHtml = templateVendorReport({ vendorName: vc.vendor_name, data, period: { from: fromDate, to: toDate } });
       try {
-        await sendEmail({ to: vc.email, subject: `📊 Your CrosCrow Report: ${fromDate} → ${toDate}`, html: vHtml, shopifyId: 'report', trigger: 'weekly_report_vendor' });
+        await sendEmail({ to: vc.email, subject: `📊 Your CROSCROW Report: ${fromDate} → ${toDate}`, html: vHtml, shopifyId: 'report', trigger: 'weekly_report_vendor' });
         sent++;
       } catch (e) { errors.push(`${vc.vendor_name}: ${e.message}`); }
     }
@@ -15207,7 +15207,7 @@ function templateRRCompletedCustomer({ req }) {
   const body = `
     <div class="subtitle">${req.type === 'exchange' ? 'Your exchange order has been delivered!' : 'We\'ve received your returned item. Your request is complete.'}</div>
     ${rrInfoBox(req)}
-    ${req.type === 'exchange' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">Enjoy your new item! Thank you for shopping with CrosCrow.</p>` : `<p style="font-size:13px;color:#6b7280;line-height:1.7">Your refund will be processed within 5–7 business days. Thank you for your patience.</p>`}`;
+    ${req.type === 'exchange' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">Enjoy your new item! Thank you for shopping with CROSCROW.</p>` : `<p style="font-size:13px;color:#6b7280;line-height:1.7">Your refund will be processed within 5–7 business days. Thank you for your patience.</p>`}`;
   return emailBase(`${req.type === 'exchange' ? 'Exchange Complete ✓' : 'Return Received ✓'} — ${req.request_id}`, '#10b981', body);
 }
 
@@ -15570,7 +15570,7 @@ app.get("/track/shipment-status", async (req, res) => {
       const pushResult = await shipsagarPushShipment({ awb, courierCode: courier, orderNo: so.name || shopify_order_id || awb, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) });
       console.log(`📦 Track-page push AWB ${awb}: ok=${pushResult?.ok} courier=${courier}`);
     } catch(e) { console.error('Track-page push error:', e.message); }
-    return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
+    return res.json({ status: '', awb, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -15836,7 +15836,7 @@ app.get("/track/rr-shipment-status", async (req, res) => {
       });
       console.log(`📦 RR ShipSagar push AWB ${awb} (${direction}): ok=${pushResult?.ok} courier=${courierCode}`);
     } catch(e) { console.error('RR ShipSagar push error:', e.message); }
-    return res.json({ status: '', awb, message: 'Tracking requested from CrosCrow channels — refresh in a moment.' });
+    return res.json({ status: '', awb, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -15885,7 +15885,7 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
     if (cfg) {
       const adminEmail = 'harshitvj24@gmail.com';
       const html = emailBase('🚨 New Vendor Application', '#6366f1', `
-        <div class="subtitle">A new vendor has applied to join CrosCrow. Review and approve their application in Admin → Onboarding.</div>
+        <div class="subtitle">A new vendor has applied to join CROSCROW. Review and approve their application in Admin → Onboarding.</div>
         <div class="info-box">
           <div class="info-row"><span class="info-label">Name</span><span class="info-val"><strong>${doc.contact_name}</strong></span></div>
           <div class="info-row"><span class="info-label">Brand</span><span class="info-val"><strong>${doc.brand_name}</strong></span></div>
@@ -15993,7 +15993,7 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
     const cfg = await getSmtpConfig();
     if (cfg) {
       const panelUrl = `${SERVER_URL}/vendor.html`;
-      const html = emailBase('🎉 Welcome to CrosCrow — You\'re Approved!', '#10b981', `
+      const html = emailBase('🎉 Welcome to CROSCROW — You\'re Approved!', '#10b981', `
         <div class="subtitle">Congratulations! Your vendor application has been approved. Here are your login credentials.</div>
         <div class="info-box">
           <div class="info-row"><span class="info-label">Panel URL</span><span class="info-val"><a href="${panelUrl}" style="color:#6366f1">${panelUrl}</a></span></div>
@@ -16003,7 +16003,7 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
         <p style="font-size:13px;color:#6b7280;line-height:1.7;margin-top:12px">Please log in and change your password on first login. If you have any questions, reply to this email.</p>
         <div style="text-align:center;margin-top:20px"><a href="${panelUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px">Login to Vendor Panel →</a></div>
       `);
-      await sendEmail({ to: ob.email, subject: '🎉 You\'re Approved — CrosCrow Vendor Access', html, shopifyId: '', trigger: 'vendor_approved' });
+      await sendEmail({ to: ob.email, subject: '🎉 You\'re Approved — CROSCROW Vendor Access', html, shopifyId: '', trigger: 'vendor_approved' });
     }
 
     if (placeholderProductId) {
@@ -16032,12 +16032,12 @@ app.post('/admin/onboards/:email/reject', adminAuth, async (req, res) => {
 
     const cfg = await getSmtpConfig();
     if (cfg && reason) {
-      const html = emailBase('Update on Your CrosCrow Application', '#ef4444', `
-        <div class="subtitle">Thank you for applying to CrosCrow. After review, we're unable to approve your application at this time.</div>
+      const html = emailBase('Update on Your CROSCROW Application', '#ef4444', `
+        <div class="subtitle">Thank you for applying to CROSCROW. After review, we're unable to approve your application at this time.</div>
         ${reason ? `<div class="info-box"><div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div></div>` : ''}
         <p style="font-size:13px;color:#6b7280;margin-top:12px">If you believe this is an error or would like to re-apply, please contact us.</p>
       `);
-      await sendEmail({ to: ob.email, subject: 'Update on Your CrosCrow Vendor Application', html, shopifyId: '', trigger: 'vendor_rejected' });
+      await sendEmail({ to: ob.email, subject: 'Update on Your CROSCROW Vendor Application', html, shopifyId: '', trigger: 'vendor_rejected' });
     }
 
     res.json({ success: true });
@@ -17365,7 +17365,7 @@ async function scCheckOrderConfirmation(orderName) {
 }
 
 const SUPPORT_TOOLS = [
-  { type:'function', function:{ name:'search_products', description:'Search the CrosCrow catalog for products by name/keyword (e.g. "sweatpants", "waffle hoodie"). Use when the customer is browsing/shopping, not asking about an existing order. If the result has curated_url=true and no products but has a collections entry, reply with "Here\'s our [category] collection — browse and pick what you like:" and the link is appended automatically. Do NOT say the link is below your message in this case — just use a natural sentence.', parameters:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } } },
+  { type:'function', function:{ name:'search_products', description:'Search the CROSCROW catalog for products by name/keyword (e.g. "sweatpants", "waffle hoodie"). Use when the customer is browsing/shopping, not asking about an existing order. If the result has curated_url=true and no products but has a collections entry, reply with "Here\'s our [category] collection — browse and pick what you like:" and the link is appended automatically. Do NOT say the link is below your message in this case — just use a natural sentence.', parameters:{ type:'object', properties:{ query:{type:'string'} }, required:['query'] } } },
   { type:'function', function:{ name:'get_order_status', description:'Look up a specific order\'s live status, stage, AWB, and per-vendor shipment details. Requires the order number; ask for it if not given.', parameters:{ type:'object', properties:{ order_name:{type:'string', description:'Order number, with or without #'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'get_delay_reason', description:'Explain why an order has not shipped yet — checks if the vendor submitted a specific delay reason, otherwise gives a generic explanation.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'start_return_exchange', description:'Customer wants to return or exchange an item from an order. Returns a link to the self-serve return/exchange flow.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
@@ -17383,7 +17383,7 @@ async function scRunTool(name, args, contact) {
   }
 }
 
-const SC_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You help customers:
+const SC_SYSTEM_PROMPT = `You are the CROSCROW support concierge — warm, sharp, concise, never robotic. You help customers:
 1. Find products ("I'm looking for sweatpants") — use search_products, then describe 2-3 best matches naturally and mention they're shown as cards below your message. If a matching collection page is returned too, mention they can browse the full collection for more options.
 2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking card is shown automatically below your message, so don't repeat every detail — just the headline). If the order's stage is "new", "hold", or "cancelled", a confirm_url will be present in the tool result — proactively tell the customer they need to confirm the order and that the confirm link is shown below your message, instead of just saying it hasn't shipped yet.
 3. Explain delays — use get_delay_reason. If there's a specific vendor reason, relay it warmly with the ETA. If not, use the generic explanation, but reassure them it's being handled.
@@ -17394,7 +17394,7 @@ Rules:
 - If a customer is venting/frustrated, acknowledge it briefly before helping.
 - If something is outside what your tools can do, say you're flagging it for a human and that's fine.`;
 
-const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CrosCrow support concierge — warm, sharp, concise, never robotic. You're replying on WhatsApp so there are NO cards or buttons — only plain text.
+const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CROSCROW support concierge — warm, sharp, concise, never robotic. You're replying on WhatsApp so there are NO cards or buttons — only plain text.
 
 TOOLS:
 1. search_products — when customer is browsing/shopping. Two possible results:
@@ -17406,7 +17406,7 @@ TOOLS:
 5. check_order_confirmation — use whenever customer mentions confirming order, ₹99 payment, or confirmation link.
 
 ORDER CONFIRMATION PROCESS (very important — know this well):
-- CrosCrow requires a ₹99 advance for COD orders. This is NOT an extra charge — it's adjusted in the final COD amount (customer pays total minus ₹99 at delivery).
+- CROSCROW requires a ₹99 advance for COD orders. This is NOT an extra charge — it's adjusted in the final COD amount (customer pays total minus ₹99 at delivery).
 - Purpose: prevents fake/mistaken orders, speeds up dispatch, supports independent brands.
 - Confirmation link format: https://croscrow.com/pages/orderconfirm?o=ORDER_NAME
 - The ₹99 is collected via this link. After payment, team verifies and marks order confirmed.
@@ -17573,7 +17573,7 @@ async function scNotifyVendorsIfNeeded(chatId) {
     const html = emailBase(
       `Customer chat about Order ${chat.order_name}`,
       '#6366f1',
-      `<div class="subtitle">A customer is chatting with CrosCrow support about <strong>${chat.order_name}</strong>, which includes your products. You can read the conversation and reply directly if relevant.</div>
+      `<div class="subtitle">A customer is chatting with CROSCROW support about <strong>${chat.order_name}</strong>, which includes your products. You can read the conversation and reply directly if relevant.</div>
        <div style="text-align:center;margin-top:20px"><a href="${link}" class="cta">Open Chat →</a></div>`
     );
     try { await sendEmail({ to: vc.email, subject: `💬 Customer asking about Order ${chat.order_name}`, html, shopifyId: chat.shopify_order_id, trigger: 'support_chat_vendor_notify' }); }
@@ -17587,7 +17587,7 @@ app.post('/support/chat/start', async (req, res) => {
   try {
     const { shop_domain, customer_email, customer_phone } = req.body || {};
     const chat = await SC.createChat({ shop_domain, customer_email, customer_phone });
-    const welcome = await SC.addMessage(chat._id, { sender:'assistant', text:"Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?" });
+    const welcome = await SC.addMessage(chat._id, { sender:'assistant', text:"Hi! I'm the CROSCROW support assistant. Looking for a product, or want an update on an order?" });
     res.json({ chatId: chat._id, messages: [welcome] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -17702,7 +17702,7 @@ app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
         ).catch(() => {});
       }
     }
-    await waSocket.sendMessage(jid, { text: `🧪 *CrosCrow Test Alert*\n\nAdmin WA is working ✅\nSent at: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\nJID used: ${jid}` });
+    await waSocket.sendMessage(jid, { text: `🧪 *CROSCROW Test Alert*\n\nAdmin WA is working ✅\nSent at: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\nJID used: ${jid}` });
     res.json({ ok: true, jid, stored_jid: adminJidDoc?.jid || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -17798,7 +17798,7 @@ async function runSupportInsightAnalysis() {
     const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
     if (!GROQ_KEY && !DEEPSEEK_KEY) return;
 
-    const prompt = `You are a QA analyst for CrosCrow, a multi-vendor e-commerce marketplace. Review these customer support chat transcripts from the last 48 hours and identify issues that need improvement.
+    const prompt = `You are a QA analyst for CROSCROW, a multi-vendor e-commerce marketplace. Review these customer support chat transcripts from the last 48 hours and identify issues that need improvement.
 
 For each issue found, output a JSON object. Return a JSON array of findings (max 15 most important). Each finding:
 {
@@ -17921,7 +17921,7 @@ async function generateWaDailyReport() {
     return `${i+1}. [${who}]\n   Q: "${q.slice(0,120)}" → Bot: "${a}..." ${flags}`;
   }).join('\n');
 
-  const prompt = `You are analyzing CrosCrow's WhatsApp support bot performance for today (${now.toDateString()}, ${label}).
+  const prompt = `You are analyzing CROSCROW's WhatsApp support bot performance for today (${now.toDateString()}, ${label}).
 
 Here are ${total} customer chats (condensed):
 ${digest}
@@ -17989,7 +17989,7 @@ async function generateWaWeeklyReport() {
   const allCustomerTexts = (chatSummaries || []).flatMap(c => c.customer_messages).slice(0, 100).join('\n');
   const confusionSummary = Object.entries(byKeyword).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>`${k}(${v})`).join(', ');
 
-  const prompt = `You are analyzing CrosCrow's WhatsApp support bot performance for the past 7 days.
+  const prompt = `You are analyzing CROSCROW's WhatsApp support bot performance for the past 7 days.
 
 Weekly stats:
 - Total chats: ${total}
@@ -18288,7 +18288,7 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
   if (!text?.trim()) return res.status(400).json({ error: 'text required' });
   const chat = await SC.get(req.params.id);
   if (!chat) return res.status(404).json({ error: 'Chat not found' });
-  const msg = await SC.addMessage(chat._id, { sender:'admin', sender_name:'CrosCrow Support', text: text.trim() });
+  const msg = await SC.addMessage(chat._id, { sender:'admin', sender_name:'CROSCROW Support', text: text.trim() });
   res.json({ message: msg });
 });
 
@@ -18526,7 +18526,7 @@ app.get('/admin/whatsapp-test', adminAuth, async (req, res) => {
   try {
     if (!waSocket) return res.status(503).json({ error: 'WhatsApp bot not running (WHATSAPP_BOT_ENABLED=true required)' });
     const to = (req.query.to || '').replace(/\D/g, '');
-    const msg = req.query.msg || 'Test message from CrosCrow bot ✅';
+    const msg = req.query.msg || 'Test message from CROSCROW bot ✅';
     const imageUrl = req.query.image || '';
     if (!to) return res.status(400).json({ error: 'to= phone number required' });
     const jid = `91${to.replace(/^91/, '')}@s.whatsapp.net`;
@@ -18585,7 +18585,7 @@ app.get('/admin/whatsapp-test-list', adminAuth, async (req, res) => {
         description: 'Tap below to choose an option',
         buttonText: 'Select Option',
         listType: 'SINGLE_SELECT',
-        footerText: 'CrosCrow',
+        footerText: 'CROSCROW',
         sections: [{
           title: 'Order Actions',
           rows: [
@@ -18704,7 +18704,7 @@ Please reply with:
 *1️⃣* — Order is delayed (share reason + ETA)
 *2️⃣* — Already shipped (share AWB + courier)
 
-_CrosCrow Operations Team_`;
+_CROSCROW Operations Team_`;
 
     const sent = await waSocket.sendMessage(jid, { text: nudgeMsg });
     const actualJid = sent?.key?.remoteJid || jid;
@@ -18909,7 +18909,7 @@ async function waHandleVendorReply(sock, sender, text) {
     const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
     const GROQ_KEY = process.env.GROQ_API_KEY;
     const prompt = [
-      { role: 'system', content: `You are a parser for vendor WhatsApp replies to CrosCrow support nudges. Today is ${today}. ${orderContext}\n\nExtract structured info from the vendor message and reply ONLY with valid JSON, no other text.\n\nJSON schema:\n{\n  "type": "tracking" | "delay" | "unknown",\n  "awb": "<AWB/tracking number if found, else null>",\n  "courier": "<courier name if found, else null>",\n  "reason": "<delay reason in one sentence if type is delay, else null>",\n  "eta": "<expected ship/delivery date as DD-MMM-YYYY if mentioned, else null>",\n  "order_num": "<order number digits only if explicitly mentioned, else null>"\n}\n\nExamples:\n- "it will be shipped on 12th july" → {"type":"delay","awb":null,"courier":null,"reason":"Order will be shipped by 12th July","eta":"12-Jul-2026","order_num":null}\n- "4959596 bluedart" → {"type":"tracking","awb":"4959596","courier":"BlueDart","reason":null,"eta":null,"order_num":null}\n- "TRACK 2531 123456 delhivery" → {"type":"tracking","awb":"123456","courier":"Delhivery","reason":null,"eta":null,"order_num":"2531"}\n- "fabric shortage, ship by 15 july" → {"type":"delay","awb":null,"courier":null,"reason":"Fabric shortage causing delay","eta":"15-Jul-2026","order_num":null}` },
+      { role: 'system', content: `You are a parser for vendor WhatsApp replies to CROSCROW support nudges. Today is ${today}. ${orderContext}\n\nExtract structured info from the vendor message and reply ONLY with valid JSON, no other text.\n\nJSON schema:\n{\n  "type": "tracking" | "delay" | "unknown",\n  "awb": "<AWB/tracking number if found, else null>",\n  "courier": "<courier name if found, else null>",\n  "reason": "<delay reason in one sentence if type is delay, else null>",\n  "eta": "<expected ship/delivery date as DD-MMM-YYYY if mentioned, else null>",\n  "order_num": "<order number digits only if explicitly mentioned, else null>"\n}\n\nExamples:\n- "it will be shipped on 12th july" → {"type":"delay","awb":null,"courier":null,"reason":"Order will be shipped by 12th July","eta":"12-Jul-2026","order_num":null}\n- "4959596 bluedart" → {"type":"tracking","awb":"4959596","courier":"BlueDart","reason":null,"eta":null,"order_num":null}\n- "TRACK 2531 123456 delhivery" → {"type":"tracking","awb":"123456","courier":"Delhivery","reason":null,"eta":null,"order_num":"2531"}\n- "fabric shortage, ship by 15 july" → {"type":"delay","awb":null,"courier":null,"reason":"Fabric shortage causing delay","eta":"15-Jul-2026","order_num":null}` },
       { role: 'user', content: text }
     ];
     const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
@@ -19026,7 +19026,7 @@ Please reply with:
 *1️⃣* — Order is delayed (share reason + ETA)
 *2️⃣* — Already shipped (share AWB + courier)
 
-_CrosCrow Operations Team_`;
+_CROSCROW Operations Team_`;
 
     try {
       const jid = `91${VENDOR_WA}@s.whatsapp.net`;
@@ -19282,7 +19282,7 @@ async function waLogConfusionInsight(chat, phone, customerText, botReply, trigge
 // ── Quick reply menus ──────────────────────────────────────────────────────
 const WA_MENUS = {
   welcome:
-    `Hi! 👋 Welcome to CrosCrow support.\n\nWhat can I help you with?\n\n1️⃣ Track my order\n2️⃣ Browse products\n3️⃣ Return / Exchange\n4️⃣ Talk to a human`,
+    `Hi! 👋 Welcome to CROSCROW support.\n\nWhat can I help you with?\n\n1️⃣ Track my order\n2️⃣ Browse products\n3️⃣ Return / Exchange\n4️⃣ Talk to a human`,
 
   order_not_confirmed: (name) =>
     `Your order *${name}* needs confirmation before the vendor can ship it.\n\n1️⃣ Send me the confirm link\n2️⃣ Why do I need to confirm?\n3️⃣ Talk to a human`,
@@ -19669,7 +19669,7 @@ async function startBaileysBot() {
               { $set: { phone: WA_ADMIN_NO, jid: sender, updated_at: new Date().toISOString() } },
               { upsert: true }
             ).catch(() => {});
-            await sock.sendMessage(sender, { text: `✅ Admin mode active. Ask me anything about CrosCrow — orders, RTO, revenue, vendors, stuck shipments.` });
+            await sock.sendMessage(sender, { text: `✅ Admin mode active. Ask me anything about CROSCROW — orders, RTO, revenue, vendors, stuck shipments.` });
             waPending.delete(sender); // must clear before continue — finally block is not reached by continue
             continue;
           }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CrosCrow — Vendor Portal</title>
+  <title>CROSCROW — Vendor Portal</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -1073,7 +1073,7 @@
     const hrsLeft = Math.floor(remaining / 3600000);
     const minsLeft = Math.floor((remaining % 3600000) / 60000);
     const label = penaltyTriggered ? '!' : hrsLeft > 0 ? `${hrsLeft}h` : `${minsLeft}m`;
-    const tip = penaltyTriggered ? 'Penalty triggered — contact CrosCrow' : `${hrsLeft}h ${minsLeft}m left to dispatch before penalty`;
+    const tip = penaltyTriggered ? 'Penalty triggered — contact CROSCROW' : `${hrsLeft}h ${minsLeft}m left to dispatch before penalty`;
     return (
       <span title={tip} style={{display:'inline-flex',alignItems:'center',verticalAlign:'middle',marginLeft:4,cursor:'default'}}>
         <svg width="26" height="26" viewBox="0 0 26 26">
@@ -1387,7 +1387,7 @@
                   </span>
                 </div>
                 <div className="detail-row"><span className="dr-label">Your Revenue</span><span className="dr-val" style={{color:'var(--teal)'}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
-                {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CrosCrow)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
+                {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CROSCROW)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
                 {order.advancePaid>0 && <div className="detail-row"><span className="dr-label">Advance / Partial Paid</span><span className="dr-val" style={{color:'var(--green)'}}>− {fmtCur(order.advancePaid, order.currency)}</span></div>}
                 {trackHistory.length > 0 && (
                   <div className="detail-row" style={{flexDirection:'column',alignItems:'flex-start',gap:4}}>
@@ -2505,7 +2505,7 @@
                   {p.pending_removal_request || reqRemoval[p.id]==='done'
                     ? <span style={{fontSize:9,padding:'2px 7px',borderRadius:99,background:'rgba(239,68,68,0.1)',color:'var(--red)',border:'1px solid var(--red)',fontWeight:700}}>⏳ REMOVAL REQUESTED</span>
                     : <button onClick={async()=>{
-                        if (!window.confirm(`Request removal of "${p.title}" from CrosCrow store? Admin will review before deleting.`)) return;
+                        if (!window.confirm(`Request removal of "${p.title}" from CROSCROW store? Admin will review before deleting.`)) return;
                         setReqRemoval(r=>({...r,[p.id]:'loading'}));
                         try {
                           const res = await fetch(`${API}/vendor/products/${p.id}/request-removal`,{
@@ -2668,7 +2668,7 @@
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
             <div>
               <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>🛍 My Shopify Store Products</div>
-              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Products from your connected Shopify store and their mapping status on CrosCrow.</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Products from your connected Shopify store and their mapping status on CROSCROW.</div>
             </div>
             {!shopifyLoaded
               ? <button className="btn btn-ghost btn-sm" onClick={loadShopifyProducts} disabled={shopifyLoad}>
@@ -2697,7 +2697,7 @@
                 <div>
                   <div style={{fontWeight:700,color:'#f87171',fontSize:13,marginBottom:6}}>Your Shopify store is not connected</div>
                   <div style={{fontSize:12,color:'#fca5a5',lineHeight:1.7}}>
-                    Without live inventory sync, CrosCrow has no way of knowing when your products go out of stock.
+                    Without live inventory sync, CROSCROW has no way of knowing when your products go out of stock.
                     This means <strong style={{color:'#f87171'}}>orders can be placed for items you can't fulfil</strong> — leading to cancellations,
                     customer complaints, and damage to your brand's reputation on our platform.
                   </div>
@@ -2838,7 +2838,7 @@
               <StatCard color="green"  icon="✓" label="Total Settled"               value={delLoading?'…':fmt(d.totalSettled)}      sub="from paid invoices"/>
               <StatCard color={isPend?'green':'red'} icon="○" label="Pending Settlement"
                 value={delLoading?'…':`${fmt(d.netPayable)} = ${isPend?'−':''}${fmt(d.pendingSettlement)}`}
-                sub={isPend?'CrosCrow owes you':'you owe CrosCrow'}/>
+                sub={isPend?'CROSCROW owes you':'you owe CROSCROW'}/>
             </div>
             <div className="card">
               <div className="card-header">
@@ -2857,7 +2857,7 @@
                       {label:`Commission (${d.commissionPct||20}%)`,val:`₹${(d.commission||0).toFixed(2)}`,color:'var(--yellow)'},
                       {label:'GST (18%)',                val:`₹${(d.gst||0).toFixed(2)}`,               color:'var(--orange)'},
                       d.advance>0 && {label:'Advance Adjusted',val:`−₹${(d.advance||0).toFixed(2)}`, color:'var(--green)'},
-                      {label:'Net Payable (all delivered)', val:`${isPayout?'CrosCrow pays you ':'You pay CrosCrow '}₹${Math.abs(d.netPayable||0).toFixed(2)}`, color:isPayout?'var(--green)':'var(--red)', bold:true},
+                      {label:'Net Payable (all delivered)', val:`${isPayout?'CROSCROW pays you ':'You pay CROSCROW '}₹${Math.abs(d.netPayable||0).toFixed(2)}`, color:isPayout?'var(--green)':'var(--red)', bold:true},
                       {label:'Already Settled (paid invoices)', val:`₹${(d.totalSettled||0).toFixed(2)}`, color:'var(--green)'},
                       {label:'Still Pending',            val:`${isPend?'CC owes you ':'You owe '}₹${Math.abs(d.pendingSettlement||0).toFixed(2)}`, color:isPend?'var(--green)':'var(--red)', bold:true},
                     ].filter(Boolean).map((row,i)=>(
@@ -2887,7 +2887,7 @@
               {invLoading ? (
                 <div style={{padding:16}}>{Array.from({length:4}).map((_,i)=><div key={i} className="skel" style={{height:60,borderRadius:8,marginBottom:10}}/>)}</div>
               ) : settlements.length===0 ? (
-                <div className="empty"><div className="empty-icon">🧾</div><div className="empty-title">No invoices yet</div><div className="empty-sub">Invoices are generated by CrosCrow after order delivery.</div></div>
+                <div className="empty"><div className="empty-icon">🧾</div><div className="empty-title">No invoices yet</div><div className="empty-sub">Invoices are generated by CROSCROW after order delivery.</div></div>
               ) : settlements.map(s=>{
                 const isCredit = s.net_payable < 0;
                 return (
@@ -2977,7 +2977,7 @@
                       const prepColl = (detail.orders||[]).filter(o=>o.payment_type==='prepaid').reduce((s,o)=>s+(o.my_revenue||0)*0.9,0);
                       return (<>
                         <div style={{borderTop:'1px solid var(--border)',marginTop:4,paddingTop:6}}>
-                          {prepColl>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--green)',fontWeight:600}}>Prepaid Collected by CrosCrow (MRP−10%)</span><span className="dr-val" style={{color:'var(--green)',fontWeight:600}}>−₹{prepColl.toFixed(2)}</span></div>}
+                          {prepColl>0 && <div className="detail-row"><span className="dr-label" style={{color:'var(--green)',fontWeight:600}}>Prepaid Collected by CROSCROW (MRP−10%)</span><span className="dr-val" style={{color:'var(--green)',fontWeight:600}}>−₹{prepColl.toFixed(2)}</span></div>}
                           {(detail.settlement.advance_total||0)>0 && <div className="detail-row"><span className="dr-label">Advance Collected (COD partial)</span><span className="dr-val">−₹{(detail.settlement.advance_total||0).toFixed(2)}</span></div>}
                           {(detail.settlement.total_shipping||0)>0 && (()=>{
                             const sh = detail.settlement.total_shipping||0;
@@ -3876,7 +3876,7 @@
       <div className="page">
         <div style={{marginBottom:18}}>
           <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:2}}>📋 My Agreement</div>
-          <div style={{fontSize:11,color:'var(--text-muted)'}}>Your partnership agreement with CrosCrow. Download, sign, and upload your signed copy below.</div>
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>Your partnership agreement with CROSCROW. Download, sign, and upload your signed copy below.</div>
         </div>
 
         {msg && <div style={{padding:'10px 14px',borderRadius:8,marginBottom:14,fontSize:12,background:msg.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',border:`1px solid ${msg.type==='success'?'rgba(16,185,129,0.3)':'rgba(239,68,68,0.3)'}`,color:msg.type==='success'?'var(--green)':'var(--red)'}}>{msg.text}</div>}
@@ -3886,7 +3886,7 @@
            <div style={{textAlign:'center',padding:48,color:'var(--text-muted)'}}>
              <div style={{fontSize:32,marginBottom:12}}>📄</div>
              <div style={{fontWeight:600,marginBottom:6}}>No agreement yet</div>
-             <div style={{fontSize:12}}>Your agreement will appear here once CrosCrow sends it.</div>
+             <div style={{fontSize:12}}>Your agreement will appear here once CROSCROW sends it.</div>
            </div>
          ) : (
            <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -3929,7 +3929,7 @@
                        <button onClick={async()=>{
                          const r = await fetch(`${API}/vendor/agreements/${ag.id}/download`, { headers:{ Authorization:`Bearer ${token}` } });
                          const blob = await r.blob();
-                         const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='CrosCrow_Agreement.pdf'; a.click(); URL.revokeObjectURL(url);
+                         const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='CROSCROW_Agreement.pdf'; a.click(); URL.revokeObjectURL(url);
                        }} style={{padding:'7px 14px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
                          📥 Download Agreement
                        </button>
@@ -3952,7 +3952,7 @@
                          <span style={{fontSize:11,color:'var(--green)',fontWeight:600}}>✓ Agreement active and approved</span>
                        )}
                        {isExpired && (
-                         <span style={{fontSize:11,color:'#ef4444',fontWeight:600}}>Agreement expired — contact CrosCrow for renewal</span>
+                         <span style={{fontSize:11,color:'#ef4444',fontWeight:600}}>Agreement expired — contact CROSCROW for renewal</span>
                        )}
                      </div>
                    </div>
@@ -4030,7 +4030,7 @@
         <div className="card" style={{marginBottom:14}}>
           <div className="card-header">
             <span className="card-title">My Profile</span>
-            <span className="card-sub">Used in invoice generation · Commission % is set by CrosCrow admin</span>
+            <span className="card-sub">Used in invoice generation · Commission % is set by CROSCROW admin</span>
           </div>
           <div style={{padding:16}}>
             {msg && <div className={`alert alert-${msg.type}`}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
@@ -4042,7 +4042,7 @@
                     <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:3}}>Your Commission Rate</div>
                     <div style={{fontSize:22,fontWeight:800,color:'var(--green)'}}>{profile.commission_pct||20}%</div>
                   </div>
-                  <div style={{fontSize:11,color:'var(--text-dim)'}}>Set by CrosCrow · Contact admin to change</div>
+                  <div style={{fontSize:11,color:'var(--text-dim)'}}>Set by CROSCROW · Contact admin to change</div>
                 </div>
 
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
@@ -4639,7 +4639,7 @@
     return (
       <div style={{padding:'24px',maxWidth:700}}>
         <h2 style={{margin:'0 0 4px',fontSize:20,color:'var(--text)'}}>🔄 Shopify Store Sync</h2>
-        <p style={{fontSize:13,color:'var(--text-muted)',marginTop:4,marginBottom:24}}>Connect your own Shopify store so CrosCrow admin can sync your products and inventory to the main store.</p>
+        <p style={{fontSize:13,color:'var(--text-muted)',marginTop:4,marginBottom:24}}>Connect your own Shopify store so CROSCROW admin can sync your products and inventory to the main store.</p>
 
         {msg && <div style={{marginBottom:16,padding:'10px 14px',borderRadius:8,background:msg.startsWith('✅')?'var(--green-dim)':'var(--red-bg)',color:msg.startsWith('✅')?'var(--green)':'var(--red)',fontSize:13}}>{msg}</div>}
 
@@ -4769,12 +4769,12 @@
                   </h3>
                   <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>
                     {noteModal.type==='upload'
-                      ? 'Ask admin to import this product as a new listing on CrosCrow store.'
-                      : 'Ask admin to map this product to an existing CrosCrow product. Add a note to help admin identify the right product.'}
+                      ? 'Ask admin to import this product as a new listing on CROSCROW store.'
+                      : 'Ask admin to map this product to an existing CROSCROW product. Add a note to help admin identify the right product.'}
                   </div>
                   <div style={{fontSize:12,fontWeight:600,color:'var(--text)',marginBottom:10}}>{noteModal.product.title}</div>
                   <textarea
-                    placeholder={noteModal.type==='mapping'?'e.g. This is the same as "NYC Black Oversized Tee" on CrosCrow store, please map to that product.':'Optional note to admin…'}
+                    placeholder={noteModal.type==='mapping'?'e.g. This is the same as "NYC Black Oversized Tee" on CROSCROW store, please map to that product.':'Optional note to admin…'}
                     value={noteText} onChange={e=>setNoteText(e.target.value)}
                     style={{width:'100%',boxSizing:'border-box',height:80,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontSize:12,fontFamily:'inherit',resize:'vertical'}}
                   />
@@ -5280,7 +5280,7 @@
           <label className="field-label">Password</label>
           <input className="field-input" type="password" placeholder="••••••••••" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&login()}/>
           <button className="login-btn" onClick={login} disabled={loginLoad||!uname||!pass}>{loginLoad?'Signing in…':'Sign In'}</button>
-          <div className="login-hint">Contact CrosCrow admin if you need access.</div>
+          <div className="login-hint">Contact CROSCROW admin if you need access.</div>
         </div>
       </div>
     );

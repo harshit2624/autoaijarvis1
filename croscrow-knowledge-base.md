@@ -1,4 +1,4 @@
-# CrosCrow Platform — Complete Knowledge Base
+# CROSCROW Platform — Complete Knowledge Base
 # Jarvis uses this to answer any question about how the panel works.
 # Last updated: July 2026
 
@@ -6,9 +6,9 @@
 
 ## 1. WHAT IS CROSCROW
 
-CrosCrow is a multi-vendor Shopify marketplace. Vendors (independent clothing brands) list their products on a shared Shopify store. When a customer orders, CrosCrow collects the payment, coordinates fulfillment with the vendor, and settles the vendor's share after deducting commission + GST.
+CROSCROW is a multi-vendor Shopify marketplace. Vendors (independent clothing brands) list their products on a shared Shopify store. When a customer orders, CROSCROW collects the payment, coordinates fulfillment with the vendor, and settles the vendor's share after deducting commission + GST.
 
-CrosCrow does NOT hold inventory and does NOT handle logistics costs — vendors ship directly to customers using their own courier accounts (Delhivery, Shiprocket, Bluedart, etc.).
+CROSCROW does NOT hold inventory and does NOT handle logistics costs — vendors ship directly to customers using their own courier accounts (Delhivery, Shiprocket, Bluedart, etc.).
 
 ---
 
@@ -44,7 +44,7 @@ A single customer order can have products from multiple vendors. Each vendor has
 ## 3. PENALTY SYSTEM
 
 ### Why Penalties Exist
-Vendors are required to ship within 48 hours of confirming an order. Delays hurt customer experience and CrosCrow's reputation. Penalties are a financial deterrent.
+Vendors are required to ship within 48 hours of confirming an order. Delays hurt customer experience and CROSCROW's reputation. Penalties are a financial deterrent.
 
 ### Penalty Timeline
 | Time from confirmation | What happens |
@@ -76,7 +76,7 @@ Vendors are required to ship within 48 hours of confirming an order. Delays hurt
 ## 4. COMMISSION & SETTLEMENT SYSTEM
 
 ### How Commission is Calculated
-CrosCrow charges vendors a commission % on every delivered order.
+CROSCROW charges vendors a commission % on every delivered order.
 
 ```
 Base = myRevenue (vendor's product price, excluding shipping)
@@ -96,18 +96,18 @@ For Prepaid orders:
 Default commission rate: 20% (configurable per vendor in vendor_config)
 
 ### What "My Revenue" Means
-`myRevenue` = the vendor's product price only. Shipping charge is separate and goes to CrosCrow (not vendor revenue). For multi-vendor orders, each vendor's revenue is their own line items only.
+`myRevenue` = the vendor's product price only. Shipping charge is separate and goes to CROSCROW (not vendor revenue). For multi-vendor orders, each vendor's revenue is their own line items only.
 
 ### Settlement Invoice
 - Generated monthly (or on demand) per vendor
 - Shows: all delivered orders in period, commission per order, penalties deducted, advance received, final amount owed TO vendor
-- If total commission+penalties > vendor revenue → vendor owes CrosCrow money (negative settlement)
+- If total commission+penalties > vendor revenue → vendor owes CROSCROW money (negative settlement)
 - Vendors can view their own invoices in the vendor panel
 
 ### Advance/Partial Payment Orders
 - Some COD orders require customer to pay an advance upfront (partial prepaid)
 - Advance is tracked in `order_meta.advance_paid`
-- At settlement: advance already received is shown as a credit to vendor (reduces what CrosCrow owes them)
+- At settlement: advance already received is shown as a credit to vendor (reduces what CROSCROW owes them)
 - Formula: `Net to vendor = myRevenue - commission - GST - penalties + advance_already_received`
 
 ### Settlement Status
@@ -226,7 +226,7 @@ System auto-generates tracking URLs from AWB + courier name (Delhivery: `delhive
 - Escalation to human agent
 
 ### How It Works
-1. Customer messages CrosCrow WA business number
+1. Customer messages CROSCROW WA business number
 2. Bot looks up customer's orders by phone number
 3. Answers using live order data from Shopify + internal stage data
 4. Complex queries escalated to admin support queue
@@ -253,7 +253,7 @@ Lets admin simulate: "If I spend ₹X on marketing and achieve Y% delivery rate,
 Key metrics:
 - **CAC** (Cost to Acquire Customer) — marketing spend / paid orders
 - **AOV** (Average Order Value) — from real delivered orders
-- **Commission %** — CrosCrow's take rate
+- **Commission %** — CROSCROW's take rate
 - **Delivery Rate** — % of orders successfully delivered (from completed orders only)
 
 Formula:
@@ -267,7 +267,7 @@ net = commissionRevenue - marketingSpend
 ROAS = commissionRevenue / marketingSpend
 ```
 
-Note: CrosCrow does NOT pay logistics. Vendors ship at their own cost. RTO only wastes the CAC spent acquiring that customer.
+Note: CROSCROW does NOT pay logistics. Vendors ship at their own cost. RTO only wastes the CAC spent acquiring that customer.
 
 ---
 
@@ -283,8 +283,8 @@ When courier fails delivery (wrong address, customer refused, not home 3 attempt
 - COD amount is NOT collected (no revenue for that order)
 - Commission is NOT charged on RTO orders
 
-### CC (CrosCrow) Inventory
-Some vendors drop-ship to CrosCrow's warehouse (CC Stock). These are tracked separately. Returns go to CC warehouse, not vendor.
+### CC (CROSCROW) Inventory
+Some vendors drop-ship to CROSCROW's warehouse (CC Stock). These are tracked separately. Returns go to CC warehouse, not vendor.
 
 ---
 
@@ -311,8 +311,8 @@ Total net payout to vendor for period: ₹X
 ```
 
 ### Prepaid vs COD at Settlement
-- Prepaid orders: CrosCrow already collected full payment from customer → owes vendor `myRevenue - commission - GST`
-- COD orders: vendor collects cash at delivery → vendor owes CrosCrow commission+GST from that cash
+- Prepaid orders: CROSCROW already collected full payment from customer → owes vendor `myRevenue - commission - GST`
+- COD orders: vendor collects cash at delivery → vendor owes CROSCROW commission+GST from that cash
 - Settlement shows net position (positive = CC pays vendor, negative = vendor pays CC)
 
 ### Invoice Number Format
@@ -345,7 +345,7 @@ deliveryRate = delivered ÷ (delivered + rto)   ← completed orders only
 
 ## 14. COD OUTSTANDING
 
-COD orders where vendor has collected cash but not yet remitted to CrosCrow (or offset in settlement):
+COD orders where vendor has collected cash but not yet remitted to CROSCROW (or offset in settlement):
 - Tracked as "COD outstanding" per vendor
 - Shown in vendor performance report
 - Should be reconciled at settlement time
@@ -386,11 +386,11 @@ COD orders where vendor has collected cash but not yet remitted to CrosCrow (or 
 
 ## 17. BUSINESS MODEL SUMMARY
 
-CrosCrow makes money from:
+CROSCROW makes money from:
 1. **Commission** — 20% of delivered order value (minus prepaid discount)
 2. **Shipping margin** — if shipping charged to customer > actual courier cost
 
-CrosCrow does NOT make money from:
+CROSCROW does NOT make money from:
 - RTO orders (no delivery, no commission)
 - Cancelled orders
 - Vendor penalties (those are a deterrent, not profit)
@@ -434,4 +434,4 @@ A: When vendor replies to a nudge, their JID is matched against wa_vendor_jids. 
 A: Order value = total customer paid (including shipping + all vendors). My revenue = just the vendor's product price (no shipping). Commission is on my revenue only.
 
 **Q: How does the advance/partial payment work?**
-A: Customer pays partial upfront (advance). Rest COD at delivery. At settlement, advance already collected is shown as deduction from what CrosCrow owes the vendor (vendor gets less at settlement because they already got some via prepaid advance).
+A: Customer pays partial upfront (advance). Rest COD at delivery. At settlement, advance already collected is shown as deduction from what CROSCROW owes the vendor (vendor gets less at settlement because they already got some via prepaid advance).

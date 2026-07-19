@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CrosCrow JARVIS — Full System Report</title>
+<title>CROSCROW JARVIS — Full System Report</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -155,10 +155,10 @@
   <!-- COVER -->
   <div class="cover">
     <div class="cover-label">Internal Documentation · Confidential</div>
-    <div class="cover-title">CrosCrow JARVIS<br>Complete System Report</div>
+    <div class="cover-title">CROSCROW JARVIS<br>Complete System Report</div>
     <div class="cover-sub">Full breakdown of the admin panel — order flows, email triggers, penalty logic, settlement engine, vendor sync, MongoDB architecture, and strategic recommendations for scaling.</div>
     <div class="cover-meta">
-      <div class="cover-meta-item"><div class="cover-meta-label">Prepared For</div><div class="cover-meta-val">CrosCrow Founders, Staff & Tech Team</div></div>
+      <div class="cover-meta-item"><div class="cover-meta-label">Prepared For</div><div class="cover-meta-val">CROSCROW Founders, Staff & Tech Team</div></div>
       <div class="cover-meta-item"><div class="cover-meta-label">System</div><div class="cover-meta-val">JARVIS Shopify Admin Panel</div></div>
       <div class="cover-meta-item"><div class="cover-meta-label">Store</div><div class="cover-meta-val">croscrowofficial.myshopify.com</div></div>
       <div class="cover-meta-item"><div class="cover-meta-label">Date</div><div class="cover-meta-val">April 2026</div></div>
@@ -236,7 +236,7 @@
       <div class="card-body">
         <table>
           <tr><th>Component</th><th>Method</th><th>Details</th></tr>
-          <tr><td><strong>Orders</strong></td><td>REST API</td><td><code>fetchAllOrders()</code> — cursor-based pagination, 250/page, fetches all statuses. Shopify is the source of truth for order data. CrosCrow adds meta (stage, AWB, advance) on top.</td></tr>
+          <tr><td><strong>Orders</strong></td><td>REST API</td><td><code>fetchAllOrders()</code> — cursor-based pagination, 250/page, fetches all statuses. Shopify is the source of truth for order data. CROSCROW adds meta (stage, AWB, advance) on top.</td></tr>
           <tr><td><strong>Webhooks</strong></td><td>POST /webhooks/orders</td><td>HMAC-verified. Receives <code>orders/create</code> → immediately sends new-order email + applies tag mappings. Keeps panel in sync without polling.</td></tr>
           <tr><td><strong>Access Token</strong></td><td>OAuth Client Credentials</td><td>Token fetched fresh via client_id + secret on startup. Cached with 55-min expiry auto-refresh. Scopes include all read/write permissions.</td></tr>
           <tr><td><strong>Fulfillment</strong></td><td>Fulfillment Orders API 2025-01</td><td>When vendor marks fulfilled: fetches open fulfillment_orders, creates fulfillment with AWB/courier, notifies customer via Shopify.</td></tr>
@@ -284,7 +284,7 @@
           <div style="width:10px;"></div>
           <div class="stage-pill" style="background:#f1f5f9;color:#475569;border-color:#cbd5e1;">✕ CANCELLED</div>
         </div>
-        <p style="font-size:12px;color:var(--muted);margin-top:10px;">Stages are CrosCrow-internal — stored in <code>order_meta.stage</code>. Shopify's own <code>fulfillment_status</code> (fulfilled/partial/unfulfilled) is tracked separately and used in reports. Multi-vendor orders also store per-vendor stage in <code>order_vendor_stage</code>.</p>
+        <p style="font-size:12px;color:var(--muted);margin-top:10px;">Stages are CROSCROW-internal — stored in <code>order_meta.stage</code>. Shopify's own <code>fulfillment_status</code> (fulfilled/partial/unfulfilled) is tracked separately and used in reports. Multi-vendor orders also store per-vendor stage in <code>order_vendor_stage</code>.</p>
       </div>
     </div>
 
@@ -343,8 +343,8 @@
       <div class="card-body">
         <table>
           <tr><th>Shopify financial_status</th><th>Our payment_type</th><th>What it means</th><th>Settlement impact</th></tr>
-          <tr><td><code>paid</code></td><td><span class="badge badge-green">prepaid</span></td><td>Customer paid full amount online at checkout</td><td>CrosCrow receives full MRP → pays vendor (MRP × 90%) − commission − GST</td></tr>
-          <tr><td><code>pending</code></td><td><span class="badge badge-yellow">cod</span></td><td>Cash on Delivery — vendor collects from customer</td><td>Vendor collects full MRP → pays CrosCrow commission + GST</td></tr>
+          <tr><td><code>paid</code></td><td><span class="badge badge-green">prepaid</span></td><td>Customer paid full amount online at checkout</td><td>CROSCROW receives full MRP → pays vendor (MRP × 90%) − commission − GST</td></tr>
+          <tr><td><code>pending</code></td><td><span class="badge badge-yellow">cod</span></td><td>Cash on Delivery — vendor collects from customer</td><td>Vendor collects full MRP → pays CROSCROW commission + GST</td></tr>
           <tr><td><code>partially_paid</code></td><td><span class="badge badge-blue">partial</span></td><td>Advance collected (e.g., ₹500 upfront, rest on delivery)</td><td>Like COD but advance deducted from what vendor owes</td></tr>
           <tr><td>Tag: <code>"500 partial"</code></td><td><span class="badge badge-blue">partial</span></td><td>Advance recorded via Shopify tag on COD order</td><td>Same as partially_paid flow</td></tr>
         </table>
@@ -577,7 +577,7 @@ gst        = commission × 0.18
 invoice    = commission + gst
 advance    = advance_paid (from order_meta)
 net_due    = invoice − advance
-type       = 'receivable' (vendor pays CrosCrow)</pre>
+type       = 'receivable' (vendor pays CROSCROW)</pre>
           </div>
           <div>
             <div style="font-weight:700;font-size:12px;margin-bottom:8px;color:var(--indigo);">Prepaid Order</div>
@@ -586,7 +586,7 @@ type       = 'receivable' (vendor pays CrosCrow)</pre>
 commission = base × (comm_pct / 100)
 gst        = commission × 0.18
 net        = −(base − commission − gst)
-type       = 'payout' (CrosCrow pays vendor)</pre>
+type       = 'payout' (CROSCROW pays vendor)</pre>
           </div>
         </div>
         <div class="insight insight-info" style="margin-top:12px;">
@@ -643,7 +643,7 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
       <div class="section-icon" style="background:#f0f9ff;">🏪</div>
       <div>
         <div class="section-title">07 — Vendor Shopify Sync</div>
-        <div class="section-sub">How vendor stores connect to CrosCrow</div>
+        <div class="section-sub">How vendor stores connect to CROSCROW</div>
       </div>
     </div>
 
@@ -661,15 +661,15 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
           </div>
           <div class="step">
             <div class="step-left"><div class="step-dot" style="background:#f5f3ff;color:#7c3aed;">3</div><div class="step-line"></div></div>
-            <div class="step-content"><div class="step-title">Products browsed & imported</div><div class="step-desc">Admin searches vendor's Shopify catalog (title search via <code>?q=</code>). Selects product → imports to CrosCrow store via Shopify Product API. Product created as DRAFT with vendor attribution.</div></div>
+            <div class="step-content"><div class="step-title">Products browsed & imported</div><div class="step-desc">Admin searches vendor's Shopify catalog (title search via <code>?q=</code>). Selects product → imports to CROSCROW store via Shopify Product API. Product created as DRAFT with vendor attribution.</div></div>
           </div>
           <div class="step">
             <div class="step-left"><div class="step-dot" style="background:#fffbeb;color:#d97706;">4</div><div class="step-line"></div></div>
-            <div class="step-content"><div class="step-title">Variant mapping saved</div><div class="step-desc">Each vendor variant ID ↔ CrosCrow variant ID mapping stored in <code>vendor_product_mappings</code>. This allows inventory sync: when CrosCrow variant sells, vendor's stock can be decremented.</div></div>
+            <div class="step-content"><div class="step-title">Variant mapping saved</div><div class="step-desc">Each vendor variant ID ↔ CROSCROW variant ID mapping stored in <code>vendor_product_mappings</code>. This allows inventory sync: when CROSCROW variant sells, vendor's stock can be decremented.</div></div>
           </div>
           <div class="step">
             <div class="step-left"><div class="step-dot" style="background:#ecfdf5;color:#059669;">5</div><div class="step-line"></div></div>
-            <div class="step-content"><div class="step-title">Price & Stock sync</div><div class="step-desc">Admin can trigger sync anytime from the map modal — fetches latest price + inventory from vendor store, updates CrosCrow listings.</div></div>
+            <div class="step-content"><div class="step-title">Price & Stock sync</div><div class="step-desc">Admin can trigger sync anytime from the map modal — fetches latest price + inventory from vendor store, updates CROSCROW listings.</div></div>
           </div>
         </div>
       </div>
@@ -726,7 +726,7 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
       </tr>
       <tr>
         <td><strong>🔄 Vendor Sync</strong></td><td>Tech / Catalog</td>
-        <td>Connect vendor Shopify stores, browse their products, import to CrosCrow, map variants, sync price/inventory.</td>
+        <td>Connect vendor Shopify stores, browse their products, import to CROSCROW, map variants, sync price/inventory.</td>
         <td>Connect store → Browse catalog → Import product → Map variants → Sync stock.</td>
       </tr>
       <tr>
@@ -746,7 +746,7 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
       </tr>
       <tr>
         <td><strong>⚙️ Settings</strong></td><td>Admin</td>
-        <td>CrosCrow company profile (for invoices) + per-vendor profiles (company name, GSTIN, PAN, bank details).</td>
+        <td>CROSCROW company profile (for invoices) + per-vendor profiles (company name, GSTIN, PAN, bank details).</td>
         <td>Edit company info, save vendor bank details for settlement invoices.</td>
       </tr>
       <tr>
@@ -873,7 +873,7 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
       <div class="insight-icon">💡</div>
       <div class="insight-body">
         <div class="insight-title">Observation: JARVIS AI uses real Shopify data but no meta enrichment</div>
-        <div class="insight-text">JARVIS AI (Claude) fetches Shopify orders for its context but doesn't pull CrosCrow meta (stage, advance, AWB). So if you ask "how many orders are confirmed?" it uses Shopify's fulfillment_status, not our internal stage. This leads to incorrect answers. <strong>Fix:</strong> Merge CrosCrow meta into orders before passing to AI context window.</div>
+        <div class="insight-text">JARVIS AI (Claude) fetches Shopify orders for its context but doesn't pull CROSCROW meta (stage, advance, AWB). So if you ask "how many orders are confirmed?" it uses Shopify's fulfillment_status, not our internal stage. This leads to incorrect answers. <strong>Fix:</strong> Merge CROSCROW meta into orders before passing to AI context window.</div>
       </div>
     </div>
   </div>
@@ -940,11 +940,11 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
         </div>
         <div class="insight insight-idea" style="margin-bottom:0;">
           <div class="insight-icon">🤖</div>
-          <div class="insight-body"><div class="insight-title">JARVIS AI — Enriched with Meta</div><div class="insight-text">Merge CrosCrow order meta (stage, advance, AWB) into JARVIS context. Enable commands like "confirm all new COD orders from Vendor X", "generate settlement for Vendor Y for last month". True natural-language ops.</div></div>
+          <div class="insight-body"><div class="insight-title">JARVIS AI — Enriched with Meta</div><div class="insight-text">Merge CROSCROW order meta (stage, advance, AWB) into JARVIS context. Enable commands like "confirm all new COD orders from Vendor X", "generate settlement for Vendor Y for last month". True natural-language ops.</div></div>
         </div>
         <div class="insight insight-idea" style="margin-bottom:0;">
           <div class="insight-icon">📦</div>
-          <div class="insight-body"><div class="insight-title">Inventory Management</div><div class="insight-text">Currently product mappings exist but inventory sync is manual. Build auto-decrement: when CrosCrow order placed → vendor inventory decremented. Low stock alerts → flag in vendor portal + email vendor to restock.</div></div>
+          <div class="insight-body"><div class="insight-title">Inventory Management</div><div class="insight-text">Currently product mappings exist but inventory sync is manual. Build auto-decrement: when CROSCROW order placed → vendor inventory decremented. Low stock alerts → flag in vendor portal + email vendor to restock.</div></div>
         </div>
       </div>
     </div>
@@ -954,7 +954,7 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
       <div class="two-col">
         <div class="insight insight-idea" style="margin-bottom:0;">
           <div class="insight-icon">🌐</div>
-          <div class="insight-body"><div class="insight-title">Multi-store Architecture</div><div class="insight-text">As CrosCrow grows to multiple Shopify stores (regions, brands), the panel needs to support store switching. The MongoDB + Express layer already abstracts Shopify cleanly — just parameterise the SHOP constant.</div></div>
+          <div class="insight-body"><div class="insight-title">Multi-store Architecture</div><div class="insight-text">As CROSCROW grows to multiple Shopify stores (regions, brands), the panel needs to support store switching. The MongoDB + Express layer already abstracts Shopify cleanly — just parameterise the SHOP constant.</div></div>
         </div>
         <div class="insight insight-idea" style="margin-bottom:0;">
           <div class="insight-icon">📱</div>
@@ -988,7 +988,7 @@ type       = 'payout' (CrosCrow pays vendor)</pre>
   </div>
 
   <div style="text-align:center;padding:32px 0;border-top:1px solid var(--border);margin-top:24px;color:var(--light);font-size:11px;">
-    CrosCrow JARVIS System Report · Generated April 2026 · Confidential — Internal Use Only
+    CROSCROW JARVIS System Report · Generated April 2026 · Confidential — Internal Use Only
   </div>
 
 </div>

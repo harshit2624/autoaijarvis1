@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CrosCrow — Admin Portal</title>
+  <title>CROSCROW — Admin Portal</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -1502,7 +1502,7 @@
             </div>
 
             <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
-              <div className="detail-box-title" style={{marginBottom:14}}>CrosCrow Metadata</div>
+              <div className="detail-box-title" style={{marginBottom:14}}>CROSCROW Metadata</div>
               <div className="form-grid">
                 <div style={{gridColumn: (order.vendors||[]).length > 1 ? '1/-1' : undefined}}>
                   <label className="form-label">
@@ -1865,7 +1865,7 @@
                     <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>Base Revenue</div><div style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(calc.base)}</div></div>
                     <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>Commission</div><div style={{color:'var(--yellow)',fontWeight:700}}>{fmtCur(calc.commission)}</div></div>
                     <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>GST (18%)</div><div style={{color:'var(--orange)',fontWeight:700}}>{fmtCur(calc.gst)}</div></div>
-                    <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>{calc.type==='payout'?'CrosCrow Pays':'Vendor Owes'}</div><div style={{color:calc.type==='payout'?'var(--green)':'var(--red)',fontWeight:700}}>{fmtCur(Math.abs(calc.net))}</div></div>
+                    <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:4}}>{calc.type==='payout'?'CROSCROW Pays':'Vendor Owes'}</div><div style={{color:calc.type==='payout'?'var(--green)':'var(--red)',fontWeight:700}}>{fmtCur(Math.abs(calc.net))}</div></div>
                   </div>
                 </div>
               );
@@ -1918,7 +1918,7 @@
                         const isBot      = !isCustomer && !isAdmin && !isVendor;
                         const bubbleColor = isCustomer ? '#1a2d1a' : isAdmin ? 'var(--indigo-dim)' : isVendor ? '#1a1a2d' : 'var(--bg-card2)';
                         const textColor   = isCustomer ? '#4ade80' : isAdmin ? 'var(--indigo)' : isVendor ? '#818cf8' : 'var(--text-muted)';
-                        const label       = isCustomer ? 'Customer' : isAdmin ? 'CrosCrow' : isVendor ? (m.sender_name||'Vendor') : 'Bot';
+                        const label       = isCustomer ? 'Customer' : isAdmin ? 'CROSCROW' : isVendor ? (m.sender_name||'Vendor') : 'Bot';
                         return (
                           <div key={i} style={{display:'flex',flexDirection:'column',alignItems:isCustomer?'flex-end':'flex-start'}}>
                             <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2,paddingLeft:4,paddingRight:4}}>{label} · {m.created_at ? new Date(m.created_at).toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
@@ -1935,7 +1935,7 @@
                       <div style={{display:'flex',gap:8,padding:'10px 12px',borderTop:'1px solid var(--border)'}}>
                         <input
                           className="form-input" style={{flex:1,fontSize:12}}
-                          placeholder="Reply as CrosCrow Support…"
+                          placeholder="Reply as CROSCROW Support…"
                           value={commReply[String(chat._id)]||''}
                           onChange={e=>setCommReply(p=>({...p,[String(chat._id)]:e.target.value}))}
                           onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&sendCommReply(String(chat._id))}
@@ -2001,7 +2001,7 @@
     const prepaidOrders   = (orders||[]).filter(o => o.payment_type === 'prepaid');
     const codOrders       = (orders||[]).filter(o => o.payment_type !== 'prepaid');
     const prepaidDiscount = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0)*0.1, 0);
-    // CrosCrow collects MRP - 10% discount from prepaid customer
+    // CROSCROW collects MRP - 10% discount from prepaid customer
     const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + ((o.my_revenue||0)*0.9), 0);
     const taxableValue    = (s.gross_revenue||0) - prepaidDiscount;
     // COD shipping from settlement_orders (stored at generation time from Shopify shipping_lines)
@@ -2062,7 +2062,7 @@
               <div className="inv-header">
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
                   <div>
-                    <div className="inv-title">{croscrow.company_name||'CrosCrow'}</div>
+                    <div className="inv-title">{croscrow.company_name||'CROSCROW'}</div>
                     <div className="inv-sub">Marketplace · GST Compliant Invoice</div>
                     {croscrow.website && <div style={{fontSize:9,color:'#888'}}>{croscrow.website}</div>}
                   </div>
@@ -2078,7 +2078,7 @@
               <div className="inv-grid">
                 <div>
                   <span className="inv-label">From (Marketplace)</span>
-                  <span className="inv-val">{croscrow.company_name||'CrosCrow Marketplace'}</span>
+                  <span className="inv-val">{croscrow.company_name||'CROSCROW Marketplace'}</span>
                   {croscrow.address && <span style={{fontSize:9,color:'#666'}}>{croscrow.address}{croscrow.city?', '+croscrow.city:''}{croscrow.state?', '+croscrow.state:''} {croscrow.pincode||''}</span>}
                   {croscrow.gst_no  && <span style={{fontSize:9,color:'#666'}}>GSTIN: {croscrow.gst_no}</span>}
                   {croscrow.pan_no  && <span style={{fontSize:9,color:'#666'}}>PAN: {croscrow.pan_no}</span>}
@@ -2245,7 +2245,7 @@
                   })()}
 
                   <div style={{borderTop:'1px solid #ddd',marginTop:4,paddingTop:6}}>
-                    {prepaidCollected>0 && <div className="inv-row" style={{color:'#10b981',fontWeight:600}}><span>Prepaid Collected by CrosCrow (MRP−10%)</span><span>−₹{prepaidCollected.toFixed(2)}</span></div>}
+                    {prepaidCollected>0 && <div className="inv-row" style={{color:'#10b981',fontWeight:600}}><span>Prepaid Collected by CROSCROW (MRP−10%)</span><span>−₹{prepaidCollected.toFixed(2)}</span></div>}
                     {(s.advance_total||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Advance Collected (COD partial)</span><span>−₹{(s.advance_total||0).toFixed(2)}</span></div>}
                     {(s.penalty_deduction||0)>0 && <div className="inv-row" style={{color:'#ef4444',fontWeight:600}}><span>⚠ Penalty Deduction</span><span>+₹{(s.penalty_deduction).toFixed(2)}</span></div>}
                     {(s.extra_discount||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Discount</span><span>−₹{(s.extra_discount).toFixed(2)}</span></div>}
@@ -2253,7 +2253,7 @@
                     {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Adj.</span><span>{s.shipping_adjustment>0?'+':'−'}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
                   </div>
                   <div className="inv-row inv-total">
-                    <span>{isCredit ? '↑ CrosCrow Pays Vendor' : '↓ Vendor Pays CrosCrow'}</span>
+                    <span>{isCredit ? '↑ CROSCROW Pays Vendor' : '↓ Vendor Pays CROSCROW'}</span>
                     <span>₹{Math.abs(displayNet).toFixed(2)}</span>
                   </div>
                 </div>
@@ -2263,7 +2263,7 @@
                   <div className="inv-pay-hdr">Payment Collection Breakdown</div>
                   {prepaidCollected > 0 && (
                     <div className="inv-pay-row">
-                      <span style={{color:'#888'}}>Prepaid Collected by CrosCrow (MRP − 10%)</span>
+                      <span style={{color:'#888'}}>Prepaid Collected by CROSCROW (MRP − 10%)</span>
                       <span style={{fontWeight:700,color:'#10b981'}}>₹{prepaidCollected.toFixed(2)}</span>
                     </div>
                   )}
@@ -2283,7 +2283,7 @@
                   )}
                   {totalCodShipping > 0 && (
                     <div className="inv-pay-row">
-                      <span style={{color:'#888'}}>COD Shipping Collected by Vendor → CrosCrow</span>
+                      <span style={{color:'#888'}}>COD Shipping Collected by Vendor → CROSCROW</span>
                       <span style={{fontWeight:700,color:'#3b82f6'}}>₹{totalCodShipping.toFixed(2)}</span>
                     </div>
                   )}
@@ -2308,7 +2308,7 @@
                   <span>Computer-generated settlement statement · {s.invoice_no}</span>
                   <span>{croscrow.email||'settlements@croscrow.com'}</span>
                 </div>
-                <div style={{marginTop:3}}>{croscrow.company_name||'CrosCrow Marketplace'} · All rights reserved · {fmtDate(s.created_at)}</div>
+                <div style={{marginTop:3}}>{croscrow.company_name||'CROSCROW Marketplace'} · All rights reserved · {fmtDate(s.created_at)}</div>
               </div>
             </div>
           </div>
@@ -4568,10 +4568,10 @@
           <div style={{padding:16}}>
             <div style={{fontSize:11,color:'var(--indigo)',fontWeight:700,marginBottom:8}}>Commission Logic</div>
             <div style={{fontSize:11,color:'var(--text-dim)',lineHeight:1.7}}>
-              <div><strong>COD:</strong> Commission% × Order Value + 18% GST = Vendor Invoice (vendor pays CrosCrow)</div>
-              <div><strong>Prepaid:</strong> 10% vendor discount → commission on discounted price. CrosCrow collected full → pays vendor (value − commission − GST)</div>
+              <div><strong>COD:</strong> Commission% × Order Value + 18% GST = Vendor Invoice (vendor pays CROSCROW)</div>
+              <div><strong>Prepaid:</strong> 10% vendor discount → commission on discounted price. CROSCROW collected full → pays vendor (value − commission − GST)</div>
               <div><strong>Partial:</strong> COD logic, but advance collected is deducted from final payable</div>
-              <div><strong>Shipping:</strong> Retained 100% by CrosCrow, commission applies only on product value</div>
+              <div><strong>Shipping:</strong> Retained 100% by CROSCROW, commission applies only on product value</div>
             </div>
           </div>
         </div>
@@ -4694,7 +4694,7 @@
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
-        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CrosCrow pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}` });
+        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}` });
         onSaved();
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSaving(false);
@@ -4735,12 +4735,12 @@
               <div>
                 <label className="form-label">Extra Discount (₹)</label>
                 <input className="form-input" type="number" min="0" placeholder="0" value={discount} onChange={e=>setDiscount(e.target.value)}/>
-                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Reduces vendor's payable / increases CrosCrow's payout</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Reduces vendor's payable / increases CROSCROW's payout</div>
               </div>
               <div>
                 <label className="form-label">Shipping Charge Adjustment (₹)</label>
                 <input className="form-input" type="number" placeholder="0 (positive adds, negative deducts)" value={shipping} onChange={e=>setShipping(e.target.value)}/>
-                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Shipping is CrosCrow's — positive = vendor owes more</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Shipping is CROSCROW's — positive = vendor owes more</div>
               </div>
               <div>
                 <label className="form-label">Additional Advance / Partial (₹)</label>
@@ -4760,7 +4760,7 @@
                 <div style={{fontSize:24,fontWeight:800,color:isCredit?'var(--green)':'var(--red)'}}>
                   {isCredit?'↑':'↓'} ₹{Math.abs(preview.netPayable).toFixed(2)}
                 </div>
-                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{isCredit?'CrosCrow pays vendor':'Vendor pays CrosCrow'}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{isCredit?'CROSCROW pays vendor':'Vendor pays CROSCROW'}</div>
               </div>
             )}
           </div>
@@ -4868,7 +4868,7 @@
         const blob = await r.blob();
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `CrosCrow_GST_${gstFrom}_to_${gstTo}.csv`;
+        a.download = `CROSCROW_GST_${gstFrom}_to_${gstTo}.csv`;
         a.click();
         URL.revokeObjectURL(a.href);
         setGstMsg({ type:'success', text:'GST sheet downloaded!' });
@@ -4975,9 +4975,9 @@
                   <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10}}>
                     {[
                       {label:'Gross Sales',              value:fmt(t.gross),              color:'indigo', tip:'Total revenue from all delivered orders'},
-                      {label:'Commission Earned',        value:fmt(t.commission),         color:'orange', tip:'CrosCrow commission on all delivered orders'},
+                      {label:'Commission Earned',        value:fmt(t.commission),         color:'orange', tip:'CROSCROW commission on all delivered orders'},
                       {label:'GST on Commission',        value:fmt(t.gst),                color:'orange', tip:'18% GST on commission (your tax liability)'},
-                      {label:'Prepaid Collected by CC',  value:fmt(t.prepaidCollected),   color:'cyan',   tip:'Prepaid order money sitting with CrosCrow'},
+                      {label:'Prepaid Collected by CC',  value:fmt(t.prepaidCollected),   color:'cyan',   tip:'Prepaid order money sitting with CROSCROW'},
                       {label:'COD Commission Due',       value:fmt(t.codCommission),      color:'yellow', tip:'Commission + GST to collect on delivery for COD orders'},
                       {label:'Advance Adjusted',         value:fmt(t.advance),            color:'green',  tip:'₹99 advances collected, deducted from vendor dues'},
                       {label:'Total Settled (Paid)',     value:fmt(t.totalSettled),       color:'green',  tip:'Amount already paid/settled via invoices'},
@@ -5369,7 +5369,7 @@
                   </button>
                 </div>
                 <div style={{marginTop:10,fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
-                  Columns: Date · Invoice No · Vendor · GST No · Location · Total Sales · Vendor Discount · Commissionable Sales · Commission · Shipping · CrosCrow Discount · Subtotal · HSN · IGST/SGST/CGST · Total GST · Total with GST
+                  Columns: Date · Invoice No · Vendor · GST No · Location · Total Sales · Vendor Discount · Commissionable Sales · Commission · Shipping · CROSCROW Discount · Subtotal · HSN · IGST/SGST/CGST · Total GST · Total with GST
                 </div>
               </div>
             </div>
@@ -5547,7 +5547,7 @@
                             <span style={{color:isCredit?'var(--green)':'var(--red)',fontWeight:700}}>
                               {isCredit?'↑ ':'↓ '}₹{Math.abs(s.net_payable||0).toFixed(2)}
                             </span>
-                            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{isCredit?'CrosCrow pays':'Vendor pays'}</div>
+                            <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{isCredit?'CROSCROW pays':'Vendor pays'}</div>
                           </td>
                           <td><span className={`badge b-${s.status}`}><span className="bdot"/>{s.status.toUpperCase()}</span></td>
                           <td>
@@ -5674,7 +5674,7 @@
       try {
         const r = await fetch(`${API}/admin/croscrow-profile`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(ccProfile)});
         if (!r.ok) throw new Error('Save failed');
-        setCcMsg({type:'success',text:'CrosCrow profile saved.'});
+        setCcMsg({type:'success',text:'CROSCROW profile saved.'});
       } catch(e) { setCcMsg({type:'error',text:e.message}); }
       setCcSaving(false);
     };
@@ -5704,9 +5704,9 @@
 
     return (
       <div className="page">
-        {/* CrosCrow Profile */}
+        {/* CROSCROW Profile */}
         <ProfileForm
-          title="⬡ CrosCrow Marketplace — Company Profile"
+          title="⬡ CROSCROW Marketplace — Company Profile"
           color="indigo"
           fields={PROFILE_FIELDS}
           values={ccProfile}
@@ -5791,7 +5791,7 @@
      EMAIL SETTINGS VIEW
   ══════════════════════════════════ */
   function EmailSettings({ token }) {
-    const [smtp,      setSmtp]      = useState({ host:'', port:'587', user:'', pass:'', fromName:'CrosCrow', fromEmail:'', adminEmail:'' });
+    const [smtp,      setSmtp]      = useState({ host:'', port:'587', user:'', pass:'', fromName:'CROSCROW', fromEmail:'', adminEmail:'' });
     const [saving,    setSaving]    = useState(false);
     const [testing,   setTesting]   = useState(false);
     const [testTo,    setTestTo]    = useState('');
@@ -5805,7 +5805,7 @@
     const [togglingEmail, setTogglingEmail] = useState(false);
 
     // Ads state
-    const [ads, setAds] = useState({ enabled: false, headline: 'Shop More at CrosCrow', products: [] });
+    const [ads, setAds] = useState({ enabled: false, headline: 'Shop More at CROSCROW', products: [] });
     const [adsLoading, setAdsLoading] = useState(false);
     const [adsSaving, setAdsSaving] = useState(false);
     const [adsMsg, setAdsMsg] = useState(null);
@@ -6003,7 +6003,7 @@
               {field('Port', 'port', 'text', '587')}
               {field('Username / Email', 'user', 'text', 'you@gmail.com')}
               {field('Password / App Password', 'pass', 'password', '••••••••')}
-              {field('From Name', 'fromName', 'text', 'CrosCrow')}
+              {field('From Name', 'fromName', 'text', 'CROSCROW')}
               {field('From Email', 'fromEmail', 'text', 'orders@croscrow.com')}
               <div style={{gridColumn:'1/-1'}}>
                 <label className="form-label">Admin Email (receives Delivered notifications)</label>
@@ -6086,7 +6086,7 @@
             {/* Headline */}
             <div style={{marginBottom:16}}>
               <label className="form-label">Strip Headline</label>
-              <input className="form-input" value={ads.headline||''} onChange={e=>setAds(a=>({...a,headline:e.target.value}))} placeholder="Shop More at CrosCrow"/>
+              <input className="form-input" value={ads.headline||''} onChange={e=>setAds(a=>({...a,headline:e.target.value}))} placeholder="Shop More at CROSCROW"/>
             </div>
 
             {/* Current products */}
@@ -6950,7 +6950,7 @@
                   <button className={`btn btn-sm ${tab==='products'?'btn-primary':'btn-ghost'}`} onClick={()=>setTab('products')}>Products</button>
                   <button className={`btn btn-sm ${tab==='mappings'?'btn-primary':'btn-ghost'}`} onClick={()=>{ setTab('mappings'); loadMappings(); }}>Mappings ({mappings.length})</button>
                   <button className={`btn btn-sm ${tab==='approvals'?'btn-primary':'btn-ghost'}`} onClick={()=>{ setTab('approvals'); loadApprovals(); }} style={{borderColor:'var(--yellow)',color:tab==='approvals'?'#fff':'var(--yellow)'}}>📤 Approvals {approvals.filter(a=>a.status==='pending').length>0?`(${approvals.filter(a=>a.status==='pending').length})`:''}</button>
-                  <button className="btn btn-sm btn-ghost" onClick={syncInventory} disabled={syncing} title="Sync price & inventory from vendor store to CrosCrow for all mapped variants">
+                  <button className="btn btn-sm btn-ghost" onClick={syncInventory} disabled={syncing} title="Sync price & inventory from vendor store to CROSCROW for all mapped variants">
                     {syncing?'Syncing…':'↻ Sync Price & Stock'}
                   </button>
                 </div>
@@ -7180,7 +7180,7 @@
                           </div>
                         </div>
                         <div style={{fontSize:16,color:'var(--text-muted)',flexShrink:0}}>→</div>
-                        {/* CrosCrow side */}
+                        {/* CROSCROW side */}
                         <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
                           {m.croscrow_image
                             ? <img src={m.croscrow_image} style={{width:40,height:40,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
@@ -7287,10 +7287,10 @@
 
                 {smartMap.step==='search_cc' && (<>
                   <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14}}>
-                    Found <strong>{smartMap.vendorVariants.length}</strong> vendor variants. Search the CrosCrow product to map to:
+                    Found <strong>{smartMap.vendorVariants.length}</strong> vendor variants. Search the CROSCROW product to map to:
                   </div>
                   <div style={{display:'flex',gap:8,marginBottom:10}}>
-                    <input className="form-input" placeholder="Search CrosCrow products…" value={ccSearch} onChange={e=>setCcSearch(e.target.value)}
+                    <input className="form-input" placeholder="Search CROSCROW products…" value={ccSearch} onChange={e=>setCcSearch(e.target.value)}
                       onKeyDown={e=>e.key==='Enter'&&ccSearch.trim().length>1&&searchCcProducts(ccSearch.trim())} style={{flex:1}}/>
                     <button className="btn btn-sm btn-primary" onClick={()=>ccSearch.trim().length>1&&searchCcProducts(ccSearch.trim())} disabled={ccSearching}>{ccSearching?'…':'Search'}</button>
                   </div>
@@ -7379,12 +7379,12 @@
         {mapModal && (
           <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.7)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
             <div style={{background:'var(--bg-card)',borderRadius:14,padding:28,width:500,maxWidth:'90vw',maxHeight:'80vh',overflowY:'auto'}}>
-              <h3 style={{margin:'0 0 4px',color:'var(--text)',fontSize:15}}>Map Variant to CrosCrow Product</h3>
+              <h3 style={{margin:'0 0 4px',color:'var(--text)',fontSize:15}}>Map Variant to CROSCROW Product</h3>
               <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>
                 Vendor: <strong>{mapModal.vendorProduct.title}</strong> — {mapModal.vendorVariant.title} (₹{mapModal.vendorVariant.price})
               </div>
               <div style={{display:'flex',gap:8,marginBottom:12}}>
-                <input className="form-input" placeholder="Search CrosCrow products…" value={ccSearch}
+                <input className="form-input" placeholder="Search CROSCROW products…" value={ccSearch}
                   onChange={e=>setCcSearch(e.target.value)}
                   onKeyDown={e=>{ if(e.key==='Enter' && ccSearch.trim().length>1) searchCcProducts(ccSearch.trim()); }}
                   style={{flex:1,boxSizing:'border-box'}}/>
@@ -7457,7 +7457,7 @@
     const openModal = (p, action) => {
       setModal({p, action});
       setAmount(action==='confirm'?'100':'');
-      setNote(action==='confirm'?'Fulfilment not done within 48 hours. Delay was not reported to CrosCrow team or on panel.':'');
+      setNote(action==='confirm'?'Fulfilment not done within 48 hours. Delay was not reported to CROSCROW team or on panel.':'');
     };
 
     const deletePenalty = async (p) => {
@@ -9752,7 +9752,7 @@
               </div>
 
               <div style={{display:'flex',gap:8,padding:14,borderTop:'1px solid var(--border)'}}>
-                <input className="form-input" placeholder="Reply as CrosCrow Support…" value={replyText}
+                <input className="form-input" placeholder="Reply as CROSCROW Support…" value={replyText}
                   onChange={e=>setReplyText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendReply()}
                   style={{flex:1}}/>
                 <button className="btn btn-indigo" onClick={sendReply} disabled={sending||!replyText.trim()}>{sending?'…':'Send'}</button>
@@ -9810,7 +9810,7 @@
     return (
       <div style={ST}>
         <h2 style={{margin:'0 0 4px',fontSize:20,color:'var(--text)'}}>📱 WhatsApp Bot</h2>
-        <p style={{margin:'0 0 28px',fontSize:13,color:'var(--text-muted)'}}>Manage the CrosCrow WhatsApp support bot connection.</p>
+        <p style={{margin:'0 0 28px',fontSize:13,color:'var(--text-muted)'}}>Manage the CROSCROW WhatsApp support bot connection.</p>
 
         {!status && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading…</div>}
 
@@ -10775,7 +10775,7 @@
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
           <div>
             <div style={{fontWeight:700,fontSize:14,color:'var(--text)'}}>🏬 CC Inventory</div>
-            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Products physically at CrosCrow admin location</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Products physically at CROSCROW admin location</div>
           </div>
           <button className="btn btn-indigo" onClick={()=>setShowAdd(v=>!v)}>+ Add Stock</button>
         </div>
@@ -10832,7 +10832,7 @@
         {/* Inventory table */}
         {loading ? <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>Loading…</div> :
          items.length === 0 ? (
-          <div className="card"><div className="empty"><div className="empty-icon">🏬</div><div className="empty-title">No inventory yet</div><div className="empty-sub">Add products that are physically at CrosCrow location.</div></div></div>
+          <div className="card"><div className="empty"><div className="empty-icon">🏬</div><div className="empty-title">No inventory yet</div><div className="empty-sub">Add products that are physically at CROSCROW location.</div></div></div>
          ) : (
           Object.entries(byVendor).map(([vendor, vendorItems]) => (
             <div key={vendor} className="card" style={{marginBottom:16}}>
@@ -11948,7 +11948,7 @@
               {fl('Agreement Date', inp('agreementDate',''))}
               {fl('Effective Date', inp('effectiveDate',''))}
               {fl('Valid Till (optional)', <input type="date" value={validTill} onChange={e=>setValidTill(e.target.value)} style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>)}
-              {fl('CrosCrow Signatory', inp('croscrowSignatory',''))}
+              {fl('CROSCROW Signatory', inp('croscrowSignatory',''))}
             </div>
 
             <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 12px',background:'var(--bg-hover)',borderRadius:8}}>
@@ -12055,7 +12055,7 @@
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href = url;
-        a.download = `CrosCrow_Agreement_${form.vendorName.replace(/\s+/g,'_')}.pdf`;
+        a.download = `CROSCROW_Agreement_${form.vendorName.replace(/\s+/g,'_')}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
       } catch(e) { setErr(e.message); }
@@ -12106,10 +12106,10 @@
             {gField('Signatory Name', gInp('vendorSignatory','________________________'), 'Leave blank — vendor fills in when signing')}
           </div>
 
-          {/* Party B — CrosCrow */}
+          {/* Party B — CROSCROW */}
           <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:20}}>
-            <div style={{fontSize:10,fontWeight:700,color:'#10b981',letterSpacing:1.5,textTransform:'uppercase',marginBottom:16}}>Party B — CrosCrow (Pre-filled)</div>
-            {gField('CrosCrow Signatory', gInp('croscrowSignatory','Harshit'))}
+            <div style={{fontSize:10,fontWeight:700,color:'#10b981',letterSpacing:1.5,textTransform:'uppercase',marginBottom:16}}>Party B — CROSCROW (Pre-filled)</div>
+            {gField('CROSCROW Signatory', gInp('croscrowSignatory','Harshit'))}
             <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.7,background:'var(--bg-hover)',borderRadius:6,padding:'10px 12px'}}>
               <div><strong style={{color:'var(--text)'}}>GSTIN:</strong> 08AAUFC5436G1Z4</div>
               <div style={{marginTop:4}}><strong style={{color:'var(--text)'}}>Address:</strong> KHASRA No. 3545, 3548, Plot No. 19, Kalyan Colony, Ajmer Road, Kekri – 305404, Rajasthan</div>
@@ -12807,7 +12807,7 @@
                 </div>
               </div>
               <div style={{fontSize:11,color:'var(--text-muted)',marginTop:8}}>
-                Margin (Shopify price − vendor cost) goes to CrosCrow. Additionally {form.margin_pct||'?'}% commission on vendor cost of ₹{form.vendor_cost||'?'}.
+                Margin (Shopify price − vendor cost) goes to CROSCROW. Additionally {form.margin_pct||'?'}% commission on vendor cost of ₹{form.vendor_cost||'?'}.
               </div>
             </div>
           )}
@@ -13198,7 +13198,7 @@
 
         {/* ── HERO ── */}
         <div style={TB.hero}>
-          <p style={TB.eyebrow}>CrosCrow · Operational Intelligence · v2.1</p>
+          <p style={TB.eyebrow}>CROSCROW · Operational Intelligence · v2.1</p>
           <h1 style={TB.title}>JAR<span style={{color:'#00e5ff'}}>VIS</span></h1>
           <p style={TB.sub}>Tech Brain · Pipeline Status · Feature Lab</p>
           <div style={TB.statsRow}>
@@ -13355,7 +13355,7 @@
         <div style={TB.sec}>
           <div style={{...TB.secEye, color:'#9d4edd'}}><span style={{...TB.secEyeLine, background:'#9d4edd'}}/> Feature Lab</div>
           <h2 style={TB.secTitle}>Out of the Box</h2>
-          <p style={TB.secDesc}>Features no typical marketplace has — built on the data CrosCrow already generates.</p>
+          <p style={TB.secDesc}>Features no typical marketplace has — built on the data CROSCROW already generates.</p>
           <div style={{display:'flex',gap:16,overflowX:'auto',paddingBottom:12}}>
             {LAB.map(l=>(
               <div key={l.title} style={{flexShrink:0,width:280,background:'rgba(6,22,38,0.9)',border:'1px solid rgba(157,78,221,0.2)',padding:24,clipPath:'polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)',transition:'all 0.2s'}}>
@@ -13397,7 +13397,7 @@
 
         {/* ── FOOTER ── */}
         <div style={{padding:'28px 32px',borderTop:'1px solid rgba(0,229,255,0.08)',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
-          <span style={{fontSize:10,letterSpacing:3,color:'#3d6282',textTransform:'uppercase'}}><span style={{color:'#00e5ff'}}>JARVIS</span> // CrosCrow Intelligence Core</span>
+          <span style={{fontSize:10,letterSpacing:3,color:'#3d6282',textTransform:'uppercase'}}><span style={{color:'#00e5ff'}}>JARVIS</span> // CROSCROW Intelligence Core</span>
           <span style={{fontSize:9,letterSpacing:2,color:'#1a3a5c',textTransform:'uppercase'}}>Built with Claude · Live System</span>
         </div>
       </div>
@@ -13548,7 +13548,7 @@
     const activeCurSpend    = mktMode === 'spend' ? curSpend : curPaidOrds * cac;
     const activeCurPaidOrds = mktMode === 'orders' ? curPaidOrds : (cac > 0 ? curSpend / cac : 0);
 
-    // CrosCrow model: no logistics cost. Revenue = commission on delivered orders only.
+    // CROSCROW model: no logistics cost. Revenue = commission on delivered orders only.
     // RTO impact = (a) less commission earned, (b) CAC wasted on paid orders that returned.
     // Since mktSpend already covers ALL paid CAC, net = commRev - mktSpend.
     const compute = (dr, spend) => {
@@ -13865,7 +13865,7 @@
                   <span style={{fontSize:8,letterSpacing:2,color:'#fff',textTransform:'uppercase'}}>Net Profit</span>
                   <span style={{fontSize:14,fontWeight:700,color:curSpendSc.net>=0?'#00f593':'#ff4560'}}>{fmtNet(curSpendSc.net)}</span>
                 </div>
-                <div style={{fontSize:7,color:'#1a3a5c',marginTop:6,lineHeight:1.5}}>CrosCrow earns commission on delivered orders only. No logistics cost — RTO only loses the CAC already counted in spend.</div>
+                <div style={{fontSize:7,color:'#1a3a5c',marginTop:6,lineHeight:1.5}}>CROSCROW earns commission on delivered orders only. No logistics cost — RTO only loses the CAC already counted in spend.</div>
               </div>
 
               {/* Quick insight */}

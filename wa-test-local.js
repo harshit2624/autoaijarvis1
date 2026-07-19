@@ -1,5 +1,5 @@
 /**
- * CrosCrow WhatsApp Local Test Bot
+ * CROSCROW WhatsApp Local Test Bot
  *
  * Uses LOCAL FILE auth — completely separate from the live Render bot's
  * MongoDB auth. Scan the QR with any secondary phone number; it will NOT
@@ -130,7 +130,7 @@ Reply with:
 *1️⃣* — Order is delayed (share reason + ETA)
 *2️⃣* — Already shipped (share AWB + courier)
 
-_Ship now to avoid penalty — CrosCrow Ops_`;
+_Ship now to avoid penalty — CROSCROW Ops_`;
       await sock.sendMessage(sender, { text: vendorMsg });
       ok(`📲 Vendor warning simulation sent`);
     }
@@ -147,13 +147,13 @@ A penalty has been applied to your account.
 
 This will be deducted from your next settlement.
 
-_CrosCrow Operations_`;
+_CROSCROW Operations_`;
       await sock.sendMessage(sender, { text: penMsg });
       ok(`📲 Penalty simulation sent`);
     }
 
     if (/^(hi|hello|hey)$/i.test(text)) {
-      await sock.sendMessage(sender, { text: `👋 Welcome to CrosCrow!\n\n1️⃣ Track my order\n2️⃣ Return/Exchange\n3️⃣ Talk to a human\n\n_[TEST BOT]_` });
+      await sock.sendMessage(sender, { text: `👋 Welcome to CROSCROW!\n\n1️⃣ Track my order\n2️⃣ Return/Exchange\n3️⃣ Talk to a human\n\n_[TEST BOT]_` });
     }
 
   } catch (e) {
@@ -216,7 +216,7 @@ function startCLI(sock) {
 async function start() {
   if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
-  console.log(`\n${c.bold}${c.green}CrosCrow WA Test Bot${c.reset}`);
+  console.log(`\n${c.bold}${c.green}CROSCROW WA Test Bot${c.reset}`);
   console.log(`${c.dim}Auth dir : ${AUTH_DIR}`);
   console.log(`Message log: ${LOG_FILE}${c.reset}`);
   console.log(`${c.yellow}⚠️  This is ISOLATED from the live bot — uses local file auth only${c.reset}\n`);
@@ -231,10 +231,13 @@ async function start() {
     auth: state,
     browser: Browsers.macOS('Desktop'),
     printQRInTerminal: true,
-    logger: { level: 'silent', info() {}, warn: (o) => warn('[baileys]', o?.msg || ''), error: (o) => err('[baileys]', o?.msg || o) },
+    logger: require('pino')({ level: 'silent' }),
+    printQRInTerminal: false,
     generateHighQualityLinkPreview: false,
     syncFullHistory: false,
   });
+
+  const qrcode = require('qrcode-terminal');
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -242,7 +245,8 @@ async function start() {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
       console.log(`\n${c.bold}${c.yellow}📱 Scan this QR with ANY phone (NOT the live bot's number)${c.reset}`);
-      console.log(`${c.dim}   The live CrosCrow bot won't be affected.${c.reset}\n`);
+      console.log(`${c.dim}   The live CROSCROW bot won't be affected.${c.reset}\n`);
+      qrcode.generate(qr, { small: true });
     }
     if (connection === 'open') {
       ok(`✅ Test bot connected!`);
@@ -251,7 +255,7 @@ async function start() {
       startCLI(sock);
     }
     if (connection === 'close') {
-      const code = (lastDisconnect?.error as any)?.output?.statusCode;
+      const code = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = code !== DisconnectReason.loggedOut;
       warn(`Connection closed (code ${code}) — ${shouldReconnect ? 'reconnecting...' : 'logged out'}`);
       if (shouldReconnect) setTimeout(start, 3000);

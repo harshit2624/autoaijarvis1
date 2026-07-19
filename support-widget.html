@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CrosCrow Support</title>
+<title>CROSCROW Support</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -251,7 +251,7 @@
     if (!chatId) {
       // Don't create a chat session on page load — show welcome greeting locally
       // and only call /support/chat/start when the customer sends their first message.
-      addMessage({ sender:'assistant', text:"Hi! I'm the CrosCrow support assistant. Looking for a product, or want an update on an order?" });
+      addMessage({ sender:'assistant', text:"Hi! I'm the CROSCROW support assistant. Looking for a product, or want an update on an order?" });
       lastSeenCount = 0;
     } else {
       const r = await fetch(`${API}/support/chat/${chatId}/messages`);
