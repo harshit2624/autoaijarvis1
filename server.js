@@ -15292,15 +15292,84 @@ function rrInfoBox(req) {
   </div>`;
 }
 
+// ── Sky-style helpers for RR customer emails ──────────────────────────────
+const RR_IMG  = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+const RR_LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+function rrEmailSky(heroHeadline, heroLabel, bodyHtml) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+  <div style="position:relative;line-height:0;">
+    <img src="${RR_IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:300px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:24px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">${heroLabel}</div>
+      <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">${heroHeadline}</div>
+    </div>
+  </div>
+  <div style="background:#161616;padding:32px;">${bodyHtml}</div>
+  <div style="background:#0d0d0d;padding:28px 32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${RR_LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:12px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reply to this email or reach us on WhatsApp.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">© CROSCROW · Automated Notification · Do Not Reply</div>
+  </div>
+</div></body></html>`;
+}
+
+function rrInfoBoxSky(req) {
+  const rows = [
+    ['Request ID', req.request_id],
+    ['Order', req.order_name || req.shopify_order_id],
+    ['Type', req.type === 'exchange' ? 'Exchange' : 'Return'],
+    ['Reason', req.reason || '—'],
+  ];
+  const rowsHtml = rows.map(([l,v]) => `
+    <tr>
+      <td style="padding:9px 0;font-size:12px;color:#666;letter-spacing:1px;text-transform:uppercase;width:40%;border-bottom:1px solid #222;">${l}</td>
+      <td style="padding:9px 0;font-size:13px;color:#e0e0e0;font-weight:600;text-align:right;border-bottom:1px solid #222;">${v}</td>
+    </tr>`).join('');
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border-radius:8px;padding:4px 20px;margin-bottom:24px;"><tbody>${rowsHtml}</tbody></table>`;
+}
+
+function rrItemsHtmlSky(items, type) {
+  if (!items?.length) return '';
+  const rows = items.map(it => `
+    <tr>
+      <td style="padding:11px 0;border-bottom:1px solid #222;">
+        <div style="font-size:13px;font-weight:700;color:#e0e0e0;">${it.title || it.product_title || ''}${it.variant_title ? ` <span style="color:#666;font-weight:400">(${it.variant_title})</span>` : ''}</div>
+        ${it.exchange_size_label ? `<div style="font-size:11px;color:#7eb8f7;margin-top:3px;">↔ Exchange for: ${it.exchange_size_label}</div>` : ''}
+      </td>
+      <td style="padding:11px 0;border-bottom:1px solid #222;text-align:right;font-size:13px;font-weight:700;color:#aaa;">Qty ${it.qty || 1}</td>
+    </tr>`).join('');
+  return `
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:10px;">Items</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;"><tbody>${rows}</tbody></table>`;
+}
+
+function rrNoteSky(text, color = '#7eb8f7') {
+  if (!text) return '';
+  return `<div style="background:#111;border-left:3px solid ${color};border-radius:0 6px 6px 0;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#aaa;line-height:1.6;"><strong style="color:${color};">Note:</strong> ${text}</div>`;
+}
+
+function rrShipBoxSky(awb, courier) {
+  if (!awb && !courier) return '';
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border-radius:8px;padding:4px 20px;margin-bottom:24px;"><tbody>
+    ${awb ? `<tr><td style="padding:9px 0;font-size:12px;color:#666;letter-spacing:1px;text-transform:uppercase;width:40%;border-bottom:1px solid #222;">AWB / Tracking</td><td style="padding:9px 0;font-size:13px;color:#7eb8f7;font-weight:700;text-align:right;border-bottom:1px solid #222;font-family:monospace;">${awb}</td></tr>` : ''}
+    ${courier ? `<tr><td style="padding:9px 0;font-size:12px;color:#666;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid #222;">Courier</td><td style="padding:9px 0;font-size:13px;color:#e0e0e0;font-weight:600;text-align:right;border-bottom:1px solid #222;">${courier}</td></tr>` : ''}
+  </tbody></table>`;
+}
+
 // Customer: submitted
 function templateRRSubmittedCustomer({ req }) {
-  const accent = '#002eff';
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
   const body = `
-    <div class="subtitle">We've received your ${req.type} request and will review it shortly.</div>
-    ${rrInfoBox(req)}
-    ${rrItemsHtml(req.items, req.type)}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our team typically reviews requests within 24 hours. We'll email you once a decision is made.</p>`;
-  return emailBase(`${req.type === 'exchange' ? 'Exchange' : 'Return'} Request Received`, accent, body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${(req.customer_name||'').split(' ')[0] || 'there'} —</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">We've received your ${req.type} request and our team will review it within 24 hours. We'll update you once a decision is made.</div>
+    ${rrInfoBoxSky(req)}
+    ${rrItemsHtmlSky(req.items, req.type)}
+    <div style="font-size:12px;color:#555;line-height:1.7;">Keep your item ready and packed. You'll hear from us soon 🙏</div>`;
+  return rrEmailSky(`${T}<br>REQUEST<br>RECEIVED.`, 'RETURN &amp; EXCHANGE', body);
 }
 
 // Admin: new request
@@ -15330,12 +15399,15 @@ function templateRRSubmittedVendor({ req }) {
 
 // Customer: approved
 function templateRRApprovedCustomer({ req }) {
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
   const body = `
-    <div class="subtitle">Great news — your ${req.type} request has been approved!</div>
-    ${rrInfoBox(req)}
-    ${rrItemsHtml(req.items, req.type)}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our team will arrange pickup of your item${req.items.length > 1 ? 's' : ''} shortly. Please keep the item${req.items.length > 1 ? 's' : ''} ready and packed. You'll receive another email when pickup is scheduled.</p>`;
-  return emailBase(`Your ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request Approved ✓`, '#10b981', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Great news, ${(req.customer_name||'').split(' ')[0] || 'there'}! 🎉</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Your ${req.type} request has been approved. We'll arrange pickup of your item shortly — please keep it ready and securely packed.</div>
+    ${rrInfoBoxSky(req)}
+    ${rrItemsHtmlSky(req.items, req.type)}
+    ${rrNoteSky(req.admin_note, '#10b981')}
+    <div style="font-size:12px;color:#555;line-height:1.7;">You'll receive another email once pickup is scheduled 🙏</div>`;
+  return rrEmailSky(`${T}<br>REQUEST<br>APPROVED.`, 'RETURN &amp; EXCHANGE', body);
 }
 
 // Vendor: admin approved — arrange pickup
@@ -15365,68 +15437,84 @@ function templateRRApprovedAdmin({ req }) {
 
 // Customer: rejected
 function templateRRRejectedCustomer({ req }) {
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
   const body = `
-    <div class="subtitle">Unfortunately, your ${req.type} request could not be approved at this time.</div>
-    ${rrInfoBox(req)}
-    ${req.admin_note ? `<div class="info-box"><div class="info-row"><span class="info-label">Reason</span><span class="info-val">${req.admin_note}</span></div></div>` : ''}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">If you believe this is an error or need further assistance, please contact our support team.</p>`;
-  return emailBase(`Update on Your ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request`, '#dc2626', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${(req.customer_name||'').split(' ')[0] || 'there'},</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Unfortunately, we were unable to approve your ${req.type} request at this time.</div>
+    ${rrInfoBoxSky(req)}
+    ${rrNoteSky(req.admin_note || 'Item did not meet our return/exchange criteria.', '#ef4444')}
+    <div style="font-size:12px;color:#555;line-height:1.7;">If you believe this is an error, please reply to this email with your Request ID: <strong style="color:#aaa;">${req.request_id}</strong></div>`;
+  return rrEmailSky(`REQUEST<br>NOT<br>APPROVED.`, 'RETURN &amp; EXCHANGE', body);
 }
 
 // Customer: pickup scheduled
 function templateRRPickupCustomer({ req }) {
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
   const body = `
-    <div class="subtitle">Pickup has been scheduled for your ${req.type} request. Please keep your item ready.</div>
-    ${rrInfoBox(req)}
-    ${rrItemsHtml(req.items, req.type)}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our pickup partner will collect the item from your address. Please ensure it is securely packed. You'll receive a tracking update once picked up.</p>`;
-  return emailBase(`Pickup Scheduled — ${req.request_id}`, '#6366f1', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Pickup is on the way, ${(req.customer_name||'').split(' ')[0] || 'there'}! 🗓️</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Our pickup partner will collect your item from your address. Please ensure it is <strong style="color:#ccc;">securely packed and sealed</strong> before the pickup agent arrives.</div>
+    ${rrInfoBoxSky(req)}
+    ${rrItemsHtmlSky(req.items, req.type)}
+    ${rrNoteSky(req.admin_note)}
+    <div style="font-size:12px;color:#555;line-height:1.7;">You'll receive a tracking update once the item is picked up 🙏</div>`;
+  return rrEmailSky(`PICKUP<br>SCHEDULED.`, `${T} &nbsp;|&nbsp; RETURN &amp; EXCHANGE`, body);
 }
 
 // Customer: in transit
 function templateRRInTransitCustomer({ req }) {
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
+  const nextStep = req.type === 'exchange'
+    ? "We'll process your exchange and dispatch your new item as soon as we receive yours."
+    : "We'll inspect your item and initiate the refund within 24 hours of receipt.";
   const body = `
-    <div class="subtitle">Your ${req.type} item is on its way to us.</div>
-    ${rrInfoBox(req)}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">${req.type === 'exchange' ? 'We\'ll process your exchange and dispatch the new item once we receive yours.' : 'We\'ll process your return and initiate the refund once we receive the item.'}</p>`;
-  return emailBase(`Your ${req.type === 'exchange' ? 'Exchange' : 'Return'} is In Transit`, '#6366f1', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Your item is on its way to us 📦</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">${nextStep}</div>
+    ${rrInfoBoxSky(req)}
+    <div style="font-size:12px;color:#555;line-height:1.7;">Expected to reach our warehouse in 5–7 days. We'll update you once it arrives 🙏</div>`;
+  return rrEmailSky(`${T}<br>IN TRANSIT.`, 'RETURN &amp; EXCHANGE', body);
 }
 
 // Customer: completed
 function templateRRCompletedCustomer({ req }) {
+  const isExchange = req.type === 'exchange';
+  const headline = isExchange ? 'EXCHANGE\nCOMPLETE.' : 'RETURN\nRECEIVED.';
+  const msg = isExchange
+    ? "Your exchange item has been delivered. Hope you love it!"
+    : "Your return has been received and verified. Your refund will be processed within 3–5 business days.";
   const body = `
-    <div class="subtitle">${req.type === 'exchange' ? 'Your exchange order has been delivered!' : 'We\'ve received your returned item. Your request is complete.'}</div>
-    ${rrInfoBox(req)}
-    ${req.type === 'exchange' ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">Enjoy your new item! Thank you for shopping with CROSCROW.</p>` : `<p style="font-size:13px;color:#6b7280;line-height:1.7">Your refund will be processed within 5–7 business days. Thank you for your patience.</p>`}`;
-  return emailBase(`${req.type === 'exchange' ? 'Exchange Complete ✓' : 'Return Received ✓'} — ${req.request_id}`, '#10b981', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">${isExchange ? 'Enjoy your new item! 🎉' : 'All done! 🙌'}</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">${msg}</div>
+    ${rrInfoBoxSky(req)}
+    ${rrNoteSky(req.admin_note, '#10b981')}
+    <div style="font-size:12px;color:#555;line-height:1.7;">Thank you for shopping with CROSCROW. See you again soon 🙏</div>`;
+  return rrEmailSky(headline.replace('\n','<br>'), 'RETURN &amp; EXCHANGE', body);
 }
 
-// Customer: reverse shipment created (pickup coming)
+// Customer: reverse shipment created (pickup AWB assigned)
 function templateRRReverseShipmentCustomer({ req, awb, courier }) {
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
   const body = `
-    <div class="subtitle">A pickup has been arranged for your ${req.type} request. Please keep your parcel ready!</div>
-    ${rrInfoBox(req)}
-    ${rrItemsHtml(req.items, req.type)}
-    <div class="info-box">
-      ${awb ? `<div class="info-row"><span class="info-label">AWB / Tracking</span><span class="info-val"><strong>${awb}</strong></span></div>` : ''}
-      ${courier ? `<div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier}</span></div>` : ''}
-    </div>
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Our pickup partner will collect the item from your address. Please ensure it is <strong>securely packed and sealed</strong> before the pickup agent arrives. You'll receive tracking updates via this email.</p>`;
-  return emailBase(`Pickup Scheduled — Keep Your Parcel Ready! — ${req.request_id}`, '#6366f1', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Pickup arranged, ${(req.customer_name||'').split(' ')[0] || 'there'}! 🛵</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Our courier partner will come to collect your item. Please keep it <strong style="color:#ccc;">packed and ready</strong> at the time of pickup.</div>
+    ${rrInfoBoxSky(req)}
+    ${rrShipBoxSky(awb, courier)}
+    ${rrItemsHtmlSky(req.items, req.type)}
+    <div style="font-size:12px;color:#555;line-height:1.7;">You'll receive a status update once the item is picked up 🙏</div>`;
+  return rrEmailSky(`PICKUP<br>ARRANGED.`, `${T} &nbsp;|&nbsp; RETURN &amp; EXCHANGE`, body);
 }
 
-// Customer: forward shipment created (exchange on its way)
+// Customer: forward shipment created (exchange dispatched)
 function templateRRForwardShipmentCustomer({ req, awb, courier }) {
+  const trackUrl = req.order_name ? `https://dashboard.croscrow.com/track?order=${encodeURIComponent(req.order_name)}&contact=na` : '';
   const body = `
-    <div class="subtitle">Great news! Your exchanged item is on its way to you. 🎉</div>
-    ${rrInfoBox(req)}
-    ${rrItemsHtml(req.items, req.type)}
-    <div class="info-box">
-      ${awb ? `<div class="info-row"><span class="info-label">AWB / Tracking</span><span class="info-val"><strong>${awb}</strong></span></div>` : ''}
-      ${courier ? `<div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier}</span></div>` : ''}
-    </div>
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Your exchanged item has been dispatched and will be delivered to your address shortly. You can use the tracking number above to track your shipment.</p>`;
-  return emailBase(`Your Exchanged Item is On Its Way! 🚚 — ${req.request_id}`, '#10b981', body);
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Your exchange is on its way! 🚀</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Your new item has been dispatched and will reach you in 3–5 days. Use the tracking number below to follow it live.</div>
+    ${rrInfoBoxSky(req)}
+    ${rrShipBoxSky(awb, courier)}
+    ${rrItemsHtmlSky(req.items, req.type)}
+    ${trackUrl ? `<a href="${trackUrl}" style="display:inline-block;margin-top:8px;padding:12px 28px;background:#7eb8f7;color:#0d0d0d;text-decoration:none;font-weight:800;font-size:11px;letter-spacing:3px;text-transform:uppercase;border-radius:4px;">Track Your Order</a>` : ''}
+    <div style="font-size:12px;color:#555;line-height:1.7;margin-top:16px;">Thanks for your patience 🙏</div>`;
+  return rrEmailSky('EXCHANGE<br>DISPATCHED.', 'RETURN &amp; EXCHANGE', body);
 }
 
 // Admin: 24hr reminder — still pending
