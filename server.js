@@ -19244,7 +19244,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
   const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID (see Order: ${_hci.order_name})` : 'Unknown — LID sender');
   await waAdminAlert(`👤 *Human Support Requested*\n${_hci.name ? `Name: *${_hci.name}*\n` : ''}Phone: ${_hPhone}${_hci.order_name ? `\nOrder: *${_hci.order_name}*` : ''}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
-  const msg = `Our team will reach out to you very shortly. 🙏`;
+  const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
   await sock.sendMessage(sender, { text: msg });
   await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
   const pauseUntil = Date.now() + 24 * 60 * 60 * 1000; // 24h — bot stays silent until admin unpauses
