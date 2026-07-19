@@ -19244,10 +19244,10 @@ async function waTalkToHuman(sock, sender, chat, phone, context) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
   const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID (see Order: ${_hci.order_name})` : 'Unknown — LID sender');
   await waAdminAlert(`👤 *Human Support Requested*\n${_hci.name ? `Name: *${_hci.name}*\n` : ''}Phone: ${_hPhone}${_hci.order_name ? `\nOrder: *${_hci.order_name}*` : ''}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
-  const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
+  const msg = `Our team will reach out to you very shortly. 🙏`;
   await sock.sendMessage(sender, { text: msg });
   await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
-  const pauseUntil = Date.now() + 12 * 60 * 60 * 1000;
+  const pauseUntil = Date.now() + 24 * 60 * 60 * 1000; // 24h — bot stays silent until admin unpauses
   await mdb.collection('support_chats').updateOne(
     { _id: chat._id },
     { $set: { needs_human: true, bot_paused_until: pauseUntil, confused_count: 0, updated_at: new Date().toISOString() } }
@@ -19742,22 +19742,14 @@ async function startBaileysBot() {
             }
           }
 
-          // ── Bot pause check (12h after human handoff) ─────────────────
-          const RESUME_KEYWORDS = /\b(track|return|exchange|order|status)\b/i;
+          // ── Bot pause check (after human handoff — stays silent until admin unpauses) ──
           const pauseUntil = chat.bot_paused_until || 0;
           if (pauseUntil > Date.now()) {
-            if (!RESUME_KEYWORDS.test(text)) {
-              // Still paused — silently ignore
-              await SC.addMessage(chat._id, { sender: 'customer', text });
-              waPending.delete(sender); // must clear before continue — finally block is not reached by continue
-              continue;
-            }
-            // Resume bot on core keyword
-            await mdb.collection('support_chats').updateOne(
-              { _id: chat._id },
-              { $unset: { bot_paused_until: '' }, $set: { updated_at: new Date().toISOString() } }
-            );
-            chat.bot_paused_until = 0;
+            // Bot is paused — log the message but stay completely silent.
+            // Only the admin can unpause via the dashboard (or it auto-expires after 24h).
+            await SC.addMessage(chat._id, { sender: 'customer', text });
+            waPending.delete(sender);
+            continue;
           }
 
           // ── "Talk to human" explicit request ─────────────────────────
@@ -19850,10 +19842,9 @@ async function startBaileysBot() {
               waAdminAlert(`⏰ *Stuck Order Alert*\nOrder: *${meta.data.order_name}*${meta.data.customer_name ? `\nCustomer: *${meta.data.customer_name}*` : ''}\nPhone: +91${phone}\n${Math.round(hrs)}h since confirmation, still not shipped.`).catch(() => {});
             }
 
-            // If bot flagged escalation (cancellation etc), skip order menu → offer human only
+            // If bot flagged escalation (cancellation etc), hand off immediately
             if (needsAdmin || botCantHelp) {
-              await sock.sendMessage(sender, { text: `Our team has been notified and will reach out to you shortly on WhatsApp. 🙏` });
-              await waSessionSet(sender, { menu: 'offer_human' });
+              await waTalkToHuman(sock, sender, chat, phone, `Order ${meta.data?.order_name || ''} — bot flagged escalation: needsAdmin=${needsAdmin} botCantHelp=${botCantHelp}`);
               waPending.delete(sender);
               continue;
             }
@@ -19872,8 +19863,7 @@ async function startBaileysBot() {
 
           if (botCantHelp) {
             await saveAndSend(reply, meta);
-            await sock.sendMessage(sender, { text: `Need more help? Our team is here:\n\n1️⃣ Talk to a human\n\nOr call us:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
-            await waSessionSet(sender, { menu: 'offer_human' });
+            await waTalkToHuman(sock, sender, chat, phone, `Bot couldn't help — handing off`);
             waPending.delete(sender);
             continue;
           }
@@ -19915,8 +19905,7 @@ async function startBaileysBot() {
               repeatedKeyword: repeatedKeyword || null,
             });
 
-            await sock.sendMessage(sender, { text: `If I'm not being helpful enough, press *1* to connect with our support team directly 👇\n\n1️⃣ Talk to a human\n\nOr call us: 📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
-            await waSessionSet(sender, { menu: 'offer_human' });
+            await waTalkToHuman(sock, sender, chat, phone, `Safety net: ${safetyNetTrigger}${repeatedKeyword ? ` (keyword: ${repeatedKeyword})` : ''}`);
           }
 
         } catch (err) {
