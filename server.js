@@ -15429,6 +15429,8 @@ async function buildOrderPayload(order) {
     created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames,
     vendor_shipments: vendorShipments, return_configs: returnConfigs, return_requests: returnRequests,
     cc_stock: ccStockItems,
+    delivery_status: meta.delivery_status || '',
+    delivery_status_updated_at: meta.delivery_status_updated_at || '',
   };
 }
 
@@ -17419,7 +17421,17 @@ HOW TO HANDLE EACH CONFIRMATION SCENARIO:
 - "I'll pay full on delivery / I don't want to pay ₹99" → say: "Noted! I've flagged this to our team and they'll manually confirm your order. Please keep the full amount ready at delivery. You should receive a confirmation message shortly." (flags admin)
 - "I already confirmed but still getting messages" → use check_order_confirmation to verify; if confirmed say "Your order is confirmed on our end — the messages may have been sent before the update. You're all good!"; if not confirmed, say "There seems to be a delay in the system — I've flagged this to our team to resolve immediately." (flags admin)
 - "I want to cancel my order" → say: "I've noted your cancellation request and flagged it to our team. They'll process it within a few hours and confirm over WhatsApp." (flags admin)
-- "How long will delivery take?" → say: "Once your order is dispatched by the vendor, delivery typically takes 3–7 days depending on your location."
+- "How long will delivery take?" → check the order's delivery_status field first. If it has a live status (e.g. "Out for Delivery", "In Transit"), share that exact update. If delivery_status is empty or generic, say: "Once dispatched, delivery typically takes 3–7 days depending on your location. I'll flag the team to give you a confirmed ETA." (flags admin). NEVER promise a specific date unless it comes from the delivery_status field.
+
+REFUND RULES (very important):
+- "How many days for refund?" or "When will I get my refund?" or "Refund status?" → say: "Once your returned product reaches us (which usually takes 5–10 days after pickup), we process the refund within 24 hours of quality check. I'm looping in our team to confirm the current status of your return 🙏" (flags admin). Do NOT try to compute a date yourself.
+- "I returned the product, when will I get money back?" → same as above — give the SLA, flag admin.
+- "I want a refund" → use get_order_status first to understand the stage, then say: "I've noted your refund request and flagged it to our team — they'll reach out to you shortly on WhatsApp 🙏" (flags admin).
+- For RTO orders (returned to origin): refund is processed within 3-5 business days once item is received at our warehouse.
+
+ORDER NUMBER HELP:
+- If customer seems to not know their order number, first tell them: "Your order number is a 4-digit number like #2434. You can find it in the confirmation message or email you received from CROSCROW." Do not immediately ask for phone number.
+- Only if they still can't find it after that guidance, our system will ask for their mobile number separately.
 
 RULES:
 - CRITICAL: call the relevant tool on EVERY turn that needs live data. Never answer from memory.
@@ -19250,7 +19262,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context) {
   const pauseUntil = Date.now() + 24 * 60 * 60 * 1000; // 24h — bot stays silent until admin unpauses
   await mdb.collection('support_chats').updateOne(
     { _id: chat._id },
-    { $set: { needs_human: true, bot_paused_until: pauseUntil, confused_count: 0, updated_at: new Date().toISOString() } }
+    { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, confused_count: 0, updated_at: new Date().toISOString() } }
   );
   await waSessionClear(sender);
 }
@@ -19791,6 +19803,73 @@ async function startBaileysBot() {
             }
           }
 
+          // ── 2b. awaiting_order: handle free-text order lookup ──────────
+          {
+            const orderSession = await waSessionGet(sender);
+            if (orderSession.menu === 'awaiting_order') {
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              const digits = text.replace(/\D/g, '');
+              const orderMatch = text.match(/\b(\d{4})\b/);
+
+              if (orderMatch) {
+                // Looks like a valid 4-digit order number — clear session, let LLM handle
+                await waSessionClear(sender);
+              } else if (digits.length === 10 && /^[6-9]/.test(digits)) {
+                // Customer sent their phone number — look up by phone
+                const found = await mdb.collection('order_meta').find(
+                  { customer_phone: { $regex: digits } },
+                  { projection: { order_name: 1, customer_name: 1, stage: 1 } }
+                ).sort({ created_at: -1 }).limit(3).toArray();
+                if (found.length) {
+                  const latest = found[0];
+                  const others = found.length > 1 ? ` (and ${found.length - 1} more)` : '';
+                  await sock.sendMessage(sender, { text: `Found your order! 🎉\n\nOrder: *${latest.order_name}*${others}\n\nLet me pull up the details for you...` });
+                  // Inject order number into session so next turn uses it
+                  await waSessionSet(sender, { menu: 'awaiting_order', prefilled_order: latest.order_name });
+                } else {
+                  await sock.sendMessage(sender, { text: `I couldn't find any orders linked to that number. Please double-check and try again, or type your 4-digit order number directly (e.g. #2434).\n\nIf you're still stuck, our team is here:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
+                }
+                waPending.delete(sender);
+                continue;
+              } else if (/can.?t find|not able|don.?t know|no order|no number|couldn.?t find/i.test(text)) {
+                // Customer says they can't find — give step-by-step guidance
+                const hint = orderSession.hinted_phone ? 2 : 1;
+                if (hint === 1) {
+                  await sock.sendMessage(sender, { text: `No worries! Your order number is a 4-digit number like *#2434*.\n\nYou can find it in:\n• The WhatsApp message you received from CROSCROW at the time of order\n• The confirmation email from CROSCROW\n\nCan you check there and share it with me? 🙏` });
+                  await waSessionSet(sender, { menu: 'awaiting_order', hinted_phone: true });
+                } else {
+                  await sock.sendMessage(sender, { text: `That's okay! Please share the mobile number you used while placing the order and I'll look it up for you 📲` });
+                  await waSessionSet(sender, { menu: 'awaiting_order', hinted_phone: true });
+                }
+                waPending.delete(sender);
+                continue;
+              }
+              // else fall through to LLM with the order session still active
+            }
+          }
+
+          // ── 2c. Detect conversation-closing messages → resolve chat ────
+          const CLOSING_PHRASES = /^(ok|okay|okk|thanks|thank you|thank u|thx|ty|thnks|thnk u|noted|got it|alright|sure|👍|🙏|perfect|great|done|bye|goodbye|no worries|np|no problem|😊|😄|👌|appreciate it|appreciate|all good|sounds good|will do)[\s!.]*$/i;
+          if (CLOSING_PHRASES.test(text.trim())) {
+            await SC.addMessage(chat._id, { sender: 'customer', text });
+            // Only respond if bot sent something meaningful recently (not just another close)
+            const recentBotMsgs = (await SC.messages(chat._id)).filter(m => m.sender === 'assistant').slice(-1);
+            const lastBotText = (recentBotMsgs[0]?.text || '').toLowerCase();
+            const isAlreadyClosed = /bye|take care|have a great|anything else/i.test(lastBotText);
+            if (!isAlreadyClosed) {
+              await sock.sendMessage(sender, { text: `Happy to help! 😊 Feel free to reach out anytime. Have a great day! 🙏` });
+              await SC.addMessage(chat._id, { sender: 'assistant', text: `Happy to help! 😊 Feel free to reach out anytime. Have a great day! 🙏` });
+            }
+            // Mark chat as resolved
+            await mdb.collection('support_chats').updateOne(
+              { _id: chat._id },
+              { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+            );
+            await waSessionClear(sender);
+            waPending.delete(sender);
+            continue;
+          }
+
           // ── 3. Escalation keywords → admin alert + human ──────────────
           if (WA_ESCALATION.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
@@ -19887,9 +19966,9 @@ async function startBaileysBot() {
             lastTwoCustomer.length === 2 && lastTwoCustomer.every(t => t.includes(kw))
           );
 
-          // Rule A: 4+ bot messages sent and no resolution (no tracking_card, no resolved tag)
-          const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved');
-          const rulA = botMessages.length >= 4 && noResolution;
+          // Rule A: 6+ bot messages sent and no resolution (no tracking_card, no resolved tag)
+          const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved') && freshChat.status !== 'resolved';
+          const rulA = botMessages.length >= 6 && noResolution;
 
           // Rule D: 5+ minutes in chat, 3+ messages, no order found yet
           const ruleD = chatAgeMinutes >= 5 && botMessages.length >= 3 && noResolution && !freshChat.tags?.includes('order_found');
