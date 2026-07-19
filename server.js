@@ -13518,6 +13518,48 @@ async function shipsagarTrackShipment(awb) {
   } catch { return { found: false }; }
 }
 
+// ── WA customer shipping notifications ───────────────────────────────────
+// Sends one WA message per stage transition. Deduplication via order_meta.wa_notif_sent.
+async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, customerPhone, awb, courier, deliveryStatus, codAmount }) {
+  if (!mdb || !waSocket || !waConnected) return;
+  const digits = String(customerPhone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10 || !/^[6-9]/.test(digits)) return;
+
+  // Deduplication — only fire once per stage per order
+  const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(shopifyId) }, { projection: { wa_notif_sent: 1 } });
+  const sent = meta?.wa_notif_sent || {};
+  if (sent[stage]) return; // already sent
+
+  const trackUrl = `https://dashboard.croscrow.com/track?order=${encodeURIComponent(orderName)}&contact=na`;
+  const name = (customerName || '').split(' ')[0] || 'there';
+  let msg = '';
+
+  if (stage === 'pickup') {
+    msg = `Hey ${name}! ���\n\nYour CROSCROW order *${orderName}* has been shipped!\n\n🚚 Courier: ${courier || 'Our delivery partner'}\n📍 AWB: ${awb}\n\nTrack your order here:\n${trackUrl}\n\nSit tight — it'll be at your doorstep in 3–5 days 🙌`;
+  } else if (stage === 'transit') {
+    const statusLine = deliveryStatus ? `📍 Status: ${deliveryStatus}\n` : '';
+    msg = `Quick update on your CROSCROW order *${orderName}* 📦\n\nYour package is currently *in transit* and moving towards you!\n\n${statusLine}🔗 Track here: ${trackUrl}\n\nAlmost there! 🙏`;
+  } else if (stage === 'ofd') {
+    const codLine = codAmount > 0 ? `\n\nCOD customers: keep *₹${codAmount}* ready at the door 💰` : '';
+    msg = `Your order is almost there! 🛵\n\n*${orderName}* is out for delivery today.\n\n📍 Your delivery partner is on the way — please keep your phone nearby.${codLine}`;
+  } else if (stage === 'delivered') {
+    msg = `Your order has been delivered! 🎊\n\nHope you love your CROSCROW picks *${orderName}* 🙌\n\nIf anything's not right — wrong size, damaged item — just reply here within 7 days and we'll sort it out.\n\nHappy shopping! 💫 — Team CROSCROW`;
+  }
+
+  if (!msg) return;
+
+  try {
+    await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+    await mdb.collection('order_meta').updateOne(
+      { shopify_id: String(shopifyId) },
+      { $set: { [`wa_notif_sent.${stage}`]: new Date().toISOString() } }
+    );
+    console.log(`📲 WA notif sent: ${orderName} → ${stage} → +91${digits}`);
+  } catch (e) {
+    console.error(`❌ WA notif failed (${orderName} ${stage}):`, e.message);
+  }
+}
+
 // ── Single source of truth for ShipSagar → OVS sync ─────────────────────
 // Call this from anywhere (cron, admin refresh, vendor track, public track).
 // ShipSagar is authoritative for delivery status — if it says delivered, OVS
@@ -13586,6 +13628,25 @@ async function shipsagarTrackingCron() {
           runLog.updated++;
           runLog.updates.push({ shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb, from: prevStage, to: newStage, desc, tag });
           console.log(`  ✓ ${rec.shopify_id} ${rec.awb}: ${rec.stage}→${newStage} "${desc}" ${tag||''}`);
+
+          // ── WA customer notification on stage change ──────────────────
+          if (['pickup','transit','ofd','delivered'].includes(newStage)) {
+            (async () => {
+              try {
+                const od = await shopifyREST(`/orders/${rec.shopify_id}.json?fields=id,name,shipping_address,billing_address,phone,financial_status,total_price,total_outstanding`).catch(() => null);
+                const order = od?.order || {};
+                const customerName = order.shipping_address ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim() : '';
+                const customerPhone = (order.shipping_address?.phone || order.billing_address?.phone || order.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+                const codAmount = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_outstanding || order.total_price || 0)) : 0;
+                await sendShipmentWANotif(rec.shopify_id, newStage, {
+                  orderName: order.name || `#${rec.shopify_id}`,
+                  customerName, customerPhone,
+                  awb: rec.awb, courier: rec.courier,
+                  deliveryStatus: desc, codAmount,
+                });
+              } catch (e) { console.error('WA shipment notif error:', e.message); }
+            })();
+          }
 
           // Send vendor + admin OFD notification email
           if (newStage === 'ofd') {
