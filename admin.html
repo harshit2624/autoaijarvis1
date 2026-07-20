@@ -9636,9 +9636,15 @@
                       <span style={{fontSize:10,color:'var(--text-muted)'}}>{vc.updated_at ? new Date(vc.updated_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : ''}</span>
                     </div>
                     <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{vc.last_message_from==='vendor'?'Vendor: ':''}{vc.last_message||'—'}</div>
-                    <div style={{display:'flex',gap:8,marginTop:4}}>
+                    <div style={{display:'flex',gap:8,marginTop:4,flexWrap:'wrap',alignItems:'center'}}>
                       <span style={{fontSize:10,color:'#10b981'}}>📤 {vc.vendor_msg_count||0} vendor</span>
                       <span style={{fontSize:10,color:'var(--text-muted)'}}>🤖 {vc.bot_msg_count||0} bot</span>
+                      {vc.phone && <span style={{fontSize:10,color:'#60a5fa',fontFamily:'monospace'}}>📱 {vc.phone}</span>}
+                      {vc.jid ? (
+                        vc.jid.includes('@lid')
+                          ? <span style={{fontSize:9,background:'rgba(245,158,11,0.15)',color:'#f59e0b',borderRadius:4,padding:'1px 5px'}}>LID</span>
+                          : <span style={{fontSize:9,background:'rgba(16,185,129,0.12)',color:'#10b981',borderRadius:4,padding:'1px 5px'}}>JID ✓</span>
+                      ) : <span style={{fontSize:9,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'1px 5px'}}>no JID</span>}
                     </div>
                   </div>
                 ))}
@@ -9648,7 +9654,18 @@
             <div style={{flex:1,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
               {!selVendorChat && <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13}}>Select a vendor to view chat</div>}
               {selVendorChat && (<>
-                <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',fontWeight:700,fontSize:13}}>{selVendorChat} — WhatsApp Chat</div>
+                <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+                  <div style={{fontWeight:700,fontSize:13,flex:1}}>{selVendorChat} — WhatsApp Chat</div>
+                  {(()=>{const vc=vendorChats.find(x=>x.vendor_name===selVendorChat); if(!vc) return null; return(<>
+                    {vc.phone && <span style={{fontSize:11,color:'#60a5fa',fontFamily:'monospace',background:'rgba(96,165,250,0.08)',padding:'3px 8px',borderRadius:6}}>📱 {vc.phone}</span>}
+                    {vc.jid ? (
+                      <span style={{fontSize:10,fontFamily:'monospace',color:'var(--text-muted)',background:'var(--bg)',padding:'3px 8px',borderRadius:6,maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={vc.jid}>
+                        {vc.jid.includes('@lid') ? '🔗 LID: ' : '📋 JID: '}{vc.jid.split('@')[0]}
+                        <span style={{marginLeft:6,fontSize:9,background: vc.jid.includes('@lid')?'rgba(245,158,11,0.15)':'rgba(16,185,129,0.12)',color: vc.jid.includes('@lid')?'#f59e0b':'#10b981',borderRadius:4,padding:'1px 5px'}}>{vc.jid.includes('@lid')?'LID':'STD'}</span>
+                      </span>
+                    ) : <span style={{fontSize:10,color:'#ef4444',background:'rgba(239,68,68,0.08)',padding:'3px 8px',borderRadius:6}}>⚠️ No JID saved</span>}
+                  </>);})()}
+                </div>
                 <div style={{flex:1,overflowY:'auto',padding:'12px 16px',display:'flex',flexDirection:'column',gap:8}}>
                   {vendorMsgs.map((m,i) => (
                     <div key={i} style={{display:'flex',justifyContent: m.role==='vendor'?'flex-start':'flex-end'}}>
@@ -9703,9 +9720,18 @@
                     <span style={{fontSize:10,color:'var(--text-muted)'}}>{elapsed(c.last_message?.created_at || c.created_at)}</span>
                   </div>
                 </div>
-                {c.last_message && <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:6}}>
+                {c.last_message && <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:4}}>
                   {c.last_message.sender!=='customer' ? '↩ ' : ''}{c.last_message.text}
                 </div>}
+                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
+                  {c.customer_phone && <span style={{fontSize:10,color:'#60a5fa',fontFamily:'monospace'}}>📱 {c.customer_phone}</span>}
+                  {c.source === 'whatsapp' && c.whatsapp_sender && (
+                    c.whatsapp_sender.includes('@lid')
+                      ? <span style={{fontSize:9,background:'rgba(245,158,11,0.15)',color:'#f59e0b',borderRadius:4,padding:'1px 5px'}}>LID</span>
+                      : <span style={{fontSize:9,background:'rgba(16,185,129,0.12)',color:'#10b981',borderRadius:4,padding:'1px 5px'}}>JID ✓</span>
+                  )}
+                  {c.source === 'whatsapp' && !c.whatsapp_sender && <span style={{fontSize:9,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'1px 5px'}}>no JID</span>}
+                </div>
                 <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                   {(c.tags||[]).map(t => <TagPill key={t} tag={t}/>)}
                   {c.hidden_from_vendors && <span style={{fontSize:9,color:'#ef4444',fontWeight:700}}>🚫 hidden</span>}
@@ -9723,10 +9749,17 @@
               <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:14,fontWeight:700,color:'var(--text)',display:'flex',alignItems:'center',gap:8}}>{selected.order_name || 'New chat'} {selected.vendor_names?.length ? `· ${selected.vendor_names.join(', ')}` : ''} <SourceBadge src={selected.source} /></div>
-                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
-                    Started {elapsed(selected.created_at)}
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                    <span>Started {elapsed(selected.created_at)}</span>
+                    {selected.customer_phone && <span style={{color:'#60a5fa',fontFamily:'monospace'}}>📱 {selected.customer_phone}</span>}
+                    {selected.whatsapp_sender && (
+                      <span style={{fontFamily:'monospace',fontSize:10}} title={selected.whatsapp_sender}>
+                        {selected.whatsapp_sender.includes('@lid') ? '🔗 LID: ' : '📋 JID: '}{selected.whatsapp_sender.split('@')[0]}
+                        <span style={{marginLeft:5,fontSize:9,background: selected.whatsapp_sender.includes('@lid')?'rgba(245,158,11,0.15)':'rgba(16,185,129,0.12)',color: selected.whatsapp_sender.includes('@lid')?'#f59e0b':'#10b981',borderRadius:4,padding:'1px 4px'}}>{selected.whatsapp_sender.includes('@lid')?'LID':'STD'}</span>
+                      </span>
+                    )}
                     {(selected.dispatch_info||[]).map(d => (
-                      <span key={d.vendor_name} style={{marginLeft:10,color: d.dispatched ? '#10b981' : '#f59e0b'}}>
+                      <span key={d.vendor_name} style={{color: d.dispatched ? '#10b981' : '#f59e0b'}}>
                         ⏱ {d.vendor_name}: {d.stage}{d.hours_since_stage_started!=null ? ` (${d.hours_since_stage_started}h)` : ''}{d.dispatched ? ' ✓ dispatched' : ''}
                       </span>
                     ))}

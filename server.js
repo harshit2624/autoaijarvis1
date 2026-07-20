@@ -18599,7 +18599,12 @@ app.get('/admin/shopify-product-search', adminAuth, async (req, res) => {
 app.get('/admin/vendor-chats', adminAuth, async (req, res) => {
   try {
     const chats = await mdb.collection('vendor_wa_chats').find({}).sort({ updated_at: -1 }).limit(100).toArray();
-    res.json({ chats });
+    const jidDocs = await mdb.collection('wa_vendor_jids').find({}).toArray();
+    const enriched = chats.map(c => {
+      const jidDoc = jidDocs.find(j => j.vendor_name === c.vendor_name || j.jid === c.jid);
+      return { ...c, phone: jidDoc?.phone || null };
+    });
+    res.json({ chats: enriched });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/admin/vendor-chats/:vendorName/messages', adminAuth, async (req, res) => {
