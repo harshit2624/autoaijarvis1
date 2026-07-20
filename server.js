@@ -9292,14 +9292,33 @@ async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
   } catch (e) { console.error('notifyDelayToCustomer error:', e.message); }
 }
 
+const COURIER_OPTIONS = [
+  { label: 'Delhivery',    code: 'DELHIVERY' },
+  { label: 'Xpressbees',  code: 'XPRESSBEES' },
+  { label: 'BlueDart',     code: 'BLUEDART' },
+  { label: 'DTDC',         code: 'DTDC' },
+  { label: 'Ecom Express', code: 'ECME' },
+  { label: 'Ekart',        code: 'EKART' },
+  { label: 'Shadowfax',    code: 'SHADOWFAX' },
+  { label: 'Shiprocket',   code: '' },
+  { label: 'FedEx',        code: 'FEDEX' },
+  { label: 'DHL',          code: 'DHL' },
+  { label: 'India Post',   code: 'INDIAPOST' },
+  { label: 'Other',        code: '' },
+];
+
 // GET /vendor/update/:token — no-login magic link form (pre-filled from token)
 app.get('/vendor/update/:token', async (req, res) => {
   try {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
-    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', 'Invalid or expired link.'));
-    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null));
-    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null));
-    res.send(vendorUpdatePage(doc, 'form', null));
+    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, 'Invalid or expired link.'));
+    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null));
+    // Check if this vendor's order is already shipped
+    const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(doc.shopify_id), vendor_name: doc.vendor_name });
+    const alreadyShipped = ovs && ['transit', 'ready', 'dispatched', 'delivered'].includes(ovs.stage) && ovs.awb;
+    if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, null));
+    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null, null));
+    res.send(vendorUpdatePage(doc, 'form', null, null));
   } catch (e) { res.status(500).send('Server error'); }
 });
 
@@ -9307,9 +9326,9 @@ app.get('/vendor/update/:token', async (req, res) => {
 app.post('/vendor/update/:token', async (req, res) => {
   try {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
-    if (!doc || doc.used || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', 'Link already used or expired.'));
-    const { type, reason, eta, awb, courier } = req.body;
-    const { shopify_id, order_name, vendor_name } = doc;
+    if (!doc || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', null, 'Link expired.'));
+    const { type, reason, eta, awb, courier, tracking_url } = req.body;
+    const { shopify_id, order_name, vendor_name, product_names } = doc;
 
     if (type === 'delay' && reason) {
       const etaIso = eta || null;
@@ -9317,32 +9336,85 @@ app.post('/vendor/update/:token', async (req, res) => {
       await OVS.upsert(shopify_id, vendor_name, { delay_reason: reason, delay_resolution_date: etaIso, updated_at: new Date().toISOString() });
       await notifyDelayToCustomer(shopify_id, vendor_name, reason, etaIso);
       await waAdminAlert(`⏳ *Vendor Delay (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nReason: ${reason}\nETA: ${etaIso || 'not specified'}`);
+
     } else if (type === 'tracking' && awb) {
       const c = courier || 'Not specified';
-      await mdb.collection('order_vendor_stage').updateOne(
-        { shopify_id: String(shopify_id) },
-        { $set: { awb, courier: c, stage: 'transit', updated_at: new Date().toISOString() } }
-      );
-      await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}`);
+      const trackUrl = tracking_url || '';
+      // Try to fulfill on Shopify (vendor's line items)
+      let fulfillError = null;
+      try {
+        const token = await getAccessToken();
+        const orderRes = await shopifyREST(`/orders/${shopify_id}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
+        const order = orderRes?.order;
+        if (order) {
+          const vendorLineItems = (order.line_items || []).filter(li => (li.vendor || '').toLowerCase() === vendor_name.toLowerCase());
+          if (vendorLineItems.length) {
+            const vendorLineItemIds = new Set(vendorLineItems.map(li => li.id));
+            const foRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopify_id}/fulfillment_orders.json`, { headers: { 'X-Shopify-Access-Token': token } });
+            if (foRes.ok) {
+              const foData = await foRes.json();
+              const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
+              const foliMap = {};
+              for (const fo of openFOs) for (const foli of (fo.line_items || [])) { if (vendorLineItemIds.has(foli.line_item_id)) foliMap[String(foli.line_item_id)] = (foliMap[String(foli.line_item_id)] || 0) + foli.fulfillable_quantity; }
+              const remaining = { ...foliMap };
+              const line_items_by_fulfillment_order = [];
+              for (const fo of openFOs) {
+                const matching = [];
+                for (const foli of (fo.line_items || [])) { const liId = String(foli.line_item_id); const rem = remaining[liId] || 0; if (rem <= 0) continue; const qty = Math.min(rem, foli.fulfillable_quantity); if (qty > 0) { matching.push({ id: foli.id, quantity: qty }); remaining[liId] -= qty; } }
+                if (matching.length) line_items_by_fulfillment_order.push({ fulfillment_order_id: fo.id, fulfillment_order_line_items: matching });
+              }
+              if (line_items_by_fulfillment_order.length) {
+                const fRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/fulfillments.json`, { method: 'POST', headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ fulfillment: { line_items_by_fulfillment_order, tracking_info: { number: awb, url: trackUrl, company: c }, notify_customer: false } }) });
+                if (fRes.ok) {
+                  const shippedItems = vendorLineItems.filter(li => foliMap[String(li.id)]).map(li => ({ ...li, quantity: foliMap[String(li.id)] }));
+                  const cfg = await getSmtpConfig();
+                  if (cfg && order.email) { const adsStrip = await getEmailAdsStrip(); await sendEmail({ to: order.email, subject: `Your Items from ${vendor_name} Have Shipped! 🚚`, html: templateVendorShipped({ order, vendorName: vendor_name, items: shippedItems, awb, courier: c, trackingUrl: trackUrl, adsStrip }), shopifyId: shopify_id, trigger: 'vendor_shipped' }); }
+                  shipsagarPushShipment({ awb, courierCode: c, orderNo: order.name || shopify_id, customerName: ((order.shipping_address?.first_name||'') + ' ' + (order.shipping_address?.last_name||'')).trim(), email: order.email || '', mobileNo: (order.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
+                }
+              }
+            }
+          }
+        }
+      } catch (e) { fulfillError = e.message; console.error('Token fulfill error:', e.message); }
+      await OVS.upsert(shopify_id, vendor_name, { awb, courier: c, tracking_url: trackUrl, stage: 'transit', updated_at: new Date().toISOString() });
+      await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}${trackUrl ? '\nTrack: ' + trackUrl : ''}${fulfillError ? '\n⚠️ Shopify fulfill error: ' + fulfillError : ''}`);
+
     } else {
-      return res.send(vendorUpdatePage(doc, 'form', 'Please fill in all required fields.'));
+      return res.send(vendorUpdatePage(doc, 'form', null, 'Please fill in all required fields.'));
     }
+
     await mdb.collection('wa_vendor_update_tokens').updateOne({ token: req.params.token }, { $set: { used: true, used_at: new Date().toISOString() } });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
-    res.send(vendorUpdatePage(doc, 'success', null));
+    res.send(vendorUpdatePage(doc, 'success', null, null));
   } catch (e) { console.error('vendor update token POST:', e.message); res.status(500).send('Server error'); }
 });
 
-function vendorUpdatePage(doc, state, errMsg) {
+function vendorUpdatePage(doc, state, ovs, errMsg) {
   const orderName = doc?.order_name || '';
   const vendorName = doc?.vendor_name || '';
   const products = doc?.product_names || '';
   const today = new Date().toISOString().split('T')[0];
+  const courierSelect = `<select name="courier" id="courier-select" style="width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;appearance:none;cursor:pointer">
+    <option value="">— Select courier —</option>
+    ${COURIER_OPTIONS.map(o => `<option value="${o.label}">${o.label}</option>`).join('')}
+  </select>`;
   const stateHtml = {
     used: `<div class="card"><div class="icon">✅</div><h2>Already Submitted</h2><p>You've already submitted an update for order <strong>${orderName}</strong>. No further action needed.</p></div>`,
     expired: `<div class="card"><div class="icon">⏰</div><h2>Link Expired</h2><p>This update link for order <strong>${orderName}</strong> has expired (72h validity). Contact CROSCROW team if needed.</p></div>`,
     error: `<div class="card"><div class="icon">❌</div><h2>Invalid Link</h2><p>${errMsg || 'This link is not valid.'}</p></div>`,
-    success: `<div class="card success"><div class="icon">🎉</div><h2>Update Submitted!</h2><p>Your update for order <strong>${orderName}</strong> has been received. The customer will be notified automatically.</p><p style="color:#64748b;font-size:13px;margin-top:12px">You can close this page.</p></div>`,
+    success: `<div class="card success"><div class="icon">🎉</div><h2>Update Submitted!</h2><p>Your update for order <strong>${orderName}</strong> has been received. The customer has been notified automatically.</p><p style="color:#64748b;font-size:13px;margin-top:12px">You can close this page.</p></div>`,
+    already_shipped: `<div class="card">
+      <div class="brand">CROSCROW</div>
+      <div class="order-badge">${orderName}</div>
+      ${products ? `<div class="product-name">${products}</div>` : ''}
+      <div class="shipped-box">
+        <div class="shipped-title">📦 Already Shipped</div>
+        <div class="shipped-row"><span>AWB</span><strong>${ovs?.awb || '—'}</strong></div>
+        <div class="shipped-row"><span>Courier</span><strong>${ovs?.courier || '—'}</strong></div>
+        ${ovs?.tracking_url ? `<div class="shipped-row"><span>Track</span><a href="${ovs.tracking_url}" target="_blank" style="color:#60a5fa;word-break:break-all">${ovs.tracking_url}</a></div>` : ''}
+      </div>
+      <p style="font-size:12px;color:#555;margin-top:16px">Order already marked as shipped. To edit shipment details, contact CROSCROW on WhatsApp or email <a href="mailto:support@croscrow.com" style="color:#60a5fa">support@croscrow.com</a>.</p>
+    </div>`,
     form: `<div class="card">
       <div class="brand">CROSCROW</div>
       <h2>Order Update</h2>
@@ -9362,9 +9434,11 @@ function vendorUpdatePage(doc, state, errMsg) {
         </div>
         <div id="tracking-section" class="section hidden">
           <label>AWB / Tracking number *</label>
-          <input type="text" name="awb" placeholder="E.g. 4959596123">
-          <label>Courier name *</label>
-          <input type="text" name="courier" placeholder="E.g. Delhivery, BlueDart, Shiprocket">
+          <input type="text" name="awb" placeholder="E.g. 4959596123" autocomplete="off">
+          <label>Courier *</label>
+          ${courierSelect}
+          <label>Tracking URL <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — direct link for customer)</span></label>
+          <input type="text" name="tracking_url" placeholder="E.g. https://www.delhivery.com/track/package/4959596123" autocomplete="off">
         </div>
         <button type="submit" id="submit-btn" disabled>Submit Update →</button>
       </form>
@@ -9380,18 +9454,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .brand{font-size:11px;font-weight:800;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:20px}
 h2{font-size:20px;font-weight:700;margin-bottom:6px}
 .order-badge{display:inline-block;background:#002eff;color:#fff;font-size:12px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:4px;margin:12px 0 4px}
-.product-name{font-size:12px;color:#94a3b8;margin-bottom:20px}
+.product-name{font-size:12px;color:#64748b;margin-bottom:20px;margin-top:6px}
 .icon{font-size:36px;margin-bottom:16px}
 .error{background:#2d1515;border:1px solid #ef4444;color:#fca5a5;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
-.tabs{display:flex;flex-direction:column;gap:10px;margin:20px 0 16px}
+.shipped-box{background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:16px 18px;margin:16px 0 0}
+.shipped-title{font-size:13px;font-weight:700;margin-bottom:12px;color:#e2e8f0}
+.shipped-row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #1e1e1e;font-size:13px}
+.shipped-row span{color:#64748b}
+.shipped-row strong{color:#e2e8f0;font-family:monospace}
+.tabs{display:flex;flex-direction:column;gap:10px;margin:20px 0 4px}
 .tab{display:flex;align-items:center;gap:10px;padding:14px 16px;border:1.5px solid #2a2a2a;border-radius:10px;cursor:pointer;font-size:14px;font-weight:500;transition:border-color .2s}
 .tab:has(input:checked){border-color:#002eff;background:rgba(0,46,255,0.08)}
-.tab input{accent-color:#002eff;width:16px;height:16px}
-.section{margin-top:16px}
+.tab input{accent-color:#002eff;width:16px;height:16px;flex-shrink:0}
+.section{margin-top:4px}
 .section.hidden{display:none}
-label{display:block;font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;margin-top:14px}
-textarea,input[type=text],input[type=date]{width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;transition:border-color .2s}
-textarea:focus,input:focus{border-color:#002eff}
+label{display:block;font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;margin-top:16px}
+textarea,input[type=text],input[type=date],select{width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;transition:border-color .2s}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14L2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center}
+textarea:focus,input:focus,select:focus{border-color:#002eff}
 textarea{resize:vertical;min-height:80px}
 button{width:100%;margin-top:24px;background:#002eff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:15px;cursor:pointer;letter-spacing:1px;transition:opacity .2s}
 button:disabled{opacity:.35;cursor:not-allowed}
@@ -9402,8 +9482,8 @@ p strong{color:#e2e8f0}
 ${stateHtml[state] || stateHtml.error}
 <script>
 function toggle(el){
-  document.getElementById('delay-section').classList.toggle('hidden', el.value!=='delay');
-  document.getElementById('tracking-section').classList.toggle('hidden', el.value!=='tracking');
+  document.getElementById('delay-section').classList.toggle('hidden',el.value!=='delay');
+  document.getElementById('tracking-section').classList.toggle('hidden',el.value!=='tracking');
   document.getElementById('submit-btn').disabled=false;
 }
 </script>
