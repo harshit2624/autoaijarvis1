@@ -9330,21 +9330,22 @@ const COURIER_OPTIONS = [
 app.get('/vendor/update/:token', async (req, res) => {
   try {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
-    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, null, 'Invalid or expired link.'));
-    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null, null));
-    // Check if this vendor's order is already shipped
-    const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(doc.shopify_id), vendor_name: doc.vendor_name });
+    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, null, null, 'Invalid or expired link.'));
+    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null, null, null));
+    const [ovs, nudge] = await Promise.all([
+      mdb.collection('order_vendor_stage').findOne({ shopify_id: String(doc.shopify_id), vendor_name: doc.vendor_name }),
+      mdb.collection('wa_vendor_nudges').findOne({ shopify_id: String(doc.shopify_id), vendor: doc.vendor_name }, { sort: { sent_at: -1 } }),
+    ]);
     const alreadyShipped = ovs && ['transit', 'ready', 'dispatched', 'delivered'].includes(ovs.stage) && ovs.awb;
-    // Fetch Shopify order for customer details
     let shopifyOrder = null;
     try {
       const tok = await getAccessToken();
       const oRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/${doc.shopify_id}.json`, { headers: { 'X-Shopify-Access-Token': tok } });
       if (oRes.ok) shopifyOrder = (await oRes.json()).order;
     } catch (_) {}
-    if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, shopifyOrder, null));
-    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null, shopifyOrder, null));
-    res.send(vendorUpdatePage(doc, 'form', null, shopifyOrder, null));
+    if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, shopifyOrder, nudge, null));
+    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null, shopifyOrder, nudge, null));
+    res.send(vendorUpdatePage(doc, 'form', null, shopifyOrder, nudge, null));
   } catch (e) { res.status(500).send('Server error'); }
 });
 
@@ -9352,7 +9353,7 @@ app.get('/vendor/update/:token', async (req, res) => {
 app.post('/vendor/update/:token', async (req, res) => {
   try {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
-    if (!doc || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', null, null, 'Link expired.'));
+    if (!doc || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', null, null, null, 'Link expired.'));
     const { type, reason, eta, awb, courier, tracking_url } = req.body;
     const { shopify_id, order_name, vendor_name, product_names } = doc;
 
@@ -9406,16 +9407,33 @@ app.post('/vendor/update/:token', async (req, res) => {
       await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}${trackUrl ? '\nTrack: ' + trackUrl : ''}${fulfillError ? '\n⚠️ Shopify fulfill error: ' + fulfillError : ''}`);
 
     } else {
-      return res.send(vendorUpdatePage(doc, 'form', null, null, 'Please fill in all required fields.'));
+      return res.send(vendorUpdatePage(doc, 'form', null, null, null, 'Please fill in all required fields.'));
     }
 
     await mdb.collection('wa_vendor_update_tokens').updateOne({ token: req.params.token }, { $set: { used: true, used_at: new Date().toISOString() } });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
-    res.send(vendorUpdatePage(doc, 'success', null, null, null));
+    res.send(vendorUpdatePage(doc, 'success', null, null, null, null));
   } catch (e) { console.error('vendor update token POST:', e.message); res.status(500).send('Server error'); }
 });
 
-function vendorUpdatePage(doc, state, ovs, shopifyOrder, errMsg) {
+// POST /vendor/update/:token/penalty — vendor acknowledges or disputes penalty
+app.post('/vendor/update/:token/penalty', async (req, res) => {
+  try {
+    const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
+    if (!doc) return res.status(404).json({ error: 'Invalid link' });
+    const { action } = req.body; // 'acknowledged' | 'disputed'
+    if (!['acknowledged', 'disputed'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+    await mdb.collection('wa_vendor_nudges').updateOne(
+      { shopify_id: String(doc.shopify_id), vendor: doc.vendor_name },
+      { $set: { penalty_status: action, penalty_status_at: new Date().toISOString() } },
+      { sort: { sent_at: -1 } }
+    );
+    await waAdminAlert(`${action === 'disputed' ? '⚠️' : '✅'} *Penalty ${action}*\nOrder: *${doc.order_name}*\nVendor: ${doc.vendor_name}`).catch(() => {});
+    res.json({ ok: true, status: action });
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
+});
+
+function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
   const orderName = doc?.order_name || '';
   const vendorName = doc?.vendor_name || '';
   const products = doc?.product_names || '';
@@ -9435,145 +9453,255 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, errMsg) {
     const days = Math.floor(hrs / 24);
     const timeStr = days > 0 ? `${days}d ${hrs % 24}h ago` : `${hrs}h ago`;
     const urgency = days >= 5 ? 'color:#ef4444' : days >= 3 ? 'color:#f59e0b' : 'color:#10b981';
-    timeSinceHtml = `<div class="info-row"><span>Order placed</span><strong style="${urgency}">${timeStr}</strong></div>`;
+    timeSinceHtml = `<div class="ilabel">Placed</div><div class="ival" style="${urgency}">${timeStr}</div>`;
   }
 
-  // Product images from vendor's line items
+  // Product images — vendor's line items only
   const vendorItems = (shopifyOrder?.line_items || []).filter(li =>
     !vendorName || (li.vendor || '').toLowerCase() === vendorName.toLowerCase()
   );
-  const productImagesHtml = vendorItems.length
-    ? `<div class="product-imgs">${vendorItems.map(li => {
+
+  // Penalty status
+  const penaltyStatus = nudge?.penalty_status || (nudge ? 'triggered' : null);
+  const penaltyBadge = { triggered: ['#f59e0b','#1c1500','Penalty Triggered'], acknowledged: ['#10b981','#0a1f14','Acknowledged'], disputed: ['#ef4444','#1f0a0a','Disputed'], cancelled: ['#64748b','#111','Cancelled'] };
+  const [pColor, pBg, pLabel] = penaltyBadge[penaltyStatus] || ['#64748b','#111','Unknown'];
+  const penaltyHtml = penaltyStatus ? `<div class="penalty-strip" style="background:${pBg};border-color:${pColor}20;color:${pColor}">
+    <span class="penalty-dot" style="background:${pColor}"></span>
+    Penalty Status: <strong>${pLabel}</strong>
+    ${penaltyStatus === 'triggered' ? `<div class="penalty-actions">
+      <button type="button" class="pact pact-ack" onclick="penaltyAction('acknowledged')">Acknowledge</button>
+      <button type="button" class="pact pact-dis" onclick="penaltyAction('disputed')">Dispute</button>
+    </div>` : ''}
+    <div id="penalty-msg" class="penalty-msg"></div>
+  </div>` : '';
+
+  const courierOpts = COURIER_OPTIONS.map(o => `<option value="${o.label}">${o.label}</option>`).join('');
+
+  // Shared order header used in form + already_shipped states
+  const orderHeader = `
+    <div class="page-header">
+      <div class="brand-line">
+        <span class="brand">CROSCROW</span>
+        <span class="order-badge">${orderName}</span>
+      </div>
+      ${penaltyHtml}
+    </div>
+    ${vendorItems.length ? `<div class="products">
+      ${vendorItems.map(li => {
         const img = li.image?.src || '';
-        return `<div class="prod-item">
-          ${img ? `<img src="${img}" alt="" loading="lazy">` : `<div class="prod-img-placeholder">&#128230;</div>`}
-          <div class="prod-meta">
-            <div class="prod-title">${li.title || ''}</div>
-            ${li.variant_title && li.variant_title !== 'Default Title' ? `<div class="prod-variant">${li.variant_title}</div>` : ''}
-            <div class="prod-qty">Qty: ${li.quantity}</div>
+        return `<div class="prod-row">
+          ${img ? `<img class="prod-img" src="${img}" alt="" loading="lazy">` : `<div class="prod-img prod-img-ph">&#128230;</div>`}
+          <div class="prod-info">
+            <div class="prod-name">${li.title || ''}</div>
+            ${li.variant_title && li.variant_title !== 'Default Title' ? `<div class="prod-var">${li.variant_title}</div>` : ''}
+            <div class="prod-qty">Qty&nbsp;${li.quantity}</div>
           </div>
         </div>`;
-      }).join('')}</div>`
-    : products ? `<div class="product-name">${products}</div>` : '';
+      }).join('')}
+    </div>` : products ? `<div class="prod-text">${products}</div>` : ''}
+    ${(custName || custPhone || custAddr) ? `<div class="info-card">
+      <div class="info-head">Customer Info</div>
+      ${custName ? `<div class="irow"><div class="ilabel">Name</div><div class="ival">${custName}</div></div>` : ''}
+      ${custPhone ? `<div class="irow"><div class="ilabel">Phone</div><div class="ival">${custPhone}</div></div>` : ''}
+      ${custAddr ? `<div class="irow"><div class="ilabel">Ship to</div><div class="ival">${custAddr}</div></div>` : ''}
+      ${timeSinceHtml ? `<div class="irow">${timeSinceHtml}</div>` : ''}
+    </div>` : ''}`;
 
-  const customerInfoHtml = (custName || custPhone || custAddr) ? `
-    <div class="info-box">
-      <div class="info-title">Customer Details</div>
-      ${custName ? `<div class="info-row"><span>Name</span><strong>${custName}</strong></div>` : ''}
-      ${custPhone ? `<div class="info-row"><span>Phone</span><strong>${custPhone}</strong></div>` : ''}
-      ${custAddr ? `<div class="info-row"><span>Ship to</span><strong>${custAddr}</strong></div>` : ''}
-      ${timeSinceHtml}
-    </div>` : '';
-  const courierSelect = `<select name="courier" id="courier-select" style="width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;appearance:none;cursor:pointer">
-    <option value="">— Select courier —</option>
-    ${COURIER_OPTIONS.map(o => `<option value="${o.label}">${o.label}</option>`).join('')}
-  </select>`;
   const stateHtml = {
-    used: `<div class="card"><div class="icon">&#10003;</div><h2>Already Submitted</h2><p>You've already submitted an update for order <strong>${orderName}</strong>. No further action needed.</p></div>`,
-    expired: `<div class="card"><div class="icon">&#9200;</div><h2>Link Expired</h2><p>This update link for order <strong>${orderName}</strong> has expired (72h validity). Contact CROSCROW team if needed.</p></div>`,
-    error: `<div class="card"><div class="icon">&#10060;</div><h2>Invalid Link</h2><p>${errMsg || 'This link is not valid.'}</p></div>`,
-    success: `<div class="card success"><div class="icon">&#127881;</div><h2>Update Submitted!</h2><p>Your update for order <strong>${orderName}</strong> has been received. The customer has been notified automatically.</p><p style="color:#64748b;font-size:13px;margin-top:12px">You can close this page.</p></div>`,
-    already_shipped: `<div class="card">
-      <div class="brand">CROSCROW</div>
-      <div class="order-badge">${orderName}</div>
-      ${productImagesHtml}
-      ${customerInfoHtml}
-      <div class="shipped-box">
-        <div class="shipped-title">&#128230; Already Shipped</div>
-        <div class="shipped-row"><span>AWB</span><strong>${ovs?.awb || '&mdash;'}</strong></div>
-        <div class="shipped-row"><span>Courier</span><strong>${ovs?.courier || '&mdash;'}</strong></div>
-        ${ovs?.tracking_url ? `<div class="shipped-row"><span>Track</span><a href="${ovs.tracking_url}" target="_blank" style="color:#60a5fa;word-break:break-all">${ovs.tracking_url}</a></div>` : ''}
+    used: `<div class="static-card"><div class="static-icon ok">&#10003;</div><div class="static-title">Already Submitted</div><p>You already sent an update for <strong>${orderName}</strong>. No further action needed.</p></div>`,
+    expired: `<div class="static-card"><div class="static-icon warn">&#9200;</div><div class="static-title">Link Expired</div><p>This link for <strong>${orderName}</strong> expired after 72 hours. Contact CROSCROW if needed.</p></div>`,
+    error: `<div class="static-card"><div class="static-icon err">&#10060;</div><div class="static-title">Invalid Link</div><p>${errMsg || 'This link is not valid.'}</p></div>`,
+    success: `<div class="static-card success-card"><div class="static-icon ok">&#10003;</div><div class="static-title">Update Submitted</div><p>Your update for <strong>${orderName}</strong> is saved. The customer has been notified automatically.</p><p class="sub">You can close this page.</p></div>`,
+    already_shipped: `<div class="page">
+      ${orderHeader}
+      <div class="section-card">
+        <div class="section-title">&#128230; Shipment Details</div>
+        <div class="detail-row"><span>AWB</span><strong class="mono">${ovs?.awb || '&mdash;'}</strong></div>
+        <div class="detail-row"><span>Courier</span><strong>${ovs?.courier || '&mdash;'}</strong></div>
+        ${ovs?.tracking_url ? `<div class="detail-row"><span>Tracking</span><a href="${ovs.tracking_url}" target="_blank" class="track-link">${ovs.tracking_url}</a></div>` : ''}
       </div>
-      <p style="font-size:12px;color:#555;margin-top:16px">Order already marked as shipped. To edit shipment details, contact CROSCROW on WhatsApp or email <a href="mailto:support@croscrow.com" style="color:#60a5fa">support@croscrow.com</a>.</p>
+      <p class="hint">Order already marked as shipped. To edit, contact CROSCROW on WhatsApp or <a href="mailto:support@croscrow.com">support@croscrow.com</a>.</p>
     </div>`,
-    form: `<div class="card">
-      <div class="brand">CROSCROW</div>
-      <h2>Order Update</h2>
-      <div class="order-badge">${orderName}</div>
-      ${productImagesHtml}
-      ${customerInfoHtml}
-      ${errMsg ? `<div class="error">${errMsg}</div>` : ''}
-      <form method="POST">
-        <div class="tabs">
-          <label class="tab"><input type="radio" name="type" value="delay" required onchange="toggle(this)"> &#9203; Order is delayed</label>
-          <label class="tab"><input type="radio" name="type" value="tracking" onchange="toggle(this)"> &#128230; Already shipped</label>
+    form: `<div class="page">
+      ${orderHeader}
+      ${errMsg ? `<div class="err-banner">${errMsg}</div>` : ''}
+      <form method="POST" id="main-form">
+        <div class="update-type-label">What do you want to update?</div>
+        <div class="type-tabs">
+          <label class="type-tab" id="tab-delay">
+            <input type="radio" name="type" value="delay" required onchange="selectType('delay')">
+            <div class="tab-icon">&#9203;</div>
+            <div class="tab-text">
+              <div class="tab-title">Report Delay</div>
+              <div class="tab-sub">Provide reason &amp; new ETA</div>
+            </div>
+          </label>
+          <label class="type-tab" id="tab-tracking">
+            <input type="radio" name="type" value="tracking" onchange="selectType('tracking')">
+            <div class="tab-icon">&#128230;</div>
+            <div class="tab-text">
+              <div class="tab-title">Already Shipped</div>
+              <div class="tab-sub">Enter AWB &amp; courier</div>
+            </div>
+          </label>
         </div>
-        <div id="delay-section" class="section hidden">
-          <label>Reason for delay *</label>
-          <textarea name="reason" placeholder="E.g. Fabric shortage, stitching pending, awaiting dispatch..." rows="3"></textarea>
-          <label>Expected dispatch date *</label>
-          <input type="date" name="eta" min="${today}">
+        <div id="delay-fields" class="fields hidden">
+          <div class="field-group">
+            <label class="field-label">Reason for delay <span class="req">*</span></label>
+            <textarea name="reason" rows="3" placeholder="E.g. Fabric shortage, stitching pending..."></textarea>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Expected dispatch date <span class="req">*</span></label>
+            <input type="date" name="eta" min="${today}">
+          </div>
         </div>
-        <div id="tracking-section" class="section hidden">
-          <label>AWB / Tracking number *</label>
-          <input type="text" name="awb" placeholder="E.g. 4959596123" autocomplete="off">
-          <label>Courier *</label>
-          ${courierSelect}
-          <label>Tracking URL <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-          <input type="text" name="tracking_url" placeholder="E.g. https://www.delhivery.com/track/package/4959596123" autocomplete="off">
+        <div id="tracking-fields" class="fields hidden">
+          <div class="field-group">
+            <label class="field-label">AWB / Tracking number <span class="req">*</span></label>
+            <input type="text" name="awb" placeholder="E.g. 4959596123" autocomplete="off">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Courier <span class="req">*</span></label>
+            <div class="select-wrap"><select name="courier"><option value="">Select courier</option>${courierOpts}</select></div>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Tracking URL <span class="optional">(optional)</span></label>
+            <input type="text" name="tracking_url" placeholder="https://..." autocomplete="off">
+          </div>
         </div>
-        <button type="submit" id="submit-btn" disabled>Submit Update &rarr;</button>
+        <div class="submit-bar">
+          <button type="submit" id="submit-btn" disabled>Submit Update</button>
+        </div>
       </form>
     </div>`,
   };
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Order Update &mdash; CROSCROW</title>
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<title>Order Update — CROSCROW</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:28px 24px;max-width:480px;width:100%}
-.card.success{border-color:#10b981;background:#0d2e1f}
-.brand{font-size:11px;font-weight:800;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:16px}
-h2{font-size:20px;font-weight:700;margin-bottom:4px}
-.order-badge{display:inline-block;background:#002eff;color:#fff;font-size:12px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:4px;margin:10px 0 14px}
-.product-name{font-size:12px;color:#64748b;margin-bottom:14px}
-.product-imgs{display:flex;flex-direction:column;gap:10px;margin:0 0 14px}
-.prod-item{display:flex;gap:12px;align-items:flex-start;background:#111;border:1px solid #222;border-radius:10px;padding:10px 12px}
-.prod-item img{width:56px;height:56px;object-fit:cover;border-radius:7px;flex-shrink:0;background:#1a1a1a}
-.prod-img-placeholder{width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:#222;border-radius:7px;font-size:22px;flex-shrink:0}
-.prod-meta{flex:1;min-width:0}
-.prod-title{font-size:13px;font-weight:600;color:#e2e8f0;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.prod-variant{font-size:11px;color:#64748b;margin-top:2px}
-.prod-qty{font-size:11px;color:#94a3b8;margin-top:4px}
-.info-box{background:#111;border:1px solid #222;border-radius:10px;padding:14px 16px;margin-bottom:16px}
-.info-title{font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#555;margin-bottom:10px}
-.info-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid #1a1a1a;font-size:12px}
-.info-row:last-child{border-bottom:none;padding-bottom:0}
-.info-row span{color:#64748b;white-space:nowrap;flex-shrink:0}
-.info-row strong{color:#e2e8f0;text-align:right;word-break:break-word}
-.icon{font-size:36px;margin-bottom:16px}
-.error{background:#2d1515;border:1px solid #ef4444;color:#fca5a5;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
-.shipped-box{background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:16px 18px;margin:16px 0 0}
-.shipped-title{font-size:13px;font-weight:700;margin-bottom:12px;color:#e2e8f0}
-.shipped-row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #1e1e1e;font-size:13px}
-.shipped-row span{color:#64748b}
-.shipped-row strong{color:#e2e8f0;font-family:monospace}
-.tabs{display:flex;flex-direction:column;gap:10px;margin:20px 0 4px}
-.tab{display:flex;align-items:center;gap:10px;padding:14px 16px;border:1.5px solid #2a2a2a;border-radius:10px;cursor:pointer;font-size:14px;font-weight:500;transition:border-color .2s}
-.tab:has(input:checked){border-color:#002eff;background:rgba(0,46,255,0.08)}
-.tab input{accent-color:#002eff;width:16px;height:16px;flex-shrink:0}
-.section{margin-top:4px}
-.section.hidden{display:none}
-label{display:block;font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;margin-top:16px}
-textarea,input[type=text],input[type=date],select{width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;transition:border-color .2s}
-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14L2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:36px}
-textarea:focus,input:focus,select:focus{border-color:#002eff}
-textarea{resize:vertical;min-height:80px}
-button{width:100%;margin-top:24px;background:#002eff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:15px;cursor:pointer;letter-spacing:1px;transition:opacity .2s}
-button:disabled{opacity:.35;cursor:not-allowed}
-button:hover:not(:disabled){opacity:.88}
-p{line-height:1.7;color:#94a3b8;margin-top:10px;font-size:14px}
-p strong{color:#e2e8f0}
-</style></head><body>
+:root{--blue:#002eff;--blue-dim:rgba(0,46,255,.1);--surface:#161616;--surface2:#1e1e1e;--surface3:#252525;--border:#2a2a2a;--text:#e2e8f0;--muted:#64748b;--hint:#94a3b8;--green:#10b981;--red:#ef4444;--amber:#f59e0b}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:#0d0d0d;color:var(--text);font-size:15px;line-height:1.5;overscroll-behavior:none}
+a{color:var(--blue);text-decoration:none}
+/* ── Layout ── */
+.page{display:flex;flex-direction:column;min-height:100vh;max-width:440px;margin:0 auto;padding:0 0 88px}
+/* ── Header ── */
+.page-header{padding:20px 16px 0}
+.brand-line{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.brand{font-size:10px;font-weight:900;letter-spacing:4px;color:var(--muted);text-transform:uppercase}
+.order-badge{background:var(--blue);color:#fff;font-size:11px;font-weight:800;letter-spacing:2px;padding:3px 10px;border-radius:4px}
+/* ── Penalty strip ── */
+.penalty-strip{border:1px solid;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.penalty-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.penalty-strip strong{font-weight:700}
+.penalty-actions{display:flex;gap:8px;width:100%;margin-top:10px}
+.pact{flex:1;border:none;border-radius:8px;font-size:13px;font-weight:700;padding:10px;cursor:pointer;font-family:inherit;transition:opacity .15s}
+.pact:active{opacity:.7}
+.pact-ack{background:#10b981;color:#fff}
+.pact-dis{background:#ef4444;color:#fff}
+.penalty-msg{width:100%;font-size:12px;font-style:italic;margin-top:4px}
+/* ── Products ── */
+.products{padding:0 16px;display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.prod-row{display:flex;gap:12px;align-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+.prod-img{width:52px;height:52px;object-fit:cover;border-radius:8px;flex-shrink:0;background:var(--surface3)}
+.prod-img-ph{display:flex;align-items:center;justify-content:center;font-size:20px}
+.prod-info{flex:1;min-width:0}
+.prod-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prod-var{font-size:11px;color:var(--muted);margin-top:2px}
+.prod-qty{font-size:11px;color:var(--hint);margin-top:3px}
+.prod-text{padding:0 16px;font-size:13px;color:var(--muted);margin-bottom:14px}
+/* ── Customer info card ── */
+.info-card{margin:0 16px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.info-head{font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:10px 14px 8px;border-bottom:1px solid var(--border)}
+.irow{display:flex;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border)}
+.irow:last-child{border-bottom:none}
+.ilabel{font-size:11px;color:var(--muted);flex-shrink:0;width:54px;padding-top:1px}
+.ival{font-size:13px;color:var(--text);flex:1;word-break:break-word}
+.iurgency-row{display:flex;justify-content:space-between;padding:8px 14px;font-size:12px}
+.iurgency-row span{color:var(--muted)}
+/* ── Update form ── */
+.update-type-label{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--hint);padding:18px 16px 10px}
+.type-tabs{display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.type-tab{display:flex;align-items:center;gap:14px;background:var(--surface2);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color .15s,background .15s;position:relative}
+.type-tab input{position:absolute;opacity:0;width:0;height:0}
+.type-tab.selected{border-color:var(--blue);background:var(--blue-dim)}
+.tab-icon{font-size:22px;flex-shrink:0;width:30px;text-align:center}
+.tab-title{font-size:14px;font-weight:600}
+.tab-sub{font-size:12px;color:var(--muted);margin-top:2px}
+/* ── Fields ── */
+.fields{padding:4px 16px 0}
+.fields.hidden{display:none}
+.field-group{margin-top:16px}
+.field-label{display:block;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--hint);margin-bottom:7px}
+.req{color:var(--red)}
+.optional{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)}
+input[type=text],input[type=date],textarea,select{width:100%;background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;padding:13px 14px;outline:none;font-family:inherit;transition:border-color .15s;-webkit-appearance:none;appearance:none}
+input[type=text]:focus,input[type=date]:focus,textarea:focus,select:focus{border-color:var(--blue)}
+textarea{resize:vertical;min-height:90px;line-height:1.5}
+.select-wrap{position:relative}
+.select-wrap::after{content:'';position:absolute;right:14px;top:50%;transform:translateY(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid var(--hint);pointer-events:none}
+.select-wrap select{padding-right:38px;cursor:pointer}
+/* ── Submit bar ── */
+.submit-bar{position:fixed;bottom:0;left:0;right:0;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));background:linear-gradient(transparent,#0d0d0d 40%);max-width:440px;margin:0 auto}
+.submit-bar button{width:100%;background:var(--blue);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;padding:16px;cursor:pointer;font-family:inherit;letter-spacing:.5px;transition:opacity .15s;-webkit-appearance:none}
+.submit-bar button:disabled{opacity:.3;cursor:not-allowed}
+.submit-bar button:active:not(:disabled){opacity:.75}
+/* ── Static states ── */
+.static-card{max-width:400px;margin:80px auto 0;padding:32px 24px;background:var(--surface);border:1px solid var(--border);border-radius:16px;text-align:center}
+.success-card{border-color:#10b98133;background:#0a1f14}
+.static-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;margin:0 auto 16px}
+.static-icon.ok{background:#10b98133;color:var(--green)}
+.static-icon.warn{background:#f59e0b22;color:var(--amber)}
+.static-icon.err{background:#ef444422;color:var(--red)}
+.static-title{font-size:18px;font-weight:700;margin-bottom:10px}
+.static-card p{font-size:14px;color:var(--hint);line-height:1.7}
+.static-card strong{color:var(--text)}
+.static-card .sub{font-size:12px;color:var(--muted);margin-top:8px}
+/* ── Shipped state ── */
+.section-card{margin:0 16px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.section-title{font-size:12px;font-weight:700;color:var(--hint);padding:10px 14px;border-bottom:1px solid var(--border)}
+.detail-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px}
+.detail-row:last-child{border-bottom:none}
+.detail-row span{color:var(--muted);flex-shrink:0}
+.mono{font-family:monospace;font-size:13px}
+.track-link{color:#60a5fa;word-break:break-all;text-align:right}
+.hint{font-size:12px;color:var(--muted);padding:0 16px;line-height:1.6}
+.hint a{color:var(--hint)}
+/* ── Error banner ── */
+.err-banner{margin:12px 16px 0;background:#2d1515;border:1px solid #ef444460;color:#fca5a5;padding:10px 14px;border-radius:10px;font-size:13px}
+</style>
+</head>
+<body>
 ${stateHtml[state] || stateHtml.error}
 <script>
-function toggle(el){
-  document.getElementById('delay-section').classList.toggle('hidden',el.value!=='delay');
-  document.getElementById('tracking-section').classList.toggle('hidden',el.value!=='tracking');
+var TOKEN='${doc?.token||''}';
+function selectType(t){
+  ['delay','tracking'].forEach(function(x){
+    document.getElementById(x+'-fields').classList.toggle('hidden',x!==t);
+    document.getElementById('tab-'+x).classList.toggle('selected',x===t);
+  });
   document.getElementById('submit-btn').disabled=false;
 }
+function penaltyAction(action){
+  var btns=document.querySelectorAll('.pact');
+  btns.forEach(function(b){b.disabled=true;b.style.opacity='.5'});
+  var msg=document.getElementById('penalty-msg');
+  fetch('/vendor/update/'+TOKEN+'/penalty',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      msg.style.color=action==='acknowledged'?'#10b981':'#ef4444';
+      msg.textContent=action==='acknowledged'?'Penalty acknowledged. Thank you.':'Dispute submitted. CROSCROW team will review.';
+    })
+    .catch(function(){msg.style.color='#f59e0b';msg.textContent='Could not update — please try again.'});
+}
 </script>
-</body></html>`;
+</body>
+</html>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
