@@ -9863,7 +9863,7 @@ function doRephrase(){
       var s=d.suggestions||[];
       if(!s.length){area.style.display='none';return;}
       chips.innerHTML=s.map(function(t){
-        return '<div onclick="useRephrase(this)" style="background:#1e1e1e;border:1px solid #2a2a2a;border-radius:10px;padding:11px 14px;font-size:13px;color:#e2e8f0;cursor:pointer;line-height:1.5;transition:border-color .15s" onmouseenter="this.style.borderColor=\'#002eff\'" onmouseleave="this.style.borderColor=\'#2a2a2a\'">'+t+'</div>';
+        return '<div onclick="useRephrase(this)" style="background:#1e1e1e;border:1px solid #2a2a2a;border-radius:10px;padding:11px 14px;font-size:13px;color:#e2e8f0;cursor:pointer;line-height:1.5;transition:border-color .15s" onmouseenter="this.style.borderColor=&quot;#002eff&quot;" onmouseleave="this.style.borderColor=&quot;#2a2a2a&quot;">'+t+'</div>';
       }).join('');
     })
     .catch(function(){loading.style.display='none';area.style.display='none';});
