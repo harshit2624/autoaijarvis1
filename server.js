@@ -9344,18 +9344,26 @@ app.get('/vendor/update/:token', async (req, res) => {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
     if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, null, null, 'Invalid or expired link.'));
     if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null, null, null));
-    const [ovs, nudgeArr] = await Promise.all([
-      mdb.collection('order_vendor_stage').findOne({ shopify_id: String(doc.shopify_id), vendor_name: doc.vendor_name }),
-      mdb.collection('wa_vendor_nudges').find({ shopify_id: String(doc.shopify_id), vendor: doc.vendor_name }).sort({ sent_at: -1 }).limit(1).toArray(),
-    ]);
-    const nudge = nudgeArr?.[0] || null;
-    const alreadyShipped = ovs && ['transit', 'ready', 'dispatched', 'delivered'].includes(ovs.stage) && ovs.awb;
+
+    // Resolve real Shopify internal ID if token stored the order name number (< 10 digits)
+    let realShopifyId = String(doc.shopify_id);
     let shopifyOrder = null;
     try {
       const tok = await getAccessToken();
-      const oRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/${doc.shopify_id}.json`, { headers: { 'X-Shopify-Access-Token': tok } });
+      if (realShopifyId.length < 10) {
+        const s = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?name=${encodeURIComponent(doc.order_name || ('#' + doc.shopify_id))}&status=any&fields=id,name`, { headers: { 'X-Shopify-Access-Token': tok } });
+        if (s.ok) { const sd = await s.json(); if (sd.orders?.[0]) realShopifyId = String(sd.orders[0].id); }
+      }
+      const oRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/${realShopifyId}.json`, { headers: { 'X-Shopify-Access-Token': tok } });
       if (oRes.ok) shopifyOrder = (await oRes.json()).order;
     } catch (_) {}
+
+    const [ovs, nudgeArr] = await Promise.all([
+      mdb.collection('order_vendor_stage').findOne({ shopify_id: { $in: [String(doc.shopify_id), realShopifyId] }, vendor_name: doc.vendor_name }),
+      mdb.collection('wa_vendor_nudges').find({ shopify_id: { $in: [String(doc.shopify_id), realShopifyId] }, vendor: doc.vendor_name }).sort({ sent_at: -1 }).limit(1).toArray(),
+    ]);
+    const nudge = nudgeArr?.[0] || null;
+    const alreadyShipped = ovs && ['transit', 'ready', 'dispatched', 'delivered'].includes(ovs.stage) && ovs.awb;
     if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, shopifyOrder, nudge, null));
     if (doc.used) return res.send(vendorUpdatePage(doc, 'used', ovs, shopifyOrder, nudge, null));
     res.send(vendorUpdatePage(doc, 'form', ovs, shopifyOrder, nudge, null));
