@@ -9436,6 +9436,42 @@ app.post('/vendor/update/:token', async (req, res) => {
   } catch (e) { console.error('vendor update token POST:', e.message, e.stack); res.status(500).send(`Server error: ${e.message}`); }
 });
 
+// POST /vendor/rephrase-delay — AI rephrase suggestions for delay reason
+app.post('/vendor/rephrase-delay', async (req, res) => {
+  try {
+    const { reason, eta, order_name } = req.body || {};
+    if (!reason || reason.trim().length < 5) return res.json({ suggestions: [] });
+    const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+    if (!DEEPSEEK_KEY) return res.json({ suggestions: [] });
+    const etaLine = eta ? ` Expected dispatch by ${new Date(eta).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}.` : '';
+    const prompt = `A vendor wrote this delay reason for order ${order_name || ''}:
+"${reason.trim()}"${etaLine}
+
+Rewrite as 3 short professional delay update messages for the customer. Rules:
+- Polite, empathetic, reassuring
+- 1-2 sentences max each
+- Brand communication tone (CROSCROW fashion brand)
+- Include dispatch date if given
+- No vendor name mentioned
+
+Return ONLY a JSON array: ["version1","version2","version3"]`;
+
+    const r = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', max_tokens: 400, temperature: 0.7, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const d = await r.json();
+    const raw = d.choices?.[0]?.message?.content?.trim() || '[]';
+    const match = raw.match(/\[[\s\S]*\]/);
+    const suggestions = match ? JSON.parse(match[0]) : [];
+    res.json({ suggestions: Array.isArray(suggestions) ? suggestions.slice(0, 3) : [] });
+  } catch (e) {
+    console.error('rephrase-delay error:', e.message);
+    res.json({ suggestions: [] });
+  }
+});
+
 // POST /vendor/update/:token/penalty — vendor acknowledges or disputes penalty
 app.post('/vendor/update/:token/penalty', async (req, res) => {
   try {
@@ -9596,11 +9632,16 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
         <div id="delay-fields" class="fields hidden">
           <div class="field-group">
             <label class="field-label">Reason for delay <span class="req">*</span></label>
-            <textarea name="reason" rows="3" placeholder="E.g. Fabric shortage, stitching pending..."></textarea>
+            <textarea name="reason" id="reason-input" rows="3" placeholder="E.g. Fabric shortage, stitching pending..." oninput="scheduleRephrase()"></textarea>
+            <div id="rephrase-area" style="display:none;margin-top:10px">
+              <div id="rephrase-label" style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#64748b;margin-bottom:7px">AI Suggestions — tap to use</div>
+              <div id="rephrase-loading" style="display:none;font-size:12px;color:#64748b;padding:4px 0">Generating suggestions...</div>
+              <div id="rephrase-chips" style="display:flex;flex-direction:column;gap:7px"></div>
+            </div>
           </div>
           <div class="field-group">
             <label class="field-label">Expected dispatch date <span class="req">*</span></label>
-            <input type="date" name="eta" min="${today}">
+            <input type="date" name="eta" id="eta-input" min="${today}" onchange="scheduleRephrase()">
           </div>
         </div>
         <div id="tracking-fields" class="fields hidden">
@@ -9752,6 +9793,45 @@ function penaltyAction(action){
       msg.textContent=action==='acknowledged'?'Penalty acknowledged. Thank you.':'Dispute submitted. CROSCROW team will review.';
     })
     .catch(function(){msg.style.color='#f59e0b';msg.textContent='Could not update — please try again.'});
+}
+var _rephraseTimer=null;
+function scheduleRephrase(){
+  clearTimeout(_rephraseTimer);
+  var reason=(document.getElementById('reason-input')||{}).value||'';
+  if(reason.trim().length<8){
+    var a=document.getElementById('rephrase-area');
+    if(a)a.style.display='none';
+    return;
+  }
+  _rephraseTimer=setTimeout(doRephrase,900);
+}
+function doRephrase(){
+  var reason=(document.getElementById('reason-input')||{}).value||'';
+  var eta=(document.getElementById('eta-input')||{}).value||'';
+  if(reason.trim().length<8)return;
+  var area=document.getElementById('rephrase-area');
+  var loading=document.getElementById('rephrase-loading');
+  var chips=document.getElementById('rephrase-chips');
+  area.style.display='block';
+  loading.style.display='block';
+  chips.innerHTML='';
+  fetch('/vendor/rephrase-delay',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason,eta:eta,order_name:'${orderName}',vendor_name:'${vendorName}'})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      loading.style.display='none';
+      var s=d.suggestions||[];
+      if(!s.length){area.style.display='none';return;}
+      chips.innerHTML=s.map(function(t){
+        return '<div onclick="useRephrase(this)" style="background:#1e1e1e;border:1px solid #2a2a2a;border-radius:10px;padding:11px 14px;font-size:13px;color:#e2e8f0;cursor:pointer;line-height:1.5;transition:border-color .15s" onmouseenter="this.style.borderColor=\'#002eff\'" onmouseleave="this.style.borderColor=\'#2a2a2a\'">'+t+'</div>';
+      }).join('');
+    })
+    .catch(function(){loading.style.display='none';area.style.display='none';});
+}
+function useRephrase(el){
+  var ta=document.getElementById('reason-input');
+  if(ta){ta.value=el.textContent;ta.dispatchEvent(new Event('input'));}
+  document.getElementById('rephrase-area').style.display='none';
+  document.getElementById('rephrase-chips').innerHTML='';
 }
 </script>
 </body>
