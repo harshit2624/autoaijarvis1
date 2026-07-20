@@ -9651,16 +9651,16 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
       <form method="POST" id="main-form">
         <div class="update-type-label">What do you want to update?</div>
         <div class="type-tabs">
-          <label class="type-tab" id="tab-delay">
-            <input type="radio" name="type" value="delay" required onchange="selectType('delay')">
+          <label class="type-tab" id="tab-delay" onclick="selectType('delay')">
+            <input type="radio" name="type" value="delay" required>
             <div class="tab-icon">&#9203;</div>
             <div class="tab-text">
               <div class="tab-title">Report Delay</div>
               <div class="tab-sub">Provide reason &amp; new ETA</div>
             </div>
           </label>
-          <label class="type-tab" id="tab-tracking">
-            <input type="radio" name="type" value="tracking" onchange="selectType('tracking')">
+          <label class="type-tab" id="tab-tracking" onclick="selectType('tracking')">
+            <input type="radio" name="type" value="tracking">
             <div class="tab-icon">&#128230;</div>
             <div class="tab-text">
               <div class="tab-title">Already Shipped</div>
@@ -9818,6 +9818,8 @@ function selectType(t){
   ['delay','tracking'].forEach(function(x){
     document.getElementById(x+'-fields').classList.toggle('hidden',x!==t);
     document.getElementById('tab-'+x).classList.toggle('selected',x===t);
+    var radio=document.querySelector('input[name="type"][value="'+x+'"]');
+    if(radio)radio.checked=(x===t);
   });
   document.getElementById('submit-btn').disabled=false;
 }
