@@ -9247,8 +9247,6 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
 });
 
 // ── Vendor Update Token (magic link for WA nudges) ────────────────────────
-const crypto = require('crypto');
-
 async function createVendorUpdateToken(shopify_id, order_name, vendor_name, product_names) {
   const token = crypto.randomBytes(16).toString('hex');
   await mdb.collection('wa_vendor_update_tokens').insertOne({
