@@ -9555,25 +9555,41 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
 
   // Penalty status
   // Determine penalty status — only "triggered" if 48h deadline actually passed
+  // If vendor filed a delay with a future resolution date, suppress penalty until that date passes
   let penaltyStatus = nudge?.penalty_status || null;
   if (!penaltyStatus && nudge) {
     const deadlinePassed = ovs?.stage_started_at
       ? (Date.now() > (typeof ovs.stage_started_at === 'number' ? ovs.stage_started_at : new Date(ovs.stage_started_at).getTime()) + 48 * 3600000)
       : false;
-    penaltyStatus = deadlinePassed ? 'triggered' : 'warning';
+    if (deadlinePassed && ovs?.delay_resolution_date) {
+      const resolutionMs = new Date(ovs.delay_resolution_date).getTime();
+      if (!isNaN(resolutionMs) && Date.now() < resolutionMs) {
+        // Vendor submitted a delay with a future resolution date — no penalty yet
+        penaltyStatus = 'delay_reported';
+      } else {
+        penaltyStatus = 'triggered';
+      }
+    } else {
+      penaltyStatus = deadlinePassed ? 'triggered' : 'warning';
+    }
   }
   const penaltyBadge = {
-    warning:     ['#f59e0b', '#1c1500', 'Dispatch Warning'],
-    triggered:   ['#ef4444', '#1f0a0a', 'Penalty Triggered'],
-    acknowledged:['#10b981', '#0a1f14', 'Acknowledged'],
-    disputed:    ['#f59e0b', '#1c1500', 'Under Review'],
-    cancelled:   ['#64748b', '#111',    'Cancelled'],
+    warning:        ['#f59e0b', '#1c1500', 'Dispatch Warning'],
+    triggered:      ['#ef4444', '#1f0a0a', 'Penalty Triggered'],
+    delay_reported: ['#3b82f6', '#0a1020', 'Delay Reported'],
+    acknowledged:   ['#10b981', '#0a1f14', 'Acknowledged'],
+    disputed:       ['#f59e0b', '#1c1500', 'Under Review'],
+    cancelled:      ['#64748b', '#111',    'Cancelled'],
   };
   const [pColor, pBg, pLabel] = penaltyBadge[penaltyStatus] || ['#64748b','#111','Unknown'];
   const showPenaltyActions = penaltyStatus === 'triggered' || penaltyStatus === 'warning';
+  // For delay_reported, show the resolution date so vendor knows when penalty window resumes
+  const delayResolutionLabel = penaltyStatus === 'delay_reported' && ovs?.delay_resolution_date
+    ? ` · Expected by ${new Date(ovs.delay_resolution_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}`
+    : '';
   const penaltyHtml = penaltyStatus ? `<div class="penalty-strip" style="background:${pBg};border-color:${pColor}20;color:${pColor}">
     <span class="penalty-dot" style="background:${pColor}"></span>
-    <strong>${pLabel}</strong>
+    <strong>${pLabel}</strong>${delayResolutionLabel}
     ${showPenaltyActions ? `<div class="penalty-actions">
       <button type="button" class="pact pact-ack" onclick="penaltyAction('acknowledged')">Acknowledge</button>
       <button type="button" class="pact pact-dis" onclick="penaltyAction('disputed')">Dispute</button>
@@ -9838,7 +9854,7 @@ function doRephrase(){
   area.style.display='block';
   loading.style.display='block';
   chips.innerHTML='';
-  fetch('/vendor/rephrase-delay',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason,eta:eta,order_name:'${orderName}',vendor_name:'${vendorName}'})})
+  fetch('/vendor/rephrase-delay',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason,eta:eta,order_name:${JSON.stringify(orderName)},vendor_name:${JSON.stringify(vendorName)}})})
     .then(function(r){return r.json()})
     .then(function(d){
       loading.style.display='none';
