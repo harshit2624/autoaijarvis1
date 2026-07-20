@@ -9370,11 +9370,18 @@ app.post('/vendor/update/:token', async (req, res) => {
     const { type, reason, eta, awb, courier, tracking_url } = req.body;
     const { shopify_id, order_name, vendor_name, product_names } = doc;
 
+    // Resolve real Shopify internal ID if token stored the order name number
+    let realShopifyId = shopify_id;
+    if (String(shopify_id).length < 10) {
+      const s = await shopifyREST(`/orders.json?name=${encodeURIComponent(order_name || ('#' + shopify_id))}&status=any&fields=id,name`).catch(() => null);
+      if (s?.orders?.[0]) realShopifyId = String(s.orders[0].id);
+    }
+
     if (type === 'delay' && reason) {
       const etaIso = eta || null;
-      await DR.insert(shopify_id, vendor_name, reason, etaIso);
-      await OVS.upsert(shopify_id, vendor_name, { delay_reason: reason, delay_resolution_date: etaIso, updated_at: new Date().toISOString() });
-      await notifyDelayToCustomer(shopify_id, vendor_name, reason, etaIso);
+      await DR.insert(realShopifyId, vendor_name, reason, etaIso);
+      await OVS.upsert(realShopifyId, vendor_name, { delay_reason: reason, delay_resolution_date: etaIso, updated_at: new Date().toISOString() });
+      await notifyDelayToCustomer(realShopifyId, vendor_name, reason, etaIso);
       await waAdminAlert(`⏳ *Vendor Delay (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nReason: ${reason}\nETA: ${etaIso || 'not specified'}`);
 
     } else if (type === 'tracking' && awb) {
@@ -9384,13 +9391,6 @@ app.post('/vendor/update/:token', async (req, res) => {
       let fulfillError = null;
       try {
         const token = await getAccessToken();
-        // shopify_id might be order name (e.g. "2660") instead of internal ID — resolve it
-        let realShopifyId = shopify_id;
-        if (String(shopify_id).length < 10) {
-          const searchRes = await shopifyREST(`/orders.json?name=${encodeURIComponent(order_name || shopify_id)}&status=any&fields=id,name`);
-          const found = searchRes?.orders?.[0];
-          if (found) realShopifyId = found.id;
-        }
         const orderRes = await shopifyREST(`/orders/${realShopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
         const order = orderRes?.order;
         if (order) {
@@ -9415,7 +9415,7 @@ app.post('/vendor/update/:token', async (req, res) => {
                 if (fRes.ok) {
                   const shippedItems = vendorLineItems.filter(li => foliMap[String(li.id)]).map(li => ({ ...li, quantity: foliMap[String(li.id)] }));
                   const cfg = await getSmtpConfig();
-                  if (cfg && order.email) { const adsStrip = await getEmailAdsStrip(); await sendEmail({ to: order.email, subject: `Your Items from ${vendor_name} Have Shipped! 🚚`, html: templateVendorShipped({ order, vendorName: vendor_name, items: shippedItems, awb, courier: c, trackingUrl: trackUrl, adsStrip }), shopifyId: shopify_id, trigger: 'vendor_shipped' }); }
+                  if (cfg && order.email) { const adsStrip = await getEmailAdsStrip(); await sendEmail({ to: order.email, subject: `Your Items from ${vendor_name} Have Shipped! 🚚`, html: templateVendorShipped({ order, vendorName: vendor_name, items: shippedItems, awb, courier: c, trackingUrl: trackUrl, adsStrip }), shopifyId: realShopifyId, trigger: 'vendor_shipped' }); }
                   shipsagarPushShipment({ awb, courierCode: c, orderNo: order.name || shopify_id, customerName: ((order.shipping_address?.first_name||'') + ' ' + (order.shipping_address?.last_name||'')).trim(), email: order.email || '', mobileNo: (order.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
                 }
               }
@@ -9423,7 +9423,7 @@ app.post('/vendor/update/:token', async (req, res) => {
           }
         }
       } catch (e) { fulfillError = e.message; console.error('Token fulfill error:', e.message); }
-      await OVS.upsert(shopify_id, vendor_name, { awb, courier: c, tracking_url: trackUrl, stage: 'transit', updated_at: new Date().toISOString() });
+      await OVS.upsert(realShopifyId, vendor_name, { awb, courier: c, tracking_url: trackUrl, stage: 'transit', updated_at: new Date().toISOString() });
       await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}${trackUrl ? '\nTrack: ' + trackUrl : ''}${fulfillError ? '\n⚠️ Shopify fulfill error: ' + fulfillError : ''}`);
 
     } else {
