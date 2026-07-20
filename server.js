@@ -18620,6 +18620,76 @@ app.get('/admin/vendor-chats/:vendorName/messages', adminAuth, async (req, res) 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Vendor JID management ────────────────────────────────────────────────────
+// GET all vendor JIDs (for admin setup panel)
+app.get('/admin/vendor-jids', adminAuth, async (req, res) => {
+  try {
+    const profiles = await mdb.collection('vendor_profiles').find(
+      { phone: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, phone: 1, _id: 0 } }
+    ).toArray();
+    const jidDocs = await mdb.collection('wa_vendor_jids').find({}).toArray();
+    const merged = profiles.map(vp => {
+      const digits = (vp.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      const jidDoc = jidDocs.find(j => j.vendor_name === vp.vendor_name || j.phone === digits);
+      return { vendor_name: vp.vendor_name, phone: digits, jid: jidDoc?.jid || null, updated_at: jidDoc?.updated_at || null };
+    });
+    // Also include any jidDocs that don't have a matching profile (manually added)
+    jidDocs.forEach(j => {
+      if (!merged.find(m => m.vendor_name === j.vendor_name)) {
+        merged.push({ vendor_name: j.vendor_name, phone: j.phone || null, jid: j.jid || null, updated_at: j.updated_at || null });
+      }
+    });
+    res.json({ vendors: merged.sort((a, b) => a.vendor_name.localeCompare(b.vendor_name)) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST re-resolve all vendor JIDs via onWhatsApp()
+app.post('/admin/vendor-jids/resolve', adminAuth, async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ error: 'WA bot not connected' });
+    const profiles = await mdb.collection('vendor_profiles').find(
+      { phone: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, phone: 1, _id: 0 } }
+    ).toArray();
+    const results = [];
+    for (const vp of profiles) {
+      const digits = (vp.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (digits.length !== 10) { results.push({ vendor_name: vp.vendor_name, phone: digits, status: 'skip', reason: 'invalid phone' }); continue; }
+      try {
+        const [vRes] = await waSocket.onWhatsApp(`91${digits}`) || [];
+        if (vRes?.jid) {
+          await mdb.collection('wa_vendor_jids').updateOne(
+            { phone: digits },
+            { $set: { phone: digits, vendor_name: vp.vendor_name, jid: vRes.jid, updated_at: new Date().toISOString() } },
+            { upsert: true }
+          );
+          results.push({ vendor_name: vp.vendor_name, phone: digits, jid: vRes.jid, status: 'ok' });
+        } else {
+          results.push({ vendor_name: vp.vendor_name, phone: digits, status: 'not_found' });
+        }
+        await new Promise(r => setTimeout(r, 200)); // rate limit
+      } catch (e) { results.push({ vendor_name: vp.vendor_name, phone: digits, status: 'error', reason: e.message }); }
+    }
+    res.json({ ok: true, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST manually set JID for a vendor (admin override)
+app.post('/admin/vendor-jids/manual', adminAuth, async (req, res) => {
+  try {
+    const { vendor_name, jid, phone } = req.body;
+    if (!vendor_name || !jid) return res.status(400).json({ error: 'vendor_name and jid required' });
+    const digits = (phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    await mdb.collection('wa_vendor_jids').updateOne(
+      { vendor_name },
+      { $set: { vendor_name, jid, ...(digits.length === 10 ? { phone: digits } : {}), updated_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+    res.json({ ok: true, vendor_name, jid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/support/chats/:id/messages', adminAuth, async (req, res) => {
   const messages = await SC.messages(req.params.id);
   res.json({ messages });

@@ -9395,7 +9395,7 @@
     const [replyText,  setReplyText]  = useState('');
     const [sending,    setSending]    = useState(false);
     const [now,        setNow]        = useState(Date.now());
-    const [mainTab,    setMainTab]    = useState('chats'); // 'chats' | 'insights' | 'vendors'
+    const [mainTab,    setMainTab]    = useState('chats'); // 'chats' | 'insights' | 'vendors' | 'jidsetup'
     const [vendorChats,       setVendorChats]       = useState([]);
     const [vendorChatsLoading,setVendorChatsLoading]= useState(false);
     const [selVendorChat,     setSelVendorChat]     = useState(null);
@@ -9403,6 +9403,12 @@
     const [insights,   setInsights]   = useState(null);
     const [insightLoading, setInsightLoading] = useState(false);
     const [insightRunning, setInsightRunning] = useState(false);
+    const [jidList,    setJidList]    = useState(null);
+    const [jidLoading, setJidLoading] = useState(false);
+    const [jidResolving, setJidResolving] = useState(false);
+    const [jidResolveResult, setJidResolveResult] = useState(null);
+    const [manualJid,  setManualJid]  = useState({ vendor_name:'', jid:'', phone:'' });
+    const [manualSaving, setManualSaving] = useState(false);
 
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
 
@@ -9604,7 +9610,7 @@
       <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)'}}>
         {/* Top tab bar: Chats | Insights */}
         <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0}}>
-          {[['chats','💬 Chats'],['vendors','🏪 Vendor WA'],['insights','🔍 Insights']].map(([id,label])=>(
+          {[['chats','💬 Chats'],['vendors','🏪 Vendor WA'],['jidsetup','🔗 JID Setup'],['insights','🔍 Insights']].map(([id,label])=>(
             <button key={id} onClick={()=>setMainTab(id)} style={{
               padding:'12px 20px',fontSize:13,fontWeight:700,border:'none',cursor:'pointer',fontFamily:'var(--font-family)',
               background:'transparent', color: mainTab===id ? 'var(--indigo)' : 'var(--text-muted)',
@@ -9614,6 +9620,118 @@
         </div>
 
         {mainTab === 'insights' && <InsightsPanel />}
+
+        {mainTab === 'jidsetup' && (()=>{
+          const loadJids = () => {
+            setJidLoading(true);
+            fetch(`${API}/admin/vendor-jids`, { headers:{ Authorization:'Bearer '+token } })
+              .then(r=>r.json()).then(d=>setJidList(d.vendors||[])).catch(()=>setJidList([])).finally(()=>setJidLoading(false));
+          };
+          if (jidList === null && !jidLoading) loadJids();
+          const resolveAll = async () => {
+            setJidResolving(true); setJidResolveResult(null);
+            const r = await fetch(`${API}/admin/vendor-jids/resolve`, { method:'POST', headers:{ Authorization:'Bearer '+token } });
+            const d = await r.json();
+            setJidResolveResult(d.results || []);
+            setJidResolving(false);
+            loadJids();
+          };
+          const saveManual = async () => {
+            if (!manualJid.vendor_name || !manualJid.jid) return;
+            setManualSaving(true);
+            await fetch(`${API}/admin/vendor-jids/manual`, { method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+token}, body: JSON.stringify(manualJid) });
+            setManualSaving(false);
+            setManualJid({ vendor_name:'', jid:'', phone:'' });
+            loadJids();
+          };
+          const linked = (jidList||[]).filter(v=>v.jid).length;
+          const total  = (jidList||[]).length;
+          return (
+            <div style={{flex:1,overflowY:'auto',padding:24}}>
+              <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:20,flexWrap:'wrap'}}>
+                <div>
+                  <div style={{fontSize:16,fontWeight:700,color:'var(--text)'}}>🔗 Vendor JID Setup</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)',marginTop:2}}>Link each vendor's WhatsApp to their account so the bot can recognise them</div>
+                </div>
+                <div style={{marginLeft:'auto',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+                  {!jidLoading && jidList && <span style={{fontSize:12,color: linked===total?'#10b981':'#f59e0b',fontWeight:600}}>{linked}/{total} linked</span>}
+                  <button className="btn btn-ghost btn-sm" onClick={loadJids} disabled={jidLoading}>{jidLoading?'Loading…':'↻ Refresh'}</button>
+                  <button className="btn btn-indigo btn-sm" onClick={resolveAll} disabled={jidResolving}>{jidResolving?'Resolving…':'⚡ Auto-resolve all JIDs'}</button>
+                </div>
+              </div>
+
+              {jidResolveResult && (
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:16,marginBottom:20}}>
+                  <div style={{fontSize:12,fontWeight:700,marginBottom:10}}>Resolve Results</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                    {jidResolveResult.map((r,i)=>(
+                      <span key={i} style={{fontSize:11,padding:'3px 8px',borderRadius:6,
+                        background: r.status==='ok'?'rgba(16,185,129,0.12)':r.status==='not_found'?'rgba(245,158,11,0.12)':'rgba(239,68,68,0.12)',
+                        color: r.status==='ok'?'#10b981':r.status==='not_found'?'#f59e0b':'#ef4444'}}>
+                        {r.vendor_name}: {r.status==='ok'?'✓ '+r.jid?.split('@')[0]:r.status}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Manual JID entry */}
+              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:16,marginBottom:20}}>
+                <div style={{fontSize:12,fontWeight:700,marginBottom:12,color:'var(--text)'}}>Manual JID Entry <span style={{fontWeight:400,color:'var(--text-muted)'}}>— for vendors where auto-resolve fails</span></div>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+                  <div style={{flex:'1 1 160px'}}>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>VENDOR NAME</div>
+                    <input className="form-input" placeholder="e.g. SICOS" value={manualJid.vendor_name} onChange={e=>setManualJid(p=>({...p,vendor_name:e.target.value}))} style={{fontSize:12}}/>
+                  </div>
+                  <div style={{flex:'1 1 160px'}}>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>PHONE (10-digit)</div>
+                    <input className="form-input" placeholder="e.g. 9820152195" value={manualJid.phone} onChange={e=>setManualJid(p=>({...p,phone:e.target.value}))} style={{fontSize:12}}/>
+                  </div>
+                  <div style={{flex:'2 1 240px'}}>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>WHATSAPP JID (from logs)</div>
+                    <input className="form-input" placeholder="e.g. 92866504298677@lid or 919820152195@s.whatsapp.net" value={manualJid.jid} onChange={e=>setManualJid(p=>({...p,jid:e.target.value}))} style={{fontSize:12,fontFamily:'monospace'}}/>
+                  </div>
+                  <button className="btn btn-indigo btn-sm" onClick={saveManual} disabled={manualSaving||!manualJid.vendor_name||!manualJid.jid}>{manualSaving?'Saving…':'Save JID'}</button>
+                </div>
+              </div>
+
+              {/* Vendor JID table */}
+              {jidLoading && <div style={{color:'var(--text-muted)',fontSize:12}}>Loading…</div>}
+              {!jidLoading && jidList && (
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead>
+                      <tr style={{borderBottom:'2px solid var(--border)',background:'var(--bg)'}}>
+                        {['Vendor','Phone','JID','Type','Last Updated'].map(h=>(
+                          <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:0.5}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jidList.map((v,i)=>(
+                        <tr key={i} style={{borderBottom:'1px solid var(--border)',background: v.jid?'transparent':'rgba(239,68,68,0.03)'}}>
+                          <td style={{padding:'10px 14px',fontWeight:600,color:'var(--text)'}}>{v.vendor_name}</td>
+                          <td style={{padding:'10px 14px',fontFamily:'monospace',color:'#60a5fa'}}>{v.phone||'—'}</td>
+                          <td style={{padding:'10px 14px',fontFamily:'monospace',fontSize:11,color:'var(--text-muted)',maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={v.jid||''}>
+                            {v.jid ? v.jid.split('@')[0] : <span style={{color:'#ef4444'}}>Not linked</span>}
+                          </td>
+                          <td style={{padding:'10px 14px'}}>
+                            {v.jid ? (
+                              v.jid.includes('@lid')
+                                ? <span style={{fontSize:10,background:'rgba(245,158,11,0.15)',color:'#f59e0b',borderRadius:4,padding:'2px 7px'}}>LID</span>
+                                : <span style={{fontSize:10,background:'rgba(16,185,129,0.12)',color:'#10b981',borderRadius:4,padding:'2px 7px'}}>STD ✓</span>
+                            ) : <span style={{fontSize:10,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'2px 7px'}}>⚠ None</span>}
+                          </td>
+                          <td style={{padding:'10px 14px',color:'var(--text-muted)'}}>{v.updated_at ? new Date(v.updated_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {mainTab === 'vendors' && (
           <div style={{display:'flex',gap:14,flex:1,minHeight:0,padding:'14px 0 0'}}>
