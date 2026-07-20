@@ -9284,7 +9284,13 @@ async function createVendorUpdateToken(shopify_id, order_name, vendor_name, prod
 
 async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
   try {
-    const shopifyOrder = await shopifyREST(`/orders/${shopify_id}.json?fields=id,name,email,customer,shipping_address`);
+    // shopify_id might be order name (short number) — resolve to real ID if needed
+    let realId = shopify_id;
+    if (String(shopify_id).length < 10) {
+      const s = await shopifyREST(`/orders.json?name=%23${shopify_id}&status=any&fields=id,name`).catch(() => null);
+      if (s?.orders?.[0]) realId = s.orders[0].id;
+    }
+    const shopifyOrder = await shopifyREST(`/orders/${realId}.json?fields=id,name,email,customer,shipping_address`);
     const ord = shopifyOrder?.order;
     const customerEmail = ord?.email;
     const customerPhone = (ord?.customer?.phone || ord?.shipping_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
@@ -9378,13 +9384,20 @@ app.post('/vendor/update/:token', async (req, res) => {
       let fulfillError = null;
       try {
         const token = await getAccessToken();
-        const orderRes = await shopifyREST(`/orders/${shopify_id}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
+        // shopify_id might be order name (e.g. "2660") instead of internal ID — resolve it
+        let realShopifyId = shopify_id;
+        if (String(shopify_id).length < 10) {
+          const searchRes = await shopifyREST(`/orders.json?name=${encodeURIComponent(order_name || shopify_id)}&status=any&fields=id,name`);
+          const found = searchRes?.orders?.[0];
+          if (found) realShopifyId = found.id;
+        }
+        const orderRes = await shopifyREST(`/orders/${realShopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
         const order = orderRes?.order;
         if (order) {
           const vendorLineItems = (order.line_items || []).filter(li => (li.vendor || '').toLowerCase() === vendor_name.toLowerCase());
           if (vendorLineItems.length) {
             const vendorLineItemIds = new Set(vendorLineItems.map(li => li.id));
-            const foRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${shopify_id}/fulfillment_orders.json`, { headers: { 'X-Shopify-Access-Token': token } });
+            const foRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${realShopifyId}/fulfillment_orders.json`, { headers: { 'X-Shopify-Access-Token': token } });
             if (foRes.ok) {
               const foData = await foRes.json();
               const openFOs = (foData.fulfillment_orders || []).filter(fo => ['open', 'in_progress'].includes(fo.status));
