@@ -2144,119 +2144,199 @@ function templateNewOrderCustomer({ order }) {
 }
 
 // Sent on orders/create webhook — heads up only, not yet confirmed
+// ── Vendor Email — "Dispatch" Design (Option A) ───────────────────────────
+function vendorEmailA(badge, orderLabel, orderValue, bodyHtml) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
+<div style="max-width:620px;margin:0 auto;background:#fff;">
+
+  <div style="background:#000;padding:28px 36px 24px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #222;padding-bottom:16px;margin-bottom:16px;">
+      <tr>
+        <td>
+          <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:4px;font-family:Arial,sans-serif;">CROSCROW</div>
+          <div style="font-size:9px;color:#555;letter-spacing:3px;text-transform:uppercase;margin-top:3px;">Vendor Notification</div>
+        </td>
+        <td style="text-align:right;vertical-align:bottom;">
+          <div style="display:inline-block;font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#000;background:#002eff;padding:5px 12px;">${badge}</div>
+        </td>
+      </tr>
+    </table>
+    <div style="font-size:9px;color:#444;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;">${orderLabel}</div>
+    <div style="font-size:38px;font-weight:900;color:#fff;letter-spacing:2px;font-family:'Courier New',monospace;line-height:1;">${orderValue}</div>
+  </div>
+
+  <div style="padding:32px 36px;background:#fff;">
+    ${bodyHtml}
+  </div>
+
+  <div style="background:#000;padding:20px 36px;text-align:center;font-size:9px;color:#444;letter-spacing:2px;text-transform:uppercase;">
+    &copy; CROSCROW &middot; Automated Notification &middot; Do Not Reply
+  </div>
+
+</div>
+</body></html>`;
+}
+
+function vendorInfoA(cells) {
+  const tds = cells.map((cell, idx) => {
+    if (cell.fullWidth) {
+      return `<tr>
+        <td colspan="2" style="padding:14px 16px;border-bottom:1px solid #e5e5e5;">
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">${cell.label}</div>
+          <div style="font-size:13px;font-weight:800;color:${cell.accent||'#111'};">${cell.value}</div>
+        </td>
+      </tr>`;
+    }
+    const next = cells[idx + 1];
+    if (idx % 2 === 0 && next && !next.fullWidth) {
+      return `<tr>
+        <td style="padding:14px 16px;border-bottom:1px solid #e5e5e5;border-right:1px solid #e5e5e5;width:50%;">
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">${cell.label}</div>
+          <div style="font-size:14px;font-weight:800;color:${cell.accent||'#111'};">${cell.value}</div>
+        </td>
+        <td style="padding:14px 16px;border-bottom:1px solid #e5e5e5;width:50%;">
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">${next.label}</div>
+          <div style="font-size:14px;font-weight:800;color:${next.accent||'#111'};">${next.value}</div>
+        </td>
+      </tr>`;
+    }
+    if (idx % 2 === 1 && !cell.fullWidth && cells[idx - 1] && !cells[idx - 1].fullWidth) return '';
+    return `<tr>
+      <td colspan="2" style="padding:14px 16px;border-bottom:1px solid #e5e5e5;">
+        <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">${cell.label}</div>
+        <div style="font-size:14px;font-weight:800;color:${cell.accent||'#111'};">${cell.value}</div>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<table style="width:100%;border-collapse:collapse;border:1px solid #e5e5e5;margin-bottom:24px;">${tds}</table>`;
+}
+
+function vendorItemsA(items) {
+  if (!items || !items.length) return '';
+  const rows = items.map(li => `
+    <tr style="border-bottom:1px solid #f0f0f0;">
+      <td style="padding:12px 0;font-size:13px;color:#333;vertical-align:top;">
+        ${li.title || li.name || ''}
+        ${(li.variant_title && li.variant_title !== 'Default Title') ? `<div style="font-size:11px;color:#aaa;margin-top:2px;">${li.variant_title}</div>` : ''}
+      </td>
+      <td style="padding:12px 0;font-size:12px;color:#aaa;text-align:center;vertical-align:top;">&times;${li.quantity || li.qty || 1}</td>
+      <td style="padding:12px 0;font-size:13px;font-weight:800;color:#111;text-align:right;vertical-align:top;">&#8377;${(parseFloat(li.price||0)*(li.quantity||li.qty||1)).toFixed(2)}</td>
+    </tr>`).join('');
+  return `
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:10px;">Items</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+      <thead><tr style="border-bottom:2px solid #000;">
+        <th style="font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#aaa;padding:8px 0;text-align:left;">Product</th>
+        <th style="font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#aaa;padding:8px 0;text-align:center;">Qty</th>
+        <th style="font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#aaa;padding:8px 0;text-align:right;">Value</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function vendorAlertA(html, type) {
+  const s = {
+    info:    'background:#f0f4ff;border-left:3px solid #002eff;color:#1a2a6e;',
+    warning: 'background:#fffbeb;border-left:3px solid #d97706;color:#78350f;',
+    danger:  'background:#fff1f2;border-left:3px solid #000;color:#7f1d1d;',
+    success: 'background:#f0fdf4;border-left:3px solid #16a34a;color:#14532d;',
+  }[type] || 'background:#f0f4ff;border-left:3px solid #002eff;color:#1a2a6e;';
+  return `<div style="${s}padding:12px 16px;margin-bottom:24px;font-size:12px;line-height:1.7;">${html}</div>`;
+}
+
+function vendorCTAA(text, url) {
+  return `<div style="text-align:center;margin:24px 0 4px;"><a href="${url||'https://autoaijarvis1.onrender.com/'}" style="display:inline-block;background:#000;color:#fff;text-decoration:none;font-size:10px;font-weight:700;letter-spacing:4px;text-transform:uppercase;padding:14px 40px;">${text||'Login to Vendor Panel &#8594;'}</a></div>`;
+}
+
+function vendorStepsA(steps) {
+  return `<div style="border:1px solid #e5e5e5;padding:18px 20px;margin-bottom:24px;">
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:12px;">What Happens Next</div>
+    <ol style="padding-left:18px;margin:0;">${steps.map(s=>`<li style="font-size:12px;color:#555;line-height:1.9;">${s}</li>`).join('')}</ol>
+  </div>`;
+}
+
 function templateNewOrderVendor({ order, vendorName }) {
   const myItems = (order.line_items || []).filter(li => li.vendor === vendorName);
   const subTotal = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
-  const body = `
-    <div class="subtitle">A new order has been placed on CROSCROW that includes your products.</div>
-    <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#0c4a6e;line-height:1.7;">
-      <strong>Please note —</strong> this is an early notification. Your order will be formally confirmed by the CROSCROW team shortly.
-      You will receive a separate confirmation email once the order is verified and approved. <strong>Do not dispatch yet.</strong>
-    </div>
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Date</span><span class="info-val">${new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
-      <div class="info-row"><span class="info-label">Your Items Value</span><span class="info-val">₹${subTotal.toFixed(2)}</span></div>
-      <div class="info-row"><span class="info-label">Items</span><span class="info-val">${myItems.length} product${myItems.length !== 1 ? 's' : ''}</span></div>
-    </div>
-    ${itemsTableHtml(myItems)}
-    <div style="background:#f8fafc;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:12px;color:#6b7280;line-height:1.8;">
-      <strong style="color:#374151;">What happens next?</strong><br>
-      1. CROSCROW reviews and confirms the order with the customer.<br>
-      2. You receive a <strong>Confirmation Email</strong> with full dispatch instructions.<br>
-      3. Pack and ship within 24–48 hours of the confirmation email.
-    </div>
-    <div style="text-align:center;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`New Order Received: ${order.name}`, '#1e40af', body);
+  const dateStr = new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'});
+  return vendorEmailA('NEW ORDER', 'ORDER ID', order.name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">A new order has been placed on CROSCROW that includes your products.</div>
+    ${vendorAlertA('<strong>Hold dispatch.</strong> This is an early notification. You\'ll receive a separate <strong>Confirmation Email</strong> once the order is verified. Do not ship until confirmed.', 'info')}
+    ${vendorInfoA([
+      { label: 'Order ID', value: order.name, accent: '#002eff' },
+      { label: 'Date', value: dateStr },
+      { label: 'Your Items', value: myItems.length + ' product' + (myItems.length !== 1 ? 's' : '') },
+      { label: 'Your Value', value: '&#8377;' + subTotal.toFixed(2) },
+    ])}
+    ${vendorItemsA(myItems)}
+    ${vendorStepsA([
+      'CROSCROW verifies and confirms the order with the customer.',
+      'You receive a <strong>Confirmation Email</strong> with full dispatch instructions.',
+      'Pack and ship within <strong>24–48 hours</strong> of the confirmation email.',
+    ])}
+    ${vendorCTAA()}
+  `);
 }
 
 function templateVendorWelcome({ vendorName, username, password }) {
   const loginUrl = 'https://autoaijarvis1.onrender.com/vendor.html';
-  return emailBase(`Welcome to the All-New CROSCROW Vendor Panel 🚀`, '#6366f1', `
-    <!-- Hero greeting -->
-    <div style="text-align:center;padding:8px 0 28px">
-      <div style="display:inline-block;background:linear-gradient(135deg,#4338ca,#7c3aed);border-radius:12px;padding:14px 28px;margin-bottom:16px">
-        <div style="font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#c4b5fd;margin-bottom:4px">CROSCROW Vendor Portal</div>
-        <div style="font-size:22px;font-weight:900;color:#ffffff;letter-spacing:-0.5px">Welcome aboard, ${vendorName}!</div>
-      </div>
-      <div style="font-size:14px;color:#94a3b8;max-width:440px;margin:0 auto;line-height:1.7">
-        We heard your requests and delivered. The all-new vendor panel is live and built around <strong style="color:#a5b4fc">your daily workflow.</strong>
-      </div>
+  return vendorEmailA('WELCOME', 'VENDOR', vendorName, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Welcome aboard!</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">Your vendor account on CROSCROW is live. Use the credentials below to log in.</div>
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:10px;">Your Login Credentials</div>
+    <div style="border:2px solid #000;padding:20px 24px;margin-bottom:24px;">
+      <table cellpadding="0" cellspacing="0" style="margin-bottom:10px;">
+        <tr>
+          <td style="padding-right:40px;">
+            <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">Username</div>
+            <div style="font-size:18px;font-weight:800;color:#002eff;font-family:'Courier New',monospace;letter-spacing:1px;">${username}</div>
+          </td>
+          <td>
+            <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;">Password</div>
+            <div style="font-size:18px;font-weight:800;color:#111;font-family:'Courier New',monospace;letter-spacing:1px;">${password}</div>
+          </td>
+        </tr>
+      </table>
+      <div style="font-size:10px;color:#aaa;">Change your password from <strong>My Profile &#8594; Change Password</strong> after first login.</div>
     </div>
 
-    <!-- Credentials box -->
-    <div style="background:#0d1520;border:2px solid #3730a3;border-radius:10px;padding:20px 24px;margin-bottom:24px">
-      <div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#6366f1;font-weight:700;margin-bottom:14px">Your Login Credentials</div>
-      <div style="display:flex;gap:32px;flex-wrap:wrap">
-        <div>
-          <div style="font-size:9px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Username</div>
-          <div style="font-size:18px;font-weight:800;color:#a5b4fc;font-family:monospace;letter-spacing:1px">${username}</div>
-        </div>
-        <div>
-          <div style="font-size:9px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Password</div>
-          <div style="font-size:18px;font-weight:800;color:#fbbf24;font-family:monospace;letter-spacing:1px">${password}</div>
-        </div>
-      </div>
-      <div style="font-size:10px;color:#475569;margin-top:10px">Change your password from <strong>My Profile → Change Password</strong> after first login.</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:14px;">What's in the Panel</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+      <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:14px 0;width:28px;vertical-align:top;font-size:18px;">&#128666;</td>
+        <td style="padding:14px 0 14px 12px;">
+          <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px;">Direct Shipping Integration</div>
+          <div style="font-size:12px;color:#888;line-height:1.6;">Connect Delhivery or Shiprocket and ship in one click.</div>
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid #f0f0f0;">
+        <td style="padding:14px 0;vertical-align:top;font-size:18px;">&#128230;</td>
+        <td style="padding:14px 0 14px 12px;">
+          <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px;">Live Order Tracking</div>
+          <div style="font-size:12px;color:#888;line-height:1.6;">All orders, stages, COD amounts, and tracking in one place.</div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:14px 0;vertical-align:top;font-size:18px;">&#128176;</td>
+        <td style="padding:14px 0 14px 12px;">
+          <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px;">Settlement &amp; Wallet</div>
+          <div style="font-size:12px;color:#888;line-height:1.6;">Full financial transparency — settlements, commissions, invoices.</div>
+        </td>
+      </tr>
+    </table>
+
+    ${vendorAlertA('<strong>48-Hour Fulfillment Policy:</strong> All confirmed orders must be dispatched within 48 hours to avoid a penalty. The circle indicator on each order shows time remaining. Unable to fulfil in time? Use <strong>Report Delay</strong> inside the order.', 'danger')}
+
+    <div style="text-align:center;padding:24px;border:1px solid #e5e5e5;margin-bottom:24px;">
+      <div style="font-size:16px;font-weight:900;color:#111;line-height:1.6;">"If you help us grow,<br>we'll help your brand steal the show."</div>
+      <div style="font-size:9px;color:#aaa;margin-top:8px;letter-spacing:3px;text-transform:uppercase;">&#8212; CROSCROW Team</div>
     </div>
 
-    <!-- Login button -->
-    <div style="text-align:center;margin-bottom:28px">
-      <a href="${loginUrl}" style="display:inline-block;background:linear-gradient(135deg,#4338ca,#7c3aed);color:#fff;text-decoration:none;font-weight:800;font-size:14px;letter-spacing:1px;padding:14px 40px;border-radius:10px;">
-        Login to Vendor Panel →
-      </a>
-    </div>
-
-    <!-- Features grid -->
-    <div style="font-size:10px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#475569;margin-bottom:14px;text-align:center">What's New For You</div>
-    <div style="display:grid;gap:10px;margin-bottom:24px">
-      <div style="background:#0a1520;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start">
-        <div style="font-size:22px;flex-shrink:0">🚚</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:3px">Direct Shipping Integration</div>
-          <div style="font-size:12px;color:#64748b;line-height:1.7">Connect your <strong style="color:#94a3b8">Delhivery</strong> or <strong style="color:#94a3b8">Shiprocket</strong> account directly inside the panel. Ship in one click — no more manual waybill generation, no more copy-pasting order details.</div>
-        </div>
-      </div>
-      <div style="background:#0a1520;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start">
-        <div style="font-size:22px;flex-shrink:0">📦</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:3px">Live Order Tracking</div>
-          <div style="font-size:12px;color:#64748b;line-height:1.7">See all your orders, their current stage, COD amounts, advance collected and tracking — all in one place, updated in real time.</div>
-        </div>
-      </div>
-      <div style="background:#0a1520;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start">
-        <div style="font-size:22px;flex-shrink:0">💰</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;color:#7eb8f7;margin-bottom:3px">Settlement & Wallet</div>
-          <div style="font-size:12px;color:#64748b;line-height:1.7">View your settlements, commission breakdown, invoices and wallet balance — full financial transparency at your fingertips.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Penalty warning -->
-    <div style="background:#1c0a0a;border:2px solid #dc2626;border-radius:8px;padding:16px 18px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:800;color:#ef4444;margin-bottom:8px;letter-spacing:0.5px">⚠ 48-Hour Fulfillment Policy</div>
-      <div style="font-size:12px;color:#fca5a5;line-height:1.8">
-        All orders in <strong>Confirmed</strong> or <strong>Partial</strong> stage must be dispatched within <strong>48 hours</strong> to avoid a penalty.<br><br>
-        The <strong>circle indicator</strong> on each order shows the time remaining before penalty kicks in. <span style="color:#fbbf24">Green → Yellow → Red.</span><br><br>
-        <strong>Unable to fulfil in time?</strong> Open the order and press <strong>"Report Delay"</strong> — submit your reason and expected dispatch date. This notifies the customer and may help reduce the penalty. If no delay is reported and 48hrs pass, <strong>penalty will be unavoidable.</strong>
-      </div>
-    </div>
-
-    <!-- Closing tagline -->
-    <div style="text-align:center;margin:28px 0 8px;padding:24px;background:linear-gradient(135deg,#0d1520,#1a1a3a);border-radius:12px;border:1px solid #2d2d5e">
-      <div style="font-size:20px;font-weight:900;color:#ffffff;line-height:1.5;letter-spacing:-0.3px">
-        "If You help us grow,<br>we'll help your brand steal the show."
-      </div>
-      <div style="font-size:11px;color:#64748b;margin-top:10px;letter-spacing:2px;text-transform:uppercase">— CROSCROW Team</div>
-    </div>
-
-    <div style="text-align:center;margin-top:20px">
-      <a href="${loginUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 32px;border-radius:8px;">Login to Vendor Panel →</a>
-    </div>
+    ${vendorCTAA('Login to Vendor Panel &#8594;', loginUrl)}
   `);
 }
 
@@ -2270,54 +2350,45 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const codAmount   = isPrepaid ? 0 : Math.max(0, subTotal + shipping - advance);
   const addr        = order.shipping_address;
 
-  const body = `
-    <div class="subtitle">Order <strong>${order.name}</strong> has been confirmed by CROSCROW. Please prepare and dispatch immediately.</div>
+  const infoCells = [
+    { label: 'Order ID', value: order.name, accent: '#002eff' },
+    { label: 'Confirmed On', value: new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}) },
+    { label: 'Customer', value: addr?.name || order.email || '&#8212;' },
+    { label: 'Phone', value: addr?.phone || '&#8212;' },
+  ];
+  if (addr) infoCells.push({ label: 'Ship To', value: `${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city}, ${addr.province} ${addr.zip}`, fullWidth: true });
 
-    ${isPrepaid
-      ? `<div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#065f46;font-size:14px;letter-spacing:1px;">PREPAID — Payment collected. Do not collect cash on delivery.</div>`
-      : advance > 0
-        ? `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#92400e;font-size:14px;letter-spacing:1px;">COD — Advance of ₹${advance.toFixed(2)} collected. Collect ₹${codAmount.toFixed(2)} on delivery.</div>`
-        : `<div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 18px;margin-bottom:16px;text-align:center;font-weight:700;color:#92400e;font-size:14px;letter-spacing:1px;">COD — Collect ₹${codAmount.toFixed(2)} on delivery.</div>`
-    }
+  const payAlert = isPrepaid
+    ? vendorAlertA('<strong>PREPAID</strong> &#8212; Payment collected online. Do <strong>not</strong> collect any cash on delivery.', 'success')
+    : advance > 0
+      ? vendorAlertA(`<strong>COD</strong> &#8212; Advance of &#8377;${advance.toFixed(2)} already collected. Collect <strong>&#8377;${codAmount.toFixed(2)}</strong> on delivery.`, 'warning')
+      : vendorAlertA(`<strong>COD</strong> &#8212; Collect <strong>&#8377;${codAmount.toFixed(2)}</strong> on delivery.`, 'warning');
 
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Confirmed On</span><span class="info-val">${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</span></div>
-      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
-      ${addr ? `<div class="info-row"><span class="info-label">Ship To</span><span class="info-val">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
-      ${addr?.phone ? `<div class="info-row"><span class="info-label">Customer Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
-    </div>
-
-    ${itemsTableHtml(myItems)}
-
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px;">
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
-      ${!isPrepaid ? `<tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>` : ''}
-      ${advance > 0 ? `<tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">− ₹${advance.toFixed(2)}</td></tr>` : ''}
-      <tr style="background:#f8fafc"><td style="padding:10px;font-weight:800;font-size:14px;color:#1a2a3a;">Amount to Collect on Delivery</td>
-        <td style="text-align:right;padding:10px;font-weight:800;font-size:16px;color:${isPrepaid ? '#10b981' : '#dc2626'}">
-          ${isPrepaid ? '₹0.00 &nbsp;(Prepaid)' : `₹${codAmount.toFixed(2)}`}
+  return vendorEmailA('ORDER CONFIRMED', 'ORDER ID', order.name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">Order <strong>${order.name}</strong> is confirmed. Prepare and dispatch immediately.</div>
+    ${payAlert}
+    ${vendorInfoA(infoCells)}
+    ${vendorItemsA(myItems)}
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:13px;">
+      <tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${subTotal.toFixed(2)}</td></tr>
+      ${!isPrepaid ? `<tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Shipping</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${shipping.toFixed(2)}</td></tr>` : ''}
+      ${advance > 0 ? `<tr><td style="padding:7px 0;color:#16a34a;border-bottom:1px solid #f0f0f0;">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;color:#16a34a;">&#8722; &#8377;${advance.toFixed(2)}</td></tr>` : ''}
+      <tr style="background:#f7f7f7;"><td style="padding:10px;font-weight:800;font-size:14px;color:#111;">Amount to Collect on Delivery</td>
+        <td style="text-align:right;padding:10px;font-weight:900;font-size:16px;color:${isPrepaid ? '#16a34a' : '#000'};">
+          ${isPrepaid ? '&#8377;0.00 (Prepaid)' : `&#8377;${codAmount.toFixed(2)}`}
         </td>
       </tr>
     </table>
-
-    <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:4px;">Dispatch Window — 24 to 48 Hours</div>
-      <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
-    </div>
-
-    <div style="text-align:center;margin-bottom:12px;">
+    ${vendorAlertA('Pack and hand over to courier within <strong>48 hours</strong>. Delays may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.', 'danger')}
+    <div style="text-align:center;margin-bottom:20px;">
       <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I need help with order ${order.name}`)}"
-         style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
-        Need help? Reach us on WhatsApp
+         style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:12px;padding:10px 22px;font-family:Arial,sans-serif;">
+        Need help? WhatsApp CROSCROW
       </a>
     </div>
-    <div style="text-align:center;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`Order Confirmed: ${order.name} — Dispatch Now`, '#6366f1', body);
+    ${vendorCTAA()}
+  `);
 }
 
 // Build a track button HTML block — uses trackingUrl or CROSCROW track page fallback
@@ -2687,27 +2758,20 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
 }
 
 function templateAdminFulfilledVendor({ order, vendorName, items, awb, courier }) {
-  const body = `
-    <div class="subtitle">Heads up — CROSCROW has fulfilled the following item(s) from order <strong>${order.name}</strong> on your behalf. No action needed from you for these items.</div>
-
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1;font-size:15px">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Fulfilled By</span><span class="info-val">CROSCROW</span></div>
-      ${courier ? `<div class="info-row"><span class="info-label">Courier</span><span class="info-val">${courier}</span></div>` : ''}
-      ${awb ? `<div class="info-row"><span class="info-label">AWB</span><span class="info-val">${awb}</span></div>` : ''}
-    </div>
-
-    ${itemsTableHtml(items)}
-
-    <div style="background:#f0fdf4;border-left:4px solid #10b981;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
-      <div style="font-size:12px;color:#065f46;line-height:1.7;">These item(s) have already been packed and shipped by CROSCROW — no need to dispatch them yourself. Any remaining items still pending from you (if any) should be fulfilled as usual.</div>
-    </div>
-
-    <div style="text-align:center;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`Order ${order.name} — Item(s) Fulfilled by CROSCROW`, '#10b981', body);
+  const infoCells = [
+    { label: 'Order ID', value: order.name, accent: '#002eff' },
+    { label: 'Fulfilled By', value: 'CROSCROW' },
+    ...(courier ? [{ label: 'Courier', value: courier }] : []),
+    ...(awb ? [{ label: 'AWB', value: awb, accent: '#002eff' }] : []),
+  ];
+  return vendorEmailA('FULFILLED', 'ORDER ID', order.name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">CROSCROW has fulfilled the following item(s) from order <strong>${order.name}</strong> on your behalf. No action needed.</div>
+    ${vendorInfoA(infoCells)}
+    ${vendorItemsA(items)}
+    ${vendorAlertA('These item(s) have been packed and shipped by CROSCROW &#8212; do not dispatch them yourself. Any remaining items still pending from you should be fulfilled as usual.', 'success')}
+    ${vendorCTAA()}
+  `);
 }
 
 function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', forRole = 'customer', adsStrip = '' }) {
@@ -2827,45 +2891,37 @@ function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
   const shipping    = parseFloat((totalShipping / vendorCount).toFixed(2));
   const advance     = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
   const newCOD      = Math.max(0, subTotal + shipping - advance);
-  const addr      = order.shipping_address;
+  const addr        = order.shipping_address;
 
-  const body = `
-    <div class="subtitle">Advance payment has been collected for order <strong>${order.name}</strong>. Please note the updated COD amount below.</div>
+  const infoCells = [
+    { label: 'Order ID', value: order.name, accent: '#002eff' },
+    { label: 'Customer', value: addr?.name || order.email || '&#8212;' },
+  ];
+  if (addr) infoCells.push({ label: 'Deliver To', value: `${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city}, ${addr.province} ${addr.zip}`, fullWidth: true });
+  if (addr?.phone) infoCells.push({ label: 'Phone', value: addr.phone });
 
-    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center">
-      <div style="font-size:12px;color:#92400e;font-weight:600;margin-bottom:4px;">💵 UPDATED COD TO COLLECT ON DELIVERY</div>
-      <div style="font-size:28px;font-weight:800;color:#b45309;">₹${newCOD.toFixed(2)}</div>
-      <div style="font-size:11px;color:#92400e;margin-top:4px;">After deducting ₹${advance.toFixed(2)} advance (your share of ${vendorCount > 1 ? `total advance split across ${vendorCount} vendors` : 'advance collected'})</div>
+  return vendorEmailA('ADVANCE COLLECTED', 'ORDER ID', order.name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">Advance payment has been collected for order <strong>${order.name}</strong>. Your updated COD amount is below.</div>
+
+    <div style="border:2px solid #000;padding:20px 24px;text-align:center;margin-bottom:24px;">
+      <div style="font-size:9px;color:#aaa;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;">Updated COD to Collect on Delivery</div>
+      <div style="font-size:36px;font-weight:900;color:#000;font-family:'Courier New',monospace;">&#8377;${newCOD.toFixed(2)}</div>
+      <div style="font-size:11px;color:#888;margin-top:4px;">After deducting &#8377;${advance.toFixed(2)} advance${vendorCount > 1 ? ` (your share, split across ${vendorCount} vendors)` : ''}</div>
     </div>
 
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
-      ${addr ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
-      ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
-    </div>
-
-    ${itemsTableHtml(myItems)}
-
-    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;">
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${subTotal.toFixed(2)}</td></tr>
-      <tr><td style="padding:7px 0;color:#6b7280;border-bottom:1px solid #f1f5f9">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600">₹${shipping.toFixed(2)}</td></tr>
-      <tr><td style="padding:7px 0;color:#10b981;border-bottom:1px solid #f1f5f9">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#10b981">— ₹${advance.toFixed(2)}</td></tr>
-      <tr style="background:#fffbeb"><td style="padding:10px;font-weight:800;font-size:14px;color:#92400e">💵 Collect on Delivery</td><td style="text-align:right;padding:10px;font-weight:800;font-size:18px;color:#b45309">₹${newCOD.toFixed(2)}</td></tr>
+    ${vendorInfoA(infoCells)}
+    ${vendorItemsA(myItems)}
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:13px;">
+      <tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${subTotal.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Shipping Charge</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${shipping.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#16a34a;border-bottom:1px solid #f0f0f0;">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;color:#16a34a;">&#8722; &#8377;${advance.toFixed(2)}</td></tr>
+      <tr style="background:#f7f7f7;"><td style="padding:10px;font-weight:800;font-size:14px;color:#111;">Collect on Delivery</td><td style="text-align:right;padding:10px;font-weight:900;font-size:16px;color:#000;">&#8377;${newCOD.toFixed(2)}</td></tr>
     </table>
-
-    <p style="font-size:12px;color:#6b7280;line-height:1.7">Please ensure you collect exactly <strong>₹${newCOD.toFixed(2)}</strong> at the time of delivery. Do not collect the full amount — customer has already paid the advance.</p>
-
-    <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:4px;">Dispatch Window — 24 to 48 Hours</div>
-      <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
-    </div>
-
-    <div style="text-align:center;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`Advance Collected: ${order.name} — Updated COD`, '#f59e0b', body);
+    <p style="font-size:12px;color:#888;line-height:1.7;margin-bottom:24px;">Collect exactly <strong>&#8377;${newCOD.toFixed(2)}</strong> on delivery &#8212; do not collect the full amount, customer has already paid the advance.</p>
+    ${vendorAlertA('Pack and hand over to courier within <strong>48 hours</strong>. Delays may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.', 'danger')}
+    ${vendorCTAA()}
+  `);
 }
 
 function templatePartialAdvanceCustomer({ order, meta = {}, adsStrip = '' }) {
@@ -3082,34 +3138,28 @@ function templateConvertedToPrepaidCustomer({ order, meta = {}, adsStrip = '' })
 function templateConvertedToPrepaidVendor({ order, vendorName, meta = {} }) {
   const myItems = (order.line_items || []).filter(li => li.vendor === vendorName);
   const addr    = order.shipping_address;
+  const infoCells = [
+    { label: 'Order ID', value: order.name, accent: '#002eff' },
+    { label: 'Customer', value: addr?.name || order.email || '&#8212;' },
+  ];
+  if (addr) infoCells.push({ label: 'Deliver To', value: `${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city}, ${addr.province} ${addr.zip}`, fullWidth: true });
+  if (addr?.phone) infoCells.push({ label: 'Phone', value: addr.phone });
 
-  const body = `
-    <div class="subtitle">The customer has paid the full order amount online for <strong>${order.name}</strong>. This order is now <strong>fully prepaid</strong> — do not collect any cash on delivery.</div>
+  return vendorEmailA('FULLY PREPAID', 'ORDER ID', order.name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">The customer has paid the full order amount online. Order <strong>${order.name}</strong> is now fully prepaid.</div>
 
-    <div style="background:#f0fdf4;border:2px solid #10b981;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center">
-      <div style="font-size:12px;color:#065f46;font-weight:600;margin-bottom:4px;">✅ FULLY PREPAID — NO COD TO COLLECT</div>
-      <div style="font-size:28px;font-weight:800;color:#059669;">₹0.00</div>
+    <div style="border:2px solid #000;padding:20px 24px;text-align:center;margin-bottom:24px;">
+      <div style="font-size:9px;color:#aaa;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;">Amount to Collect on Delivery</div>
+      <div style="font-size:36px;font-weight:900;color:#16a34a;font-family:'Courier New',monospace;">&#8377;0.00</div>
+      <div style="font-size:11px;color:#888;margin-top:4px;">Do NOT collect any cash &#8212; fully paid online</div>
     </div>
 
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${addr?.name || order.email || '—'}</span></div>
-      ${addr ? `<div class="info-row"><span class="info-label">Deliver To</span><span class="info-val">${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city}, ${addr.province} ${addr.zip}</span></div>` : ''}
-      ${addr?.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-val">${addr.phone}</span></div>` : ''}
-    </div>
-
-    ${itemsTableHtml(myItems)}
-
-    <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin-bottom:16px;">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:4px;">Dispatch Window — 24 to 48 Hours</div>
-      <div style="font-size:12px;color:#7f1d1d;line-height:1.7;">Pack and hand over to courier within <strong>48 hours</strong>. Delays beyond this window may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.</div>
-    </div>
-
-    <div style="text-align:center;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`Order Fully Prepaid: ${order.name}`, '#10b981', body);
+    ${vendorInfoA(infoCells)}
+    ${vendorItemsA(myItems)}
+    ${vendorAlertA('Pack and hand over to courier within <strong>48 hours</strong>. Delays may attract penalties. Dispatch within <strong>24 hours</strong> earns a seller reward.', 'danger')}
+    ${vendorCTAA()}
+  `);
 }
 
 function templateConvertedToPrepaidAdmin({ order, meta = {} }) {
@@ -11045,53 +11095,38 @@ _CROSCROW Operations_`;
 
 // ── Warning email template ────────────────────────────────────────────────
 function templateFulfilmentWarning({ order, vendorName, hoursElapsed, delayLink }) {
-  const body = `
-    <div class="subtitle">Action required for order <strong>${order.name}</strong> assigned to <strong>${vendorName}</strong>.</div>
+  return vendorEmailA('ACTION REQUIRED', 'ORDER ID', order.name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">This order has been confirmed but not yet shipped. Your dispatch window is closing.</div>
 
-    <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:16px 20px;margin-bottom:20px;text-align:center">
-      <div style="font-size:14px;font-weight:700;color:#92400e;margin-bottom:4px;">⏰ ${hoursElapsed} Hours Since Order Confirmed</div>
-      <div style="font-size:13px;color:#7c3aed;font-weight:600">You have ${48 - hoursElapsed} hours left before a penalty is applied.</div>
+    <div style="border:2px solid #000;padding:20px 24px;text-align:center;margin-bottom:24px;">
+      <div style="font-size:9px;color:#aaa;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;">Hours Since Confirmation</div>
+      <div style="font-size:52px;font-weight:900;color:#000;font-family:'Courier New',monospace;line-height:1;">${hoursElapsed}</div>
+      <div style="font-size:12px;color:#888;margin-top:6px;">${48 - hoursElapsed} hours remaining before penalty kicks in</div>
     </div>
 
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${order.name}</span></div>
-      <div class="info-row"><span class="info-label">Deadline</span><span class="info-val" style="color:#dc2626;font-weight:700">48 hours from confirmation</span></div>
-    </div>
+    ${vendorInfoA([
+      { label: 'Order ID', value: order.name, accent: '#002eff' },
+      { label: 'Dispatch Deadline', value: '48 hours from confirmation', accent: '#dc2626' },
+    ])}
+    ${vendorAlertA('If this order is not handed to courier within <strong>48 hours</strong>, a penalty will be applied to your settlement. Dispatching within <strong>24 hours</strong> earns a seller reward.', 'danger')}
 
-    <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:20px;">
-      <div style="font-weight:700;color:#991b1b;font-size:13px;margin-bottom:6px;">⚠️ Penalty Warning</div>
-      <div style="font-size:12px;color:#7f1d1d;line-height:1.7">
-        If this order is not handed over to courier within <strong>48 hours</strong> of confirmation, a penalty will be automatically applied to your settlement account.
-        <br><br>
-        🌟 <strong>Fulfil before 24 hours</strong> from confirmation to earn a seller reward!
+    <div style="border:1px solid #e5e5e5;padding:18px 20px;margin-bottom:24px;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:10px;">Unable to fulfil on time?</div>
+      <p style="font-size:12px;color:#555;line-height:1.7;margin-bottom:14px;">Submit a delay remark with your reason and expected dispatch date. This notifies the customer and may prevent or reduce the penalty.</p>
+      <div style="text-align:center;">
+        <a href="${delayLink}" style="display:inline-block;background:#002eff;color:#fff;text-decoration:none;font-size:10px;font-weight:700;letter-spacing:3px;text-transform:uppercase;padding:12px 28px;">Submit Delay Remark &#8594;</a>
       </div>
     </div>
 
-    <div style="background:#f0f9ff;border:2px solid #bae6fd;border-radius:8px;padding:14px 18px;margin-bottom:20px;">
-      <div style="font-weight:700;color:#0369a1;font-size:13px;margin-bottom:8px;">🕐 Unable to Fulfil on Time?</div>
-      <div style="font-size:12px;color:#0c4a6e;line-height:1.7;margin-bottom:12px;">
-        If you cannot fulfil this order within 48 hours, please submit a delay remark with the reason and your expected dispatch date.
-        This will automatically notify the customer and may prevent or reduce the penalty.
-      </div>
-      <div style="text-align:center">
-        <a href="${delayLink}" style="display:inline-block;background:#0369a1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 24px;border-radius:8px;">
-          Submit Delay Remark →
-        </a>
-      </div>
-    </div>
-
-    <div style="text-align:center;margin-bottom:12px;">
+    <div style="text-align:center;margin-bottom:20px;">
       <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I need help with order ${order.name} (${vendorName})`)}"
-         style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
+         style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:12px;padding:10px 20px;font-family:Arial,sans-serif;">
         Contact Support on WhatsApp
       </a>
     </div>
-    <div style="text-align:center;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`⚠️ 24hr Fulfilment Warning: ${order.name}`, '#f59e0b', body);
+    ${vendorCTAA()}
+  `);
 }
 
 // ── Vendor delay remark page (public — token auth) ────────────────────────
@@ -14163,70 +14198,62 @@ function templateAdminReport({ data, period }) {
 
 // ── Vendor report template ────────────────────────────────────────────────
 function templateVendorReport({ vendorName, data, period }) {
-  const v = data.vendors.find(vv => vv.name === vendorName) || { total: 0, fulfilled: 0, unfulfilled: 0, prepaid_pending: 0, partial_pending: 0, confirmed_pending: 0, new_pending: 0 };
+  const v = data.vendors.find(vv => vv.name === vendorName) || { total: 0, fulfilled: 0, unfulfilled: 0, prepaid_pending: 0, partial_pending: 0 };
   const myUrgent = data.urgentOrders.filter(o => o.vendors.includes(vendorName));
   const fulfillRate = v.total > 0 ? Math.round((v.fulfilled / v.total) * 100) : 0;
-  const rateColor = fulfillRate >= 80 ? '#10b981' : fulfillRate >= 50 ? '#f59e0b' : '#ef4444';
+  const rateColor = fulfillRate >= 80 ? '#16a34a' : fulfillRate >= 50 ? '#d97706' : '#dc2626';
 
   const urgentRows = myUrgent.slice(0, 10).map(o => `
-    <tr>
-      <td style="padding:7px 10px;font-size:12px;color:#a5b4fc;font-weight:700;border-bottom:1px solid #1e293b">${o.order_name}</td>
-      <td style="padding:7px 10px;font-size:11px;color:${o.payment_type==='prepaid'?'#ef4444':o.advance_paid>0?'#f59e0b':'#6b7280'};font-weight:700;border-bottom:1px solid #1e293b">${o.payment_type==='prepaid'?'🔴 Prepaid':o.advance_paid>0?`🟡 +₹${o.advance_paid}`:'COD'}</td>
-      <td style="padding:7px 10px;font-size:11px;color:#94a3b8;border-bottom:1px solid #1e293b;text-transform:capitalize">${o.stage}</td>
-      <td style="padding:7px 10px;font-size:11px;color:${o.age_hours>48?'#ef4444':o.age_hours>24?'#f59e0b':'#94a3b8'};font-weight:${o.age_hours>24?'700':'400'};border-bottom:1px solid #1e293b">${o.age_label}</td>
+    <tr style="border-bottom:1px solid #f0f0f0;">
+      <td style="padding:10px 8px;font-size:12px;font-weight:700;color:#002eff;font-family:'Courier New',monospace;">${o.order_name}</td>
+      <td style="padding:10px 8px;font-size:11px;font-weight:700;color:${o.payment_type==='prepaid'?'#dc2626':o.advance_paid>0?'#d97706':'#888'};">${o.payment_type==='prepaid'?'PREPAID':o.advance_paid>0?`+&#8377;${o.advance_paid}`:'COD'}</td>
+      <td style="padding:10px 8px;font-size:11px;color:#555;text-transform:capitalize;">${o.stage}</td>
+      <td style="padding:10px 8px;font-size:11px;font-weight:${o.age_hours>24?'700':'400'};color:${o.age_hours>48?'#dc2626':o.age_hours>24?'#d97706':'#555'};">${o.age_label}</td>
     </tr>`).join('');
 
-  const body = `
-    <div style="text-align:center;margin-bottom:24px">
-      <div style="font-size:13px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:1px">Your CROSCROW Performance Report</div>
-      <div style="font-size:20px;font-weight:800;color:#f8fafc;margin-top:4px">${period.from} → ${period.to}</div>
-    </div>
+  return vendorEmailA('YOUR REPORT', 'PERIOD', `${period.from} &#8212; ${period.to}`, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">Your CROSCROW performance summary for <strong>${period.from} &#8594; ${period.to}</strong>.</div>
 
-    <table style="width:100%;border-collapse:separate;border-spacing:6px;margin-bottom:20px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;border:1px solid #e5e5e5;">
       <tr>
-        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
-          <div style="font-size:28px;font-weight:800;color:#a5b4fc">${v.total}</div>
-          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">YOUR ORDERS</div>
+        <td style="width:25%;padding:16px;text-align:center;border-right:1px solid #e5e5e5;">
+          <div style="font-size:28px;font-weight:900;color:#111;">${v.total}</div>
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-top:4px;">Orders</div>
         </td>
-        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
-          <div style="font-size:28px;font-weight:800;color:#10b981">${v.fulfilled}</div>
-          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">FULFILLED</div>
+        <td style="width:25%;padding:16px;text-align:center;border-right:1px solid #e5e5e5;">
+          <div style="font-size:28px;font-weight:900;color:#16a34a;">${v.fulfilled}</div>
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-top:4px;">Fulfilled</div>
         </td>
-        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
-          <div style="font-size:28px;font-weight:800;color:#ef4444">${v.unfulfilled}</div>
-          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">PENDING</div>
+        <td style="width:25%;padding:16px;text-align:center;border-right:1px solid #e5e5e5;">
+          <div style="font-size:28px;font-weight:900;color:#dc2626;">${v.unfulfilled}</div>
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-top:4px;">Pending</div>
         </td>
-        <td style="background:#1e293b;border-radius:10px;padding:14px;text-align:center">
-          <div style="font-size:28px;font-weight:800;color:${rateColor}">${fulfillRate}%</div>
-          <div style="font-size:11px;color:#64748b;margin-top:2px;font-weight:600">YOUR RATE</div>
+        <td style="width:25%;padding:16px;text-align:center;">
+          <div style="font-size:28px;font-weight:900;color:${rateColor};">${fulfillRate}%</div>
+          <div style="font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-top:4px;">Rate</div>
         </td>
       </tr>
     </table>
 
-    ${v.prepaid_pending > 0 ? `<div style="background:#2d0a0a;border:2px solid #ef4444;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#fca5a5;font-weight:700;text-align:center;">🔴 You have ${v.prepaid_pending} prepaid order${v.prepaid_pending>1?'s':''} waiting — please ship immediately!</div>` : ''}
-    ${v.partial_pending > 0 ? `<div style="background:#2d1a00;border:2px solid #f59e0b;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#fde68a;font-weight:700;text-align:center;">🟡 ${v.partial_pending} order${v.partial_pending>1?'s':''} with advance collected — dispatch soon to avoid penalties.</div>` : ''}
+    ${v.prepaid_pending > 0 ? vendorAlertA(`You have <strong>${v.prepaid_pending} prepaid order${v.prepaid_pending>1?'s':''}</strong> waiting &#8212; please ship immediately!`, 'danger') : ''}
+    ${v.partial_pending > 0 ? vendorAlertA(`<strong>${v.partial_pending} order${v.partial_pending>1?'s':''}</strong> with advance collected &#8212; dispatch soon to avoid penalties.`, 'warning') : ''}
 
     ${myUrgent.length > 0 ? `
-    <div style="font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">📋 Your Pending Orders</div>
-    <div style="background:#1e293b;border-radius:10px;overflow:hidden;margin-bottom:20px">
-      <table style="width:100%;border-collapse:collapse">
-        <tr style="background:#0f172a">
-          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">ORDER</th>
-          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">PAYMENT</th>
-          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">STAGE</th>
-          <th style="padding:9px 10px;text-align:left;font-size:11px;color:#64748b;font-weight:600">AGE</th>
-        </tr>
-        ${urgentRows}
-      </table>
-    </div>` : `<div style="text-align:center;padding:20px;color:#10b981;font-weight:700;font-size:14px">🎉 All your orders are fulfilled — great work, ${vendorName}!</div>`}
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:10px;">Your Pending Orders</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;border:1px solid #e5e5e5;">
+      <thead><tr style="border-bottom:2px solid #000;">
+        <th style="font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#aaa;padding:9px 8px;text-align:left;">Order</th>
+        <th style="font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#aaa;padding:9px 8px;text-align:left;">Payment</th>
+        <th style="font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#aaa;padding:9px 8px;text-align:left;">Stage</th>
+        <th style="font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#aaa;padding:9px 8px;text-align:left;">Age</th>
+      </tr></thead>
+      <tbody>${urgentRows}</tbody>
+    </table>` : `<div style="text-align:center;padding:20px;border:1px solid #e5e5e5;margin-bottom:24px;color:#16a34a;font-weight:700;font-size:14px;">All orders fulfilled &#8212; great work, ${vendorName}!</div>`}
 
-    <p style="font-size:12px;color:#475569;text-align:center;line-height:1.7">Keep up the great work! Fast fulfilment earns seller rewards on CROSCROW.</p>
-
-    <div style="text-align:center;margin-top:4px;margin-bottom:8px;">
-      <a href="https://autoaijarvis1.onrender.com/" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px;letter-spacing:0.5px;">Login to Vendor Panel →</a>
-    </div>
-  `;
-  return emailBase(`📊 Your Report: ${period.from} → ${period.to}`, '#6366f1', body);
+    <p style="font-size:12px;color:#888;text-align:center;line-height:1.7;margin-bottom:24px;">Fast fulfilment earns seller rewards on CROSCROW. Keep it up!</p>
+    ${vendorCTAA()}
+  `);
 }
 
 // ── Send report helper ────────────────────────────────────────────────────
@@ -15388,13 +15415,20 @@ function templateRRSubmittedAdmin({ req }) {
 
 // Vendor: new request
 function templateRRSubmittedVendor({ req }) {
-  const accent = '#6366f1';
-  const body = `
-    <div class="subtitle">A customer has submitted a ${req.type} request for one of your orders.</div>
-    ${rrInfoBox(req)}
-    ${rrItemsHtml(req.items, req.type)}
-    <p style="font-size:13px;color:#6b7280">Please log in to the <strong>Vendor Portal → Returns</strong> to review. Admin will approve or reject within 24 hours.</p>`;
-  return emailBase(`New ${req.type === 'exchange' ? 'Exchange' : 'Return'} Request — ${req.order_name}`, accent, body);
+  const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
+  return vendorEmailA(`${T} REQUEST`, 'ORDER ID', req.order_name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">New ${req.type} request received.</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">A customer has submitted a ${req.type} request for one of your orders. Admin will review within 24 hours.</div>
+    ${vendorInfoA([
+      { label: 'Request ID', value: req.request_id, accent: '#002eff' },
+      { label: 'Order', value: req.order_name },
+      { label: 'Type', value: req.type.toUpperCase() },
+      { label: 'Reason', value: req.reason || '&#8212;' },
+    ])}
+    ${vendorItemsA(req.items)}
+    <p style="font-size:12px;color:#888;line-height:1.7;margin-bottom:24px;">Log in to <strong>Vendor Portal &#8594; Returns</strong> to review. Admin will approve or reject within 24 hours.</p>
+    ${vendorCTAA()}
+  `);
 }
 
 // Customer: approved
@@ -15412,17 +15446,20 @@ function templateRRApprovedCustomer({ req }) {
 
 // Vendor: admin approved — arrange pickup
 function templateRRApprovedVendor({ req }) {
-  const body = `
-    <div class="subtitle">Admin has approved a ${req.type} request. Please arrange reverse pickup from the customer.</div>
-    ${rrInfoBox(req)}
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${req.customer_name}</span></div>
-      <div class="info-row"><span class="info-label">Email</span><span class="info-val">${req.customer_email}</span></div>
-      <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${req.customer_phone || '—'}</span></div>
-    </div>
-    ${rrItemsHtml(req.items, req.type)}
-    <p style="font-size:13px;color:#6b7280;line-height:1.7">Please arrange reverse pickup within <strong>24 hours</strong>. Log in to <strong>Vendor Portal → Returns</strong> to update the status.</p>`;
-  return emailBase(`Action Needed: ${req.type === 'exchange' ? 'Exchange' : 'Return'} Approved — ${req.order_name}`, '#f59e0b', body);
+  return vendorEmailA('ACTION NEEDED', 'ORDER ID', req.order_name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Arrange reverse pickup immediately.</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">Admin has approved a ${req.type} request. Please arrange reverse pickup from the customer within <strong>24 hours</strong>.</div>
+    ${vendorInfoA([
+      { label: 'Request ID', value: req.request_id, accent: '#002eff' },
+      { label: 'Order', value: req.order_name },
+      { label: 'Customer', value: req.customer_name },
+      { label: 'Phone', value: req.customer_phone || '&#8212;' },
+      { label: 'Email', value: req.customer_email, fullWidth: true },
+    ])}
+    ${vendorItemsA(req.items)}
+    ${vendorAlertA('Arrange reverse pickup within <strong>24 hours</strong>. Log in to <strong>Vendor Portal &#8594; Returns</strong> to update the status.', 'warning')}
+    ${vendorCTAA()}
+  `);
 }
 
 // Admin: vendor approved
@@ -15532,16 +15569,25 @@ function templateRRReminder24Admin({ req }) {
 // Vendor: 24hr reminder — approved but not fulfilled
 function templateRRReminder24Vendor({ req }) {
   const hrs = Math.round((Date.now() - new Date(req.updated_at || req.created_at).getTime()) / 3600000);
-  const body = `
-    <div class="subtitle">This ${req.type} request was approved <strong>${hrs} hours ago</strong> but pickup has not been arranged yet.</div>
-    ${rrInfoBox(req)}
-    <div class="info-box">
-      <div class="info-row"><span class="info-label">Customer</span><span class="info-val">${req.customer_name}</span></div>
-      <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${req.customer_phone || '—'}</span></div>
+  return vendorEmailA('REMINDER', 'ORDER ID', req.order_name, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Pickup not yet arranged.</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">This ${req.type} request was approved <strong>${hrs} hours ago</strong> but reverse pickup has not been arranged yet.</div>
+
+    <div style="border:2px solid #000;padding:20px 24px;text-align:center;margin-bottom:24px;">
+      <div style="font-size:9px;color:#aaa;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;">Hours Since Approval</div>
+      <div style="font-size:52px;font-weight:900;color:#000;font-family:'Courier New',monospace;line-height:1;">${hrs}</div>
     </div>
-    <p style="font-size:13px;color:#f59e0b;font-weight:700">Please arrange reverse pickup immediately from the customer's address.</p>
-    <p style="font-size:13px;color:#6b7280">Log in to <strong>Vendor Portal → Returns</strong> to update the status.</p>`;
-  return emailBase(`⏰ Action Needed: ${req.type === 'exchange' ? 'Exchange' : 'Return'} Not Yet Arranged`, '#f59e0b', body);
+
+    ${vendorInfoA([
+      { label: 'Request ID', value: req.request_id, accent: '#002eff' },
+      { label: 'Order', value: req.order_name },
+      { label: 'Customer', value: req.customer_name },
+      { label: 'Phone', value: req.customer_phone || '&#8212;' },
+    ])}
+    ${vendorItemsA(req.items)}
+    ${vendorAlertA('Please arrange reverse pickup from the customer immediately. Log in to <strong>Vendor Portal &#8594; Returns</strong> to update the status.', 'danger')}
+    ${vendorCTAA()}
+  `);
 }
 
 // ── Helper: send RR email by type ─────────────────────────────────────────
