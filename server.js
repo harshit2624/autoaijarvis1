@@ -9487,11 +9487,12 @@ app.post('/vendor/update/:token/penalty', async (req, res) => {
     if (!doc) return res.status(404).json({ error: 'Invalid link' });
     const { action } = req.body; // 'acknowledged' | 'disputed'
     if (!['acknowledged', 'disputed'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-    await mdb.collection('wa_vendor_nudges').updateOne(
-      { shopify_id: String(doc.shopify_id), vendor: doc.vendor_name },
-      { $set: { penalty_status: action, penalty_status_at: new Date().toISOString() } },
-      { sort: { sent_at: -1 } }
-    );
+    // Update most recent nudge for this vendor+order (updateOne with sort not supported — find then update)
+    const latestNudge = await mdb.collection('wa_vendor_nudges')
+      .find({ shopify_id: { $in: [String(doc.shopify_id)] }, vendor: doc.vendor_name })
+      .sort({ sent_at: -1 }).limit(1).toArray();
+    const nudgeFilter = latestNudge[0]?._id ? { _id: latestNudge[0]._id } : { shopify_id: String(doc.shopify_id), vendor: doc.vendor_name };
+    await mdb.collection('wa_vendor_nudges').updateOne(nudgeFilter, { $set: { penalty_status: action, penalty_status_at: new Date().toISOString() } });
     await waAdminAlert(`${action === 'disputed' ? '⚠️' : '✅'} *Penalty ${action}*\nOrder: *${doc.order_name}*\nVendor: ${doc.vendor_name}`).catch(() => {});
     res.json({ ok: true, status: action });
   } catch (e) { res.status(500).json({ error: 'Server error' }); }
@@ -9553,13 +9554,27 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
   );
 
   // Penalty status
-  const penaltyStatus = nudge?.penalty_status || (nudge ? 'triggered' : null);
-  const penaltyBadge = { triggered: ['#f59e0b','#1c1500','Penalty Triggered'], acknowledged: ['#10b981','#0a1f14','Acknowledged'], disputed: ['#ef4444','#1f0a0a','Disputed'], cancelled: ['#64748b','#111','Cancelled'] };
+  // Determine penalty status — only "triggered" if 48h deadline actually passed
+  let penaltyStatus = nudge?.penalty_status || null;
+  if (!penaltyStatus && nudge) {
+    const deadlinePassed = ovs?.stage_started_at
+      ? (Date.now() > (typeof ovs.stage_started_at === 'number' ? ovs.stage_started_at : new Date(ovs.stage_started_at).getTime()) + 48 * 3600000)
+      : false;
+    penaltyStatus = deadlinePassed ? 'triggered' : 'warning';
+  }
+  const penaltyBadge = {
+    warning:     ['#f59e0b', '#1c1500', 'Dispatch Warning'],
+    triggered:   ['#ef4444', '#1f0a0a', 'Penalty Triggered'],
+    acknowledged:['#10b981', '#0a1f14', 'Acknowledged'],
+    disputed:    ['#f59e0b', '#1c1500', 'Under Review'],
+    cancelled:   ['#64748b', '#111',    'Cancelled'],
+  };
   const [pColor, pBg, pLabel] = penaltyBadge[penaltyStatus] || ['#64748b','#111','Unknown'];
+  const showPenaltyActions = penaltyStatus === 'triggered' || penaltyStatus === 'warning';
   const penaltyHtml = penaltyStatus ? `<div class="penalty-strip" style="background:${pBg};border-color:${pColor}20;color:${pColor}">
     <span class="penalty-dot" style="background:${pColor}"></span>
-    Penalty Status: <strong>${pLabel}</strong>
-    ${penaltyStatus === 'triggered' ? `<div class="penalty-actions">
+    <strong>${pLabel}</strong>
+    ${showPenaltyActions ? `<div class="penalty-actions">
       <button type="button" class="pact pact-ack" onclick="penaltyAction('acknowledged')">Acknowledge</button>
       <button type="button" class="pact pact-dis" onclick="penaltyAction('disputed')">Dispute</button>
     </div>` : ''}
