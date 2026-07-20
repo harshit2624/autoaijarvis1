@@ -1514,7 +1514,12 @@ function emailBase(title, accentColor, bodyHtml) {
     <div class="title">${title}</div>
     ${bodyHtml}
   </div>
-  <div class="footer">© CROSCROW · This is an automated notification · Do not reply to this email</div>
+  <div class="footer">
+    © CROSCROW · Automated notification · Do not reply
+    <div style="margin-top:8px;font-size:10px;letter-spacing:1px;opacity:.45">
+      EMAILS POWERED BY <a href="https://antortiq.onrender.com/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:1px">ANTORTIQ</a>
+    </div>
+  </div>
 </div></body></html>`;
 }
 
