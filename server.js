@@ -19468,12 +19468,13 @@ app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
         productName: r._id, productImage: r.image || '',
         views: r.views, atc: r.atc, checkout: r.checkout, purchases: r.purchases,
         viewToAtcRate: r.views ? (effectiveAtc / r.views) * 100 : 0,
+        viewToCheckoutRate: r.views ? (r.checkout / r.views) * 100 : 0,
         atcToCheckoutRate: effectiveAtc ? (r.checkout / effectiveAtc) * 100 : 0,
         checkoutToPurchaseRate: r.checkout ? (r.purchases / r.checkout) * 100 : 0,
         viewToPurchaseRate: r.views ? (r.purchases / r.views) * 100 : 0,
       };
     });
-    const sortBy = ['viewToAtcRate','atcToCheckoutRate','checkoutToPurchaseRate','viewToPurchaseRate'].includes(req.query.sortBy) ? req.query.sortBy : 'viewToAtcRate';
+    const sortBy = ['viewToAtcRate','viewToCheckoutRate','atcToCheckoutRate','checkoutToPurchaseRate','viewToPurchaseRate'].includes(req.query.sortBy) ? req.query.sortBy : 'viewToAtcRate';
     withRates.sort((a, b) => b[sortBy] - a[sortBy]);
     res.json({ products: withRates.slice(0, limit) });
   } catch (e) { res.status(500).json({ error: e.message }); }
