@@ -19258,16 +19258,44 @@ async function waHandleVendorReply(sock, sender, text) {
     return;
   }
 
-  // No session — detect if vendor is sending a bare menu reply ("1"/"2") or delay keyword
-  // In that case show their pending orders so they can pick the right one
-  const isPenaltyOrMenuReply = /^[12]$/.test(trimmed) ||
-    /\b(delay|delayed|dispute|penalty|wrong|extend|can'?t ship|not yet|few days|stock issue|stitching|fabric|courier|pickup|tomorrow|this week)\b/i.test(trimmed);
-
   // Resolve vendor name from wa_vendor_jids for use in messages below
   const vendorJidDoc = await mdb.collection('wa_vendor_jids').findOne(
     { $or: [{ jid: sender }, ...(phone ? [{ phone: { $regex: phone } }] : [])] }
   ).catch(() => null);
   const resolvedVendorName = vendorJidDoc?.vendor_name || null;
+
+  // Find most recent unresolved nudge for THIS specific vendor (last 7 days)
+  const recentNudge = resolvedVendorName
+    ? await mdb.collection('wa_vendor_nudges').findOne(
+        { vendor: resolvedVendorName, sent_at: { $gt: Date.now() - 7 * 86400000 }, resolved: { $ne: true } },
+        { sort: { sent_at: -1 } }
+      ).catch(() => null)
+    : null;
+
+  // If vendor sends "1" or "2" with a recent nudge in context → go straight to that order
+  const isBareMenuReply = /^[12]$/.test(trimmed);
+  if (isBareMenuReply && recentNudge && resolvedVendorName) {
+    const orderName = recentNudge.order_name || `#${recentNudge.shopify_id}`;
+    const shopifyId = String(recentNudge.shopify_id);
+    if (trimmed === '1') {
+      await waSessionSet(sender, { type: 'vendor_delay', order_name: orderName, shopify_id: shopifyId, vendor: resolvedVendorName });
+      await sendAndLog(
+        `📝 *Order ${orderName} — Delay Update*\n\nPlease share the reason and when you'll ship it. Just reply naturally, for example:\n\n_Slightly delayed due to stitching, will ship by 16 July_\n_Stock issue, dispatching by 18 Jul_\n_Courier pickup delayed, shipping tomorrow_\n\nJust type your message 👇`,
+        resolvedVendorName
+      );
+    } else {
+      await waSessionSet(sender, { type: 'vendor_tracking', order_name: orderName, shopify_id: shopifyId, vendor: resolvedVendorName });
+      await sendAndLog(
+        `📦 *Order ${orderName} — Tracking Update*\n\nPlease share the AWB number and courier. Just reply naturally, for example:\n\n_123456789 Delhivery_\n_Shipped via Shiprocket, AWB 9876543210_\n_Bluedart 445566778_\n\nJust type your message 👇`,
+        resolvedVendorName
+      );
+    }
+    return;
+  }
+
+  // If vendor sends "1"/"2" or delay keywords with NO nudge context → show order picker
+  const isPenaltyOrMenuReply = isBareMenuReply ||
+    /\b(delay|delayed|dispute|penalty|wrong|extend|can'?t ship|not yet|few days|stock issue|stitching|fabric|courier|pickup|tomorrow|this week)\b/i.test(trimmed);
 
   if (isPenaltyOrMenuReply && resolvedVendorName) {
     const pendingOrders = await mdb.collection('order_vendor_stage').find({
@@ -19301,12 +19329,6 @@ async function waHandleVendorReply(sock, sender, text) {
     );
     return;
   }
-
-  // No session — find the most recent unresolved nudge sent to this vendor (last 7 days)
-  const recentNudge = await mdb.collection('wa_vendor_nudges').findOne(
-    { sent_at: { $gt: Date.now() - 7 * 86400000 }, resolved: { $ne: true } },
-    { sort: { sent_at: -1 } }
-  );
 
   // Use LLM to parse natural language from vendor into structured data
   const orderContext = recentNudge ? `The vendor is likely replying about order ${recentNudge.order_name}.` : 'No recent order context found.';
