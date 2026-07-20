@@ -19466,7 +19466,7 @@ app.get('/admin/pixel-tracker/top-products', adminAuth, async (req, res) => {
 app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const minViews = parseInt(req.query.minViews) || 3; // avoid noisy rates from 1-2 view flukes
+    const minViews = parseInt(req.query.minViews) || 10;
     const match = { ...pixelDateRange(req.query.from, req.query.to), productName: { $ne: 'N/A' } };
     const rows = await mdb.collection('pixel_events').aggregate([
       { $match: match },

@@ -9202,6 +9202,7 @@
     const [topProducts, setTopProducts] = useState([]);
     const [topLoading,setTopLoading]= useState(true);
     const [rankBy,    setRankBy]    = useState('viewToAtcRate');
+    const [minViews,  setMinViews]  = useState(50);
     const [lbLimit,   setLbLimit]   = useState(20);
     const [topLimit,  setTopLimit]  = useState(30);
     const [leaderboard,setLeaderboard] = useState([]);
@@ -9226,7 +9227,7 @@
     };
     const loadLeaderboard = () => {
       setLbLoading(true);
-      fetch(`${API}/admin/pixel-tracker/leaderboard?sortBy=${rankBy}&limit=${lbLimit}&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+      fetch(`${API}/admin/pixel-tracker/leaderboard?sortBy=${rankBy}&limit=${lbLimit}&minViews=${minViews}&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>setLeaderboard(d.products||[])).catch(()=>{}).finally(()=>setLbLoading(false));
     };
     const loadLogs = () => {
@@ -9236,7 +9237,7 @@
 
     useEffect(loadSummary, [period]);
     useEffect(loadTopProducts, [period, topTab, topLimit]);
-    useEffect(loadLeaderboard, [period, rankBy, lbLimit]);
+    useEffect(loadLeaderboard, [period, rankBy, lbLimit, minViews]);
     useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, []);
 
     const EVENT_META = {
@@ -9326,9 +9327,12 @@
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
             <div>
               <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Conversion Leaderboard</div>
-              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>Ranked by your selected rate · minimum 3 views to qualify</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>Ranked by your selected rate · min {minViews} views to qualify</div>
             </div>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <select value={minViews} onChange={e=>setMinViews(Number(e.target.value))} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px',cursor:'pointer'}}>
+                {[10,50,100,500,1000].map(n=><option key={n} value={n}>Min {n} views</option>)}
+              </select>
               <select value={lbLimit} onChange={e=>setLbLimit(Number(e.target.value))} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px',cursor:'pointer'}}>
                 {[20,30,50,100].map(n=><option key={n} value={n}>Top {n}</option>)}
               </select>
