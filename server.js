@@ -9246,6 +9246,172 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+// ── Vendor Update Token (magic link for WA nudges) ────────────────────────
+const crypto = require('crypto');
+
+async function createVendorUpdateToken(shopify_id, order_name, vendor_name, product_names) {
+  const token = crypto.randomBytes(16).toString('hex');
+  await mdb.collection('wa_vendor_update_tokens').insertOne({
+    token, shopify_id: String(shopify_id), order_name, vendor_name,
+    product_names: product_names || '',
+    created_at: Date.now(), expires_at: Date.now() + 72 * 3600000, used: false,
+  });
+  return token;
+}
+
+async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
+  try {
+    const shopifyOrder = await shopifyREST(`/orders/${shopify_id}.json?fields=id,name,email,customer,shipping_address`);
+    const ord = shopifyOrder?.order;
+    const customerEmail = ord?.email;
+    const customerPhone = (ord?.customer?.phone || ord?.shipping_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    const etaFormatted = eta_date ? new Date(eta_date + (eta_date.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'soon';
+    const adminEmail = (await getSmtpConfig())?.user;
+    const delayHtmlCustomer = emailBase(`We're Sorry — Your Order Is Delayed`, '#f59e0b', `
+      <div class="subtitle">We sincerely apologise for the delay in fulfilling your order.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${ord?.name || shopify_id}</span></div>
+        <div class="info-row"><span class="info-label">Expected Dispatch By</span><span class="info-val" style="color:#10b981;font-weight:700">${etaFormatted}</span></div>
+      </div>
+      <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#713f12;line-height:1.7">
+        Your order is being prepared and will be dispatched by <strong>${etaFormatted}</strong>. You'll receive a shipping confirmation with tracking details once dispatched.
+      </div>`);
+    const delayHtmlAdmin = emailBase(`Vendor Delay Remark: ${ord?.name || shopify_id}`, '#f59e0b', `
+      <div class="subtitle">Vendor <strong>${vendor}</strong> has submitted a delay remark.</div>
+      <div class="info-box">
+        <div class="info-row"><span class="info-label">Order</span><span class="info-val">${ord?.name || shopify_id}</span></div>
+        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendor}</span></div>
+        <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
+        <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
+      </div>`);
+    if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || shopify_id} is Delayed`, html: delayHtmlCustomer, shopifyId: shopify_id, trigger: 'delay_remark_customer' });
+    if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || shopify_id} — ${vendor}`, html: delayHtmlAdmin, shopifyId: shopify_id, trigger: 'delay_remark_admin' });
+    // Customer WA notification
+    if (customerPhone && waSocket && waConnected) {
+      const waMsg = `Hi! 👋\n\nYour *CROSCROW* order ${ord?.name || '#'+shopify_id} update:\n\n⏳ Vendor is preparing your order and will dispatch by *${etaFormatted}*.\n\nYou'll receive tracking details once shipped. Thank you for your patience! 🙏`;
+      await waSocket.sendMessage(`91${customerPhone}@s.whatsapp.net`, { text: waMsg }).catch(() => {});
+    }
+  } catch (e) { console.error('notifyDelayToCustomer error:', e.message); }
+}
+
+// GET /vendor/update/:token — no-login magic link form (pre-filled from token)
+app.get('/vendor/update/:token', async (req, res) => {
+  try {
+    const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
+    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', 'Invalid or expired link.'));
+    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null));
+    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null));
+    res.send(vendorUpdatePage(doc, 'form', null));
+  } catch (e) { res.status(500).send('Server error'); }
+});
+
+// POST /vendor/update/:token — process form submission
+app.post('/vendor/update/:token', async (req, res) => {
+  try {
+    const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
+    if (!doc || doc.used || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', 'Link already used or expired.'));
+    const { type, reason, eta, awb, courier } = req.body;
+    const { shopify_id, order_name, vendor_name } = doc;
+
+    if (type === 'delay' && reason) {
+      const etaIso = eta || null;
+      await DR.insert(shopify_id, vendor_name, reason, etaIso);
+      await OVS.upsert(shopify_id, vendor_name, { delay_reason: reason, delay_resolution_date: etaIso, updated_at: new Date().toISOString() });
+      await notifyDelayToCustomer(shopify_id, vendor_name, reason, etaIso);
+      await waAdminAlert(`⏳ *Vendor Delay (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nReason: ${reason}\nETA: ${etaIso || 'not specified'}`);
+    } else if (type === 'tracking' && awb) {
+      const c = courier || 'Not specified';
+      await mdb.collection('order_vendor_stage').updateOne(
+        { shopify_id: String(shopify_id) },
+        { $set: { awb, courier: c, stage: 'transit', updated_at: new Date().toISOString() } }
+      );
+      await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}`);
+    } else {
+      return res.send(vendorUpdatePage(doc, 'form', 'Please fill in all required fields.'));
+    }
+    await mdb.collection('wa_vendor_update_tokens').updateOne({ token: req.params.token }, { $set: { used: true, used_at: new Date().toISOString() } });
+    await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
+    res.send(vendorUpdatePage(doc, 'success', null));
+  } catch (e) { console.error('vendor update token POST:', e.message); res.status(500).send('Server error'); }
+});
+
+function vendorUpdatePage(doc, state, errMsg) {
+  const orderName = doc?.order_name || '';
+  const vendorName = doc?.vendor_name || '';
+  const products = doc?.product_names || '';
+  const today = new Date().toISOString().split('T')[0];
+  const stateHtml = {
+    used: `<div class="card"><div class="icon">✅</div><h2>Already Submitted</h2><p>You've already submitted an update for order <strong>${orderName}</strong>. No further action needed.</p></div>`,
+    expired: `<div class="card"><div class="icon">⏰</div><h2>Link Expired</h2><p>This update link for order <strong>${orderName}</strong> has expired (72h validity). Contact CROSCROW team if needed.</p></div>`,
+    error: `<div class="card"><div class="icon">❌</div><h2>Invalid Link</h2><p>${errMsg || 'This link is not valid.'}</p></div>`,
+    success: `<div class="card success"><div class="icon">🎉</div><h2>Update Submitted!</h2><p>Your update for order <strong>${orderName}</strong> has been received. The customer will be notified automatically.</p><p style="color:#64748b;font-size:13px;margin-top:12px">You can close this page.</p></div>`,
+    form: `<div class="card">
+      <div class="brand">CROSCROW</div>
+      <h2>Order Update</h2>
+      <div class="order-badge">${orderName}</div>
+      ${products ? `<div class="product-name">${products}</div>` : ''}
+      ${errMsg ? `<div class="error">${errMsg}</div>` : ''}
+      <form method="POST">
+        <div class="tabs">
+          <label class="tab"><input type="radio" name="type" value="delay" required onchange="toggle(this)"> ⏳ Order is delayed</label>
+          <label class="tab"><input type="radio" name="type" value="tracking" onchange="toggle(this)"> 📦 Already shipped</label>
+        </div>
+        <div id="delay-section" class="section hidden">
+          <label>Reason for delay *</label>
+          <textarea name="reason" placeholder="E.g. Fabric shortage, stitching pending, awaiting dispatch..." rows="3"></textarea>
+          <label>Expected dispatch date *</label>
+          <input type="date" name="eta" min="${today}">
+        </div>
+        <div id="tracking-section" class="section hidden">
+          <label>AWB / Tracking number *</label>
+          <input type="text" name="awb" placeholder="E.g. 4959596123">
+          <label>Courier name *</label>
+          <input type="text" name="courier" placeholder="E.g. Delhivery, BlueDart, Shiprocket">
+        </div>
+        <button type="submit" id="submit-btn" disabled>Submit Update →</button>
+      </form>
+    </div>`,
+  };
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Order Update — CROSCROW</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:32px 28px;max-width:480px;width:100%}
+.card.success{border-color:#10b981;background:#0d2e1f}
+.brand{font-size:11px;font-weight:800;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:20px}
+h2{font-size:20px;font-weight:700;margin-bottom:6px}
+.order-badge{display:inline-block;background:#002eff;color:#fff;font-size:12px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:4px;margin:12px 0 4px}
+.product-name{font-size:12px;color:#94a3b8;margin-bottom:20px}
+.icon{font-size:36px;margin-bottom:16px}
+.error{background:#2d1515;border:1px solid #ef4444;color:#fca5a5;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
+.tabs{display:flex;flex-direction:column;gap:10px;margin:20px 0 16px}
+.tab{display:flex;align-items:center;gap:10px;padding:14px 16px;border:1.5px solid #2a2a2a;border-radius:10px;cursor:pointer;font-size:14px;font-weight:500;transition:border-color .2s}
+.tab:has(input:checked){border-color:#002eff;background:rgba(0,46,255,0.08)}
+.tab input{accent-color:#002eff;width:16px;height:16px}
+.section{margin-top:16px}
+.section.hidden{display:none}
+label{display:block;font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;margin-top:14px}
+textarea,input[type=text],input[type=date]{width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;transition:border-color .2s}
+textarea:focus,input:focus{border-color:#002eff}
+textarea{resize:vertical;min-height:80px}
+button{width:100%;margin-top:24px;background:#002eff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:15px;cursor:pointer;letter-spacing:1px;transition:opacity .2s}
+button:disabled{opacity:.35;cursor:not-allowed}
+button:hover:not(:disabled){opacity:.88}
+p{line-height:1.7;color:#94a3b8;margin-top:10px;font-size:14px}
+p strong{color:#e2e8f0}
+</style></head><body>
+${stateHtml[state] || stateHtml.error}
+<script>
+function toggle(el){
+  document.getElementById('delay-section').classList.toggle('hidden', el.value!=='delay');
+  document.getElementById('tracking-section').classList.toggle('hidden', el.value!=='tracking');
+  document.getElementById('submit-btn').disabled=false;
+}
+</script>
+</body></html>`;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 //  VENDOR SHOPIFY SYNC — OAuth + Product Import/Map
 // ══════════════════════════════════════════════════════════════════════════
@@ -19114,6 +19280,8 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
     const days = req.body?.days || 3;
     const orderRef = shopifyId;
 
+    const testToken = mdb ? await createVendorUpdateToken(shopifyId, orderName, vendorName, productNames).catch(() => null) : null;
+    const testLink = testToken ? `\n\n🔗 *Quick update (no login):*\n${SERVER_BASE}/vendor/update/${testToken}` : '';
     const nudgeMsg =
 `⚠️ *Action Required — ${orderName}*
 
@@ -19126,6 +19294,8 @@ Status: *Not shipped for ${days} day${days > 1 ? 's' : ''}* _(Test Warning)_
 Please reply with:
 *1️⃣* — Order is delayed (share reason + ETA)
 *2️⃣* — Already shipped (share AWB + courier)
+
+Or tap the link to submit instantly:${testLink}
 
 _CROSCROW Operations Team_`;
 
@@ -19317,6 +19487,35 @@ async function waHandleVendorReply(sock, sender, text) {
     return;
   }
 
+  // ── vendor_confirm: short confirmation step for natural language WA updates ──
+  if (session?.type === 'vendor_confirm') {
+    const { action, shopify_id, order_name, vendor_name, data } = session;
+    if (trimmed === '1') {
+      await waSessionClear(sender);
+      if (action === 'delay') {
+        await DR.insert(shopify_id, vendor_name, data.reason, data.eta_iso);
+        await OVS.upsert(shopify_id, vendor_name, { delay_reason: data.reason, delay_resolution_date: data.eta_display, updated_at: new Date().toISOString() });
+        await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
+        await notifyDelayToCustomer(shopify_id, vendor_name, data.reason, data.eta_iso);
+        await waAdminAlert(`⏳ *Vendor Delay (WA natural language)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nReason: ${data.reason}\nETA: ${data.eta_display || 'not specified'}`);
+        await sendAndLog(`✅ *Delay recorded for ${order_name}*\n\nReason: ${data.reason}\nShipping by: *${data.eta_display || 'not specified'}*\n\nCustomer has been notified. Thank you! 🙏`, vendor_name);
+      } else if (action === 'tracking') {
+        await mdb.collection('order_vendor_stage').updateOne(
+          { shopify_id: String(shopify_id) },
+          { $set: { awb: data.awb, courier: data.courier, stage: 'transit', updated_at: new Date().toISOString() } }
+        );
+        await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
+        await waAdminAlert(`📦 *Vendor Tracking (WA natural language)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${data.awb}\nCourier: ${data.courier}`);
+        await sendAndLog(`✅ *Tracking updated for ${order_name}*\n\nAWB: *${data.awb}*\nCourier: *${data.courier}*\n\nThank you! 🙏`, vendor_name);
+      }
+      return;
+    }
+    // "2" or anything else = cancel
+    await waSessionClear(sender);
+    await sendAndLog(`↩ Cancelled. No changes saved.\n\nTo report a delay or shipping update, just describe it naturally:\n_"Order 2344 delayed, fabric issue, ships by 25 Jul"_\n_"Order 2344 AWB 123456789 Delhivery"_`, vendor_name);
+    return;
+  }
+
   if (session?.type === 'vendor_order_select') {
     const { vendor, orders } = session;
     const num = parseInt(trimmed, 10);
@@ -19403,6 +19602,51 @@ async function waHandleVendorReply(sock, sender, text) {
       resolvedVendorName
     );
     return;
+  }
+
+  // ── Stateless natural language detection ─────────────────────────────────
+  // Detect messages like "order 2344 delayed fabric issue ships 25 july"
+  // Accepts from any sender — order number in the message is the identifier
+  const orderNumMatch = trimmed.match(/(?:order[#\s]*|#)(\d{3,6})/i);
+  const hasDelayKeywords = /delay|not.*ship|can'?t.*ship|issue|stitching|fabric|stock|pending|by \d|shipping.*\d|dispatch.*\d|tomorrow|next week|this week/i.test(trimmed);
+  const hasTrackingKeywords = /\bawb\b|\btrack(ing)?\b|delhivery|bluedart|ecomexpress|shiprocket|ekart|dtdc|xpressbees|\b[A-Z0-9]{8,}\s+(delhivery|bluedart|shiprocket|ecomexpress)\b/i.test(trimmed);
+
+  if (orderNumMatch && (hasDelayKeywords || hasTrackingKeywords)) {
+    const orderNum = orderNumMatch[1];
+    // Look up order in order_vendor_stage
+    const ovs = await mdb.collection('order_vendor_stage').findOne({
+      $or: [{ shopify_id: { $regex: orderNum } }, { order_name: { $regex: orderNum } }]
+    }).catch(() => null);
+    if (ovs) {
+      const vName = ovs.vendor_name;
+      const shopifyId = String(ovs.shopify_id);
+      const oName = ovs.order_name || `#${orderNum}`;
+      const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      try {
+        const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+        const GROQ_KEY = process.env.GROQ_API_KEY;
+        const llmPrompt = [
+          { role: 'system', content: `Extract delay/tracking info. Today is ${today}. Order is ${oName}. Reply ONLY with JSON:\n{"type":"delay"|"tracking","reason":"one sentence or null","eta_display":"DD-MMM-YYYY or null","eta_iso":"YYYY-MM-DD or null","awb":"AWB number or null","courier":"courier name or null"}` },
+          { role: 'user', content: trimmed }
+        ];
+        const apiUrl = DEEPSEEK_KEY ? 'https://api.deepseek.com/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+        const r = await fetch(apiUrl, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${DEEPSEEK_KEY||GROQ_KEY}`}, body: JSON.stringify({ model: DEEPSEEK_KEY?'deepseek-chat':'llama-3.3-70b-versatile', max_tokens:150, messages: llmPrompt }) });
+        const lr = await r.json();
+        const nlParsed = JSON.parse((lr.choices?.[0]?.message?.content?.trim()||'{}').replace(/^```json\s*/i,'').replace(/```$/,'').trim());
+        if (nlParsed.type === 'delay' && nlParsed.reason) {
+          const confirmMsg = `Got it! Here's what I captured:\n\n📦 Order *${oName}*\n⏳ *Delay* — ${nlParsed.reason}\n📅 Ships by: *${nlParsed.eta_display || 'date not mentioned'}*\n\nReply *1* to confirm ✓ or *2* to cancel ✗`;
+          await waSessionSet(sender, { type: 'vendor_confirm', action: 'delay', shopify_id: shopifyId, order_name: oName, vendor_name: vName, data: { reason: nlParsed.reason, eta_display: nlParsed.eta_display, eta_iso: nlParsed.eta_iso } });
+          await sendAndLog(confirmMsg, vName);
+          return;
+        }
+        if (nlParsed.type === 'tracking' && nlParsed.awb) {
+          const confirmMsg = `Got it! Here's what I captured:\n\n📦 Order *${oName}*\n🚚 *Shipped* — AWB: ${nlParsed.awb}\n📮 Courier: ${nlParsed.courier || 'not mentioned'}\n\nReply *1* to confirm ✓ or *2* to cancel ✗`;
+          await waSessionSet(sender, { type: 'vendor_confirm', action: 'tracking', shopify_id: shopifyId, order_name: oName, vendor_name: vName, data: { awb: nlParsed.awb, courier: nlParsed.courier || 'Not specified' } });
+          await sendAndLog(confirmMsg, vName);
+          return;
+        }
+      } catch (_) {}
+    }
   }
 
   // Use LLM to parse natural language from vendor into structured data
@@ -19518,6 +19762,9 @@ async function waVendorNudge(meta, customerPhone) {
     const customerName = d.customer_name || '';
     const customerMobile = customerPhone ? `+91${customerPhone}` : '';
     const productNames = (d.items || []).filter(i => !i.vendor || i.vendor === vs.vendor_name).map(i => i.title || i.name).filter(Boolean).join(', ') || 'your item';
+    // Generate magic link token for no-login form update
+    const updateToken = mdb ? await createVendorUpdateToken(d.shopify_order_id, d.order_name, vs.vendor_name, productNames).catch(() => null) : null;
+    const updateLink = updateToken ? `\n\n🔗 *Quick update (no login):*\n${SERVER_BASE}/vendor/update/${updateToken}` : '';
     const nudgeMsg =
 `⚠️ *Action Required — Order ${d.order_name}*
 
@@ -19530,6 +19777,8 @@ Status: *Not shipped for ${days} day${days > 1 ? 's' : ''}*
 Please reply with:
 *1️⃣* — Order is delayed (share reason + ETA)
 *2️⃣* — Already shipped (share AWB + courier)
+
+Or tap the link to submit instantly:${updateLink}
 
 _CROSCROW Operations Team_`;
 
