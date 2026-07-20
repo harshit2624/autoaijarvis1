@@ -19242,6 +19242,66 @@ async function waHandleVendorReply(sock, sender, text) {
     return;
   }
 
+  if (session?.type === 'vendor_order_select') {
+    const { vendor, orders } = session;
+    const num = parseInt(trimmed, 10);
+    if (!isNaN(num) && num >= 1 && num <= orders.length) {
+      const selected = orders[num - 1];
+      await waSessionSet(sender, { type: 'vendor_menu', order_name: selected.order_name, shopify_id: selected.shopify_id, vendor });
+      await sendAndLog(
+        `*Order ${selected.order_name}* selected ✅\n\nWhat do you want to update?\n\n1️⃣ — Report delay (reason + expected date)\n2️⃣ — Already shipped (AWB + courier name)`,
+        vendor
+      );
+      return;
+    }
+    await sendAndLog(`Please reply with a number between *1* and *${orders.length}*.\n\nFor example, reply *1* to select the first order in the list.`, vendor);
+    return;
+  }
+
+  // No session — detect if vendor is sending a bare menu reply ("1"/"2") or delay keyword
+  // In that case show their pending orders so they can pick the right one
+  const isPenaltyOrMenuReply = /^[12]$/.test(trimmed) ||
+    /\b(delay|delayed|dispute|penalty|wrong|extend|can'?t ship|not yet|few days|stock issue|stitching|fabric|courier|pickup|tomorrow|this week)\b/i.test(trimmed);
+
+  // Resolve vendor name from wa_vendor_jids for use in messages below
+  const vendorJidDoc = await mdb.collection('wa_vendor_jids').findOne(
+    { $or: [{ jid: sender }, ...(phone ? [{ phone: { $regex: phone } }] : [])] }
+  ).catch(() => null);
+  const resolvedVendorName = vendorJidDoc?.vendor_name || null;
+
+  if (isPenaltyOrMenuReply && resolvedVendorName) {
+    const pendingOrders = await mdb.collection('order_vendor_stage').find({
+      vendor_name: resolvedVendorName,
+      stage: { $in: ['confirmed', 'partial', 'hold', 'new', 'pending'] }
+    }).sort({ updated_at: -1 }).limit(10).toArray();
+
+    if (!pendingOrders.length) {
+      await sendAndLog(
+        `Hi ${resolvedVendorName}! 👋\n\nNo pending fulfillments found for your account right now.\n\nIf you need help with a specific order, share the order number (e.g. *#2531*) and we'll sort it out!`,
+        resolvedVendorName
+      );
+      return;
+    }
+
+    const lines = pendingOrders.map((o, i) =>
+      `*${i + 1}.* ${o.order_name || '#' + o.shopify_id} — ${(o.stage || 'pending').toUpperCase()}`
+    );
+    await waSessionSet(sender, {
+      type: 'vendor_order_select',
+      vendor: resolvedVendorName,
+      orders: pendingOrders.map(o => ({
+        shopify_id: String(o.shopify_id),
+        order_name: o.order_name || `#${o.shopify_id}`,
+        stage: o.stage
+      }))
+    });
+    await sendAndLog(
+      `Hi ${resolvedVendorName}! 👋\n\nWhich order are you updating?\n\n${lines.join('\n')}\n\nReply with the number (e.g. *1*, *3*)`,
+      resolvedVendorName
+    );
+    return;
+  }
+
   // No session — find the most recent unresolved nudge sent to this vendor (last 7 days)
   const recentNudge = await mdb.collection('wa_vendor_nudges').findOne(
     { sent_at: { $gt: Date.now() - 7 * 86400000 }, resolved: { $ne: true } },
@@ -20042,12 +20102,29 @@ async function startBaileysBot() {
           {
             const BOT_NO = (process.env.WHATSAPP_NUMBER || '').replace(/^91/, '');
             const allVendorJids = await mdb.collection('wa_vendor_jids').find({}).toArray();
-            const matchedVendor = allVendorJids.find(v =>
+            let matchedVendor = allVendorJids.find(v =>
               v.phone && v.phone !== BOT_NO && (
                 sender === `91${v.phone}@s.whatsapp.net` ||
                 (v.jid && sender === v.jid)
               )
             );
+            // Fallback: if no JID match (LID or JID never saved), check vendor_profiles by phone
+            // This handles vendors replying to penalty WA where JID was never registered
+            if (!matchedVendor && phone) {
+              const vp = await mdb.collection('vendor_profiles').findOne(
+                { phone: { $regex: phone } },
+                { projection: { vendor_name: 1, phone: 1 } }
+              ).catch(() => null);
+              if (vp) {
+                matchedVendor = { phone: vp.phone || phone, vendor_name: vp.vendor_name };
+                // Register JID so future messages route correctly without DB lookup
+                await mdb.collection('wa_vendor_jids').updateOne(
+                  { phone: vp.phone || phone },
+                  { $set: { phone: vp.phone || phone, vendor_name: vp.vendor_name, jid: sender, updated_at: new Date().toISOString() } },
+                  { upsert: true }
+                ).catch(() => {});
+              }
+            }
             // Check if this exact sender JID has an active vendor session
             const senderSession = !matchedVendor ? await waSessionGet(sender) : null;
             const hasVendorSession = senderSession && ['vendor_menu','vendor_delay','vendor_tracking'].includes(senderSession.type);
