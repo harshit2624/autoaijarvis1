@@ -9313,8 +9313,8 @@ async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
         <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
         <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
       </div>`);
-    if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || shopify_id} is Delayed`, html: delayHtmlCustomer, shopifyId: shopify_id, trigger: 'delay_remark_customer' });
-    if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || shopify_id} — ${vendor}`, html: delayHtmlAdmin, shopifyId: shopify_id, trigger: 'delay_remark_admin' });
+    if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || shopify_id} is Delayed`, html: delayHtmlCustomer, shopifyId: realId, trigger: 'delay_remark_customer' });
+    if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || shopify_id} — ${vendor}`, html: delayHtmlAdmin, shopifyId: realId, trigger: 'delay_remark_admin' });
     // Customer WA notification
     if (customerPhone && waSocket && waConnected) {
       const waMsg = `Hi! 👋\n\nYour *CROSCROW* order ${ord?.name || '#'+shopify_id} update:\n\n⏳ Vendor is preparing your order and will dispatch by *${etaFormatted}*.\n\nYou'll receive tracking details once shipped. Thank you for your patience! 🙏`;
