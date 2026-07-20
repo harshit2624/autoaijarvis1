@@ -461,6 +461,7 @@ app.get('/uploads/:id', async (req, res) => {
 // ── Raw body needed for webhook HMAC verification ──────────────────────────
 app.use("/webhooks", express.raw({ type: "application/json" }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 // ── CORS — allow your deployed frontend URL ────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*").split(",").map(s => s.trim());
@@ -9337,10 +9338,11 @@ app.get('/vendor/update/:token', async (req, res) => {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
     if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, null, null, 'Invalid or expired link.'));
     if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null, null, null));
-    const [ovs, nudge] = await Promise.all([
+    const [ovs, nudgeArr] = await Promise.all([
       mdb.collection('order_vendor_stage').findOne({ shopify_id: String(doc.shopify_id), vendor_name: doc.vendor_name }),
-      mdb.collection('wa_vendor_nudges').findOne({ shopify_id: String(doc.shopify_id), vendor: doc.vendor_name }, { sort: { sent_at: -1 } }),
+      mdb.collection('wa_vendor_nudges').find({ shopify_id: String(doc.shopify_id), vendor: doc.vendor_name }).sort({ sent_at: -1 }).limit(1).toArray(),
     ]);
+    const nudge = nudgeArr?.[0] || null;
     const alreadyShipped = ovs && ['transit', 'ready', 'dispatched', 'delivered'].includes(ovs.stage) && ovs.awb;
     let shopifyOrder = null;
     try {
@@ -9349,8 +9351,8 @@ app.get('/vendor/update/:token', async (req, res) => {
       if (oRes.ok) shopifyOrder = (await oRes.json()).order;
     } catch (_) {}
     if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, shopifyOrder, nudge, null));
-    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null, shopifyOrder, nudge, null));
-    res.send(vendorUpdatePage(doc, 'form', null, shopifyOrder, nudge, null));
+    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', ovs, shopifyOrder, nudge, null));
+    res.send(vendorUpdatePage(doc, 'form', ovs, shopifyOrder, nudge, null));
   } catch (e) { res.status(500).send('Server error'); }
 });
 
@@ -9418,7 +9420,7 @@ app.post('/vendor/update/:token', async (req, res) => {
     await mdb.collection('wa_vendor_update_tokens').updateOne({ token: req.params.token }, { $set: { used: true, used_at: new Date().toISOString() } });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
     res.send(vendorUpdatePage(doc, 'success', null, null, null, null));
-  } catch (e) { console.error('vendor update token POST:', e.message); res.status(500).send('Server error'); }
+  } catch (e) { console.error('vendor update token POST:', e.message, e.stack); res.status(500).send(`Server error: ${e.message}`); }
 });
 
 // POST /vendor/update/:token/penalty — vendor acknowledges or disputes penalty
@@ -9459,6 +9461,33 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
     const timeStr = days > 0 ? `${days}d ${hrs % 24}h ago` : `${hrs}h ago`;
     const urgency = days >= 5 ? 'color:#ef4444' : days >= 3 ? 'color:#f59e0b' : 'color:#10b981';
     timeSinceHtml = `<div class="ilabel">Placed</div><div class="ival" style="${urgency}">${timeStr}</div>`;
+  }
+
+  // 48-hour dispatch timer from when order was confirmed
+  let dispatchTimerHtml = '';
+  if (ovs?.stage_started_at && ovs.stage === 'confirmed') {
+    const confirmedMs = typeof ovs.stage_started_at === 'number' ? ovs.stage_started_at : new Date(ovs.stage_started_at).getTime();
+    const deadlineMs = confirmedMs + 48 * 3600000;
+    const remainMs = deadlineMs - Date.now();
+    const remainHrs = Math.floor(remainMs / 3600000);
+    const remainMins = Math.floor((remainMs % 3600000) / 60000);
+    if (remainMs > 0) {
+      const timerColor = remainHrs < 6 ? '#ef4444' : remainHrs < 18 ? '#f59e0b' : '#10b981';
+      dispatchTimerHtml = `<div class="dispatch-timer" style="border-color:${timerColor}33;background:${timerColor}11">
+        <div class="dt-label">Dispatch deadline</div>
+        <div class="dt-countdown" style="color:${timerColor}" id="dt-display">${remainHrs}h ${remainMins}m remaining</div>
+        <div class="dt-bar-bg"><div class="dt-bar" style="width:${Math.max(2,Math.min(100,Math.round(remainMs/(48*3600000)*100)))}%;background:${timerColor}"></div></div>
+        <div class="dt-sub">48-hour policy from order confirmation</div>
+      </div>`;
+    } else {
+      const overHrs = Math.abs(remainHrs);
+      dispatchTimerHtml = `<div class="dispatch-timer" style="border-color:#ef444433;background:#ef444411">
+        <div class="dt-label">Dispatch deadline</div>
+        <div class="dt-countdown" style="color:#ef4444">Overdue by ${overHrs}h</div>
+        <div class="dt-bar-bg"><div class="dt-bar" style="width:100%;background:#ef4444"></div></div>
+        <div class="dt-sub">Penalty may be triggered — update immediately</div>
+      </div>`;
+    }
   }
 
   // Product images — vendor's line items only
@@ -9510,7 +9539,8 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
       ${custPhone ? `<div class="irow"><div class="ilabel">Phone</div><div class="ival">${custPhone}</div></div>` : ''}
       ${custAddr ? `<div class="irow"><div class="ilabel">Ship to</div><div class="ival">${custAddr}</div></div>` : ''}
       ${timeSinceHtml ? `<div class="irow">${timeSinceHtml}</div>` : ''}
-    </div>` : ''}`;
+    </div>` : ''}
+    ${dispatchTimerHtml}`;
 
   const stateHtml = {
     used: `<div class="static-card"><div class="static-icon ok">&#10003;</div><div class="static-title">Already Submitted</div><p>You already sent an update for <strong>${orderName}</strong>. No further action needed.</p></div>`,
@@ -9677,6 +9707,12 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .track-link{color:#60a5fa;word-break:break-all;text-align:right}
 .hint{font-size:12px;color:var(--muted);padding:0 16px;line-height:1.6}
 .hint a{color:var(--hint)}
+.dispatch-timer{margin:0 16px 14px;border:1px solid;border-radius:12px;padding:14px 16px}
+.dt-label{font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.dt-countdown{font-size:20px;font-weight:800;letter-spacing:-.5px;margin-bottom:8px}
+.dt-bar-bg{height:4px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:6px}
+.dt-bar{height:100%;border-radius:4px;transition:width .3s}
+.dt-sub{font-size:11px;color:var(--muted)}
 /* ── Error banner ── */
 .err-banner{margin:12px 16px 0;background:#2d1515;border:1px solid #ef444460;color:#fca5a5;padding:10px 14px;border-radius:10px;font-size:13px}
 </style>
