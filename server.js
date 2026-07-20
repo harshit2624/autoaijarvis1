@@ -1395,16 +1395,35 @@ app.post("/webhooks/fulfillments", (req, res) => {
           });
           auditLog("webhook", "fulfillment_auto_ready", shopifyId, { vendorName, awb });
 
-          // Email customer about this vendor's shipment
-          const cfg = await getSmtpConfig();
-          if (cfg && order.email && vendorItems.length) {
-            const adsStrip = await getEmailAdsStrip();
-            await sendEmail({
-              to: order.email,
-              subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
-              html: templateVendorShipped({ order, vendorName, items: vendorItems, awb, courier, trackingUrl: trackUrl, adsStrip }),
-              shopifyId, trigger: 'vendor_shipped',
-            });
+          // Email customer — skip if already sent in the last 5 min (dedup webhook vs direct send)
+          const recentlySent = await mdb.collection('email_log').findOne({
+            shopify_id: String(shopifyId), trigger: 'vendor_shipped', status: 'sent',
+            sent_at: { $gt: new Date(Date.now() - 5 * 60000).toISOString() }
+          }).catch(() => null);
+          if (!recentlySent) {
+            const cfg = await getSmtpConfig();
+            if (cfg && order.email && vendorItems.length) {
+              const adsStrip = await getEmailAdsStrip();
+              await sendEmail({
+                to: order.email,
+                subject: `Your Items from ${vendorName} Have Shipped! 🚚`,
+                html: templateVendorShipped({ order, vendorName, items: vendorItems, awb, courier, trackingUrl: trackUrl, adsStrip }),
+                shopifyId, trigger: 'vendor_shipped',
+              });
+            }
+          }
+
+          // Immediate WA notification to customer on shipment
+          if (awb) {
+            const custRaw = order.shipping_address?.phone || order.customer?.phone || '';
+            const custPhone = custRaw.replace(/\D/g, '').replace(/^91/, '').slice(-10);
+            if (custPhone && custPhone.length === 10) {
+              const custName = ((order.shipping_address?.first_name || '') + ' ' + (order.shipping_address?.last_name || '')).trim() || 'Customer';
+              await sendShipmentWANotif(shopifyId, 'pickup', {
+                orderName: order.name, customerName: custName, customerPhone: custPhone,
+                awb, courier, deliveryStatus: null, codAmount: null,
+              }).catch(e => console.error('WA notif on fulfillment failed:', e.message));
+            }
           }
         }
         console.log(`📦 fulfillments/create: order ${order.name}, vendors: ${vendors.join(', ')}, AWB: ${awb}`);
@@ -9311,14 +9330,21 @@ const COURIER_OPTIONS = [
 app.get('/vendor/update/:token', async (req, res) => {
   try {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
-    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, 'Invalid or expired link.'));
-    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null));
+    if (!doc) return res.status(404).send(vendorUpdatePage(null, 'error', null, null, 'Invalid or expired link.'));
+    if (doc.expires_at < Date.now()) return res.send(vendorUpdatePage(doc, 'expired', null, null, null));
     // Check if this vendor's order is already shipped
     const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(doc.shopify_id), vendor_name: doc.vendor_name });
     const alreadyShipped = ovs && ['transit', 'ready', 'dispatched', 'delivered'].includes(ovs.stage) && ovs.awb;
-    if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, null));
-    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null, null));
-    res.send(vendorUpdatePage(doc, 'form', null, null));
+    // Fetch Shopify order for customer details
+    let shopifyOrder = null;
+    try {
+      const tok = await getAccessToken();
+      const oRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/${doc.shopify_id}.json`, { headers: { 'X-Shopify-Access-Token': tok } });
+      if (oRes.ok) shopifyOrder = (await oRes.json()).order;
+    } catch (_) {}
+    if (alreadyShipped) return res.send(vendorUpdatePage(doc, 'already_shipped', ovs, shopifyOrder, null));
+    if (doc.used) return res.send(vendorUpdatePage(doc, 'used', null, shopifyOrder, null));
+    res.send(vendorUpdatePage(doc, 'form', null, shopifyOrder, null));
   } catch (e) { res.status(500).send('Server error'); }
 });
 
@@ -9326,7 +9352,7 @@ app.get('/vendor/update/:token', async (req, res) => {
 app.post('/vendor/update/:token', async (req, res) => {
   try {
     const doc = await mdb.collection('wa_vendor_update_tokens').findOne({ token: req.params.token });
-    if (!doc || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', null, 'Link expired.'));
+    if (!doc || doc.expires_at < Date.now()) return res.status(400).send(vendorUpdatePage(null, 'error', null, null, 'Link expired.'));
     const { type, reason, eta, awb, courier, tracking_url } = req.body;
     const { shopify_id, order_name, vendor_name, product_names } = doc;
 
@@ -9380,37 +9406,82 @@ app.post('/vendor/update/:token', async (req, res) => {
       await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}${trackUrl ? '\nTrack: ' + trackUrl : ''}${fulfillError ? '\n⚠️ Shopify fulfill error: ' + fulfillError : ''}`);
 
     } else {
-      return res.send(vendorUpdatePage(doc, 'form', null, 'Please fill in all required fields.'));
+      return res.send(vendorUpdatePage(doc, 'form', null, null, 'Please fill in all required fields.'));
     }
 
     await mdb.collection('wa_vendor_update_tokens').updateOne({ token: req.params.token }, { $set: { used: true, used_at: new Date().toISOString() } });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
-    res.send(vendorUpdatePage(doc, 'success', null, null));
+    res.send(vendorUpdatePage(doc, 'success', null, null, null));
   } catch (e) { console.error('vendor update token POST:', e.message); res.status(500).send('Server error'); }
 });
 
-function vendorUpdatePage(doc, state, ovs, errMsg) {
+function vendorUpdatePage(doc, state, ovs, shopifyOrder, errMsg) {
   const orderName = doc?.order_name || '';
   const vendorName = doc?.vendor_name || '';
   const products = doc?.product_names || '';
   const today = new Date().toISOString().split('T')[0];
+
+  // Customer info from Shopify order
+  const addr = shopifyOrder?.shipping_address || {};
+  const custName = [addr.first_name, addr.last_name].filter(Boolean).join(' ') || shopifyOrder?.customer?.first_name || '';
+  const custPhone = addr.phone || shopifyOrder?.customer?.phone || '';
+  const custCity = [addr.city, addr.province_code || addr.province].filter(Boolean).join(', ');
+  const custAddr = [addr.address1, addr.address2, custCity, addr.zip].filter(Boolean).join(', ');
+
+  // Time since order created — color coded by urgency
+  let timeSinceHtml = '';
+  if (shopifyOrder?.created_at) {
+    const hrs = Math.floor((Date.now() - new Date(shopifyOrder.created_at).getTime()) / 3600000);
+    const days = Math.floor(hrs / 24);
+    const timeStr = days > 0 ? `${days}d ${hrs % 24}h ago` : `${hrs}h ago`;
+    const urgency = days >= 5 ? 'color:#ef4444' : days >= 3 ? 'color:#f59e0b' : 'color:#10b981';
+    timeSinceHtml = `<div class="info-row"><span>Order placed</span><strong style="${urgency}">${timeStr}</strong></div>`;
+  }
+
+  // Product images from vendor's line items
+  const vendorItems = (shopifyOrder?.line_items || []).filter(li =>
+    !vendorName || (li.vendor || '').toLowerCase() === vendorName.toLowerCase()
+  );
+  const productImagesHtml = vendorItems.length
+    ? `<div class="product-imgs">${vendorItems.map(li => {
+        const img = li.image?.src || '';
+        return `<div class="prod-item">
+          ${img ? `<img src="${img}" alt="" loading="lazy">` : `<div class="prod-img-placeholder">&#128230;</div>`}
+          <div class="prod-meta">
+            <div class="prod-title">${li.title || ''}</div>
+            ${li.variant_title && li.variant_title !== 'Default Title' ? `<div class="prod-variant">${li.variant_title}</div>` : ''}
+            <div class="prod-qty">Qty: ${li.quantity}</div>
+          </div>
+        </div>`;
+      }).join('')}</div>`
+    : products ? `<div class="product-name">${products}</div>` : '';
+
+  const customerInfoHtml = (custName || custPhone || custAddr) ? `
+    <div class="info-box">
+      <div class="info-title">Customer Details</div>
+      ${custName ? `<div class="info-row"><span>Name</span><strong>${custName}</strong></div>` : ''}
+      ${custPhone ? `<div class="info-row"><span>Phone</span><strong>${custPhone}</strong></div>` : ''}
+      ${custAddr ? `<div class="info-row"><span>Ship to</span><strong>${custAddr}</strong></div>` : ''}
+      ${timeSinceHtml}
+    </div>` : '';
   const courierSelect = `<select name="courier" id="courier-select" style="width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;appearance:none;cursor:pointer">
     <option value="">— Select courier —</option>
     ${COURIER_OPTIONS.map(o => `<option value="${o.label}">${o.label}</option>`).join('')}
   </select>`;
   const stateHtml = {
-    used: `<div class="card"><div class="icon">✅</div><h2>Already Submitted</h2><p>You've already submitted an update for order <strong>${orderName}</strong>. No further action needed.</p></div>`,
-    expired: `<div class="card"><div class="icon">⏰</div><h2>Link Expired</h2><p>This update link for order <strong>${orderName}</strong> has expired (72h validity). Contact CROSCROW team if needed.</p></div>`,
-    error: `<div class="card"><div class="icon">❌</div><h2>Invalid Link</h2><p>${errMsg || 'This link is not valid.'}</p></div>`,
-    success: `<div class="card success"><div class="icon">🎉</div><h2>Update Submitted!</h2><p>Your update for order <strong>${orderName}</strong> has been received. The customer has been notified automatically.</p><p style="color:#64748b;font-size:13px;margin-top:12px">You can close this page.</p></div>`,
+    used: `<div class="card"><div class="icon">&#10003;</div><h2>Already Submitted</h2><p>You've already submitted an update for order <strong>${orderName}</strong>. No further action needed.</p></div>`,
+    expired: `<div class="card"><div class="icon">&#9200;</div><h2>Link Expired</h2><p>This update link for order <strong>${orderName}</strong> has expired (72h validity). Contact CROSCROW team if needed.</p></div>`,
+    error: `<div class="card"><div class="icon">&#10060;</div><h2>Invalid Link</h2><p>${errMsg || 'This link is not valid.'}</p></div>`,
+    success: `<div class="card success"><div class="icon">&#127881;</div><h2>Update Submitted!</h2><p>Your update for order <strong>${orderName}</strong> has been received. The customer has been notified automatically.</p><p style="color:#64748b;font-size:13px;margin-top:12px">You can close this page.</p></div>`,
     already_shipped: `<div class="card">
       <div class="brand">CROSCROW</div>
       <div class="order-badge">${orderName}</div>
-      ${products ? `<div class="product-name">${products}</div>` : ''}
+      ${productImagesHtml}
+      ${customerInfoHtml}
       <div class="shipped-box">
-        <div class="shipped-title">📦 Already Shipped</div>
-        <div class="shipped-row"><span>AWB</span><strong>${ovs?.awb || '—'}</strong></div>
-        <div class="shipped-row"><span>Courier</span><strong>${ovs?.courier || '—'}</strong></div>
+        <div class="shipped-title">&#128230; Already Shipped</div>
+        <div class="shipped-row"><span>AWB</span><strong>${ovs?.awb || '&mdash;'}</strong></div>
+        <div class="shipped-row"><span>Courier</span><strong>${ovs?.courier || '&mdash;'}</strong></div>
         ${ovs?.tracking_url ? `<div class="shipped-row"><span>Track</span><a href="${ovs.tracking_url}" target="_blank" style="color:#60a5fa;word-break:break-all">${ovs.tracking_url}</a></div>` : ''}
       </div>
       <p style="font-size:12px;color:#555;margin-top:16px">Order already marked as shipped. To edit shipment details, contact CROSCROW on WhatsApp or email <a href="mailto:support@croscrow.com" style="color:#60a5fa">support@croscrow.com</a>.</p>
@@ -9419,12 +9490,13 @@ function vendorUpdatePage(doc, state, ovs, errMsg) {
       <div class="brand">CROSCROW</div>
       <h2>Order Update</h2>
       <div class="order-badge">${orderName}</div>
-      ${products ? `<div class="product-name">${products}</div>` : ''}
+      ${productImagesHtml}
+      ${customerInfoHtml}
       ${errMsg ? `<div class="error">${errMsg}</div>` : ''}
       <form method="POST">
         <div class="tabs">
-          <label class="tab"><input type="radio" name="type" value="delay" required onchange="toggle(this)"> ⏳ Order is delayed</label>
-          <label class="tab"><input type="radio" name="type" value="tracking" onchange="toggle(this)"> 📦 Already shipped</label>
+          <label class="tab"><input type="radio" name="type" value="delay" required onchange="toggle(this)"> &#9203; Order is delayed</label>
+          <label class="tab"><input type="radio" name="type" value="tracking" onchange="toggle(this)"> &#128230; Already shipped</label>
         </div>
         <div id="delay-section" class="section hidden">
           <label>Reason for delay *</label>
@@ -9437,24 +9509,38 @@ function vendorUpdatePage(doc, state, ovs, errMsg) {
           <input type="text" name="awb" placeholder="E.g. 4959596123" autocomplete="off">
           <label>Courier *</label>
           ${courierSelect}
-          <label>Tracking URL <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — direct link for customer)</span></label>
+          <label>Tracking URL <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
           <input type="text" name="tracking_url" placeholder="E.g. https://www.delhivery.com/track/package/4959596123" autocomplete="off">
         </div>
-        <button type="submit" id="submit-btn" disabled>Submit Update →</button>
+        <button type="submit" id="submit-btn" disabled>Submit Update &rarr;</button>
       </form>
     </div>`,
   };
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Order Update — CROSCROW</title>
+<title>Order Update &mdash; CROSCROW</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:32px 28px;max-width:480px;width:100%}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px;padding:28px 24px;max-width:480px;width:100%}
 .card.success{border-color:#10b981;background:#0d2e1f}
-.brand{font-size:11px;font-weight:800;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:20px}
-h2{font-size:20px;font-weight:700;margin-bottom:6px}
-.order-badge{display:inline-block;background:#002eff;color:#fff;font-size:12px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:4px;margin:12px 0 4px}
-.product-name{font-size:12px;color:#64748b;margin-bottom:20px;margin-top:6px}
+.brand{font-size:11px;font-weight:800;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:16px}
+h2{font-size:20px;font-weight:700;margin-bottom:4px}
+.order-badge{display:inline-block;background:#002eff;color:#fff;font-size:12px;font-weight:700;letter-spacing:2px;padding:4px 12px;border-radius:4px;margin:10px 0 14px}
+.product-name{font-size:12px;color:#64748b;margin-bottom:14px}
+.product-imgs{display:flex;flex-direction:column;gap:10px;margin:0 0 14px}
+.prod-item{display:flex;gap:12px;align-items:flex-start;background:#111;border:1px solid #222;border-radius:10px;padding:10px 12px}
+.prod-item img{width:56px;height:56px;object-fit:cover;border-radius:7px;flex-shrink:0;background:#1a1a1a}
+.prod-img-placeholder{width:56px;height:56px;display:flex;align-items:center;justify-content:center;background:#222;border-radius:7px;font-size:22px;flex-shrink:0}
+.prod-meta{flex:1;min-width:0}
+.prod-title{font-size:13px;font-weight:600;color:#e2e8f0;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prod-variant{font-size:11px;color:#64748b;margin-top:2px}
+.prod-qty{font-size:11px;color:#94a3b8;margin-top:4px}
+.info-box{background:#111;border:1px solid #222;border-radius:10px;padding:14px 16px;margin-bottom:16px}
+.info-title{font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#555;margin-bottom:10px}
+.info-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid #1a1a1a;font-size:12px}
+.info-row:last-child{border-bottom:none;padding-bottom:0}
+.info-row span{color:#64748b;white-space:nowrap;flex-shrink:0}
+.info-row strong{color:#e2e8f0;text-align:right;word-break:break-word}
 .icon{font-size:36px;margin-bottom:16px}
 .error{background:#2d1515;border:1px solid #ef4444;color:#fca5a5;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
 .shipped-box{background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:16px 18px;margin:16px 0 0}
@@ -9470,7 +9556,7 @@ h2{font-size:20px;font-weight:700;margin-bottom:6px}
 .section.hidden{display:none}
 label{display:block;font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;margin-top:16px}
 textarea,input[type=text],input[type=date],select{width:100%;background:#111;border:1px solid #2a2a2a;border-radius:8px;color:#e2e8f0;font-size:14px;padding:11px 13px;outline:none;font-family:inherit;transition:border-color .2s}
-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14L2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14L2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:36px}
 textarea:focus,input:focus,select:focus{border-color:#002eff}
 textarea{resize:vertical;min-height:80px}
 button{width:100%;margin-top:24px;background:#002eff;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:15px;cursor:pointer;letter-spacing:1px;transition:opacity .2s}
