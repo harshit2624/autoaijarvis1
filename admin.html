@@ -9030,18 +9030,68 @@
   }
 
   const STAFF_PERMISSIONS = [
-    { id:'orders', label:'Orders', desc:'Full access to the Orders page — tags, stage changes, fulfillment, timeline notes, bulk actions. Settlements stays admin-only.' },
-    { id:'penalties', label:'Penalties', desc:'Full access to the Penalties page — view, edit, waive/confirm, bulk actions, and the test/cron tools.' },
+    { id:'dashboard',    label:'Dashboard',        icon:'◈', desc:'Overview, stage counts, revenue summary' },
+    { id:'orders',       label:'Orders',           icon:'◎', desc:'View, update stages, fulfillment, notes, tags' },
+    { id:'vendors',      label:'Vendors',          icon:'🏪', desc:'Vendor profiles, credentials, agreements' },
+    { id:'returns',      label:'Returns',          icon:'↩', desc:'Return & exchange requests' },
+    { id:'penalties',    label:'Penalties',        icon:'⚠️', desc:'View, waive, confirm vendor penalties' },
+    { id:'settlements',  label:'Settlements',      icon:'₹', desc:'Payouts, GST export, settlement history' },
+    { id:'supportchats', label:'Support Chats',    icon:'💬', desc:'Customer chat inbox' },
+    { id:'reports',      label:'Reports',          icon:'📊', desc:'Sales and performance reports' },
+    { id:'pixeltracker', label:'Pixel Tracker',    icon:'🎯', desc:'Ad pixel events and conversion leaderboard' },
+    { id:'vendorscores', label:'Vendor Scores',    icon:'🏆', desc:'Vendor performance scorecards' },
+    { id:'abandonedcarts',label:'Abandoned Carts', icon:'🛒', desc:'Abandoned checkout recovery' },
+    { id:'audit',        label:'Audit Log',        icon:'📋', desc:'Full admin action history' },
   ];
 
+  const STAFF_ROLE_PRESETS = [
+    {
+      id: 'ops',
+      label: 'Operations Manager',
+      color: '#6366f1',
+      desc: 'Handles orders, vendors, returns & penalties day-to-day',
+      permissions: ['dashboard','orders','vendors','returns','penalties','vendorscores'],
+    },
+    {
+      id: 'support',
+      label: 'Support Staff',
+      color: '#22d3ee',
+      desc: 'Customer support, order status updates, chats',
+      permissions: ['orders','supportchats','returns'],
+    },
+    {
+      id: 'finance',
+      label: 'Finance & Reports',
+      color: '#10b981',
+      desc: 'Settlements, reports, pixel tracker, audit log',
+      permissions: ['dashboard','settlements','reports','pixeltracker','audit'],
+    },
+    {
+      id: 'full',
+      label: 'Full Access',
+      color: '#f59e0b',
+      desc: 'Everything except admin-only settings & staff management',
+      permissions: STAFF_PERMISSIONS.map(p=>p.id),
+    },
+  ];
+
+  function getRoleLabel(perms) {
+    if (!perms || !perms.length) return null;
+    for (const r of STAFF_ROLE_PRESETS) {
+      if (r.permissions.length === perms.length && r.permissions.every(p=>perms.includes(p))) return r;
+    }
+    return { label:'Custom', color:'#94a3b8' };
+  }
+
   function StaffAccounts({ token }) {
-    const [staff,    setStaff]    = useState([]);
-    const [loading,  setLoading]  = useState(true);
-    const [showNew,  setShowNew]  = useState(false);
-    const [newUser,  setNewUser]  = useState({ username:'', name:'', password:'', permissions:[] });
-    const [creating, setCreating] = useState(false);
-    const [msg,      setMsg]      = useState('');
-    const [createdCreds, setCreatedCreds] = useState(null);
+    const [staff,       setStaff]       = useState([]);
+    const [loading,     setLoading]     = useState(true);
+    const [showNew,     setShowNew]     = useState(false);
+    const [newUser,     setNewUser]     = useState({ username:'', name:'', password:'', permissions:[] });
+    const [creating,    setCreating]    = useState(false);
+    const [msg,         setMsg]         = useState('');
+    const [createdCreds,setCreatedCreds]= useState(null);
+    const [expandedUser,setExpandedUser]= useState(null);
 
     const load = () => {
       setLoading(true);
@@ -9050,12 +9100,19 @@
     };
     useEffect(load, []);
 
+    const applyPreset = (presetId, isNew=true) => {
+      const preset = STAFF_ROLE_PRESETS.find(r=>r.id===presetId);
+      if (!preset) return;
+      if (isNew) setNewUser(u=>({...u, permissions:[...preset.permissions]}));
+    };
+
     const togglePerm = (perm) => setNewUser(u => ({
       ...u, permissions: u.permissions.includes(perm) ? u.permissions.filter(p=>p!==perm) : [...u.permissions, perm],
     }));
 
     const createStaff = async () => {
-      if (!newUser.username.trim()) { setMsg('❌ Username required'); return; }
+      if (!newUser.username.trim()) { setMsg('Username required'); return; }
+      if (!newUser.permissions.length) { setMsg('Select at least one permission'); return; }
       setCreating(true); setMsg('');
       try {
         const r = await fetch(`${API}/admin/staff`, {
@@ -9068,17 +9125,21 @@
         setNewUser({ username:'', name:'', password:'', permissions:[] });
         setShowNew(false);
         load();
-      } catch(e) { setMsg('❌ '+e.message); }
+      } catch(e) { setMsg(e.message); }
       setCreating(false);
+    };
+
+    const setPermissionsOnExisting = async (s, perms) => {
+      await fetch(`${API}/admin/staff/${s.username}`, {
+        method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body: JSON.stringify({ permissions: perms }),
+      });
+      load();
     };
 
     const togglePermOnExisting = async (s, perm) => {
       const next = (s.permissions||[]).includes(perm) ? s.permissions.filter(p=>p!==perm) : [...(s.permissions||[]), perm];
-      await fetch(`${API}/admin/staff/${s.username}`, {
-        method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
-        body: JSON.stringify({ permissions: next }),
-      });
-      load();
+      setPermissionsOnExisting(s, next);
     };
 
     const resetPassword = async (username) => {
@@ -9096,77 +9157,147 @@
       load();
     };
 
+    const chipStyle = (color, active) => ({
+      display:'inline-flex', alignItems:'center', gap:5, fontSize:11, fontWeight:600,
+      padding:'4px 10px', borderRadius:99, cursor:'pointer', border:'1px solid',
+      borderColor: active ? color : 'var(--border)',
+      background: active ? color+'22' : 'transparent',
+      color: active ? color : 'var(--text-muted)',
+      transition:'all .15s',
+    });
+
     return (
       <div>
         <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
           <span style={{fontSize:24}}>🔐</span>
           <div style={{flex:1}}>
             <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>Staff Accounts</h2>
-            <div style={{fontSize:12,color:'var(--text-muted)'}}>Limited-access logins — they sign in here too, but only see pages you grant them.</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Create logins with role-based access. Staff see only pages you grant.</div>
           </div>
-          <button className="btn btn-indigo btn-sm" onClick={()=>setShowNew(s=>!s)}>{showNew?'Cancel':'+ New Staff Account'}</button>
+          <button className="btn btn-indigo btn-sm" onClick={()=>{ setShowNew(s=>!s); setMsg(''); }}>{showNew?'Cancel':'+ New Staff'}</button>
         </div>
 
         {createdCreds && (
           <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.3)',borderRadius:10,padding:'14px 18px',marginBottom:18,fontSize:13}}>
-            ✅ Credentials — share these with the staff member (shown once):
-            <div style={{marginTop:8,fontFamily:'monospace',fontSize:13}}>
-              Username: <strong>{createdCreds.username}</strong> · Password: <strong>{createdCreds.password}</strong>
+            ✅ Share these credentials with the staff member (shown once):
+            <div style={{marginTop:8,fontFamily:'monospace',fontSize:14,letterSpacing:.5}}>
+              <strong>{createdCreds.username}</strong> · <strong>{createdCreds.password}</strong>
             </div>
             <button className="btn btn-ghost btn-sm" style={{marginTop:8}} onClick={()=>setCreatedCreds(null)}>Dismiss</button>
           </div>
         )}
 
         {showNew && (
-          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:20,marginBottom:20}}>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:22,marginBottom:20}}>
+            <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:14}}>New Staff Account</div>
+
+            {/* Basic info */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:18}}>
               <div>
-                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>USERNAME</label>
-                <input className="form-input" value={newUser.username} onChange={e=>setNewUser(u=>({...u,username:e.target.value}))} style={{width:'100%'}}/>
+                <label style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,display:'block',marginBottom:4}}>USERNAME</label>
+                <input className="form-input" value={newUser.username} onChange={e=>setNewUser(u=>({...u,username:e.target.value.toLowerCase().replace(/\s/g,'')}))} placeholder="e.g. priya" style={{width:'100%'}}/>
               </div>
               <div>
-                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>DISPLAY NAME</label>
-                <input className="form-input" value={newUser.name} onChange={e=>setNewUser(u=>({...u,name:e.target.value}))} placeholder="e.g. Intern — Priya" style={{width:'100%'}}/>
+                <label style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,display:'block',marginBottom:4}}>DISPLAY NAME</label>
+                <input className="form-input" value={newUser.name} onChange={e=>setNewUser(u=>({...u,name:e.target.value}))} placeholder="e.g. Priya — Ops" style={{width:'100%'}}/>
               </div>
               <div>
-                <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:4}}>PASSWORD</label>
+                <label style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,display:'block',marginBottom:4}}>PASSWORD</label>
                 <input className="form-input" type="text" value={newUser.password} onChange={e=>setNewUser(u=>({...u,password:e.target.value}))} placeholder="Default: Croscrow@00" style={{width:'100%'}}/>
               </div>
             </div>
-            <label style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:8}}>PAGE ACCESS</label>
-            <div style={{display:'flex',gap:14,flexWrap:'wrap',marginBottom:16}}>
-              {STAFF_PERMISSIONS.map(p => (
-                <label key={p.id} style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',maxWidth:280}}>
-                  <input type="checkbox" checked={newUser.permissions.includes(p.id)} onChange={()=>togglePerm(p.id)} style={{marginTop:2,width:15,height:15,accentColor:'#6366f1'}}/>
-                  <span><div style={{fontSize:13,color:'var(--text)',fontWeight:600}}>{p.label}</div><div style={{fontSize:11,color:'var(--text-muted)'}}>{p.desc}</div></span>
-                </label>
-              ))}
+
+            {/* Role presets */}
+            <label style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,display:'block',marginBottom:10}}>QUICK ROLE PRESET</label>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:18}}>
+              {STAFF_ROLE_PRESETS.map(r => {
+                const active = r.permissions.length===newUser.permissions.length && r.permissions.every(p=>newUser.permissions.includes(p));
+                return (
+                  <button key={r.id} onClick={()=>applyPreset(r.id)} style={{...chipStyle(r.color, active), padding:'7px 14px', fontSize:12}}>
+                    {active && '✓ '}{r.label}
+                  </button>
+                );
+              })}
             </div>
-            {msg && <div style={{fontSize:12,color:'#ef4444',marginBottom:10}}>{msg}</div>}
-            <button className="btn btn-indigo" onClick={createStaff} disabled={creating}>{creating?'Creating…':'Create Account'}</button>
+
+            {/* Granular permissions */}
+            <label style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,display:'block',marginBottom:10}}>PAGE ACCESS — fine-tune below</label>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:8,marginBottom:18}}>
+              {STAFF_PERMISSIONS.map(p => {
+                const on = newUser.permissions.includes(p.id);
+                return (
+                  <label key={p.id} onClick={()=>togglePerm(p.id)} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:9,border:'1px solid',borderColor:on?'#6366f1':'var(--border)',background:on?'#6366f122':'var(--bg-hover)',cursor:'pointer',transition:'all .15s'}}>
+                    <input type="checkbox" checked={on} onChange={()=>togglePerm(p.id)} style={{width:14,height:14,accentColor:'#6366f1',flexShrink:0}} onClick={e=>e.stopPropagation()}/>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>{p.icon} {p.label}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{p.desc}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            {msg && <div style={{fontSize:12,color:'#ef4444',marginBottom:10}}>⚠ {msg}</div>}
+            <div style={{display:'flex',gap:10,alignItems:'center'}}>
+              <button className="btn btn-indigo" onClick={createStaff} disabled={creating}>{creating?'Creating…':'Create Account'}</button>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>{newUser.permissions.length} page{newUser.permissions.length!==1?'s':''} selected</span>
+            </div>
           </div>
         )}
 
         {loading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
         {!loading && staff.length===0 && <div style={{fontSize:12,color:'var(--text-muted)'}}>No staff accounts yet.</div>}
-        {!loading && staff.map(s => (
-          <div key={s.username} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 18px',marginBottom:10,display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
-            <div style={{flex:1,minWidth:160}}>
-              <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{s.name || s.username}</div>
-              <div style={{fontSize:11,color:'var(--text-muted)'}}>@{s.username}</div>
+        {!loading && staff.map(s => {
+          const roleInfo = getRoleLabel(s.permissions||[]);
+          const isExpanded = expandedUser === s.username;
+          return (
+            <div key={s.username} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,marginBottom:10,overflow:'hidden'}}>
+              {/* Staff card header */}
+              <div style={{padding:'14px 18px',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+                <div style={{flex:1,minWidth:160}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{s.name || s.username}</span>
+                    {roleInfo && <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:99,background:roleInfo.color+'22',color:roleInfo.color,letterSpacing:.5}}>{roleInfo.label.toUpperCase()}</span>}
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>@{s.username} · {(s.permissions||[]).length} pages</div>
+                </div>
+                {/* Role preset quick-assign chips */}
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {STAFF_ROLE_PRESETS.map(r => {
+                    const active = r.permissions.length===(s.permissions||[]).length && r.permissions.every(p=>(s.permissions||[]).includes(p));
+                    return (
+                      <button key={r.id} onClick={()=>setPermissionsOnExisting(s,[...r.permissions])} style={chipStyle(r.color, active)}>
+                        {active && '✓ '}{r.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>setExpandedUser(isExpanded?null:s.username)}>{isExpanded?'▲ Close':'✏ Fine-tune'}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>resetPassword(s.username)}>Reset PW</button>
+                  <button className="btn btn-ghost btn-sm" style={{color:'#ef4444'}} onClick={()=>deleteStaff(s.username)}>Remove</button>
+                </div>
+              </div>
+              {/* Expanded granular permissions */}
+              {isExpanded && (
+                <div style={{borderTop:'1px solid var(--border)',padding:'14px 18px',background:'var(--bg-hover)'}}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,marginBottom:10}}>FINE-TUNE PAGE ACCESS</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:7}}>
+                    {STAFF_PERMISSIONS.map(p => {
+                      const on = (s.permissions||[]).includes(p.id);
+                      return (
+                        <label key={p.id} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:8,border:'1px solid',borderColor:on?'#6366f1':'var(--border)',background:on?'#6366f115':'transparent',cursor:'pointer',transition:'all .15s'}}>
+                          <input type="checkbox" checked={on} onChange={()=>togglePermOnExisting(s,p.id)} style={{width:13,height:13,accentColor:'#6366f1',flexShrink:0}}/>
+                          <span style={{fontSize:11,fontWeight:600,color:on?'var(--text)':'var(--text-muted)'}}>{p.icon} {p.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              {STAFF_PERMISSIONS.map(p => (
-                <label key={p.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--text-muted)',cursor:'pointer',background:'var(--bg-hover)',padding:'4px 9px',borderRadius:99}}>
-                  <input type="checkbox" checked={(s.permissions||[]).includes(p.id)} onChange={()=>togglePermOnExisting(s,p.id)} style={{width:12,height:12,accentColor:'#6366f1'}}/>
-                  {p.label}
-                </label>
-              ))}
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={()=>resetPassword(s.username)}>Reset Password</button>
-            <button className="btn btn-ghost btn-sm" style={{color:'#ef4444'}} onClick={()=>deleteStaff(s.username)}>Remove</button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
