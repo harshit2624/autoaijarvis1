@@ -399,100 +399,291 @@
     .pbtn.cur { background: var(--indigo); color: #fff; border-color: var(--indigo); font-weight: 700; }
     .pbtn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    /* ── JARVIS Chat ── */
-    .chat-wrap { display: flex; flex-direction: column; height: calc(100vh - 110px); gap: 0; }
-    .chat-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; flex: 1; min-height: 0; }
-    .chat-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-    .chat-logo { width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, var(--cyan), var(--indigo)); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; color: #fff; flex-shrink: 0; }
-    .chat-title { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--text); }
-    .chat-sub { font-size: 10px; color: var(--text-muted); margin-left: auto; letter-spacing: 1px; }
-    .chat-messages { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
-    .cmsg { display: flex; gap: 10px; align-items: flex-start; }
-    .cmsg.user { flex-direction: row-reverse; }
-    .cmsg-av { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
-    .cmsg.bot  .cmsg-av { background: var(--bg-card2); border: 1px solid var(--border); color: var(--cyan); }
-    .cmsg.user .cmsg-av { background: var(--indigo); color: #fff; }
-    .cmsg-bubble { max-width: 72%; padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
-    .cmsg.bot  .cmsg-bubble { background: var(--bg-card2); color: var(--text); border: 1px solid var(--border); }
-    .cmsg.user .cmsg-bubble { background: var(--indigo-dim); color: #dde0ff; border: 1px solid #2d2f6a; }
-    .typing-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); animation: tdot 1.2s infinite; margin-right: 3px; }
-    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes tdot { 0%,60%,100%{opacity:0.2;transform:scale(0.8);} 30%{opacity:1;transform:scale(1.1);} }
-    .chat-suggestions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 20px 12px; flex-shrink: 0; }
-    .suggestion { padding: 5px 12px; border-radius: 20px; font-size: 11px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: var(--font-family); transition: all 0.15s; }
-    .suggestion:hover { background: var(--bg-card2); color: var(--cyan); border-color: var(--cyan); }
-    .chat-input-row { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0; }
-    .chat-textarea { flex: 1; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; color: var(--text); font-family: var(--font-family); font-size: 13px; resize: none; outline: none; transition: border-color 0.15s; max-height: 120px; line-height: 1.5; }
-    .chat-textarea::placeholder { color: var(--text-muted); }
-    .chat-textarea:focus { border-color: var(--cyan); }
-    .chat-send { width: 40px; height: 40px; border-radius: 8px; border: none; background: var(--indigo); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; flex-shrink: 0; }
-    .chat-send:hover:not(:disabled) { background: #4f46e5; }
-    .chat-send:disabled { opacity: 0.3; cursor: not-allowed; }
-
-    /* ── Jarvis mode tabs ─────────────────────────────── */
-    .jv-tabs { display:flex; gap:4px; padding:14px 20px 0; flex-shrink:0; }
-    .jv-tab  { flex:1; padding:8px; border-radius:8px 8px 0 0; border:1px solid var(--border); border-bottom:none;
-               background:transparent; color:var(--text-muted); font-family:var(--font-family); font-size:11px;
-               font-weight:700; letter-spacing:1.5px; cursor:pointer; text-transform:uppercase; transition:all 0.15s; }
-    .jv-tab.active { background:var(--bg-card); color:var(--cyan); border-color:var(--cyan); }
-
-    /* ── Voice mode panel ─────────────────────────────── */
-    .voice-panel {
-      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:space-between;
-      background: radial-gradient(ellipse at 60% 20%, #1a0a2e 0%, #0d0d1a 50%, #050510 100%);
-      border-radius:0 0 12px 12px; border:1px solid var(--border); border-top:none;
-      padding:28px 24px 32px; overflow:hidden; position:relative; min-height:0;
+    /* ══════════════════════════════════════════════
+       JARVIS — Futuristic AI Interface
+    ══════════════════════════════════════════════ */
+    .jv-wrap {
+      display:flex; flex-direction:column;
+      height:calc(100vh - 110px); min-height:500px;
+      background:#030711;
+      border-radius:16px; overflow:hidden;
+      border:1px solid rgba(0,180,255,0.1);
+      box-shadow:0 0 0 1px rgba(0,180,255,0.04), 0 32px 80px rgba(0,0,0,0.6);
+      position:relative;
     }
-    .voice-status { font-size:12px; letter-spacing:2px; color:rgba(255,255,255,0.5); text-transform:uppercase; text-align:center; }
-    .voice-status.listening { color:#c084fc; animation:pulse 1s infinite; }
-    .voice-status.speaking  { color:#22d3ee; }
+    /* Subtle animated background grid */
+    .jv-wrap::before {
+      content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+      background-image:
+        linear-gradient(rgba(0,180,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,180,255,0.025) 1px, transparent 1px);
+      background-size:48px 48px;
+      mask-image:radial-gradient(ellipse 80% 60% at 50% 0%, black 30%, transparent 100%);
+    }
+    .jv-wrap > * { position:relative; z-index:1; }
 
-    /* Orb */
-    .orb-wrap { position:relative; width:200px; height:200px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-    .orb-ring { position:absolute; inset:0; border-radius:50%; border:1.5px solid rgba(139,92,246,0.3); animation:orb-breathe 3s ease-in-out infinite; }
-    .orb-ring:nth-child(2) { inset:-16px; border-color:rgba(139,92,246,0.18); animation-delay:0.4s; }
-    .orb-ring:nth-child(3) { inset:-34px; border-color:rgba(139,92,246,0.1); animation-delay:0.8s; }
-    .orb-core {
-      width:160px; height:160px; border-radius:50%;
-      background: radial-gradient(circle at 38% 36%, rgba(192,132,252,0.9) 0%, rgba(139,92,246,0.8) 30%, rgba(79,46,180,0.7) 60%, rgba(30,10,80,0.9) 100%);
-      box-shadow: 0 0 60px rgba(139,92,246,0.5), 0 0 120px rgba(139,92,246,0.2), inset 0 0 40px rgba(192,132,252,0.3);
-      position:relative; transition:transform 0.3s;
+    /* ── Header ── */
+    .jv-header {
+      display:flex; align-items:center; gap:14px;
+      padding:16px 22px; flex-shrink:0;
+      border-bottom:1px solid rgba(0,180,255,0.07);
+      background:rgba(3,7,17,0.8); backdrop-filter:blur(12px);
     }
-    .orb-core::before {
-      content:''; position:absolute; top:18%; left:20%; width:28%; height:22%;
-      background:rgba(255,255,255,0.25); border-radius:50%; filter:blur(8px);
+    .jv-logo-wrap {
+      width:38px; height:38px; border-radius:10px; flex-shrink:0; position:relative;
+      background:linear-gradient(135deg,#001833,#003366);
+      border:1px solid rgba(0,180,255,0.25);
+      display:flex; align-items:center; justify-content:center;
+      box-shadow:0 0 20px rgba(0,180,255,0.15);
     }
-    .orb-core::after {
+    .jv-logo-inner {
+      font-size:16px; font-weight:900; letter-spacing:-1px;
+      background:linear-gradient(135deg,#60c8ff,#00aaff); -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    }
+    .jv-logo-wrap::after {
+      content:''; position:absolute; inset:-1px; border-radius:11px;
+      background:linear-gradient(135deg,rgba(0,180,255,0.3),transparent,rgba(0,120,255,0.15));
+      pointer-events:none;
+    }
+    .jv-title-block { flex:1; min-width:0; }
+    .jv-title { font-size:13px; font-weight:800; letter-spacing:3px; color:#e2f4ff; text-transform:uppercase; }
+    .jv-subtitle { font-size:10px; color:rgba(0,180,255,0.5); letter-spacing:1.5px; margin-top:1px; }
+    .jv-status {
+      display:flex; align-items:center; gap:6px;
+      font-size:9px; font-weight:700; letter-spacing:2px; color:rgba(0,255,160,0.7); text-transform:uppercase;
+    }
+    .jv-status-dot {
+      width:6px; height:6px; border-radius:50%; background:#00ffa0;
+      box-shadow:0 0 8px #00ffa0; animation:jv-pulse-dot 2.5s ease-in-out infinite;
+    }
+    @keyframes jv-pulse-dot { 0%,100%{opacity:1;box-shadow:0 0 6px #00ffa0;} 50%{opacity:0.5;box-shadow:0 0 14px #00ffa0;} }
+    .jv-voice-toggle {
+      width:34px; height:34px; border-radius:9px; border:1px solid rgba(0,180,255,0.15);
+      background:rgba(0,180,255,0.05); color:rgba(0,180,255,0.6); cursor:pointer;
+      display:flex; align-items:center; justify-content:center; font-size:15px;
+      transition:all .2s; flex-shrink:0;
+    }
+    .jv-voice-toggle:hover { border-color:rgba(0,180,255,0.4); background:rgba(0,180,255,0.1); color:#60c8ff; }
+    .jv-voice-toggle.active { border-color:#60c8ff; background:rgba(0,180,255,0.15); color:#60c8ff; box-shadow:0 0 16px rgba(0,180,255,0.2); }
+
+    /* ── Presets strip ── */
+    .jv-presets {
+      flex-shrink:0; overflow-x:auto; padding:12px 22px;
+      display:flex; flex-direction:column; gap:6px;
+      border-bottom:1px solid rgba(0,180,255,0.06);
+      background:rgba(0,6,20,0.5);
+      scrollbar-width:none;
+    }
+    .jv-presets::-webkit-scrollbar { display:none; }
+    .jv-preset-cat { font-size:8px; font-weight:800; letter-spacing:2px; color:rgba(0,180,255,0.35); text-transform:uppercase; }
+    .jv-preset-row { display:flex; gap:5px; flex-wrap:wrap; }
+    .jv-chip {
+      white-space:nowrap; padding:4px 11px; border-radius:99px;
+      border:1px solid rgba(0,180,255,0.12); background:rgba(0,180,255,0.04);
+      color:rgba(180,220,255,0.55); font-size:10px; font-family:var(--font-family);
+      cursor:pointer; transition:all .18s; letter-spacing:.3px;
+    }
+    .jv-chip:hover:not(:disabled) { border-color:rgba(0,180,255,0.45); background:rgba(0,180,255,0.1); color:#a8d8ff; }
+    .jv-chip:disabled { opacity:.35; cursor:not-allowed; }
+
+    /* ── Messages ── */
+    .jv-messages {
+      flex:1; overflow-y:auto; min-height:0;
+      padding:20px 22px; display:flex; flex-direction:column; gap:18px;
+      scrollbar-width:thin; scrollbar-color:rgba(0,180,255,0.1) transparent;
+    }
+    .jv-messages::-webkit-scrollbar { width:3px; }
+    .jv-messages::-webkit-scrollbar-thumb { background:rgba(0,180,255,0.15); border-radius:3px; }
+    .jv-msg { display:flex; flex-direction:column; gap:4px; animation:jv-fadein .3s ease; }
+    @keyframes jv-fadein { from{opacity:0;transform:translateY(6px);} to{opacity:1;transform:translateY(0);} }
+    .jv-msg.user { align-items:flex-end; }
+    .jv-msg.bot  { align-items:flex-start; }
+    .jv-msg-label { font-size:8px; font-weight:800; letter-spacing:2px; text-transform:uppercase; padding:0 4px; }
+    .jv-msg.bot  .jv-msg-label { color:rgba(0,180,255,0.4); }
+    .jv-msg.user .jv-msg-label { color:rgba(255,255,255,0.25); }
+    .jv-bubble {
+      padding:12px 16px; font-size:13px; line-height:1.7; white-space:pre-wrap;
+      max-width:82%; border-radius:14px;
+    }
+    .jv-msg.bot .jv-bubble {
+      background:rgba(0,25,60,0.7); color:#c8e6ff;
+      border:1px solid rgba(0,180,255,0.12);
+      border-radius:4px 14px 14px 14px;
+      box-shadow:inset 0 1px 0 rgba(0,180,255,0.08);
+    }
+    .jv-msg.user .jv-bubble {
+      background:rgba(0,180,255,0.1); color:#dff0ff;
+      border:1px solid rgba(0,180,255,0.2);
+      border-radius:14px 14px 4px 14px;
+    }
+
+    /* Typing indicator */
+    .jv-typing { display:flex; align-items:center; gap:4px; padding:12px 16px; }
+    .jv-dot { width:5px; height:5px; border-radius:50%; background:rgba(0,180,255,0.5); animation:jv-tdot 1.4s ease-in-out infinite; }
+    .jv-dot:nth-child(2) { animation-delay:.2s; }
+    .jv-dot:nth-child(3) { animation-delay:.4s; }
+    @keyframes jv-tdot { 0%,80%,100%{transform:scale(0.6);opacity:.3;} 40%{transform:scale(1);opacity:1;} }
+
+    /* ── Input bar ── */
+    .jv-input-bar {
+      flex-shrink:0; padding:14px 18px;
+      border-top:1px solid rgba(0,180,255,0.07);
+      background:rgba(0,6,20,0.85); backdrop-filter:blur(12px);
+      display:flex; gap:8px; align-items:flex-end;
+    }
+    .jv-textarea {
+      flex:1; background:rgba(0,20,50,0.6); border:1px solid rgba(0,180,255,0.12);
+      border-radius:12px; padding:11px 16px; color:#e2f4ff;
+      font-family:var(--font-family); font-size:13px; resize:none; outline:none;
+      max-height:110px; line-height:1.55; transition:border-color .2s;
+      scrollbar-width:none;
+    }
+    .jv-textarea::placeholder { color:rgba(0,180,255,0.28); }
+    .jv-textarea:focus { border-color:rgba(0,180,255,0.35); box-shadow:0 0 0 3px rgba(0,180,255,0.06); }
+    .jv-send {
+      width:42px; height:42px; border-radius:11px; border:none; cursor:pointer;
+      background:linear-gradient(135deg,#0066cc,#004499);
+      border:1px solid rgba(0,180,255,0.3);
+      color:#60c8ff; display:flex; align-items:center; justify-content:center;
+      transition:all .2s; flex-shrink:0;
+      box-shadow:0 4px 16px rgba(0,100,200,0.3);
+    }
+    .jv-send:hover:not(:disabled) { background:linear-gradient(135deg,#0077ee,#0055bb); box-shadow:0 4px 24px rgba(0,120,255,0.45); }
+    .jv-send:disabled { opacity:.25; cursor:not-allowed; box-shadow:none; }
+
+    /* ── Voice overlay ── */
+    .jv-voice-overlay {
+      position:absolute; inset:0; z-index:10;
+      background:radial-gradient(ellipse at 50% 40%, #000e2a 0%, #000511 60%, #000209 100%);
+      display:flex; flex-direction:column; align-items:center; justify-content:space-between;
+      padding:32px 24px 36px; overflow:hidden;
+    }
+    .jv-voice-overlay::before {
+      content:''; position:absolute; inset:0; pointer-events:none;
+      background-image:
+        linear-gradient(rgba(0,120,255,0.03) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(0,120,255,0.03) 1px,transparent 1px);
+      background-size:40px 40px;
+    }
+    .jv-voice-overlay > * { position:relative; z-index:1; }
+    .jv-voice-top { display:flex; flex-direction:column; align-items:center; gap:8px; }
+    .jv-voice-label { font-size:9px; font-weight:800; letter-spacing:3px; color:rgba(0,180,255,0.4); text-transform:uppercase; }
+    .jv-voice-status { font-size:14px; font-weight:600; letter-spacing:.5px; color:rgba(200,230,255,0.8); }
+    .jv-voice-status.listening { color:#c084fc; }
+    .jv-voice-status.speaking  { color:#00d4ff; }
+
+    /* Orb — completely redesigned */
+    .jv-orb-wrap { position:relative; width:220px; height:220px; display:flex; align-items:center; justify-content:center; }
+    .jv-orb-ring {
+      position:absolute; border-radius:50%;
+      border:1px solid rgba(0,120,255,0.2);
+      animation:jv-orb-breathe 4s ease-in-out infinite;
+    }
+    .jv-orb-ring:nth-child(1) { inset:-18px; border-color:rgba(0,120,255,0.12); }
+    .jv-orb-ring:nth-child(2) { inset:-38px; border-color:rgba(0,120,255,0.07); animation-delay:.6s; }
+    .jv-orb-ring:nth-child(3) { inset:-60px; border-color:rgba(0,120,255,0.04); animation-delay:1.2s; }
+    .jv-orb-core {
+      width:180px; height:180px; border-radius:50%; position:relative;
+      background:radial-gradient(circle at 36% 32%,
+        rgba(120,200,255,0.9) 0%,
+        rgba(0,140,255,0.8) 25%,
+        rgba(0,60,180,0.75) 55%,
+        rgba(0,10,60,0.95) 100%);
+      box-shadow:
+        0 0 50px rgba(0,120,255,0.4),
+        0 0 100px rgba(0,80,200,0.2),
+        inset 0 0 50px rgba(0,180,255,0.15),
+        inset 0 2px 20px rgba(160,220,255,0.2);
+      transition:all .3s;
+    }
+    .jv-orb-core::before {
+      content:''; position:absolute; top:16%; left:18%; width:30%; height:22%;
+      background:rgba(255,255,255,0.3); border-radius:50%; filter:blur(10px);
+    }
+    .jv-orb-core::after {
       content:''; position:absolute; inset:0; border-radius:50%;
-      background:conic-gradient(from 180deg, transparent 60%, rgba(192,132,252,0.4) 75%, transparent 90%);
-      animation:orb-spin 4s linear infinite;
+      background:conic-gradient(from 0deg, transparent 70%, rgba(0,200,255,0.3) 80%, transparent 95%);
+      animation:jv-orb-spin 6s linear infinite;
     }
-    .orb-wrap.listening .orb-core { animation:orb-listen 0.6s ease-in-out infinite alternate; box-shadow: 0 0 80px rgba(192,132,252,0.7), 0 0 160px rgba(139,92,246,0.35), inset 0 0 50px rgba(192,132,252,0.4); }
-    .orb-wrap.listening .orb-ring  { border-color:rgba(192,132,252,0.5); animation-duration:1.2s; }
-    .orb-wrap.speaking  .orb-core { animation:orb-speak 0.4s ease-in-out infinite alternate; box-shadow: 0 0 80px rgba(34,211,238,0.6), 0 0 160px rgba(34,211,238,0.3), inset 0 0 50px rgba(34,211,238,0.3); background: radial-gradient(circle at 38% 36%, rgba(167,243,255,0.9) 0%, rgba(34,211,238,0.8) 30%, rgba(6,182,212,0.7) 60%, rgba(10,30,60,0.9) 100%); }
-    .orb-wrap.speaking  .orb-ring  { border-color:rgba(34,211,238,0.4); }
+    .jv-orb-wrap.listening .jv-orb-core {
+      animation:jv-orb-listen .5s ease-in-out infinite alternate;
+      background:radial-gradient(circle at 36% 32%, rgba(220,160,255,0.9) 0%, rgba(160,80,255,0.8) 30%, rgba(80,20,180,0.75) 60%, rgba(10,0,40,0.95) 100%);
+      box-shadow:0 0 70px rgba(160,80,255,0.6), 0 0 140px rgba(120,40,220,0.3), inset 0 0 60px rgba(200,120,255,0.25);
+    }
+    .jv-orb-wrap.listening .jv-orb-ring { border-color:rgba(180,100,255,0.3); animation-duration:1.5s; }
+    .jv-orb-wrap.speaking .jv-orb-core {
+      animation:jv-orb-speak .35s ease-in-out infinite alternate;
+      background:radial-gradient(circle at 36% 32%, rgba(160,255,240,0.9) 0%, rgba(0,220,200,0.8) 30%, rgba(0,120,140,0.75) 60%, rgba(0,20,40,0.95) 100%);
+      box-shadow:0 0 70px rgba(0,220,200,0.5), 0 0 140px rgba(0,180,200,0.25), inset 0 0 60px rgba(0,255,220,0.2);
+    }
+    .jv-orb-wrap.speaking .jv-orb-ring { border-color:rgba(0,220,200,0.3); }
+    @keyframes jv-orb-breathe { 0%,100%{transform:scale(1);opacity:.9;} 50%{transform:scale(1.04);opacity:1;} }
+    @keyframes jv-orb-spin    { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    @keyframes jv-orb-listen  { from{transform:scale(.95);} to{transform:scale(1.08);} }
+    @keyframes jv-orb-speak   { from{transform:scale(.97);} to{transform:scale(1.06);} }
 
-    @keyframes orb-breathe { 0%,100%{transform:scale(1);opacity:0.7;} 50%{transform:scale(1.06);opacity:1;} }
-    @keyframes orb-spin    { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
-    @keyframes orb-listen  { from{transform:scale(0.96);} to{transform:scale(1.07);} }
-    @keyframes orb-speak   { from{transform:scale(0.98);} to{transform:scale(1.05);} }
+    /* Waveform bars under orb for speaking */
+    .jv-wave { display:flex; align-items:center; gap:3px; height:32px; }
+    .jv-wave-bar {
+      width:3px; border-radius:3px; background:rgba(0,200,255,0.5);
+      animation:jv-wave-bar 1s ease-in-out infinite;
+    }
+    .jv-wave-bar:nth-child(1) { height:8px; animation-delay:.0s; }
+    .jv-wave-bar:nth-child(2) { height:16px; animation-delay:.1s; }
+    .jv-wave-bar:nth-child(3) { height:24px; animation-delay:.2s; }
+    .jv-wave-bar:nth-child(4) { height:32px; animation-delay:.3s; }
+    .jv-wave-bar:nth-child(5) { height:24px; animation-delay:.4s; }
+    .jv-wave-bar:nth-child(6) { height:16px; animation-delay:.5s; }
+    .jv-wave-bar:nth-child(7) { height:8px;  animation-delay:.6s; }
+    @keyframes jv-wave-bar { 0%,100%{transform:scaleY(.4);opacity:.4;} 50%{transform:scaleY(1);opacity:1;} }
 
-    /* Transcript */
-    .voice-transcript { text-align:center; max-width:300px; min-height:60px; display:flex; flex-direction:column; gap:6px; }
-    .voice-transcript .vt-user { font-size:14px; color:rgba(255,255,255,0.85); line-height:1.5; }
-    .voice-transcript .vt-user em { color:#c084fc; font-style:normal; }
-    .voice-transcript .vt-reply { font-size:12px; color:rgba(255,255,255,0.45); line-height:1.6; }
+    /* Voice transcript */
+    .jv-voice-transcript { text-align:center; max-width:320px; display:flex; flex-direction:column; gap:8px; min-height:64px; }
+    .jv-vt-user { font-size:14px; color:rgba(200,230,255,0.9); line-height:1.5; font-weight:500; }
+    .jv-vt-reply { font-size:12px; color:rgba(160,200,255,0.5); line-height:1.65; }
 
-    /* Voice bottom bar */
-    .voice-actions { display:flex; align-items:center; gap:28px; }
-    .va-btn { width:52px; height:52px; border-radius:50%; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:20px; transition:all 0.2s; flex-shrink:0; }
-    .va-btn.mic { background:rgba(255,255,255,0.1); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.2); color:#fff; }
-    .va-btn.mic.active { background:rgba(192,132,252,0.25); border-color:#c084fc; box-shadow:0 0 24px rgba(192,132,252,0.4); animation:pulse 1s infinite; }
-    .va-btn.mic-main { width:68px; height:68px; font-size:26px; background:linear-gradient(135deg,#7c3aed,#4f46e5); box-shadow:0 4px 24px rgba(124,58,237,0.5); border:none; color:#fff; }
-    .va-btn.mic-main.active { background:linear-gradient(135deg,#c084fc,#7c3aed); box-shadow:0 0 40px rgba(192,132,252,0.6); }
-    .va-btn.close { background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.5); font-size:16px; }
-    .va-btn.close:hover { background:rgba(239,68,68,0.2); border-color:#ef4444; color:#ef4444; }
+    /* Voice controls */
+    .jv-voice-controls { display:flex; align-items:center; gap:20px; }
+    .jv-va-btn {
+      width:52px; height:52px; border-radius:50%; border:1px solid rgba(255,255,255,0.1);
+      background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.45);
+      cursor:pointer; display:flex; align-items:center; justify-content:center;
+      font-size:18px; transition:all .2s;
+    }
+    .jv-va-btn:hover { background:rgba(255,255,255,0.1); color:rgba(255,255,255,0.8); }
+    .jv-va-btn.danger:hover { background:rgba(239,68,68,0.15); border-color:#ef4444; color:#ef4444; }
+    .jv-mic-btn {
+      width:72px; height:72px; border-radius:50%; border:none; cursor:pointer;
+      background:linear-gradient(145deg,#0055cc,#003399);
+      border:1px solid rgba(0,180,255,0.4);
+      box-shadow:0 8px 32px rgba(0,80,200,0.5), 0 0 0 8px rgba(0,100,255,0.06);
+      color:#80c8ff; font-size:28px;
+      display:flex; align-items:center; justify-content:center;
+      transition:all .25s;
+    }
+    .jv-mic-btn:hover:not(:disabled) { box-shadow:0 8px 40px rgba(0,100,255,0.65), 0 0 0 12px rgba(0,100,255,0.08); transform:scale(1.04); }
+    .jv-mic-btn.active {
+      background:linear-gradient(145deg,#7c22ee,#5010cc);
+      border-color:rgba(180,100,255,0.5);
+      box-shadow:0 8px 40px rgba(140,40,255,0.6), 0 0 0 12px rgba(140,40,255,0.08);
+      color:#e0b0ff; animation:jv-mic-pulse 1s ease-in-out infinite;
+    }
+    .jv-mic-btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+    @keyframes jv-mic-pulse { 0%,100%{box-shadow:0 8px 40px rgba(140,40,255,0.6),0 0 0 8px rgba(140,40,255,0.08);} 50%{box-shadow:0 8px 60px rgba(140,40,255,0.8),0 0 0 16px rgba(140,40,255,0.12);} }
+
+    /* ── Rich message types ───────────────────────────── */
+    .rich-chart { background:rgba(0,20,50,0.6); border:1px solid rgba(0,180,255,0.1); border-radius:10px; padding:14px; margin-top:8px; max-width:500px; }
+    .rich-chart-title { font-size:10px; font-weight:700; letter-spacing:2px; color:rgba(0,180,255,0.5); text-transform:uppercase; margin-bottom:10px; }
+    .rich-table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+    .rich-table th { padding:7px 10px; background:rgba(0,20,50,0.8); color:rgba(0,180,255,0.5); font-size:9px; letter-spacing:1.5px; text-transform:uppercase; text-align:left; border-bottom:1px solid rgba(0,180,255,0.1); }
+    .rich-table td { padding:7px 10px; border-bottom:1px solid rgba(0,180,255,0.05); color:#c8e6ff; }
+    .rich-table tr:last-child td { border-bottom:none; }
+
+    /* chat-wrap alias for backward compat */
+    .chat-wrap { display:flex; flex-direction:column; height:calc(100vh - 110px); }
+    .chat-send { display:none; }
+    .suggestion { display:none; }
+    .typing-dot { display:none; }
 
     /* ── Rich message types ───────────────────────────── */
     .rich-chart { background:var(--bg-card2); border:1px solid var(--border); border-radius:10px; padding:14px; margin-top:8px; max-width:500px; }
@@ -10829,111 +11020,122 @@
     const orbState = listening ? 'listening' : speaking ? 'speaking' : '';
 
     return (
-      <div className="chat-wrap">
-        {/* Mode tabs */}
-        <div className="jv-tabs">
-          <button className={`jv-tab ${mode==='chat'?'active':''}`} onClick={()=>{setMode('chat');stopSpeaking();}}>💬 Chat</button>
-          <button className={`jv-tab ${mode==='voice'?'active':''}`} onClick={()=>{setMode('voice');stopSpeaking();}}>🎙 Voice</button>
+      <div className="jv-wrap">
+
+        {/* ── Header ── */}
+        <div className="jv-header">
+          <div className="jv-logo-wrap">
+            <span className="jv-logo-inner">J</span>
+          </div>
+          <div className="jv-title-block">
+            <div className="jv-title">JARVIS</div>
+            <div className="jv-subtitle">CROSCROW Intelligence · Live Store Data</div>
+          </div>
+          <div className="jv-status">
+            <span className="jv-status-dot"/>
+            {loading ? 'Processing' : 'Online'}
+          </div>
+          {hasSR && (
+            <button className={`jv-voice-toggle ${mode==='voice'?'active':''}`}
+              onClick={()=>{ mode==='voice' ? (setMode('chat'),stopSpeaking()) : setMode('voice'); }}
+              title="Voice mode">
+              🎙
+            </button>
+          )}
         </div>
 
-        {/* ── VOICE MODE ── */}
-        {mode==='voice' && (
-          <div className="voice-panel">
-            {/* Status */}
-            <div className={`voice-status ${orbState}`}>
-              {listening ? 'JARVIS is listening…' : speaking ? 'JARVIS is speaking…' : loading ? 'Processing…' : 'Tap the mic to speak'}
-            </div>
-
-            {/* Orb */}
-            <div className={`orb-wrap ${orbState}`}>
-              <div className="orb-ring"/>
-              <div className="orb-ring"/>
-              <div className="orb-ring"/>
-              <div className="orb-core"/>
-            </div>
-
-            {/* Transcript */}
-            <div className="voice-transcript">
-              {voiceTranscript && <div className="vt-user">{voiceTranscript}</div>}
-              {voiceReply && !speaking && <div className="vt-reply">{voiceReply.slice(0,160)}{voiceReply.length>160?'…':''}</div>}
-              {loading && <div className="vt-reply" style={{animation:'pulse 1s infinite'}}>Thinking…</div>}
-            </div>
-
-            {/* Controls */}
-            <div className="voice-actions">
-              <button className="va-btn close" onClick={()=>setMode('chat')} title="Back to chat">←</button>
-              <button className={`va-btn mic-main ${listening?'active':''}`}
-                onClick={listening ? stopListening : startListening}
-                disabled={loading}
-                title={listening?'Stop':'Start listening'}>
-                {listening ? '■' : '🎙'}
-              </button>
-              <button className="va-btn close" onClick={stopSpeaking} title="Stop speaking">✕</button>
-            </div>
-          </div>
-        )}
-
-        {/* ── CHAT MODE ── */}
-        {mode==='chat' && (
-          <div className="chat-panel" style={{borderRadius:'0 0 12px 12px',borderTop:'none'}}>
-            <div className="chat-header">
-              <div className="chat-logo">J</div>
-              <div><div className="chat-title">JARVIS</div></div>
-              <div style={{display:'flex',gap:6,marginLeft:'auto',alignItems:'center'}}>
-                {hasSR && <button onClick={()=>setMode('voice')} style={{background:'none',border:'1px solid var(--border)',borderRadius:7,padding:'4px 10px',color:'var(--text-muted)',cursor:'pointer',fontSize:11}}>🎙 Voice</button>}
-                {speaking && <button onClick={stopSpeaking} style={{background:'var(--red-bg)',border:'1px solid var(--red)',borderRadius:7,padding:'4px 10px',color:'var(--red)',cursor:'pointer',fontSize:11}}>■ Stop</button>}
+        {/* ── Preset chips ── */}
+        <div className="jv-presets">
+          {JARVIS_PRESETS.map(cat => (
+            <div key={cat.category}>
+              <div className="jv-preset-cat" style={{marginBottom:4}}>{cat.category}</div>
+              <div className="jv-preset-row">
+                {cat.items.map(p => (
+                  <button key={p.query} className="jv-chip" onClick={()=>send(p.query)} disabled={loading}>
+                    {p.icon} {p.label}
+                  </button>
+                ))}
               </div>
-              <span className="chat-sub" style={{marginLeft:8}}>Live store data</span>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Messages ── */}
+        <div className="jv-messages">
+          {messages.map((m,i) => (
+            <div key={i} className={`jv-msg ${m.role}`}>
+              <div className="jv-msg-label">{m.role==='bot'?'JARVIS':'YOU'}</div>
+              <div className="jv-bubble">
+                {m.role==='bot' ? <RichMessage msg={m}/> : <span style={{whiteSpace:'pre-wrap'}}>{m.text}</span>}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="jv-msg bot">
+              <div className="jv-msg-label">JARVIS</div>
+              <div className="jv-bubble" style={{padding:0}}>
+                <div className="jv-typing">
+                  <div className="jv-dot"/><div className="jv-dot"/><div className="jv-dot"/>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={endRef}/>
+        </div>
+
+        {/* ── Input bar ── */}
+        <div className="jv-input-bar">
+          <textarea className="jv-textarea" rows={1}
+            placeholder="Ask anything — orders, revenue, vendor performance, RTOs…"
+            value={input} onChange={e=>setInput(e.target.value)} onKeyDown={onKey}/>
+          <button className="jv-send" onClick={()=>send()} disabled={!input.trim()||loading}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* ── Voice overlay ── */}
+        {mode==='voice' && (
+          <div className="jv-voice-overlay">
+            <div className="jv-voice-top">
+              <div className="jv-voice-label">Voice Mode</div>
+              <div className={`jv-voice-status ${orbState}`}>
+                {listening ? 'Listening…' : speaking ? 'Speaking…' : loading ? 'Processing…' : 'Tap to speak'}
+              </div>
             </div>
 
-            {/* Quick report buttons */}
-            <div style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',maxHeight:140,overflowY:'auto'}}>
-              {JARVIS_PRESETS.map(cat => (
-                <div key={cat.category} style={{marginBottom:6}}>
-                  <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:3}}>{cat.category}</div>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
-                    {cat.items.map(p => (
-                      <button key={p.query} className="suggestion" style={{fontSize:10}} onClick={() => send(p.query)} disabled={loading}>
-                        {p.icon} {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
+            <div className={`jv-orb-wrap ${orbState}`}>
+              <div className="jv-orb-ring"/>
+              <div className="jv-orb-ring"/>
+              <div className="jv-orb-ring"/>
+              <div className="jv-orb-core"/>
             </div>
 
-            <div className="chat-messages">
-              {messages.map((m, i) => (
-                <div key={i} className={`cmsg ${m.role}`}>
-                  <div className="cmsg-av">{m.role==='bot' ? 'J' : 'A'}</div>
-                  <div className="cmsg-bubble">
-                    {m.role==='bot' ? <RichMessage msg={m}/> : <span style={{whiteSpace:'pre-wrap'}}>{m.text}</span>}
-                  </div>
-                </div>
-              ))}
-              {loading && (
-                <div className="cmsg bot">
-                  <div className="cmsg-av">J</div>
-                  <div className="cmsg-bubble"><span className="typing-dot"/><span className="typing-dot"/><span className="typing-dot"/></div>
+            <div className="jv-voice-transcript">
+              {speaking && (
+                <div className="jv-wave">
+                  {[1,2,3,4,5,6,7].map(n=><div key={n} className="jv-wave-bar"/>)}
                 </div>
               )}
-              <div ref={endRef}/>
+              {voiceTranscript && <div className="jv-vt-user">{voiceTranscript}</div>}
+              {voiceReply && !speaking && <div className="jv-vt-reply">{voiceReply.slice(0,180)}{voiceReply.length>180?'…':''}</div>}
+              {loading && !voiceTranscript && <div className="jv-vt-reply" style={{opacity:.6}}>Processing your request…</div>}
             </div>
 
-            <div className="chat-input-row">
-              <textarea className="chat-textarea" rows={1}
-                placeholder="Ask JARVIS anything — 'sales chart', 'vendor split', 'top 10 products'…"
-                value={input} onChange={e=>setInput(e.target.value)} onKeyDown={onKey}/>
-              {hasSR && (
-                <button onClick={()=>setMode('voice')} title="Switch to voice mode"
-                  style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'0 12px',cursor:'pointer',color:'var(--text-muted)',fontSize:18}}>
-                  🎙
-                </button>
-              )}
-              <button className="chat-send" onClick={()=>send()} disabled={!input.trim()||loading}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                </svg>
+            <div className="jv-voice-controls">
+              <button className="jv-va-btn danger" onClick={()=>{setMode('chat');stopSpeaking();}} title="Back to chat">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+              </button>
+              <button className={`jv-mic-btn ${listening?'active':''}`}
+                onClick={listening?stopListening:startListening} disabled={loading}>
+                {listening
+                  ? <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  : <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                }
+              </button>
+              <button className="jv-va-btn" onClick={stopSpeaking} title="Stop speaking">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
           </div>
