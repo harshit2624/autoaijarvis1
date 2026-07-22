@@ -672,6 +672,98 @@
     .rich-table td { padding:7px 10px; border-bottom:1px solid rgba(139,92,246,0.06); color:rgba(233,221,255,0.8); }
     .rich-table tr:last-child td { border-bottom:none; }
 
+    /* ── Home screen ── */
+    .jv-home {
+      flex:1; display:flex; flex-direction:column; overflow:hidden; min-height:0;
+    }
+    .jv-home-top {
+      padding:28px 26px 20px; flex-shrink:0;
+    }
+    .jv-home-eyebrow {
+      font-size:10px; font-weight:800; letter-spacing:2.5px; color:rgba(139,92,246,0.5);
+      text-transform:uppercase; margin-bottom:10px;
+    }
+    .jv-home-greeting {
+      margin:0; font-size:clamp(22px,4vw,32px); font-weight:800; line-height:1.2;
+      color:rgba(237,233,254,0.95); letter-spacing:-.5px;
+    }
+    .jv-quick-grid {
+      display:grid; grid-template-columns:1fr 1fr; gap:10px;
+      padding:0 20px 16px; flex-shrink:0;
+    }
+    .jv-qa-card {
+      display:flex; align-items:flex-start; gap:10px; padding:14px;
+      background:rgba(139,92,246,0.07); border:1px solid rgba(139,92,246,0.14);
+      border-radius:16px; cursor:pointer; text-align:left;
+      transition:all .2s; backdrop-filter:blur(8px);
+      font-family:var(--font-family);
+    }
+    .jv-qa-card:hover:not(:disabled) {
+      background:rgba(139,92,246,0.14); border-color:rgba(139,92,246,0.3);
+      transform:translateY(-2px); box-shadow:0 8px 24px rgba(109,40,217,0.2);
+    }
+    .jv-qa-card:disabled { opacity:.4; cursor:not-allowed; }
+    .jv-qa-icon { font-size:20px; flex-shrink:0; margin-top:1px; }
+    .jv-qa-title { font-size:12px; font-weight:700; color:rgba(233,221,255,0.95); margin-bottom:2px; }
+    .jv-qa-sub   { font-size:10px; color:rgba(167,139,250,0.55); line-height:1.4; }
+    .jv-topics-label {
+      font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase;
+      color:rgba(139,92,246,0.45); padding:0 26px 10px;  flex-shrink:0;
+    }
+    .jv-topics-scroll {
+      flex:1; overflow-y:auto; overflow-x:hidden; padding:0 20px 12px;
+      display:flex; flex-direction:column; gap:14px;
+      scrollbar-width:thin; scrollbar-color:rgba(139,92,246,0.1) transparent;
+    }
+    .jv-topics-scroll::-webkit-scrollbar { width:3px; }
+    .jv-topics-scroll::-webkit-scrollbar-thumb { background:rgba(139,92,246,0.15); border-radius:3px; }
+    .jv-topic-group { display:flex; flex-direction:column; gap:6px; }
+    .jv-topic-cat { font-size:9px; font-weight:800; letter-spacing:1.5px; color:rgba(139,92,246,0.4); text-transform:uppercase; }
+    .jv-topic-chips { display:flex; flex-wrap:wrap; gap:5px; }
+    .jv-home-input {
+      flex-shrink:0; padding:12px 18px 18px;
+      border-top:1px solid rgba(139,92,246,0.08);
+      background:rgba(8,4,20,0.7); backdrop-filter:blur(20px);
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .jv-home-input-actions { display:flex; justify-content:flex-end; gap:8px; align-items:center; }
+
+    /* ── Chat screen ── */
+    .jv-chat { flex:1; display:flex; flex-direction:column; min-height:0; }
+    .jv-chat-header {
+      display:flex; align-items:center; gap:12px; padding:16px 22px 14px;
+      background:rgba(12,8,24,0.7); backdrop-filter:blur(20px); flex-shrink:0;
+      border-bottom:1px solid rgba(139,92,246,0.1);
+    }
+
+    /* ── Icon button (mic etc) ── */
+    .jv-icon-btn {
+      width:40px; height:40px; border-radius:11px; border:1px solid rgba(139,92,246,0.15);
+      background:rgba(139,92,246,0.06); color:rgba(167,139,250,0.6);
+      cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;
+      transition:all .2s;
+    }
+    .jv-icon-btn:hover { border-color:rgba(139,92,246,0.35); background:rgba(139,92,246,0.12); color:#c4b5fd; }
+
+    /* ── Voice overlay layout ── */
+    .jv-vo-header {
+      display:flex; align-items:center; justify-content:space-between; width:100%;
+    }
+    .jv-vo-back {
+      width:36px; height:36px; border-radius:50%; border:1px solid rgba(139,92,246,0.2);
+      background:rgba(139,92,246,0.08); color:rgba(167,139,250,0.7);
+      display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .2s;
+    }
+    .jv-vo-back:hover { background:rgba(139,92,246,0.16); color:#c4b5fd; }
+    .jv-vo-center { display:flex; align-items:center; justify-content:center; flex:1; }
+    .jv-vo-controls { display:flex; align-items:center; gap:24px; }
+    .jv-vo-stop {
+      width:48px; height:48px; border-radius:50%; border:1px solid rgba(139,92,246,0.15);
+      background:rgba(139,92,246,0.06); color:rgba(167,139,250,0.5);
+      display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .2s;
+    }
+    .jv-vo-stop:hover { background:rgba(239,68,68,0.1); border-color:#ef4444; color:#f87171; }
+
     /* compat */
     .chat-wrap { display:flex; flex-direction:column; height:calc(100vh - 110px); }
     .chat-send,.suggestion,.typing-dot { display:none; }
@@ -11009,124 +11101,160 @@
     const onKey = e => { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} };
     const hasSR = !!(window.SpeechRecognition||window.webkitSpeechRecognition);
     const orbState = listening ? 'listening' : speaking ? 'speaking' : '';
+    const isHome = messages.length <= 1 && !loading;
+    const now = new Date();
+    const hour = now.getHours();
+    const greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
+
+    const QUICK_ACTIONS = [
+      { icon:'📅', title:"Today's Summary",    sub:'Orders, revenue, pending',     query:"give me today's full summary — orders, revenue, pending, dispatched" },
+      { icon:'🚚', title:'Dispatch Status',     sub:'AWB coverage, stuck orders',   query:"show dispatch rate per vendor this month and stuck confirmed orders" },
+      { icon:'💰', title:'Revenue Report',      sub:'COD, prepaid, by vendor',      query:"revenue breakdown by vendor this month with COD vs prepaid split" },
+      { icon:'↩️', title:'RTO & Returns',       sub:'Rates, cities, trends',        query:"overall RTO rate, which vendors and cities have the most RTOs?" },
+    ];
 
     return (
       <div className="jv-wrap">
 
-        {/* ── Header ── */}
-        <div className="jv-header">
-          <div className="jv-logo-wrap">
-            <span className="jv-logo-inner">J</span>
-          </div>
-          <div className="jv-title-block">
-            <div className="jv-title">JARVIS</div>
-            <div className="jv-subtitle">CROSCROW Intelligence · Live Store Data</div>
-          </div>
-          <div className="jv-status">
-            <span className="jv-status-dot"/>
-            {loading ? 'Processing' : 'Online'}
-          </div>
-          {hasSR && (
-            <button className={`jv-voice-toggle ${mode==='voice'?'active':''}`}
-              onClick={()=>{ mode==='voice' ? (setMode('chat'),stopSpeaking()) : setMode('voice'); }}
-              title="Voice mode">
-              🎙
-            </button>
-          )}
-        </div>
-
-        {/* ── Preset chips ── */}
-        <div className="jv-presets">
-          {JARVIS_PRESETS.map(cat => (
-            <div key={cat.category}>
-              <div className="jv-preset-cat" style={{marginBottom:4}}>{cat.category}</div>
-              <div className="jv-preset-row">
-                {cat.items.map(p => (
-                  <button key={p.query} className="jv-chip" onClick={()=>send(p.query)} disabled={loading}>
-                    {p.icon} {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* ── Messages ── */}
-        <div className="jv-messages">
-          {messages.map((m,i) => (
-            <div key={i} className={`jv-msg ${m.role}`}>
-              <div className="jv-msg-label">{m.role==='bot'?'JARVIS':'YOU'}</div>
-              <div className="jv-bubble">
-                {m.role==='bot' ? <RichMessage msg={m}/> : <span style={{whiteSpace:'pre-wrap'}}>{m.text}</span>}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="jv-msg bot">
-              <div className="jv-msg-label">JARVIS</div>
-              <div className="jv-bubble" style={{padding:0}}>
-                <div className="jv-typing">
-                  <div className="jv-dot"/><div className="jv-dot"/><div className="jv-dot"/>
-                </div>
-              </div>
-            </div>
-          )}
-          <div ref={endRef}/>
-        </div>
-
-        {/* ── Input bar ── */}
-        <div className="jv-input-bar">
-          <textarea className="jv-textarea" rows={1}
-            placeholder="Ask anything — orders, revenue, vendor performance, RTOs…"
-            value={input} onChange={e=>setInput(e.target.value)} onKeyDown={onKey}/>
-          <button className="jv-send" onClick={()=>send()} disabled={!input.trim()||loading}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-          </button>
-        </div>
-
-        {/* ── Voice overlay ── */}
+        {/* ── Voice overlay — full screen ── */}
         {mode==='voice' && (
           <div className="jv-voice-overlay">
-            <div className="jv-voice-top">
-              <div className="jv-voice-label">Voice Mode</div>
+            <div className="jv-vo-header">
+              <button className="jv-vo-back" onClick={()=>{setMode('chat');stopSpeaking();}}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+              </button>
               <div className={`jv-voice-status ${orbState}`}>
-                {listening ? 'Listening…' : speaking ? 'Speaking…' : loading ? 'Processing…' : 'Tap to speak'}
+                {listening ? 'Listening…' : speaking ? 'Speaking…' : loading ? 'Processing…' : 'Tap mic to speak'}
               </div>
+              <div style={{width:36}}/>
             </div>
 
-            <div className={`jv-orb-wrap ${orbState}`}>
-              <div className="jv-orb-ring"/>
-              <div className="jv-orb-ring"/>
-              <div className="jv-orb-ring"/>
-              <div className="jv-orb-core"/>
+            <div className="jv-vo-center">
+              <div className={`jv-orb-wrap ${orbState}`}>
+                <div className="jv-orb-ring"/><div className="jv-orb-ring"/><div className="jv-orb-ring"/>
+                <div className="jv-orb-core"/>
+              </div>
             </div>
 
             <div className="jv-voice-transcript">
-              {speaking && (
-                <div className="jv-wave">
-                  {[1,2,3,4,5,6,7].map(n=><div key={n} className="jv-wave-bar"/>)}
-                </div>
-              )}
+              {speaking && <div className="jv-wave">{[1,2,3,4,5,6,7].map(n=><div key={n} className="jv-wave-bar"/>)}</div>}
               {voiceTranscript && <div className="jv-vt-user">{voiceTranscript}</div>}
-              {voiceReply && !speaking && <div className="jv-vt-reply">{voiceReply.slice(0,180)}{voiceReply.length>180?'…':''}</div>}
-              {loading && !voiceTranscript && <div className="jv-vt-reply" style={{opacity:.6}}>Processing your request…</div>}
+              {voiceReply && !speaking && <div className="jv-vt-reply">{voiceReply.slice(0,200)}{voiceReply.length>200?'…':''}</div>}
+              {loading && !voiceTranscript && <div className="jv-vt-reply">Processing your request…</div>}
             </div>
 
-            <div className="jv-voice-controls">
-              <button className="jv-va-btn danger" onClick={()=>{setMode('chat');stopSpeaking();}} title="Back to chat">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-              </button>
-              <button className={`jv-mic-btn ${listening?'active':''}`}
-                onClick={listening?stopListening:startListening} disabled={loading}>
+            <div className="jv-vo-controls">
+              <button className={`jv-mic-btn ${listening?'active':''}`} onClick={listening?stopListening:startListening} disabled={loading}>
                 {listening
-                  ? <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                  : <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  ? <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+                  : <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
                 }
               </button>
-              <button className="jv-va-btn" onClick={stopSpeaking} title="Stop speaking">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <button className="jv-vo-stop" onClick={stopSpeaking}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── HOME screen ── */}
+        {isHome && (
+          <div className="jv-home">
+            <div className="jv-home-top">
+              <div className="jv-home-eyebrow">JARVIS · CROSCROW</div>
+              <h1 className="jv-home-greeting">{greeting},<br/>what's on your mind?</h1>
+            </div>
+
+            <div className="jv-quick-grid">
+              {QUICK_ACTIONS.map(a => (
+                <button key={a.query} className="jv-qa-card" onClick={()=>send(a.query)} disabled={loading}>
+                  <span className="jv-qa-icon">{a.icon}</span>
+                  <div className="jv-qa-text">
+                    <div className="jv-qa-title">{a.title}</div>
+                    <div className="jv-qa-sub">{a.sub}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="jv-topics-label">Quick insights</div>
+            <div className="jv-topics-scroll">
+              {JARVIS_PRESETS.map(cat => (
+                <div key={cat.category} className="jv-topic-group">
+                  <div className="jv-topic-cat">{cat.category}</div>
+                  <div className="jv-topic-chips">
+                    {cat.items.map(p=>(
+                      <button key={p.query} className="jv-chip" onClick={()=>send(p.query)} disabled={loading}>
+                        {p.icon} {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="jv-home-input">
+              <textarea className="jv-textarea" rows={1}
+                placeholder="Or type anything — ask about orders, vendors, revenue…"
+                value={input} onChange={e=>setInput(e.target.value)} onKeyDown={onKey}/>
+              <div className="jv-home-input-actions">
+                {hasSR && (
+                  <button className="jv-icon-btn" onClick={()=>setMode('voice')} title="Voice">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+                  </button>
+                )}
+                <button className="jv-send" onClick={()=>send()} disabled={!input.trim()||loading}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── CHAT screen ── */}
+        {!isHome && (
+          <div className="jv-chat">
+            <div className="jv-chat-header">
+              <div className="jv-logo-wrap"><span className="jv-logo-inner">J</span></div>
+              <div className="jv-title-block">
+                <div className="jv-title">JARVIS</div>
+                <div className="jv-subtitle">{loading ? 'Thinking…' : 'CROSCROW Intelligence'}</div>
+              </div>
+              <div className="jv-status"><span className="jv-status-dot"/>{loading?'Processing':'Online'}</div>
+              {hasSR && (
+                <button className="jv-voice-toggle" onClick={()=>setMode('voice')} title="Voice">🎙</button>
+              )}
+            </div>
+
+            <div className="jv-messages">
+              {messages.map((m,i) => (
+                <div key={i} className={`jv-msg ${m.role}`}>
+                  <div className="jv-bubble">
+                    {m.role==='bot' ? <RichMessage msg={m}/> : <span style={{whiteSpace:'pre-wrap'}}>{m.text}</span>}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="jv-msg bot">
+                  <div className="jv-bubble" style={{padding:0}}>
+                    <div className="jv-typing"><div className="jv-dot"/><div className="jv-dot"/><div className="jv-dot"/></div>
+                  </div>
+                </div>
+              )}
+              <div ref={endRef}/>
+            </div>
+
+            <div className="jv-input-bar">
+              <textarea className="jv-textarea" rows={1}
+                placeholder="Ask JARVIS anything…"
+                value={input} onChange={e=>setInput(e.target.value)} onKeyDown={onKey}/>
+              {hasSR && (
+                <button className="jv-icon-btn" onClick={()=>setMode('voice')} title="Voice">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+                </button>
+              )}
+              <button className="jv-send" onClick={()=>send()} disabled={!input.trim()||loading}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
             </div>
           </div>
