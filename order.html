@@ -453,6 +453,18 @@ html,body{
   border:1px solid var(--amber-border);
 }
 
+/* why-box on confirm page */
+.why-box{
+  background:var(--bg);border:1px solid var(--border);border-radius:12px;
+  padding:16px;display:flex;flex-direction:column;gap:8px;
+}
+.why-title{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.01em}
+.why-body{font-size:12px;color:var(--body);line-height:1.7}
+.why-body strong{color:var(--text);font-weight:700}
+.why-note{font-size:11px;color:var(--muted);line-height:1.65;padding-top:2px;border-top:1px solid var(--border)}
+.why-note strong{color:var(--body);font-weight:700}
+.razorpay-badge{width:100%;max-width:280px;height:auto;display:block;margin:4px auto 0;opacity:.85}
+
 .hidden{display:none!important}
 </style>
 </head>
@@ -584,6 +596,14 @@ html,body{
         <span class="pay-badge">Mastercard</span>
         <span class="pay-badge">Net Banking</span>
         <span class="pay-badge">COD</span>
+      </div>
+
+      <!-- Why we collect ₹99 -->
+      <div class="why-box">
+        <div class="why-title">Why a small confirmation amount?</div>
+        <div class="why-body">COD orders are sometimes placed by mistake or rejected at the door — return shipping costs everyone. A tiny advance lets us know <strong>you really want this order</strong>, so we pack and ship it right away.</div>
+        <div class="why-note">This ₹99 is <strong>not an extra charge</strong> — it's part of your order total and gets deducted from what you pay on delivery.</div>
+        <img src="/razorpay-secure-badge.png" alt="Secured by Razorpay" class="razorpay-badge">
       </div>
     </div>
 
