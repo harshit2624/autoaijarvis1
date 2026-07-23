@@ -16,18 +16,13 @@
   --text:#0f0f0f;
   --body:#555;
   --muted:#999;
-  --blue:#002eff;
-  --blue-light:#eef3ff;
-  --blue-border:#99b3ff;
-  --blue-dark:#0020cc;
-  /* alias green → blue so all existing refs work */
-  --green:var(--blue);
-  --green-light:var(--blue-light);
-  --green-border:var(--blue-border);
-  --green-dark:var(--blue-dark);
-  --purple:var(--blue);
-  --purple-light:var(--blue-light);
-  --purple-border:var(--blue-border);
+  --green:#002eff;
+  --green-light:#eef3ff;
+  --green-border:#99b3ff;
+  --green-dark:#0020cc;
+  --purple:#002eff;
+  --purple-light:#eef3ff;
+  --purple-border:#99b3ff;
   --amber:#f59e0b;
   --amber-light:#fffbeb;
   --amber-border:#fde68a;
@@ -427,14 +422,14 @@ html,body{
   width:20px;height:20px;border-radius:50%;display:flex;align-items:center;
   justify-content:center;flex-shrink:0;position:relative;z-index:2;
 }
-.vc-dot.done{background:var(--blue)}
+.vc-dot.done{background:var(--green)}
 .vc-dot.done svg{stroke:#fff}
 .vc-dot.active{background:var(--text)}
 .vc-dot.active svg{stroke:#fff}
 .vc-dot.pending{background:var(--bg);border:1.5px solid var(--border)}
 .vc-dot.pending svg{stroke:#ccc}
 .vc-line{position:absolute;top:10px;left:50%;right:-50%;height:1px;z-index:0}
-.vc-line.done{background:var(--blue)}
+.vc-line.done{background:var(--green)}
 .vc-line.pending{background:var(--border)}
 .vc-lbl{
   font-size:8px;font-weight:700;color:var(--muted);margin-top:5px;text-align:center;
@@ -446,10 +441,10 @@ html,body{
 .vc-ship{padding:11px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .vc-awb-group{display:flex;flex-direction:column;gap:1px}
 .vc-awb-label{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
-.vc-awb-num{font-size:12px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums}
+.vc-awb-num{font-size:12px;font-weight:700;color:var(--green);font-variant-numeric:tabular-nums}
 .vc-track-btn{
   display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
-  color:var(--blue);text-decoration:none;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;
+  color:var(--green);text-decoration:none;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;
 }
 .vc-pending-row{padding:11px 14px;display:flex;align-items:center;justify-content:space-between}
 .pending-badge{
@@ -877,7 +872,7 @@ function statusCardHtml(stage, d) {
   if (['transit','pickup','ofd','ready'].includes(stage)) {
     const ofd = stage==='ofd';
     return `<div class="status-card-base eta-card">
-      <div class="eta-icon" style="color:${ofd?'var(--blue)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
+      <div class="eta-icon" style="color:${ofd?'var(--green)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
       <div>
         <div class="eta-text">${ofd?'Out for delivery':'On its way to you'}</div>
         <div class="eta-sub">${ofd?'Arriving today':'Expected in 2–5 business days'}</div>
