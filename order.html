@@ -8,285 +8,396 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0a0a0a;
-  --card:#141414;
-  --border:#222;
-  --text:#fff;
-  --muted:#888;
-  --green:#00e676;
-  --green-dim:#00c85a;
-  --red:#ff4d4d;
-  --yellow:#ffd600;
-  font-size:16px;
+  --bg:#f5f5f5;
+  --surface:#fff;
+  --card:#fff;
+  --border:#e8e8e8;
+  --border-strong:#d0d0d0;
+  --text:#0f0f0f;
+  --body:#555;
+  --muted:#999;
+  --green:#10b981;
+  --green-light:#f0fdf8;
+  --green-border:#c6f0e0;
+  --green-dark:#059669;
+  --purple:#6366f1;
+  --purple-light:#f5f3ff;
+  --purple-border:#e0e7ff;
+  --amber:#f59e0b;
+  --amber-light:#fffbeb;
+  --amber-border:#fde68a;
+  --red:#ef4444;
+  --red-light:#fef2f2;
+  --red-border:#fecaca;
 }
-html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
+html,body{
+  min-height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;overscroll-behavior:none;
+}
 
-/* ── LOOKUP SCREEN ─────────────────────────────────────────── */
+/* ── LOOKUP ──────────────────────────────────────────────────── */
 #lookup-screen{
-  min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:32px 20px;
+  min-height:100svh;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;padding:40px 24px;background:var(--surface);
 }
-.logo{font-size:13px;font-weight:800;letter-spacing:.18em;color:var(--green);text-transform:uppercase;margin-bottom:40px}
-.lookup-title{font-size:28px;font-weight:900;letter-spacing:-.02em;text-align:center;line-height:1.15;margin-bottom:8px}
-.lookup-sub{font-size:14px;color:var(--muted);text-align:center;margin-bottom:32px}
-.lookup-form{width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px}
+.logo{
+  font-size:11px;font-weight:800;letter-spacing:.22em;color:var(--green);
+  text-transform:uppercase;margin-bottom:44px;
+}
+.lookup-title{
+  font-size:25px;font-weight:800;letter-spacing:-.03em;text-align:center;
+  line-height:1.2;margin-bottom:8px;color:var(--text);
+}
+.lookup-sub{
+  font-size:13px;color:var(--muted);text-align:center;margin-bottom:32px;
+  line-height:1.65;max-width:280px;
+}
+.lookup-form{width:100%;max-width:320px;display:flex;flex-direction:column;gap:10px}
 .inp{
-  width:100%;background:#1a1a1a;border:1.5px solid var(--border);border-radius:14px;
-  padding:16px 18px;font-size:16px;color:#fff;outline:none;transition:border-color .15s;
-  -webkit-appearance:none;
+  width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;
+  padding:14px 16px;font-size:15px;color:var(--text);outline:none;
+  transition:border-color .15s;-webkit-appearance:none;
 }
-.inp::placeholder{color:#444}
-.inp:focus{border-color:#444}
+.inp::placeholder{color:#bbb}
+.inp:focus{border-color:var(--border-strong)}
 .btn-primary{
-  width:100%;background:var(--green);color:#000;border:none;border-radius:14px;
-  padding:17px;font-size:15px;font-weight:800;letter-spacing:.02em;cursor:pointer;
-  transition:opacity .15s;-webkit-tap-highlight-color:transparent;
+  width:100%;background:var(--text);color:#fff;border:none;border-radius:10px;
+  padding:16px;font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  cursor:pointer;transition:opacity .15s;-webkit-tap-highlight-color:transparent;
 }
-.btn-primary:active{opacity:.85}
-.btn-primary:disabled{opacity:.4;cursor:not-allowed}
-.err-msg{font-size:13px;color:var(--red);text-align:center;min-height:18px}
+.btn-primary:active{opacity:.8}
+.btn-primary:disabled{opacity:.35;cursor:not-allowed}
+.err-msg{font-size:12px;color:var(--red);text-align:center;min-height:18px;letter-spacing:.01em}
 
-/* ── LOADING ───────────────────────────────────────────────── */
+/* ── LOADING ─────────────────────────────────────────────────── */
 #loading-screen{
-  min-height:100svh;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;
+  min-height:100svh;display:none;align-items:center;justify-content:center;
+  flex-direction:column;gap:14px;background:var(--surface);
 }
-.spinner{width:36px;height:36px;border:3px solid #222;border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite}
+.spinner{
+  width:28px;height:28px;border:2px solid var(--border);
+  border-top-color:var(--text);border-radius:50%;animation:spin .8s linear infinite;
+}
 @keyframes spin{to{transform:rotate(360deg)}}
+.loading-label{
+  font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;
+}
 
-/* ── MAIN ORDER SCREEN ─────────────────────────────────────── */
-#order-screen{display:none;min-height:100svh;flex-direction:column}
+/* ── ORDER SCREEN ────────────────────────────────────────────── */
+#order-screen{display:none;min-height:100svh;flex-direction:column;background:var(--bg)}
 
 /* CONFIRM VIEW */
-#confirm-view{flex:1;display:none;flex-direction:column;min-height:100svh}
+#confirm-view{flex:1;display:none;flex-direction:column;min-height:100svh;background:var(--bg)}
 .hero-img-wrap{
-  position:relative;width:100%;height:58svh;min-height:260px;overflow:hidden;flex-shrink:0;
+  position:relative;width:100%;height:56svh;min-height:240px;overflow:hidden;flex-shrink:0;
+  background:var(--bg);
 }
 .hero-img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
 .hero-placeholder{
-  width:100%;height:100%;background:linear-gradient(135deg,#1a1a1a 0%,#111 100%);
+  width:100%;height:100%;background:#efefef;
   display:flex;align-items:center;justify-content:center;
 }
-.hero-placeholder svg{opacity:.12}
 .hero-fade{
-  position:absolute;bottom:0;left:0;right:0;height:55%;
-  background:linear-gradient(to top,var(--bg) 0%,transparent 100%);
-  pointer-events:none;
+  position:absolute;bottom:0;left:0;right:0;height:50%;
+  background:linear-gradient(to top,var(--bg) 0%,transparent 100%);pointer-events:none;
 }
 .order-badge{
-  position:absolute;top:16px;left:50%;transform:translateX(-50%);
-  background:rgba(0,0,0,.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-  border:1px solid rgba(255,255,255,.1);border-radius:100px;
-  padding:8px 18px;font-size:12px;font-weight:700;letter-spacing:.06em;
-  white-space:nowrap;color:#fff;
+  position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  background:rgba(255,255,255,.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(0,0,0,.07);border-radius:100px;
+  padding:6px 14px;font-size:10px;font-weight:700;letter-spacing:.09em;
+  white-space:nowrap;color:var(--body);text-transform:uppercase;
 }
 .confirm-sheet{
-  flex:1;padding:4px 20px 180px;display:flex;flex-direction:column;gap:20px;
-  background:var(--bg);
+  flex:1;padding:6px 20px 200px;display:flex;flex-direction:column;gap:20px;
 }
-.product-name{font-size:22px;font-weight:900;letter-spacing:-.02em;line-height:1.2}
-.product-variant{font-size:13px;color:var(--muted);margin-top:4px;font-weight:500}
+.product-name{font-size:21px;font-weight:800;letter-spacing:-.02em;line-height:1.2;color:var(--text)}
+.product-variant{
+  font-size:11px;color:var(--muted);margin-top:5px;font-weight:600;
+  letter-spacing:.07em;text-transform:uppercase;
+}
 .price-row{display:flex;align-items:baseline;gap:10px;margin-top:12px}
-.price-cod{font-size:32px;font-weight:900;letter-spacing:-.02em}
-.price-tag{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+.price-cod{font-size:29px;font-weight:800;letter-spacing:-.03em;color:var(--text)}
+.price-tag{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.1em}
 
 /* summary card */
-.summary-card{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden}
-.summary-row{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;border-bottom:1px solid var(--border);font-size:14px}
+.summary-card{
+  background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);
+}
+.summary-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:13px 16px;border-bottom:1px solid var(--border);
+}
 .summary-row:last-child{border-bottom:none}
-.summary-label{color:var(--muted);font-weight:500}
-.summary-val{font-weight:700}
-.summary-val.green{color:var(--green)}
+.summary-label{
+  font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+}
+.summary-val{font-size:13px;font-weight:700;color:var(--text)}
+.summary-val.green{color:var(--green-dark)}
 .summary-val.muted{color:var(--muted)}
 
 /* multi-item list */
-.items-list{display:flex;flex-direction:column;gap:10px}
-.item-row{display:flex;gap:12px;align-items:center}
-.item-thumb{width:46px;height:46px;border-radius:10px;object-fit:cover;background:#1a1a1a;flex-shrink:0}
+.items-list{display:flex;flex-direction:column;gap:8px}
+.item-row{
+  display:flex;gap:12px;align-items:center;padding:12px 14px;
+  background:var(--card);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+}
+.item-thumb{
+  width:44px;height:44px;border-radius:8px;object-fit:cover;
+  background:var(--bg);flex-shrink:0;border:1px solid var(--border);
+}
 .item-info{flex:1;min-width:0}
-.item-title{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.item-meta{font-size:12px;color:var(--muted);margin-top:2px}
-.item-price{font-size:13px;font-weight:800;flex-shrink:0}
+.item-title{
+  font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;color:var(--text);
+}
+.item-meta{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.03em}
+.item-price{font-size:13px;font-weight:700;flex-shrink:0;color:var(--text)}
 
 /* trust badges */
-.badges-row{display:flex;align-items:center;justify-content:center;gap:16px;padding:4px 0}
-.badge-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);font-weight:600}
-.badge-icon{font-size:14px}
+.badges-row{display:flex;align-items:center;justify-content:center;gap:18px;padding:2px 0}
+.badge-item{
+  display:flex;align-items:center;gap:5px;font-size:11px;
+  color:var(--muted);font-weight:600;letter-spacing:.01em;
+}
+.badge-icon{display:flex;align-items:center;color:var(--green)}
+
+/* pay method labels */
+.pay-logos{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
+.pay-badge{
+  background:var(--bg);border:1px solid var(--border);border-radius:5px;
+  padding:4px 9px;font-size:9px;font-weight:700;color:var(--muted);
+  letter-spacing:.08em;text-transform:uppercase;
+}
 
 /* sticky CTA */
 .cta-bar{
   position:fixed;bottom:0;left:0;right:0;z-index:100;
-  background:linear-gradient(to top,var(--bg) 70%,transparent 100%);
-  padding:12px 20px calc(env(safe-area-inset-bottom,0px) + 20px);
-  display:flex;flex-direction:column;gap:10px;
+  background:linear-gradient(to top,var(--surface) 60%,rgba(255,255,255,0) 100%);
+  padding:16px 20px calc(env(safe-area-inset-bottom,0px) + 18px);
+  display:flex;flex-direction:column;gap:8px;
 }
 .btn-confirm{
-  width:100%;background:var(--green);color:#000;border:none;border-radius:16px;
-  padding:18px;font-size:16px;font-weight:900;letter-spacing:.01em;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;background:var(--text);color:#fff;border:none;border-radius:12px;
+  padding:17px;font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
   -webkit-tap-highlight-color:transparent;transition:opacity .15s;
 }
-.btn-confirm:active{opacity:.85}
-.btn-confirm:disabled{opacity:.4;cursor:not-allowed}
+.btn-confirm:active{opacity:.8}
+.btn-confirm:disabled{opacity:.35;cursor:not-allowed}
 .btn-prepaid{
-  width:100%;background:transparent;color:#fff;border:1.5px solid #333;border-radius:16px;
-  padding:15px;font-size:14px;font-weight:700;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:6px;
-  -webkit-tap-highlight-color:transparent;transition:border-color .15s;
+  width:100%;background:var(--surface);color:var(--green-dark);
+  border:1.5px solid var(--green-border);border-radius:12px;
+  padding:14px;font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
+  -webkit-tap-highlight-color:transparent;transition:opacity .15s;
 }
-.btn-prepaid:active{border-color:#555}
-.btn-prepaid:disabled{opacity:.4;cursor:not-allowed}
+.btn-prepaid:active{opacity:.75}
+.btn-prepaid:disabled{opacity:.35;cursor:not-allowed}
 .savings-pill{
-  background:#1a3320;border:1px solid #0d4d22;border-radius:100px;
-  padding:3px 10px;font-size:11px;font-weight:800;color:var(--green);letter-spacing:.04em;
+  background:var(--green-light);border:1px solid var(--green-border);border-radius:100px;
+  padding:2px 8px;font-size:10px;font-weight:700;color:var(--green-dark);letter-spacing:.05em;
 }
-/* ALREADY CONFIRMED */
-.confirmed-banner{
-  background:#0d2d1a;border:1px solid #1a4d2a;border-radius:16px;padding:16px;
-  display:flex;align-items:center;gap:12px;
-}
-.confirmed-icon{font-size:24px}
-.confirmed-text{font-size:14px;font-weight:700;line-height:1.4}
-.confirmed-sub{font-size:12px;color:var(--muted);margin-top:2px;font-weight:400}
 
-/* TRACK VIEW */
-#track-view{flex:1;display:none;flex-direction:column;padding:0 0 40px}
-.track-header{
-  padding:20px 20px 0;display:flex;align-items:center;gap:12px;
+/* already confirmed */
+.confirmed-banner{
+  background:var(--green-light);border:1px solid var(--green-border);border-radius:12px;
+  padding:14px 16px;display:flex;align-items:center;gap:12px;
 }
-.track-order-num{font-size:20px;font-weight:900;letter-spacing:-.01em}
+.confirmed-icon{display:flex;align-items:center;color:var(--green);flex-shrink:0}
+.confirmed-text{font-size:14px;font-weight:700;color:var(--text)}
+.confirmed-sub{font-size:12px;color:var(--body);margin-top:2px}
+
+/* ── TRACK VIEW ──────────────────────────────────────────────── */
+#track-view{flex:1;display:none;flex-direction:column;padding:0 0 48px;background:var(--bg)}
+.track-topbar{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:20px 20px 16px;display:flex;align-items:flex-start;gap:12px;
+}
+.track-order-num{font-size:17px;font-weight:800;letter-spacing:-.01em;color:var(--text)}
+.track-customer-name{font-size:12px;color:var(--muted);margin-top:3px;letter-spacing:.02em}
 .stage-pill{
-  padding:5px 12px;border-radius:100px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  padding:4px 10px;border-radius:100px;font-size:10px;font-weight:700;
+  letter-spacing:.07em;text-transform:uppercase;white-space:nowrap;border:1px solid;
 }
-.stage-pill.confirmed{background:#1a2a1a;color:#4ade80}
-.stage-pill.transit{background:#1a1f3a;color:#818cf8}
-.stage-pill.delivered{background:#0d2d1a;color:var(--green)}
-.stage-pill.rto{background:#2d1a1a;color:var(--red)}
-.stage-pill.new{background:#2a2a1a;color:var(--yellow)}
+.stage-pill.confirmed{background:var(--green-light);color:var(--green-dark);border-color:var(--green-border)}
+.stage-pill.transit{background:var(--purple-light);color:var(--purple);border-color:var(--purple-border)}
+.stage-pill.delivered{background:var(--green-light);color:var(--green-dark);border-color:var(--green-border)}
+.stage-pill.rto{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
+.stage-pill.new{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
 
 /* progress stepper */
-.stepper{padding:24px 20px 8px;position:relative}
-.step-track{display:flex;align-items:flex-start;gap:0;position:relative}
+.stepper{
+  padding:24px 20px 20px;background:var(--surface);
+  border-bottom:1px solid var(--border);
+}
+.step-track{display:flex;align-items:flex-start}
 .step-item{flex:1;display:flex;flex-direction:column;align-items:center;position:relative;z-index:1}
 .step-dot{
-  width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:800;flex-shrink:0;position:relative;z-index:2;
-  transition:all .3s;
+  width:26px;height:26px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;flex-shrink:0;position:relative;z-index:2;transition:all .2s;
 }
-.step-dot.done{background:var(--green);color:#000}
-.step-dot.active{background:#fff;color:#000;box-shadow:0 0 0 4px rgba(255,255,255,.12)}
-.step-dot.pending{background:#1e1e1e;color:#444;border:1.5px solid #2a2a2a}
-.step-line{
-  position:absolute;top:14px;left:50%;right:-50%;height:2px;z-index:0;
-}
+.step-dot.done{background:var(--green);color:#fff}
+.step-dot.done svg{stroke:#fff}
+.step-dot.active{background:var(--text);color:#fff;box-shadow:0 0 0 3px rgba(15,15,15,.1)}
+.step-dot.active svg{stroke:#fff}
+.step-dot.pending{background:var(--bg);border:1.5px solid var(--border)}
+.step-dot.pending svg{stroke:#ccc}
+.step-line{position:absolute;top:13px;left:50%;right:-50%;height:1.5px;z-index:0}
 .step-line.done{background:var(--green)}
-.step-line.pending{background:#1e1e1e}
-.step-label{font-size:10px;font-weight:700;color:var(--muted);margin-top:6px;text-align:center;letter-spacing:.04em;text-transform:uppercase;line-height:1.3;max-width:54px}
-.step-label.active{color:#fff}
+.step-line.pending{background:var(--border)}
+.step-label{
+  font-size:9px;font-weight:700;color:var(--muted);margin-top:7px;text-align:center;
+  letter-spacing:.06em;text-transform:uppercase;line-height:1.3;max-width:52px;
+}
+.step-label.active{color:var(--text)}
 .step-item:last-child .step-line{display:none}
 
-/* shipment card */
-.section-pad{padding:0 20px}
-.section-title{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin:24px 0 10px}
-.shipment-card{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden}
-.shipment-vendor{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
-.vendor-name{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
-.courier-tag{font-size:11px;color:var(--muted);background:#1e1e1e;padding:3px 9px;border-radius:100px;font-weight:600}
-.awb-row{padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
-.awb-label{font-size:12px;color:var(--muted);font-weight:500}
-.awb-num{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.04em}
-.track-link{
-  display:block;background:var(--green);color:#000;text-decoration:none;text-align:center;
-  padding:14px 16px;font-size:14px;font-weight:800;letter-spacing:.02em;
+/* section titles */
+.section-wrap{padding:0 16px}
+.section-title{
+  font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.13em;
+  text-transform:uppercase;margin:20px 0 8px;
 }
-.track-link:active{opacity:.85}
-.eta-card{
-  background:var(--card);border:1px solid var(--border);border-radius:16px;
-  padding:16px;display:flex;align-items:center;gap:14px;
-}
-.eta-icon{font-size:28px;flex-shrink:0}
-.eta-text{font-size:15px;font-weight:800;line-height:1.3}
-.eta-sub{font-size:12px;color:var(--muted);margin-top:3px;font-weight:400}
 
-/* waiting card */
-.waiting-card{
-  background:var(--card);border:1px solid var(--border);border-radius:16px;
-  padding:20px;display:flex;flex-direction:column;gap:8px;
+/* status cards */
+.status-card-base{
+  background:var(--card);border:1px solid var(--border);border-radius:12px;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);
 }
-.waiting-title{font-size:16px;font-weight:800}
-.waiting-sub{font-size:13px;color:var(--muted);line-height:1.55}
-.waiting-steps{display:flex;flex-direction:column;gap:6px;margin-top:4px}
-.w-step{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);font-weight:500}
-.w-dot{width:6px;height:6px;border-radius:50%;background:#333;flex-shrink:0}
+.eta-card{
+  display:flex;align-items:center;gap:14px;padding:18px;
+}
+.eta-icon{display:flex;align-items:center;flex-shrink:0}
+.eta-text{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-.01em}
+.eta-sub{font-size:12px;color:var(--body);margin-top:3px}
+
+.waiting-card{padding:20px;display:flex;flex-direction:column;gap:10px}
+.waiting-icon{display:flex;align-items:center}
+.waiting-title{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-.01em}
+.waiting-sub{font-size:13px;color:var(--body);line-height:1.65}
+.waiting-steps{display:flex;flex-direction:column;gap:7px;margin-top:4px}
+.w-step{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);font-weight:500}
+.w-dot{width:5px;height:5px;border-radius:50%;background:var(--border);flex-shrink:0}
 .w-dot.green{background:var(--green)}
 
-/* delivered card */
 .delivered-card{
-  background:linear-gradient(135deg,#0a2010,#0d1a0d);
-  border:1px solid #1a4d2a;border-radius:16px;
-  padding:20px;text-align:center;
+  background:var(--green-light);border:1px solid var(--green-border);border-radius:12px;
+  padding:22px;text-align:center;
 }
-.delivered-emoji{font-size:40px;margin-bottom:8px}
-.delivered-title{font-size:18px;font-weight:900;color:var(--green)}
-.delivered-sub{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.5}
+.delivered-icon{display:flex;align-items:center;justify-content:center;color:var(--green);margin-bottom:10px}
+.delivered-title{font-size:16px;font-weight:800;color:var(--green-dark);letter-spacing:-.01em}
+.delivered-sub{font-size:13px;color:var(--body);margin-top:6px;line-height:1.6}
 
-/* return section — only on delivered */
-.rr-divider{height:1px;background:var(--border);margin:28px 20px 0}
-.rr-section{padding:20px}
-.rr-notice{
-  background:#141414;border:1px solid #2a2a2a;border-radius:14px;padding:14px 16px;
-  font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:14px;
-}
-.rr-notice strong{color:#aaa;font-weight:700}
-.rr-btns{display:flex;gap:10px}
-.btn-rr{
-  flex:1;padding:13px 10px;border-radius:12px;font-size:13px;font-weight:800;
-  cursor:pointer;letter-spacing:.02em;border:1.5px solid;
-  -webkit-tap-highlight-color:transparent;transition:opacity .15s;text-align:center;
-}
-.btn-rr:active{opacity:.75}
-.btn-exchange{background:#1a1f3a;border-color:#3730a3;color:#818cf8}
-.btn-return{background:#1e1e1e;border-color:#333;color:#aaa}
-
-/* RTO / cancelled */
 .rto-card{
-  background:#1e0a0a;border:1px solid #4d1a1a;border-radius:16px;
-  padding:20px;text-align:center;
+  background:var(--red-light);border:1px solid var(--red-border);border-radius:12px;
+  padding:22px;text-align:center;
 }
-.rto-emoji{font-size:36px;margin-bottom:8px}
-.rto-title{font-size:17px;font-weight:900;color:var(--red)}
-.rto-sub{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.5}
+.rto-icon{display:flex;align-items:center;justify-content:center;color:var(--red);margin-bottom:10px}
+.rto-title{font-size:16px;font-weight:800;color:var(--red);letter-spacing:-.01em}
+.rto-sub{font-size:13px;color:var(--body);margin-top:6px;line-height:1.6}
 
-/* existing return requests */
-.rr-existing{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-top:12px}
-.rr-req-item{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+/* shipment card */
+.shipment-card{
+  background:var(--card);border:1px solid var(--border);border-radius:12px;
+  overflow:hidden;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.04);
+}
+.shipment-vendor{
+  padding:10px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;background:var(--bg);
+}
+.vendor-name{
+  font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;
+}
+.courier-tag{
+  font-size:10px;color:var(--muted);background:var(--surface);
+  padding:3px 8px;border-radius:100px;font-weight:600;border:1px solid var(--border);
+}
+.awb-row{padding:12px 14px;display:flex;align-items:center;justify-content:space-between}
+.awb-label{
+  font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+}
+.awb-num{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:.04em;color:var(--purple)}
+.track-link{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--green-light);color:var(--green-dark);text-decoration:none;
+  padding:12px 14px;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  border-top:1px solid var(--green-border);
+}
+.track-link:active{opacity:.8}
+
+/* return section */
+.rr-divider{height:1px;background:var(--border);margin:0}
+.rr-inner{padding:20px 0 4px}
+.rr-notice{
+  background:var(--bg);border:1px solid var(--border);border-radius:10px;
+  padding:13px 14px;font-size:13px;color:var(--body);line-height:1.65;margin-bottom:12px;
+}
+.rr-notice strong{color:var(--text);font-weight:700}
+.rr-btns{display:flex;gap:8px}
+.btn-rr{
+  flex:1;padding:13px 10px;border-radius:10px;font-size:11px;font-weight:700;
+  cursor:pointer;letter-spacing:.07em;border:1.5px solid;
+  -webkit-tap-highlight-color:transparent;transition:opacity .15s;
+  text-align:center;text-transform:uppercase;background:var(--card);
+}
+.btn-rr:active{opacity:.7}
+.btn-exchange{border-color:var(--purple-border);color:var(--purple)}
+.btn-return{border-color:var(--border);color:var(--body)}
+
+.rr-existing{
+  background:var(--card);border:1px solid var(--border);border-radius:10px;
+  overflow:hidden;margin-top:12px;box-shadow:0 1px 2px rgba(0,0,0,.03);
+}
+.rr-req-item{
+  padding:12px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
 .rr-req-item:last-child{border-bottom:none}
-.rr-req-label{font-size:13px;font-weight:700}
-.rr-req-status{font-size:11px;font-weight:800;padding:3px 9px;border-radius:100px}
-.rr-req-status.pending{background:#2a1a00;color:#fbbf24}
-.rr-req-status.approved{background:#0d2d1a;color:var(--green)}
-.rr-req-status.rejected{background:#2d1a1a;color:var(--red)}
+.rr-req-label{font-size:12px;font-weight:700;color:var(--text)}
+.rr-req-status{
+  font-size:10px;font-weight:700;padding:3px 8px;border-radius:100px;
+  letter-spacing:.06em;text-transform:uppercase;border:1px solid;
+}
+.rr-req-status.pending{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
+.rr-req-status.approved{background:var(--green-light);color:var(--green-dark);border-color:var(--green-border)}
+.rr-req-status.rejected{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
 
-/* payment success overlay */
+/* help row */
+.help-row{
+  margin-top:28px;padding:0 16px;display:flex;align-items:center;
+  justify-content:center;gap:5px;font-size:12px;color:var(--muted);
+}
+.help-link{color:var(--body);font-weight:700;text-decoration:none}
+
+/* success overlay */
 .success-overlay{
-  position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:200;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;
-  opacity:0;pointer-events:none;transition:opacity .3s;
+  position:fixed;inset:0;background:rgba(255,255,255,.97);z-index:200;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:40px 28px;opacity:0;pointer-events:none;transition:opacity .3s;
 }
 .success-overlay.visible{opacity:1;pointer-events:all}
-.success-icon{font-size:64px;margin-bottom:16px;animation:pop .4s cubic-bezier(.34,1.56,.64,1) forwards}
+.success-icon-wrap{
+  width:68px;height:68px;border-radius:50%;background:var(--green-light);
+  border:1.5px solid var(--green-border);display:flex;align-items:center;
+  justify-content:center;color:var(--green);margin-bottom:18px;
+  animation:pop .4s cubic-bezier(.34,1.56,.64,1) forwards;
+}
 @keyframes pop{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:1}}
-.success-title{font-size:26px;font-weight:900;letter-spacing:-.02em;text-align:center}
-.success-sub{font-size:15px;color:var(--muted);text-align:center;margin-top:8px;line-height:1.6}
+.success-title{font-size:22px;font-weight:800;letter-spacing:-.02em;text-align:center;color:var(--text)}
+.success-sub{
+  font-size:13px;color:var(--body);text-align:center;margin-top:8px;
+  line-height:1.65;max-width:260px;
+}
 .success-btn{
-  margin-top:28px;padding:15px 36px;background:var(--green);color:#000;border:none;
-  border-radius:14px;font-size:15px;font-weight:800;cursor:pointer;letter-spacing:.02em;
+  margin-top:24px;padding:14px 28px;background:var(--text);color:#fff;border:none;
+  border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;
+  letter-spacing:.07em;text-transform:uppercase;
 }
 
-/* contact help */
-.help-row{padding:0 20px;margin-top:28px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;color:var(--muted)}
-.help-link{color:#aaa;font-weight:700;text-decoration:none}
-
-/* utility */
 .hidden{display:none!important}
 </style>
 </head>
@@ -296,19 +407,22 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
 <div id="lookup-screen">
   <div class="logo">CROSCROW</div>
   <h1 class="lookup-title">Track your order</h1>
-  <p class="lookup-sub">Enter your order number to see status &amp; updates</p>
+  <p class="lookup-sub">Enter your order number to check status and updates</p>
   <form class="lookup-form" id="lookup-form">
-    <input class="inp" id="inp-order" type="text" inputmode="numeric" placeholder="Order number (e.g. 2688)" autocomplete="off" autocorrect="off">
-    <input class="inp" id="inp-contact" type="text" inputmode="email" placeholder="Email or phone (optional)" autocomplete="off" autocorrect="off">
-    <button class="btn-primary" type="submit" id="lookup-btn">Track Order →</button>
+    <input class="inp" id="inp-order" type="text" inputmode="numeric"
+      placeholder="Order number (e.g. 2688)" autocomplete="off" autocorrect="off">
+    <input class="inp" id="inp-contact" type="text" inputmode="email"
+      placeholder="Email or phone (optional)" autocomplete="off" autocorrect="off">
+    <button class="btn-primary" type="submit" id="lookup-btn">Track Order</button>
     <div class="err-msg" id="lookup-err"></div>
   </form>
 </div>
 
 <!-- LOADING -->
-<div id="loading-screen" style="display:none;min-height:100svh;align-items:center;justify-content:center;flex-direction:column;gap:16px">
+<div id="loading-screen"
+  style="display:none;min-height:100svh;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:var(--surface)">
   <div class="spinner"></div>
-  <span style="font-size:13px;color:var(--muted);font-weight:600">Looking up your order…</span>
+  <span class="loading-label">Looking up order</span>
 </div>
 
 <!-- ORDER SCREEN -->
@@ -318,7 +432,11 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
   <div id="confirm-view" style="display:none;flex-direction:column;min-height:100svh">
     <div class="hero-img-wrap">
       <div class="hero-placeholder" id="hero-placeholder">
-        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width=".8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+        </svg>
       </div>
       <img id="hero-img" class="hero-img hidden" alt="Product">
       <div class="hero-fade"></div>
@@ -326,11 +444,16 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
     </div>
 
     <div class="confirm-sheet">
-      <!-- Already confirmed banner -->
+      <!-- Already confirmed -->
       <div class="confirmed-banner hidden" id="confirmed-banner">
-        <div class="confirmed-icon">✅</div>
+        <div class="confirmed-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="7 13 10 16 17 9"/>
+          </svg>
+        </div>
         <div>
-          <div class="confirmed-text">Order confirmed!</div>
+          <div class="confirmed-text">Order confirmed</div>
           <div class="confirmed-sub">Your advance payment was received. We'll dispatch shortly.</div>
         </div>
       </div>
@@ -345,7 +468,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
         </div>
       </div>
 
-      <!-- Multi-item list (shown if >1 item) -->
+      <!-- Multi-item list -->
       <div id="items-list" class="items-list hidden"></div>
 
       <!-- Summary -->
@@ -355,8 +478,8 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
           <span class="summary-val" id="sum-total">—</span>
         </div>
         <div class="summary-row hidden" id="sum-confirm-row">
-          <span class="summary-label">Advance now (₹99)</span>
-          <span class="summary-val green">— ₹99 deducted at door</span>
+          <span class="summary-label">Advance now</span>
+          <span class="summary-val green">₹99 · deducted at door</span>
         </div>
         <div class="summary-row hidden" id="sum-cod-row">
           <span class="summary-label">Balance at delivery</span>
@@ -370,25 +493,53 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
 
       <!-- Trust badges -->
       <div class="badges-row" id="badges-row">
-        <div class="badge-item"><span class="badge-icon">🔒</span><span>Secure payment</span></div>
-        <div class="badge-item"><span class="badge-icon">✅</span><span>RBI compliant</span></div>
-        <div class="badge-item"><span class="badge-icon">🔄</span><span>Easy returns</span></div>
+        <div class="badge-item">
+          <span class="badge-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </span>
+          <span>Secure payment</span>
+        </div>
+        <div class="badge-item">
+          <span class="badge-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </span>
+          <span>RBI compliant</span>
+        </div>
+        <div class="badge-item">
+          <span class="badge-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+            </svg>
+          </span>
+          <span>Easy returns</span>
+        </div>
       </div>
 
-      <!-- payment badge image placeholder — swap with real badges if available -->
-      <div style="display:flex;align-items:center;justify-content:center;gap:10px;opacity:.35;flex-wrap:wrap">
-        <svg width="44" height="20" viewBox="0 0 44 20" fill="none"><rect width="44" height="20" rx="4" fill="#1a1a1a"/><text x="22" y="14" text-anchor="middle" font-size="9" fill="#aaa" font-family="sans-serif" font-weight="700">UPI</text></svg>
-        <svg width="44" height="20" viewBox="0 0 44 20" fill="none"><rect width="44" height="20" rx="4" fill="#1a1a1a"/><text x="22" y="14" text-anchor="middle" font-size="9" fill="#aaa" font-family="sans-serif" font-weight="700">VISA</text></svg>
-        <svg width="44" height="20" viewBox="0 0 44 20" fill="none"><rect width="44" height="20" rx="4" fill="#1a1a1a"/><text x="22" y="14" text-anchor="middle" font-size="9" fill="#aaa" font-family="sans-serif" font-weight="700">MC</text></svg>
-        <svg width="44" height="20" viewBox="0 0 44 20" fill="none"><rect width="44" height="20" rx="4" fill="#1a1a1a"/><text x="22" y="14" text-anchor="middle" font-size="9" fill="#aaa" font-family="sans-serif" font-weight="700">NET</text></svg>
-        <svg width="44" height="20" viewBox="0 0 44 20" fill="none"><rect width="44" height="20" rx="4" fill="#1a1a1a"/><text x="22" y="14" text-anchor="middle" font-size="9" fill="#aaa" font-family="sans-serif" font-weight="700">COD</text></svg>
+      <!-- Pay method labels -->
+      <div class="pay-logos">
+        <span class="pay-badge">UPI</span>
+        <span class="pay-badge">Visa</span>
+        <span class="pay-badge">Mastercard</span>
+        <span class="pay-badge">Net Banking</span>
+        <span class="pay-badge">COD</span>
       </div>
     </div>
 
-    <!-- Sticky CTA (hidden if already confirmed) -->
+    <!-- Sticky CTA -->
     <div class="cta-bar" id="cta-bar">
       <button class="btn-confirm" id="btn-confirm" onclick="pay('confirm')">
-        <span>🔒</span> Pay ₹99 &amp; Confirm Order
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Pay ₹99 &amp; Confirm Order
       </button>
       <button class="btn-prepaid" id="btn-prepaid" onclick="pay('prepaid')">
         Pay in full &amp; save <span class="savings-pill" id="savings-pill">₹—</span>
@@ -398,12 +549,12 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
 
   <!-- TRACK VIEW -->
   <div id="track-view" style="display:none;flex-direction:column;padding-bottom:40px">
-    <div class="track-header">
+    <div class="track-topbar">
       <div>
         <div class="track-order-num" id="track-order-num">—</div>
-        <div style="font-size:13px;color:var(--muted);margin-top:3px;font-weight:500" id="track-customer">—</div>
+        <div class="track-customer-name" id="track-customer">—</div>
       </div>
-      <div style="margin-left:auto">
+      <div style="margin-left:auto;padding-top:2px">
         <div class="stage-pill" id="stage-pill">—</div>
       </div>
     </div>
@@ -411,26 +562,26 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
     <!-- Progress stepper -->
     <div class="stepper" id="stepper"></div>
 
-    <div class="section-pad">
-      <!-- Status card: waiting / eta / delivered / rto -->
-      <div id="status-card"></div>
+    <div class="section-wrap">
+      <!-- Status card -->
+      <div id="status-card" style="margin-top:16px"></div>
 
-      <!-- Shipment info (AWB) -->
+      <!-- Shipment info -->
       <div id="shipment-wrap" class="hidden">
         <div class="section-title">Shipment</div>
         <div id="shipment-cards"></div>
       </div>
 
-      <!-- Delivered: return/exchange -->
+      <!-- Return/exchange -->
       <div id="rr-section" class="hidden">
-        <div class="rr-divider" style="margin:28px 0 0"></div>
-        <div class="rr-section">
+        <div class="rr-divider" style="margin:24px 0 0"></div>
+        <div class="rr-inner">
           <div class="rr-notice">
             <strong>Have an issue with this order?</strong><br>
             You can request a return or exchange within the eligible window.
           </div>
           <div class="rr-btns">
-            <button class="btn-rr btn-exchange" onclick="goRR('exchange')">↩ Exchange</button>
+            <button class="btn-rr btn-exchange" onclick="goRR('exchange')">Exchange</button>
             <button class="btn-rr btn-return" onclick="goRR('return')">Return</button>
           </div>
           <div id="rr-existing-list"></div>
@@ -439,7 +590,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
     </div>
 
     <div class="help-row">
-      Need help? <a class="help-link" href="https://wa.me/916375668971">Chat on WhatsApp →</a>
+      Need help?&nbsp;<a class="help-link" href="https://wa.me/916375668971">Chat on WhatsApp</a>
     </div>
   </div>
 
@@ -447,10 +598,17 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:-ap
 
 <!-- Success overlay -->
 <div class="success-overlay" id="success-overlay">
-  <div class="success-icon">🎉</div>
-  <div class="success-title">Order Confirmed!</div>
-  <div class="success-sub" id="success-sub">Your advance of ₹99 has been received.<br>We'll dispatch your order shortly.</div>
-  <button class="success-btn" onclick="showTrack()">Track Your Order →</button>
+  <div class="success-icon-wrap">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+  </div>
+  <div class="success-title">Order Confirmed</div>
+  <div class="success-sub" id="success-sub">
+    Your advance of ₹99 has been received. We'll dispatch your order shortly.
+  </div>
+  <button class="success-btn" onclick="showTrack()">Track Your Order</button>
 </div>
 
 <script>
@@ -458,16 +616,35 @@ const API = '';
 let orderData = null;
 let paying = false;
 
-// ── Parse URL params ─────────────────────────────────────────
+// ── Inline SVG icon sets ──────────────────────────────────────
+const IC = {
+  check: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  pkg:   `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`,
+  truck: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect width="7" height="7" x="14" y="11" rx="1"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>`,
+  nav:   `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>`,
+  star:  `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`,
+};
+
+const BIG = {
+  checkCircle: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="7 13 10 16 17 9"/></svg>`,
+  clock:       `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  pkg:         `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`,
+  truck:       `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3"/><rect width="7" height="7" x="14" y="11" rx="1"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>`,
+  nav:         `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>`,
+  pause:       `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>`,
+  rto:         `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`,
+  xCircle:     `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>`,
+  extLink:     `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
+};
+
+// ── URL params ────────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const urlOrder = params.get('order') || '';
 const urlContact = params.get('contact') || '';
 
-// Pre-fill and auto-lookup if params present
 if (urlOrder) {
   document.getElementById('inp-order').value = urlOrder.replace('#','');
   if (urlContact && urlContact !== 'na') document.getElementById('inp-contact').value = urlContact;
-  // Auto-lookup
   window.addEventListener('DOMContentLoaded', () => { setTimeout(doLookup, 50); });
 }
 
@@ -475,8 +652,7 @@ document.getElementById('lookup-form').addEventListener('submit', e => { e.preve
 
 function showScreen(id) {
   ['lookup-screen','loading-screen','order-screen'].forEach(s => {
-    const el = document.getElementById(s);
-    el.style.display = s === id ? (s === 'order-screen' ? 'flex' : 'flex') : 'none';
+    document.getElementById(s).style.display = s === id ? 'flex' : 'none';
   });
 }
 
@@ -487,7 +663,6 @@ async function doLookup() {
   document.getElementById('lookup-err').textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');
-
   try {
     const r = await fetch(`${API}/order/lookup?q=${encodeURIComponent(q)}&contact=${encodeURIComponent(contact)}`);
     const d = await r.json();
@@ -504,27 +679,18 @@ async function doLookup() {
 function renderOrder(d) {
   const stage = d.stage || 'new';
   const notConfirmed = !d.already_confirmed && !d.is_prepaid && ['new','hold','misc',''].includes(stage);
-  const dispatched = ['ready','pickup','transit','ofd','delivered'].includes(stage);
-
   showScreen('order-screen');
   document.getElementById('order-screen').style.flexDirection = 'column';
-
-  if (notConfirmed) {
-    renderConfirm(d);
-  } else {
-    renderTrack(d);
-  }
+  notConfirmed ? renderConfirm(d) : renderTrack(d);
 }
 
-// ── CONFIRM VIEW ─────────────────────────────────────────────
+// ── CONFIRM VIEW ──────────────────────────────────────────────
 function renderConfirm(d) {
   document.getElementById('confirm-view').style.display = 'flex';
   document.getElementById('track-view').style.display = 'none';
 
-  // Badge
-  document.getElementById('order-badge').textContent = `ORDER ${d.order_name} • COD ₹${fmt(d.total)}`;
+  document.getElementById('order-badge').textContent = `ORDER ${d.order_name} · COD ₹${fmt(d.total)}`;
 
-  // Hero image — first item image
   const firstImg = d.items?.find(i => i.image_url)?.image_url;
   if (firstImg) {
     const img = document.getElementById('hero-img');
@@ -538,20 +704,18 @@ function renderConfirm(d) {
   const multi = d.items?.length > 1;
 
   if (multi) {
-    // Multi-item: show list
     document.getElementById('product-info').classList.add('hidden');
     const list = document.getElementById('items-list');
     list.classList.remove('hidden');
     list.innerHTML = d.items.map(it => `
       <div class="item-row">
-        ${it.image_url ? `<img class="item-thumb" src="${it.image_url}" alt="">` : `<div class="item-thumb" style="background:#1a1a1a"></div>`}
+        ${it.image_url ? `<img class="item-thumb" src="${it.image_url}" alt="">` : `<div class="item-thumb"></div>`}
         <div class="item-info">
           <div class="item-title">${esc(it.title)}</div>
-          <div class="item-meta">${esc(it.variant_title || '')}${it.quantity > 1 ? ` × ${it.quantity}` : ''}</div>
+          <div class="item-meta">${esc(it.variant_title||'')}${it.quantity>1?` · ×${it.quantity}`:''}</div>
         </div>
         <div class="item-price">₹${fmt(parseFloat(it.price)*it.quantity)}</div>
-      </div>
-    `).join('');
+      </div>`).join('');
   } else if (d.items?.length === 1) {
     const it = d.items[0];
     document.getElementById('product-name').textContent = it.title;
@@ -559,18 +723,15 @@ function renderConfirm(d) {
     document.getElementById('price-cod').textContent = `₹${fmt(codAfter)}`;
   }
 
-  // Summary
   document.getElementById('sum-total').textContent = `₹${fmt(total)}`;
   document.getElementById('sum-confirm-row').classList.remove('hidden');
   document.getElementById('sum-cod-row').classList.remove('hidden');
   document.getElementById('sum-cod').textContent = `₹${fmt(codAfter)}`;
 
-  // Prepaid button
   const savings = d.prepaid_savings || 0;
   document.getElementById('savings-pill').textContent = `Save ₹${savings}`;
   if (d.prepaid_amount_due <= 0) document.getElementById('btn-prepaid').classList.add('hidden');
 
-  // Already confirmed?
   if (d.already_confirmed) {
     document.getElementById('confirmed-banner').classList.remove('hidden');
     document.getElementById('cta-bar').classList.add('hidden');
@@ -580,7 +741,7 @@ function renderConfirm(d) {
   }
 }
 
-// ── TRACK VIEW ───────────────────────────────────────────────
+// ── TRACK VIEW ────────────────────────────────────────────────
 function renderTrack(d) {
   document.getElementById('track-view').style.display = 'flex';
   document.getElementById('confirm-view').style.display = 'none';
@@ -589,7 +750,6 @@ function renderTrack(d) {
   document.getElementById('track-order-num').textContent = d.order_name;
   document.getElementById('track-customer').textContent = d.customer_name || '';
 
-  // Stage pill
   const pill = document.getElementById('stage-pill');
   const stageLabels = {
     new:'Pending', hold:'On Hold', confirmed:'Confirmed', partial:'Processing',
@@ -597,33 +757,35 @@ function renderTrack(d) {
     ofd:'Out for Delivery', delivered:'Delivered', rto:'Returned', cancelled:'Cancelled',
   };
   pill.textContent = stageLabels[stage] || stage;
-  const pillClass = ['delivered','ready','pickup','transit','ofd'].includes(stage) ? (stage === 'delivered' ? 'delivered' : 'transit')
+  const pillClass = ['delivered','ready','pickup','transit','ofd'].includes(stage)
+    ? (stage === 'delivered' ? 'delivered' : 'transit')
     : ['confirmed','partial'].includes(stage) ? 'confirmed'
     : ['rto','cancelled'].includes(stage) ? 'rto' : 'new';
   pill.className = `stage-pill ${pillClass}`;
 
   // Stepper
   const STEPS = [
-    { key:'confirmed', label:'Confirmed', icon:'✓' },
-    { key:'ready',     label:'Dispatched', icon:'📦' },
-    { key:'transit',   label:'In Transit', icon:'🚚' },
-    { key:'ofd',       label:'Out for Delivery', icon:'🛵' },
-    { key:'delivered', label:'Delivered', icon:'🎉' },
+    { key:'confirmed', label:'Confirmed', icon: IC.check },
+    { key:'ready',     label:'Dispatched', icon: IC.pkg   },
+    { key:'transit',   label:'Transit',    icon: IC.truck  },
+    { key:'ofd',       label:'Delivery',   icon: IC.nav    },
+    { key:'delivered', label:'Delivered',  icon: IC.star   },
   ];
   const ORDER = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered'];
   const idx = ORDER.indexOf(stage);
-  const stepHtml = STEPS.map((s, i) => {
-    const stepIdx = ORDER.indexOf(s.key === 'ready' ? 'ready' : s.key === 'transit' ? 'transit' : s.key);
-    const done = idx >= stepIdx && idx > 0;
+  const stepHtml = STEPS.map(s => {
+    const stepIdx = ORDER.indexOf(s.key);
+    const done = idx >= stepIdx && idx > 0 && ORDER[idx] !== s.key;
     const active = ORDER[idx] === s.key || (s.key === 'confirmed' && ['confirmed','partial'].includes(stage));
-    const cls = done && !active ? 'done' : active ? 'active' : 'pending';
-    const lineCls = done ? 'done' : 'pending';
+    const cls = done ? 'done' : active ? 'active' : 'pending';
     return `<div class="step-item">
       <div style="position:relative;width:100%">
-        <div class="step-line ${lineCls}"></div>
-        <div style="display:flex;justify-content:center"><div class="step-dot ${cls}">${done && !active ? '✓' : s.icon}</div></div>
+        <div class="step-line ${done?'done':'pending'}"></div>
+        <div style="display:flex;justify-content:center">
+          <div class="step-dot ${cls}">${done ? IC.check : s.icon}</div>
+        </div>
       </div>
-      <div class="step-label ${active ? 'active' : ''}">${s.label}</div>
+      <div class="step-label ${active?'active':''}">${s.label}</div>
     </div>`;
   }).join('');
   document.getElementById('stepper').innerHTML = `<div class="step-track">${stepHtml}</div>`;
@@ -631,41 +793,42 @@ function renderTrack(d) {
   // Status card
   let statusHtml = '';
   if (stage === 'delivered') {
-    const dateStr = d.delivery_status_updated_at ? new Date(d.delivery_status_updated_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
+    const dateStr = d.delivery_status_updated_at
+      ? new Date(d.delivery_status_updated_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
     statusHtml = `<div class="delivered-card">
-      <div class="delivered-emoji">🎉</div>
-      <div class="delivered-title">Delivered!</div>
-      <div class="delivered-sub">${dateStr ? `Delivered on ${dateStr}.` : 'Your order has been delivered.'} We hope you love it!</div>
+      <div class="delivered-icon">${BIG.checkCircle}</div>
+      <div class="delivered-title">Delivered</div>
+      <div class="delivered-sub">${dateStr?`Delivered on ${dateStr}.`:'Your order has been delivered.'} We hope you love it.</div>
     </div>`;
-    // Show return/exchange section
     document.getElementById('rr-section').classList.remove('hidden');
     renderRR(d);
   } else if (['rto','cancelled'].includes(stage)) {
     statusHtml = `<div class="rto-card">
-      <div class="rto-emoji">${stage === 'rto' ? '↩️' : '❌'}</div>
-      <div class="rto-title">${stage === 'rto' ? 'Order Returned' : 'Order Cancelled'}</div>
-      <div class="rto-sub">${stage === 'rto' ? 'This order was returned to the seller. If you were charged, a refund will be processed within 3–5 business days.' : 'This order has been cancelled. For any questions, contact our support team.'}</div>
+      <div class="rto-icon">${stage==='rto'?BIG.rto:BIG.xCircle}</div>
+      <div class="rto-title">${stage==='rto'?'Order Returned':'Order Cancelled'}</div>
+      <div class="rto-sub">${stage==='rto'
+        ?'This order was returned to the seller. If you were charged, a refund will be processed within 3–5 business days.'
+        :'This order has been cancelled. For any questions, contact our support team.'}</div>
     </div>`;
   } else if (['transit','pickup','ofd','ready'].includes(stage)) {
-    const etaMsg = stage === 'ofd' ? 'Arriving today!' : 'Expected in 2–5 business days';
-    statusHtml = `<div class="eta-card">
-      <div class="eta-icon">${stage === 'ofd' ? '🛵' : '🚚'}</div>
+    const ofd = stage === 'ofd';
+    statusHtml = `<div class="status-card-base eta-card">
+      <div class="eta-icon" style="color:${ofd?'var(--green)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
       <div>
-        <div class="eta-text">${stage === 'ofd' ? 'Out for delivery' : 'On its way to you'}</div>
-        <div class="eta-sub">${etaMsg}</div>
+        <div class="eta-text">${ofd?'Out for delivery':'On its way to you'}</div>
+        <div class="eta-sub">${ofd?'Arriving today':'Expected in 2–5 business days'}</div>
       </div>
     </div>`;
   } else {
-    // confirmed / partial / new / hold
-    const stepLabels = {
-      confirmed: { icon:'⏳', title:'Preparing your order', sub:'The vendor is processing your order. Tracking details will appear once dispatched — usually within 1–2 days.' },
-      partial:   { icon:'📦', title:'Partially processing', sub:'Some items in your order are being prepared. Full dispatch coming soon.' },
-      new:       { icon:'🕐', title:'Order pending', sub:'Your order is awaiting confirmation from the team. This usually takes a few hours.' },
-      hold:      { icon:'⏸️', title:'Order on hold', sub:'Your order is temporarily on hold. Our team will update you shortly.' },
+    const SL = {
+      confirmed: { icon:BIG.pkg,   color:'var(--amber)', title:'Preparing your order',  sub:'The vendor is processing your order. Tracking details will appear once dispatched — usually within 1–2 days.' },
+      partial:   { icon:BIG.pkg,   color:'var(--amber)', title:'Partially processing',   sub:'Some items in your order are being prepared. Full dispatch coming soon.' },
+      new:       { icon:BIG.clock, color:'var(--amber)', title:'Order pending',           sub:'Your order is awaiting confirmation from the team. This usually takes a few hours.' },
+      hold:      { icon:BIG.pause, color:'var(--muted)', title:'Order on hold',           sub:'Your order is temporarily on hold. Our team will update you shortly.' },
     };
-    const sl = stepLabels[stage] || stepLabels.new;
-    statusHtml = `<div class="waiting-card">
-      <div style="font-size:28px">${sl.icon}</div>
+    const sl = SL[stage] || SL.new;
+    statusHtml = `<div class="status-card-base waiting-card">
+      <div class="waiting-icon" style="color:${sl.color}">${sl.icon}</div>
       <div class="waiting-title">${sl.title}</div>
       <div class="waiting-sub">${sl.sub}</div>
       <div class="waiting-steps">
@@ -677,35 +840,35 @@ function renderTrack(d) {
   }
   document.getElementById('status-card').innerHTML = statusHtml;
 
-  // Shipment cards (show if AWB exists)
-  const shipments = (d.vendor_shipments || []).filter(s => s.awb);
+  // Shipment cards
+  const shipments = (d.vendor_shipments||[]).filter(s=>s.awb);
   if (shipments.length) {
     document.getElementById('shipment-wrap').classList.remove('hidden');
-    document.getElementById('shipment-cards').innerHTML = shipments.map(s => `
-      <div class="shipment-card" style="margin-bottom:10px">
+    document.getElementById('shipment-cards').innerHTML = shipments.map(s=>`
+      <div class="shipment-card">
         <div class="shipment-vendor">
           <span class="vendor-name">${esc(s.vendor_name)}</span>
-          ${s.courier ? `<span class="courier-tag">${esc(s.courier)}</span>` : ''}
+          ${s.courier?`<span class="courier-tag">${esc(s.courier)}</span>`:''}
         </div>
         <div class="awb-row">
           <span class="awb-label">AWB</span>
           <span class="awb-num">${esc(s.awb)}</span>
         </div>
-        ${s.tracking_url ? `<a class="track-link" href="${s.tracking_url}" target="_blank" rel="noopener">Track Shipment →</a>` : ''}
-      </div>
-    `).join('');
+        ${s.tracking_url?`<a class="track-link" href="${s.tracking_url}" target="_blank" rel="noopener">Track Shipment ${BIG.extLink}</a>`:''}
+      </div>`).join('');
   }
 }
 
 function renderRR(d) {
-  const existing = d.return_requests || [];
+  const existing = d.return_requests||[];
   if (!existing.length) return;
-  const statusMap = { pending:'pending', approved:'approved', rejected:'rejected', completed:'approved', cancelled:'rejected' };
-  document.getElementById('rr-existing-list').innerHTML = `<div class="rr-existing" style="margin-top:14px">` +
-    existing.map(r => `<div class="rr-req-item">
-      <span class="rr-req-label">${r.type === 'exchange' ? '↩ Exchange' : 'Return'} · ${r.vendor_name || ''}</span>
+  const statusMap = {pending:'pending',approved:'approved',rejected:'rejected',completed:'approved',cancelled:'rejected'};
+  document.getElementById('rr-existing-list').innerHTML =
+    `<div class="rr-existing">`+
+    existing.map(r=>`<div class="rr-req-item">
+      <span class="rr-req-label">${r.type==='exchange'?'Exchange':'Return'} · ${r.vendor_name||''}</span>
       <span class="rr-req-status ${statusMap[r.status]||'pending'}">${r.status}</span>
-    </div>`).join('') + `</div>`;
+    </div>`).join('')+`</div>`;
 }
 
 function showTrack() {
@@ -713,62 +876,49 @@ function showTrack() {
   if (orderData) renderTrack(orderData);
 }
 
-// ── PAYMENT ──────────────────────────────────────────────────
+// ── PAYMENT ───────────────────────────────────────────────────
 async function pay(mode) {
-  if (paying || !orderData) return;
+  if (paying||!orderData) return;
   paying = true;
-  const btn = mode === 'confirm' ? document.getElementById('btn-confirm') : document.getElementById('btn-prepaid');
+  const btn = mode==='confirm'?document.getElementById('btn-confirm'):document.getElementById('btn-prepaid');
   btn.disabled = true;
   try {
-    const r = await fetch(`${API}/track/confirm-razorpay-order`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ shopify_order_id: orderData.shopify_order_id, order_name: orderData.order_name, customer_name: orderData.customer_name, mode }),
+    const r = await fetch(`${API}/track/confirm-razorpay-order`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({shopify_order_id:orderData.shopify_order_id,order_name:orderData.order_name,customer_name:orderData.customer_name,mode}),
     });
     const rz = await r.json();
-    if (!r.ok) { alert(rz.error || 'Payment error'); paying=false; btn.disabled=false; return; }
-
+    if (!r.ok){alert(rz.error||'Payment error');paying=false;btn.disabled=false;return;}
     const rzp = new Razorpay({
-      key: rz.key,
-      order_id: rz.order_id,
-      amount: Math.round(rz.amount * 100),
-      currency: 'INR',
-      name: 'CROSCROW',
-      description: mode === 'prepaid' ? 'Full prepaid payment' : 'Order confirmation fee',
-      theme: { color: '#00e676' },
-      handler: async (resp) => {
+      key:rz.key, order_id:rz.order_id, amount:Math.round(rz.amount*100), currency:'INR',
+      name:'CROSCROW', description:mode==='prepaid'?'Full prepaid payment':'Order confirmation fee',
+      theme:{color:'#10b981'},
+      handler:async(resp)=>{
         try {
-          const vr = await fetch(`${API}/track/confirm-payment-verify`, {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ shopify_order_id: orderData.shopify_order_id, mode, ...resp }),
+          const vr = await fetch(`${API}/track/confirm-payment-verify`,{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({shopify_order_id:orderData.shopify_order_id,mode,...resp}),
           });
           const vd = await vr.json();
-          if (!vr.ok) { alert(vd.error || 'Verification failed'); return; }
+          if (!vr.ok){alert(vd.error||'Verification failed');return;}
           orderData.already_confirmed = true;
-          if (mode === 'prepaid') {
-            document.getElementById('success-sub').innerHTML = `You've paid in full. Your order is confirmed &amp; will be dispatched shortly.`;
-          }
+          if (mode==='prepaid') document.getElementById('success-sub').innerHTML=`You've paid in full. Your order is confirmed and will be dispatched shortly.`;
           document.getElementById('success-overlay').classList.add('visible');
-        } catch(e) { alert('Payment verified but could not update. Please contact support.'); }
-        finally { paying=false; btn.disabled=false; }
+        } catch(e){alert('Payment verified but could not update. Please contact support.');}
+        finally{paying=false;btn.disabled=false;}
       },
-      modal: { ondismiss: () => { paying=false; btn.disabled=false; } }
+      modal:{ondismiss:()=>{paying=false;btn.disabled=false;}},
     });
     rzp.open();
-  } catch(e) { alert(e.message); paying=false; btn.disabled=false; }
+  } catch(e){alert(e.message);paying=false;btn.disabled=false;}
 }
 
 function goRR(type) {
   if (!orderData) return;
-  const base = `/track?order=${encodeURIComponent(orderData.order_name)}&contact=na&action=${type}`;
-  location.href = base;
+  location.href=`/track?order=${encodeURIComponent(orderData.order_name)}&contact=na&action=${type}`;
 }
-
-function fmt(n) {
-  return Number(n).toLocaleString('en-IN', { maximumFractionDigits:0 });
-}
-function esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function fmt(n){return Number(n).toLocaleString('en-IN',{maximumFractionDigits:0});}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 </script>
 </body>
 </html>
