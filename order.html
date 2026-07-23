@@ -398,6 +398,42 @@ html,body{
   letter-spacing:.07em;text-transform:uppercase;
 }
 
+/* product photo strip on track */
+.photo-strip{
+  display:flex;gap:8px;padding:16px 16px 0;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none;
+}
+.photo-strip::-webkit-scrollbar{display:none}
+.photo-chip{
+  width:52px;height:52px;border-radius:8px;object-fit:cover;flex-shrink:0;
+  border:1px solid var(--border);background:var(--bg);
+}
+.photo-chip-placeholder{
+  width:52px;height:52px;border-radius:8px;flex-shrink:0;
+  background:var(--bg);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+}
+
+/* pending vendor card */
+.vendor-pending{
+  background:var(--bg);border:1px solid var(--border);border-radius:12px;
+  margin-bottom:8px;overflow:hidden;
+}
+.vendor-pending-header{
+  padding:10px 14px;display:flex;align-items:center;justify-content:space-between;
+}
+.vendor-pending-items{
+  padding:0 14px 12px;display:flex;flex-direction:column;gap:4px;
+}
+.vendor-pending-item{
+  font-size:12px;color:var(--muted);font-weight:500;
+}
+.pending-badge{
+  font-size:10px;font-weight:700;padding:3px 8px;border-radius:100px;letter-spacing:.06em;
+  text-transform:uppercase;background:var(--amber-light);color:var(--amber);
+  border:1px solid var(--amber-border);
+}
+
 .hidden{display:none!important}
 </style>
 </head>
@@ -558,6 +594,9 @@ html,body{
         <div class="stage-pill" id="stage-pill">—</div>
       </div>
     </div>
+
+    <!-- Product photo strip -->
+    <div class="photo-strip hidden" id="photo-strip"></div>
 
     <!-- Progress stepper -->
     <div class="stepper" id="stepper"></div>
@@ -741,14 +780,39 @@ function renderConfirm(d) {
   }
 }
 
+// ── Compute best visual stage across all vendor shipments ─────
+function getDisplayStage(d) {
+  const ORD = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered'];
+  const metaIdx = ORD.indexOf(d.stage || 'new');
+  if (metaIdx < 0) return d.stage || 'new'; // rto/cancelled/misc — keep
+  let best = metaIdx;
+  for (const vs of (d.vendor_shipments || [])) {
+    const vi = ORD.indexOf(vs.stage);
+    if (vi > best) best = vi;
+  }
+  return ORD[best] || d.stage || 'new';
+}
+
 // ── TRACK VIEW ────────────────────────────────────────────────
 function renderTrack(d) {
   document.getElementById('track-view').style.display = 'flex';
   document.getElementById('confirm-view').style.display = 'none';
 
-  const stage = d.stage || 'new';
+  // Use the most-advanced vendor stage for visual display
+  const stage = getDisplayStage(d);
   document.getElementById('track-order-num').textContent = d.order_name;
   document.getElementById('track-customer').textContent = d.customer_name || '';
+
+  // Product photo strip
+  const imgs = (d.items || []).filter(i => i.image_url);
+  const strip = document.getElementById('photo-strip');
+  if (imgs.length) {
+    strip.classList.remove('hidden');
+    strip.innerHTML = (d.items || []).map(it => it.image_url
+      ? `<img class="photo-chip" src="${esc(it.image_url)}" alt="${esc(it.title)}" title="${esc(it.title)}">`
+      : `<div class="photo-chip-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`
+    ).join('');
+  }
 
   const pill = document.getElementById('stage-pill');
   const stageLabels = {
@@ -840,22 +904,34 @@ function renderTrack(d) {
   }
   document.getElementById('status-card').innerHTML = statusHtml;
 
-  // Shipment cards
-  const shipments = (d.vendor_shipments||[]).filter(s=>s.awb);
-  if (shipments.length) {
+  // Shipment cards — show all vendors, pending ones without AWB shown differently
+  const allShipments = d.vendor_shipments || [];
+  if (allShipments.length) {
     document.getElementById('shipment-wrap').classList.remove('hidden');
-    document.getElementById('shipment-cards').innerHTML = shipments.map(s=>`
-      <div class="shipment-card">
-        <div class="shipment-vendor">
-          <span class="vendor-name">${esc(s.vendor_name)}</span>
-          ${s.courier?`<span class="courier-tag">${esc(s.courier)}</span>`:''}
-        </div>
-        <div class="awb-row">
-          <span class="awb-label">AWB</span>
-          <span class="awb-num">${esc(s.awb)}</span>
-        </div>
-        ${s.tracking_url?`<a class="track-link" href="${s.tracking_url}" target="_blank" rel="noopener">Track Shipment ${BIG.extLink}</a>`:''}
-      </div>`).join('');
+    document.getElementById('shipment-cards').innerHTML = allShipments.map(s => {
+      if (s.awb) {
+        return `<div class="shipment-card">
+          <div class="shipment-vendor">
+            <span class="vendor-name">${esc(s.vendor_name)}</span>
+            ${s.courier?`<span class="courier-tag">${esc(s.courier)}</span>`:''}
+          </div>
+          <div class="awb-row">
+            <span class="awb-label">AWB</span>
+            <span class="awb-num">${esc(s.awb)}</span>
+          </div>
+          ${s.tracking_url?`<a class="track-link" href="${s.tracking_url}" target="_blank" rel="noopener">Track Shipment ${BIG.extLink}</a>`:''}
+        </div>`;
+      } else {
+        const pendingItems = (s.items || []).map(i => `<div class="vendor-pending-item">${esc(i.title)}${i.variant_title ? ' · ' + esc(i.variant_title) : ''}${i.qty > 1 ? ' ×' + i.qty : ''}</div>`).join('');
+        return `<div class="vendor-pending">
+          <div class="vendor-pending-header">
+            <span class="vendor-name">${esc(s.vendor_name)}</span>
+            <span class="pending-badge">Pending dispatch</span>
+          </div>
+          ${pendingItems ? `<div class="vendor-pending-items">${pendingItems}</div>` : ''}
+        </div>`;
+      }
+    }).join('');
   }
 }
 
