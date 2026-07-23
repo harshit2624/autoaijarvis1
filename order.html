@@ -16,13 +16,18 @@
   --text:#0f0f0f;
   --body:#555;
   --muted:#999;
-  --green:#002eff;
-  --green-light:#f0f3ff;
-  --green-border:#b3c2ff;
-  --green-dark:#0024cc;
-  --purple:#6690ff;
-  --purple-light:#f0f3ff;
-  --purple-border:#b3c2ff;
+  --blue:#002eff;
+  --blue-light:#eef3ff;
+  --blue-border:#99b3ff;
+  --blue-dark:#0020cc;
+  /* alias green → blue so all existing refs work */
+  --green:var(--blue);
+  --green-light:var(--blue-light);
+  --green-border:var(--blue-border);
+  --green-dark:var(--blue-dark);
+  --purple:var(--blue);
+  --purple-light:var(--blue-light);
+  --purple-border:var(--blue-border);
   --amber:#f59e0b;
   --amber-light:#fffbeb;
   --amber-border:#fde68a;
@@ -398,36 +403,55 @@ html,body{
   letter-spacing:.07em;text-transform:uppercase;
 }
 
-/* product photo strip on track */
-.photo-strip{
-  display:flex;gap:8px;padding:16px 16px 0;overflow-x:auto;
-  scrollbar-width:none;-ms-overflow-style:none;
-}
-.photo-strip::-webkit-scrollbar{display:none}
-.photo-chip{
-  width:52px;height:52px;border-radius:8px;object-fit:cover;flex-shrink:0;
-  border:1px solid var(--border);background:var(--bg);
-}
-.photo-chip-placeholder{
-  width:52px;height:52px;border-radius:8px;flex-shrink:0;
-  background:var(--bg);border:1px solid var(--border);
-  display:flex;align-items:center;justify-content:center;
-}
+/* single-vendor hero image on track */
+.track-hero-wrap{width:100%;height:240px;overflow:hidden;background:var(--bg);flex-shrink:0}
+.track-hero-img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
+.track-hero-ph{width:100%;height:100%;background:#efefef;display:flex;align-items:center;justify-content:center}
 
-/* pending vendor card */
-.vendor-pending{
-  background:var(--bg);border:1px solid var(--border);border-radius:12px;
-  margin-bottom:8px;overflow:hidden;
+/* vendor card (multi-vendor track) */
+.vc{
+  background:var(--card);border:1px solid var(--border);border-radius:14px;
+  overflow:hidden;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.04);
 }
-.vendor-pending-header{
-  padding:10px 14px;display:flex;align-items:center;justify-content:space-between;
+.vc-hero{width:100%;height:200px;object-fit:cover;object-position:top center;display:block}
+.vc-hero-ph{width:100%;height:160px;background:#efefef;display:flex;align-items:center;justify-content:center}
+.vc-body{padding:14px 16px 12px;border-bottom:1px solid var(--border)}
+.vc-vname{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px}
+.vc-item-title{font-size:13px;font-weight:700;color:var(--text);line-height:1.35}
+.vc-item-meta{font-size:11px;color:var(--muted);margin-bottom:3px}
+/* mini stepper */
+.vc-stepper{padding:12px 14px;border-bottom:1px solid var(--border)}
+.vc-track{display:flex;align-items:flex-start}
+.vc-si{flex:1;display:flex;flex-direction:column;align-items:center;position:relative;z-index:1}
+.vc-dot{
+  width:20px;height:20px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;flex-shrink:0;position:relative;z-index:2;
 }
-.vendor-pending-items{
-  padding:0 14px 12px;display:flex;flex-direction:column;gap:4px;
+.vc-dot.done{background:var(--blue)}
+.vc-dot.done svg{stroke:#fff}
+.vc-dot.active{background:var(--text)}
+.vc-dot.active svg{stroke:#fff}
+.vc-dot.pending{background:var(--bg);border:1.5px solid var(--border)}
+.vc-dot.pending svg{stroke:#ccc}
+.vc-line{position:absolute;top:10px;left:50%;right:-50%;height:1px;z-index:0}
+.vc-line.done{background:var(--blue)}
+.vc-line.pending{background:var(--border)}
+.vc-lbl{
+  font-size:8px;font-weight:700;color:var(--muted);margin-top:5px;text-align:center;
+  letter-spacing:.05em;text-transform:uppercase;line-height:1.2;max-width:44px;
 }
-.vendor-pending-item{
-  font-size:12px;color:var(--muted);font-weight:500;
+.vc-lbl.active{color:var(--text)}
+.vc-si:last-child .vc-line{display:none}
+/* vendor shipment row */
+.vc-ship{padding:11px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.vc-awb-group{display:flex;flex-direction:column;gap:1px}
+.vc-awb-label{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+.vc-awb-num{font-size:12px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums}
+.vc-track-btn{
+  display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
+  color:var(--blue);text-decoration:none;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap;
 }
+.vc-pending-row{padding:11px 14px;display:flex;align-items:center;justify-content:space-between}
 .pending-badge{
   font-size:10px;font-weight:700;padding:3px 8px;border-radius:100px;letter-spacing:.06em;
   text-transform:uppercase;background:var(--amber-light);color:var(--amber);
@@ -595,17 +619,25 @@ html,body{
       </div>
     </div>
 
-    <!-- Product photo strip -->
-    <div class="photo-strip hidden" id="photo-strip"></div>
+    <!-- Single-vendor hero image -->
+    <div class="track-hero-wrap hidden" id="track-hero-wrap">
+      <div class="track-hero-ph" id="track-hero-ph">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width=".8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      </div>
+      <img id="track-hero-img" class="track-hero-img hidden" alt="Product">
+    </div>
 
-    <!-- Progress stepper -->
-    <div class="stepper" id="stepper"></div>
+    <!-- Progress stepper (single vendor) -->
+    <div class="stepper hidden" id="stepper"></div>
 
     <div class="section-wrap">
-      <!-- Status card -->
+      <!-- Multi-vendor cards (one per vendor) -->
+      <div id="vendor-cards" class="hidden" style="margin-top:16px"></div>
+
+      <!-- Status card (single vendor) -->
       <div id="status-card" style="margin-top:16px"></div>
 
-      <!-- Shipment info -->
+      <!-- Shipment info (single vendor) -->
       <div id="shipment-wrap" class="hidden">
         <div class="section-title">Shipment</div>
         <div id="shipment-cards"></div>
@@ -784,7 +816,7 @@ function renderConfirm(d) {
 function getDisplayStage(d) {
   const ORD = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered'];
   const metaIdx = ORD.indexOf(d.stage || 'new');
-  if (metaIdx < 0) return d.stage || 'new'; // rto/cancelled/misc — keep
+  if (metaIdx < 0) return d.stage || 'new';
   let best = metaIdx;
   for (const vs of (d.vendor_shipments || [])) {
     const vi = ORD.indexOf(vs.stage);
@@ -793,145 +825,215 @@ function getDisplayStage(d) {
   return ORD[best] || d.stage || 'new';
 }
 
-// ── TRACK VIEW ────────────────────────────────────────────────
-function renderTrack(d) {
-  document.getElementById('track-view').style.display = 'flex';
-  document.getElementById('confirm-view').style.display = 'none';
-
-  // Use the most-advanced vendor stage for visual display
-  const stage = getDisplayStage(d);
-  document.getElementById('track-order-num').textContent = d.order_name;
-  document.getElementById('track-customer').textContent = d.customer_name || '';
-
-  // Product photo strip
-  const imgs = (d.items || []).filter(i => i.image_url);
-  const strip = document.getElementById('photo-strip');
-  if (imgs.length) {
-    strip.classList.remove('hidden');
-    strip.innerHTML = (d.items || []).map(it => it.image_url
-      ? `<img class="photo-chip" src="${esc(it.image_url)}" alt="${esc(it.title)}" title="${esc(it.title)}">`
-      : `<div class="photo-chip-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`
-    ).join('');
-  }
-
-  const pill = document.getElementById('stage-pill');
-  const stageLabels = {
-    new:'Pending', hold:'On Hold', confirmed:'Confirmed', partial:'Processing',
-    ready:'Ready to Ship', pickup:'Picked Up', transit:'In Transit',
-    ofd:'Out for Delivery', delivered:'Delivered', rto:'Returned', cancelled:'Cancelled',
-  };
-  pill.textContent = stageLabels[stage] || stage;
-  const pillClass = ['delivered','ready','pickup','transit','ofd'].includes(stage)
-    ? (stage === 'delivered' ? 'delivered' : 'transit')
-    : ['confirmed','partial'].includes(stage) ? 'confirmed'
-    : ['rto','cancelled'].includes(stage) ? 'rto' : 'new';
-  pill.className = `stage-pill ${pillClass}`;
-
-  // Stepper
+// ── Build stepper HTML (reusable for main + mini) ─────────────
+function buildStepper(stage, mini = false) {
   const STEPS = [
-    { key:'confirmed', label:'Confirmed', icon: IC.check },
+    { key:'confirmed', label:'Confirmed',  icon: IC.check },
     { key:'ready',     label:'Dispatched', icon: IC.pkg   },
     { key:'transit',   label:'Transit',    icon: IC.truck  },
     { key:'ofd',       label:'Delivery',   icon: IC.nav    },
     { key:'delivered', label:'Delivered',  icon: IC.star   },
   ];
-  const ORDER = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered'];
-  const idx = ORDER.indexOf(stage);
-  const stepHtml = STEPS.map(s => {
-    const stepIdx = ORDER.indexOf(s.key);
-    const done = idx >= stepIdx && idx > 0 && ORDER[idx] !== s.key;
-    const active = ORDER[idx] === s.key || (s.key === 'confirmed' && ['confirmed','partial'].includes(stage));
-    const cls = done ? 'done' : active ? 'active' : 'pending';
-    return `<div class="step-item">
+  const ORD = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered'];
+  const idx = ORD.indexOf(stage);
+  const p = mini ? 'vc' : 'step'; // class prefix
+  return `<div class="${mini?'vc-track':'step-track'}">`+STEPS.map(s => {
+    const si = ORD.indexOf(s.key);
+    const done = idx >= si && idx > 0 && ORD[idx] !== s.key;
+    const active = ORD[idx] === s.key || (s.key==='confirmed' && ['confirmed','partial'].includes(stage));
+    const cls = done?'done':active?'active':'pending';
+    return `<div class="${p}-${mini?'si':'item'}">
       <div style="position:relative;width:100%">
-        <div class="step-line ${done?'done':'pending'}"></div>
+        <div class="${p}-${mini?'line':'line'} ${done?'done':'pending'}"></div>
         <div style="display:flex;justify-content:center">
-          <div class="step-dot ${cls}">${done ? IC.check : s.icon}</div>
+          <div class="${p}-dot ${cls}">${done?IC.check:s.icon}</div>
         </div>
       </div>
-      <div class="step-label ${active?'active':''}">${s.label}</div>
+      <div class="${p}-${mini?'lbl':'label'} ${active?'active':''}">${s.label}</div>
     </div>`;
-  }).join('');
-  document.getElementById('stepper').innerHTML = `<div class="step-track">${stepHtml}</div>`;
+  }).join('')+`</div>`;
+}
 
-  // Status card
-  let statusHtml = '';
+// ── Status card HTML for a given stage ───────────────────────
+function statusCardHtml(stage, d) {
   if (stage === 'delivered') {
     const dateStr = d.delivery_status_updated_at
       ? new Date(d.delivery_status_updated_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
-    statusHtml = `<div class="delivered-card">
+    return `<div class="delivered-card">
       <div class="delivered-icon">${BIG.checkCircle}</div>
       <div class="delivered-title">Delivered</div>
       <div class="delivered-sub">${dateStr?`Delivered on ${dateStr}.`:'Your order has been delivered.'} We hope you love it.</div>
     </div>`;
-    document.getElementById('rr-section').classList.remove('hidden');
-    renderRR(d);
-  } else if (['rto','cancelled'].includes(stage)) {
-    statusHtml = `<div class="rto-card">
+  }
+  if (['rto','cancelled'].includes(stage)) {
+    return `<div class="rto-card">
       <div class="rto-icon">${stage==='rto'?BIG.rto:BIG.xCircle}</div>
       <div class="rto-title">${stage==='rto'?'Order Returned':'Order Cancelled'}</div>
       <div class="rto-sub">${stage==='rto'
         ?'This order was returned to the seller. If you were charged, a refund will be processed within 3–5 business days.'
         :'This order has been cancelled. For any questions, contact our support team.'}</div>
     </div>`;
-  } else if (['transit','pickup','ofd','ready'].includes(stage)) {
-    const ofd = stage === 'ofd';
-    statusHtml = `<div class="status-card-base eta-card">
-      <div class="eta-icon" style="color:${ofd?'var(--green-dark)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
+  }
+  if (['transit','pickup','ofd','ready'].includes(stage)) {
+    const ofd = stage==='ofd';
+    return `<div class="status-card-base eta-card">
+      <div class="eta-icon" style="color:${ofd?'var(--blue)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
       <div>
         <div class="eta-text">${ofd?'Out for delivery':'On its way to you'}</div>
         <div class="eta-sub">${ofd?'Arriving today':'Expected in 2–5 business days'}</div>
       </div>
     </div>`;
-  } else {
-    const SL = {
-      confirmed: { icon:BIG.pkg,   color:'var(--amber)', title:'Preparing your order',  sub:'The vendor is processing your order. Tracking details will appear once dispatched — usually within 1–2 days.' },
-      partial:   { icon:BIG.pkg,   color:'var(--amber)', title:'Partially processing',   sub:'Some items in your order are being prepared. Full dispatch coming soon.' },
-      new:       { icon:BIG.clock, color:'var(--amber)', title:'Order pending',           sub:'Your order is awaiting confirmation from the team. This usually takes a few hours.' },
-      hold:      { icon:BIG.pause, color:'var(--muted)', title:'Order on hold',           sub:'Your order is temporarily on hold. Our team will update you shortly.' },
-    };
-    const sl = SL[stage] || SL.new;
-    statusHtml = `<div class="status-card-base waiting-card">
-      <div class="waiting-icon" style="color:${sl.color}">${sl.icon}</div>
-      <div class="waiting-title">${sl.title}</div>
-      <div class="waiting-sub">${sl.sub}</div>
-      <div class="waiting-steps">
-        <div class="w-step"><div class="w-dot green"></div>Order confirmed</div>
-        <div class="w-step"><div class="w-dot ${['ready','pickup','transit','ofd','delivered'].includes(stage)?'green':''}"></div>Dispatched by vendor</div>
-        <div class="w-step"><div class="w-dot"></div>Out for delivery</div>
-      </div>
-    </div>`;
   }
-  document.getElementById('status-card').innerHTML = statusHtml;
+  const SL = {
+    confirmed:{icon:BIG.pkg,  color:'var(--amber)',title:'Preparing your order', sub:'The vendor is processing your order. Tracking details will appear once dispatched — usually within 1–2 days.'},
+    partial:  {icon:BIG.pkg,  color:'var(--amber)',title:'Partially processing',  sub:'Some items in your order are being prepared. Full dispatch coming soon.'},
+    new:      {icon:BIG.clock,color:'var(--amber)',title:'Order pending',          sub:'Your order is awaiting confirmation from the team. This usually takes a few hours.'},
+    hold:     {icon:BIG.pause,color:'var(--muted)',title:'Order on hold',          sub:'Your order is temporarily on hold. Our team will update you shortly.'},
+  };
+  const sl = SL[stage]||SL.new;
+  const dis = ['ready','pickup','transit','ofd','delivered'].includes(stage);
+  return `<div class="status-card-base waiting-card">
+    <div class="waiting-icon" style="color:${sl.color}">${sl.icon}</div>
+    <div class="waiting-title">${sl.title}</div>
+    <div class="waiting-sub">${sl.sub}</div>
+    <div class="waiting-steps">
+      <div class="w-step"><div class="w-dot green"></div>Order confirmed</div>
+      <div class="w-step"><div class="w-dot ${dis?'green':''}"></div>Dispatched by vendor</div>
+      <div class="w-step"><div class="w-dot"></div>Out for delivery</div>
+    </div>
+  </div>`;
+}
 
-  // Shipment cards — show all vendors, pending ones without AWB shown differently
-  const allShipments = d.vendor_shipments || [];
-  if (allShipments.length) {
-    document.getElementById('shipment-wrap').classList.remove('hidden');
-    document.getElementById('shipment-cards').innerHTML = allShipments.map(s => {
-      if (s.awb) {
-        return `<div class="shipment-card">
-          <div class="shipment-vendor">
-            <span class="vendor-name">${esc(s.vendor_name)}</span>
-            ${s.courier?`<span class="courier-tag">${esc(s.courier)}</span>`:''}
-          </div>
-          <div class="awb-row">
-            <span class="awb-label">AWB</span>
-            <span class="awb-num">${esc(s.awb)}</span>
-          </div>
-          ${s.tracking_url?`<a class="track-link" href="${s.tracking_url}" target="_blank" rel="noopener">Track Shipment ${BIG.extLink}</a>`:''}
-        </div>`;
-      } else {
-        const pendingItems = (s.items || []).map(i => `<div class="vendor-pending-item">${esc(i.title)}${i.variant_title ? ' · ' + esc(i.variant_title) : ''}${i.qty > 1 ? ' ×' + i.qty : ''}</div>`).join('');
-        return `<div class="vendor-pending">
-          <div class="vendor-pending-header">
-            <span class="vendor-name">${esc(s.vendor_name)}</span>
+// ── TRACK VIEW ────────────────────────────────────────────────
+function renderTrack(d) {
+  document.getElementById('track-view').style.display = 'flex';
+  document.getElementById('confirm-view').style.display = 'none';
+
+  const displayStage = getDisplayStage(d);
+  const isMulti = (d.vendor_shipments || []).length > 1;
+
+  document.getElementById('track-order-num').textContent = d.order_name;
+  document.getElementById('track-customer').textContent = d.customer_name || '';
+
+  // Stage pill (based on best overall stage)
+  const pill = document.getElementById('stage-pill');
+  const stageLabels = {
+    new:'Pending',hold:'On Hold',confirmed:'Confirmed',partial:'Processing',
+    ready:'Ready to Ship',pickup:'Picked Up',transit:'In Transit',
+    ofd:'Out for Delivery',delivered:'Delivered',rto:'Returned',cancelled:'Cancelled',
+  };
+  pill.textContent = stageLabels[displayStage] || displayStage;
+  const pillClass = ['delivered','ready','pickup','transit','ofd'].includes(displayStage)
+    ?(displayStage==='delivered'?'delivered':'transit')
+    :['confirmed','partial'].includes(displayStage)?'confirmed'
+    :['rto','cancelled'].includes(displayStage)?'rto':'new';
+  pill.className = `stage-pill ${pillClass}`;
+
+  if (isMulti) {
+    // ── MULTI-VENDOR: per-vendor cards with individual steppers ──
+    document.getElementById('track-hero-wrap').classList.add('hidden');
+    document.getElementById('stepper').classList.add('hidden');
+    document.getElementById('status-card').innerHTML = '';
+    document.getElementById('shipment-wrap').classList.add('hidden');
+    document.getElementById('vendor-cards').classList.remove('hidden');
+
+    // Image lookup by title from enriched items
+    const imgByTitle = {};
+    for (const it of (d.items||[])) { if (it.image_url) imgByTitle[it.title] = it.image_url; }
+
+    document.getElementById('vendor-cards').innerHTML = (d.vendor_shipments||[]).map(vs => {
+      const vsStage = vs.stage || 'new';
+      const heroImg = (vs.items||[]).reduce((f,i)=>f||imgByTitle[i.title]||null, null);
+      const heroHtml = heroImg
+        ? `<img class="vc-hero" src="${esc(heroImg)}" alt="">`
+        : `<div class="vc-hero-ph"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
+      const itemsHtml = (vs.items||[]).map(i =>
+        `<div class="vc-item-title">${esc(i.title)}</div>`+
+        (i.variant_title||i.qty>1?`<div class="vc-item-meta">${[i.variant_title?esc(i.variant_title):'',i.qty>1?`×${i.qty}`:''].filter(Boolean).join(' · ')}</div>`:'')
+      ).join('');
+      const shipHtml = vs.awb
+        ? `<div class="vc-ship">
+            <div class="vc-awb-group">
+              <div class="vc-awb-label">${esc(vs.courier||'AWB')}</div>
+              <div class="vc-awb-num">${esc(vs.awb)}</div>
+            </div>
+            ${vs.tracking_url?`<a class="vc-track-btn" href="${vs.tracking_url}" target="_blank" rel="noopener">Track ${BIG.extLink}</a>`:''}
+          </div>`
+        : `<div class="vc-pending-row">
+            <span class="vendor-name">${esc(vs.vendor_name)}</span>
             <span class="pending-badge">Pending dispatch</span>
-          </div>
-          ${pendingItems ? `<div class="vendor-pending-items">${pendingItems}</div>` : ''}
-        </div>`;
-      }
+          </div>`;
+      return `<div class="vc">
+        ${heroHtml}
+        <div class="vc-body">
+          <div class="vc-vname">${esc(vs.vendor_name)}</div>
+          ${itemsHtml}
+        </div>
+        <div class="vc-stepper">${buildStepper(vsStage, true)}</div>
+        ${shipHtml}
+      </div>`;
     }).join('');
+
+    // Show return/exchange if any vendor is delivered
+    const anyDelivered = (d.vendor_shipments||[]).some(vs=>vs.stage==='delivered')||displayStage==='delivered';
+    if (anyDelivered) {
+      document.getElementById('rr-section').classList.remove('hidden');
+      renderRR(d);
+    }
+
+  } else {
+    // ── SINGLE VENDOR: big hero image + stepper + status card ───
+    document.getElementById('vendor-cards').classList.add('hidden');
+
+    // Big hero image
+    const firstImg = (d.items||[]).find(i=>i.image_url)?.image_url;
+    const heroWrap = document.getElementById('track-hero-wrap');
+    const heroImg  = document.getElementById('track-hero-img');
+    const heroPh   = document.getElementById('track-hero-ph');
+    heroWrap.classList.remove('hidden');
+    if (firstImg) {
+      heroImg.src = firstImg;
+      heroImg.classList.remove('hidden');
+      heroPh.classList.add('hidden');
+    }
+
+    // Stepper
+    const stepperEl = document.getElementById('stepper');
+    stepperEl.classList.remove('hidden');
+    stepperEl.innerHTML = buildStepper(displayStage, false);
+
+    // Status card
+    document.getElementById('status-card').innerHTML = statusCardHtml(displayStage, d);
+
+    // Single shipment cards
+    const allS = d.vendor_shipments||[];
+    if (allS.length) {
+      document.getElementById('shipment-wrap').classList.remove('hidden');
+      document.getElementById('shipment-cards').innerHTML = allS.map(s => s.awb
+        ? `<div class="shipment-card">
+            <div class="shipment-vendor">
+              <span class="vendor-name">${esc(s.vendor_name)}</span>
+              ${s.courier?`<span class="courier-tag">${esc(s.courier)}</span>`:''}
+            </div>
+            <div class="awb-row">
+              <span class="awb-label">AWB</span>
+              <span class="awb-num">${esc(s.awb)}</span>
+            </div>
+            ${s.tracking_url?`<a class="track-link" href="${s.tracking_url}" target="_blank" rel="noopener">Track Shipment ${BIG.extLink}</a>`:''}
+          </div>`
+        : `<div class="shipment-card">
+            <div class="shipment-vendor">
+              <span class="vendor-name">${esc(s.vendor_name)}</span>
+              <span class="pending-badge">Pending dispatch</span>
+            </div>
+          </div>`
+      ).join('');
+    }
+
+    if (displayStage==='delivered') {
+      document.getElementById('rr-section').classList.remove('hidden');
+      renderRR(d);
+    }
   }
 }
 
