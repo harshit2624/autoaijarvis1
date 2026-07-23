@@ -11720,7 +11720,7 @@ _CROSCROW Operations_`;
         await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
         console.log(`📲 WA penalty notification sent: ${orderName} / ${vendorName}`);
       }
-    } catch (e) { console.error('❌ WA penalty notification failed:', e.message); }
+    } catch (e) { waLogVendorSendFailure(vendorName, rawPhone, 'penalty_triggered', orderName, e).catch(()=>{}); }
   }
 }
 
@@ -12077,7 +12077,8 @@ Orders: ${vendor.stats.total_orders}  |  RTO: ${vendor.stats.rto_rate}%  |  Pena
     }).catch(() => {});
     return { sent: true, jid, score: vendor.score, grade: vendor.grade };
   } catch (e) {
-    console.error(`❌ Score card send failed (${vendor.vendor}):`, e.message);
+    const rawPhone = jid.replace('@s.whatsapp.net','').replace(/^91/,'');
+    waLogVendorSendFailure(vendor.vendor, rawPhone, 'score_card', null, e).catch(()=>{});
     return { sent: false, reason: e.message };
   }
 }
@@ -12106,6 +12107,24 @@ async function vendorScoreCron() {
 setInterval(vendorScoreCron, 60 * 60 * 1000); // check every hour
 
 // GET /admin/vendor-scores — compute live scores
+// GET /admin/wa-vendor-failures — vendors with WA send failures, grouped by vendor
+app.get('/admin/wa-vendor-failures', requirePermission('vendors'), async (req, res) => {
+  try {
+    const failures = await mdb.collection('wa_vendor_send_failures')
+      .find({}, { projection: { _id: 0 } })
+      .sort({ failed_at: -1 })
+      .limit(500)
+      .toArray();
+    // Group by vendor
+    const byVendor = {};
+    for (const f of failures) {
+      if (!byVendor[f.vendor]) byVendor[f.vendor] = { vendor: f.vendor, phone: f.phone, failures: [] };
+      byVendor[f.vendor].failures.push({ type: f.type, order_name: f.order_name, error: f.error, failed_at: f.failed_at });
+    }
+    res.json({ failures: Object.values(byVendor).sort((a,b) => b.failures.length - a.failures.length) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/vendor-scores', requirePermission('vendors'), async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 30;
@@ -13699,7 +13718,7 @@ _Ship now to avoid penalty — CROSCROW Ops_`;
                 console.log(`📲 WA 24hr warning sent: ${orderName} / ${vendor}`);
               }
             }
-          } catch (e) { console.error('❌ WA 24hr warning failed:', e.message); }
+          } catch (e) { waLogVendorSendFailure(vendor, rawPhone, '24hr_warning', orderName, e).catch(()=>{}); }
         }
         await OVS.upsert(sid, vendor, { warning_sent: 1 });
         console.log(`📧  24hr warning sent: ${orderName} / ${vendor}`);
@@ -20317,7 +20336,7 @@ _CROSCROW Operations Team_`;
       await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, shopify_id: String(d.shopify_order_id), vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
       console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
     } catch (e) {
-      console.error('❌ Vendor nudge failed:', e.message);
+      waLogVendorSendFailure(vs.vendor_name, VENDOR_WA, 'stuck_order_nudge', d.order_name, e).catch(()=>{});
     }
   }
 }
@@ -20392,6 +20411,18 @@ async function waAdminSessionSet(sender) {
 async function waAdminSessionCheck(sender) {
   const doc = await mdb.collection('wa_admin_sessions').findOne({ _id: sender });
   return !!doc?.active;
+}
+
+async function waLogVendorSendFailure(vendor, phone, type, orderName, error) {
+  if (!mdb) return;
+  try {
+    await mdb.collection('wa_vendor_send_failures').insertOne({
+      vendor, phone: phone || null, type, order_name: orderName || null,
+      error: (error?.message || String(error)).slice(0, 300),
+      failed_at: new Date().toISOString(),
+    });
+    console.error(`❌ WA vendor send failure logged: ${vendor} / ${type} / ${orderName || ''} — ${error?.message || error}`);
+  } catch (_) {}
 }
 
 async function waAdminAlert(message) {
