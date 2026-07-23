@@ -16375,6 +16375,87 @@ app.get("/track", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'track.html'));
 });
 
+// ── Serve new combined order page (test) ──────────────────────────────────
+app.get("/order", (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'order.html'));
+});
+
+// GET /order/lookup — unified API: track + confirm data in one call
+app.get("/order/lookup", async (req, res) => {
+  try {
+    const { q, contact } = req.query;
+    if (!q) return res.status(400).json({ error: "Order number is required" });
+
+    const normalized = q.replace(/^#/, '').trim();
+    const name = `#${normalized}`;
+    const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
+    const orders = data.orders || [];
+
+    const skipContact = !contact || contact.trim().toLowerCase() === 'na';
+    let order;
+    if (skipContact) {
+      order = orders[0];
+    } else {
+      const contactClean = contact.toLowerCase().trim();
+      const contactPhone = normalizePhone(contact);
+      order = orders.find(o => {
+        const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
+        const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+        return oEmail === contactClean || (contactPhone.length >= 10 && oPhone === contactPhone);
+      });
+    }
+
+    if (!order) return res.status(404).json({ error: "Order not found. Please check your order number." });
+    if (order.cancelled_at) return res.status(400).json({ error: "This order has been cancelled." });
+
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
+    const isPrepaid = order.financial_status === 'paid';
+    const advancePaid = parseFloat(meta.advance_paid || 0);
+    const alreadyConfirmed = !!meta.confirmation_paid || advancePaid >= CONFIRM_FEE || isPrepaid;
+    const total = parseFloat(order.total_price);
+    const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+    const prepaidSavings = Math.round(total - discountedTotal);
+
+    // Enrich items with images
+    const enriched = await enrichOrderImages(order);
+    const confirmItems = (enriched.line_items || []).map(li => ({
+      title: li.title, variant_title: li.variant_title || '',
+      quantity: li.quantity, price: li.price, image_url: li.image_url || null,
+    }));
+
+    // Build track payload
+    const trackPayload = await buildOrderPayload(order);
+
+    res.json({
+      // shared
+      shopify_order_id: order.id,
+      order_name: order.name,
+      customer_name: trackPayload.customer_name,
+      stage: trackPayload.stage,
+      financial_status: order.financial_status,
+      is_prepaid: isPrepaid,
+      // confirm-specific
+      already_confirmed: alreadyConfirmed,
+      fee: CONFIRM_FEE,
+      prepaid_savings: prepaidSavings,
+      prepaid_amount_due: Math.max(0, discountedTotal - advancePaid),
+      total: order.total_price,
+      items: confirmItems,
+      // track-specific
+      awb: trackPayload.awb,
+      tracking_url: trackPayload.tracking_url,
+      delivery_status: trackPayload.delivery_status,
+      delivery_status_updated_at: trackPayload.delivery_status_updated_at,
+      vendor_shipments: trackPayload.vendor_shipments,
+      return_requests: trackPayload.return_requests,
+      created_at: order.created_at,
+    });
+  } catch (e) {
+    console.error('❌ /order/lookup:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Serve confirm-order.html ─────────────────────────────────────────────
 app.get("/confirm-order", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'confirm-order.html'));
