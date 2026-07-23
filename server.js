@@ -11883,15 +11883,34 @@ async function computeVendorScores(windowDays = 30) {
     mdb.collection('support_chats').find({ needs_human: true, created_at: { $gte: since } }).toArray().catch(() => []),
   ]);
 
+  // Fetch Shopify orders to compute per-vendor revenue from line items
+  const ovsSids = [...new Set(allStages.map(s => s.shopify_id).filter(Boolean))];
+  const revenueByVendor = {};
+  try {
+    const BATCH = 250;
+    for (let i = 0; i < ovsSids.length; i += BATCH) {
+      const idChunk = ovsSids.slice(i, i + BATCH).join(',');
+      const { orders } = await shopifyREST(`/orders.json?ids=${idChunk}&limit=${BATCH}&status=any&fields=id,line_items`);
+      for (const o of (orders || [])) {
+        for (const li of (o.line_items || [])) {
+          const vName = (li.vendor || '').trim();
+          if (vName) revenueByVendor[vName] = (revenueByVendor[vName] || 0) + parseFloat(li.price || 0) * (li.quantity || 1);
+        }
+      }
+    }
+  } catch (_) { /* revenue stays 0 if Shopify fetch fails */ }
+
   // Group by vendor
   const vendorMap = {};
   for (const v of allVendors) {
     vendorMap[v.vendor_name] = {
       name: v.vendor_name, phone: v.phone, email: v.email, commission_rate: v.commission_rate,
-      total: 0, rto: 0, delivered: 0, penalties: 0, warnings: 0, delays: 0, escalations: 0,
+      total: 0, rto: 0, delivered: 0, cancelled: 0, not_dispatched: 0, penalties: 0, warnings: 0, delays: 0, escalations: 0,
       stageBreakdown: {},
     };
   }
+
+  const NOT_DISPATCHED_STAGES = new Set(['confirmed', 'partial', 'new', 'hold']);
 
   for (const s of allStages) {
     const v = vendorMap[s.vendor_name];
@@ -11899,6 +11918,8 @@ async function computeVendorScores(windowDays = 30) {
     v.total++;
     if (s.stage === 'rto') v.rto++;
     if (s.stage === 'delivered') v.delivered++;
+    if (s.stage === 'cancelled') v.cancelled++;
+    if (NOT_DISPATCHED_STAGES.has(s.stage)) v.not_dispatched++;
     if (s.penalty_triggered) v.penalties++;
     if (s.warning_sent) v.warnings++;
     v.stageBreakdown[s.stage] = (v.stageBreakdown[s.stage] || 0) + 1;
@@ -11955,6 +11976,8 @@ async function computeVendorScores(windowDays = 30) {
       pillars: { dispatch: dispatchScore, rto: rtoScore, compliance: complianceScore, escalation: escalationScore },
       stats: {
         total_orders: v.total, rto_count: v.rto, delivered: v.delivered,
+        cancelled: v.cancelled, not_dispatched: v.not_dispatched,
+        revenue: Math.round(revenueByVendor[v.name] || 0),
         rto_rate: rtoRate, penalty_count: v.penalties, warning_count: v.warnings,
         delay_count: v.delays, escalation_count: v.escalations,
       },

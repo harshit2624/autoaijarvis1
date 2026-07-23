@@ -8509,16 +8509,19 @@
               letterSpacing:'0.08em', marginBottom:12 } }, `Stats — Last ${days} Days`),
             React.createElement('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 } },
               [
+                { l:'Revenue', v: selected.stats.revenue > 0 ? `₹${selected.stats.revenue.toLocaleString('en-IN')}` : '—', icon:'💰', hi:true },
                 { l:'Total Orders', v:selected.stats.total_orders, icon:'📋' },
-                { l:'RTO Rate', v:`${selected.stats.rto_rate}%`, icon:'↩️' },
                 { l:'Delivered', v:selected.stats.delivered, icon:'✅' },
-                { l:'Penalties', v:selected.stats.penalty_count, icon:'🚨' },
-                { l:'Slow Dispatch', v:selected.stats.warning_count, icon:'⏰' },
+                { l:'RTO', v:`${selected.stats.rto_count} (${selected.stats.rto_rate}%)`, icon:'↩️', warn: selected.stats.rto_rate > 15 },
+                { l:'Not Dispatched', v:selected.stats.not_dispatched ?? '—', icon:'📦', warn: (selected.stats.not_dispatched || 0) > 0 },
+                { l:'Cancelled', v:selected.stats.cancelled ?? '—', icon:'❌', warn: (selected.stats.cancelled || 0) > 5 },
+                { l:'Penalties', v:selected.stats.penalty_count, icon:'🚨', warn: selected.stats.penalty_count > 0 },
                 { l:'Delay Submits', v:selected.stats.delay_count, icon:'📝' },
-              ].map(({ l, v, icon }) =>
-                React.createElement('div', { key:l, style:{ background:'#f9fafb', borderRadius:10, padding:'10px 12px' } },
-                  React.createElement('div', { style:{ fontSize:11, color:'#9ca3af', marginBottom:2 } }, `${icon} ${l}`),
-                  React.createElement('div', { style:{ fontWeight:800, fontSize:16, color:'#111' } }, v),
+              ].map(({ l, v, icon, hi, warn }) =>
+                React.createElement('div', { key:l, style:{ background: hi ? '#f0fdf4' : warn ? '#fff7ed' : '#f9fafb', borderRadius:10, padding:'10px 12px',
+                  border: hi ? '1px solid #bbf7d0' : warn ? '1px solid #fed7aa' : '1px solid transparent' } },
+                  React.createElement('div', { style:{ fontSize:11, color: warn ? '#d97706' : '#9ca3af', marginBottom:2 } }, `${icon} ${l}`),
+                  React.createElement('div', { style:{ fontWeight:800, fontSize:16, color: hi ? '#16a34a' : warn ? '#c2410c' : '#111' } }, v),
                 )
               )
             ),
