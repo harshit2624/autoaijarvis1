@@ -13679,6 +13679,8 @@ async function penaltyCronJob() {
               const dedupKey = `warn:${sid}:${vendor}`;
               const recentWarn = await mdb.collection('wa_vendor_nudges').findOne({ key: dedupKey, sent_at: { $gt: now - 86400000 } });
               if (!recentWarn) {
+                const warnToken = await createVendorUpdateToken(sid, orderName || sid, vendor, '').catch(() => null);
+                const warnLink = warnToken ? `https://dashboard.croscrow.com/vendor/update/${warnToken}` : null;
                 const warnMsg =
 `⏰ *24hr Warning — Order ${orderName || sid}*
 
@@ -13688,9 +13690,7 @@ This order has been confirmed but not yet shipped.
 
 You have *${hoursLeft} hours left* before a penalty is applied.
 
-Reply with:
-*1️⃣* — Order is delayed (share reason + ETA)
-*2️⃣* — Already shipped (share AWB + courier)
+${warnLink ? `Tap the link below to report a delay or confirm shipment:\n👉 ${warnLink}` : 'Please dispatch immediately or reply to report a delay.'}
 
 _Ship now to avoid penalty — CROSCROW Ops_`;
                 const sent = await waSocket.sendMessage(jid, { text: warnMsg });
