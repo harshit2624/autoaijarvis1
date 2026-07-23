@@ -1,0 +1,35 @@
+# render.yaml — Render Blueprint
+# This file lets Render auto-configure your service.
+# Just connect your GitHub repo and Render reads this file automatically.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: jarvis-shopify
+    env: node
+    region: oregon           # Change to: oregon | frankfurt | singapore | ohio
+    plan: free               # free | starter ($7/mo, no sleep)
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+
+    # Auto-deploy whenever you push to main branch
+    autoDeploy: true
+
+    envVars:
+      # These will show as empty — fill them in the Render dashboard
+      - key: SHOP_NAME
+        sync: false
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
+        sync: false
+      # ALLOWED_ORIGINS: comma-separated list of your frontend URLs
+      # e.g. https://my-jarvis.netlify.app,https://jarvis.mydomain.com
+      # Use * during development, restrict in production
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      # PORT is set automatically by Render — do not change
+      - key: PORT
+        value: "10000"

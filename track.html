@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Track Your Order — CROSCROW</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.27.0/babel.min.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #ffffff;
+      --bg-card:   #ffffff;
+      --bg-card2:  #f7f7f7;
+      --bg-hover:  #f2f2f2;
+      --border:    #ebebeb;
+      --border-hi: #d4d4d4;
+      --accent:    #0a0a0a;
+      --accent-dim:#f2f2f2;
+      --accent-mid:#6b6b6b;
+      --red:       #c00000;
+      --red-bg:    #fff5f5;
+      --red-border:#ffd0d0;
+      --text:      #0a0a0a;
+      --text-muted:#8c8c8c;
+      --text-dim:  #4a4a4a;
+      --shadow:    0 1px 4px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+      --shadow-lg: 0 8px 32px rgba(0,0,0,0.10);
+      --radius:    10px;
+      --radius-sm: 7px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+    .page-wrap {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px 16px 48px;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      padding: 20px 0 18px;
+    }
+    .header-logo { margin: 0 auto 8px; display: flex; align-items: center; justify-content: center; }
+    .header-sub {
+      font-size: 12px; color: var(--text-muted); margin-top: 4px; font-weight: 400; letter-spacing: 0.1px;
+    }
+
+    /* Divider */
+    .divider { height: 1px; background: var(--border); margin: 0 0 16px; }
+
+    /* Search card */
+    .search-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+    .search-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .search-field { flex: 1; min-width: 130px; }
+    .field-label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase;
+      color: var(--text-muted); margin-bottom: 6px; display: block;
+    }
+    .field-input {
+      width: 100%; background: var(--bg-card2); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 13px; color: var(--text);
+      font-family: inherit; font-size: 13px; font-weight: 400;
+      outline: none; transition: border-color 0.12s, box-shadow 0.12s;
+    }
+    .field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(10,10,10,0.07); background: #fff; }
+    .field-input::placeholder { color: #b8b8b8; }
+
+    .btn {
+      padding: 10px 20px; border-radius: var(--radius-sm); border: none; cursor: pointer;
+      font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0.1px;
+      transition: all 0.12s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #222; box-shadow: var(--shadow-md); }
+    .btn-primary:active:not(:disabled) { background: #000; transform: translateY(1px); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-ghost { background: transparent; color: var(--text-dim); border: 1.5px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--border-hi); background: var(--bg-card2); }
+    .btn-full { width: 100%; justify-content: center; margin-top: 12px; }
+    /* keep old class working */
+    .btn-green { background: var(--accent); color: #fff; }
+    .btn-green:hover:not(:disabled) { background: #222; }
+    .btn-green:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .alert {
+      border-radius: var(--radius-sm); padding: 10px 13px; font-size: 12px;
+      margin-bottom: 12px; font-weight: 500;
+    }
+    .alert-error { background: var(--red-bg); border: 1px solid var(--red-border); color: var(--red); }
+    .alert-success { background: #f2f2f2; border: 1px solid var(--border); color: var(--accent); }
+
+    /* Order result card */
+    .order-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      animation: fadeIn 0.25s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+
+    .order-header {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+      flex-wrap: wrap;
+    }
+    .order-name { font-size: 17px; font-weight: 800; color: var(--accent); letter-spacing: -0.3px; }
+    .order-date { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .order-customer { font-size: 12px; color: var(--text-dim); margin-top: 2px; font-weight: 500; }
+
+    /* Stage badge */
+    .stage-pill {
+      padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 700;
+      letter-spacing: 0.8px; text-transform: uppercase; white-space: nowrap;
+    }
+    .stage-new       { background:#f2f2f2; color:#555; border:1px solid #e0e0e0; }
+    .stage-confirmed { background:#0a0a0a; color:#fff; border:1px solid #0a0a0a; }
+    .stage-partial   { background:#fff8e6; color:#a05800; border:1px solid #fde9a0; }
+    .stage-hold      { background:#fff3ed; color:#b84000; border:1px solid #fcd9be; }
+    .stage-ready     { background:#f0f0ff; color:#4433cc; border:1px solid #d8d4ff; }
+    .stage-pickup    { background:#f0f0ff; color:#4433cc; border:1px solid #d8d4ff; }
+    .stage-transit   { background:#e8f4ff; color:#0055cc; border:1px solid #bbd8ff; }
+    .stage-ofd       { background:#fff4e6; color:#b45309; border:1px solid #fcd6a0; }
+    .stage-delivered { background:#e8fff4; color:#007a3a; border:1px solid #9fedd0; }
+    .stage-rto       { background:var(--red-bg); color:var(--red); border:1px solid var(--red-border); }
+    .stage-cancelled { background:#f7f7f7; color:#999; border:1px solid #e5e5e5; }
+
+    /* AWB row */
+    .awb-row {
+      padding: 11px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      font-size: 12px; background: var(--bg-card2);
+    }
+    .awb-label { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; }
+    .awb-value { color: var(--accent); font-weight: 600; font-family: 'SF Mono', monospace; font-size: 12px; }
+    .awb-link { color: var(--accent); text-decoration: none; font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--border-hi); }
+    .awb-link:hover { border-bottom-color: var(--accent); }
+
+    /* Items list */
+    .items-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+    .items-title { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .item-row {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 8px 0; border-bottom: 1px solid var(--border); gap: 12px;
+    }
+    .item-row:last-child { border-bottom: none; }
+    .item-title { font-size: 13px; color: var(--text); font-weight: 500; line-height: 1.4; }
+    .item-variant { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .item-price { font-size: 13px; color: var(--accent); white-space: nowrap; font-weight: 700; }
+    .item-qty { font-size: 11px; color: var(--text-muted); margin-top: 2px; text-align: right; }
+
+    /* Action tiles */
+    .tiles-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      padding: 14px 18px;
+    }
+    .tile {
+      border-radius: var(--radius); padding: 16px 14px; cursor: pointer;
+      border: 1.5px solid var(--border); transition: all 0.15s;
+      background: var(--bg-card); position: relative; overflow: hidden;
+    }
+    .tile:hover:not(.tile-disabled) { border-color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .tile:active:not(.tile-disabled) { transform: translateY(0); box-shadow: var(--shadow); }
+    .tile-disabled { opacity: 0.45; cursor: not-allowed; }
+    .tile-exchange:hover:not(.tile-disabled) { background: #fafafa; }
+    .tile-return:hover:not(.tile-disabled) { background: #fafafa; }
+    .tile-return-disabled { border-color: var(--red-border) !important; background: var(--red-bg) !important; opacity:1 !important; }
+
+    .tile-icon { font-size: 20px; margin-bottom: 8px; line-height: 1; }
+    .tile-label { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: -0.1px; }
+    .tile-desc { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; font-weight: 400; }
+
+    /* Request form */
+    .form-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow);
+      animation: fadeIn 0.25s ease;
+    }
+    .form-title { font-size: 14px; font-weight: 700; margin-bottom: 14px; color: var(--text); display: flex; align-items: center; gap: 8px; letter-spacing: -0.1px; }
+    .form-section-label { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; display: block; }
+
+    .item-check-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+      background: var(--bg-card2); margin-bottom: 7px;
+      transition: border-color 0.12s, background 0.12s;
+    }
+    .item-check-row.selected { border-color: var(--accent); background: #fafafa; }
+    .item-check-row input[type=checkbox] {
+      accent-color: var(--accent); width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;
+    }
+    .item-check-body { flex: 1; }
+    .item-check-title { font-size: 13px; color: var(--text); font-weight: 500; }
+    .item-check-variant { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+    .qty-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .qty-label { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+    .qty-select {
+      background: #fff; border: 1.5px solid var(--border); border-radius: 5px;
+      color: var(--text); font-family: inherit; font-size: 12px; padding: 4px 8px; outline: none;
+    }
+
+    .variant-select-row { margin-top: 9px; }
+    .variant-select {
+      width: 100%; background: #fff; border: 1.5px solid var(--border-hi);
+      border-radius: var(--radius-sm); color: var(--text); font-family: inherit;
+      font-size: 13px; padding: 8px 11px; outline: none; transition: border-color 0.12s;
+    }
+    .variant-select:focus { border-color: var(--accent); }
+
+    .reason-textarea {
+      width: 100%; background: var(--bg-card2); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 13px; color: var(--text);
+      font-family: inherit; font-size: 13px; line-height: 1.6;
+      outline: none; resize: vertical; min-height: 75px; transition: border-color 0.12s;
+    }
+    .reason-textarea:focus { border-color: var(--accent); background: #fff; }
+    .reason-textarea::placeholder { color: #bbb; }
+
+    /* Confirmation */
+    .confirm-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      text-align: center;
+      box-shadow: var(--shadow-md);
+      animation: fadeIn 0.3s ease;
+    }
+    .confirm-icon { font-size: 40px; margin-bottom: 14px; }
+    .confirm-title { font-size: 18px; font-weight: 800; color: var(--accent); margin-bottom: 6px; letter-spacing: -0.3px; }
+    .confirm-sub { font-size: 12px; color: var(--text-muted); line-height: 1.8; }
+    .confirm-id {
+      display: inline-block; background: var(--accent); border-radius: var(--radius-sm);
+      padding: 9px 20px; font-size: 13px; font-weight: 700;
+      color: #fff; letter-spacing: 2px; margin: 14px 0; font-family: 'SF Mono', monospace;
+    }
+
+    .spin { display: inline-block; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Stage progress bar */
+    .stage-bar {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-card2);
+    }
+    .stage-bar-label { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; }
+    .stage-steps { display: flex; align-items: center; }
+    .stage-step { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .stage-dot {
+      width: 9px; height: 9px; border-radius: 50%; background: #ddd;
+      position: relative; z-index: 1; transition: background 0.2s;
+    }
+    .stage-dot.done { background: var(--accent); }
+    .stage-dot.active { background: var(--accent); box-shadow: 0 0 0 3px rgba(10,10,10,0.12); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 0 3px rgba(10,10,10,0.10)} 50%{box-shadow:0 0 0 5px rgba(10,10,10,0.06)} }
+    .stage-line {
+      flex: 1; height: 1.5px; background: #e0e0e0; margin: 0 -1px;
+      position: relative; top: -12px; transition: background 0.2s;
+    }
+    .stage-line.done { background: var(--accent); }
+    .stage-step-label {
+      font-size: 9px; color: var(--text-muted); margin-top: 6px; letter-spacing: 0.2px;
+      white-space: nowrap; font-weight: 500;
+    }
+    .stage-step-label.active { color: var(--accent); font-weight: 700; }
+    .stage-step-label.done { color: var(--accent); }
+
+    @media (max-width: 480px) {
+      .tiles-row { grid-template-columns: 1fr; }
+      .search-row { flex-direction: column; }
+      .order-header { flex-direction: column; }
+      .page-wrap { padding: 12px 12px 36px; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect, useCallback } = React;
+
+  const API = window.location.origin;
+
+  const STAGE_STEPS = ['confirmed','ready','pickup','transit','ofd','delivered'];
+  const STAGE_LABELS = { new:'New', confirmed:'Confirmed', partial:'Partial', hold:'On Hold', ready:'Packed', pickup:'Picked Up', transit:'In Transit', ofd:'Out for Delivery', delivered:'Delivered', rto:'Returned', cancelled:'Cancelled' };
+
+  function stagePillClass(stage) {
+    const map = { new:'stage-new', confirmed:'stage-confirmed', partial:'stage-partial', hold:'stage-hold', ready:'stage-ready', pickup:'stage-pickup', transit:'stage-transit', ofd:'stage-ofd', delivered:'stage-delivered', rto:'stage-rto', cancelled:'stage-cancelled' };
+    return 'stage-pill ' + (map[stage] || 'stage-new');
+  }
+
+  function VendorShipmentCard({ vs, shopifyOrderId, index, total, singleVendor, onOrderRefresh }) {
+    const [shipment, setShipment] = React.useState(vs);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [msg, setMsg] = React.useState('');
+
+    React.useEffect(() => { setShipment(vs); }, [vs]);
+
+    const refresh = async () => {
+      setRefreshing(true); setMsg('');
+      try {
+        if (shipment.awb) {
+          // AWB known — track it via ShipSagar
+          const params = new URLSearchParams({ awb: shipment.awb, shopify_order_id: shopifyOrderId, vendor_name: shipment.vendor_name });
+          const r = await fetch(`${API}/track/shipment-status?${params}`);
+          const d = await r.json();
+          if (d.stage || d.status) {
+            setShipment(prev => ({ ...prev, stage: d.stage || prev.stage, awb_status: d.status, history: d.history, tag: d.tag }));
+          }
+          if (d.message) setMsg(d.message);
+        } else {
+          // No AWB yet — re-fetch the order to check if it's been fulfilled since last load
+          if (!shopifyOrderId) { setMsg('Awaiting shipment update from CROSCROW.'); setRefreshing(false); return; }
+          const r = await fetch(`${API}/track/order-by-id?id=${shopifyOrderId}`);
+          const d = await r.json();
+          if (d.vendor_shipments?.length) {
+            const updated = d.vendor_shipments.find(s => s.vendor_name === shipment.vendor_name);
+            if (updated?.awb) {
+              setShipment(prev => ({ ...prev, ...updated }));
+              setMsg('Shipment found! Tracking activated.');
+            } else {
+              setMsg('Not yet dispatched — check back soon.');
+            }
+          } else if (d.awb) {
+            setShipment(prev => ({ ...prev, awb: d.awb, courier: d.courier, stage: d.stage || prev.stage }));
+            setMsg('Shipment found! Tracking activated.');
+          } else {
+            setMsg('Not yet dispatched — check back soon.');
+          }
+          if (onOrderRefresh) onOrderRefresh(d);
+        }
+      } catch { setMsg('Could not reach CROSCROW — try again.'); }
+      setRefreshing(false);
+    };
+
+    return (
+      <div style={{marginBottom: index < total-1 ? 16 : 0, padding: singleVendor ? '0' : '12px 14px', borderRadius: singleVendor ? 0 : 10, background: singleVendor ? 'transparent' : '#f8f9ff', border: singleVendor ? 'none' : '1px solid #e8eaf6'}}>
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
+          {!singleVendor && <div style={{fontSize:12, fontWeight:700, color:'#002eff'}}>📦 Shipment {index+1} — {shipment.vendor_name}</div>}
+          <div style={{display:'flex', alignItems:'center', gap:8, marginLeft: singleVendor ? 'auto' : 0}}>
+            {singleVendor && <div className={stagePillClass(shipment.stage)} style={{fontSize:10}}>{STAGE_LABELS[shipment.stage] || shipment.stage}</div>}
+            <button onClick={refresh} disabled={refreshing}
+              style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'3px 8px',display:'flex',alignItems:'center',gap:3}}>
+              {refreshing ? '…' : '↻ Refresh'}
+            </button>
+          </div>
+        </div>
+        <StageProgress stage={shipment.stage}/>
+        {shipment.awb && (
+          <div className="awb-row" style={{marginTop:8}}>
+            <span className="awb-label">AWB</span>
+            <span className="awb-value">{shipment.awb}</span>
+            {shipment.courier && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:6}}>{shipment.courier}</span>}
+            {shipment.tracking_url && <a className="awb-link" href={shipment.tracking_url} target="_blank" rel="noopener noreferrer">🔗 Track →</a>}
+          </div>
+        )}
+        {msg && <div style={{fontSize:10,color:'#4433cc',marginTop:6}}>{msg}</div>}
+        {shipment.awb_status && (
+          <div style={{fontSize:11,color:'#333',marginTop:6,fontWeight:600}}>{shipment.awb_status}
+            {shipment.tag && <span style={{marginLeft:8,fontSize:10,background:'#f0f0ff',border:'1px solid #d8d4ff',color:'#4433cc',borderRadius:99,padding:'2px 8px'}}>{shipment.tag}</span>}
+          </div>
+        )}
+        {shipment.history?.length > 0 && (
+          <div style={{marginTop:8,borderTop:'1px solid #e8eaf6',paddingTop:8}}>
+            {shipment.history.map((h,i)=>(
+              <div key={i} style={{display:'flex',gap:8,fontSize:10,color:i===shipment.history.length-1?'#333':'#888',marginBottom:3}}>
+                <span style={{whiteSpace:'nowrap',minWidth:90}}>{h.ActionDate} {h.ActionTime}</span>
+                <span>{h.ActionDescription}{h.ActionLocation?` · ${h.ActionLocation}`:''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {!singleVendor && shipment.items?.length > 0 && (
+          <div style={{marginTop:8, fontSize:11, color:'var(--text-muted)'}}>
+            {shipment.items.map(it => (
+              <div key={it.line_item_id} style={{padding:'4px 0', borderBottom:'1px solid #eee'}}>
+                {it.title}{it.variant_title ? ` · ${it.variant_title}` : ''} × {it.qty}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function StageProgress({ stage }) {
+    const isRto = stage === 'rto';
+    const idx = isRto ? STAGE_STEPS.indexOf('transit') : STAGE_STEPS.indexOf(stage);
+    return (
+      <div className="stage-bar">
+        <div className="stage-bar-label">Delivery Progress</div>
+        {isRto && (
+          <div style={{marginBottom:10,padding:'7px 12px',borderRadius:8,background:'#fff0f0',border:'1px solid #ffb3b3',color:'#cc0000',fontSize:12,fontWeight:600}}>
+            🔄 Shipment is being returned to origin
+          </div>
+        )}
+        <div className="stage-steps">
+          {STAGE_STEPS.map((s, i) => {
+            const done = isRto ? i < idx : (idx > i);
+            const active = isRto ? false : (idx === i);
+            const isLast = i === STAGE_STEPS.length - 1;
+            return (
+              <React.Fragment key={s}>
+                <div className="stage-step">
+                  <div className={`stage-dot ${done?'done':''} ${active?'active':''}`}/>
+                  <div className={`stage-step-label ${done?'done':''} ${active?'active':''}`}>{STAGE_LABELS[s]}</div>
+                </div>
+                {!isLast && <div className={`stage-line ${done?'done':''}`}/>}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function ItemCheckRow({ item, checked, onCheck, qty, onQtyChange, showVariants, variants, loadingVariants, exchangeVariantId, onVariantChange }) {
+    return (
+      <div className={`item-check-row ${checked?'selected':''}`}>
+        <input type="checkbox" checked={checked} onChange={e=>onCheck(e.target.checked)}/>
+        <div className="item-check-body">
+          <div className="item-check-title">{item.title}</div>
+          {item.variant_title && <div className="item-check-variant">{item.variant_title}</div>}
+          {checked && (
+            <div className="qty-row">
+              <span className="qty-label">Qty:</span>
+              <select className="qty-select" value={qty} onChange={e=>onQtyChange(Number(e.target.value))}>
+                {Array.from({length:item.qty},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}
+              </select>
+            </div>
+          )}
+          {checked && showVariants && (
+            <div className="variant-select-row">
+              <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:5}}>Select exchange size/variant:</div>
+              {loadingVariants ? (
+                <div style={{fontSize:11,color:'var(--text-muted)'}}><span className="spin">↻</span> Loading variants…</div>
+              ) : (
+                <select className="variant-select" value={exchangeVariantId||''} onChange={e=>onVariantChange(e.target.value, variants.find(v=>String(v.id)===e.target.value)?.title)}>
+                  <option value="">— Select size/variant —</option>
+                  {variants.map(v=>(
+                    <option key={v.id} value={v.id} disabled={!v.available}>{v.title}{!v.available?' (out of stock)':''}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function RequestForm({ order, type, onSuccess, onCancel, onSwitchToExchange }) {
+    const [selectedItems, setSelectedItems] = useState({}); // line_item_id → {checked,qty,exchangeVariantId,exchangeSizeLabel}
+    const [variantCache, setVariantCache] = useState({});
+    const [loadingVariants, setLoadingVariants] = useState({});
+    const [reason, setReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState(null);
+    const [paymentDone, setPaymentDone] = useState(null);
+    const [adminCode, setAdminCode] = useState('');
+    const [adminCodeResult, setAdminCodeResult] = useState(null); // null | {valid,type}
+    const [checkingCode, setCheckingCode] = useState(false);
+    const [imageFiles, setImageFiles] = useState([]); // File objects (preview only)
+    const [imageUrls, setImageUrls] = useState([]); // uploaded server paths
+    const [uploadingImages, setUploadingImages] = useState(false);
+
+    const checkedItems = (order.items || []).filter(it => selectedItems[it.line_item_id]?.checked);
+
+    // Active vendor = vendor of currently selected items (first checked item wins)
+    const activeVendor = checkedItems[0]?.vendor || '';
+
+    // Fee and config based on active vendor (falls back to first item's vendor if nothing checked yet)
+    const defaultVendor = (order.items||[])[0]?.vendor || '';
+    const displayVendor = activeVendor || defaultVendor;
+    const vendorCfg = order.return_configs?.[displayVendor] || {};
+    const baseFee = vendorCfg.rr_fee ?? 199;
+
+    // Admin code overrides
+    const isFeeWaived = adminCodeResult?.valid && adminCodeResult?.type === 'fee_waiver';
+    const fee = isFeeWaived ? 0 : baseFee;
+
+    // Is return/exchange enabled for the active vendor?
+    const returnEnabled  = vendorCfg.return_enabled !== false;
+    const exchangeEnabled = vendorCfg.exchange_enabled !== false;
+
+    const checkAdminCode = async () => {
+      if (!adminCode.trim()) return;
+      setCheckingCode(true);
+      try {
+        const r = await fetch(`${API}/track/validate-admin-code`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ code: adminCode.trim() }),
+        });
+        const d = await r.json();
+        setAdminCodeResult(d);
+      } catch { setAdminCodeResult({ valid: false, type: null }); }
+      setCheckingCode(false);
+    };
+
+    // Fetch variants when item is checked (exchange only)
+    const handleCheck = useCallback(async (item, checked) => {
+      // Block cross-vendor selection
+      if (checked && activeVendor && item.vendor && item.vendor !== activeVendor) return;
+      setSelectedItems(prev => ({
+        ...prev,
+        [item.line_item_id]: checked
+          ? { checked: true, qty: 1, exchangeVariantId: '', exchangeSizeLabel: '' }
+          : { checked: false }
+      }));
+      if (checked && type === 'exchange' && item.product_id && !variantCache[item.product_id]) {
+        setLoadingVariants(p => ({ ...p, [item.product_id]: true }));
+        try {
+          const r = await fetch(`${API}/track/product/${item.product_id}/variants`);
+          const d = await r.json();
+          setVariantCache(p => ({ ...p, [item.product_id]: d.variants || [] }));
+        } catch {}
+        setLoadingVariants(p => ({ ...p, [item.product_id]: false }));
+      }
+    }, [type, variantCache, activeVendor]);
+
+    const handleQtyChange = (id, qty) => setSelectedItems(p => ({ ...p, [id]: { ...p[id], qty } }));
+    const handleVariantChange = (productId, lineItemId, variantId, sizeLabel) => {
+      setSelectedItems(p => ({ ...p, [lineItemId]: { ...p[lineItemId], exchangeVariantId: variantId, exchangeSizeLabel: sizeLabel } }));
+    };
+
+    const buildItems = () => checkedItems.map(it => {
+      const sel = selectedItems[it.line_item_id];
+      return {
+        line_item_id: it.line_item_id, variant_id: it.variant_id,
+        product_id: it.product_id, title: it.title,
+        variant_title: it.variant_title, qty: sel.qty, price: it.price,
+        exchange_variant_id: sel.exchangeVariantId || null,
+        exchange_size_label: sel.exchangeSizeLabel || null,
+      };
+    });
+
+    const handleImageSelect = async (e) => {
+      const files = Array.from(e.target.files || []).slice(0, 5 - imageFiles.length);
+      if (!files.length) return;
+      const newFiles = [...imageFiles, ...files].slice(0, 5);
+      setImageFiles(newFiles);
+      setUploadingImages(true);
+      try {
+        const fd = new FormData();
+        files.forEach(f => fd.append('images', f));
+        const r = await fetch(`${API}/track/upload-images`, { method: 'POST', body: fd });
+        const d = await r.json();
+        setImageUrls(prev => [...prev, ...(d.urls || [])].slice(0, 5));
+      } catch {}
+      setUploadingImages(false);
+    };
+
+    const removeImage = (idx) => {
+      setImageFiles(prev => prev.filter((_,i) => i !== idx));
+      setImageUrls(prev => prev.filter((_,i) => i !== idx));
+    };
+
+    const doSubmitRequest = async (paymentId, rzpOrderId) => {
+      const vendorName = checkedItems[0]?.vendor || '';
+      const r = await fetch(`${API}/track/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopify_order_id: order.shopify_order_id,
+          order_name: order.order_name,
+          customer_email: order.customer_email,
+          customer_name: order.customer_name,
+          customer_phone: order.customer_phone,
+          type, items: buildItems(), reason: reason.trim(), vendor_name: vendorName,
+          payment_id: paymentId, razorpay_order_id: rzpOrderId,
+          image_urls: imageUrls,
+          ...(adminCodeResult?.valid && { admin_code: adminCode.trim() }),
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      return d.request_id;
+    };
+
+    const openRazorpay = async () => {
+      setError(null);
+      const vendorName = checkedItems[0]?.vendor || '';
+      // Create Razorpay order
+      const orderRes = await fetch(`${API}/track/razorpay-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendor_name: vendorName, order_name: order.order_name, customer_name: order.customer_name }),
+      });
+      const orderData = await orderRes.json();
+      if (!orderRes.ok) throw new Error(orderData.error || 'Could not create payment.');
+
+      return new Promise((resolve, reject) => {
+        const rzp = new window.Razorpay({
+          key: orderData.key,
+          amount: orderData.amount * 100,
+          currency: 'INR',
+          name: 'CROSCROW',
+          description: `${type === 'exchange' ? 'Exchange' : 'Return'} Request Fee — ${order.order_name}`,
+          order_id: orderData.order_id,
+          prefill: {
+            name: order.customer_name || '',
+            email: order.customer_email || '',
+            contact: order.customer_phone || '',
+          },
+          theme: { color: '#6366f1' },
+          handler: async (response) => {
+            try {
+              // Verify payment
+              const vr = await fetch(`${API}/track/razorpay-verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
+                }),
+              });
+              const vd = await vr.json();
+              if (!vr.ok || !vd.verified) throw new Error('Payment verification failed.');
+              resolve({ payment_id: response.razorpay_payment_id, rzp_order_id: response.razorpay_order_id });
+            } catch(e) { reject(e); }
+          },
+          modal: { ondismiss: () => reject(new Error('Payment cancelled.')) },
+        });
+        rzp.open();
+      });
+    };
+
+    const submit = async () => {
+      if (!checkedItems.length) { setError('Please select at least one item.'); return; }
+      if (!reason.trim()) { setError('Please provide a reason.'); return; }
+      if (type === 'exchange') {
+        const missing = checkedItems.find(it => !selectedItems[it.line_item_id]?.exchangeVariantId);
+        if (missing) { setError('Please select an exchange variant for each selected item.'); return; }
+      }
+
+      setSubmitting(true); setError(null);
+      try {
+        let payment_id = null, rzp_order_id = null;
+        if (fee > 0) {
+          const result = await openRazorpay();
+          payment_id = result.payment_id;
+          rzp_order_id = result.rzp_order_id;
+        }
+        const request_id = await doSubmitRequest(payment_id, rzp_order_id);
+        onSuccess(request_id);
+      } catch(e) { setError(e.message); }
+      setSubmitting(false);
+    };
+
+    return (
+      <div className="form-card">
+        <div className="form-title">
+          {type === 'exchange' ? '🔄' : '↩'} {type === 'exchange' ? 'Exchange' : 'Return'} Request
+          <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400}}>— {order.order_name}</span>
+        </div>
+
+        {error && <div className="alert alert-error">⚠ {error}</div>}
+
+        <span className="form-section-label">Select items</span>
+        {activeVendor && (
+          <div style={{fontSize:11,color:'#a5b4fc',background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:6,padding:'6px 10px',marginBottom:8}}>
+            🏪 Showing items from <strong>{activeVendor}</strong> — one vendor per request
+          </div>
+        )}
+        {(order.items || []).map(item => {
+          const isLocked = activeVendor && item.vendor && item.vendor !== activeVendor;
+          return (
+            <div key={item.line_item_id} style={{opacity: isLocked ? 0.4 : 1, pointerEvents: isLocked ? 'none' : 'auto', position:'relative'}}>
+              {isLocked && <div style={{position:'absolute',top:8,right:8,fontSize:10,color:'#888',zIndex:1}}>Different vendor</div>}
+              <ItemCheckRow
+                item={item}
+                checked={!!selectedItems[item.line_item_id]?.checked}
+                onCheck={checked => handleCheck(item, checked)}
+                qty={selectedItems[item.line_item_id]?.qty || 1}
+                onQtyChange={qty => handleQtyChange(item.line_item_id, qty)}
+                showVariants={type === 'exchange'}
+                variants={variantCache[item.product_id] || []}
+                loadingVariants={!!loadingVariants[item.product_id]}
+                exchangeVariantId={selectedItems[item.line_item_id]?.exchangeVariantId}
+                onVariantChange={(varId, sizeLabel) => handleVariantChange(item.product_id, item.line_item_id, varId, sizeLabel)}
+              />
+            </div>
+          );
+        })}
+
+        <div style={{marginTop:16,marginBottom:16}}>
+          <span className="form-section-label">Reason <span style={{color:'var(--red)'}}>*</span></span>
+          <textarea
+            className="reason-textarea"
+            placeholder={type === 'exchange' ? 'E.g. Wrong size ordered, would like to exchange for L instead of M.' : 'E.g. Product damaged on arrival / not as described.'}
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+          />
+        </div>
+
+        {/* Image upload */}
+        <div style={{marginBottom:16}}>
+          <span className="form-section-label">Photos <span style={{fontSize:10,fontWeight:400,color:'var(--text-muted)'}}>optional · up to 5</span></span>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:6}}>
+            {imageFiles.map((f, idx) => (
+              <div key={idx} style={{position:'relative',width:72,height:72,borderRadius:8,overflow:'hidden',border:'1px solid var(--border)'}}>
+                <img src={URL.createObjectURL(f)} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                <button onClick={()=>removeImage(idx)} style={{position:'absolute',top:2,right:2,width:18,height:18,borderRadius:'50%',background:'rgba(0,0,0,0.65)',border:'none',color:'#fff',fontSize:11,lineHeight:'18px',textAlign:'center',cursor:'pointer',padding:0}}>×</button>
+                {imageUrls[idx] ? <div style={{position:'absolute',bottom:0,left:0,right:0,height:4,background:'#4ade80'}}/> : <div style={{position:'absolute',bottom:0,left:0,right:0,height:4,background:'#a5b4fc',opacity:0.7}}/>}
+              </div>
+            ))}
+            {imageFiles.length < 5 && (
+              <label style={{width:72,height:72,borderRadius:8,border:'1.5px dashed var(--border)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer',color:'var(--text-muted)',fontSize:10,gap:4,background:'var(--bg-card2)'}}>
+                <span style={{fontSize:20}}>{uploadingImages ? '⟳' : '📷'}</span>
+                <span>{uploadingImages ? 'Uploading…' : 'Add photo'}</span>
+                <input type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleImageSelect} disabled={uploadingImages}/>
+              </label>
+            )}
+          </div>
+        </div>
+
+        {/* Eligibility warning */}
+        {activeVendor && type === 'return' && !returnEnabled && (
+          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:8,padding:'12px 14px',marginBottom:14,fontSize:12,color:'#f87171',lineHeight:1.6}}>
+            ⚠ Returns are not available for <strong>{activeVendor}</strong>'s products.
+            {exchangeEnabled && onSwitchToExchange && (
+              <span> You can still request an <span
+                style={{color:'#a5b4fc',fontWeight:700,cursor:'pointer',textDecoration:'underline'}}
+                onClick={onSwitchToExchange}>Exchange</span> instead.</span>
+            )}
+          </div>
+        )}
+
+        {/* Admin code input */}
+        <details style={{marginBottom:12}}>
+          <summary style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:6}}>
+            <span>🔑</span> Have an admin code?
+          </summary>
+          <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <input
+              type="text"
+              placeholder="Enter admin code…"
+              value={adminCode}
+              onChange={e => { setAdminCode(e.target.value); setAdminCodeResult(null); }}
+              style={{flex:1,minWidth:160,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'7px 10px',color:'var(--text)',fontSize:13,fontFamily:'inherit'}}
+            />
+            <button
+              className="btn"
+              onClick={checkAdminCode}
+              disabled={checkingCode || !adminCode.trim()}
+              style={{fontSize:12,padding:'7px 14px',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.4)',color:'#a5b4fc'}}>
+              {checkingCode ? '…' : 'Apply'}
+            </button>
+          </div>
+          {adminCodeResult && (
+            <div style={{marginTop:6,fontSize:12,fontWeight:600,
+              color: adminCodeResult.valid && adminCodeResult.type === 'fee_waiver' ? '#4ade80' : '#f87171'}}>
+              {adminCodeResult.valid && adminCodeResult.type === 'fee_waiver'
+                ? '✓ Fee waiver applied — no payment required'
+                : '✗ Invalid code'}
+            </div>
+          )}
+        </details>
+
+        {/* Fee notice */}
+        <div style={{background: isFeeWaived ? 'rgba(74,222,128,0.08)' : 'rgba(99,102,241,0.08)', border: `1px solid ${isFeeWaived ? 'rgba(74,222,128,0.3)' : 'rgba(99,102,241,0.25)'}`,borderRadius:8,padding:'12px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:20}}>{isFeeWaived ? '✓' : '💳'}</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color: isFeeWaived ? '#4ade80' : '#a5b4fc'}}>
+              {fee === null ? '⟳ Loading fee…' : fee === 0 ? (isFeeWaived ? 'Fee Waived by Admin' : 'Free — No Fee') : `₹${fee} Processing Fee`}
+            </div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+              {fee === 0 ? 'This request can be submitted for free.' : 'A one-time fee is charged to process your ' + type + ' request. Payment via Razorpay (UPI, Card, Net Banking).'}
+            </div>
+          </div>
+        </div>
+
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <button className="btn btn-green" onClick={submit} disabled={submitting || fee === null}
+            style={{display:'flex',alignItems:'center',gap:8}}>
+            {submitting
+              ? <><span className="spin">↻</span> Processing…</>
+              : fee === 0
+                ? `Submit ${type === 'exchange' ? 'Exchange' : 'Return'}`
+                : <><span>💳</span> Pay ₹{fee} & Submit {type === 'exchange' ? 'Exchange' : 'Return'}</>}
+          </button>
+          <button className="btn" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-muted)'}} onClick={onCancel} disabled={submitting}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+
+  function RRShipmentTracker({ awb, courier, direction, requestId, trackingStatus }) {
+    const [status, setStatus] = React.useState(trackingStatus || '');
+    const [history, setHistory] = React.useState([]);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [msg, setMsg] = React.useState('');
+
+    const refresh = async () => {
+      if (!awb) return;
+      setRefreshing(true); setMsg('');
+      try {
+        const params = new URLSearchParams({ awb, request_id: requestId || '', direction: direction || '' });
+        const r = await fetch(`${API}/track/rr-shipment-status?${params}`);
+        const d = await r.json();
+        if (d.status) setStatus(d.status);
+        if (d.history) setHistory(d.history);
+        if (d.message) setMsg(d.message);
+      } catch { setMsg('Could not fetch status.'); }
+      setRefreshing(false);
+    };
+
+    return (
+      <div style={{background:'#f0f0ff',border:'1px solid #d8d4ff',borderRadius:8,padding:'10px 12px',marginTop:8}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:11,fontWeight:700,color:'#4433cc'}}>{direction==='reverse'?'↩ Return Pickup':'→ Exchange Dispatch'}</span>
+            <span style={{fontSize:10,color:'#888',fontFamily:'monospace'}}>{awb}</span>
+            {courier && <span style={{fontSize:10,color:'#aaa'}}>{courier}</span>}
+          </div>
+          <button onClick={refresh} disabled={refreshing}
+            style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'2px 8px',display:'flex',alignItems:'center',gap:3}}>
+            {refreshing?'…':'↻ Refresh'}
+          </button>
+        </div>
+        {status && <div style={{fontSize:11,color:'#4433cc',fontWeight:600,marginBottom:4}}>{status}</div>}
+        {msg && <div style={{fontSize:10,color:'#888',marginTop:2}}>{msg}</div>}
+        {history.length > 0 && (
+          <div style={{marginTop:6,borderTop:'1px solid #e8e4ff',paddingTop:6}}>
+            {history.slice().reverse().slice(0,3).map((h,i)=>(
+              <div key={i} style={{fontSize:10,color:'#666',marginBottom:2,display:'flex',gap:8}}>
+                <span style={{color:'#aaa',flexShrink:0}}>{h.ActionDate||''}</span>
+                <span>{h.ActionDescription||''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function RRProgressCard({ rr, idx, total, RR_STEPS, RR_LABELS, RR_ICONS, statusColor, isTerminal, currentStep }) {
+    return (
+      <div style={{background:'#f8f9ff',border:'1px solid #e8eaf6',borderRadius:10,padding:'14px 16px',marginBottom: idx < total-1 ? 10 : 0}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{fontSize:16}}>{rr.type==='exchange'?'🔄':'↩'}</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#1a1a2e'}}>{rr.type==='exchange'?'Exchange':'Return'} Request</div>
+              <div style={{fontSize:10,color:'#888',marginTop:1}}>ID: {rr.request_id}</div>
+            </div>
+          </div>
+          <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,background:statusColor(rr.status)+'18',color:statusColor(rr.status)}}>
+            {RR_ICONS[rr.status]} {RR_LABELS[rr.status]||rr.status}
+          </span>
+        </div>
+
+        {/* Progress bar */}
+        {!isTerminal && (
+          <div style={{display:'flex',alignItems:'center',gap:0,marginBottom:10}}>
+            {RR_STEPS.map((step, i) => (
+              <React.Fragment key={step}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',flex:'none'}}>
+                  <div style={{width:20,height:20,borderRadius:'50%',background:i<=currentStep?'#6366f1':'#e8eaf6',border:`2px solid ${i<=currentStep?'#6366f1':'#d0d4f0'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:i<=currentStep?'#fff':'#aaa',fontWeight:700}}>
+                    {i<currentStep?'✓':i===currentStep?'●':''}
+                  </div>
+                  <div style={{fontSize:8,color:i<=currentStep?'#6366f1':'#aaa',marginTop:3,textAlign:'center',whiteSpace:'nowrap',maxWidth:50,overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {RR_LABELS[step]}
+                  </div>
+                </div>
+                {i < RR_STEPS.length-1 && <div style={{flex:1,height:2,background:i<currentStep?'#6366f1':'#e8eaf6',margin:'0 2px',marginBottom:14}}/>}
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+
+        {/* AWB shipment trackers */}
+        {rr.reverse_shipment?.awb && (
+          <RRShipmentTracker awb={rr.reverse_shipment.awb} courier={rr.reverse_shipment.courier} direction="reverse"
+            requestId={rr.request_id} trackingStatus={rr.reverse_shipment.tracking_status}/>
+        )}
+        {rr.forward_shipment?.awb && (
+          <RRShipmentTracker awb={rr.forward_shipment.awb} courier={rr.forward_shipment.courier} direction="forward"
+            requestId={rr.request_id} trackingStatus={rr.forward_shipment.tracking_status}/>
+        )}
+
+        {/* Reason + admin note */}
+        {rr.reason && <div style={{fontSize:11,color:'#666',marginTop:8}}>Reason: {rr.reason}</div>}
+        {rr.admin_note && (
+          <div style={{fontSize:11,color:'#6366f1',background:'#f0f0ff',borderRadius:6,padding:'6px 10px',marginTop:6}}>
+            💬 {rr.admin_note}
+          </div>
+        )}
+        <div style={{fontSize:10,color:'#aaa',marginTop:6}}>{rr.created_at ? new Date(rr.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+      </div>
+    );
+  }
+
+  function AdminCodeField({ onForceEnable, forceEnabled }) {
+    const [code, setCode] = useState('');
+    const [checking, setChecking] = useState(false);
+    const [result, setResult] = useState(null);
+
+    const apply = async () => {
+      if (!code.trim()) return;
+      setChecking(true);
+      try {
+        const r = await fetch(`${API}/track/validate-admin-code`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ code: code.trim() }),
+        });
+        const d = await r.json();
+        setResult(d);
+        if (d.valid && d.type === 'force_enable') onForceEnable(true);
+      } catch { setResult({ valid: false }); }
+      setChecking(false);
+    };
+
+    if (forceEnabled) return (
+      <div style={{fontSize:11,color:'#4ade80',marginBottom:8,fontWeight:600}}>🔓 Admin access active — return enabled for all orders</div>
+    );
+
+    return (
+      <details style={{marginBottom:8}}>
+        <summary style={{fontSize:11,color:'var(--text-muted)',cursor:'pointer',userSelect:'none',listStyle:'none',display:'flex',alignItems:'center',gap:5}}>
+          🔑 Have an admin code?
+        </summary>
+        <div style={{marginTop:6,display:'flex',gap:6,alignItems:'center'}}>
+          <input type="text" placeholder="Admin code…" value={code}
+            onChange={e=>{setCode(e.target.value);setResult(null);}}
+            onKeyDown={e=>e.key==='Enter'&&apply()}
+            style={{flex:1,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontSize:12,fontFamily:'inherit'}}/>
+          <button className="btn" onClick={apply} disabled={checking||!code.trim()}
+            style={{fontSize:11,padding:'6px 12px',background:'rgba(99,102,241,0.15)',border:'1px solid rgba(99,102,241,0.4)',color:'#a5b4fc'}}>
+            {checking?'…':'Apply'}
+          </button>
+        </div>
+        {result && (
+          <div style={{marginTop:4,fontSize:11,fontWeight:600,color: result.valid && result.type==='force_enable' ? '#4ade80' : '#f87171'}}>
+            {result.valid && result.type==='force_enable' ? '✓ Access granted — return enabled' : result.valid ? '✗ Code not valid for this action' : '✗ Invalid code'}
+          </div>
+        )}
+      </details>
+    );
+  }
+
+  function App() {
+    const [orderNum, setOrderNum]   = useState('');
+    const [contact,  setContact]    = useState(''); // email or phone
+    const [loading,  setLoading]    = useState(false);
+    const [error,    setError]      = useState(null);
+    const [order,    setOrder]      = useState(null);
+    const [activeForm,  setActiveForm]  = useState(null);
+    const [confirmed,   setConfirmed]   = useState(null);
+    const [forceReturnEnabled, setForceReturnEnabled] = useState(false);
+
+    // "Find my orders" mode
+    const [findMode,    setFindMode]    = useState(false);
+    const [findContact, setFindContact] = useState('');
+    const [findLoading, setFindLoading] = useState(false);
+    const [findError,   setFindError]   = useState(null);
+    const [orderList,   setOrderList]   = useState(null); // array of orders
+
+    const resetResult = () => { setOrder(null); setActiveForm(null); setConfirmed(null); setOrderList(null); };
+
+    // Accepts optional overrides so a deep-link auto-fill (?order=&contact=)
+    // can trigger a lookup immediately without waiting on React state to
+    // re-render — calling setOrderNum/setContact then lookup() in the same
+    // tick would read stale ('') values from this closure otherwise.
+    const lookup = async (overrideOrderNum, overrideContact) => {
+      // onClick={lookup} passes the click event as the first arg — only use
+      // the override when it's actually a string (from the deep-link effect).
+      const orderVal = (typeof overrideOrderNum === 'string' ? overrideOrderNum : orderNum).trim();
+      const contactVal = (typeof overrideContact === 'string' ? overrideContact : contact).trim();
+      if (!orderVal) { setError('Please enter your order number.'); return; }
+      if (!contactVal) { setError('Please enter your email or mobile number.'); return; }
+      setLoading(true); setError(null); resetResult();
+      try {
+        const r = await fetch(`${API}/track/order?q=${encodeURIComponent(orderVal)}&contact=${encodeURIComponent(contactVal)}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setOrder(d);
+      } catch(e) { setError(e.message); }
+      setLoading(false);
+    };
+
+    // Deep-link auto-fill: /track?order=2334&contact=na (or &contact=email/phone)
+    // — used by JARVIS support chat's tracking links. Previously this page had
+    // no query-param handling at all, so those links landed on an empty form.
+    useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      const o = (params.get('order') || params.get('o') || '').replace(/^#/, '').trim();
+      const c = (params.get('contact') || '').trim();
+      if (o) {
+        setOrderNum(o);
+        setContact(c);
+        lookup(o, c);
+      }
+    }, []);
+
+    const findMyOrders = async () => {
+      if (!findContact.trim()) { setFindError('Enter your email or mobile number.'); return; }
+      setFindLoading(true); setFindError(null); setOrderList(null);
+      try {
+        const r = await fetch(`${API}/track/my-orders?contact=${encodeURIComponent(findContact.trim())}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setOrderList(d.orders);
+      } catch(e) { setFindError(e.message); }
+      setFindLoading(false);
+    };
+
+    const selectOrder = async (shopifyId) => {
+      setLoading(true); setError(null); setOrder(null); setActiveForm(null); setConfirmed(null);
+      try {
+        const r = await fetch(`${API}/track/order-by-id?id=${shopifyId}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setOrder(d); setOrderList(null); setFindMode(false);
+      } catch(e) { setError(e.message); }
+      setLoading(false);
+    };
+
+    const handleSuccess = async (requestId) => {
+      setActiveForm(null);
+      setConfirmed(requestId);
+      // Re-fetch order so the new request shows in progress view immediately
+      try {
+        const r = await fetch(`${API}/track/order-by-id?id=${order.shopify_order_id}`);
+        const d = await r.json();
+        if (d.shopify_order_id) setOrder(d);
+      } catch {}
+    };
+
+    const returnCfg = order ? (() => {
+      if (forceReturnEnabled) return { return_enabled: true };
+      // Show return button if ANY vendor in the order accepts returns
+      const cfgs = Object.values(order.return_configs || {});
+      if (!cfgs.length) return { return_enabled: true };
+      return { return_enabled: cfgs.some(c => c.return_enabled !== false) };
+    })() : null;
+
+    return (
+      <div className="page-wrap">
+        <div className="header">
+          <div className="header-logo">
+            <img src="/croscrow-logo.png" alt="CROSCROW" style={{height:48,width:'auto',borderRadius:8}}/>
+          </div>
+          <div className="header-sub" style={{marginTop:8}}>Track your order · Request returns & exchanges</div>
+        </div>
+
+        {/* Search */}
+        <div className="search-card">
+          {/* Toggle: normal vs find-my-orders */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+            <span style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+              {findMode ? '🔍 Find My Orders' : '📦 Track by Order Number'}
+            </span>
+            <button onClick={()=>{setFindMode(m=>!m);resetResult();setError(null);setFindError(null);}} style={{
+              background: findMode?'var(--green)':'var(--bg-card2)',
+              border:`1px solid ${findMode?'var(--green)':'var(--border)'}`,
+              borderRadius:20, padding:'3px 10px', cursor:'pointer',
+              fontSize:10, fontWeight:600, color: findMode?'#fff':'var(--text-muted)',
+              fontFamily:'inherit', transition:'all 0.2s', display:'flex', alignItems:'center', gap:5,
+            }}>
+              <span style={{
+                display:'inline-block', width:28, height:14, borderRadius:7,
+                background: findMode?'rgba(255,255,255,0.3)':'var(--border)',
+                position:'relative', transition:'all 0.2s',
+              }}>
+                <span style={{
+                  position:'absolute', top:2, left: findMode?14:2, width:10, height:10,
+                  borderRadius:'50%', background: findMode?'#fff':'var(--text-muted)',
+                  transition:'left 0.2s',
+                }}/>
+              </span>
+              {findMode ? "Don't know order #" : "Don't know order #"}
+            </button>
+          </div>
+
+          {!findMode ? (
+            <>
+              <div className="search-row">
+                <div className="search-field">
+                  <label className="field-label">Order Number</label>
+                  <input className="field-input" placeholder="#1905 or 1905"
+                    value={orderNum} onChange={e=>setOrderNum(e.target.value)} onKeyDown={e=>e.key==='Enter'&&lookup()}/>
+                </div>
+                <div className="search-field">
+                  <label className="field-label">Email or Mobile</label>
+                  <input className="field-input" placeholder="you@example.com or 98765 43210"
+                    value={contact} onChange={e=>{setContact(e.target.value);setForceReturnEnabled(false);}}
+                    onKeyDown={e=>e.key==='Enter'&&lookup()}/>
+                </div>
+              </div>
+              <AdminCodeField onForceEnable={setForceReturnEnabled} forceEnabled={forceReturnEnabled}/>
+              {error && <div className="alert alert-error" style={{marginTop:10,marginBottom:0}}>⚠ {error}</div>}
+              <button className="btn btn-green btn-full" onClick={lookup} disabled={loading}>
+                {loading ? <><span className="spin">↻</span> Searching…</> : '🔍 Track Order'}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{marginBottom:10}}>
+                <label className="field-label">Email or Mobile Number</label>
+                <input className="field-input" placeholder="you@example.com or 98765 43210"
+                  value={findContact} onChange={e=>setFindContact(e.target.value)} onKeyDown={e=>e.key==='Enter'&&findMyOrders()}/>
+              </div>
+              {findError && <div className="alert alert-error" style={{marginBottom:8}}>⚠ {findError}</div>}
+              <button className="btn btn-green btn-full" onClick={findMyOrders} disabled={findLoading}>
+                {findLoading ? <><span className="spin">↻</span> Searching…</> : '🔍 Find My Orders'}
+              </button>
+
+              {/* Order list */}
+              {orderList && (
+                <div style={{marginTop:14}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8,fontWeight:500}}>
+                    {orderList.length} order{orderList.length!==1?'s':''} found — select one to track
+                  </div>
+                  {orderList.map(o=>(
+                    <div key={o.shopify_order_id} onClick={()=>selectOrder(o.shopify_order_id)}
+                      style={{
+                        display:'flex', alignItems:'center', justifyContent:'space-between', gap:10,
+                        padding:'10px 12px', borderRadius:8, border:'1px solid var(--border)',
+                        background:'var(--bg-card2)', marginBottom:6, cursor:'pointer',
+                        transition:'all 0.15s',
+                      }}
+                      onMouseEnter={e=>{ e.currentTarget.style.borderColor='var(--green)'; e.currentTarget.style.background='var(--bg-hover)'; }}
+                      onMouseLeave={e=>{ e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.background='var(--bg-card2)'; }}
+                    >
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13,color:'var(--green)'}}>{o.order_name}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{o.items_preview}{o.item_count>2?` +${o.item_count-2} more`:''}</div>
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{new Date(o.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</div>
+                      </div>
+                      <div style={{textAlign:'right',flexShrink:0}}>
+                        <div className={stagePillClass(o.stage)} style={{marginBottom:4}}>{STAGE_LABELS[o.stage]||o.stage}</div>
+                        <div style={{fontSize:11,fontWeight:600,color:'var(--text)'}}>₹{parseFloat(o.total).toFixed(0)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Order Result */}
+        {order && !confirmed && (
+          <>
+            <div className="order-card">
+              <div className="order-header">
+                <div>
+                  <div className="order-name">{order.order_name}</div>
+                  <div className="order-customer">{order.customer_name}</div>
+                  <div className="order-date">{order.created_at ? new Date(order.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}) : ''}</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div className={stagePillClass(order.stage)}>{STAGE_LABELS[order.stage] || order.stage}</div>
+                  {order.financial_status && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:5}}>{order.financial_status}</div>}
+                </div>
+              </div>
+
+              {/* Shipment progress — single vendor uses first vendorShipment, multi-vendor shows cards */}
+              {(order.vendor_shipments?.length > 1) ? (
+                <div style={{marginBottom:12}}>
+                  {order.vendor_shipments.map((vs, i) => (
+                    <VendorShipmentCard key={vs.vendor_name} vs={vs} shopifyOrderId={String(order.shopify_order_id)} index={i} total={order.vendor_shipments.length}/>
+                  ))}
+                </div>
+              ) : (
+                <VendorShipmentCard
+                  vs={order.vendor_shipments?.[0] || { vendor_name: '', stage: order.stage, awb: order.awb, courier: order.vendor_shipments?.[0]?.courier || '', tracking_url: order.tracking_url, items: [] }}
+                  shopifyOrderId={String(order.shopify_order_id)}
+                  index={0}
+                  total={1}
+                  singleVendor={true}
+                />
+              )}
+
+              <div className="items-section">
+                <div className="items-title">Items in this order ({order.items?.length})</div>
+                {(order.items || []).map(item => (
+                  <div key={item.line_item_id} className="item-row">
+                    <div>
+                      <div className="item-title">{item.title}</div>
+                      {item.variant_title && <div className="item-variant">{item.variant_title}</div>}
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div className="item-price">₹{parseFloat(item.price).toFixed(2)}</div>
+                      <div className="item-qty">Qty: {item.qty}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Return/Exchange: show progress if request exists, else show action tiles */}
+              {!activeForm && (() => {
+                const rrs = order.return_requests || [];
+                if (rrs.length > 0) {
+                  const RR_STEPS = ['submitted','approved','pickup_scheduled','in_transit','completed'];
+                  const RR_LABELS = { submitted:'Submitted', approved:'Approved', pickup_scheduled:'Pickup Scheduled', in_transit:'In Transit', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
+                  const RR_ICONS  = { submitted:'📋', approved:'✅', pickup_scheduled:'🚚', in_transit:'📦', completed:'🎉', rejected:'❌', cancelled:'✕' };
+                  const statusColor = s => s==='completed'?'#10b981':s==='rejected'||s==='cancelled'?'#ef4444':'#6366f1';
+                  return (
+                    <div style={{marginTop:12}}>
+                      {rrs.map((rr, idx) => {
+                        const isTerminal = ['rejected','cancelled'].includes(rr.status);
+                        const currentStep = isTerminal ? -1 : RR_STEPS.indexOf(rr.status);
+                        return (
+                          <RRProgressCard key={rr.request_id} rr={rr} idx={idx} total={rrs.length}
+                            RR_STEPS={RR_STEPS} RR_LABELS={RR_LABELS} RR_ICONS={RR_ICONS} statusColor={statusColor} isTerminal={isTerminal} currentStep={currentStep}/>
+                        );
+                      })}
+                    </div>
+                  );
+                }
+                // No existing requests — show normal action tiles
+                return (
+                  <div className="tiles-row">
+                    <div className="tile tile-exchange" onClick={() => setActiveForm('exchange')} title="Request an exchange">
+                      <div className="tile-icon">🔄</div>
+                      <div className="tile-label">Exchange</div>
+                      <div className="tile-desc">Swap for a different size or variant</div>
+                    </div>
+                    {returnCfg?.return_enabled ? (
+                      <div className="tile tile-return" onClick={() => setActiveForm('return')} title="Request a return">
+                        <div className="tile-icon">↩</div>
+                        <div className="tile-label">Return</div>
+                        <div className="tile-desc">Return items for a refund or credit</div>
+                      </div>
+                    ) : (
+                      <div className="tile tile-disabled tile-return-disabled" title="Returns not accepted">
+                        <div className="tile-icon">↩</div>
+                        <div className="tile-label" style={{color:'var(--red)'}}>Return</div>
+                        <div className="tile-desc" style={{color:'var(--red)'}}>Returns not accepted for any items in this order</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Request Form */}
+            {activeForm && (
+              <RequestForm
+                order={order}
+                type={activeForm}
+                onSuccess={handleSuccess}
+                onCancel={() => setActiveForm(null)}
+                onSwitchToExchange={() => setActiveForm('exchange')}
+              />
+            )}
+          </>
+        )}
+
+        {/* Confirmation */}
+        {confirmed && (
+          <div className="confirm-card">
+            <div className="confirm-icon">✅</div>
+            <div className="confirm-title">Request Submitted!</div>
+            <div className="confirm-id">{confirmed}</div>
+            <div className="confirm-sub">
+              Your request has been received. Our team will review it and get back to you within 1–2 business days.<br/><br/>
+              Please save your request ID for reference.
+            </div>
+            <button className="btn btn-green" style={{marginTop:20}} onClick={()=>{setConfirmed(null);setActiveForm(null);}}>
+              Track Another Order
+            </button>
+          </div>
+        )}
+
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
