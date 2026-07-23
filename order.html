@@ -678,7 +678,7 @@ async function doLookup() {
 
 function renderOrder(d) {
   const stage = d.stage || 'new';
-  const notConfirmed = !d.already_confirmed && !d.is_prepaid && ['new','hold','misc',''].includes(stage);
+  const notConfirmed = !d.already_confirmed && !d.is_prepaid && stage === 'confirmed';
   showScreen('order-screen');
   document.getElementById('order-screen').style.flexDirection = 'column';
   notConfirmed ? renderConfirm(d) : renderTrack(d);
