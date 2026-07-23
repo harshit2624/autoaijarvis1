@@ -16,13 +16,13 @@
   --text:#0f0f0f;
   --body:#555;
   --muted:#999;
-  --green:#10b981;
-  --green-light:#f0fdf8;
-  --green-border:#c6f0e0;
-  --green-dark:#059669;
-  --purple:#6366f1;
-  --purple-light:#f5f3ff;
-  --purple-border:#e0e7ff;
+  --green:#6366f1;
+  --green-light:#f0f0ff;
+  --green-border:#c7d2fe;
+  --green-dark:#4f46e5;
+  --purple:#a5b4fc;
+  --purple-light:#eef2ff;
+  --purple-border:#c7d2fe;
   --amber:#f59e0b;
   --amber-light:#fffbeb;
   --amber-border:#fde68a;
@@ -813,7 +813,7 @@ function renderTrack(d) {
   } else if (['transit','pickup','ofd','ready'].includes(stage)) {
     const ofd = stage === 'ofd';
     statusHtml = `<div class="status-card-base eta-card">
-      <div class="eta-icon" style="color:${ofd?'var(--green)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
+      <div class="eta-icon" style="color:${ofd?'var(--green-dark)':'var(--amber)'}">${ofd?BIG.nav:BIG.truck}</div>
       <div>
         <div class="eta-text">${ofd?'Out for delivery':'On its way to you'}</div>
         <div class="eta-sub">${ofd?'Arriving today':'Expected in 2–5 business days'}</div>
@@ -892,7 +892,7 @@ async function pay(mode) {
     const rzp = new Razorpay({
       key:rz.key, order_id:rz.order_id, amount:Math.round(rz.amount*100), currency:'INR',
       name:'CROSCROW', description:mode==='prepaid'?'Full prepaid payment':'Order confirmation fee',
-      theme:{color:'#10b981'},
+      theme:{color:'#6366f1'},
       handler:async(resp)=>{
         try {
           const vr = await fetch(`${API}/track/confirm-payment-verify`,{
