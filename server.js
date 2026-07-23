@@ -20542,8 +20542,9 @@ async function waDelayReason(shopifyOrderId) {
   return { reason: vs.delay_reason, eta: vs.delay_resolution_date || null };
 }
 
-// ── Escalate to human + pause bot for 12 hours ────────────────────────────
-async function waTalkToHuman(sock, sender, chat, phone, context) {
+// ── Escalate to human + pause bot ────────────────────────────────────────
+// sendCustomerMsg: true = send the handoff line to customer (only on first escalation or explicit request)
+async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerMsg = true, forceMsg = false } = {}) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
   const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID — Order ${_hci.order_name}` : null);
 
@@ -20560,13 +20561,20 @@ async function waTalkToHuman(sock, sender, chat, phone, context) {
   const _orderStr = _hci.order_name ? `Order: *${_hci.order_name}*\n` : '';
 
   await waAdminAlert(`👤 *Human Support Requested*\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\n\n🔗 Open chat: ${_panelLink}`);
-  const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
-  await sock.sendMessage(sender, { text: msg });
-  await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
-  const pauseUntil = Date.now() + 24 * 60 * 60 * 1000; // 24h — bot stays silent until admin unpauses
+
+  // Only send the customer-facing message if this is a fresh escalation (not already done recently)
+  const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
+  const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000; // within 6 hours
+  if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
+    const msg = `If you feel I'm not being helpful enough, our support team is available to assist you directly 🙏\n\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM\n\nOr just reply *"human"* anytime and I'll connect you right away.`;
+    await sock.sendMessage(sender, { text: msg });
+    await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
+  }
+
+  const pauseUntil = Date.now() + 24 * 60 * 60 * 1000;
   await mdb.collection('support_chats').updateOne(
     { _id: chat._id },
-    { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, confused_count: 0, updated_at: new Date().toISOString() } }
+    { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, last_escalated_at: new Date().toISOString(), confused_count: 0, updated_at: new Date().toISOString() } }
   );
   await waSessionClear(sender);
 }
@@ -21089,7 +21097,8 @@ async function startBaileysBot() {
           const HUMAN_REQUEST = /\b(talk to human|human|agent|real person|speak to (someone|a person)|customer care|support team)\b/i;
           if (HUMAN_REQUEST.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
-            await waTalkToHuman(sock, sender, chat, phone, `Customer explicitly asked: "${text.slice(0, 100)}"`);
+            // Always send the customer message on explicit request, regardless of recent escalation
+            await waTalkToHuman(sock, sender, chat, phone, `Customer explicitly asked: "${text.slice(0, 100)}"`, { sendCustomerMsg: true, forceMsg: true });
             waPending.delete(sender);
             continue;
           }
@@ -21248,9 +21257,11 @@ async function startBaileysBot() {
               waAdminAlert(`⏰ *Stuck Order Alert*\nOrder: *${meta.data.order_name}*${meta.data.customer_name ? `\nCustomer: *${meta.data.customer_name}*` : ''}\nPhone: +91${phone}\n${Math.round(hrs)}h since confirmation, still not shipped.`).catch(() => {});
             }
 
-            // If bot flagged escalation (cancellation etc), hand off immediately
+            // If bot flagged escalation (cancellation etc), hand off
+            // needsAdmin only = bot already told customer it's flagged, just alert admin silently
+            // botCantHelp = bot explicitly said it can't help, send handoff message too
             if (needsAdmin || botCantHelp) {
-              await waTalkToHuman(sock, sender, chat, phone, `Order ${meta.data?.order_name || ''} — bot flagged escalation: needsAdmin=${needsAdmin} botCantHelp=${botCantHelp}`);
+              await waTalkToHuman(sock, sender, chat, phone, `Order ${meta.data?.order_name || ''} — bot flagged escalation: needsAdmin=${needsAdmin} botCantHelp=${botCantHelp}`, { sendCustomerMsg: botCantHelp });
               waPending.delete(sender);
               continue;
             }
@@ -21269,7 +21280,7 @@ async function startBaileysBot() {
 
           if (botCantHelp) {
             await saveAndSend(reply, meta);
-            await waTalkToHuman(sock, sender, chat, phone, `Bot couldn't help — handing off`);
+            await waTalkToHuman(sock, sender, chat, phone, `Bot couldn't help — handing off`, { sendCustomerMsg: true });
             waPending.delete(sender);
             continue;
           }
@@ -21286,32 +21297,37 @@ async function startBaileysBot() {
           const chatStartedAt = new Date(freshChat.created_at || Date.now()).getTime();
           const chatAgeMinutes = (Date.now() - chatStartedAt) / 60000;
 
-          // Rule B: customer repeated same keyword twice with no resolution
           const lastTwoCustomer = customerMessages.slice(-2).map(m => (m.text || '').toLowerCase());
           const STICKY_KEYWORDS = ['refund', 'return', 'exchange', 'cancel', 'size', 'wrong', 'damaged', 'missing', 'delay', 'not received', 'not delivered'];
-          const repeatedKeyword = STICKY_KEYWORDS.find(kw =>
-            lastTwoCustomer.length === 2 && lastTwoCustomer.every(t => t.includes(kw))
-          );
 
-          // Rule A: 6+ bot messages sent and no resolution (no tracking_card, no resolved tag)
-          const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved') && freshChat.status !== 'resolved';
-          const rulA = botMessages.length >= 6 && noResolution;
+          // Safety net — skip entirely if already escalated (needs_human already set)
+          // to prevent repeat "support executive" messages on every turn after 24h pause expires
+          const alreadyEscalated = !!freshChat.needs_human;
+          if (!alreadyEscalated) {
+            // Rule A: 6+ bot messages, no resolution, and order was never found
+            const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved') && freshChat.status !== 'resolved';
+            const orderFound = freshChat.tags?.includes('order_found');
+            const rulA = botMessages.length >= 6 && noResolution && !orderFound;
 
-          // Rule D: 5+ minutes in chat, 3+ messages, no order found yet
-          const ruleD = chatAgeMinutes >= 5 && botMessages.length >= 3 && noResolution && !freshChat.tags?.includes('order_found');
+            // Rule B: customer repeated same keyword twice with no resolution
+            const repeatedKeyword = STICKY_KEYWORDS.find(kw =>
+              lastTwoCustomer.length === 2 && lastTwoCustomer.every(t => t.includes(kw))
+            );
 
-          const safetyNetTrigger = repeatedKeyword ? 'repeated_keyword' : rulA ? 'message_count' : ruleD ? 'time_limit' : null;
+            // Rule D: 5+ minutes in chat, 3+ messages, no order found yet
+            const ruleD = chatAgeMinutes >= 5 && botMessages.length >= 3 && noResolution && !orderFound;
 
-          if (safetyNetTrigger) {
-            // Log confusion insight before handing off
-            await waLogConfusionInsight(chat, phone, text, reply, safetyNetTrigger, {
-              botMessages: botMessages.length,
-              customerMessages: customerMessages.length,
-              chatAgeMinutes: Math.round(chatAgeMinutes),
-              repeatedKeyword: repeatedKeyword || null,
-            });
+            const safetyNetTrigger = repeatedKeyword ? 'repeated_keyword' : rulA ? 'message_count' : ruleD ? 'time_limit' : null;
 
-            await waTalkToHuman(sock, sender, chat, phone, `Safety net: ${safetyNetTrigger}${repeatedKeyword ? ` (keyword: ${repeatedKeyword})` : ''}`);
+            if (safetyNetTrigger) {
+              await waLogConfusionInsight(chat, phone, text, reply, safetyNetTrigger, {
+                botMessages: botMessages.length,
+                customerMessages: customerMessages.length,
+                chatAgeMinutes: Math.round(chatAgeMinutes),
+                repeatedKeyword: repeatedKeyword || null,
+              });
+              await waTalkToHuman(sock, sender, chat, phone, `Safety net: ${safetyNetTrigger}${repeatedKeyword ? ` (keyword: ${repeatedKeyword})` : ''}`, { sendCustomerMsg: true });
+            }
           }
 
         } catch (err) {
