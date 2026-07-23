@@ -11698,6 +11698,8 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
       if (rawPhone.length === 10) {
         const jid = `91${rawPhone}@s.whatsapp.net`;
         const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : 'Manual penalty by admin';
+        const penaltyToken = await createVendorUpdateToken(shopifyId, orderName || shopifyId, vendorName, '').catch(() => null);
+        const penaltyLink = penaltyToken ? `\n\n*Still not shipped?* Update here (no login):\n👉 https://dashboard.croscrow.com/vendor/update/${penaltyToken}` : '';
         const penaltyMsg =
 `🚨 *Penalty Triggered — Order ${orderName || shopifyId}*
 
@@ -11709,16 +11711,12 @@ A penalty has been applied to your account.
 
 This will be deducted from your next settlement.
 
-To dispute, reply here or contact CROSCROW ops immediately.
-
-*Still not shipped?* Reply now:
-*1️⃣* — Delay reason + ETA
-*2️⃣* — Already shipped (AWB + courier)
+To dispute, contact CROSCROW ops immediately on WhatsApp.${penaltyLink}
 
 _CROSCROW Operations_`;
         const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
         const actualJid = sent?.key?.remoteJid || jid;
-        await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || shopifyId, shopify_id: String(shopifyId), orderRef: String(shopifyId).replace(/^#/, ''), vendor: vendorName });
+        await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
         await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
         console.log(`📲 WA penalty notification sent: ${orderName} / ${vendorName}`);
       }
@@ -13733,6 +13731,35 @@ _Ship now to avoid penalty — CROSCROW Ops_`;
         triggerPenalty(dr.shopify_id, dr.vendor_name, orderName, 'eta_breach');
       }
       await DR.markEtaPenalty(dr.id);
+    }
+
+    // Auto-confirm penalties that have been pending for 72+ hours
+    const HR72 = 72 * 3600000;
+    const AUTO_CONFIRM_NOTE = 'Fulfilment not done within 48 hours. Delay was not reported to CROSCROW team or on panel.';
+    const AUTO_CONFIRM_AMOUNT = 100;
+    const pendingPenalties = await mdb.collection('order_penalties').find(
+      { status: 'pending', triggered_at: { $lt: now - HR72 } },
+      { projection: { _id: 0 } }
+    ).toArray();
+    for (const p of pendingPenalties) {
+      await OP.resolve(p.id, 'confirmed', AUTO_CONFIRM_AMOUNT, AUTO_CONFIRM_NOTE);
+      console.log(`✅ Auto-confirmed penalty #${p.id}: ${p.order_name} / ${p.vendor_name}`);
+      auditLog('system', 'penalty_auto_confirmed', p.id, { vendor: p.vendor_name, amount: AUTO_CONFIRM_AMOUNT, note: AUTO_CONFIRM_NOTE });
+
+      // Email vendor
+      const vcfg = await VC.get(p.vendor_name).catch(() => null);
+      if (vcfg?.email) {
+        const html = emailBase(`🚨 Penalty Confirmed: ${p.order_name}`, '#ef4444',
+          `<div class="subtitle">A penalty of <strong>₹${AUTO_CONFIRM_AMOUNT}</strong> has been confirmed for order <strong>${p.order_name}</strong> and will be deducted from your next settlement.</div>
+          <div class="info-box">
+            <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#6366f1">${p.order_name}</span></div>
+            <div class="info-row"><span class="info-label">Deduction</span><span class="info-val" style="color:#ef4444;font-weight:700">₹${AUTO_CONFIRM_AMOUNT}</span></div>
+            <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${AUTO_CONFIRM_NOTE}</span></div>
+          </div>
+          <p style="font-size:13px;color:#6b7280;line-height:1.7">This amount will appear in your next settlement invoice. To dispute, contact us on WhatsApp.</p>`
+        );
+        await sendEmail({ to: vcfg.email, subject: `🚨 Penalty Confirmed: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: 'penalty_auto_confirmed' }).catch(() => {});
+      }
     }
   } catch (e) {
     console.error("⚠️  Penalty cron error:", e.message);
