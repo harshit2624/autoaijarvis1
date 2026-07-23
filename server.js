@@ -9256,14 +9256,17 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
       <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#713f12;line-height:1.7">
         Your order is being prepared and will be dispatched by <strong>${etaFormatted}</strong>. You'll receive a shipping confirmation with tracking details once dispatched.
       </div>`);
-    const delayHtmlAdmin = emailBase(`Vendor Delay Remark: ${ord?.name || sid}`, '#f59e0b', `
-      <div class="subtitle">Vendor <strong>${vendor}</strong> has submitted a delay remark.</div>
-      <div class="info-box">
-        <div class="info-row"><span class="info-label">Order</span><span class="info-val">${ord?.name || sid}</span></div>
-        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendor}</span></div>
-        <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
-        <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
-      </div>`);
+    const delayHtmlAdmin = vendorEmailSky('#f59e0b', 'DELAY<br>REPORTED.', 'FULFILMENT ALERT',
+      `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Vendor delay remark submitted.</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Vendor <strong style="color:#e0e0e0;">${vendor}</strong> has submitted a delay remark for order <strong style="color:#e0e0e0;">${ord?.name || sid}</strong>. Review and monitor for ETA breach.</div>
+      ${vendorInfoBoxSky([
+        ['Order', ord?.name || sid, '#a5b4fc'],
+        ['Vendor', vendor, '#e0e0e0'],
+        ['ETA Dispatch', etaFormatted, '#fbbf24'],
+        ['Reason', reason, '#888'],
+      ])}
+      ${vendorAlertBoxSky('If the order is not dispatched by the ETA date, it will be automatically moved to the penalty queue.', '#f59e0b')}`
+    );
     if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || sid} is Delayed`, html: delayHtmlCustomer, shopifyId: sid, trigger: 'delay_remark_customer' });
     if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || sid} — ${vendor}`, html: delayHtmlAdmin, shopifyId: sid, trigger: 'delay_remark_admin' });
   } catch (e) { console.error("Delay remark email:", e.message); }
@@ -9305,14 +9308,17 @@ async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
       <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#713f12;line-height:1.7">
         Your order is being prepared and will be dispatched by <strong>${etaFormatted}</strong>. You'll receive a shipping confirmation with tracking details once dispatched.
       </div>`);
-    const delayHtmlAdmin = emailBase(`Vendor Delay Remark: ${ord?.name || shopify_id}`, '#f59e0b', `
-      <div class="subtitle">Vendor <strong>${vendor}</strong> has submitted a delay remark.</div>
-      <div class="info-box">
-        <div class="info-row"><span class="info-label">Order</span><span class="info-val">${ord?.name || shopify_id}</span></div>
-        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendor}</span></div>
-        <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
-        <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
-      </div>`);
+    const delayHtmlAdmin = vendorEmailSky('#f59e0b', 'DELAY<br>REPORTED.', 'FULFILMENT ALERT',
+      `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Vendor delay remark submitted.</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Vendor <strong style="color:#e0e0e0;">${vendor}</strong> has submitted a delay remark for order <strong style="color:#e0e0e0;">${ord?.name || shopify_id}</strong>. Review and monitor for ETA breach.</div>
+      ${vendorInfoBoxSky([
+        ['Order', ord?.name || shopify_id, '#a5b4fc'],
+        ['Vendor', vendor, '#e0e0e0'],
+        ['ETA Dispatch', etaFormatted, '#fbbf24'],
+        ['Reason', reason, '#888'],
+      ])}
+      ${vendorAlertBoxSky('If the order is not dispatched by the ETA date, it will be automatically moved to the penalty queue.', '#f59e0b')}`
+    );
     if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || shopify_id} is Delayed`, html: delayHtmlCustomer, shopifyId: realId, trigger: 'delay_remark_customer' });
     if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || shopify_id} — ${vendor}`, html: delayHtmlAdmin, shopifyId: realId, trigger: 'delay_remark_admin' });
     // Customer WA notification
@@ -11663,31 +11669,19 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
   // Email vendor
   const vcfg = await VC.get(vendorName);
   if (vcfg?.email) {
-    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours' : reason === 'eta_breach' ? 'Order not dispatched by committed ETA date' : 'Manual penalty by admin';
-    const html = emailBase(`⚠️ Penalty Applied: ${orderName || shopifyId}`, '#ef4444', `
-      <div class="subtitle">A fulfilment penalty has been applied to your account for order <strong>${orderName || shopifyId}</strong>.</div>
-      <div style="background:#2d0a0a;border:2px solid #ef4444;border-radius:8px;padding:16px 20px;margin-bottom:20px;text-align:center">
-        <div style="font-size:13px;font-weight:700;color:#fca5a5;margin-bottom:4px;">🚨 PENALTY TRIGGERED</div>
-        <div style="font-size:12px;color:#fca5a5;">Reason: ${reasonLabel}</div>
-      </div>
-      <div class="info-box">
-        <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#6366f1">${orderName || shopifyId}</span></div>
-        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendorName}</span></div>
-        <div class="info-row"><span class="info-label">Status</span><span class="info-val" style="color:#ef4444;font-weight:700">Pending admin review</span></div>
-      </div>
-      <p style="font-size:13px;color:#6b7280;line-height:1.7">
-        This penalty is currently under admin review. If confirmed, it will be deducted from your next settlement invoice.
-        If you believe this is an error, please contact us immediately on WhatsApp.
-      </p>
-      <div style="text-align:center">
-        <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I want to dispute the penalty for order ${orderName || shopifyId}`)}"
-           style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp">
-          Dispute on WhatsApp
-        </a>
-      </div>
-    `);
-    await sendEmail({ to: vcfg.email, subject: `⚠️ Penalty Applied: ${orderName || shopifyId}`, html, shopifyId, trigger: 'penalty_triggered' });
+    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not dispatched by your committed ETA date' : 'Manual penalty applied by admin';
+    const html = vendorEmailSky('#ef4444', 'PENALTY<br>TRIGGERED.', 'FULFILMENT ALERT',
+      `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${vendorName} —</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">A fulfilment penalty has been raised for order <strong style="color:#e0e0e0;">${orderName || shopifyId}</strong>. This is currently under admin review and will be confirmed or cancelled within 72 hours.</div>
+      ${vendorInfoBoxSky([
+        ['Order', orderName || shopifyId, '#a5b4fc'],
+        ['Reason', reasonLabel, '#fca5a5'],
+        ['Status', 'Pending Admin Review', '#fbbf24'],
+      ])}
+      ${vendorAlertBoxSky('If confirmed, ₹100 will be deducted from your next settlement. If you believe this is an error or have already shipped, please contact us immediately on WhatsApp.', '#ef4444')}
+      ${vendorWaButtonSky(orderName || shopifyId)}`
+    );
+    await sendEmail({ to: vcfg.email, subject: `⚠️ Penalty Triggered: ${orderName || shopifyId}`, html, shopifyId, trigger: 'penalty_triggered' });
   }
 
   // WA penalty notification
@@ -11842,16 +11836,17 @@ app.post("/vendor/delay-remark", async (req, res) => {
       <p style="font-size:13px;color:#6b7280">If you have any questions, please reply to this email or contact us on WhatsApp.</p>
     `);
 
-    const delayHtmlAdmin = emailBase(`Vendor Delay Remark: ${ord?.name || order}`, '#f59e0b', `
-      <div class="subtitle">Vendor <strong>${vendor}</strong> has submitted a delay remark.</div>
-      <div class="info-box">
-        <div class="info-row"><span class="info-label">Order</span><span class="info-val">${ord?.name || order}</span></div>
-        <div class="info-row"><span class="info-label">Vendor</span><span class="info-val">${vendor}</span></div>
-        <div class="info-row"><span class="info-label">ETA Dispatch</span><span class="info-val" style="color:#f59e0b;font-weight:700">${etaFormatted}</span></div>
-        <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${reason}</span></div>
-      </div>
-      <p style="font-size:12px;color:#6b7280">If the order is not dispatched by ${etaFormatted}, it will be automatically moved to the penalty queue.</p>
-    `);
+    const delayHtmlAdmin = vendorEmailSky('#f59e0b', 'DELAY<br>REPORTED.', 'FULFILMENT ALERT',
+      `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Vendor delay remark submitted.</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Vendor <strong style="color:#e0e0e0;">${vendor}</strong> has submitted a delay remark for order <strong style="color:#e0e0e0;">${ord?.name || order}</strong>. Review and monitor for ETA breach.</div>
+      ${vendorInfoBoxSky([
+        ['Order', ord?.name || order, '#a5b4fc'],
+        ['Vendor', vendor, '#e0e0e0'],
+        ['ETA Dispatch', etaFormatted, '#fbbf24'],
+        ['Reason', reason, '#888'],
+      ])}
+      ${vendorAlertBoxSky('If the order is not dispatched by the ETA date, it will be automatically moved to the penalty queue.', '#f59e0b')}`
+    );
 
     if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || order} is Delayed`, html: delayHtmlCustomer, shopifyId: order, trigger: 'delay_remark_customer' });
     if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || order} — ${vendor}`, html: delayHtmlAdmin, shopifyId: order, trigger: 'delay_remark_admin' });
@@ -12970,25 +12965,28 @@ app.put("/admin/penalties/:id", requirePermission('penalties'), async (req, res)
   const vcfg = await VC.get(p.vendor_name);
   if (vcfg?.email) {
     const isConfirm = status === 'confirmed';
-    const html = emailBase(
-      isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`,
-      isConfirm ? '#ef4444' : '#10b981',
-      `<div class="subtitle">${isConfirm
-        ? `A penalty of <strong>₹${amount.toFixed(2)}</strong> has been confirmed for order <strong>${p.order_name}</strong> and will be deducted from your next settlement.`
-        : `The penalty for order <strong>${p.order_name}</strong> has been cancelled by admin. No deduction will be made.`
-      }</div>
-      <div class="info-box">
-        <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#6366f1">${p.order_name}</span></div>
-        <div class="info-row"><span class="info-label">Decision</span><span class="info-val" style="color:${isConfirm?'#ef4444':'#10b981'};font-weight:700">${isConfirm?'CONFIRMED':'CANCELLED'}</span></div>
-        ${isConfirm ? `<div class="info-row"><span class="info-label">Deduction</span><span class="info-val" style="color:#ef4444;font-weight:700">₹${amount.toFixed(2)}</span></div>` : ''}
-        ${admin_note ? `<div class="info-row"><span class="info-label">Admin Note</span><span class="info-val">${admin_note}</span></div>` : ''}
-      </div>
-      ${isConfirm ? `<p style="font-size:13px;color:#6b7280;line-height:1.7">This amount will appear in your next settlement invoice. To dispute, contact us on WhatsApp.</p>
-      <div style="text-align:center"><a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I want to dispute the penalty for order ${p.order_name}`)}"
-         style="display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" width="18" height="18" style="vertical-align:middle" alt="WhatsApp"> Dispute on WhatsApp</a></div>`
-      : `<p style="font-size:13px;color:#6b7280;line-height:1.7">No action is required from your side. Thank you for your continued partnership with CROSCROW.</p>`}
-    `);
+    const noteRows = admin_note ? [['Admin Note', admin_note, '#fbbf24']] : [];
+    const html = isConfirm
+      ? vendorEmailSky('#ef4444', 'PENALTY<br>CONFIRMED.', 'SETTLEMENT DEDUCTION',
+          `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${p.vendor_name} —</div>
+          <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">The penalty for order <strong style="color:#e0e0e0;">${p.order_name}</strong> has been reviewed and confirmed. The amount will be deducted from your next settlement.</div>
+          ${vendorInfoBoxSky([
+            ['Order', p.order_name, '#a5b4fc'],
+            ['Deduction', `₹${amount.toFixed(0)}`, '#fca5a5'],
+            ['Settlement', 'Next payout cycle', '#888'],
+            ...noteRows,
+          ])}
+          ${vendorAlertBoxSky('This deduction will appear in your settlement invoice. If you believe this is incorrect, contact us immediately on WhatsApp.', '#ef4444')}
+          ${vendorWaButtonSky(p.order_name)}`)
+      : vendorEmailSky('#10b981', 'PENALTY<br>CANCELLED.', 'GOOD NEWS',
+          `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${p.vendor_name} —</div>
+          <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">The penalty raised for order <strong style="color:#e0e0e0;">${p.order_name}</strong> has been reviewed and cancelled. No deduction will be made from your settlement.</div>
+          ${vendorInfoBoxSky([
+            ['Order', p.order_name, '#a5b4fc'],
+            ['Decision', 'Cancelled — No Deduction', '#4ade80'],
+            ...noteRows,
+          ])}
+          ${vendorAlertBoxSky('No further action is needed from your side. Thank you for your partnership with CROSCROW.', '#10b981')}`);
     await sendEmail({ to: vcfg.email, subject: isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: `penalty_${status}` });
   }
 
@@ -13018,19 +13016,17 @@ app.post("/admin/penalties/bulk", requirePermission('penalties'), async (req, re
         const vcfg = await VC.get(p.vendor_name);
         if (vcfg?.email) {
           const isConfirm = status === 'confirmed';
-          const html = emailBase(
-            isConfirm ? `🚨 Penalty Confirmed: ${p.order_name}` : `✅ Penalty Cancelled: ${p.order_name}`,
-            isConfirm ? '#ef4444' : '#10b981',
-            `<div class="subtitle">${isConfirm
-              ? `A penalty of <strong>₹${amount.toFixed(2)}</strong> has been confirmed for order <strong>${p.order_name}</strong>.`
-              : `The penalty for order <strong>${p.order_name}</strong> has been cancelled.`
-            }</div>
-            <div class="info-box">
-              <div class="info-row"><span class="info-label">Order</span><span class="info-val">${p.order_name}</span></div>
-              <div class="info-row"><span class="info-label">Decision</span><span class="info-val" style="color:${isConfirm?'#ef4444':'#10b981'};font-weight:700">${isConfirm?'CONFIRMED':'CANCELLED'}</span></div>
-              ${isConfirm?`<div class="info-row"><span class="info-label">Deduction</span><span class="info-val" style="color:#ef4444;font-weight:700">₹${amount.toFixed(2)}</span></div>`:''}
-            </div>`
-          );
+          const html = isConfirm
+            ? vendorEmailSky('#ef4444', 'PENALTY<br>CONFIRMED.', 'SETTLEMENT DEDUCTION',
+                `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${p.vendor_name} —</div>
+                <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">The penalty for order <strong style="color:#e0e0e0;">${p.order_name}</strong> has been confirmed and will be deducted from your next settlement.</div>
+                ${vendorInfoBoxSky([['Order', p.order_name, '#a5b4fc'], ['Deduction', `₹${amount.toFixed(0)}`, '#fca5a5']])}
+                ${vendorWaButtonSky(p.order_name)}`)
+            : vendorEmailSky('#10b981', 'PENALTY<br>CANCELLED.', 'GOOD NEWS',
+                `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${p.vendor_name} —</div>
+                <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">The penalty for order <strong style="color:#e0e0e0;">${p.order_name}</strong> has been cancelled. No deduction will be made.</div>
+                ${vendorInfoBoxSky([['Order', p.order_name, '#a5b4fc'], ['Decision', 'Cancelled', '#4ade80']])}
+                ${vendorAlertBoxSky('No further action needed. Thank you for your partnership with CROSCROW.', '#10b981')}`);
           await sendEmail({ to: vcfg.email, subject: isConfirm?`🚨 Penalty Confirmed: ${p.order_name}`:`✅ Penalty Cancelled: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: `penalty_${status}` });
         }
       }
@@ -13768,14 +13764,17 @@ _Ship now to avoid penalty — CROSCROW Ops_`;
       // Email vendor
       const vcfg = await VC.get(p.vendor_name).catch(() => null);
       if (vcfg?.email) {
-        const html = emailBase(`🚨 Penalty Confirmed: ${p.order_name}`, '#ef4444',
-          `<div class="subtitle">A penalty of <strong>₹${AUTO_CONFIRM_AMOUNT}</strong> has been confirmed for order <strong>${p.order_name}</strong> and will be deducted from your next settlement.</div>
-          <div class="info-box">
-            <div class="info-row"><span class="info-label">Order</span><span class="info-val" style="color:#6366f1">${p.order_name}</span></div>
-            <div class="info-row"><span class="info-label">Deduction</span><span class="info-val" style="color:#ef4444;font-weight:700">₹${AUTO_CONFIRM_AMOUNT}</span></div>
-            <div class="info-row"><span class="info-label">Reason</span><span class="info-val">${AUTO_CONFIRM_NOTE}</span></div>
-          </div>
-          <p style="font-size:13px;color:#6b7280;line-height:1.7">This amount will appear in your next settlement invoice. To dispute, contact us on WhatsApp.</p>`
+        const html = vendorEmailSky('#ef4444', 'PENALTY<br>CONFIRMED.', 'SETTLEMENT DEDUCTION',
+          `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${p.vendor_name} —</div>
+          <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">The penalty for order <strong style="color:#e0e0e0;">${p.order_name}</strong> has been auto-confirmed after the review window. This amount will be deducted from your next settlement.</div>
+          ${vendorInfoBoxSky([
+            ['Order', p.order_name, '#a5b4fc'],
+            ['Deduction', `₹${AUTO_CONFIRM_AMOUNT}`, '#fca5a5'],
+            ['Reason', AUTO_CONFIRM_NOTE, '#888'],
+            ['Settlement', 'Next payout cycle', '#888'],
+          ])}
+          ${vendorAlertBoxSky('This deduction will appear in your settlement invoice. If you believe this is incorrect, contact us immediately on WhatsApp.', '#ef4444')}
+          ${vendorWaButtonSky(p.order_name)}`
         );
         await sendEmail({ to: vcfg.email, subject: `🚨 Penalty Confirmed: ${p.order_name}`, html, shopifyId: p.shopify_id, trigger: 'penalty_auto_confirmed' }).catch(() => {});
       }
@@ -16024,6 +16023,53 @@ function rrInfoBox(req) {
 // ── Sky-style helpers for RR customer emails ──────────────────────────────
 const RR_IMG  = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
 const RR_LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+
+// ── Shared dark template for vendor penalty / delay emails ───────────────
+function vendorEmailSky(accentColor, heroHeadline, heroLabel, bodyHtml) {
+  const accent = accentColor || '#ef4444';
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;">
+  <div style="position:relative;line-height:0;">
+    <img src="${RR_IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:280px;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:24px 32px;background:linear-gradient(to top,rgba(0,0,0,0.95) 0%,rgba(0,0,0,0.35) 75%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:${accent};text-transform:uppercase;margin-bottom:8px;">${heroLabel}</div>
+      <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:2px;text-transform:uppercase;line-height:1.1;">${heroHeadline}</div>
+    </div>
+  </div>
+  <div style="background:#161616;padding:32px;">${bodyHtml}</div>
+  <div style="background:#0d0d0d;padding:28px 32px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${RR_LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:12px;border-radius:6px;">
+    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#2a2a2a;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">© CROSCROW · Vendor Notification · Do Not Reply</div>
+  </div>
+</div></body></html>`;
+}
+
+function vendorInfoBoxSky(rows) {
+  const rowsHtml = rows.map(([l, v, vc]) => `
+    <tr>
+      <td style="padding:9px 0;font-size:12px;color:#666;letter-spacing:1px;text-transform:uppercase;width:40%;border-bottom:1px solid #222;">${l}</td>
+      <td style="padding:9px 0;font-size:13px;color:${vc||'#e0e0e0'};font-weight:700;text-align:right;border-bottom:1px solid #222;">${v}</td>
+    </tr>`).join('');
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border-radius:8px;padding:4px 20px;margin-bottom:24px;"><tbody>${rowsHtml}</tbody></table>`;
+}
+
+function vendorAlertBoxSky(text, accentColor) {
+  const c = accentColor || '#ef4444';
+  return `<div style="background:#111;border-left:4px solid ${c};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:24px;font-size:13px;color:#aaa;line-height:1.7;">${text}</div>`;
+}
+
+function vendorWaButtonSky(orderName) {
+  const waText = encodeURIComponent(`Hi CROSCROW, I want to dispute the penalty for order ${orderName}`);
+  return `<div style="text-align:center;margin-top:8px;">
+    <a href="https://wa.me/${process.env.WHATSAPP_NUMBER || '916375668971'}?text=${waText}"
+       style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:12px 28px;border-radius:8px;letter-spacing:0.5px;">
+      💬 Dispute on WhatsApp
+    </a>
+  </div>`;
+}
 
 function rrEmailSky(heroHeadline, heroLabel, bodyHtml) {
   return `<!DOCTYPE html>
