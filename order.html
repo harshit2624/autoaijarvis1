@@ -16,13 +16,13 @@
   --text:#0f0f0f;
   --body:#555;
   --muted:#999;
-  --green:#6366f1;
-  --green-light:#f0f0ff;
-  --green-border:#c7d2fe;
-  --green-dark:#4f46e5;
-  --purple:#a5b4fc;
-  --purple-light:#eef2ff;
-  --purple-border:#c7d2fe;
+  --green:#002eff;
+  --green-light:#f0f3ff;
+  --green-border:#b3c2ff;
+  --green-dark:#0024cc;
+  --purple:#6690ff;
+  --purple-light:#f0f3ff;
+  --purple-border:#b3c2ff;
   --amber:#f59e0b;
   --amber-light:#fffbeb;
   --amber-border:#fde68a;
@@ -892,7 +892,7 @@ async function pay(mode) {
     const rzp = new Razorpay({
       key:rz.key, order_id:rz.order_id, amount:Math.round(rz.amount*100), currency:'INR',
       name:'CROSCROW', description:mode==='prepaid'?'Full prepaid payment':'Order confirmation fee',
-      theme:{color:'#6366f1'},
+      theme:{color:'#002eff'},
       handler:async(resp)=>{
         try {
           const vr = await fetch(`${API}/track/confirm-payment-verify`,{
