@@ -20514,8 +20514,21 @@ async function waDelayReason(shopifyOrderId) {
 // ── Escalate to human + pause bot for 12 hours ────────────────────────────
 async function waTalkToHuman(sock, sender, chat, phone, context) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
-  const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID (see Order: ${_hci.order_name})` : 'Unknown — LID sender');
-  await waAdminAlert(`👤 *Human Support Requested*\n${_hci.name ? `Name: *${_hci.name}*\n` : ''}Phone: ${_hPhone}${_hci.order_name ? `\nOrder: *${_hci.order_name}*` : ''}\nContext: ${context}\n\nPlease connect with them on WhatsApp.`);
+  const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID — Order ${_hci.order_name}` : null);
+
+  // Pull last 3 customer messages for context
+  const _allMsgs = await SC.messages(chat._id).catch(() => []);
+  const _lastMsgs = _allMsgs.filter(m => m.sender === 'customer').slice(-3);
+  const _chatSnippet = _lastMsgs.length
+    ? '\n\n💬 *Last messages:*\n' + _lastMsgs.map(m => `"${(m.text || '').slice(0, 120)}"`).join('\n')
+    : '';
+
+  const _panelLink = `https://dashboard.croscrow.com/admin#supportchats`;
+  const _nameStr = _hci.name ? `Name: *${_hci.name}*\n` : '';
+  const _phoneStr = _hPhone ? `Phone: ${_hPhone}\n` : '';
+  const _orderStr = _hci.order_name ? `Order: *${_hci.order_name}*\n` : '';
+
+  await waAdminAlert(`👤 *Human Support Requested*\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\n\n🔗 Open chat: ${_panelLink}`);
   const msg = `Our support executive will connect with you shortly on WhatsApp 👤\n\nFor urgent queries, call us directly:\n📞 *6375668971*\n🕐 Available: 2:00 PM – 8:00 PM`;
   await sock.sendMessage(sender, { text: msg });
   await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
@@ -21151,8 +21164,11 @@ async function startBaileysBot() {
           if (WA_ESCALATION.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
             const _ac = await waLookupCustomer(phone === 'unknown' ? '' : phone);
-            const _acPhone = phone !== 'unknown' ? `+91${phone}` : (_ac.order_name ? `LID (see Order: ${_ac.order_name})` : 'Unknown — LID sender');
-            await waAdminAlert(`🚨 *Angry Customer*\n${_ac.name ? `Name: *${_ac.name}*\n` : ''}Phone: ${_acPhone}${_ac.order_name ? `\nOrder: *${_ac.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"`);
+            const _acPhone = phone !== 'unknown' ? `+91${phone}` : (_ac.order_name ? `LID — Order ${_ac.order_name}` : null);
+            const _acNameStr = _ac.name ? `Name: *${_ac.name}*\n` : '';
+            const _acPhoneStr = _acPhone ? `Phone: ${_acPhone}\n` : '';
+            const _acOrderStr = _ac.order_name ? `Order: *${_ac.order_name}*\n` : '';
+            await waAdminAlert(`🚨 *Angry Customer*\n${_acNameStr}${_acPhoneStr}${_acOrderStr}Message: "${text.slice(0, 200)}"\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`);
           }
 
           // ── 4. LLM handles everything else ────────────────────────────
@@ -21178,8 +21194,11 @@ async function startBaileysBot() {
           const botCantHelp = /flag.*human|connect.*team|reach out|outside.*tools|can't help|cannot help/i.test(reply);
           if (needsAdmin) {
             waLookupCustomer(phone === 'unknown' ? '' : phone).then(ci => {
-              const _ph = phone !== 'unknown' ? `+91${phone}` : (ci.order_name ? `LID (see Order: ${ci.order_name})` : 'Unknown — LID sender');
-              waAdminAlert(`🔔 *Action Needed*\n${ci.name ? `Name: *${ci.name}*\n` : ''}Phone: ${_ph}${ci.order_name ? `\nOrder: *${ci.order_name}*` : ''}\nMessage: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"`)
+              const _ph = phone !== 'unknown' ? `+91${phone}` : (ci.order_name ? `LID — Order ${ci.order_name}` : null);
+              const _nameStr = ci.name ? `Name: *${ci.name}*\n` : '';
+              const _phoneStr = _ph ? `Phone: ${_ph}\n` : '';
+              const _orderStr = ci.order_name ? `Order: *${ci.order_name}*\n` : '';
+              waAdminAlert(`🔔 *Action Needed*\n${_nameStr}${_phoneStr}${_orderStr}Message: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`)
             }).catch(() => {});
           }
 
