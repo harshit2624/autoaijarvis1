@@ -3000,14 +3000,18 @@
                       <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
                         <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:3,transition:'width 0.4s'}}/>
                       </div>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:2,marginBottom:2}}>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginTop:2,marginBottom:2}}>
                         <div style={{background:'rgba(52,211,153,0.08)',border:'1px solid rgba(52,211,153,0.2)',borderRadius:6,padding:'6px 10px'}}>
                           <div style={{fontSize:9,color:'#34d399',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Confirmed Revenue</div>
                           <div style={{fontSize:13,fontWeight:800,color:'#34d399'}}>{fmtCur((fs.revDispatched||0)+(fs.revPending||0))}</div>
                         </div>
                         <div style={{background:'rgba(148,163,184,0.08)',border:'1px solid rgba(148,163,184,0.2)',borderRadius:6,padding:'6px 10px'}}>
-                          <div style={{fontSize:9,color:'#94a3b8',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Confirmed Revenue</div>
+                          <div style={{fontSize:9,color:'#94a3b8',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Confirmed</div>
                           <div style={{fontSize:13,fontWeight:800,color:'#94a3b8'}}>{fmtCur(fs.revNotConfirmed||0)}</div>
+                        </div>
+                        <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#f87171',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Cancelled</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#f87171'}}>{fmtCur(fs.revCancelled||0)}</div>
                         </div>
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:4}}>

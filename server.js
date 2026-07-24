@@ -5739,7 +5739,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const stageMap = {};
       // confirmedTagMap: for not-confirmed stages, count orders that carry the "Order Confirmed" tag
       const confirmedTagMap = { hold: 0, cancelled: 0, new: 0, misc: 0 };
-      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0, revNotConfirmed=0;
+      let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0, revNotConfirmed=0, revCancelled=0;
       const IN_TRANSIT_SET = new Set(['ready','pickup','transit']);
       const NOT_CONFIRMED_SET = new Set(['hold','cancelled','new','misc']);
 
@@ -5769,11 +5769,12 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         } else if (PENDING_SET.has(stage)) {
           revPending += price;
           revNotDispatched += price;  // confirmed + partial
-        } else if (stage === 'new' || stage === 'hold') {
-          revNotDispatched += price;  // new + hold — not yet confirmed but still orders
-          revNotConfirmed  += price;
+        } else if (stage === 'new' || stage === 'hold' || stage === 'misc') {
+          revNotDispatched += price;
+          revNotConfirmed  += price;  // new + hold + misc
+        } else if (stage === 'cancelled') {
+          revCancelled += price;
         }
-        // cancelled excluded from revNotDispatched intentionally
       });
 
       // Derived counts — all from stageMap (unique orders)
@@ -5801,8 +5802,9 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         revDelivered:     parseFloat(revDelivered.toFixed(2)),
         revInTransit:     parseFloat(revInTransit.toFixed(2)),
         revRto:           parseFloat(revRto.toFixed(2)),
-        revNotDispatched:  parseFloat(revNotDispatched.toFixed(2)),  // all non-dispatched excl. cancelled
-        revNotConfirmed:   parseFloat(revNotConfirmed.toFixed(2)),  // new + hold revenue
+        revNotDispatched:  parseFloat(revNotDispatched.toFixed(2)),
+        revNotConfirmed:   parseFloat(revNotConfirmed.toFixed(2)),  // new + hold + misc
+        revCancelled:      parseFloat(revCancelled.toFixed(2)),
         rto_rate: dispatched > 0 ? Math.round(rto / dispatched * 100) : 0,
         // legacy aliases so existing frontend doesn't break
         confirmed:     active,
