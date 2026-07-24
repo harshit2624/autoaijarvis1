@@ -16641,6 +16641,13 @@ app.get("/order", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'order.html'));
 });
 
+// Short link for direct customer sends — /o/2558 or /o/%232558
+// No contact verification needed since we're sending the link directly to them
+app.get("/o/:num", (req, res) => {
+  const num = req.params.num.replace(/^#/, '');
+  res.redirect(302, `/order?order=${encodeURIComponent(num)}&contact=na`);
+});
+
 app.get("/returns", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'returns.html'));
 });
@@ -18786,7 +18793,7 @@ async function scGetOrderStatus(orderName, contact) {
     const metaDoc = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { advance_paid:1, confirmation_paid:1, _id:0 } }) || {};
     const alreadyPaid = !!(metaDoc.confirmation_paid) || (parseFloat(metaDoc.advance_paid||0) >= 99) || isPrepaidOrder;
     const needsConfirm = !isPrepaidOrder && !alreadyPaid && !DISPATCHED_STAGES.includes(payload.stage);
-    const orderPageUrl = `${SERVER_URL}/order?o=${encodeURIComponent(payload.order_name.replace(/^#/, ''))}&contact=na`;
+    const orderPageUrl = `${SERVER_URL}/o/${encodeURIComponent(payload.order_name.replace(/^#/, ''))}`;
     const confirm_url = needsConfirm ? orderPageUrl : null;
     const track_url   = needsConfirm ? null : orderPageUrl;
     return { found: true, ...payload, track_url, confirm_url, needs_confirm: needsConfirm };
@@ -18930,7 +18937,7 @@ function waLinksFromMeta(meta) {
     const d = meta.data;
     // Single /order page handles both confirm and track — no separate links needed
     const orderUrl = d.order_name
-      ? `${SERVER_URL}/order?o=${encodeURIComponent(String(d.order_name).replace(/^#/,''))}&contact=na`
+      ? `${SERVER_URL}/o/${encodeURIComponent(String(d.order_name).replace(/^#/,''))}`
       : d.track_url || d.confirm_url;
     if (d.needs_confirm && orderUrl) {
       lines.push(`💳 Pay ₹99 & confirm: ${orderUrl}`);
