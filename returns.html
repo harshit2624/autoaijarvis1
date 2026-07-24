@@ -827,7 +827,8 @@ function renderPortal(d) {
     [returnBtn, exchangeBtn].forEach(b => { if(b) { b.style.opacity = '.45'; b.style.pointerEvents = 'none'; } });
 
   } else {
-    // Normal eligible state
+    // Normal eligible state — reset any dimming applied by earlier branches
+    [returnBtn, exchangeBtn].forEach(b => { if(b) { b.style.opacity = ''; b.style.pointerEvents = ''; b.style.display = ''; } });
     actionSec.classList.remove('hidden');
     // Hide return button if vendor disables returns
     if (returnBtn) {
