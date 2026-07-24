@@ -872,10 +872,10 @@ function showScreen(id) {
 
 async function doLookup() {
   const q = document.getElementById('inp-order').value.trim().replace('#','');
-  const contact = (document.getElementById('inp-contact').value.trim() || '').toLowerCase() || 'na';
+  const rawContact = document.getElementById('inp-contact').value.trim().toLowerCase();
+  const contact = rawContact || 'na';
   if (!q) { document.getElementById('lookup-err').textContent = 'Please enter your order number.'; return; }
-  if (!contact || (contact !== 'na' && contact.length < 3)) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone.'; return; }
-  if (!contact || (contact !== 'na' && contact.length < 3)) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone.'; return; }
+  if (!rawContact || (rawContact !== 'na' && rawContact.length < 3)) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone.'; return; }
   document.getElementById('lookup-err').textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');

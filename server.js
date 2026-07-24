@@ -16570,6 +16570,9 @@ app.get("/order/lookup", async (req, res) => {
       delivery_status_updated_at: trackPayload.delivery_status_updated_at,
       vendor_shipments: trackPayload.vendor_shipments,
       return_requests: trackPayload.return_requests,
+      return_configs: trackPayload.return_configs,
+      customer_email: trackPayload.customer_email,
+      customer_phone: trackPayload.customer_phone,
       created_at: order.created_at,
     });
   } catch (e) {

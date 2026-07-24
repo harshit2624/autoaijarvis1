@@ -598,6 +598,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
 
 <script>
 const API = '';
+const IC_INFO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
 let orderData = null;
 let flowType = null; // 'return' | 'exchange'
 let selectedItems = {}; // { itemIdx: { qty, exchange_for } }
@@ -673,12 +674,12 @@ function closeSidebar() {
 // ── Lookup ────────────────────────────────────────────────────
 async function doLookup() {
   const q = document.getElementById('inp-order').value.trim().replace('#', '');
-  const contact = (document.getElementById('inp-contact').value.trim() || '').toLowerCase() || 'na';
-  const fromBot = urlContact.toLowerCase() === 'na';
+  const rawContact = document.getElementById('inp-contact').value.trim().toLowerCase();
+  const contact = rawContact || 'na';
   const errEl = document.getElementById('lookup-err');
 
   if (!q) { errEl.textContent = 'Please enter your order number.'; return; }
-  if (!contact || (contact !== 'na' && contact.length < 3)) { errEl.textContent = 'Please enter your email or phone.'; return; }
+  if (!rawContact || (rawContact !== 'na' && rawContact.length < 3)) { errEl.textContent = 'Please enter your email or phone.'; return; }
   if (!contact || (contact !== 'na' && contact.length < 3)) { errEl.textContent = 'Please enter your email or phone.'; return; }
   errEl.textContent = '';
   document.getElementById('lookup-btn').disabled = true;
@@ -733,42 +734,96 @@ function renderPortal(d) {
     document.getElementById('existing-list').innerHTML = existing.map(rr => renderRRCard(rr)).join('');
   }
 
-  // Fetch fee
-  const vendorName = d.vendor_shipments?.[0]?.vendor_name || '';
-  fetch(`${API}/track/rr-fee?vendor_name=${encodeURIComponent(vendorName)}`)
-    .then(r => r.json()).then(fd => {
-      rrFee = fd.fee ?? 199;
-      const feeTag = rrFee > 0 ? `₹${rrFee} fee` : 'Free';
-      const tagCls = rrFee > 0 ? 'fee' : 'free';
-      ['return-tag','exchange-tag'].forEach(id => {
-        const el = document.getElementById(id);
-        el.textContent = feeTag; el.className = 'action-tag ' + tagCls;
-      });
-    }).catch(() => {});
+  // ── Per-vendor eligibility using return_configs from server ──
+  const returnConfigs = d.return_configs || {};
+  const vendors = (d.vendor_shipments || []).map(v => v.vendor_name).filter(Boolean);
+  // If no vendor info, fall back to a single unknown vendor with defaults
+  const effectiveVendors = vendors.length ? vendors : [''];
 
-  // Eligibility check
+  // Aggregate: any vendor allows return? all vendor fees (for display)
+  const anyReturnEnabled = effectiveVendors.some(v => returnConfigs[v]?.return_enabled === true);
+  const anyExchangeEnabled = true; // exchange always enabled per system design
+
+  // Fee: use first (or only) vendor's fee
+  const primaryVendor = effectiveVendors[0] || '';
+  const primaryCfg = returnConfigs[primaryVendor] || {};
+  rrFee = primaryCfg.rr_fee ?? 199;
+  const returnWindowDays = primaryCfg.return_window_days ?? 7;
+
+  // Update fee tags
+  const feeTag = rrFee > 0 ? `₹${rrFee} fee` : 'Free';
+  const tagCls = rrFee > 0 ? 'fee' : 'free';
+  ['return-tag','exchange-tag'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = feeTag; el.className = 'action-tag ' + tagCls; }
+  });
+
+  // ── Eligibility checks ──
   const DISPATCHED = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
   const isDelivered = stage === 'delivered';
   const isPreDispatch = !DISPATCHED.includes(stage);
   const noticeEl = document.getElementById('notice-section');
+  const actionSec = document.getElementById('action-section');
+  const returnBtn = document.querySelector('.return-card');
+  const exchangeBtn = document.querySelector('.exchange-card');
+
+  // Check delivery window
+  let withinWindow = true;
+  let daysAgo = 0;
+  if (isDelivered && d.delivery_status_updated_at) {
+    daysAgo = (Date.now() - new Date(d.delivery_status_updated_at)) / (1000 * 60 * 60 * 24);
+    withinWindow = daysAgo <= returnWindowDays;
+  }
 
   if (stage === 'rto' || stage === 'cancelled') {
     noticeEl.classList.remove('hidden');
     noticeEl.innerHTML = `<div class="notice-box warn">
-      <div class="notice-icon" style="color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+      <div class="notice-icon" style="color:var(--amber)">${IC_INFO}</div>
       <div class="notice-text">This order was ${stage === 'rto' ? 'returned to the seller' : 'cancelled'}. Returns &amp; exchanges are not available.</div>
     </div>`;
-    document.getElementById('action-section').classList.add('hidden');
+    actionSec.classList.add('hidden');
+
   } else if (isPreDispatch) {
     noticeEl.classList.remove('hidden');
     noticeEl.innerHTML = `<div class="notice-box info">
-      <div class="notice-icon" style="color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
-      <div class="notice-text">Your order hasn't shipped yet. You can submit a request now and our team will review it before dispatch. <strong>Have an admin code?</strong> Use the code option in the reason step to proceed.</div>
+      <div class="notice-icon" style="color:var(--blue)">${IC_INFO}</div>
+      <div class="notice-text">Your order hasn't shipped yet. You can submit a pre-dispatch cancellation request and our team will review it. <strong>Have an admin code?</strong> Use the code option in the reason step.</div>
     </div>`;
-    document.getElementById('action-section').classList.remove('hidden');
+    actionSec.classList.remove('hidden');
     document.getElementById('action-label').textContent = 'Submit a Pre-Dispatch Request';
+    // hide return if vendor doesn't allow it
+    if (returnBtn) returnBtn.style.display = anyReturnEnabled ? '' : 'none';
+
+  } else if (isDelivered && !withinWindow) {
+    noticeEl.classList.remove('hidden');
+    noticeEl.innerHTML = `<div class="notice-box warn">
+      <div class="notice-icon" style="color:var(--amber)">${IC_INFO}</div>
+      <div class="notice-text"><strong>Return window closed.</strong> Returns &amp; exchanges must be raised within ${returnWindowDays} days of delivery. It's been ${Math.floor(daysAgo)} days. If you have a genuine issue, use an admin code below or <a href="https://wa.me/916375668971" style="color:var(--blue);font-weight:700">chat with us</a>.</div>
+    </div>`;
+    actionSec.classList.remove('hidden');
+    document.getElementById('action-label').textContent = 'Request Anyway (Code Required)';
+    // Dim both buttons — require admin code to proceed
+    [returnBtn, exchangeBtn].forEach(b => { if(b) b.style.opacity = '.5'; });
+
   } else {
-    document.getElementById('action-section').classList.remove('hidden');
+    // Normal eligible state
+    actionSec.classList.remove('hidden');
+    // Hide return button if vendor disables returns
+    if (returnBtn) {
+      if (!anyReturnEnabled) {
+        returnBtn.style.display = 'none';
+        noticeEl.classList.remove('hidden');
+        noticeEl.innerHTML = (noticeEl.innerHTML || '') + `<div class="notice-box info" style="margin-top:8px">
+          <div class="notice-icon" style="color:var(--blue)">${IC_INFO}</div>
+          <div class="notice-text">This vendor does not accept returns — only exchanges are available.</div>
+        </div>`;
+      }
+    }
+  }
+
+  // Pre-fill customer contact for submission
+  if (d.customer_email && !document.getElementById('inp-contact').value) {
+    document.getElementById('inp-contact').value = d.customer_email;
   }
 
   showScreen('portal-screen');
@@ -1243,9 +1298,9 @@ async function submitRequest(paymentId, rzOrderId) {
       body: JSON.stringify({
         shopify_order_id: orderData?.shopify_order_id,
         order_name: orderData?.order_name,
-        customer_email: document.getElementById('inp-contact')?.value?.trim() || '',
+        customer_email: orderData?.customer_email || document.getElementById('inp-contact')?.value?.trim() || '',
         customer_name: orderData?.customer_name || '',
-        customer_phone: '',
+        customer_phone: orderData?.customer_phone || '',
         type: flowType,
         items: reqItems,
         reason: reasonFull,
