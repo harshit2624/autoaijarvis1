@@ -1,0 +1,2959 @@
+[
+  {
+    "name": "theme_info",
+    "theme_name": "Materia ",
+    "theme_version": "1.1.0",
+    "theme_author": "Materia Themes Inc",
+    "theme_documentation_url": "https://materia-theme.gitbook.io/materia-theme",
+    "theme_support_url": "https://materiathemes.com"
+  },
+  {
+
+
+    
+ "name": "• Logo",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Logo Settings"
+
+   
+    },
+    {
+      "type": "image_picker",
+      "id": "logo",
+      "label": "Logo Image",
+      "info": "Upload your primary logo. This will be used in the header and across the site. Recommended size is 400 X 200 PX, trasparent image."
+    },
+    {
+      "type": "image_picker",
+      "id": "logo_on_transparent",
+      "label": "t:settings_schema.logo_favicon.settings.logo.logo_on_transparent.label",
+      "info": "Upload an alternate logo for transparent backgrounds (e.g., sticky header). Recommended size is 400 X 200 PX, trasparent image."
+    },
+    {
+
+      "type": "checkbox",
+      "id": "use_logo_url_override",
+      "label": "Use logo image URLs instead of uploaded files",
+      "default": false
+    },
+    {
+      "type": "text",
+      "id": "logo_url",
+      "label": "Logo Image (URL)",
+      "info": "Paste a full URL (https://...) to an image. Used only if the toggle above is enabled."
+    },
+    {
+      "type": "text",
+      "id": "logo_transparent_url",
+      "label": "Logo Image Transparent (URL)",
+      "info": "Optional. If empty, will fall back to the normal logo URL or the uploaded transparent logo."
+
+ },
+    {
+
+       "type": "paragraph",
+  "content": "If you want more advanced customizations for the transparent logo, check the header section settings. There, you’ll find options for logo transparency, position, size, menu color, and more."
+
+   },
+{
+    
+  "type": "paragraph",
+  "content": "If you don’t have a logo yet, you can [Create your own logo here](https://www.shopify.com/tools/logo-maker)."
+
+   },
+{
+      
+      "type": "header",
+      "content": "Logo Sizes"
+
+  
+
+    },
+    {
+      "type": "range",
+      "id": "desktop_logo_width",
+      "min": 50,
+      "max": 250,
+      "step": 2,
+      "unit": "px",
+      "label": "Desktop Logo Size",
+      "default": 90,
+      "info": "Adjust the width of the logo on desktop screens."
+    },
+    {
+      "type": "range",
+      "id": "mobile_logo_size",
+      "label": "Mobile Logo Size",
+      "min": 50,
+      "max": 300,
+      "step": 5,
+      "default": 120,
+      "unit": "px",
+      "info": "Control the logo size on mobile devices."
+},
+{
+   
+       "type": "range",
+  "id": "logo_transparent_position",
+  "label": "Horizontal Position Logo Transparent",
+  "info": "Adjust the horizontal position of the logo when the header is transparent.",
+  "default": 0,
+  "min": -100,
+  "max": 100,
+  "step": 10,
+  "unit": "px"
+},
+{
+  "type": "range",
+  "id": "logo_transparent_width",
+  "label": "Logo Transparent Width",
+  "info": "Adjust the width of the logo when the header is transparent.",
+  "default": 100,
+  "min": 20,
+  "max": 300,
+  "step": 5,
+  "unit": "px"
+
+
+
+        },
+    {
+      "type": "header",
+      "content": "Logo General Positioning"
+    },
+    {
+      "type": "range",
+      "id": "mobile_logo_position",
+      "label": "Mobile Logo Horizontal Position",
+      "min": -50,
+      "max": 50,
+      "step": 1,
+      "default": 0,
+      "unit": "px",
+      "info": "Adjust the horizontal positioning of the mobile logo (left or right shift)."
+
+},
+    {
+      
+  "type": "range",
+  "id": "desktop_logo_position",
+  "label": "Desktop Logo Horizontal Position",
+  "min": -30,
+  "max": 50,
+  "step": 1,
+  "default": 0,
+  "unit": "px",
+       "info": "Adjust the horizontal positioning of the desktop logo (left or right shift)."
+
+
+
+   
+ }
+    ]
+  },
+  {
+
+
+
+
+    
+
+"name": "• Favicon",
+    "settings": [
+      {
+        "type": "header",
+        "content": "Favicon Settings"
+
+  },
+  {
+ "type": "paragraph",
+  "content": "A favicon is a small icon that appears in browser tabs, bookmarks, and search results.For best results, use a square image e.g (32x32px , 51x51 px or 100x100px) . "
+
+
+        
+   },
+  {
+        "type": "image_picker",
+        "id": "favicon",
+        "label": "Favicon Image ",
+        "info": " 32 x 32px or 50 x 50 image favicon recommended."
+    },
+  {
+     "type": "paragraph",
+ "content": "If you don’t have a favicon , you can [Create your own favicon here for free](https://favicon.io/favicon-converter/). "
+    }
+    ]
+  },
+  {
+
+
+  "name": "• Animations",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_fade_in_animation",
+      "label": "Enable Fade-In Animation",
+      "default": true,
+      "info": "Fades each section in as it scrolls into view."
+    },
+    {
+      "type": "range",
+      "id": "fade_in_duration",
+      "label": "Animation Duration (seconds)",
+      "unit": "s",
+      "min": 0.1,
+      "max": 3,
+      "step": 0.1,
+      "default": 0.5,
+      "info": "How long the fade-in transition lasts."
+         }
+    ]
+  },
+  {
+
+    "name": "• Layout Settings",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_rounded",
+      "label": "Enable Rounded Corners",
+      "info": "Toggle this setting to enable rounded corners on various UI elements for a softer, modern look.\n\nNote: Rounded corners may not apply to some elements due to additional customization and specific design choices in certain sections.",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "rounded_corner",
+      "min": 0,
+      "max": 15,
+      "step": 1,
+      "unit": "px",
+      "label": "Rounded Corner Radius",
+      "info": "Adjust the corner radius of UI elements to control how rounded they appear.",
+      "default": 10
+    },
+    {
+      "type": "range",
+      "id": "fluid_container_width",
+      "min": 1200,
+      "max": 1800,
+      "step": 10,
+      "unit": "px",
+      "label": "General Fluid Container Width",
+      "info": "Controls the overall width of sections set to fluid layout. A fluid container stretches to fit the entire screen width and adjusts dynamically as the viewport resizes.",
+      "default": 1710
+    },
+    {
+      "type": "range",
+      "id": "page_width",
+      "min": 1100,
+      "max": 1800,
+      "step": 10,
+      "unit": "px",
+      "label": "General Page Width",
+      "info": "Defines the maximum width of your website's content. This affects text, images, and layouts, ensuring readability on different screen sizes.",
+      "default": 1200
+    },
+    {
+      "type": "header",
+      "content": "RTL Settings"
+    },
+    {
+      "type": "checkbox",
+      "id": "rtl",
+      "label": "Enable Right-to-Left (RTL) Mode",
+      "info": "Activate this setting to support languages that use right-to-left text direction, such as Arabic or Hebrew. It automatically adjusts page layouts and text alignment.",
+      "default": false
+    },
+    {
+      "type": "textarea",
+      "id": "language_rtl",
+      "label": "RTL Language Codes",
+      "info": "Enter the language codes (comma-separated) for languages that require RTL mode. Example: 'ar' for Arabic, 'he' for Hebrew, 'ur' for Urdu.",
+      "default": "ar,iw,he,ur,ug"
+      }
+    ]
+  },
+  {
+   
+  "name": "• Typography ",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Heading Typography Settings",
+      "info": "Customize the fonts and styles for your site’s headings."
+    },
+    {
+      "type": "select",
+      "label": "Choose Font Source for Headings",
+      "id": "font_type_heading",
+      "default": "default_font",
+      "options": [
+        {
+          "label": "Shopify System Font",
+          "value": "shopify"
+        },
+        {
+          "label": "Google Fonts",
+          "value": "google"
+        },
+        {
+          "label": "Default Font",
+          "value": "default_font"
+        }
+      ]
+
+   
+    },
+    {
+
+      "type": "checkbox",
+  "id": "enable_custom_heading_font",
+  "label": "Enable Custom Font for Headings",
+  "default": false
+},
+{
+  "type": "text",
+  "id": "custom_heading_font_url",
+  "label": "Custom Font URL for Headings",
+  "info": "To easily add a custom font, make sure your font file is in TTF or OTF format. Simply go to Shopify Admin Panel → Content → Files, upload your font file, copy the font file URL, and paste it into the input field in your theme settings Paste the URL of your custom font (e.g., a .woff2 or .css file). This will override default fonts when enabled."
+
+
+
+
+
+
+
+      
+    },
+    {
+      "type": "font_picker",
+      "id": "font_heading_system",
+      "label": "Select Shopify Font for Headings",
+      "default": "poppins_n4"
+    },
+    {
+      "type": "header",
+      "content": "✏️ Google Font Settings for Headings",
+      "info": "If you want to use a Google Font for headings, provide the embed code and font name below."
+    },
+    {
+      "type": "textarea",
+      "id": "font_body_heading_embed",
+      "label": "Paste Google Font Embed Code for Headings"
+    },
+    {
+      "type": "text",
+      "id": "font_heading_google",
+      "label": "Google Font Name for Headings",
+      "info": "Enter the exact name of the Google Font."
+    },
+    {
+      "type": "range",
+      "id": "heading_font_scale",
+      "min": 80,
+      "max": 130,
+      "step": 1,
+      "unit": "%",
+      "label": "Heading Font Size Scale (%)",
+      "default": 100
+    },
+    {
+      "type": "range",
+      "id": "heading_font_weight",
+      "min": 300,
+      "max": 700,
+      "step": 100,
+      "label": "Heading Font Weight",
+      "default": 600
+ 
+    },
+    {
+      "type": "select",
+      "id": "heading_text_transform",
+      "label": "Heading Text Transform",
+      "default": "unset",
+      "options": [
+        {
+          "value": "unset",
+          "label": "No Transformation"
+        },
+        {
+          "value": "uppercase",
+          "label": "Uppercase"
+        }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "heading_letter_spacing",
+      "label": "Heading Letter Spacing",
+      "default": "unset",
+      "options": [
+        {
+          "value": "negative",
+          "label": "Negative Spacing"
+        },
+        {
+          "value": "unset",
+          "label": "Default Spacing"
+        },
+        {
+          "value": "0.005em",
+          "label": "Small Spacing"
+        },
+        {
+          "value": "0.025em",
+          "label": "Medium Spacing"
+        },
+        {
+          "value": "0.05em",
+          "label": "Large Spacing"
+        }
+      ]
+    },
+    {
+      "type": "header",
+      "content": "Body Typography Settings",
+      "info": "Customize the fonts and styles for your site’s main text."
+    },
+    {
+      "type": "select",
+      "label": "Choose Font Source for Body Text",
+      "id": "font_type_body",
+      "default": "default_font",
+      "options": [
+        {
+          "label": "Shopify System Font",
+          "value": "shopify"
+        },
+        {
+          "label": "Google Fonts",
+          "value": "google"
+        },
+        {
+          "label": "Default Font",
+          "value": "default_font"
+        }
+      ]
+       },
+    {
+
+      
+       "type": "checkbox",
+  "id": "enable_custom_body_font",
+  "label": "Enable Custom Font for Body",
+  "default": false
+},
+{
+  "type": "text",
+  "id": "custom_body_font_url",
+  "label": "Custom Font URL for Body",
+  "info": "To easily add a custom font, make sure your font file is in TTF or OTF format. Simply go to Shopify Admin Panel → Content → Files, upload your font file, copy the font file URL, and paste it into the input field in your theme settings Paste the URL of your custom font (e.g., a .woff2 or .css file). This will override default fonts when enabled."
+
+
+
+
+
+
+
+
+
+
+
+
+
+      
+    },
+    {
+      "type": "font_picker",
+      "id": "font_body_system",
+      "label": "Select Shopify Font for Body Text",
+      "default": "poppins_n4"
+    },
+    {
+      "type": "header",
+      "content": "✏️ Google Font Settings for Body Text",
+      "info": "If you want to use a Google Font for body text, provide the embed code and font name below."
+    },
+    {
+      "type": "textarea",
+      "id": "font_body_google_embed",
+      "label": "Paste Google Font Embed Code for Body Text"
+    },
+    {
+      "type": "text",
+      "id": "font_body_google",
+      "label": "Google Font Name for Body Text"
+    },
+    {
+      "type": "range",
+      "id": "body_font_size",
+      "min": 10,
+      "max": 20,
+      "step": 1,
+      "unit": "px",
+      "label": "Body Font Size (px)",
+      "default": 14
+    },
+    {
+      "type": "range",
+      "id": "body_font_weight",
+      "min": 300,
+      "max": 700,
+      "step": 100,
+      "label": "Body Font Weight",
+      "default": 400
+    },
+    {
+      "type": "header",
+      "content": "Menu Typography Settings",
+      "info": "Select which font style will be used for your site's menus."
+    },
+    {
+      "type": "select",
+      "id": "menu_font",
+      "label": "Select Menu Font Style",
+      "default": "body_font",
+      "options": [
+        {
+          "value": "body_font",
+          "label": "Use Body Font"
+        },
+        {
+          "value": "heading_font",
+          "label": "Use Heading Font"
+     }
+        ]
+      },
+      {
+
+        "type": "range",
+        "id": "subheading_font_weight",
+        "min": 300,
+        "max": 700,
+        "step": 100,
+        "label": "t:settings_schema.typography.settings.subheading_font_weight.label",
+        "default": 500
+
+
+   },
+    {
+      "type": "header",
+      "content": "Button Typography Settings",
+    "info": "The primary and secondary buttons use the body font. Other button fonts can't be changed due to specific customizations. Here, you can adjust additional button settings."
+   },
+    {
+  "type": "range",
+  "id": "primary_button_font_weight",
+  "label": "Button Font Weight",
+  "min": 200,
+  "max": 700,
+  "step": 100,
+
+  "default": 600,
+  "info": "Adjust the thickness of the button text. Choose between 200 (thin) and 700 (bold)."
+
+
+    
+      }
+        ]
+      },
+      {
+   
+    "name": "• Color Schemes",
+    "settings": [
+      {
+    
+        "type": "color_scheme_group",
+        "id": "color_schemes",
+        "definition": [
+          {
+   "type": "header",
+      "content": "Color schemes can be applied to sections throughout your online store, allowing for a cohesive and visually appealing design. However, not all sections are customizable through the scheme, as some sections may require extra customization to meet specific user preferences and design needs."
+    },
+    {
+      "type": "color",
+      "id": "background",
+      "label": "t:settings_schema.colors.settings.header.background",
+      "default": "#FFFFFF",
+      "info": "Defines the main background color for your store."
+    },
+    {
+      "type": "color_background",
+      "id": "background_gradient",
+      "label": "t:settings_schema.colors.settings.background_gradient.label",
+      "info": "Sets a gradient background effect for enhanced visuals."
+    },
+    {
+      "type": "header",
+      "content": "General Colors"
+    },
+    {
+      "type": "color",
+      "id": "primary_color",
+      "label": "t:settings_schema.colors.settings.primary_color.label",
+      "default": "#D0473E",
+      "info": "This is the main accent color used across your store."
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "t:settings_schema.colors.settings.text_color.label",
+      "default": "#444",
+      "info": "Defines the primary text color for readability."
+    },
+    {
+      "type": "color",
+      "id": "heading_color",
+      "label": "t:settings_schema.colors.settings.heading_color.label",
+      "default": "#111111",
+      "info": "Used for headings to ensure contrast and visibility."
+    },
+    {
+      "type": "color",
+      "id": "border_color",
+      "label": "t:settings_schema.colors.settings.border_color.label",
+      "default": "#EBEBEB",
+      "info": "Sets the color for borders and separators."
+    },
+    {
+      "type": "header",
+      "content": "t:settings_schema.colors.settings.header.button_link"
+    },
+    {
+      "type": "color",
+      "id": "button_link_color",
+      "label": "t:settings_schema.colors.name",
+      "default": "#111111",
+      "info": "Defines the color of text-based buttons (links)."
+    },
+    {
+      "type": "color",
+      "id": "button_link_hover_color",
+      "label": "t:settings_schema.colors.settings.hover_color.label",
+      "default": "#111111",
+      "info": "Changes the color of text-based buttons when hovered."
+    }
+  ],
+  "role": {
+    "text": "text_color",
+    "background": {
+      "solid": "background",
+      "gradient": "background_gradient"
+    },
+    "links": "text_color",
+    "icons": "text_color",
+    "primary_button": "primary_color",
+    "on_primary_button": "text_color",
+    "primary_button_border": "primary_color",
+    "secondary_button": "background",
+    "on_secondary_button": "text_color",
+    "secondary_button_border": "border_color"
+
+
+
+
+
+
+
+
+    
+        }
+      }
+    ]
+  },
+  {
+
+
+     "name": "• Website Intro",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_website_intro",
+      "label": "Enable Website Intro",
+      "default": false,
+      "info": "Enable this option to activate the website intro animation."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_intro_only_first_load",
+      "label": "Show the intro only on the first load of the website",
+      "default": false,
+      "info": "If enabled, the intro will be shown only once when a user visits the site for the first time."
+    },
+    {
+      "type": "select",
+      "id": "intro_behavior",
+      "label": "Behavior",
+      "options": [
+        {
+          "value": "show_on_first_access",
+          "label": "Show only on first access of the site"
+        },
+        {
+          "value": "show_on_every_page",
+          "label": "Show on every page"
+        },
+        {
+          "value": "show_always",
+          "label": "Show always (Testing Mode)"
+        },
+        {
+          "value": "show_once_per_day",
+          "label": "Show only once per day"
+        }
+      ],
+      "default": "show_on_first_access",
+      "info": "Defines how the website intro appears. \n- 'Show only on first access' will display the intro once when a user first visits. \n- 'Show on every page' will make it appear on all page loads. \n- 'Show always (Testing Mode)' will make it appear every time for testing purposes. \n- 'Show only once per day' uses cookies/local storage to prevent reappearance until the next day.If you want to see the feature and you're not in testing mode, try using another browser.    "
+    },
+    {
+      "type": "range",
+      "id": "intro_duration",
+      "label": "Intro Duration (seconds)",
+      "default": 3,
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "info": "Set the duration (in seconds) for how long the intro animation should be visible."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_background_color_instead_of_image",
+      "label": "Enable Background Color instead of Image",
+      "default": false,
+      "info": "If enabled, the intro background will use a solid color instead of an image."
+    },
+    {
+      "type": "color",
+      "id": "intro_background_color",
+      "label": "Background Color",
+      "default": "#ffffff",
+      "info": "Choose the background color for the intro when 'Enable Background Color' is active."
+    },
+    {
+      "type": "image_picker",
+      "id": "intro_background_image",
+      "label": "Background Image",
+      "info": "Upload an image to use as the intro background. Overrides background color if selected."
+    },
+    {
+      "type": "range",
+      "id": "intro_background_brightness",
+      "label": "Background Image Brightness (0-100)",
+      "default": 100,
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "info": "Adjusts the brightness of the background image (0 = darkest, 100 = normal)."
+    },
+    {
+      "type": "range",
+      "id": "intro_background_blur",
+      "label": "Background Image Blur (px)",
+      "default": 0,
+      "min": 0,
+      "max": 20,
+      "step": 1,
+      "info": "Applies a blur effect to the background image. Higher values create a stronger blur."
+    },
+    {
+      "type": "image_picker",
+      "id": "intro_logo",
+      "label": "Intro Logo Image",
+      "info": "Upload a logo image to display in the intro animation."
+    },
+    {
+      "type": "range",
+      "id": "intro_logo_size",
+      "label": "Logo Image Size (px)",
+      "default": 200,
+      "min": 50,
+      "max": 800,
+      "step": 10,
+      "info": "Set the size of the logo image in pixels."
+    },
+    {
+      "type": "select",
+      "id": "intro_logo_animation",
+      "label": "Logo Animation",
+      "options": [
+        {
+          "value": "none",
+          "label": "None"
+        },
+        {
+          "value": "fade_in",
+          "label": "Subtle Fade In"
+        },
+        {
+          "value": "blink",
+          "label": "Subtle Blink"
+        },
+        {
+          "value": "float",
+          "label": "Floating Up and Down"
+        },
+        {
+          "value": "zoom",
+          "label": "Zoom In/Out"
+        },
+        {
+          "value": "rotate",
+          "label": "Rotate Constantly"
+        },
+        {
+          "value": "glow",
+          "label": "Outline Glow (pulsing)"
+        }
+      ],
+      "default": "none",
+      "info": "Select an animation effect for the intro logo."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_text_above_loading",
+      "label": "Enable Text Above Loading Bar",
+      "default": false,
+      "info": "If enabled, a custom text message will be displayed above the loading bar."
+    },
+    {
+      "type": "text",
+      "id": "intro_loading_text",
+      "label": "Intro Loading Text",
+      "default": "Welcome to Our Store",
+      "info": "Enter the text to display above the loading bar."
+    },
+    {
+      "type": "color",
+      "id": "intro_loading_text_color",
+      "label": "Intro Loading Text Color",
+      "default": "#000000",
+      "info": "Choose a color for the loading text."
+    },
+    {
+      "type": "range",
+      "id": "intro_loading_text_font_size",
+      "label": "Intro Loading Text Font Size (px)",
+      "default": 20,
+      "min": 10,
+      "max": 60,
+      "step": 1,
+      "info": "Set the font size of the intro loading text."
+    },
+    {
+      "type": "select",
+      "id": "intro_loading_bar_style",
+      "label": "Loading Bar Style",
+      "options": [
+        {
+          "value": "style1",
+          "label": "Style 1"
+        },
+        {
+          "value": "style2",
+          "label": "Style 2"
+        },
+        {
+          "value": "style3",
+          "label": "Style 3"
+        },
+        {
+          "value": "style4",
+          "label": "Style 4"
+        },
+        {
+          "value": "style5",
+          "label": "Style 5"
+        }
+      ],
+      "default": "style1",
+      "info": "Choose a style for the loading bar animation."
+    },
+    {
+      "type": "color",
+      "id": "intro_loading_bar_unfilled_color",
+      "label": "Loading Bar Unfilled Color",
+      "default": "#cccccc",
+      "info": "Select the color for the unfilled portion of the loading bar."
+    },
+    {
+      "type": "color",
+      "id": "intro_loading_bar_filled_color",
+      "label": "Loading Bar Filled Color",
+      "default": "#000000",
+      "info": "Choose the color for the filled portion of the loading bar."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_loading_bar_glow",
+      "label": "Enable White Glow for Loading Bar",
+      "default": false,
+      "info": "If enabled, the loading bar will have a white glow effect."
+       }
+    ]
+  },
+  {
+
+
+    
+
+
+      "name": "• Overall Zoom",
+  "settings": [
+    {
+      "type": "range",
+      "id": "global_scale",
+      "label": "Page Zoom Desktop",
+      "min": 60,
+      "max": 120,
+      "step": 5,
+      "default": 100,
+      "unit": "%"
+
+  
+   }
+    ]
+  },
+  {
+
+    
+    "name": "• Browser Tab Messages",
+    "settings": [
+      {
+       "type": "paragraph",
+  "content": "Browser tab messages are displayed when users switch to another tab, helping to regain their attention. If no custom messages are set, the default website name will be displayed instead."
+},
+{
+  "type": "checkbox",
+  "id": "enable_browser_tab_notifications",
+  "label": "Enable Browser Tab Messages",
+  "default": true,
+  "info": "Turn this feature on to show attention-grabbing messages in the browser tab when users navigate away from your site."
+},
+{
+  "type": "text",
+  "id": "first_notification",
+  "label": "Browser Tab Primary Message",
+  "default": "👋 Still there? Check this out!",
+  "info": "This is the first message displayed in the browser tab when a user becomes inactive. Use an engaging phrase to bring them back."
+},
+{
+  "type": "text",
+  "id": "secondary_notification",
+  "label": "Browser Tab Secondary Message",
+  "default": "🐀񙐠Exclusive deal waiting for you!",
+  "info": "This message appears after the primary message, creating a sense of urgency or curiosity to encourage users to return."
+      }
+    ]
+  },
+  {
+    "name": "• Badges",
+    "settings": [
+      {
+      
+       "type": "header",
+    "content": "Sale Badge Settings"
+  },
+  {
+    "type": "checkbox",
+    "id": "show_sale",
+    "label": "Display Sale Badge",
+    "default": true,
+    "info": "Enable this option to show a 'Sale' badge on discounted products."
+  },
+  {
+    "type": "select",
+    "id": "sale_badge_type",
+    "label": "Sale Badge Display Style",
+    "default": "text",
+    "info": "Choose how the sale badge should display the discount.",
+    "options": [
+      {
+        "value": "text",
+        "label": "Show 'Sale' Text"
+      },
+      {
+        "value": "percent",
+        "label": "Show Discount Percentage"
+      },
+      {
+        "value": "price",
+        "label": "Show Discounted Price"
+      }
+    ]
+  },
+  {
+    "type": "color",
+    "id": "sale_background",
+    "label": "Sale Badge Background Color",
+    "default": "#D0473E",
+    "info": "Customize the background color of the sale badge."
+  },
+  {
+    "type": "color",
+    "id": "sale_color",
+    "label": "Sale Badge Text Color",
+    "default": "#fff",
+    "info": "Choose the color of the text inside the sale badge."
+
+
+
+  },
+  {
+    "type": "range",
+    "id": "badges_rounded_corner",
+    "min": 0,
+    "max": 15,
+    "step": 1,
+    "unit": "px",
+    "label": "Badge Corner Roundness",
+    "default": 15,
+    "info": "Adjust the roundness of the badge corners. Set to 0 for sharp edges or up to 15 for rounded corners."
+
+    
+ },
+    {
+ 
+      "type": "range",
+      "id": "sale_badge_font_size",
+      "label": "Sale Badge Font Size",
+      "min": 10,
+      "max": 24,
+      "step": 1,
+      "default": 13,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "sale_badge_border_color",
+      "label": "Sale Badge Border Color",
+      "default": "#000000"
+
+
+
+  },
+    {
+      "type": "range",
+      "id": "sale_badge_padding_left",
+      "label": "Sale Badge Padding Left",
+      "min": 0,
+      "max": 30,
+      "step": 1,
+      "default": 10,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "sale_badge_padding_right",
+      "label": "Sale Badge Padding Right",
+      "min": 0,
+      "max": 30,
+      "step": 1,
+      "default": 10,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "sale_badge_padding_top",
+      "label": "Sale Badge Padding Top",
+      "min": 0,
+      "max": 30,
+      "step": 1,
+      "default": 5,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "sale_badge_padding_bottom",
+      "label": "Sale Badge Padding Bottom",
+      "min": 0,
+      "max": 30,
+      "step": 1,
+      "default": 5,
+      "unit": "px"
+
+
+
+
+  },
+
+  {
+    "type": "header",
+    "content": "NEW Badge Configuration"
+     },
+  {
+   "type": "checkbox",
+      "id": "enable_new_badge_desktop",
+      "label": "Enable NEW Badge for Desktop Version only",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_new_badge_mobile",
+      "label": "Enable NEW Badge for Mobile Device (Mobile View only)",
+      "default": false
+  },
+  {
+    "type": "textarea",
+    "id": "new_badge_product_urls_1",
+    "label": "Product URLs for 'NEW' Badge #1 (comma-separated)",
+    "info": "Enter the URLs of products to assign the 'NEW' badge. Example: /products/trap-dutty-free-loops",
+ 
+ },
+  {
+    "type": "textarea",
+    "id": "new_badge_product_urls_2",
+    "label": "Product URLs for 'NEW' Badge #2 (comma-separated)",
+    "info": "Enter additional product URLs to assign the 'NEW' badge. Example: /products/trap-dutty-free-loops",
+
+  },
+  {
+    "type": "textarea",
+    "id": "new_badge_product_urls_3",
+    "label": "Product URLs for 'NEW' Badge #3 (comma-separated)",
+    "info": "Enter more product URLs to assign the 'NEW' badge. Example: /products/trap-dutty-free-loops",
+
+  },
+  {
+    "type": "textarea",
+    "id": "new_badge_product_urls_4",
+    "label": "Product URLs for 'NEW' Badge #4 (comma-separated)",
+    "info": "Enter additional product URLs for the 'NEW' badge.  Example: /products/trap-dutty-free-loops",
+    
+  },
+  {
+    "type": "textarea",
+    "id": "new_badge_product_urls_5",
+    "label": "Product URLs for 'NEW' Badge #5 (comma-separated)",
+    "info": "Enter more product URLs to assign the 'NEW' badge. Example: /products/trap-dutty-free-loops",
+
+  },
+  {
+    "type": "text",
+    "id": "new_badge_label",
+    "label": "'NEW' Badge Text",
+    "info": "Customize the text displayed on the 'NEW' badge.",
+    "default": "NEW"
+  },
+  {
+    "type": "range",
+    "id": "new_badge_border_radius",
+    "label": "'NEW' Badge Corner Radius (px)",
+    "info": "Adjust the roundness of the 'NEW' badge corners by setting the radius in pixels.",
+    "default": 4,
+    "min": 0,
+    "max": 50,
+    "step": 1
+  },
+  {
+    "type": "color",
+    "id": "new_badge_background_color",
+    "label": "'NEW' Badge Background Color",
+    "info": "Choose the background color for the 'NEW' badge to make it stand out.",
+    "default": "#6D5DF5"
+  },
+  {
+    "type": "color",
+    "id": "new_badge_text_color",
+    "label": "'NEW' Badge Text Color",
+    "info": "Set the color of the text inside the 'NEW' badge for better readability.",
+    "default": "#FFFFFF"
+ 
+
+
+
+
+
+
+
+
+      
+      
+ },
+    {
+    "type": "header",
+    "content": "Pre-Order Badge Settings"
+  },
+  {
+    "type": "checkbox",
+    "id": "show_pre_order",
+    "label": "Enable Pre-Order Badge",
+    "default": true,
+    "info": "Enable this option to display a 'Pre-Order' badge on products that are available for pre-order."
+  },
+  {
+    "type": "color",
+    "id": "pre_order_background",
+    "label": "Pre-Order Badge Background Color",
+    "default": "#D0473E",
+    "info": "Set the background color of the pre-order badge."
+  },
+  {
+    "type": "color",
+    "id": "pre_order_color",
+    "label": "Pre-Order Badge Text Color",
+    "default": "#fff",
+    "info": "Select the color of the text inside the pre-order badge."
+  },
+  {
+    "type": "header",
+    "content": "Sold-Out Badge Settings"
+  },
+  {
+    "type": "checkbox",
+    "id": "show_sold_out",
+    "label": "Enable Sold-Out Badge",
+    "default": true,
+    "info": "Enable this option to show a 'Sold Out' badge on products that are no longer in stock."
+  },
+  {
+    "type": "color",
+    "id": "sold_out_background",
+    "label": "Sold-Out Badge Background Color",
+    "default": "#D0473E",
+    "info": "Set the background color of the sold-out badge."
+  },
+  {
+    "type": "color",
+    "id": "sold_out_color",
+    "label": "Sold-Out Badge Text Color",
+    "default": "#fff",
+    "info": "Choose the text color for the sold-out badge."
+
+   
+      }
+    ]
+  },
+  {
+
+
+     "name": "• Notifications Bubble ",
+    "settings": [
+      {
+      
+       "type": "header",
+    "content": "Notifications Bubble Colors"
+
+       },
+  {
+
+     "type": "color",
+  "id": "notification_bubble_bg",
+  "label": "Bubble Notification Background Color",
+  "default": "#000000"
+
+
+      },
+  {
+    "type": "color",
+    "id": "notification_bubble_text_color",
+    "label": "Notification Bubble Text Color",
+    "default": "#FFFFFF"
+
+       
+},
+  {
+   "type": "header",
+    "content": "Notifications Bubble Colors"
+
+       },
+  {
+
+    "type": "range",
+    "id": "notification_bubble_width",
+    "label": "Bubble Notification Width",
+    "default": 1.8,
+    "min": 1,
+    "max": 5,
+    "step": 0.1
+  },
+  {
+    "type": "range",
+    "id": "notification_bubble_height",
+    "label": "Bubble Notification Height",
+    "default": 1.8,
+    "min": 1,
+    "max": 5,
+    "step": 0.1
+  },
+  {
+    "type": "range",
+    "id": "notification_bubble_top",
+    "label": "Bubble Notification Top Position",
+    "default": -6,
+    "min": -20,
+    "max": 20,
+    "step": 1
+
+
+   
+      }
+    ]
+  },
+  {
+
+
+
+
+
+
+
+
+
+
+
+    
+   "name": "• Buttons Customization",
+    "settings": [
+      {
+
+  "type": "header",
+      "content": "Primary Button Customizations",
+      "info": "Customize the appearance of your primary action buttons to align with your brand."
+   
+  },
+    {
+      
+      "type": "color",
+      "id": "primary_button_background_color",
+      "label": "Primary Button Background Color",
+      "default": "#0033FF",
+      "info": "Select the background color for the primary buttons used across your site."
+    },
+    {
+      "type": "color",
+      "id": "primary_button_hover_background_color",
+      "label": "Primary Button Hover Background Color",
+      "default": "#0056FF",
+      "info": "Choose the background color when users hover over the primary buttons."
+    },
+    {
+      "type": "color",
+      "id": "primary_button_text_color",
+      "label": "Primary Button Text Color",
+      "default": "#FFFFFF",
+      "info": "Set the text color for the primary buttons to ensure readability."
+    },
+    {
+      "type": "color",
+      "id": "primary_button_hover_text_color",
+      "label": "Primary Button Hover Text Color",
+      "default": "#FFFFFF",
+      "info": "Define the text color for primary buttons on hover to maintain contrast."
+    },
+    {
+      "type": "range",
+      "id": "primary_button_border_weight",
+      "label": "Primary Button Border Thickness",
+      "min": 0,
+      "max": 5,
+      "step": 0.5,
+      "default": 1,
+      "info": "Adjust the thickness of the border around primary buttons."
+    },
+    {
+      "type": "color",
+      "id": "primary_button_border_color",
+      "label": "Primary Button Border Color",
+      "default": "#000000",
+      "info": "Choose the color of the border surrounding primary buttons."
+    },
+    {
+      "type": "range",
+      "id": "primary_button_border_radius",
+      "label": "Primary Button Border Radius",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 8,
+      "info": "Set the curvature of the primary button corners for a rounded or sharp look."
+    },
+    
+    {
+      "type": "header",
+      "content": "Secondary Outline Button Customizations",
+      "info": "Modify the styling of secondary outline buttons to complement primary buttons."
+    },
+    {
+      "type": "color",
+      "id": "btn_outline_bg_color",
+      "label": "Outline Button Background Color",
+      "default": "#3498db",
+      "info": "Select the background color for secondary outline buttons."
+    },
+    {
+      "type": "color",
+      "id": "btn_outline_hover_color",
+      "label": "Outline Button Hover Background Color",
+      "default": "#2980b9",
+      "info": "Choose the background color for outline buttons when hovered."
+    },
+    {
+      "type": "color",
+      "id": "btn_outline_text_color",
+      "label": "Outline Button Text Color",
+      "default": "#ffffff",
+      "info": "Set the text color for secondary outline buttons."
+    },
+    {
+      "type": "color",
+      "id": "btn_outline_hover_text_color",
+      "label": "Outline Button Hover Text Color",
+      "default": "#ecf0f1",
+      "info": "Define the text color for outline buttons on hover."
+    },
+    {
+      "type": "range",
+      "id": "outline_button_border_weight",
+      "label": "Outline Button Border Thickness",
+      "min": 0,
+      "max": 5,
+      "step": 0.1,
+      "default": 1,
+      "info": "Adjust the border thickness for secondary outline buttons."
+    },
+    {
+      "type": "color",
+      "id": "outline_button_border_color",
+      "label": "Outline Button Border Color",
+      "default": "#2980b9",
+      "info": "Choose the color for the border of outline buttons."
+    },
+    {
+      "type": "range",
+      "id": "btn_border_radius",
+      "label": "Outline Button Border Radius",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 8,
+      "info": "Set the border radius for outline buttons to achieve desired corner curvature."
+    },
+    
+    {
+      "type": "header",
+      "content": "Payment Button Customizations - Product Page",
+      "info": "Configure the appearance of payment-related buttons on product pages."
+
+      
+    },
+    {
+      "type": "color",
+      "id": "payment_button_more_options_bg_color",
+      "label": "Payment Button Background Color",
+      "default": "#000000",
+      "info": "Select the background color for payment option buttons."
+
+
+    },
+    {
+      "type": "color",
+      "id": "payment_button_more_options_text_color",
+      "label": "Payment Button Text Color",
+      "default": "#ffffff",
+      "info": "Set the text color for payment option buttons to ensure clarity."
+    },
+    {
+      "type": "color",
+      "id": "payment_button_more_options_border_color",
+      "label": "Payment Button Border Color",
+      "default": "#000000",
+      "info": "Choose the border color for payment option buttons."
+    },
+    {
+      "type": "range",
+      "id": "payment_button_more_options_border_radius",
+      "label": "Payment Button Border Radius",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 8,
+      "info": "Adjust the border radius for payment buttons to control corner rounding."
+    },
+    {
+      "type": "range",
+      "id": "payment_button_more_options_border_weight",
+      "label": "Payment Button Border Thickness",
+      "min": 0,
+      "max": 5,
+      "step": 1,
+      "default": 2,
+      "info": "Set the thickness of the border around payment option buttons."
+    },
+    
+    {
+      "type": "header",
+      "content": "Add To Cart Button Customizations - Product Page",
+      "info": "Customize the 'Add to Cart' button to enhance user interaction on product pages."
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_bg_color",
+      "label": "Add to Cart Button Background Color",
+      "default": "#000000",
+      "info": "Select the background color for the 'Add to Cart' button."
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_text_color",
+      "label": "Add to Cart Button Text Color",
+      "default": "#ffffff",
+      "info": "Set the text color for the 'Add to Cart' button to ensure visibility."
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_border_color",
+      "label": "Add to Cart Button Border Color",
+      "default": "#000000",
+      "info": "Choose the border color for the 'Add to Cart' button."
+    },
+    {
+      "type": "range",
+      "id": "add_to_cart_border_weight",
+      "label": "Add to Cart Button Border Thickness",
+      "min": 0,
+      "max": 5,
+      "step": 0.1,
+      "default": 1,
+      "info": "Adjust the border thickness of the 'Add to Cart' button."
+    },
+    {
+      "type": "range",
+      "id": "add_to_cart_border_radius",
+      "label": "Add to Cart Button Border Radius",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 8,
+      "info": "Set the border radius for the 'Add to Cart' button to control corner rounding."
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_hover_bg_color",
+      "label": "Add to Cart Button Hover Background Color",
+      "default": "#333333",
+      "info": "Choose the background color for the 'Add to Cart' button when hovered."
+    },
+    
+    {
+      "type": "header",
+      "content": "Cart Recommendations Button Customizations",
+      "info": "Customize the buttons related to cart recommendations to enhance user engagement."
+    },
+    {
+      "type": "color",
+      "id": "cart_recommend_button_text_color",
+      "label": "Cart Recommendations Button Text Color",
+      "default": "#000000",
+      "info": "Set the text color for cart recommendation buttons."
+    },
+    {
+      "type": "color",
+      "id": "cart_recommend_button_hover_text_color",
+      "label": "Cart Recommendations Button Hover Text Color",
+      "default": "#FF0000",
+      "info": "Define the text color for cart recommendation buttons on hover."
+    },
+    {
+      "type": "range",
+      "id": "cart_recommend_button_font_size",
+      "label": "Cart Recommendations Button Font Size",
+      "default": 14,
+      "min": 10,
+      "max": 24,
+      "step": 1,
+      "unit": "px",
+      "info": "Adjust the font size for text within cart recommendation buttons."
+
+     
+     }
+    ]
+  },
+  {
+ "name": "• Main Collection Filter ",
+    "settings": [
+      
+      {
+
+ "type": "header",
+        "content": "Product Size Tabs Customization"
+
+ },
+    {
+
+
+ "type": "color",
+      "id": "checked_product_size_bg_color",
+      "label": "Checked Product Size Background Color",
+      "default": "#ffffff"
+    
+    },
+    {
+      "type": "color",
+      "id": "checked_product_size_text_color",
+      "label": "Checked Product Size Text Color",
+      "default": "#000000"
+
+
+      }
+    ]
+  },
+  {
+
+
+
+ "name": "• Product Card Settings",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Product Display Settings"
+    },
+    {
+         "type": "checkbox",
+    "id": "enable_zoom_on_hover",
+    "label": "Enable Secondary Image On Hover",
+    "info": "Enable secondary image on hover product card.",
+    "default": true
+  },
+  {
+    "type": "checkbox",
+    "id": "enable_secondary_zoom",
+    "label": "Enable Zoom on Secondary Image",
+    "info": "When enabled, this setting allows zoom functionality on the secondary image.",
+    "default": true
+  },
+  {
+    "type": "checkbox",
+    "id": "enable_fade",
+    "label": "Enable Fade Effect on Hover",
+    "info": "Apply a fade effect when hovering over the product image.",
+    "default": true
+  },
+  {
+    "type": "checkbox",
+    "id": "enable_fade_in_up",
+    "label": "Enable Fade-In-Up Effect on Hover",
+    "info": "Display a fade-in-up effect when hovering, enhancing visual appeal.",
+    "default": true
+  },
+  {
+    "type": "checkbox",
+    "id": "enable_add_cart_on_hover",
+    "label": "Show 'Select Options' on Hover",
+    "info": "Displays the 'Select Options' button when a user hovers over the product image.",
+    "default": false
+
+
+    },
+    {
+      "type": "checkbox",
+      "id": "show_quick_view",
+      "label": "Enable Quick Add Popup",
+      "info": "Adds a Quick Add button on product cards — customers pick a variant and add to cart from a popup, without leaving the collection page.",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "show_vendor",
+      "label": "Show Vendor Name",
+      "info": "Display the vendor name under the product title.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_rate",
+      "label": "Show Product Ratings",
+      "info": "Enable star ratings on product cards. You can integrate an app like Judge.me for this.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_add_cart",
+      "label": "Enable Cart General",
+      "info": "Show or hide the cart in general",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_catalog_mode",
+      "label": "Enable Catalog Mode",
+      "info": "Disables purchasing and hides 'Select Options' buttons, making your store browse-only.",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "hidden_price",
+      "label": "Hide Product Prices",
+      "info": "Conceals product prices when catalog mode is enabled.",
+      "default": false
+    },
+    {
+      "type": "header",
+      "content": "Product Card Style"
+    },
+    {
+      "type": "select",
+      "id": "product_style",
+      "label": "Choose Product Card Style",
+      "info": "Select the overall layout and design of your product cards.",
+      "default": "modern",
+      "options": [
+        {
+          "value": "card",
+          "label": "Classic Card Style"
+        },
+        {
+          "value": "modern",
+          "label": "Modern Minimalist Style"
+        },
+        {
+          "value": "carousel",
+          "label": "Image Carousel (Swipe Gallery)"
+        }
+      ]
+    },
+    {
+      "type": "header",
+      "content": "Product Image Settings"
+    },
+    {
+      "type": "select",
+      "id": "product_image_ratio",
+      "label": "Product Image Ratio",
+      "info": "Select the aspect ratio for product images.",
+      "default": "adapt",
+      "options": [
+        {
+          "value": "adapt",
+          "label": "Adapt to Image"
+        },
+        {
+          "value": "square",
+          "label": "Square (1:1)"
+        },
+        {
+          "value": "portrait",
+          "label": "Portrait (2:3)"
+        },
+        {
+          "value": "landscape",
+          "label": "Landscape (3:2)"
+        },
+        {
+          "value": "custom",
+          "label": "Custom Ratio"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "product_custom_ratio",
+      "label": "Custom Image Ratio",
+      "info": "Define a custom aspect ratio for product images (e.g., 16:9)."
+    },
+    {
+      "type": "header",
+      "content": "Add to Cart Button Customization"
+
+      
+       },
+    {
+    "type": "text",
+  "id": "add_to_cart_button_text",
+  "label": "Add to Cart Button Text",
+  "default": "Add to Cart"
+
+
+    },
+    {
+
+
+     "type": "range",
+      "id": "add_to_cart_button_border_radius",
+      "label": "Add to Cart Button Border Radius",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 5,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_button_background_color",
+      "label": "Add to Cart Button Background Color",
+      "default": "#ff6600"
+
+
+       },
+    {
+      "type": "color",
+      "id": "add_to_cart_button_background_hover_color",
+      "label": "Add to Cart Button Background Hover Color",
+      "default": "#cc5500"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_button_text_color",
+      "label": "Add to Cart Button Text Color",
+      "default": "#ffffff"
+
+
+
+
+
+       },
+    {
+      "type": "color",
+      "id": "add_to_cart_button_text_hover_color",
+      "label": "Add to Cart Button Text Hover Color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "add_to_cart_button_size_mobile",
+      "label": "Add to Cart Button Size (Mobile)",
+      "min": 10,
+      "max": 24,
+      "step": 1,
+      "default": 16,
+      "unit": "px"
+    },
+    {
+      "type": "select",
+      "id": "add_to_cart_button_font_weight",
+      "label": "Add to Cart Button Font Weight",
+      "options": [
+        { "value": "normal", "label": "Normal" },
+        { "value": "bold", "label": "Bold" }
+      ],
+      "default": "bold"
+
+
+     },
+    {
+
+
+
+
+
+
+
+      
+      "type": "header",
+      "content": "Product Text Styling"
+    },
+    {
+      "type": "select",
+      "id": "product_alignment",
+      "label": "Text Alignment",
+      "info": "Choose how product details are aligned.",
+      "default": "start",
+      "options": [
+        {
+          "value": "start",
+          "label": "Left"
+        },
+        {
+          "value": "center",
+          "label": "Center"
+        },
+        {
+          "value": "end",
+          "label": "Right"
+        }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "product_name_text_transform",
+      "label": "Product Name Formatting",
+      "info": "Choose the text format for product names.",
+      "default": "unset",
+      "options": [
+        {
+          "value": "unset",
+          "label": "Default"
+        },
+        {
+          "value": "uppercase",
+          "label": "UPPERCASE"
+        },
+        {
+          "value": "capitalize",
+          "label": "Capitalize Each Word"
+        }
+      ]
+    },
+    {
+      "type": "range",
+      "id": "product_size",
+      "label": "Product Title Font Size",
+      "info": "Set the font size of the product title (in pixels).",
+      "min": 12,
+      "max": 18,
+      "step": 1,
+      "default": 14
+         },
+    {
+        "type": "range",
+      "id": "price_size",
+      "label": "Product Price Font Size",
+      "min": 10,
+      "max": 36,
+      "step": 1,
+      "unit": "px",
+      "default": 18
+    },
+    {
+      "type": "header",
+      "content": "Price and Vendor Customization"
+    },
+    {
+      "type": "color",
+      "id": "compare_price_color",
+      "label": "Compare Price Text Color",
+      "info": "Set the color for the compare price text.",
+      "default": "#000000"
+    },
+    {
+      "type": "range",
+      "id": "compare_price_font_size",
+      "label": "Compare Price Font Size",
+      "info": "Adjust the font size for the compare price text (in pixels).",
+      "min": 10,
+      "max": 24,
+      "step": 1,
+      "default": 14
+    },
+    {
+      "type": "color",
+      "id": "product_vendor_color",
+      "label": "Vendor Name Text Color",
+      "info": "Choose the color for the vendor name displayed on product cards.",
+      "default": "#000000"
+    
+      }
+    ]
+  },
+  {
+  "name": "• Product Variant Swatches",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Color and Size Swatch Settings"
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_color_swatches",
+      "label": "Enable Color Swatches",
+      "info": "Turn on color swatches to display product color options visually instead of dropdowns.",
+      "default": true
+    },
+    {
+      "type": "select",
+      "id": "swatch_item_type",
+      "label": "Swatch Display Type",
+      "info": "Choose how product variants should be represented – as color swatches or variant images.",
+      "default": "color_swatches",
+      "options": [
+        {
+          "value": "color_swatches",
+          "label": "Use Color Swatches"
+        },
+        {
+          "value": "variant_images",
+          "label": "Use Variant Images"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "color_swatch_trigger",
+      "label": "Keywords for Color Swatches",
+      "info": "Define words that trigger color swatches (e.g., Color, Colour, Cor). Use a comma to separate multiple values.",
+      "default": "Color,Colour,Cor"
+    },
+    {
+      "type": "text",
+      "id": "size_trigger",
+      "label": "Keywords for Size Selection",
+      "info": "Specify words that trigger size swatches (e.g., Size, Measure). Use a comma to separate multiple values.",
+      "default": "Size"
+      }
+    ]
+  },
+  {
+     "name": "• Search Behavior Settings",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Search Display Options"
+    },
+    {
+      "type": "select",
+      "id": "search_type",
+      "label": "Search Box Display Style",
+      "info": "Choose how the search function appears – as a popup, drawer, or standard inline search.",
+      "default": "popup",
+      "options": [
+        {
+       
+          "value": "popup",
+          "label": "Popup Search Window"
+        },
+        {
+          "value": "drawer",
+          "label": "Sliding Drawer Search"
+         },
+        {
+          "value": "minimal",
+  "label": "Minimal Inline Search Bar"
+   },
+      ]
+    },
+    {
+      "type": "select",
+      "id": "search_result",
+      "label": "Search Results Type",
+      "info": "Define what type of content the search should return – products only or all content.",
+      "default": "products",
+      "options": [
+        {
+          "value": "all",
+          "label": "Search All Content (Products, Blogs, Pages)"
+        },
+        {
+          "value": "products",
+          "label": "Search Only Products"
+        }
+      ]
+    },
+    {
+      "type": "header",
+      "content": "Search Input Customization"
+    },
+    {
+      "type": "range",
+      "id": "search_input_border_radius",
+      "label": "Search Bar Corner Roundness",
+      "info": "Adjust the corner radius of the search bar to make it more rounded or sharp.",
+      "default": 5,
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "search_input_focus_color",
+      "label": "Search Bar Focus Color",
+      "info": "Choose the highlight color when users click into the search bar.",
+      "default": "#ff224e"
+ },
+    {
+
+  "type": "header",
+      "content": "Search Default Style Desktop"
+
+       },
+    {
+
+"type": "color",
+  "id": "search_desktop_bg_color",
+  "label": "Default Search Desktop Background Color",
+  "default": "#000000",
+  "info": "Select the background color for the search popup on desktop."
+
+
+
+
+      
+    },
+    {
+      "type": "header",
+      "content": "Search Suggestion Settings"
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_search_suggestion",
+      "label": "Enable Trending Search Suggestions",
+      "info": "Show suggested results as users type in the search bar to enhance navigation.",
+      "default": true
+    },
+    {
+      "type": "textarea",
+      "id": "popular_key_word",
+      "label": "Predefined Search Keywords",
+      "info": "Set common search keywords that will be suggested when users type in the search bar.For e.g ( delimano chef, ai watterbottle, brand notes ) ."
+    },
+    {
+      "type": "collection",
+      "id": "collection_suggestion",
+      "label": "Suggested  Collections",
+      "info": "Specify collections that will appear as suggested results in the search bar."
+
+ },
+  {
+
+
+ "type": "header",
+    "content": "Trending Pill Customization"
+  },
+  {
+    "type": "color",
+    "id": "trending_pill_bg_color",
+    "label": "Trending Pill Background Color",
+    "default": "#000000",
+    "info": "Select the background color for the trending pill button."
+  },
+  {
+    "type": "color",
+    "id": "trending_pill_text_color",
+    "label": "Trending Pill Text Color",
+    "default": "#ffffff",
+    "info": "Select the text color for the trending pill button."
+  },
+  {
+    "type": "range",
+    "id": "trending_pill_border_radius",
+    "label": "Trending Pill Border Radius",
+    "min": 0,
+    "max": 50,
+    "step": 1,
+    "default": 7,
+    "unit": "px",
+    "info": "Adjust the roundness of the trending pill button."
+  },
+  {
+    "type": "color",
+    "id": "trending_pill_hover_bg_color",
+    "label": "Trending Pill Hover Background Color",
+    "default": "#ff6600",
+    "info": "Select the background color when hovering over the trending pill button."
+ 
+
+      
+    },
+    {
+      "type": "checkbox",
+      "id": "show_search_price",
+      "label": "Show Prices in Search Results",
+      "info": "Display product prices directly in the search result dropdown.",
+      "default": true
+      }
+    ]
+  },
+  {
+    "name": "• Wishlist",
+    "settings": [
+      {
+
+ "type": "header",
+    "content": "Wishlist Button Settings"
+  },
+  {
+    "type": "checkbox",
+    "id": "show_wishlist",
+    "label": "Enable Wishlist Feature",
+    "default": false,
+    "info": "Toggle this setting to enable or disable the Wishlist button on product cards."
+  },
+  {
+    "type": "checkbox",
+    "id": "show_action_on_mobile",
+    "label": "Show Wishlist Button on Mobile",
+    "default": false,
+    "info": "Choose whether the Wishlist button should be visible on mobile devices."
+  },
+  {
+    "type": "header",
+    "content": "Wishlist Button Appearance"
+  },
+  {
+    "type": "color",
+    "id": "wishlist_button_bg",
+    "label": "Wishlist Button Background",
+    "default": "#f7f7f7",
+    "info": "Set the default background color for the Wishlist button."
+  },
+  {
+    "type": "color",
+    "id": "wishlist_button_active_bg",
+    "label": "Wishlist Button Active Background",
+    "default": "#e63946",
+    "info": "Set the background color when the Wishlist button is active (selected)."
+  },
+  {
+    "type": "color",
+    "id": "wishlist_button_border",
+    "label": "Wishlist Button Border",
+    "default": "#000000",
+    "info": "Define the border color for the Wishlist button."
+  },
+  {
+    "type": "color",
+    "id": "wishlist_icon_color",
+    "label": "Wishlist Icon Color",
+    "default": "#000000",
+    "info": "Choose the default color for the Wishlist icon."
+  },
+  {
+    "type": "color",
+    "id": "wishlist_icon_checked_color",
+    "label": "Wishlist Icon Checked Color",
+    "default": "#e63946",
+    "info": "Choose the color for the Wishlist icon when an item is added."
+  },
+  {
+    "type": "header",
+    "content": "Wishlist Button Positioning"
+  },
+  {
+    "type": "range",
+    "id": "wishlist_button_top",
+    "label": "Wishlist Button Vertical Position (Desktop)",
+    "default": 44,
+    "min": 0,
+    "max": 100,
+    "step": 1,
+    "unit": "px",
+    "info": "Adjust the vertical position of the Wishlist button on desktop screens."
+  },
+  {
+    "type": "range",
+    "id": "wishlist_button_top_mobile",
+    "label": "Wishlist Button Vertical Position (Mobile)",
+    "default": -115,
+    "min": -190,
+    "max": 50,
+    "step": 5,
+    "unit": "px",
+    "info": "Adjust the vertical position of the Wishlist button on mobile devices."
+  },
+  {
+    "type": "header",
+    "content": "Wishlist Page - Remove Button"
+  },
+  {
+    "type": "color",
+    "id": "remove_wishlist_bg",
+    "label": "Remove Button Background",
+    "default": "#f0f0f0",
+    "info": "Set the background color of the remove button on the Wishlist page."
+  },
+  {
+    "type": "color",
+    "id": "remove_wishlist_border",
+    "label": "Remove Button Border",
+    "default": "#e0e0e0",
+    "info": "Set the border color of the remove button on the Wishlist page."
+  },
+  {
+    "type": "color",
+    "id": "remove_wishlist_svg_color",
+    "label": "Remove Button Icon Color",
+    "default": "#000000",
+    "info": "Set the color of the remove button’s SVG icon."
+  },
+  {
+    "type": "header",
+    "content": "Wishlist Button Behavior"
+  },
+  {
+    "type": "select",
+    "id": "action_when_click_added_wishlist",
+    "label": "Action on Adding to Wishlist",
+    "default": "remove",
+    "info": "Choose what happens when a user adds an item to the Wishlist.",
+    "options": [
+      {
+        "value": "remove",
+        "label": "Remove item from Wishlist when clicked again"
+      },
+      {
+        "value": "go_to_page",
+        "label": "Redirect to the Wishlist page after adding an item"
+          }
+        ]
+      }
+    ]
+  },
+  {
+      "name": "• Cart Settings",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Cart Behavior & Actions",
+      "info": "Configure what happens when customers add items to the cart."
+    },
+    {
+      "type": "select",
+      "id": "action_after_add_cart",
+      "label": "Post-Add to Cart Action",
+      "info": "Decide what happens when a customer adds a product to the cart.",
+      "default": "open_drawer",
+      "options": [
+        {
+          "value": "open_drawer",
+          "label": "Open Cart Drawer"
+        },
+        {
+          "value": "go_to_cart_page",
+          "label": "Redirect to Cart Page"
+        }
+      ]
+    },
+    {
+      "type": "header",
+      "content": "Cart Drawer Customization",
+      "info": "Personalize the look and feel of the cart drawer."
+    },
+    {
+      "type": "color",
+      "id": "cart_drawer_shipping_bar_color",
+      "label": "Shipping Bar Background",
+      "info": "Select the background color of the shipping progress bar.",
+      "default": "#C8C8C8"
+    },
+    {
+      "type": "range",
+      "id": "cart_drawer_shipping_bar_height",
+      "label": "Shipping Bar Height",
+      "info": "Adjust the height of the shipping progress bar.",
+      "default": 7,
+      "min": 1,
+      "max": 20,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "cart_drawer_shipping_bar_fill_color",
+      "label": "Shipping Bar Fill Color",
+      "info": "Choose the color that fills the progress bar as the cart total increases.",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "cart_drawer_free_shipping_message_color",
+      "label": "Free Shipping Message Color",
+      "info": "Set the text color of the free shipping message.",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "cart_drawer_free_shipping_price_color",
+      "label": "Free Shipping Price Highlight",
+      "info": "Choose the color for the free shipping price text.",
+      "default": "#FF0000"
+    },
+    {
+      "type": "header",
+      "content": "Free Shipping Bar",
+      "info": "Display a progress bar encouraging customers to reach the free shipping threshold."
+      
+    },
+    {
+      "type": "checkbox",
+      "id": "show_on_minicart_cart_page",
+      "label": "Show Free Shipping Bar",
+      "info": "Enable the free shipping bar on both the minicart and main cart page.",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "free_shipping_minimum",
+      "label": "Free Shipping Threshold",
+      "info": "Set the minimum cart value required for free shipping."
+    },
+    {
+      "type": "header",
+      "content": "Cart Page Enhancements",
+      "info": "Additional features to improve the cart page experience."
+   
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_gift_wrap",
+      "label": "Offer Protective Packaging",
+      "info": "Provide an option for customers to add protective packaging for their order.",
+      "default": true
+    },
+    {
+      "type": "product",
+      "id": "choose_gift_wrap_product",
+      "label": "Select Protective Packaging Product",
+      "info": "Choose a specific product that will be used as an optional add-on for protective packaging."
+
+
+
+},
+    {
+
+
+
+        "type": "checkbox",
+      "id": "enable_cart_drawer_countdown_timer",
+      "label": "Enable Cart Drawer Countdown Timer",
+      "default": false
+    },
+    {
+      "type": "text",
+      "id": "cart_drawer_countdown_text",
+      "label": "Countdown Text",
+      "default": "Hurry Up, checkout within"
+    },
+    {
+      "type": "range",
+      "id": "cart_drawer_countdown_initial_time",
+      "label": "Countdown Time (minutes)",
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "default": 5
+    },
+    {
+      "type": "color",
+      "id": "cart_drawer_countdown_color",
+      "label": "Countdown Numbers Color",
+      "default": "#ff0000"
+
+
+
+
+       },
+    {
+      "type": "checkbox",
+      "id": "enable_cart_drawer_countdown_transparent",
+      "label": "Enable Transparent Background",
+      "default": true
+
+      },
+    {
+      "type": "color",
+      "id": "cart_drawer_countdown_border_color",
+      "label": "Border Color",
+      "default": "transparent"
+    },
+    {
+      "type": "range",
+      "id": "cart_drawer_countdown_border_radius",
+      "label": "Border Radius",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 30
+    },
+    {
+      "type": "range",
+      "id": "cart_drawer_countdown_padding",
+      "label": "Padding",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 7
+    },
+    {
+      "type": "range",
+      "id": "cart_drawer_countdown_margin",
+      "label": "Margin",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 10
+
+
+
+
+
+
+
+      
+    },
+    {
+      "type": "header",
+      "content": "Cart Countdown Timer",
+      "info": "Add urgency to increase conversions."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_duration_on_minicart_cart_page",
+      "label": "Display Timer in Cart",
+      "info": "Enable a countdown timer on cart page.",
+      "default": true
+    },
+    {
+      "type": "header",
+      "content": "Product Recommendations",
+      "info": "Boost sales with recommended products in the cart."
+    },
+    {
+      "type": "text",
+      "id": "product_recommendations_heading",
+      "label": "Recommendations Section Title",
+      "info": "Customize the title for the product recommendations section."
+    },
+    {
+      "type": "select",
+      "id": "minicart_type",
+      "label": "Cart Drawer Recommendations",
+      "info": "Control how product recommendations are displayed in the minicart.",
+      "default": "show_inside",
+      "options": [
+        {
+          "value": "disable",
+          "label": "Disable Recommendations"
+        },
+        {
+          "value": "show_inside",
+          "label": "Show Inside Minicart"
+        }
+      ]
+    },
+    {
+      "type": "checkbox",
+      "id": "show_on_cart_page",
+      "label": "Show Recommendations on Cart Page",
+      "info": "Enable recommended products on the cart page."
+    },
+    {
+      "type": "select",
+      "id": "product_recommendations_type",
+      "label": "Recommendation Type",
+      "info": "Choose how products are recommended.",
+      "default": "select",
+      "options": [
+        {
+          "value": "auto",
+          "label": "Automatic Suggestions"
+        },
+        {
+          "value": "select",
+          "label": "Manually Selected Products"
+        }
+      ]
+    },
+    {
+      "type": "product_list",
+      "id": "select_product_recommendations",
+      "label": "Choose Recommended Products",
+      "info": "Manually select products to be displayed if 'Manual Selection' is chosen."
+    },
+    {
+      "type": "header",
+      "content": "Instagram Call-To-Action",
+      "info": "Engage customers with an Instagram CTA in the cart."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_cart_addons",
+      "label": "Enable Instagram CTA",
+      "info": "Display an Instagram follow message in the cart.",
+      "default": true
+    },
+    {
+      "type": "color",
+      "id": "cta_instagram_accent_color",
+      "label": "CTA Accent Color",
+      "info": "Set the color of the Instagram call-to-action text.",
+      "default": "#3b82f6"
+    },
+    {
+      "type": "url",
+      "id": "social_account_url",
+      "label": "Instagram Profile Link",
+      "info": "Provide the URL of your Instagram account."
+    },
+    {
+      "type": "textarea",
+      "id": "social_icon_svg",
+      "label": "Instagram Icon SVG Code",
+      "info": "Paste the SVG code of the Instagram icon for the call to action.",
+      "default": "<svg viewBox=\"0 -0.5 25 25\" xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\">\n  <g>\n    <path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.5 5H9.5C7.29086 5 5.5 6.79086 5.5 9V15C5.5 17.2091 7.29086 19 9.5 19H15.5C17.7091 19 19.5 17.2091 19.5 15V9C19.5 6.79086 17.7091 5 15.5 5Z\"></path>\n    <path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M12.5 15C10.8431 15 9.5 13.6569 9.5 12C9.5 10.3431 10.8431 9 12.5 9C14.1569 9 15.5 10.3431 15.5 12C15.5 12.7956 15.1839 13.5587 14.6213 14.1213C14.0587 14.6839 13.2956 15 12.5 15Z\"></path>\n  </g>\n</svg>"
+    }
+    ]
+  },
+  {
+    "name": "• Social Media",
+  "settings": [
+    {
+      "type": "header",
+      "content": "🎨 Icon Appearance"
+    },
+    {
+      "type": "color",
+      "id": "social_icons_color",
+      "label": "Social Media Icons - Default Color",
+      "info": "Select the default color for your social media icons.",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "social_icons_hover_color",
+      "label": "Social Media Icons - Hover Color",
+      "info": "Choose the color displayed when users hover over your social icons.",
+      "default": "#ff0000"
+    },
+    {
+      "type": "range",
+      "id": "social_icons_size_desktop",
+      "label": "Icon Size on Desktop",
+      "info": "Adjust the size of the social media icons for desktop users.",
+      "min": 10,
+      "max": 100,
+      "step": 1,
+      "default": 40
+    },
+    {
+      "type": "range",
+      "id": "social_icons_size_mobile",
+      "label": "Icon Size on Mobile",
+      "info": "Modify the size of the social media icons for mobile users.",
+      "min": 10,
+      "max": 100,
+      "step": 1,
+      "default": 30
+    },
+    {
+      "type": "range",
+      "id": "social_icons_gap",
+      "label": "Spacing Between Icons (px)",
+      "info": "Set the horizontal spacing between social media icons.",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 10
+    },
+    {
+      "type": "header",
+      "content": "🔗 Social Media Links"
+    },
+    {
+      "type": "text",
+      "id": "facebook",
+      "label": "Facebook Profile URL",
+      "info": "Enter your Facebook profile or page link."
+    },
+    {
+      "type": "text",
+      "id": "instagram",
+      "label": "Instagram Profile URL",
+      "info": "Provide the link to your Instagram profile."
+    },
+    {
+      "type": "text",
+      "id": "twitter",
+      "label": "X (Formerly Twitter) Profile URL",
+      "info": "Insert your profile link for X (formerly Twitter)."
+    },
+    {
+      "type": "text",
+      "id": "youtube",
+      "label": "YouTube Channel URL",
+      "info": "Add the link to your YouTube channel."
+    },
+    {
+      "type": "text",
+      "id": "tiktok",
+      "label": "TikTok Profile URL",
+      "info": "Include your TikTok profile link."
+    },
+    {
+      "type": "text",
+      "id": "pinterest",
+      "label": "Pinterest Profile URL",
+      "info": "Specify the URL of your Pinterest profile."
+    },
+    {
+      "type": "text",
+      "id": "linkedin",
+      "label": "LinkedIn Profile URL",
+      "info": "Provide the link to your LinkedIn profile."
+    },
+    {
+      "type": "text",
+      "id": "whatsapp",
+      "label": "WhatsApp Contact Number",
+      "info": "Enter your WhatsApp number (with country code) for direct messaging."
+  
+      }
+    ]
+  },
+  {
+   "name": "• Preloader Settings",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Preloader Configuration"
+    },
+    {
+      "type": "paragraph",
+      "content": "The preloader helps improve the user experience by displaying a loading animation before the website fully loads. Choose a style below, or upload a custom GIF/image."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_preload",
+      "label": "Enable Preloader",
+      "default": false
+    },
+    {
+      "type": "select",
+      "id": "preload_page",
+      "label": "Preloader Style (Choose Animation)",
+      "default": "dot",
+      "options": [
+        {
+          "value": "dot",
+          "label": "Animated Dots Loader"
+        },
+        {
+          "value": "spin",
+          "label": "Spinning Ring Loader"
+        },
+        {
+          "value": "ripple",
+          "label": "Ripple Effect Loader"
+        },
+        {
+          "value": "custom",
+          "label": "Custom Image or GIF"
+        },
+        {
+          "value": "rect_flicker",
+          "label": "Flickering Rectangles"
+        },
+        {
+          "value": "circles_slide",
+          "label": "Sliding Circles"
+        },
+        {
+          "value": "wave_path",
+          "label": "Wavy Path Animation"
+        },
+        {
+          "value": "double_line_spin",
+          "label": "Double Line Spinner"
+        },
+        {
+          "value": "square_fold",
+          "label": "Folding Square"
+        },
+        {
+          "value": "progress_text",
+          "label": "Loading Progress (0%)"
+        },
+        {
+          "value": "rotating_arc",
+          "label": "Rotating Arc Animation"
+        }
+      ]
+    },
+    {
+      "type": "image_picker",
+      "id": "preload_custom_image",
+      "label": "Custom Preloader Image Logo or GIF",
+      "info": "Upload your own preloader image or GIF. You can create or download GIF animations from external sources like [Gifer](https://gifer.com/en/gifs/loader). Simply download the GIF and upload it here."
+    },
+    {
+      "type": "paragraph",
+      "content": "Customize the size and duration of the preloader below."
+    },
+    {
+      "type": "range",
+      "id": "preloader_size",
+      "label": "Preloader Size (px)",
+      "default": 40,
+      "min": 20,
+      "max": 300,
+      "step": 10
+    },
+    {
+      "type": "range",
+      "id": "preloader_duration",
+      "label": "Preloader Display Duration (seconds)",
+      "default": 1.0,
+      "min": 0.1,
+      "max": 3.0,
+      "step": 0.1
+
+          }
+        ]
+      },
+      {
+
+
+
+    "name": "• Currency Display Settings",
+    "settings": [
+      {
+        "type": "paragraph",
+        "content": "Customize how currency information is displayed in your store. You can choose whether to show the currency code alongside prices for better clarity."
+      },
+      {
+        "type": "header",
+        "content": "Currency Formatting Options"
+      },
+      {
+        "type": "checkbox",
+        "id": "show_currency_code",
+        "label": "Display Currency Code",
+        "info": "Enable this option to show the currency code (e.g., USD, EUR) next to product prices. This helps customers easily identify the currency being used.",
+        "default": false
+      }
+    ]
+  },
+  {
+
+
+
+    "name": "• GDPR Cookies ",
+    "settings": [
+      {
+        "type": "paragraph",
+        "content": "Manage how your website handles cookies and user consent. This section allows you to customize cookie-related messages, buttons, and settings."
+      },
+      {
+        "type": "header",
+        "content": "Cookie Consent Settings"
+      },
+      {
+        "type": "checkbox",
+        "id": "enable_cookies",
+        "label": "Enable Cookie Consent Banner",
+        "info": "Turn this on to display a cookie consent banner to inform visitors about cookie usage and request their consent.",
+        "default": false
+      },
+      {
+        "type": "header",
+        "content": "Cookie Banner Content"
+      },
+      {
+        "type": "text",
+        "id": "heading_cookies",
+        "label": "Cookie Banner Heading",
+        "info": "Enter a custom heading for your cookie banner, such as 'We Value Your Privacy' or 'Cookie Preferences'."
+      },
+      {
+        "type": "richtext",
+        "id": "content_cookies",
+        "label": "Cookie Banner Message",
+        "info": "Customize the message that appears in the cookie banner. You can explain why cookies are used and provide a link to your cookie policy.",
+        "default": "<p>We use cookies to enhance your browsing experience, serve personalized ads, and analyze our traffic. By clicking \"<strong>Allow Cookies<\/strong>\", you consent to our use of cookies. <strong>More info<\/strong><\/p>"
+      },
+      {
+        "type": "text",
+        "id": "label_allow",
+        "label": "Accept Cookies Button Text",
+        "info": "Customize the text for the button that allows users to accept cookies.",
+        "default": "Allow Cookies"
+      },
+      {
+        "type": "text",
+        "id": "label_refuse",
+        "label": "Decline Cookies Button Text",
+        "info": "Customize the text for the button that lets users refuse cookies."
+
+      
+          }
+        ]
+      },
+      {
+
+  "name": "• Speed Optimization",
+  "settings": [
+    {
+   
+
+     "type": "checkbox",
+      "id": "enable_speed_optimization",
+      "label": "Enable Smooth Fast Speed Optimization",
+       "info": "Optimizes website speed by enabling lazy loading for images and deferring non-essential JavaScript. Recommended for better performance and faster page load times.",
+      "default": true
+
+        },
+    {
+      "type": "checkbox",
+      "id": "enable_preload_resources",
+      "label": "Preload Critical Resources",
+      "info": "Preloads important assets like fonts, stylesheets, and hero images before other content loads. This speeds up page rendering.",
+      "default": true
+
+  
+   }
+    ]
+  },
+  {
+   "name": "• General Store Information",
+    "settings": [
+      {
+        "type": "paragraph",
+        "content": "Manage your store's essential contact details and location settings. This section allows you to configure the phone number, email, and address that will be displayed on your website."
+      },
+      {
+        "type": "header",
+        "content": "Store Contact Information"
+
+           },
+      {
+        "type": "page",
+        "id": "store_page",
+        "label": "Find Store Page"
+      },
+      {
+        "type": "text",
+        "id": "store_phone",
+        "label": "Store Phone Number",
+        "info": "Enter your store's primary contact number. This number will be displayed in the footer and other contact sections of your site."
+      },
+      {
+        "type": "text",
+        "id": "store_email",
+        "label": "Store Email Address",
+        "info": "Provide your official store email. Customers will use this email to contact support or inquiries."
+      },
+      {
+        "type": "text",
+        "id": "store_address",
+        "label": "Store Physical Address",
+        "info": "Input your store's physical location. This will be used for customer inquiries, shipping policies, and other location-based details."
+    
+      }
+    ]
+  },
+  {
+     "name": "• Terms & Conditions Settings",
+  "settings": [
+    {
+
+      "type": "page",
+      "id": "page_terms_conditions",
+      "label": "Select Terms & Conditions Page",
+      "info": "Choose an existing page that contains the full Terms & Conditions. This link will be used for reference in customer agreements."
+           },
+    {
+      "type": "checkbox",
+      "id": "show_check_box_in_cart",
+      "label": "Enable Terms & Conditions Checkbox in Cart",
+      "default": true,
+      "info": "When enabled, customers must accept the Terms & Conditions before proceeding with their purchase in the cart."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_checkbox_in_product_page",
+      "label": "Show Terms & Conditions Checkbox on Product Page",
+      "default": true,
+      "info": "This setting adds a checkbox to the product page, ensuring customers acknowledge the terms before adding a product to their cart."
+
+    },
+    {
+      "type": "richtext",
+      "id": "text_terms_conditions",
+      "label": "Custom Terms & Conditions Text",
+      "default": "<p>By continuing, you agree to our <a href=''>Terms & Conditions</a>.</p>",
+      "info": "Modify the text that appears alongside the checkbox. You can add links, styling, or custom messaging here."
+
+      }
+    ]
+  }
+]
