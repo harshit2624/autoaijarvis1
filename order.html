@@ -103,11 +103,11 @@ html,body{
   background:linear-gradient(to top,var(--bg) 0%,transparent 100%);pointer-events:none;
 }
 .order-badge{
-  position:absolute;top:64px;left:20px;
-  background:rgba(255,255,255,.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-  border:1px solid rgba(0,0,0,.07);border-radius:100px;
-  padding:6px 14px;font-size:10px;font-weight:700;letter-spacing:.09em;
-  white-space:nowrap;color:var(--body);text-transform:uppercase;
+  background:rgba(255,255,255,.15);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.28);border-radius:100px;
+  padding:5px 12px;font-size:10px;font-weight:700;letter-spacing:.08em;
+  white-space:nowrap;color:var(--text);text-transform:uppercase;
+  transition:background .25s,border-color .25s,color .25s;
 }
 .confirm-sheet{
   flex:1;padding:6px 20px 200px;display:flex;flex-direction:column;gap:20px;
@@ -565,6 +565,7 @@ html,body{
 <!-- FLOATING HEADER -->
 <header class="site-header solid" id="site-header" style="display:none">
   <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" class="header-logo" id="header-logo">
+  <div class="order-badge hidden" id="order-badge"></div>
   <button class="menu-btn" id="menu-btn" onclick="openSidebar()" aria-label="Menu">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="17" x2="21" y2="17"/></svg>
   </button>
@@ -647,7 +648,6 @@ html,body{
       </div>
       <img id="hero-img" class="hero-img hidden" alt="Product">
       <div class="hero-fade"></div>
-      <div class="order-badge" id="order-badge">ORDER #—</div>
     </div>
 
     <div class="confirm-sheet">
@@ -1277,10 +1277,16 @@ window.addEventListener('scroll', () => {
   // Menu button: fade from frosted-dark to solid bg
   const mb = document.getElementById('menu-btn');
   if (mb) {
-    const btnAlpha = 0.22 + t * 0.78; // frosted dark → light bg
     mb.style.background = t > 0.5 ? `rgba(245,245,245,${t})` : `rgba(0,0,0,${0.22 * (1-t)})`;
     mb.style.borderColor = `rgba(0,0,0,${t * 0.12})`;
     mb.style.color = t > 0.4 ? 'var(--body)' : '#fff';
+  }
+  // Order badge pill: frosted glass → solid bordered pill
+  const ob = document.getElementById('order-badge');
+  if (ob) {
+    ob.style.background = `rgba(255,255,255,${0.15 + t * 0.7})`;
+    ob.style.borderColor = `rgba(0,0,0,${t * 0.1})`;
+    ob.style.backdropFilter = `blur(${Math.max(0, 12 - t * 12)}px)`;
   }
 }, { passive: true });
 
