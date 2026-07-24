@@ -875,6 +875,7 @@ async function doLookup() {
   const contact = (document.getElementById('inp-contact').value.trim() || '').toLowerCase() || 'na';
   if (!q) { document.getElementById('lookup-err').textContent = 'Please enter your order number.'; return; }
   if (!contact || (contact !== 'na' && contact.length < 3)) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone.'; return; }
+  if (!contact || (contact !== 'na' && contact.length < 3)) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone.'; return; }
   document.getElementById('lookup-err').textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');

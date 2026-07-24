@@ -679,6 +679,7 @@ async function doLookup() {
 
   if (!q) { errEl.textContent = 'Please enter your order number.'; return; }
   if (!contact || (contact !== 'na' && contact.length < 3)) { errEl.textContent = 'Please enter your email or phone.'; return; }
+  if (!contact || (contact !== 'na' && contact.length < 3)) { errEl.textContent = 'Please enter your email or phone.'; return; }
   errEl.textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');
@@ -820,6 +821,7 @@ function startFlow(type) {
   selectedReason = null;
   adminCodeType = null;
   uploadedPhotoUrls = [];
+  Object.keys(itemOptionSel).forEach(k => delete itemOptionSel[k]);
   stepHistory = [];
   buildItemsStep();
   showStep('items');
@@ -879,6 +881,8 @@ function buildItemsStep() {
 
 // Cache fetched variant data so we don't re-fetch
 const variantCache = {};
+// Persist selected option values per item index across re-renders
+const itemOptionSel = {};
 
 function toggleItem(idx) {
   const row = document.getElementById(`item-row-${idx}`);
@@ -933,13 +937,15 @@ function renderVariantPicker(idx, item, data) {
   loadEl.style.display = 'none';
 
   const { options, variants, imageMap } = data;
-  // State: selected option values (one per option index)
   const numOptions = options.length;
-  // Init selections from current variant
   const curVariant = variants.find(v => v.is_current);
-  const sel = curVariant
-    ? [curVariant.option1, curVariant.option2, curVariant.option3].slice(0, numOptions)
-    : Array(numOptions).fill(null);
+  // Use persisted selection if exists, else init from current variant
+  if (!itemOptionSel[idx]) {
+    itemOptionSel[idx] = curVariant
+      ? [curVariant.option1, curVariant.option2, curVariant.option3].slice(0, numOptions)
+      : Array(numOptions).fill(null);
+  }
+  const sel = itemOptionSel[idx];
 
   function isVariantAvailable(opts) {
     return variants.some(v =>
@@ -991,16 +997,14 @@ function renderVariantPicker(idx, item, data) {
     optEl.classList.remove('hidden');
   }
 
-  // Expose pickOption globally keyed by idx
-  window[`_varSel_${idx}`] = sel;
-  window.pickOption = function(itemIdx, optionIdx, val) {
-    const s = window[`_varSel_${itemIdx}`];
-    s[optionIdx] = val;
-    // Re-render this picker
-    renderVariantPicker(itemIdx, orderData.items[itemIdx], variantCache[orderData.items[itemIdx].product_id]);
-  };
-
   render();
+}
+
+function pickOption(itemIdx, optionIdx, val) {
+  if (!itemOptionSel[itemIdx]) return;
+  itemOptionSel[itemIdx][optionIdx] = val;
+  const it = orderData.items[itemIdx];
+  renderVariantPicker(itemIdx, it, variantCache[it.product_id]);
 }
 
 function setExchangeFor(idx, label, variantId) {
