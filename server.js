@@ -16547,7 +16547,8 @@ app.get("/order/lookup", async (req, res) => {
       shopify_order_id: order.id,
       order_name: order.name,
       customer_name: trackPayload.customer_name,
-      stage: trackPayload.stage,
+      // Use order_meta.stage for confirm/track routing — OVS max only for stepper display inside track
+      stage: meta.stage || 'new',
       financial_status: order.financial_status,
       is_prepaid: isPrepaid,
       // confirm-specific
