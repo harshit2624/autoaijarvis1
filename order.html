@@ -366,6 +366,22 @@ html,body{
 .rr-req-status.approved{background:var(--green-light);color:var(--green-dark);border-color:var(--green-border)}
 .rr-req-status.rejected{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
 
+/* rr rich card */
+.rr-card-track{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:12px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.rr-card-head2{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:14px}
+.rr-card-title{font-size:13px;font-weight:700;color:var(--text)}
+.rr-card-sub{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5}
+.rr-prog-row{display:flex;align-items:center;margin-bottom:10px}
+.rr-step-wrap{display:flex;flex-direction:column;align-items:center;flex-shrink:0}
+.rr-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid;flex-shrink:0}
+.rr-dot-done{background:var(--green-dark);border-color:var(--green-dark)}
+.rr-dot-active{background:#fff;border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,100,255,.12)}
+.rr-dot-pending{background:var(--bg);border-color:var(--border)}
+.rr-step-lbl{font-size:9px;color:var(--muted);margin-top:4px;text-align:center;white-space:nowrap}
+.rr-step-line{flex:1;height:1.5px;background:var(--border);margin:0 4px;margin-bottom:14px}
+.rr-track-row{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border);margin-top:4px}
+.rr-track-link{color:var(--blue);font-weight:600;text-decoration:none}
+
 /* help row */
 .help-row{
   margin-top:28px;padding:0 16px;display:flex;align-items:center;
@@ -826,6 +842,7 @@ html,body{
 <script>
 const API = '';
 let orderData = null;
+let lastContact = 'na';
 let paying = false;
 
 // ── Inline SVG icon sets ──────────────────────────────────────
@@ -884,6 +901,7 @@ async function doLookup() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Order not found');
     orderData = d;
+    lastContact = rawContact || 'na';
     renderOrder(d);
   } catch(e) {
     showScreen('lookup-screen');
@@ -1191,13 +1209,34 @@ function renderTrack(d) {
 function renderRR(d) {
   const existing = d.return_requests||[];
   if (!existing.length) return;
-  const statusMap = {pending:'pending',approved:'approved',rejected:'rejected',completed:'approved',cancelled:'rejected'};
-  document.getElementById('rr-existing-list').innerHTML =
-    `<div class="rr-existing">`+
-    existing.map(r=>`<div class="rr-req-item">
-      <span class="rr-req-label">${r.type==='exchange'?'Exchange':'Return'} · ${r.vendor_name||''}</span>
-      <span class="rr-req-status ${statusMap[r.status]||'pending'}">${r.status}</span>
-    </div>`).join('')+`</div>`;
+  const statusChip = {pending:'pending',approved:'approved',rejected:'rejected',completed:'approved',cancelled:'rejected'};
+  const statusLabel = {pending:'Pending',approved:'Approved',rejected:'Rejected',completed:'Completed',cancelled:'Cancelled'};
+  const STEPS = ['Submitted','Approved',null]; // null = dynamic third label
+  document.getElementById('rr-existing-list').innerHTML = existing.map(r => {
+    const sMap = {pending:0,approved:1,completed:2,rejected:-1,cancelled:-1};
+    const sIdx = sMap[r.status] ?? 0;
+    const thirdLabel = r.type==='exchange' ? 'Replacement sent' : 'Refund processed';
+    const steps = ['Submitted','Approved', thirdLabel];
+    const dots = steps.map((lbl,i) => {
+      const active = r.status==='rejected'||r.status==='cancelled' ? i===0 : i<=sIdx;
+      const cls = active ? (i===sIdx&&sIdx<2?'rr-dot-active':'rr-dot-done') : 'rr-dot-pending';
+      return `<div class="rr-step-wrap"><div class="rr-dot ${cls}"></div><div class="rr-step-lbl">${lbl}</div></div>`;
+    }).join('<div class="rr-step-line"></div>');
+    const trackLink = r.forward_shipment?.tracking_url || r.reverse_shipment?.tracking_url || '';
+    const awb = r.forward_shipment?.awb || r.reverse_shipment?.awb || '';
+    const date = new Date(r.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+    return `<div class="rr-card-track">
+      <div class="rr-card-head2">
+        <div>
+          <div class="rr-card-title">${r.type==='exchange'?'Exchange':'Return'} Request</div>
+          <div class="rr-card-sub">${r.vendor_name||''} · ${date}${r.reason ? ' · '+r.reason : ''}</div>
+        </div>
+        <span class="rr-req-status ${statusChip[r.status]||'pending'}">${statusLabel[r.status]||r.status}</span>
+      </div>
+      <div class="rr-prog-row">${dots}</div>
+      ${awb ? `<div class="rr-track-row">${IC.truck}&nbsp;<span>AWB: ${awb}</span>${trackLink?`&nbsp;<a href="${trackLink}" target="_blank" class="rr-track-link">Track shipment →</a>`:''}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 function showTrack() {
@@ -1244,7 +1283,9 @@ async function pay(mode) {
 
 function goRR(type) {
   if (!orderData) return;
-  location.href=`/track?order=${encodeURIComponent(orderData.order_name)}&contact=na&action=${type}`;
+  const o = encodeURIComponent(orderData.order_name.replace(/^#/,''));
+  const c = encodeURIComponent(lastContact || 'na');
+  location.href=`/returns?o=${o}&contact=${c}&action=${type}`;
 }
 function sbReturnClick(e) {
   if (orderData) {
