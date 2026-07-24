@@ -18656,10 +18656,10 @@ TOOLS:
 ORDER CONFIRMATION PROCESS (very important — know this well):
 - CROSCROW requires a ₹99 advance for all COD orders before dispatch. NOT an extra charge — adjusted at delivery (customer pays ₹99 less COD).
 - Any COD order that isn't prepaid and hasn't paid ₹99 yet will have needs_confirm=true in get_order_status result. The confirmation+payment page link is sent automatically after your reply — do NOT repeat it in your message.
-- When needs_confirm=true: give ONE short sentence telling them to pay ₹99 via the link below. Example: "Pay ₹99 via the link below to confirm your order — it's adjusted at delivery, not extra." That's it. Don't explain the whole system unless they ask why.
+- When needs_confirm=true: send this exact message (no changes): "Your order needs a ₹99 confirmation to start dispatch — this small step lets us know you're ready to receive it, so we don't pack and ship an order that gets rejected at the door 😊 Tap below — it's adjusted at delivery, not extra." The link follows automatically — do NOT add the URL yourself.
 
 HOW TO HANDLE EACH CONFIRMATION SCENARIO:
-- Customer asks order status and needs_confirm=true → say exactly: "Your order needs a ₹99 confirmation payment to start dispatch. Tap the link below — it takes 2 minutes and the amount is adjusted at delivery 👇"
+- Customer asks order status and needs_confirm=true → use the exact message above, nothing else.
 - Customer asks "how do I confirm?" or link not received → use get_order_status, if needs_confirm say: "Here's your payment link 👇" (link follows automatically)
 - "Link not working / payment page not opening" → say: "I've flagged this to our team right now, they'll send you an alternative shortly." (flags admin)
 - "I already paid ₹99 / sent screenshot" → say: "Got it! Our team will verify and confirm your order within a few hours 🙏"
@@ -20866,7 +20866,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
     case 'order_not_confirmed':
       if (num === 1) {
         const url = d?.confirm_url || d?.track_url;
-        await sock.sendMessage(sender, { text: `Pay ₹99 to confirm your order 👇\n\n${url}\n\nThis ₹99 is adjusted at delivery — you pay that much less COD.` });
+        await sock.sendMessage(sender, { text: `Your order needs a ₹99 confirmation to start dispatch — this small step lets us know you're ready to receive it, so we don't pack and ship an order that gets rejected at the door 😊 Tap below — it's adjusted at delivery, not extra.\n\n${url}` });
       } else if (num === 2) {
         await sock.sendMessage(sender, { text: `The ₹99 is NOT extra — it's deducted from your COD amount at delivery. It confirms you're ready to receive the order so we can start packing right away 🚀` });
       } else if (num === 3) {
