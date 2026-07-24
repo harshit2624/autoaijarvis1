@@ -166,7 +166,6 @@ html,body{
 .badge-icon{display:flex;align-items:center;color:var(--green)}
 
 /* pay method labels */
-.pay-logos{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
 .pay-badge{
   background:var(--bg);border:1px solid var(--border);border-radius:5px;
   padding:4px 9px;font-size:9px;font-weight:700;color:var(--muted);
@@ -455,8 +454,8 @@ html,body{
 
 /* why-box on confirm page */
 .why-box{
-  background:var(--bg);border:1px solid var(--border);border-radius:12px;
-  padding:16px;display:flex;flex-direction:column;gap:8px;
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:14px;display:flex;flex-direction:column;gap:8px;margin-top:10px;margin-bottom:4px;
 }
 .why-title{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.01em}
 .why-body{font-size:12px;color:var(--body);line-height:1.7}
@@ -558,52 +557,33 @@ html,body{
         </div>
       </div>
 
-      <!-- Trust badges -->
-      <div class="badges-row" id="badges-row">
-        <div class="badge-item">
-          <span class="badge-icon">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
-          </span>
-          <span>Secure payment</span>
-        </div>
-        <div class="badge-item">
-          <span class="badge-icon">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-          </span>
-          <span>RBI compliant</span>
-        </div>
-        <div class="badge-item">
-          <span class="badge-icon">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
-            </svg>
-          </span>
-          <span>Easy returns</span>
-        </div>
-      </div>
-
-      <!-- Pay method labels -->
-      <div class="pay-logos">
-        <span class="pay-badge">UPI</span>
-        <span class="pay-badge">Visa</span>
-        <span class="pay-badge">Mastercard</span>
-        <span class="pay-badge">Net Banking</span>
-        <span class="pay-badge">COD</span>
-      </div>
-
       <!-- Why we collect ₹99 -->
       <div class="why-box">
         <div class="why-title">Why a small confirmation amount?</div>
         <div class="why-body">COD orders are sometimes placed by mistake or rejected at the door — return shipping costs everyone. A tiny advance lets us know <strong>you really want this order</strong>, so we pack and ship it right away.</div>
         <div class="why-note">This ₹99 is <strong>not an extra charge</strong> — it's part of your order total and gets deducted from what you pay on delivery.</div>
         <img src="/razorpay-secure-badge.png" alt="Secured by Razorpay" class="razorpay-badge">
+        <!-- Trust badges -->
+        <div class="badges-row" id="badges-row">
+          <div class="badge-item">
+            <span class="badge-icon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </span>
+            <span>Secure payment</span>
+          </div>
+          <div class="badge-item">
+            <span class="badge-icon">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+              </svg>
+            </span>
+            <span>Easy returns</span>
+          </div>
+        </div>
       </div>
     </div>
 
