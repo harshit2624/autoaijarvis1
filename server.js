@@ -3544,9 +3544,14 @@ async function runJarvisTool(name, args, reqCache) {
   // Use per-request cache to avoid hitting Shopify rate limits on parallel tool calls
   if (!reqCache.orders) reqCache.orders = await fetchAllOrders("any", "2020-01-01T00:00:00Z");
   if (!reqCache.metas)  reqCache.metas  = Object.fromEntries((await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray()).map(m=>[m.shopify_id,m]));
+  if (!reqCache.ovsRtoSet) {
+    const ovsRto = await mdb.collection('order_vendor_stage').find({ stage: 'rto' }, { projection: { shopify_id: 1, _id: 0 } }).toArray();
+    reqCache.ovsRtoSet = new Set(ovsRto.map(r => r.shopify_id));
+  }
 
   const allOrders = reqCache.orders;
   const metas     = reqCache.metas;
+  const ovsRtoSet = reqCache.ovsRtoSet;
 
   const now      = new Date();
   const today    = new Date(now); today.setHours(0,0,0,0);
@@ -3571,7 +3576,7 @@ async function runJarvisTool(name, args, reqCache) {
 
   const rev = os => Math.round(os.reduce((s,o)=>s+parseFloat(o.total_price||0),0));
   const isCOD  = o => o.financial_status !== "paid";
-  const isRTO  = o => metas[String(o.id)]?.stage==="rto" || o.tags?.includes("RTO");
+  const isRTO  = o => metas[String(o.id)]?.stage==="rto" || ovsRtoSet.has(String(o.id)) || o.tags?.includes("RTO");
 
   if (name === "get_order_stats") {
     const os = filterByPeriod(allOrders, args.period, args.from, args.to);
@@ -3677,6 +3682,15 @@ async function runJarvisTool(name, args, reqCache) {
   }
 
   if (name === "get_orders_list") {
+    const SO_JL = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+    const allJLVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,courier:1,_id:0}}).toArray();
+    const jlVsMap = {};
+    allJLVS.forEach(r=>{ if(!jlVsMap[r.shopify_id])jlVsMap[r.shopify_id]={}; jlVsMap[r.shopify_id][r.vendor_name]={stage:r.stage,awb:r.awb,courier:r.courier}; });
+    const jlEffStage = (sid) => {
+      const ms = metas[sid]?.stage||'new'; let best=SO_JL.indexOf(ms); if(best<0)best=0;
+      Object.values(jlVsMap[sid]||{}).forEach(v=>{const vi=SO_JL.indexOf(v?.stage);if(vi>best)best=vi;});
+      return SO_JL[best]||ms;
+    };
     let os = filterByPeriod(allOrders, args.period||"all");
     if (args.status && args.status!=="any") {
       if (args.status==="pending") os=os.filter(o=>!o.fulfillment_status||o.fulfillment_status==="unfulfilled");
@@ -3686,11 +3700,8 @@ async function runJarvisTool(name, args, reqCache) {
       if (args.payment==="cod") os=os.filter(isCOD);
       else os=os.filter(o=>!isCOD(o));
     }
-    if (args.stage) os=os.filter(o=>metas[String(o.id)]?.stage===args.stage);
+    if (args.stage) os=os.filter(o=>jlEffStage(String(o.id))===args.stage);
     if (args.vendor) os=os.filter(o=>(o.line_items||[]).some(li=>li.vendor?.toLowerCase()===args.vendor.toLowerCase()));
-    const vendorStages = await mdb.collection('order_vendor_stage').find({shopify_id:{$in:os.map(o=>String(o.id))}},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,courier:1,_id:0}}).toArray();
-    const vsMap = {};
-    vendorStages.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]={stage:r.stage,awb:r.awb,courier:r.courier}; });
     return os.slice(0,parseInt(args.limit)||15).map(o=>({
       id: o.id,
       name: o.name,
@@ -3699,12 +3710,12 @@ async function runJarvisTool(name, args, reqCache) {
       total: parseFloat(o.total_price||0),
       payment: isCOD(o)?"COD":"Prepaid",
       status: o.fulfillment_status||"unfulfilled",
-      stage: metas[String(o.id)]?.stage||null,
+      stage: jlEffStage(String(o.id)),
       advance_paid: metas[String(o.id)]?.advance_paid||0,
       awb: metas[String(o.id)]?.awb||null,
       date: o.created_at?.slice(0,10),
       vendors: [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))],
-      vendor_stages: vsMap[String(o.id)]||{},
+      vendor_stages: jlVsMap[String(o.id)]||{},
     }));
   }
 
@@ -3859,13 +3870,19 @@ async function runJarvisTool(name, args, reqCache) {
 
   // ── get_cod_outstanding ───────────────────────────────────────────────────
   if (name === "get_cod_outstanding") {
-    const os = filterByPeriod(allOrders, args.period||"all").filter(isCOD);
-    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,stage:1,awb:1,_id:0}}).toArray();
-    const vsMap = Object.fromEntries(allVS.map(r=>[r.shopify_id,r]));
+    const SO_COD = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+    const allVS = await mdb.collection('order_vendor_stage').find({},{projection:{shopify_id:1,vendor_name:1,stage:1,awb:1,_id:0}}).toArray();
+    const vsMap = {};
+    allVS.forEach(r=>{ if(!vsMap[r.shopify_id])vsMap[r.shopify_id]={}; vsMap[r.shopify_id][r.vendor_name]=r.stage; });
+    const codEffStage = (sid) => {
+      const ms=metas[sid]?.stage||'new'; let best=SO_COD.indexOf(ms); if(best<0)best=0;
+      Object.values(vsMap[sid]||{}).forEach(s=>{const vi=SO_COD.indexOf(s);if(vi>best)best=vi;});
+      return SO_COD[best]||ms;
+    };
     let inTransit=0,inTransitAmt=0,delivered=0,deliveredAmt=0,advanceUnshipped=0,advanceUnshippedAmt=0;
     filterByPeriod(allOrders,args.period||"all").filter(isCOD).forEach(o=>{
       const sid=String(o.id);
-      const stage=metas[sid]?.stage||vsMap[sid]?.stage||'new';
+      const stage=codEffStage(sid);
       const amt=parseFloat(o.total_price||0);
       const adv=metas[sid]?.advance_paid||0;
       if(['transit','pickup','ready'].includes(stage)){inTransit++;inTransitAmt+=amt;}
@@ -5584,9 +5601,15 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
     const stageCounts = Object.fromEntries(STAGES.map(s => [s, 0]));
     let totalRevenue = 0;
 
+    const SO_DASH = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
     raw.forEach(o => {
-      const meta  = metaMap[String(o.id)];
-      const stage = meta?.stage || "new";
+      const sid = String(o.id);
+      const meta = metaMap[sid];
+      const metaStage = meta?.stage || 'new';
+      const ovsRecords = Object.values(vsMap[sid] || {});
+      let bestIdx = SO_DASH.indexOf(metaStage); if (bestIdx < 0) bestIdx = 0;
+      ovsRecords.forEach(r => { const vi = SO_DASH.indexOf(r?.stage); if (vi > bestIdx) bestIdx = vi; });
+      const stage = SO_DASH[bestIdx] || metaStage;
       if (stageCounts[stage] !== undefined) stageCounts[stage]++;
       totalRevenue += parseFloat(o.total_price || 0);
     });
@@ -5828,6 +5851,19 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       .sort((a,b) => b.revenue - a.revenue)
       .slice(0, 8);
 
+    // ── OVS map — built once, reused for trend, RTO rate, and stage counts
+    const SO_ANA = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+    const ovsForStage = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, _id:0 } }).toArray();
+    const ovsStageMap = {};
+    ovsForStage.forEach(r => { if (!ovsStageMap[r.shopify_id]) ovsStageMap[r.shopify_id] = {}; ovsStageMap[r.shopify_id][r.vendor_name] = r.stage; });
+    const getEffectiveStage = (sid) => {
+      const metaStage = metaMap[sid]?.stage || 'new';
+      const ovsList = Object.values(ovsStageMap[sid] || {});
+      let best = SO_ANA.indexOf(metaStage); if (best < 0) best = 0;
+      ovsList.forEach(s => { const vi = SO_ANA.indexOf(s); if (vi > best) best = vi; });
+      return SO_ANA[best] || metaStage;
+    };
+
     // ── Daily revenue trend — span of selected period (cap at 90 days)
     const trendFrom = new Date(Math.max(periodFrom.getTime(), now - 89*DAY));
     const trendDays = Math.round((periodTo - trendFrom) / DAY) + 1;
@@ -5842,7 +5878,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       if (trendMap[key]) {
         trendMap[key].orders++;
         trendMap[key].revenue = parseFloat((trendMap[key].revenue + parseFloat(o.total_price||0)).toFixed(2));
-        const stage = (metaMap[String(o.id)] || {}).stage || 'new';
+        const stage = getEffectiveStage(String(o.id));
         if (!['new','hold','cancelled'].includes(stage)) trendMap[key].confirmed++;
       }
     });
@@ -5853,7 +5889,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const aov7    = orders7d.length   ? parseFloat((rev(orders7d)/orders7d.length).toFixed(2)) : 0;
 
     // ── RTO rate (selected period)
-    const rtoCountMain = ordersMain.filter(o => (metaMap[String(o.id)] || {}).stage === 'rto').length;
+    const rtoCountMain = ordersMain.filter(o => getEffectiveStage(String(o.id)) === 'rto').length;
     const rtoRate30    = ordersMain.length ? parseFloat((rtoCountMain/ordersMain.length*100).toFixed(1)) : 0;
 
     // ── Repeat customers (all time orders with same email > 1)
@@ -5874,18 +5910,14 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     // ── Stage counts for selected period
     const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","penalty"];
     const stageCounts = Object.fromEntries(STAGE_LIST.map(s=>[s,0]));
-    // Build ovs map for stage counts (same as commission uses)
-    const ovsForStage = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, _id:0 } }).toArray();
-    const ovsStageMap = {};
-    ovsForStage.forEach(r => { if (!ovsStageMap[r.shopify_id]) ovsStageMap[r.shopify_id] = {}; ovsStageMap[r.shopify_id][r.vendor_name] = r.stage; });
-    const SO_STAGECOUNT = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+    // ovsStageMap and getEffectiveStage already built above (reused here)
     ordersMain.forEach(o => {
       const sid = String(o.id);
       const vendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       let s;
       if (vendors.length > 0 && ovsStageMap[sid]) {
         const vstages = vendors.map(v=>ovsStageMap[sid]?.[v]).filter(Boolean);
-        s = vstages.length ? vstages.reduce((best,st)=>SO_STAGECOUNT.indexOf(st)>SO_STAGECOUNT.indexOf(best)?st:best, vstages[0]) : (metaMap[sid]?.stage||'new');
+        s = vstages.length ? vstages.reduce((best,st)=>SO_ANA.indexOf(st)>SO_ANA.indexOf(best)?st:best, vstages[0]) : (metaMap[sid]?.stage||'new');
       } else {
         s = metaMap[sid]?.stage || 'new';
       }
@@ -8007,11 +8039,22 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
     const paidSettlDocs = await mdb.collection('settlements').find({ vendor_name: req.vendor, status: 'paid' }, { projection: { net_payable: 1, _id: 0 } }).toArray();
     const totalSettled = paidSettlDocs.reduce((s, d) => s + (d.net_payable || 0), 0);
 
+    // Build per-vendor OVS map to check this vendor's stage per order
+    const vdsOvsArr = await mdb.collection('order_vendor_stage').find({ vendor_name: req.vendor }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
+    const vdsOvsMap = Object.fromEntries(vdsOvsArr.map(r => [r.shopify_id, r.stage]));
+    const VDS_SO = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+    const vdsIsDelivered = (sid, meta) => {
+      const ovs = vdsOvsMap[sid];
+      const metaStage = meta.stage || 'new';
+      const best = VDS_SO.indexOf(ovs) > VDS_SO.indexOf(metaStage) ? ovs : metaStage;
+      return best === 'delivered';
+    };
+
     let totalOrders = 0, gross = 0, prepaidDiscount = 0, commission = 0, gst = 0, advance = 0, shipping = 0, net = 0;
 
     allOrders.forEach(o => {
       const meta = metaMap[String(o.id)] || {};
-      if ((meta.stage || "new") !== "delivered") return;
+      if (!vdsIsDelivered(String(o.id), meta)) return;
       const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       if (!myItems.length) return;
       totalOrders++;
@@ -13965,6 +14008,10 @@ async function autoHoldCronJob() {
     const oldOrders = await fetchAllOrders("any", "2020-01-01T00:00:00Z", cutoffISO);
     const metas = await mdb.collection('order_meta').find({}, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const holdOvsArr = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
+    const holdOvsMap = {};
+    holdOvsArr.forEach(r => { if (!holdOvsMap[r.shopify_id]) holdOvsMap[r.shopify_id] = []; holdOvsMap[r.shopify_id].push(r.stage); });
+    const HOLD_SO = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
     const token = await getAccessToken();
     const cfg = await getSmtpConfig();
 
@@ -13972,7 +14019,11 @@ async function autoHoldCronJob() {
     for (const o of oldOrders) {
       const sid = String(o.id);
       const meta = metaMap[sid] || {};
-      const stage = meta.stage || 'new';
+      // Use max stage across order_meta and OVS to avoid holding vendor-confirmed orders
+      const metaStage = meta.stage || 'new';
+      let bestIdx = HOLD_SO.indexOf(metaStage); if (bestIdx < 0) bestIdx = 0;
+      (holdOvsMap[sid] || []).forEach(s => { const vi = HOLD_SO.indexOf(s); if (vi > bestIdx) bestIdx = vi; });
+      const stage = HOLD_SO[bestIdx] || metaStage;
       if (stage !== 'new') continue; // only auto-hold orders still in new
 
       // Move to hold in our DB
@@ -14685,10 +14736,17 @@ async function generateReport(fromDate, toDate) {
   const vendorMap = {};
   const urgentOrders = [];
 
+  const RPT_SO = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+  const rptEffStage = (sid) => {
+    const ms = metas[sid]?.stage || 'new'; let best = RPT_SO.indexOf(ms); if (best < 0) best = 0;
+    Object.values(vsMap[sid] || {}).forEach(s => { const vi = RPT_SO.indexOf(s); if (vi > best) best = vi; });
+    return RPT_SO[best] || ms;
+  };
+
   allOrders.forEach(o => {
     const sid = String(o.id);
     const meta = metas[sid] || {};
-    const stage = meta.stage || 'new';
+    const stage = rptEffStage(sid);
     const payType = meta.payment_type || (o.financial_status === 'paid' ? 'prepaid' : 'cod');
     const shopifyFulfill = o.fulfillment_status; // 'fulfilled' | 'partial' | null
     const isCancelled = !!o.cancelled_at || o.financial_status === 'voided';
@@ -15066,6 +15124,12 @@ async function buildPatternDataset(days) {
   const vsArr = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
   const vsMap = {};
   vsArr.forEach(r => { (vsMap[r.shopify_id] ||= []).push(r); });
+  const PI_SO = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+  const piEffStage = (sid, meta) => {
+    const ms = meta.stage || 'new'; let best = PI_SO.indexOf(ms); if (best < 0) best = 0;
+    (vsMap[sid] || []).forEach(r => { const vi = PI_SO.indexOf(r.stage); if (vi > best) best = vi; });
+    return PI_SO[best] || ms;
+  };
 
   return orders.map(o => {
     const sid = String(o.id);
@@ -15076,7 +15140,7 @@ async function buildPatternDataset(days) {
       name: o.name,
       created_at: o.created_at,
       created_ms: new Date(o.created_at).getTime(),
-      stage: meta.stage || 'new',
+      stage: piEffStage(sid, meta),
       tags: (o.tags || '').split(',').map(t => t.trim()).filter(Boolean),
       vendors: [...new Set((o.line_items || []).map(li => li.vendor).filter(Boolean))],
       state: addr.province || 'Unknown',
@@ -21391,7 +21455,15 @@ async function startBaileysBot() {
             // Auto-alert admin if order stuck >3 days
             const hrs = await waHoursConfirmed(meta.data?.shopify_order_id);
             if (hrs > 72 && ['confirmed','partial','hold'].includes(meta.data?.stage) && !meta.data?.awb) {
-              waAdminAlert(`⏰ *Stuck Order Alert*\nOrder: *${meta.data.order_name}*${meta.data.customer_name ? `\nCustomer: *${meta.data.customer_name}*` : ''}\nPhone: +91${phone}\n${Math.round(hrs)}h since confirmation, still not shipped.`).catch(() => {});
+              // Check OVS — vendor may have already submitted AWB even if session meta is stale
+              const sid = String(meta.data?.shopify_order_id || '');
+              const ovsDispatched = sid ? await mdb.collection('order_vendor_stage').findOne(
+                { shopify_id: sid, stage: { $in: ['ready','pickup','transit','ofd','delivered'] } },
+                { projection: { _id: 1 } }
+              ) : null;
+              if (!ovsDispatched) {
+                waAdminAlert(`⏰ *Stuck Order Alert*\nOrder: *${meta.data.order_name}*${meta.data.customer_name ? `\nCustomer: *${meta.data.customer_name}*` : ''}\nPhone: +91${phone}\n${Math.round(hrs)}h since confirmation, still not shipped.`).catch(() => {});
+              }
             }
 
             // If bot flagged escalation (cancellation etc), hand off
