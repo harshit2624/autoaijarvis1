@@ -20821,8 +20821,8 @@ const WA_MENUS = {
   welcome:
     `Hi! 👋 Welcome to CROSCROW support.\n\nWhat can I help you with?\n\n1️⃣ Track my order\n2️⃣ Browse products\n3️⃣ Return / Exchange\n4️⃣ Talk to a human`,
 
-  order_not_confirmed: (name) =>
-    `Your order *${name}* needs confirmation before the vendor can ship it.\n\n1️⃣ Send me the confirm link\n2️⃣ Why do I need to confirm?\n3️⃣ Talk to a human`,
+  order_not_confirmed: (name, url) =>
+    `Your order *${name}* needs a ₹99 confirmation to start dispatch.\n\n💳 Pay & confirm:\n${url}\n\n2️⃣ Why ₹99?\n3️⃣ Talk to a human`,
 
   order_confirmed_short: (name) =>
     `Your order *${name}* is confirmed and being prepared — there's a slight delay but we're on it! 🙏\n\n1️⃣ Check if vendor gave a reason\n2️⃣ Talk to a human`,
@@ -20864,11 +20864,8 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_not_confirmed':
-      if (num === 1) {
-        const url = d?.confirm_url || d?.track_url;
-        await sock.sendMessage(sender, { text: `Here's your confirmation link 👇\n\n${url}` });
-      } else if (num === 2) {
-        await sock.sendMessage(sender, { text: `The ₹99 is NOT extra — it's deducted from your COD amount at delivery. It confirms you're ready to receive the order so we can start packing right away 🚀` });
+      if (num === 2) {
+        await sock.sendMessage(sender, { text: `The ₹99 is deducted from your COD amount at delivery — so you pay that much less at the door. It confirms the order is genuine so we can start packing right away 🚀` });
       } else if (num === 3) {
         await waTalkToHuman(sock, sender, chat, phone, `Customer needs help confirming order ${d?.order_name || ''}`);
         return true;
@@ -21491,7 +21488,8 @@ async function startBaileysBot() {
             const menuInfo = await waMenuForOrder(meta);
             if (menuInfo) {
               const menuFn = WA_MENUS[menuInfo.menu];
-              const menuText = typeof menuFn === 'function' ? menuFn(meta.data.order_name) : menuFn;
+              const menuUrl = menuInfo.orderData?.confirm_url || menuInfo.orderData?.track_url || '';
+              const menuText = typeof menuFn === 'function' ? menuFn(meta.data.order_name, menuUrl) : menuFn;
               await sock.sendMessage(sender, { text: menuText });
               await waSessionSet(sender, menuInfo);
             }
