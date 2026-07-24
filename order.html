@@ -482,6 +482,7 @@ html,body{
 }
 .header-logo{height:22px;display:block;transition:filter .25s}
 .site-header.clear .header-logo{filter:none}
+.site-header.clear .menu-btn{transition:background .2s,border-color .2s,color .2s}
 .menu-btn{
   width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,border-color .15s;
@@ -1242,13 +1243,46 @@ function fmt(n){return Number(n).toLocaleString('en-IN',{maximumFractionDigits:0
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 // ── HEADER ────────────────────────────────────────────────────
+let _headerMode = 'hidden';
 function setHeader(mode) {
-  // mode: 'hidden' | 'solid' | 'clear'
   const h = document.getElementById('site-header');
-  if (mode === 'hidden') { h.style.display = 'none'; return; }
+  _headerMode = mode;
+  if (mode === 'hidden') { h.style.display = 'none'; h.removeAttribute('style'); h.style.display='none'; return; }
   h.style.display = 'flex';
   h.className = 'site-header ' + (mode === 'clear' ? 'clear' : 'solid');
+  // reset inline scroll styles when switching modes
+  if (mode !== 'clear') {
+    h.style.background = '';
+    h.style.backdropFilter = '';
+    h.style.webkitBackdropFilter = '';
+    h.style.borderBottomColor = '';
+    const mb = document.getElementById('menu-btn');
+    if (mb) { mb.style.background=''; mb.style.borderColor=''; mb.style.color=''; }
+  }
 }
+
+// Scroll-driven header hardening on confirm page
+window.addEventListener('scroll', () => {
+  if (_headerMode !== 'clear') return;
+  const h = document.getElementById('site-header');
+  const scrollY = window.scrollY || window.pageYOffset;
+  // Fully transition over first 120px of scroll
+  const t = Math.min(scrollY / 120, 1);
+  const alpha = t * 0.92;
+  const blur  = t * 18;
+  h.style.background = `rgba(255,255,255,${alpha})`;
+  h.style.backdropFilter = `blur(${blur}px)`;
+  h.style.webkitBackdropFilter = `blur(${blur}px)`;
+  h.style.borderBottomColor = `rgba(0,0,0,${t * 0.08})`;
+  // Menu button: fade from frosted-dark to solid bg
+  const mb = document.getElementById('menu-btn');
+  if (mb) {
+    const btnAlpha = 0.22 + t * 0.78; // frosted dark → light bg
+    mb.style.background = t > 0.5 ? `rgba(245,245,245,${t})` : `rgba(0,0,0,${0.22 * (1-t)})`;
+    mb.style.borderColor = `rgba(0,0,0,${t * 0.12})`;
+    mb.style.color = t > 0.4 ? 'var(--body)' : '#fff';
+  }
+}, { passive: true });
 
 // ── SIDEBAR ───────────────────────────────────────────────────
 function openSidebar() {
