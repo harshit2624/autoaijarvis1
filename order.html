@@ -744,7 +744,9 @@ async function doLookup() {
 
 function renderOrder(d) {
   const stage = d.stage || 'new';
-  const notConfirmed = !d.already_confirmed && !d.is_prepaid && stage === 'confirmed';
+  // Show confirm page for any COD order not yet paid and not dispatched
+  const DISPATCHED = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
+  const notConfirmed = !d.already_confirmed && !d.is_prepaid && !DISPATCHED.includes(stage);
   showScreen('order-screen');
   document.getElementById('order-screen').style.flexDirection = 'column';
   notConfirmed ? renderConfirm(d) : renderTrack(d);
