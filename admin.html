@@ -10966,7 +10966,122 @@
             )}
           </div>
         )}
+        <TrackAnalytics token={token} />
         <ConfirmAnalytics token={token} />
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     TRACK PAGE ANALYTICS
+  ══════════════════════════════════ */
+  function TrackAnalytics({ token }) {
+    const [days,    setDays]    = useState(30);
+    const [data,    setData]    = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [tab,     setTab]     = useState('vendor');
+
+    const load = async (d) => {
+      setLoading(true); setData(null);
+      try {
+        const r = await fetch(`${API}/admin/track-analytics?days=${d}`, { headers:{ Authorization:'Bearer '+token } });
+        setData(await r.json());
+      } catch(e) {}
+      setLoading(false);
+    };
+
+    useEffect(() => { load(days); }, []);
+
+    const STAGE_LABEL = { ready:'Ready to Ship', pickup:'Picked Up', transit:'In Transit', ofd:'Out for Delivery', delivered:'Delivered', rto:'Returned' };
+    const STAGE_COLOR = { ready:'#f59e0b', pickup:'#f59e0b', transit:'#6366f1', ofd:'#10b981', delivered:'#10b981', rto:'#ef4444' };
+    const rows = data ? (tab==='vendor' ? data.by_vendor : tab==='product' ? data.by_product : data.by_state) : [];
+
+    return (
+      <div style={{marginTop:28}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:20}}>📦</span>
+            <div>
+              <div style={{fontWeight:700,color:'var(--text)',fontSize:15}}>Track Page Analytics</div>
+              <div style={{fontSize:11,color:'var(--text-muted)'}}>How often customers check tracking after shipment</div>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:6}}>
+            {[7,14,30,60].map(d =>
+              <button key={d} className="btn btn-sm btn-ghost"
+                style={{background:days===d?'var(--indigo)':'',color:days===d?'#fff':''}}
+                onClick={()=>{ setDays(d); load(d); }}>{d}d</button>
+            )}
+          </div>
+        </div>
+
+        {loading && <div style={{color:'var(--text-muted)',fontSize:13,padding:'20px 0'}}>Loading…</div>}
+
+        {data && !loading && (
+          <>
+            {/* KPI strip */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10,marginBottom:16}}>
+              {[
+                { label:'Total Views',       value: data.total_views,          sub: 'track page opens' },
+                { label:'Unique Orders',     value: data.unique_orders,        sub: 'orders checked' },
+                { label:'Avg Checks/Order',  value: data.avg_visits_per_order, sub: 'repeat visits' },
+              ].map(k => (
+                <div key={k.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:'1px',textTransform:'uppercase',marginBottom:4}}>{k.label}</div>
+                  <div style={{fontSize:22,fontWeight:700,color:'var(--text)',fontVariantNumeric:'tabular-nums'}}>{k.value}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{k.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Stage breakdown mini pills */}
+            {data.by_stage?.length > 0 && (
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:16}}>
+                {data.by_stage.map(s => (
+                  <div key={s.stage} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'5px 10px',display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{width:6,height:6,borderRadius:'50%',background:STAGE_COLOR[s.stage]||'var(--text-muted)',flexShrink:0,display:'inline-block'}}/>
+                    <span style={{fontSize:11,color:'var(--text)',fontWeight:600}}>{STAGE_LABEL[s.stage]||s.stage}</span>
+                    <span style={{fontSize:11,color:'var(--text-muted)',fontVariantNumeric:'tabular-nums'}}>{s.views}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Tab toggle */}
+            <div style={{display:'flex',gap:6,marginBottom:12}}>
+              {[['vendor','By Vendor'],['product','By Product'],['state','By State']].map(([id,lbl]) =>
+                <button key={id} className="btn btn-sm"
+                  style={{background:tab===id?'var(--indigo)':'var(--bg-card)',color:tab===id?'#fff':'var(--text-muted)',border:'1px solid var(--border)'}}
+                  onClick={()=>setTab(id)}>{lbl}</button>
+              )}
+            </div>
+
+            {/* Table */}
+            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:'1px solid var(--border)'}}>
+                    <th style={{padding:'9px 14px',textAlign:'left',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>{tab==='vendor'?'Vendor':tab==='product'?'Product':'State'}</th>
+                    <th style={{padding:'9px 10px',textAlign:'right',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>Views</th>
+                    <th style={{padding:'9px 14px',textAlign:'right',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>Unique Orders</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <tr><td colSpan={3} style={{padding:'20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No data yet for this period</td></tr>
+                  )}
+                  {rows.map((r,i) => (
+                    <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                      <td style={{padding:'9px 14px',color:'var(--text)',maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name||'—'}</td>
+                      <td style={{padding:'9px 10px',textAlign:'right',color:'var(--text)',fontVariantNumeric:'tabular-nums',fontWeight:600}}>{r.views}</td>
+                      <td style={{padding:'9px 14px',textAlign:'right',color:'var(--text-muted)',fontVariantNumeric:'tabular-nums'}}>{r.unique_orders}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     );
   }

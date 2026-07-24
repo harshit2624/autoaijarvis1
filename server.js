@@ -15158,6 +15158,69 @@ app.get("/admin/confirm-analytics", adminAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Track page event tracking ──────────────────────────────────────────────
+app.post("/admin/track-page-event", async (req, res) => {
+  try {
+    const { shopify_order_id, order_name, stage, products, vendors, state, city, ts } = req.body;
+    if (!shopify_order_id) return res.json({ ok: false });
+    await mdb.collection('track_page_events').insertOne({
+      shopify_order_id: String(shopify_order_id), order_name,
+      stage: stage || '', products: products || [], vendors: vendors || [],
+      state: state || '', city: city || '',
+      ts: ts || Date.now(), created_at: new Date(),
+    });
+    res.json({ ok: true });
+  } catch(e) { res.json({ ok: false }); }
+});
+
+app.get("/admin/track-analytics", adminAuth, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days || '30');
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+    const events = await mdb.collection('track_page_events').find({ created_at: { $gte: since } }).toArray();
+
+    const totalViews = events.length;
+
+    // Visits per order (how many times each order was checked)
+    const perOrder = {};
+    for (const e of events) {
+      if (!perOrder[e.shopify_order_id]) perOrder[e.shopify_order_id] = { count: 0, stage: e.stage, state: e.state, vendors: e.vendors, products: e.products };
+      perOrder[e.shopify_order_id].count++;
+    }
+    const orders = Object.values(perOrder);
+    const avgVisitsPerOrder = orders.length ? +(orders.reduce((s,o)=>s+o.count,0)/orders.length).toFixed(1) : 0;
+
+    // By stage
+    const stageMap = {};
+    for (const e of events) { stageMap[e.stage] = (stageMap[e.stage]||0)+1; }
+
+    // Aggregate helper
+    const agg = (keyFn) => {
+      const m = {};
+      for (const e of events) {
+        const keys = keyFn(e);
+        for (const k of keys) {
+          if (!k) continue;
+          if (!m[k]) m[k] = { views: 0, orders: new Set() };
+          m[k].views++;
+          m[k].orders.add(e.shopify_order_id);
+        }
+      }
+      return Object.entries(m).map(([name,d]) => ({ name, views: d.views, unique_orders: d.orders.size }))
+        .sort((a,b) => b.views - a.views).slice(0, 20);
+    };
+
+    res.json({
+      days, total_views: totalViews, unique_orders: orders.length,
+      avg_visits_per_order: avgVisitsPerOrder,
+      by_stage: Object.entries(stageMap).map(([stage,views])=>({stage,views})).sort((a,b)=>b.views-a.views),
+      by_vendor: agg(e => e.vendors||[]),
+      by_product: agg(e => e.products||[]),
+      by_state: agg(e => [e.state]),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Report API endpoints ──────────────────────────────────────────────────
 app.get("/admin/reports/settings", adminAuth, async (req, res) => {
   res.json(await RS.get());

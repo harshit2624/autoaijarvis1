@@ -1227,6 +1227,26 @@ function renderTrack(d) {
       renderRR(d);
     }
   }
+
+  // Fire track page view event for post-dispatch stages only
+  const TRACK_STAGES = ['ready','pickup','transit','ofd','delivered','rto'];
+  if (TRACK_STAGES.includes(displayStage)) {
+    try {
+      fetch(`${API}/admin/track-page-event`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          shopify_order_id: String(d.shopify_order_id),
+          order_name: d.order_name,
+          stage: displayStage,
+          products: (d.items||[]).map(i => i.title).filter(Boolean),
+          vendors: (d.vendor_shipments||[]).map(v => v.vendor_name).filter(Boolean),
+          state: d.shipping_state || '',
+          city: d.shipping_city || '',
+          ts: Date.now(),
+        }),
+      }).catch(()=>{});
+    } catch(e) {}
+  }
 }
 
 function renderRR(d) {
