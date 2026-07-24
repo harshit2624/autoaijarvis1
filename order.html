@@ -893,7 +893,8 @@ const urlContact = params.get('contact') || '';
 
 if (urlOrder) {
   document.getElementById('inp-order').value = urlOrder.replace('#','');
-  if (urlContact && urlContact !== 'na') document.getElementById('inp-contact').value = urlContact;
+  // Fill contact field — including 'na' so the bypass code reaches doLookup validation
+  if (urlContact) document.getElementById('inp-contact').value = urlContact;
   window.addEventListener('DOMContentLoaded', () => { setTimeout(doLookup, 50); });
 }
 

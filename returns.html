@@ -651,7 +651,7 @@ const urlType = params.get('action') || ''; // 'return' or 'exchange'
 
 if (urlOrder) {
   document.getElementById('inp-order').value = urlOrder.replace('#', '');
-  if (urlContact && urlContact !== 'na') document.getElementById('inp-contact').value = urlContact;
+  if (urlContact) document.getElementById('inp-contact').value = urlContact;
   window.addEventListener('DOMContentLoaded', () => setTimeout(doLookup, 50));
 }
 
