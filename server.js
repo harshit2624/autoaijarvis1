@@ -16541,6 +16541,7 @@ app.get("/order/lookup", async (req, res) => {
     const confirmItems = (enriched.line_items || []).map(li => ({
       title: li.title, variant_title: li.variant_title || '',
       quantity: li.quantity, price: li.price, image_url: li.image_url || null,
+      product_id: li.product_id || null, variant_id: li.variant_id || null,
     }));
 
     // Build track payload
@@ -16573,6 +16574,40 @@ app.get("/order/lookup", async (req, res) => {
     });
   } catch (e) {
     console.error('❌ /order/lookup:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /order/product-variants — return all variants for a product (for exchange picker)
+app.get("/order/product-variants", async (req, res) => {
+  try {
+    const { product_id, variant_id } = req.query;
+    if (!product_id) return res.status(400).json({ error: "product_id required" });
+    const data = await shopifyREST(`/products/${product_id}.json?fields=id,title,variants,options,images`);
+    const product = data.product;
+    if (!product) return res.status(404).json({ error: "Product not found" });
+
+    // Build option names (e.g. Size, Color)
+    const options = (product.options || []).map(o => ({ name: o.name, values: o.values }));
+
+    // Map variants, mark current one and OOS ones
+    const variants = (product.variants || []).map(v => ({
+      id: v.id,
+      title: v.title,
+      price: v.price,
+      available: v.inventory_quantity > 0 || v.inventory_management === null || v.inventory_policy === 'continue',
+      is_current: String(v.id) === String(variant_id),
+      option1: v.option1, option2: v.option2, option3: v.option3,
+      image_id: v.image_id || null,
+    }));
+
+    // Map image_id → url
+    const imageMap = {};
+    (product.images || []).forEach(img => { imageMap[img.id] = img.src; });
+
+    res.json({ options, variants, imageMap });
+  } catch(e) {
+    console.error('❌ /order/product-variants:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

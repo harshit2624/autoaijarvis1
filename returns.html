@@ -238,12 +238,24 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
 .qty-btn:active{background:var(--border)}
 .qty-num{font-size:13px;font-weight:700;color:var(--text);min-width:24px;text-align:center}
 
-/* Exchange details */
-.exchange-field{margin-top:8px;padding-left:60px}
-.exchange-inp{width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;
-  padding:10px 12px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s}
-.exchange-inp:focus{border-color:var(--border-strong)}
-.exchange-inp::placeholder{color:#bbb}
+/* Variant picker */
+.variant-picker{margin-top:10px;padding-left:60px}
+.variant-loading{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.05em;display:flex;align-items:center;gap:6px}
+.variant-loading .mini-spin{width:12px;height:12px;border:1.5px solid var(--border);border-top-color:var(--muted);border-radius:50%;animation:spin .7s linear infinite}
+.option-group{margin-bottom:10px}
+.option-label{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px}
+.option-chips{display:flex;flex-wrap:wrap;gap:6px}
+.opt-chip{padding:7px 13px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);
+  font-size:12px;font-weight:600;color:var(--body);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  transition:border-color .12s,background .12s,color .12s}
+.opt-chip.selected{border-color:var(--text);background:var(--text);color:#fff}
+.opt-chip.oos{opacity:.38;cursor:not-allowed;text-decoration:line-through}
+.opt-chip:not(.oos):active{opacity:.75}
+.variant-note{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5}
+.variant-selected-pill{display:inline-flex;align-items:center;gap:6px;margin-top:8px;
+  padding:5px 10px;border-radius:100px;background:var(--green-light);border:1px solid var(--green-border);
+  font-size:11px;font-weight:700;color:var(--green)}
+.variant-error{font-size:11px;color:var(--red);margin-top:6px}
 
 /* Reason selector */
 .reason-list{display:flex;flex-direction:column;gap:6px}
@@ -847,10 +859,11 @@ function buildItemsStep() {
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       </div>
     </div>
-    ${isEx ? `<div class="exchange-field hidden" id="exchange-field-${idx}">
-      <input class="exchange-inp" id="exchange-inp-${idx}" type="text"
-        placeholder="What do you want instead? (size, colour…)"
-        oninput="updateExchangeFor(${idx}, this.value)">
+    ${isEx ? `<div class="variant-picker hidden" id="variant-picker-${idx}">
+      <div class="variant-loading" id="variant-loading-${idx}">
+        <div class="mini-spin"></div> Loading options…
+      </div>
+      <div id="variant-options-${idx}" class="hidden"></div>
     </div>` : ''}
     ${it.quantity > 1 ? `<div class="qty-row hidden" id="qty-row-${idx}">
       <span class="qty-label">Qty to ${flowType}:</span>
@@ -864,19 +877,136 @@ function buildItemsStep() {
   updateItemsBtn();
 }
 
+// Cache fetched variant data so we don't re-fetch
+const variantCache = {};
+
 function toggleItem(idx) {
   const row = document.getElementById(`item-row-${idx}`);
   if (selectedItems[idx]) {
     delete selectedItems[idx];
     row.classList.remove('selected');
     document.getElementById(`qty-row-${idx}`)?.classList.add('hidden');
-    document.getElementById(`exchange-field-${idx}`)?.classList.add('hidden');
+    document.getElementById(`variant-picker-${idx}`)?.classList.add('hidden');
   } else {
     const it = orderData.items[idx];
-    selectedItems[idx] = { qty: 1, exchange_for: '' };
+    selectedItems[idx] = { qty: 1, exchange_for: '', exchange_variant_id: null };
     row.classList.add('selected');
     document.getElementById(`qty-row-${idx}`)?.classList.remove('hidden');
-    if (flowType === 'exchange') document.getElementById(`exchange-field-${idx}`)?.classList.remove('hidden');
+    if (flowType === 'exchange') {
+      document.getElementById(`variant-picker-${idx}`)?.classList.remove('hidden');
+      loadVariantPicker(idx, it);
+    }
+  }
+  updateItemsBtn();
+}
+
+async function loadVariantPicker(idx, item) {
+  const loadEl = document.getElementById(`variant-loading-${idx}`);
+  const optEl  = document.getElementById(`variant-options-${idx}`);
+  if (!item.product_id) {
+    loadEl.innerHTML = '<div class="variant-error">Variants unavailable — enter manually below</div>';
+    // fallback: show text input
+    optEl.innerHTML = `<input class="exchange-inp" style="width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);outline:none;margin-top:6px" placeholder="Describe what you want (size, colour…)" oninput="setExchangeFor(${idx},this.value)">`;
+    optEl.classList.remove('hidden');
+    return;
+  }
+  if (variantCache[item.product_id]) {
+    renderVariantPicker(idx, item, variantCache[item.product_id]);
+    return;
+  }
+  try {
+    const r = await fetch(`/order/product-variants?product_id=${item.product_id}&variant_id=${item.variant_id || ''}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    variantCache[item.product_id] = d;
+    renderVariantPicker(idx, item, d);
+  } catch(e) {
+    loadEl.innerHTML = '<div class="variant-error">Could not load options. Describe what you want:</div>';
+    optEl.innerHTML = `<input class="exchange-inp" style="width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);outline:none;margin-top:6px" placeholder="e.g. Size M in Black" oninput="setExchangeFor(${idx},this.value)">`;
+    optEl.classList.remove('hidden');
+  }
+}
+
+function renderVariantPicker(idx, item, data) {
+  const loadEl = document.getElementById(`variant-loading-${idx}`);
+  const optEl  = document.getElementById(`variant-options-${idx}`);
+  loadEl.style.display = 'none';
+
+  const { options, variants, imageMap } = data;
+  // State: selected option values (one per option index)
+  const numOptions = options.length;
+  // Init selections from current variant
+  const curVariant = variants.find(v => v.is_current);
+  const sel = curVariant
+    ? [curVariant.option1, curVariant.option2, curVariant.option3].slice(0, numOptions)
+    : Array(numOptions).fill(null);
+
+  function isVariantAvailable(opts) {
+    return variants.some(v =>
+      opts.every((val, i) => !val || [v.option1,v.option2,v.option3][i] === val) && v.available
+    );
+  }
+
+  function findMatchingVariant(opts) {
+    return variants.find(v =>
+      opts.every((val, i) => !val || [v.option1,v.option2,v.option3][i] === val)
+    );
+  }
+
+  function render() {
+    optEl.innerHTML = options.map((opt, oi) => {
+      const chips = opt.values.map(val => {
+        const testSel = sel.map((s, i) => i === oi ? val : s);
+        const available = isVariantAvailable(testSel);
+        const isSel = sel[oi] === val;
+        const isCurrent = curVariant && [curVariant.option1,curVariant.option2,curVariant.option3][oi] === val;
+        return `<div class="opt-chip${isSel?' selected':''}${!available?' oos':''}"
+          onclick="${available?`pickOption(${idx},${oi},'${val.replace(/'/g,"\\'")}')`:''}"
+          title="${!available?'Out of stock':''}${isCurrent?' (your current)':''}">
+          ${esc(val)}${isCurrent?'<span style="font-size:9px;opacity:.6"> ✓current</span>':''}
+        </div>`;
+      }).join('');
+      return `<div class="option-group"><div class="option-label">${esc(opt.name)}</div><div class="option-chips">${chips}</div></div>`;
+    }).join('');
+
+    // Check if full selection is made and different from current
+    const matched = findMatchingVariant(sel);
+    const allSelected = sel.every(s => s !== null);
+    if (allSelected && matched) {
+      const isSame = matched.is_current;
+      if (isSame) {
+        optEl.insertAdjacentHTML('beforeend','<div class="variant-note">This is your current variant — pick a different one to exchange.</div>');
+        setExchangeFor(idx, '', null);
+      } else {
+        const label = matched.title === 'Default Title' ? options.map((_,i)=>sel[i]).join(' / ') : matched.title;
+        optEl.insertAdjacentHTML('beforeend',`<div class="variant-selected-pill">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Exchange for: ${esc(label)}
+        </div>`);
+        setExchangeFor(idx, label, matched.id);
+      }
+    } else {
+      setExchangeFor(idx, '', null);
+    }
+    optEl.classList.remove('hidden');
+  }
+
+  // Expose pickOption globally keyed by idx
+  window[`_varSel_${idx}`] = sel;
+  window.pickOption = function(itemIdx, optionIdx, val) {
+    const s = window[`_varSel_${itemIdx}`];
+    s[optionIdx] = val;
+    // Re-render this picker
+    renderVariantPicker(itemIdx, orderData.items[itemIdx], variantCache[orderData.items[itemIdx].product_id]);
+  };
+
+  render();
+}
+
+function setExchangeFor(idx, label, variantId) {
+  if (selectedItems[idx]) {
+    selectedItems[idx].exchange_for = label;
+    selectedItems[idx].exchange_variant_id = variantId;
   }
   updateItemsBtn();
 }
@@ -888,11 +1018,6 @@ function changeQty(idx, delta, e) {
   const newQty = Math.max(1, Math.min(max, (selectedItems[idx].qty || 1) + delta));
   selectedItems[idx].qty = newQty;
   document.getElementById(`qty-num-${idx}`).textContent = newQty;
-}
-
-function updateExchangeFor(idx, val) {
-  if (selectedItems[idx]) selectedItems[idx].exchange_for = val;
-  updateItemsBtn();
 }
 
 function updateItemsBtn() {
@@ -1100,7 +1225,7 @@ async function submitRequest(paymentId, rzOrderId) {
     return {
       title: it.title, variant_title: it.variant_title || '', quantity: sel.qty,
       sku: it.sku || '', price: it.price, image_url: it.image_url || null,
-      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for } : {})
+      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for, exchange_variant_id: sel.exchange_variant_id || null } : {})
     };
   });
   const note = document.getElementById('reason-note')?.value?.trim() || '';
