@@ -103,7 +103,7 @@ html,body{
   background:linear-gradient(to top,var(--bg) 0%,transparent 100%);pointer-events:none;
 }
 .order-badge{
-  position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  position:absolute;top:64px;left:50%;transform:translateX(-50%);
   background:rgba(255,255,255,.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border:1px solid rgba(0,0,0,.07);border-radius:100px;
   padding:6px 14px;font-size:10px;font-weight:700;letter-spacing:.09em;
@@ -215,6 +215,7 @@ html,body{
 .track-topbar{
   background:var(--surface);border-bottom:1px solid var(--border);
   padding:20px 20px 16px;display:flex;align-items:flex-start;gap:12px;
+  margin-top:54px;
 }
 .track-order-num{font-size:17px;font-weight:800;letter-spacing:-.01em;color:var(--text)}
 .track-customer-name{font-size:12px;color:var(--muted);margin-top:3px;letter-spacing:.02em}
@@ -465,23 +466,162 @@ html,body{
 .razorpay-badge{width:100%;max-width:280px;height:auto;display:block;margin:4px auto 0;opacity:.85}
 
 .hidden{display:none!important}
+
+/* ── FLOATING HEADER ──────────────────────────────────────────── */
+.site-header{
+  position:fixed;top:0;left:0;right:0;z-index:90;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;height:54px;
+  transition:background .25s,border-color .25s,backdrop-filter .25s;
+}
+.site-header.solid{
+  background:var(--surface);border-bottom:1px solid var(--border);
+}
+.site-header.clear{
+  background:transparent;border-bottom:1px solid transparent;
+}
+.header-logo{height:22px;display:block;transition:filter .25s}
+.site-header.clear .header-logo{filter:brightness(0) invert(1) drop-shadow(0 1px 4px rgba(0,0,0,.3))}
+.menu-btn{
+  width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,border-color .15s;
+}
+.site-header.solid .menu-btn{background:var(--bg);border:1px solid var(--border);color:var(--body)}
+.site-header.clear .menu-btn{
+  background:rgba(0,0,0,.22);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.18);color:#fff;
+}
+.menu-btn:active{opacity:.7}
+
+/* ── SIDEBAR ─────────────────────────────────────────────────── */
+.sb-overlay{
+  position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.38);
+  backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.sb-overlay.open{opacity:1;pointer-events:all}
+.sb-panel{
+  position:fixed;top:0;right:0;bottom:0;z-index:201;
+  width:min(272px,84vw);background:var(--surface);
+  display:flex;flex-direction:column;
+  transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+  box-shadow:-2px 0 28px rgba(0,0,0,.13);
+}
+.sb-panel.open{transform:translateX(0)}
+.sb-top{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px 20px;border-bottom:1px solid var(--border);
+}
+.sb-logo{height:20px;display:block}
+.sb-close{
+  width:30px;height:30px;border-radius:50%;background:var(--bg);
+  border:1px solid var(--border);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;color:var(--body);
+}
+.sb-close:active{opacity:.7}
+.sb-nav{padding:10px 8px;flex:1}
+.sb-link{
+  display:flex;align-items:center;gap:13px;padding:14px 12px;border-radius:10px;
+  text-decoration:none;color:var(--text);font-size:14px;font-weight:600;
+  -webkit-tap-highlight-color:transparent;
+}
+.sb-link:active{background:var(--bg)}
+.sb-link svg{flex-shrink:0;color:var(--muted)}
+.sb-divider{height:1px;background:var(--border);margin:4px 12px}
+.sb-footer{
+  padding:16px 20px;border-top:1px solid var(--border);
+  font-size:10px;color:var(--muted);text-align:center;letter-spacing:.1em;text-transform:uppercase;
+}
+
+/* ── LOOKUP TABS ─────────────────────────────────────────────── */
+.lookup-tabs{
+  display:flex;gap:0;background:var(--bg);border:1.5px solid var(--border);border-radius:11px;
+  padding:3px;width:100%;max-width:320px;margin-bottom:24px;
+}
+.tab-btn{
+  flex:1;padding:9px 8px;border-radius:8px;border:none;background:transparent;
+  font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;
+  letter-spacing:.04em;transition:background .15s,color .15s;-webkit-tap-highlight-color:transparent;
+}
+.tab-btn.active{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tab-btn:active{opacity:.8}
+
+/* order picker from contact lookup */
+.order-pick-list{width:100%;max-width:320px;display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.order-pick-item{
+  background:var(--bg);border:1.5px solid var(--border);border-radius:10px;
+  padding:14px 16px;display:flex;align-items:center;justify-content:space-between;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color .15s;
+}
+.order-pick-item:active{border-color:var(--border-strong)}
+.order-pick-name{font-size:14px;font-weight:700;color:var(--text)}
+.order-pick-date{font-size:11px;color:var(--muted);margin-top:2px}
+.order-pick-chevron{color:var(--muted)}
 </style>
 </head>
 <body>
 
+<!-- FLOATING HEADER -->
+<header class="site-header solid" id="site-header" style="display:none">
+  <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" class="header-logo" id="header-logo">
+  <button class="menu-btn" id="menu-btn" onclick="openSidebar()" aria-label="Menu">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="17" x2="21" y2="17"/></svg>
+  </button>
+</header>
+
+<!-- SIDEBAR OVERLAY + PANEL -->
+<div class="sb-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+<div class="sb-panel" id="sb-panel">
+  <div class="sb-top">
+    <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" class="sb-logo">
+    <button class="sb-close" onclick="closeSidebar()" aria-label="Close">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <nav class="sb-nav">
+    <a class="sb-link" href="https://croscrow.com" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Back to CROSCROW
+    </a>
+    <div class="sb-divider"></div>
+    <a class="sb-link" href="https://wa.me/916375668971" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Contact Us
+    </a>
+  </nav>
+  <div class="sb-footer">CROSCROW &copy; 2025</div>
+</div>
+
 <!-- LOOKUP -->
 <div id="lookup-screen">
-  <div class="logo">CROSCROW</div>
+  <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" style="height:26px;display:block;margin-bottom:44px">
   <h1 class="lookup-title">Track your order</h1>
-  <p class="lookup-sub">Enter your order number to check status and updates</p>
-  <form class="lookup-form" id="lookup-form">
+  <p class="lookup-sub">Use your order number or find it via email / phone</p>
+
+  <!-- Mode tabs -->
+  <div class="lookup-tabs">
+    <button class="tab-btn active" id="tab-ordernum" onclick="switchTab('ordernum')">Order number</button>
+    <button class="tab-btn" id="tab-contact" onclick="switchTab('contact')">Email / Phone</button>
+  </div>
+
+  <!-- Mode: order number -->
+  <form class="lookup-form" id="lookup-form" style="display:flex">
     <input class="inp" id="inp-order" type="text" inputmode="numeric"
       placeholder="Order number (e.g. 2688)" autocomplete="off" autocorrect="off">
     <input class="inp" id="inp-contact" type="text" inputmode="email"
-      placeholder="Email or phone (optional)" autocomplete="off" autocorrect="off">
+      placeholder="Email or phone" autocomplete="off" autocorrect="off">
     <button class="btn-primary" type="submit" id="lookup-btn">Track Order</button>
     <div class="err-msg" id="lookup-err"></div>
   </form>
+
+  <!-- Mode: contact only -->
+  <div id="contact-form-wrap" style="display:none;width:100%;max-width:320px;display:none;flex-direction:column;gap:10px">
+    <input class="inp" id="inp-contact-only" type="text" inputmode="email"
+      placeholder="Email or 10-digit phone" autocomplete="off" autocorrect="off">
+    <button class="btn-primary" id="contact-lookup-btn" onclick="doContactLookup()">Find My Orders</button>
+    <div class="err-msg" id="contact-err"></div>
+    <div class="order-pick-list hidden" id="order-pick-list"></div>
+  </div>
 </div>
 
 <!-- LOADING -->
@@ -720,12 +860,16 @@ function showScreen(id) {
   ['lookup-screen','loading-screen','order-screen'].forEach(s => {
     document.getElementById(s).style.display = s === id ? 'flex' : 'none';
   });
+  // header: hide on lookup/loading, set by render functions for order screen
+  if (id !== 'order-screen') setHeader(id === 'lookup-screen' ? 'hidden' : 'hidden');
 }
 
 async function doLookup() {
   const q = document.getElementById('inp-order').value.trim().replace('#','');
   const contact = document.getElementById('inp-contact').value.trim() || 'na';
+  const fromBot = (new URLSearchParams(location.search).get('contact') || '').toLowerCase() === 'na';
   if (!q) { document.getElementById('lookup-err').textContent = 'Please enter your order number.'; return; }
+  if (!fromBot && (!contact || contact === 'na')) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone number.'; return; }
   document.getElementById('lookup-err').textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');
@@ -754,6 +898,7 @@ function renderOrder(d) {
 
 // ── CONFIRM VIEW ──────────────────────────────────────────────
 function renderConfirm(d) {
+  setHeader('clear');
   document.getElementById('confirm-view').style.display = 'flex';
   document.getElementById('track-view').style.display = 'none';
 
@@ -903,6 +1048,7 @@ function statusCardHtml(stage, d) {
 
 // ── TRACK VIEW ────────────────────────────────────────────────
 function renderTrack(d) {
+  setHeader('solid');
   document.getElementById('track-view').style.display = 'flex';
   document.getElementById('confirm-view').style.display = 'none';
 
@@ -1094,6 +1240,85 @@ function goRR(type) {
 }
 function fmt(n){return Number(n).toLocaleString('en-IN',{maximumFractionDigits:0});}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ── HEADER ────────────────────────────────────────────────────
+function setHeader(mode) {
+  // mode: 'hidden' | 'solid' | 'clear'
+  const h = document.getElementById('site-header');
+  if (mode === 'hidden') { h.style.display = 'none'; return; }
+  h.style.display = 'flex';
+  h.className = 'site-header ' + (mode === 'clear' ? 'clear' : 'solid');
+}
+
+// ── SIDEBAR ───────────────────────────────────────────────────
+function openSidebar() {
+  document.getElementById('sb-overlay').classList.add('open');
+  document.getElementById('sb-panel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeSidebar() {
+  document.getElementById('sb-overlay').classList.remove('open');
+  document.getElementById('sb-panel').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+// ── LOOKUP TABS ───────────────────────────────────────────────
+function switchTab(mode) {
+  document.getElementById('tab-ordernum').classList.toggle('active', mode === 'ordernum');
+  document.getElementById('tab-contact').classList.toggle('active', mode === 'contact');
+  document.getElementById('lookup-form').style.display = mode === 'ordernum' ? 'flex' : 'none';
+  const cw = document.getElementById('contact-form-wrap');
+  cw.style.display = mode === 'contact' ? 'flex' : 'none';
+  document.getElementById('lookup-err').textContent = '';
+  document.getElementById('contact-err').textContent = '';
+  document.getElementById('order-pick-list').classList.add('hidden');
+  document.getElementById('order-pick-list').innerHTML = '';
+}
+
+// ── CONTACT-ONLY LOOKUP ───────────────────────────────────────
+async function doContactLookup() {
+  const contact = document.getElementById('inp-contact-only').value.trim();
+  const errEl = document.getElementById('contact-err');
+  const pickEl = document.getElementById('order-pick-list');
+  const btn = document.getElementById('contact-lookup-btn');
+  if (!contact) { errEl.textContent = 'Please enter your email or phone number.'; return; }
+  errEl.textContent = '';
+  pickEl.classList.add('hidden');
+  pickEl.innerHTML = '';
+  btn.disabled = true;
+  btn.textContent = 'Searching…';
+  try {
+    const r = await fetch(`${API}/order/lookup-by-contact?contact=${encodeURIComponent(contact)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Not found');
+    pickEl.classList.remove('hidden');
+    pickEl.innerHTML = d.orders.map(o => {
+      const dt = new Date(o.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+      const num = (o.order_name || '').replace('#','');
+      return `<div class="order-pick-item" onclick="pickOrder('${num}','${contact}')">
+        <div>
+          <div class="order-pick-name">${esc(o.order_name)}</div>
+          <div class="order-pick-date">${dt}</div>
+        </div>
+        <div class="order-pick-chevron">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Find My Orders';
+  }
+}
+
+function pickOrder(num, contact) {
+  document.getElementById('inp-order').value = num;
+  document.getElementById('inp-contact').value = contact;
+  switchTab('ordernum');
+  doLookup();
+}
 </script>
 </body>
 </html>

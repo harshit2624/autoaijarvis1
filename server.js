@@ -16573,6 +16573,44 @@ app.get("/order/lookup", async (req, res) => {
   }
 });
 
+// GET /order/lookup-by-contact — find orders by email or phone (no order number needed)
+app.get("/order/lookup-by-contact", async (req, res) => {
+  try {
+    const contact = (req.query.contact || '').trim();
+    if (!contact) return res.status(400).json({ error: "Email or phone number is required" });
+
+    const isEmail = contact.includes('@');
+    let shopifyOrders = [];
+
+    if (isEmail) {
+      const data = await shopifyREST(`/orders.json?email=${encodeURIComponent(contact)}&status=any&limit=5&fields=id,name,financial_status,created_at,cancelled_at`);
+      shopifyOrders = data.orders || [];
+    } else {
+      const phone = normalizePhone(contact);
+      if (phone.length < 10) return res.status(400).json({ error: "Enter a valid 10-digit phone number or email" });
+      // Search customers by phone then pull their orders
+      const custData = await shopifyREST(`/customers/search.json?query=phone:${encodeURIComponent('+91' + phone.slice(-10))}&fields=id&limit=3`);
+      const customers = custData.customers || [];
+      if (customers.length) {
+        const data = await shopifyREST(`/orders.json?customer_id=${customers[0].id}&status=any&limit=5&fields=id,name,financial_status,created_at,cancelled_at`);
+        shopifyOrders = data.orders || [];
+      }
+    }
+
+    const orders = shopifyOrders
+      .filter(o => !o.cancelled_at)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 3)
+      .map(o => ({ order_name: o.name, created_at: o.created_at, status: o.financial_status }));
+
+    if (!orders.length) return res.status(404).json({ error: "No orders found for this contact. Try your order number instead." });
+    return res.json({ orders });
+  } catch (e) {
+    console.error('❌ /order/lookup-by-contact:', e.message);
+    res.status(500).json({ error: "Lookup failed. Please try again." });
+  }
+});
+
 // ── Serve confirm-order.html ─────────────────────────────────────────────
 app.get("/confirm-order", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'confirm-order.html'));
