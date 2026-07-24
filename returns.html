@@ -807,16 +807,24 @@ function renderPortal(d) {
     // hide return if vendor doesn't allow it
     if (returnBtn) returnBtn.style.display = anyReturnEnabled ? '' : 'none';
 
-  } else if (isDelivered && !withinWindow) {
+  } else if (isDelivered && !withinWindow && !adminForceItems) {
     noticeEl.classList.remove('hidden');
     noticeEl.innerHTML = `<div class="notice-box warn">
       <div class="notice-icon" style="color:var(--amber)">${IC_INFO}</div>
       <div class="notice-text"><strong>Return window closed.</strong> Returns &amp; exchanges must be raised within ${returnWindowDays} days of delivery. It's been ${Math.floor(daysAgo)} days. If you have a genuine issue, use an admin code below or <a href="https://wa.me/916375668971" style="color:var(--blue);font-weight:700">chat with us</a>.</div>
+    </div>
+    <div id="portal-admin-wrap" style="margin-top:10px;padding:12px 14px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Enter admin code to override window</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="portal-admin-inp" type="text" placeholder="Admin code" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--input-bg);color:var(--text)" />
+        <button onclick="applyPortalAdminCode()" style="padding:8px 14px;background:var(--text);color:var(--bg);border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Apply</button>
+      </div>
+      <div id="portal-admin-result" style="margin-top:6px;font-size:12px"></div>
     </div>`;
     actionSec.classList.remove('hidden');
     document.getElementById('action-label').textContent = 'Request Anyway (Code Required)';
     // Dim both buttons — require admin code to proceed
-    [returnBtn, exchangeBtn].forEach(b => { if(b) b.style.opacity = '.5'; });
+    [returnBtn, exchangeBtn].forEach(b => { if(b) { b.style.opacity = '.45'; b.style.pointerEvents = 'none'; } });
 
   } else {
     // Normal eligible state
@@ -895,10 +903,11 @@ function startFlow(type) {
   flowType = type;
   selectedItems = {};
   selectedReason = null;
-  adminCodeType = null;
+  // Preserve adminCodeType/adminForceItems if already set at portal level
+  if (!adminForceItems) adminCodeType = null;
   uploadedPhotoUrls = [];
   Object.keys(itemOptionSel).forEach(k => delete itemOptionSel[k]);
-  adminForceItems = false;
+  // Do NOT reset adminForceItems — portal-level REFORCE carries into the flow
   stepHistory = [];
   buildItemsStep();
   showStep('items');
@@ -1153,15 +1162,12 @@ async function applyPortalAdminCode() {
     if (d.valid && d.type === 'force_enable') {
       adminForceItems = true;
       adminCodeType = 'force_enable';
-      resultEl.innerHTML = `<div class="admin-badge force">✓ Return unlocked</div>`;
-      // Show the return button and re-render portal
-      const returnBtn = document.querySelector('.return-card');
-      if (returnBtn) returnBtn.style.display = '';
-      const wrap = document.getElementById('portal-admin-wrap');
-      if (wrap) setTimeout(() => wrap.classList.add('hidden'), 1200);
+      resultEl.innerHTML = `<div class="admin-badge force">✓ Unlocked — you can now proceed</div>`;
+      // Re-render portal so window-closed / vendor-disabled guards are bypassed
+      setTimeout(() => renderPortal(orderData), 800);
     } else if (d.valid && d.type === 'fee_waiver') {
       adminCodeType = 'fee_waiver';
-      resultEl.innerHTML = `<div class="admin-badge waiver">✓ Fee waiver applied — return still not available from vendor</div>`;
+      resultEl.innerHTML = `<div class="admin-badge waiver">✓ Fee waiver applied</div>`;
     } else {
       resultEl.innerHTML = `<div class="admin-badge invalid">✗ Invalid code</div>`;
     }
