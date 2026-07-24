@@ -20822,7 +20822,7 @@ const WA_MENUS = {
     `Hi! 👋 Welcome to CROSCROW support.\n\nWhat can I help you with?\n\n1️⃣ Track my order\n2️⃣ Browse products\n3️⃣ Return / Exchange\n4️⃣ Talk to a human`,
 
   order_not_confirmed: (name, url) =>
-    `Your order *${name}* needs a ₹99 confirmation to start dispatch.\n\n💳 Pay & confirm:\n${url}\n\n2️⃣ Why ₹99?\n3️⃣ Talk to a human`,
+    `Your order *${name}* needs a ₹99 confirmation to start dispatch — this small step lets us know you're ready to receive it, so we don't pack and ship an order that gets rejected at the door 😊 Tap below — it's adjusted at delivery, not extra.\n\n💳 Pay & confirm:\n${url}\n\n2️⃣ Why ₹99?\n3️⃣ Talk to a human`,
 
   order_confirmed_short: (name) =>
     `Your order *${name}* is confirmed and being prepared — there's a slight delay but we're on it! 🙏\n\n1️⃣ Check if vendor gave a reason\n2️⃣ Talk to a human`,
