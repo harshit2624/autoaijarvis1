@@ -20866,7 +20866,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
     case 'order_not_confirmed':
       if (num === 1) {
         const url = d?.confirm_url || d?.track_url;
-        await sock.sendMessage(sender, { text: `Your order needs a ₹99 confirmation to start dispatch — this small step lets us know you're ready to receive it, so we don't pack and ship an order that gets rejected at the door 😊 Tap below — it's adjusted at delivery, not extra.\n\n${url}` });
+        await sock.sendMessage(sender, { text: `Here's your confirmation link 👇\n\n${url}` });
       } else if (num === 2) {
         await sock.sendMessage(sender, { text: `The ₹99 is NOT extra — it's deducted from your COD amount at delivery. It confirms you're ready to receive the order so we can start packing right away 🚀` });
       } else if (num === 3) {
