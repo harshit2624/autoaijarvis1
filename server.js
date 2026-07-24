@@ -16496,6 +16496,10 @@ app.get("/order", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'order.html'));
 });
 
+app.get("/returns", (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'returns.html'));
+});
+
 // GET /order/lookup — unified API: track + confirm data in one call
 app.get("/order/lookup", async (req, res) => {
   try {

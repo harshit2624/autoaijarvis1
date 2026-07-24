@@ -1,0 +1,1171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Returns &amp; Exchanges — CROSCROW</title>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f5f5f5;--surface:#fff;--card:#fff;--border:#e8e8e8;--border-strong:#d0d0d0;
+  --text:#0f0f0f;--body:#555;--muted:#999;
+  --blue:#002eff;--blue-light:#eef3ff;--blue-border:#99b3ff;--blue-dark:#0020cc;
+  --green:#16a34a;--green-light:#f0fdf4;--green-border:#86efac;
+  --amber:#f59e0b;--amber-light:#fffbeb;--amber-border:#fde68a;
+  --red:#ef4444;--red-light:#fef2f2;--red-border:#fecaca;
+  --radius:14px;--radius-sm:10px;
+}
+html,body{min-height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;overscroll-behavior:none}
+
+/* ── HEADER ── */
+.site-header{
+  position:fixed;top:0;left:0;right:0;z-index:90;height:54px;
+  display:flex;align-items:center;justify-content:space-between;padding:0 20px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+}
+.header-logo{height:22px;display:block}
+.menu-btn{
+  width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);border:1px solid var(--border);color:var(--body);
+  cursor:pointer;-webkit-tap-highlight-color:transparent
+}
+.menu-btn:active{opacity:.7}
+
+/* ── SIDEBAR ── */
+.sb-overlay{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.38);
+  backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;transition:opacity .25s}
+.sb-overlay.open{opacity:1;pointer-events:all}
+.sb-panel{position:fixed;top:0;right:0;bottom:0;z-index:201;width:min(272px,84vw);
+  background:var(--surface);display:flex;flex-direction:column;
+  transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+  box-shadow:-2px 0 28px rgba(0,0,0,.13)}
+.sb-panel.open{transform:translateX(0)}
+.sb-top{display:flex;align-items:center;justify-content:space-between;
+  padding:18px 20px;border-bottom:1px solid var(--border)}
+.sb-logo{height:20px}
+.sb-close{width:30px;height:30px;border-radius:50%;background:var(--bg);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--body);
+  -webkit-tap-highlight-color:transparent}
+.sb-nav{padding:10px 8px;flex:1}
+.sb-link{display:flex;align-items:center;gap:13px;padding:14px 12px;border-radius:10px;
+  text-decoration:none;color:var(--text);font-size:14px;font-weight:600;
+  -webkit-tap-highlight-color:transparent}
+.sb-link:active{background:var(--bg)}
+.sb-link svg{flex-shrink:0;color:var(--muted)}
+.sb-divider{height:1px;background:var(--border);margin:4px 12px}
+.sb-footer{padding:16px 20px;border-top:1px solid var(--border);
+  font-size:10px;color:var(--muted);text-align:center;letter-spacing:.1em;text-transform:uppercase}
+
+/* ── SCREENS ── */
+.screen{min-height:100svh;display:none;flex-direction:column}
+.screen.active{display:flex}
+
+/* ── LOOKUP ── */
+#lookup-screen{align-items:center;justify-content:center;padding:100px 24px 60px;background:var(--surface)}
+.lookup-logo{height:26px;display:block;margin-bottom:44px}
+.lookup-title{font-size:25px;font-weight:800;letter-spacing:-.03em;text-align:center;line-height:1.2;margin-bottom:6px}
+.lookup-tag{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--blue);text-align:center;margin-bottom:6px}
+.lookup-sub{font-size:13px;color:var(--muted);text-align:center;margin-bottom:32px;line-height:1.65;max-width:280px}
+.lookup-form{width:100%;max-width:320px;display:flex;flex-direction:column;gap:10px}
+.inp{width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  padding:14px 16px;font-size:15px;color:var(--text);outline:none;
+  transition:border-color .15s;-webkit-appearance:none}
+.inp::placeholder{color:#bbb}
+.inp:focus{border-color:var(--border-strong)}
+.btn-primary{width:100%;background:var(--text);color:#fff;border:none;border-radius:var(--radius-sm);
+  padding:16px;font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  cursor:pointer;transition:opacity .15s;-webkit-tap-highlight-color:transparent}
+.btn-primary:active{opacity:.8}
+.btn-primary:disabled{opacity:.35;cursor:not-allowed}
+.err-msg{font-size:12px;color:var(--red);text-align:center;min-height:18px}
+
+/* ── LOADING ── */
+#loading-screen{align-items:center;justify-content:center;gap:14px;background:var(--surface)}
+.spinner{width:28px;height:28px;border:2px solid var(--border);border-top-color:var(--text);
+  border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-label{font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+
+/* ── MAIN PORTAL ── */
+#portal-screen{padding-top:54px;background:var(--bg);min-height:100svh}
+
+/* Order header card */
+.order-card{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:20px;display:flex;align-items:center;gap:14px
+}
+.order-thumb{width:52px;height:52px;border-radius:10px;object-fit:cover;
+  border:1px solid var(--border);background:var(--bg);flex-shrink:0}
+.order-thumb-ph{width:52px;height:52px;border-radius:10px;background:var(--bg);
+  border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.order-card-info{flex:1;min-width:0}
+.order-card-name{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+.order-card-title{font-size:14px;font-weight:700;color:var(--text);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.order-card-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.stage-chip{padding:4px 10px;border-radius:100px;font-size:10px;font-weight:700;
+  letter-spacing:.07em;text-transform:uppercase;border:1px solid;white-space:nowrap;flex-shrink:0}
+.chip-delivered{background:var(--green-light);color:var(--green);border-color:var(--green-border)}
+.chip-transit{background:var(--blue-light);color:var(--blue);border-color:var(--blue-border)}
+.chip-pending{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
+.chip-rto{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
+
+/* Content area */
+.portal-body{padding:0 16px 80px;max-width:480px;margin:0 auto}
+
+/* Section */
+.section-label{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.13em;
+  text-transform:uppercase;margin:20px 0 8px;padding:0 2px}
+
+/* Existing requests */
+.rr-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.rr-card-head{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border)}
+.rr-card-id{font-size:12px;font-weight:700;color:var(--text)}
+.rr-card-date{font-size:11px;color:var(--muted)}
+.rr-status{font-size:10px;font-weight:700;padding:4px 10px;border-radius:100px;
+  letter-spacing:.06em;text-transform:uppercase;border:1px solid}
+.rr-status.pending{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
+.rr-status.approved{background:var(--green-light);color:var(--green);border-color:var(--green-border)}
+.rr-status.rejected{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
+.rr-status.completed{background:var(--green-light);color:var(--green);border-color:var(--green-border)}
+.rr-card-body{padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.rr-card-row{display:flex;justify-content:space-between;align-items:center}
+.rr-card-label{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.rr-card-val{font-size:12px;font-weight:700;color:var(--text)}
+.rr-progress{padding:0 16px 14px;display:flex;gap:0}
+.rr-step{flex:1;height:3px;border-radius:100px;margin:0 2px}
+.rr-step.done{background:var(--green)}
+.rr-step.active{background:var(--blue)}
+.rr-step.pending-step{background:var(--border)}
+.rr-timeline{padding:0 16px 16px;display:flex;flex-direction:column;gap:8px}
+.rr-tl-row{display:flex;align-items:flex-start;gap:10px}
+.rr-tl-dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.rr-tl-dot.done{background:var(--green)}
+.rr-tl-dot.active{background:var(--blue)}
+.rr-tl-dot.waiting{background:var(--border)}
+.rr-tl-text{font-size:12px;color:var(--body);line-height:1.5}
+.rr-tl-text.active{font-weight:700;color:var(--text)}
+
+/* Action cards (start return/exchange) */
+.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
+.action-card{
+  background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);
+  padding:18px 14px;display:flex;flex-direction:column;gap:10px;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color .15s,box-shadow .15s;
+  text-align:left
+}
+.action-card:active{opacity:.85}
+.action-card.return-card:hover,.action-card.return-card:focus{border-color:var(--red-border);box-shadow:0 0 0 3px var(--red-light)}
+.action-card.exchange-card:hover,.action-card.exchange-card:focus{border-color:var(--blue-border);box-shadow:0 0 0 3px var(--blue-light)}
+.action-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+.action-icon.return{background:var(--red-light);color:var(--red)}
+.action-icon.exchange{background:var(--blue-light);color:var(--blue)}
+.action-title{font-size:14px;font-weight:800;color:var(--text);letter-spacing:-.01em}
+.action-sub{font-size:11px;color:var(--muted);line-height:1.5;margin-top:2px}
+.action-tag{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  padding:3px 8px;border-radius:100px;width:fit-content}
+.action-tag.free{background:var(--green-light);color:var(--green);border:1px solid var(--green-border)}
+.action-tag.fee{background:var(--amber-light);color:var(--amber);border:1px solid var(--amber-border)}
+
+/* Policy notice */
+.policy-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:14px 16px;font-size:12px;color:var(--body);line-height:1.7;margin-top:8px}
+.policy-box strong{color:var(--text);font-weight:700}
+.policy-box a{color:var(--blue);font-weight:600;text-decoration:none}
+
+/* Not eligible notice */
+.notice-box{border-radius:var(--radius-sm);padding:16px;display:flex;gap:12px;align-items:flex-start}
+.notice-box.info{background:var(--blue-light);border:1px solid var(--blue-border)}
+.notice-box.warn{background:var(--amber-light);border:1px solid var(--amber-border)}
+.notice-icon{flex-shrink:0;margin-top:1px}
+.notice-text{font-size:13px;color:var(--text);line-height:1.65;font-weight:500}
+.notice-text strong{font-weight:700}
+
+/* ── STEP PANEL ── */
+.step-panel{display:none;flex-direction:column;min-height:calc(100svh - 54px);padding-top:54px}
+.step-panel.active{display:flex}
+
+/* Step header */
+.step-header{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 20px 14px}
+.step-back{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--muted);
+  cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:12px;background:none;border:none}
+.step-back:active{opacity:.7}
+.step-progress{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.sp-dot{width:6px;height:6px;border-radius:50%;transition:all .2s}
+.sp-dot.done{background:var(--green);width:18px;border-radius:100px}
+.sp-dot.active{background:var(--text);width:22px;border-radius:100px}
+.sp-dot.pending{background:var(--border)}
+.step-title{font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+.step-sub{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+
+/* Step body */
+.step-body{flex:1;padding:20px 16px 100px;max-width:480px;margin:0 auto;width:100%}
+
+/* Item selector */
+.item-select-grid{display:flex;flex-direction:column;gap:8px}
+.item-select-row{
+  background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  padding:12px;display:flex;align-items:center;gap:12px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;transition:border-color .15s,background .15s
+}
+.item-select-row.selected{border-color:var(--text);background:var(--surface)}
+.item-select-row:active{opacity:.85}
+.item-sel-thumb{width:48px;height:48px;border-radius:8px;object-fit:cover;
+  background:var(--bg);border:1px solid var(--border);flex-shrink:0}
+.item-sel-ph{width:48px;height:48px;border-radius:8px;background:var(--bg);
+  border:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.item-sel-info{flex:1;min-width:0}
+.item-sel-title{font-size:13px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-sel-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.item-sel-price{font-size:13px;font-weight:700;color:var(--text);flex-shrink:0}
+.check-circle{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;background:var(--bg)}
+.item-select-row.selected .check-circle{background:var(--text);border-color:var(--text)}
+
+/* Qty selector */
+.qty-row{display:flex;align-items:center;gap:12px;margin-top:8px;padding-left:60px}
+.qty-label{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.05em}
+.qty-ctrl{display:flex;align-items:center;gap:0;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;overflow:hidden}
+.qty-btn{width:32px;height:32px;border:none;background:transparent;font-size:16px;color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}
+.qty-btn:active{background:var(--border)}
+.qty-num{font-size:13px;font-weight:700;color:var(--text);min-width:24px;text-align:center}
+
+/* Exchange details */
+.exchange-field{margin-top:8px;padding-left:60px}
+.exchange-inp{width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:8px;
+  padding:10px 12px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s}
+.exchange-inp:focus{border-color:var(--border-strong)}
+.exchange-inp::placeholder{color:#bbb}
+
+/* Reason selector */
+.reason-list{display:flex;flex-direction:column;gap:6px}
+.reason-row{
+  background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  padding:14px 16px;display:flex;align-items:center;justify-content:space-between;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color .15s
+}
+.reason-row.selected{border-color:var(--text)}
+.reason-row:active{opacity:.8}
+.reason-text{font-size:13px;font-weight:600;color:var(--text)}
+.reason-radio{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--border);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s}
+.reason-row.selected .reason-radio{border-color:var(--text);background:var(--text)}
+.reason-radio-dot{width:6px;height:6px;border-radius:50%;background:#fff;opacity:0;transition:opacity .15s}
+.reason-row.selected .reason-radio-dot{opacity:1}
+
+/* Note + photo */
+.note-area{width:100%;min-height:90px;background:var(--bg);border:1.5px solid var(--border);
+  border-radius:var(--radius-sm);padding:12px 14px;font-size:13px;color:var(--text);
+  font-family:inherit;outline:none;resize:none;transition:border-color .15s;margin-top:10px}
+.note-area:focus{border-color:var(--border-strong)}
+.note-area::placeholder{color:#bbb}
+.photo-upload-row{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+.photo-slot{width:72px;height:72px;border-radius:10px;border:1.5px dashed var(--border);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  cursor:pointer;-webkit-tap-highlight-color:transparent;font-size:9px;
+  color:var(--muted);font-weight:600;letter-spacing:.05em;text-transform:uppercase;overflow:hidden;
+  position:relative;background:var(--bg);transition:border-color .15s}
+.photo-slot:active{background:var(--border)}
+.photo-slot img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}
+.photo-slot .remove-photo{position:absolute;top:3px;right:3px;width:18px;height:18px;
+  background:rgba(0,0,0,.6);border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:10px;color:#fff;z-index:2;display:none}
+.photo-slot.has-img:hover .remove-photo,.photo-slot.has-img .remove-photo{display:flex}
+#photo-file-input{display:none}
+
+/* Admin code */
+.admin-code-toggle{font-size:11px;color:var(--muted);cursor:pointer;text-align:center;
+  margin-top:16px;display:block;-webkit-tap-highlight-color:transparent}
+.admin-code-toggle:active{opacity:.7}
+.admin-code-wrap{margin-top:10px;display:none}
+.admin-code-row{display:flex;gap:8px}
+.admin-badge{display:inline-flex;align-items:center;gap:6px;margin-top:8px;
+  font-size:11px;font-weight:700;padding:5px 10px;border-radius:100px}
+.admin-badge.waiver{background:var(--green-light);color:var(--green);border:1px solid var(--green-border)}
+.admin-badge.force{background:var(--blue-light);color:var(--blue);border:1px solid var(--blue-border)}
+.admin-badge.invalid{background:var(--red-light);color:var(--red);border:1px solid var(--red-border)}
+
+/* Review */
+.review-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.review-row{display:flex;justify-content:space-between;align-items:center;
+  padding:13px 16px;border-bottom:1px solid var(--border)}
+.review-row:last-child{border-bottom:none}
+.review-label{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.review-val{font-size:13px;font-weight:700;color:var(--text);text-align:right;max-width:60%}
+.review-val.blue{color:var(--blue-dark)}
+.review-val.green{color:var(--green)}
+.fee-box{background:var(--amber-light);border:1px solid var(--amber-border);border-radius:var(--radius-sm);
+  padding:14px 16px;margin-top:12px;font-size:13px;color:var(--text);line-height:1.65}
+.fee-box strong{font-weight:700}
+.fee-free-box{background:var(--green-light);border:1px solid var(--green-border);border-radius:var(--radius-sm);
+  padding:12px 16px;margin-top:12px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--green)}
+
+/* Sticky CTA */
+.step-cta{position:fixed;bottom:0;left:0;right:0;z-index:80;
+  background:linear-gradient(to top,var(--surface) 65%,rgba(255,255,255,0));
+  padding:16px 20px calc(env(safe-area-inset-bottom,0px) + 18px)}
+.btn-step{width:100%;background:var(--text);color:#fff;border:none;border-radius:var(--radius-sm);
+  padding:17px;font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
+  -webkit-tap-highlight-color:transparent;transition:opacity .15s;max-width:480px;margin:0 auto;display:flex}
+.btn-step:active{opacity:.8}
+.btn-step:disabled{opacity:.35;cursor:not-allowed}
+
+/* Success */
+#success-screen{align-items:center;justify-content:center;padding:80px 28px;background:var(--surface)}
+.success-icon{width:72px;height:72px;border-radius:50%;background:var(--green-light);
+  border:1.5px solid var(--green-border);display:flex;align-items:center;justify-content:center;
+  color:var(--green);margin-bottom:20px;animation:pop .4s cubic-bezier(.34,1.56,.64,1)}
+@keyframes pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+.success-title{font-size:22px;font-weight:800;letter-spacing:-.02em;text-align:center;margin-bottom:6px}
+.success-id{font-size:12px;color:var(--muted);text-align:center;letter-spacing:.04em;margin-bottom:20px}
+.success-card{width:100%;max-width:320px;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;margin-bottom:24px}
+.success-row{padding:13px 16px;border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center}
+.success-row:last-child{border-bottom:none}
+.success-label{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.success-val{font-size:13px;font-weight:700;color:var(--text)}
+.success-next{width:100%;max-width:320px;display:flex;flex-direction:column;gap:8px}
+.btn-outline{width:100%;background:transparent;border:1.5px solid var(--border);
+  border-radius:var(--radius-sm);padding:14px;font-size:12px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--body);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.btn-outline:active{background:var(--bg)}
+
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site-header">
+  <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" class="header-logo">
+  <button class="menu-btn" onclick="openSidebar()" aria-label="Menu">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="17" x2="21" y2="17"/></svg>
+  </button>
+</header>
+
+<!-- SIDEBAR -->
+<div class="sb-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
+<div class="sb-panel" id="sb-panel">
+  <div class="sb-top">
+    <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" class="sb-logo">
+    <button class="sb-close" onclick="closeSidebar()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <nav class="sb-nav">
+    <a class="sb-link" href="/order" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+      Track My Order
+    </a>
+    <div class="sb-divider"></div>
+    <a class="sb-link" href="https://croscrow.com" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Back to CROSCROW
+    </a>
+    <a class="sb-link" href="https://wa.me/916375668971" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Contact Support
+    </a>
+  </nav>
+  <div class="sb-footer">CROSCROW &copy; 2025</div>
+</div>
+
+<!-- ════════════════════════════════ LOOKUP ═══════════════════════════════ -->
+<div id="lookup-screen" class="screen active">
+  <img src="https://i.ibb.co/DgVCcHHJ/CROSCROW-9.png" alt="CROSCROW" class="lookup-logo">
+  <div class="lookup-tag">Returns &amp; Exchanges</div>
+  <h1 class="lookup-title">How can we make it right?</h1>
+  <p class="lookup-sub">Enter your order details and we'll sort it out quickly.</p>
+  <form class="lookup-form" onsubmit="e=>e.preventDefault()">
+    <input class="inp" id="inp-order" type="text" inputmode="numeric"
+      placeholder="Order number (e.g. 2688)" autocomplete="off">
+    <input class="inp" id="inp-contact" type="text" inputmode="email"
+      placeholder="Email or phone" autocomplete="off">
+    <button class="btn-primary" type="button" onclick="doLookup()" id="lookup-btn">Continue</button>
+    <div class="err-msg" id="lookup-err"></div>
+  </form>
+</div>
+
+<!-- LOADING -->
+<div id="loading-screen" class="screen">
+  <div class="spinner"></div>
+  <span class="loading-label">Fetching your order</span>
+</div>
+
+<!-- ════════════════════════════════ PORTAL ═══════════════════════════════ -->
+<div id="portal-screen" class="screen">
+  <!-- Order mini-card -->
+  <div class="order-card">
+    <div class="order-thumb-ph" id="order-thumb-ph">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    </div>
+    <img id="order-thumb" class="order-thumb hidden" alt="">
+    <div class="order-card-info">
+      <div class="order-card-name" id="order-card-name">ORDER</div>
+      <div class="order-card-title" id="order-card-title">—</div>
+      <div class="order-card-sub" id="order-card-sub">—</div>
+    </div>
+    <div class="stage-chip" id="stage-chip">—</div>
+  </div>
+
+  <div class="portal-body">
+
+    <!-- Existing RR requests -->
+    <div id="existing-section" class="hidden">
+      <div class="section-label">Your Requests</div>
+      <div id="existing-list"></div>
+    </div>
+
+    <!-- Not eligible notice -->
+    <div id="notice-section" class="hidden" style="margin-top:16px"></div>
+
+    <!-- Action buttons -->
+    <div id="action-section" class="hidden">
+      <div class="section-label" id="action-label">Start a New Request</div>
+      <div class="action-grid">
+        <button class="action-card return-card" onclick="startFlow('return')">
+          <div class="action-icon return">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+          </div>
+          <div>
+            <div class="action-title">Return</div>
+            <div class="action-sub">Get a refund for items you don't want</div>
+          </div>
+          <div class="action-tag fee" id="return-tag">Fee may apply</div>
+        </button>
+        <button class="action-card exchange-card" onclick="startFlow('exchange')">
+          <div class="action-icon exchange">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>
+          </div>
+          <div>
+            <div class="action-title">Exchange</div>
+            <div class="action-sub">Swap for a different size or colour</div>
+          </div>
+          <div class="action-tag fee" id="exchange-tag">Fee may apply</div>
+        </button>
+      </div>
+      <div class="policy-box">
+        <strong>Policy:</strong> Returns &amp; exchanges are accepted within 7 days of delivery. Items must be unused and in original packaging. <a href="https://wa.me/916375668971">Questions? Chat with us.</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════ STEP: ITEMS ═══════════════════════════════ -->
+<div id="step-items" class="step-panel">
+  <div class="step-header">
+    <button class="step-back" onclick="goBack()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Back
+    </button>
+    <div class="step-progress" id="items-progress"></div>
+    <div class="step-title" id="items-step-title">Select Items</div>
+    <div class="step-sub" id="items-step-sub">Choose which items to include</div>
+  </div>
+  <div class="step-body">
+    <div class="item-select-grid" id="items-grid"></div>
+  </div>
+  <div class="step-cta">
+    <button class="btn-step" id="items-next-btn" onclick="goToReason()" disabled>
+      Continue
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ STEP: REASON ══════════════════════════════ -->
+<div id="step-reason" class="step-panel">
+  <div class="step-header">
+    <button class="step-back" onclick="goBack()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Back
+    </button>
+    <div class="step-progress" id="reason-progress"></div>
+    <div class="step-title">Why are you returning?</div>
+    <div class="step-sub">Help us understand — this takes 10 seconds</div>
+  </div>
+  <div class="step-body">
+    <div class="reason-list" id="reason-list"></div>
+    <textarea class="note-area" id="reason-note" placeholder="Anything else we should know? (optional)" maxlength="400"></textarea>
+    <div style="margin-top:12px">
+      <div style="font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Photos (optional)</div>
+      <div class="photo-upload-row" id="photo-upload-row">
+        <div class="photo-slot" id="add-photo-btn" onclick="document.getElementById('photo-file-input').click()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Add
+        </div>
+      </div>
+      <input type="file" id="photo-file-input" accept="image/*" multiple onchange="handlePhotoUpload(this)">
+    </div>
+    <span class="admin-code-toggle" onclick="toggleAdminCode()">Have a support / admin code?</span>
+    <div class="admin-code-wrap" id="admin-code-wrap">
+      <div class="admin-code-row">
+        <input class="inp" id="admin-code-inp" type="text" placeholder="Enter code" autocomplete="off" style="font-size:14px">
+        <button class="btn-primary" style="width:auto;padding:14px 18px;flex-shrink:0" onclick="validateAdminCode()">Apply</button>
+      </div>
+      <div id="admin-code-result"></div>
+    </div>
+  </div>
+  <div class="step-cta">
+    <button class="btn-step" id="reason-next-btn" onclick="goToReview()" disabled>
+      Continue
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ STEP: REVIEW ══════════════════════════════ -->
+<div id="step-review" class="step-panel">
+  <div class="step-header">
+    <button class="step-back" onclick="goBack()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Back
+    </button>
+    <div class="step-progress" id="review-progress"></div>
+    <div class="step-title">Review &amp; Submit</div>
+    <div class="step-sub">Double-check before sending</div>
+  </div>
+  <div class="step-body">
+    <div class="review-card" id="review-card"></div>
+    <div id="fee-section"></div>
+  </div>
+  <div class="step-cta">
+    <button class="btn-step" id="submit-btn" onclick="handleSubmit()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Submit Request
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ SUCCESS ═══════════════════════════════════ -->
+<div id="success-screen" class="screen">
+  <div class="success-icon">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+  </div>
+  <div class="success-title">Request Submitted</div>
+  <div class="success-id" id="success-req-id">—</div>
+  <div class="success-card" id="success-card"></div>
+  <div class="section-label" style="text-align:center;margin:0 0 12px">What happens next</div>
+  <div class="success-card" id="success-next-steps" style="max-width:320px;width:100%">
+    <div class="success-row">
+      <div>
+        <div class="success-label">Step 1</div>
+        <div class="success-val" style="font-size:12px;margin-top:2px" id="next-step-1">—</div>
+      </div>
+    </div>
+    <div class="success-row">
+      <div>
+        <div class="success-label">Step 2</div>
+        <div class="success-val" style="font-size:12px;margin-top:2px" id="next-step-2">—</div>
+      </div>
+    </div>
+    <div class="success-row" style="border-bottom:none">
+      <div>
+        <div class="success-label">Step 3</div>
+        <div class="success-val" style="font-size:12px;margin-top:2px" id="next-step-3">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="success-next" style="margin-top:20px">
+    <button class="btn-primary" onclick="location.href='/order?o='+encodeURIComponent((orderData?.order_name||'').replace('#',''))+'&contact=na'">Track My Order</button>
+    <button class="btn-outline" onclick="location.href='https://wa.me/916375668971'">Chat on WhatsApp</button>
+  </div>
+</div>
+
+<script>
+const API = '';
+let orderData = null;
+let flowType = null; // 'return' | 'exchange'
+let selectedItems = {}; // { itemIdx: { qty, exchange_for } }
+let selectedReason = null;
+let adminCodeType = null; // 'fee_waiver' | 'force_enable' | null
+let uploadedPhotoUrls = [];
+let rrFee = 199;
+let submitting = false;
+
+const REASONS_RETURN = [
+  'Wrong size / fit issue',
+  'Product looks different from photos',
+  'Quality not as expected',
+  'Received wrong item',
+  'Item is damaged / defective',
+  'Changed my mind',
+  'Other',
+];
+const REASONS_EXCHANGE = [
+  'Want a different size',
+  'Want a different colour',
+  'Received wrong size',
+  'Received wrong colour',
+  'Item is defective — want replacement',
+  'Other',
+];
+
+const STEPS = ['items', 'reason', 'review'];
+let currentStep = 0; // index into STEPS
+let stepHistory = []; // for back navigation
+
+// ── URL params ────────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const urlOrder = params.get('o') || params.get('order') || '';
+const urlContact = params.get('contact') || '';
+const urlType = params.get('action') || ''; // 'return' or 'exchange'
+
+if (urlOrder) {
+  document.getElementById('inp-order').value = urlOrder.replace('#', '');
+  if (urlContact && urlContact !== 'na') document.getElementById('inp-contact').value = urlContact;
+  window.addEventListener('DOMContentLoaded', () => setTimeout(doLookup, 50));
+}
+
+// ── Screens ───────────────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.step-panel').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById(id);
+  if (el.classList.contains('screen')) el.classList.add('active');
+  else el.classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function showStep(stepId) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.step-panel').forEach(s => s.classList.remove('active'));
+  document.getElementById('step-' + stepId).classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+// ── Sidebar ───────────────────────────────────────────────────
+function openSidebar() {
+  document.getElementById('sb-overlay').classList.add('open');
+  document.getElementById('sb-panel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeSidebar() {
+  document.getElementById('sb-overlay').classList.remove('open');
+  document.getElementById('sb-panel').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+// ── Lookup ────────────────────────────────────────────────────
+async function doLookup() {
+  const q = document.getElementById('inp-order').value.trim().replace('#', '');
+  const contact = document.getElementById('inp-contact').value.trim() || 'na';
+  const fromBot = urlContact.toLowerCase() === 'na';
+  const errEl = document.getElementById('lookup-err');
+
+  if (!q) { errEl.textContent = 'Please enter your order number.'; return; }
+  if (!fromBot && contact === 'na') { errEl.textContent = 'Please enter your email or phone.'; return; }
+  errEl.textContent = '';
+  document.getElementById('lookup-btn').disabled = true;
+  showScreen('loading-screen');
+
+  try {
+    const r = await fetch(`${API}/order/lookup?q=${encodeURIComponent(q)}&contact=${encodeURIComponent(contact)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Order not found');
+    orderData = d;
+    renderPortal(d);
+  } catch(e) {
+    showScreen('lookup-screen');
+    document.getElementById('lookup-err').textContent = e.message;
+    document.getElementById('lookup-btn').disabled = false;
+  }
+}
+
+// ── Portal ────────────────────────────────────────────────────
+function renderPortal(d) {
+  // Order mini card
+  document.getElementById('order-card-name').textContent = d.order_name || '';
+  const title = d.items?.length === 1
+    ? d.items[0].title
+    : `${d.items?.length || 0} items`;
+  document.getElementById('order-card-title').textContent = title;
+  document.getElementById('order-card-sub').textContent = `₹${fmt(d.total)} · ${d.is_prepaid ? 'Prepaid' : 'COD'}`;
+
+  const firstImg = d.items?.find(i => i.image_url)?.image_url;
+  if (firstImg) {
+    const th = document.getElementById('order-thumb');
+    th.src = firstImg; th.classList.remove('hidden');
+    document.getElementById('order-thumb-ph').classList.add('hidden');
+  }
+
+  const stage = d.stage || 'new';
+  const stageLabels = {new:'Pending',hold:'On Hold',confirmed:'Confirmed',partial:'Processing',
+    ready:'Dispatched',pickup:'Picked Up',transit:'In Transit',ofd:'Out for Delivery',
+    delivered:'Delivered',rto:'Returned',cancelled:'Cancelled'};
+  const chip = document.getElementById('stage-chip');
+  chip.textContent = stageLabels[stage] || stage;
+  chip.className = 'stage-chip ' + (
+    stage === 'delivered' ? 'chip-delivered'
+    : ['transit','pickup','ofd','ready'].includes(stage) ? 'chip-transit'
+    : stage === 'rto' ? 'chip-rto' : 'chip-pending'
+  );
+
+  // Existing requests
+  const existing = d.return_requests || [];
+  if (existing.length) {
+    document.getElementById('existing-section').classList.remove('hidden');
+    document.getElementById('existing-list').innerHTML = existing.map(rr => renderRRCard(rr)).join('');
+  }
+
+  // Fetch fee
+  const vendorName = d.vendor_shipments?.[0]?.vendor_name || '';
+  fetch(`${API}/track/rr-fee?vendor_name=${encodeURIComponent(vendorName)}`)
+    .then(r => r.json()).then(fd => {
+      rrFee = fd.fee ?? 199;
+      const feeTag = rrFee > 0 ? `₹${rrFee} fee` : 'Free';
+      const tagCls = rrFee > 0 ? 'fee' : 'free';
+      ['return-tag','exchange-tag'].forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent = feeTag; el.className = 'action-tag ' + tagCls;
+      });
+    }).catch(() => {});
+
+  // Eligibility check
+  const DISPATCHED = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
+  const isDelivered = stage === 'delivered';
+  const isPreDispatch = !DISPATCHED.includes(stage);
+  const noticeEl = document.getElementById('notice-section');
+
+  if (stage === 'rto' || stage === 'cancelled') {
+    noticeEl.classList.remove('hidden');
+    noticeEl.innerHTML = `<div class="notice-box warn">
+      <div class="notice-icon" style="color:var(--amber)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+      <div class="notice-text">This order was ${stage === 'rto' ? 'returned to the seller' : 'cancelled'}. Returns &amp; exchanges are not available.</div>
+    </div>`;
+    document.getElementById('action-section').classList.add('hidden');
+  } else if (isPreDispatch) {
+    noticeEl.classList.remove('hidden');
+    noticeEl.innerHTML = `<div class="notice-box info">
+      <div class="notice-icon" style="color:var(--blue)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+      <div class="notice-text">Your order hasn't shipped yet. You can submit a request now and our team will review it before dispatch. <strong>Have an admin code?</strong> Use the code option in the reason step to proceed.</div>
+    </div>`;
+    document.getElementById('action-section').classList.remove('hidden');
+    document.getElementById('action-label').textContent = 'Submit a Pre-Dispatch Request';
+  } else {
+    document.getElementById('action-section').classList.remove('hidden');
+  }
+
+  showScreen('portal-screen');
+
+  // Auto-start flow if action param passed
+  if (urlType === 'return' || urlType === 'exchange') {
+    setTimeout(() => startFlow(urlType), 200);
+  }
+}
+
+function renderRRCard(rr) {
+  const date = new Date(rr.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  const statusMap = {pending:0, approved:1, completed:2, rejected:-1};
+  const sIdx = statusMap[rr.status] ?? 0;
+  const steps = ['Submitted','Approved','Completed'];
+  const progressDots = steps.map((_,i) => {
+    const cls = rr.status==='rejected'&&i>0?'pending-step':i<sIdx?'done':i===sIdx&&sIdx>=0?'active':'pending-step';
+    return `<div class="rr-step ${cls}"></div>`;
+  }).join('');
+
+  const timelineItems = [
+    {text:'Request submitted', done: true},
+    {text: rr.type==='return'?'Team reviews &amp; approves':'Team processes exchange', done: sIdx >= 1},
+    {text: rr.type==='return'?'Refund processed (3–5 days)':'Replacement dispatched', done: sIdx >= 2},
+  ];
+
+  return `<div class="rr-card">
+    <div class="rr-card-head">
+      <div>
+        <div class="rr-card-id">${esc(rr.request_id)} · ${rr.type === 'return' ? 'Return' : 'Exchange'}</div>
+        <div class="rr-card-date">${date}</div>
+      </div>
+      <div class="rr-status ${rr.status}">${rr.status}</div>
+    </div>
+    <div class="rr-progress">${progressDots}</div>
+    <div class="rr-timeline">
+      ${timelineItems.map(t => `<div class="rr-tl-row">
+        <div class="rr-tl-dot ${t.done?'done':'waiting'}"></div>
+        <div class="rr-tl-text ${t.done?'':''}"> ${t.text}</div>
+      </div>`).join('')}
+    </div>
+    ${rr.admin_note ? `<div style="padding:0 16px 14px;font-size:12px;color:var(--body);line-height:1.6;background:var(--bg);border-top:1px solid var(--border);padding-top:12px"><strong style="color:var(--text)">Note from team:</strong> ${esc(rr.admin_note)}</div>` : ''}
+  </div>`;
+}
+
+// ── Flow ──────────────────────────────────────────────────────
+function startFlow(type) {
+  flowType = type;
+  selectedItems = {};
+  selectedReason = null;
+  adminCodeType = null;
+  uploadedPhotoUrls = [];
+  stepHistory = [];
+  buildItemsStep();
+  showStep('items');
+}
+
+function goBack() {
+  if (stepHistory.length === 0) { showScreen('portal-screen'); return; }
+  const prev = stepHistory.pop();
+  if (prev === 'portal') { showScreen('portal-screen'); return; }
+  showStep(prev);
+}
+
+function pushStep(id) { stepHistory.push(id); }
+
+// ── Step: Items ───────────────────────────────────────────────
+function buildItemsStep() {
+  renderProgress('items-progress', 0, 3);
+  const isEx = flowType === 'exchange';
+  document.getElementById('items-step-title').textContent = isEx ? 'What to exchange?' : 'What to return?';
+  document.getElementById('items-step-sub').textContent = isEx
+    ? 'Select items you want to swap'
+    : 'Select items you want to return';
+
+  const items = orderData?.items || [];
+  document.getElementById('items-grid').innerHTML = items.map((it, idx) => {
+    const price = parseFloat(it.price) * (it.quantity || 1);
+    return `<div class="item-select-row" id="item-row-${idx}" onclick="toggleItem(${idx})">
+      ${it.image_url
+        ? `<img class="item-sel-thumb" src="${esc(it.image_url)}" alt="">`
+        : `<div class="item-sel-ph"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`}
+      <div class="item-sel-info">
+        <div class="item-sel-title">${esc(it.title)}</div>
+        <div class="item-sel-meta">${esc(it.variant_title || '')}${it.quantity > 1 ? ` · ×${it.quantity}` : ''}</div>
+      </div>
+      <div class="item-sel-price">₹${fmt(price)}</div>
+      <div class="check-circle" id="check-${idx}">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>
+    ${isEx ? `<div class="exchange-field hidden" id="exchange-field-${idx}">
+      <input class="exchange-inp" id="exchange-inp-${idx}" type="text"
+        placeholder="What do you want instead? (size, colour…)"
+        oninput="updateExchangeFor(${idx}, this.value)">
+    </div>` : ''}
+    ${it.quantity > 1 ? `<div class="qty-row hidden" id="qty-row-${idx}">
+      <span class="qty-label">Qty to ${flowType}:</span>
+      <div class="qty-ctrl">
+        <button class="qty-btn" onclick="changeQty(${idx},-1,event)">−</button>
+        <span class="qty-num" id="qty-num-${idx}">1</span>
+        <button class="qty-btn" onclick="changeQty(${idx},+1,event)">+</button>
+      </div>
+    </div>` : ''}`;
+  }).join('');
+  updateItemsBtn();
+}
+
+function toggleItem(idx) {
+  const row = document.getElementById(`item-row-${idx}`);
+  if (selectedItems[idx]) {
+    delete selectedItems[idx];
+    row.classList.remove('selected');
+    document.getElementById(`qty-row-${idx}`)?.classList.add('hidden');
+    document.getElementById(`exchange-field-${idx}`)?.classList.add('hidden');
+  } else {
+    const it = orderData.items[idx];
+    selectedItems[idx] = { qty: 1, exchange_for: '' };
+    row.classList.add('selected');
+    document.getElementById(`qty-row-${idx}`)?.classList.remove('hidden');
+    if (flowType === 'exchange') document.getElementById(`exchange-field-${idx}`)?.classList.remove('hidden');
+  }
+  updateItemsBtn();
+}
+
+function changeQty(idx, delta, e) {
+  e.stopPropagation();
+  if (!selectedItems[idx]) return;
+  const max = orderData.items[idx].quantity || 1;
+  const newQty = Math.max(1, Math.min(max, (selectedItems[idx].qty || 1) + delta));
+  selectedItems[idx].qty = newQty;
+  document.getElementById(`qty-num-${idx}`).textContent = newQty;
+}
+
+function updateExchangeFor(idx, val) {
+  if (selectedItems[idx]) selectedItems[idx].exchange_for = val;
+  updateItemsBtn();
+}
+
+function updateItemsBtn() {
+  const hasItems = Object.keys(selectedItems).length > 0;
+  const allFilled = !Object.entries(selectedItems).some(([idx]) =>
+    flowType === 'exchange' && !selectedItems[idx].exchange_for?.trim()
+  );
+  document.getElementById('items-next-btn').disabled = !(hasItems && allFilled);
+}
+
+function goToReason() {
+  pushStep('items');
+  buildReasonStep();
+  showStep('reason');
+}
+
+// ── Step: Reason ──────────────────────────────────────────────
+function buildReasonStep() {
+  renderProgress('reason-progress', 1, 3);
+  const reasons = flowType === 'exchange' ? REASONS_EXCHANGE : REASONS_RETURN;
+  document.getElementById('reason-list').innerHTML = reasons.map(r => `
+    <div class="reason-row" onclick="selectReason('${esc(r)}')" id="reason-${r.replace(/\s+/g,'-')}">
+      <span class="reason-text">${esc(r)}</span>
+      <div class="reason-radio"><div class="reason-radio-dot"></div></div>
+    </div>`).join('');
+  selectedReason = null;
+  document.getElementById('reason-next-btn').disabled = true;
+  document.getElementById('admin-code-result').innerHTML = '';
+  document.getElementById('admin-code-inp').value = '';
+  document.getElementById('admin-code-wrap').style.display = 'none';
+}
+
+function selectReason(r) {
+  selectedReason = r;
+  document.querySelectorAll('.reason-row').forEach(el => el.classList.remove('selected'));
+  const key = r.replace(/\s+/g,'-');
+  document.getElementById(`reason-${key}`)?.classList.add('selected');
+  document.getElementById('reason-next-btn').disabled = false;
+}
+
+function toggleAdminCode() {
+  const w = document.getElementById('admin-code-wrap');
+  w.style.display = w.style.display === 'flex' ? 'none' : 'flex';
+  w.style.flexDirection = 'column';
+}
+
+async function validateAdminCode() {
+  const code = document.getElementById('admin-code-inp').value.trim();
+  const resultEl = document.getElementById('admin-code-result');
+  if (!code) return;
+  try {
+    const r = await fetch(`${API}/track/validate-admin-code`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ code })
+    });
+    const d = await r.json();
+    if (d.valid) {
+      adminCodeType = d.type;
+      const label = d.type === 'fee_waiver' ? '✓ Fee waiver applied' : '✓ Force enable active';
+      const cls = d.type === 'fee_waiver' ? 'waiver' : 'force';
+      resultEl.innerHTML = `<div class="admin-badge ${cls}">${label}</div>`;
+    } else {
+      adminCodeType = null;
+      resultEl.innerHTML = `<div class="admin-badge invalid">✗ Invalid code</div>`;
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<div class="admin-badge invalid">✗ Could not validate</div>`;
+  }
+}
+
+async function handlePhotoUpload(input) {
+  const files = Array.from(input.files || []).slice(0, 5 - uploadedPhotoUrls.length);
+  if (!files.length) return;
+  const fd = new FormData();
+  files.forEach(f => fd.append('images', f));
+  try {
+    const r = await fetch(`${API}/track/upload-images`, { method: 'POST', body: fd });
+    const d = await r.json();
+    uploadedPhotoUrls = [...uploadedPhotoUrls, ...(d.urls || [])];
+    renderPhotoSlots();
+  } catch(e) { console.warn('Photo upload failed', e); }
+  input.value = '';
+}
+
+function renderPhotoSlots() {
+  const row = document.getElementById('photo-upload-row');
+  const addBtn = document.getElementById('add-photo-btn');
+  // Remove existing photo slots
+  row.querySelectorAll('.photo-slot:not(#add-photo-btn)').forEach(el => el.remove());
+  uploadedPhotoUrls.forEach((url, i) => {
+    const slot = document.createElement('div');
+    slot.className = 'photo-slot has-img';
+    slot.innerHTML = `<img src="${esc(url)}" alt=""><div class="remove-photo" onclick="removePhoto(${i})">×</div>`;
+    row.insertBefore(slot, addBtn);
+  });
+  if (uploadedPhotoUrls.length >= 5) addBtn.classList.add('hidden');
+  else addBtn.classList.remove('hidden');
+}
+
+function removePhoto(i) {
+  uploadedPhotoUrls.splice(i, 1);
+  renderPhotoSlots();
+}
+
+function goToReview() {
+  if (!selectedReason) return;
+  pushStep('reason');
+  buildReviewStep();
+  showStep('review');
+}
+
+// ── Step: Review ──────────────────────────────────────────────
+function buildReviewStep() {
+  renderProgress('review-progress', 2, 3);
+  const items = orderData?.items || [];
+  const selEntries = Object.entries(selectedItems);
+
+  const itemRows = selEntries.map(([idx, sel]) => {
+    const it = items[idx];
+    const exFor = sel.exchange_for ? ` → ${sel.exchange_for}` : '';
+    return `<div class="review-row">
+      <span class="review-label">${esc(it.title.slice(0,22)+(it.title.length>22?'…':''))}</span>
+      <span class="review-val">${it.variant_title ? esc(it.variant_title) : ''}${sel.qty > 1 ? ` ×${sel.qty}` : ''}${esc(exFor)}</span>
+    </div>`;
+  }).join('');
+
+  const needsFee = rrFee > 0 && !adminCodeType;
+  const feeLabel = adminCodeType === 'fee_waiver' ? 'Waived' : adminCodeType === 'force_enable' ? 'Admin override' : `₹${rrFee}`;
+  const feeCls = adminCodeType ? 'green' : 'blue';
+
+  document.getElementById('review-card').innerHTML = `
+    <div class="review-row"><span class="review-label">Order</span><span class="review-val">${esc(orderData?.order_name || '')}</span></div>
+    <div class="review-row"><span class="review-label">Type</span><span class="review-val">${flowType === 'return' ? 'Return (Refund)' : 'Exchange'}</span></div>
+    ${itemRows}
+    <div class="review-row"><span class="review-label">Reason</span><span class="review-val">${esc(selectedReason)}</span></div>
+    <div class="review-row" style="border-bottom:none"><span class="review-label">Processing fee</span><span class="review-val ${feeCls}">${feeLabel}</span></div>
+  `;
+
+  const feeSection = document.getElementById('fee-section');
+  if (needsFee) {
+    feeSection.innerHTML = `<div class="fee-box">
+      A <strong>₹${rrFee} processing fee</strong> covers return pickup &amp; restocking.
+      It's collected via Razorpay before we process your request.
+    </div>`;
+    document.getElementById('submit-btn').innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      Pay ₹${rrFee} &amp; Submit`;
+  } else {
+    feeSection.innerHTML = `<div class="fee-free-box">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      No fee required for this request
+    </div>`;
+    document.getElementById('submit-btn').innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Submit Request`;
+  }
+}
+
+// ── Submit ────────────────────────────────────────────────────
+async function handleSubmit() {
+  if (submitting) return;
+  const needsFee = rrFee > 0 && !adminCodeType;
+  if (needsFee) { await payAndSubmit(); }
+  else { await submitRequest(null, null); }
+}
+
+async function payAndSubmit() {
+  submitting = true;
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  try {
+    const vendorName = orderData?.vendor_shipments?.[0]?.vendor_name || '';
+    const r = await fetch(`${API}/track/razorpay-order`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ vendor_name: vendorName, order_name: orderData?.order_name, customer_name: orderData?.customer_name })
+    });
+    const rz = await r.json();
+    if (!r.ok) throw new Error(rz.error || 'Payment error');
+    const rzp = new Razorpay({
+      key: rz.key, order_id: rz.order_id, amount: Math.round(rz.amount * 100), currency: 'INR',
+      name: 'CROSCROW', description: `${flowType === 'return' ? 'Return' : 'Exchange'} processing fee`,
+      theme: { color: '#002eff' },
+      handler: async (resp) => {
+        try {
+          const vr = await fetch(`${API}/track/razorpay-verify`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(resp)
+          });
+          const vd = await vr.json();
+          if (!vr.ok) throw new Error(vd.error || 'Payment verification failed');
+          await submitRequest(resp.razorpay_payment_id, rz.order_id);
+        } catch(e) { alert(e.message); submitting = false; btn.disabled = false; }
+      },
+      modal: { ondismiss: () => { submitting = false; btn.disabled = false; } }
+    });
+    rzp.open();
+  } catch(e) { alert(e.message); submitting = false; btn.disabled = false; }
+}
+
+async function submitRequest(paymentId, rzOrderId) {
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  const items = orderData?.items || [];
+  const reqItems = Object.entries(selectedItems).map(([idx, sel]) => {
+    const it = items[idx];
+    return {
+      title: it.title, variant_title: it.variant_title || '', quantity: sel.qty,
+      sku: it.sku || '', price: it.price, image_url: it.image_url || null,
+      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for } : {})
+    };
+  });
+  const note = document.getElementById('reason-note')?.value?.trim() || '';
+  const reasonFull = note ? `${selectedReason} — ${note}` : selectedReason;
+  const vendorName = orderData?.vendor_shipments?.[0]?.vendor_name || '';
+  const adminCode = document.getElementById('admin-code-inp')?.value?.trim() || '';
+
+  try {
+    const r = await fetch(`${API}/track/request`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        shopify_order_id: orderData?.shopify_order_id,
+        order_name: orderData?.order_name,
+        customer_email: document.getElementById('inp-contact')?.value?.trim() || '',
+        customer_name: orderData?.customer_name || '',
+        customer_phone: '',
+        type: flowType,
+        items: reqItems,
+        reason: reasonFull,
+        vendor_name: vendorName,
+        payment_id: paymentId || undefined,
+        razorpay_order_id: rzOrderId || undefined,
+        admin_code: adminCode || undefined,
+        image_urls: uploadedPhotoUrls,
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Submission failed');
+    showSuccessScreen(d.request_id);
+  } catch(e) {
+    alert(e.message);
+    btn.disabled = false;
+  } finally {
+    submitting = false;
+  }
+}
+
+function showSuccessScreen(reqId) {
+  document.getElementById('success-req-id').textContent = `Request ID: ${reqId}`;
+  const isEx = flowType === 'exchange';
+  document.getElementById('success-card').innerHTML = `
+    <div class="success-row"><span class="success-label">Type</span><span class="success-val">${isEx ? 'Exchange' : 'Return'}</span></div>
+    <div class="success-row"><span class="success-label">Order</span><span class="success-val">${esc(orderData?.order_name || '')}</span></div>
+    <div class="success-row" style="border-bottom:none"><span class="success-label">Status</span><span class="success-val" style="color:var(--amber)">Under Review</span></div>`;
+  document.getElementById('next-step-1').textContent = 'Our team reviews your request (usually within 24 hours)';
+  document.getElementById('next-step-2').textContent = isEx
+    ? 'We coordinate exchange with the vendor'
+    : 'We arrange pickup of the item from your address';
+  document.getElementById('next-step-3').textContent = isEx
+    ? 'Replacement dispatched to you'
+    : 'Refund processed within 3–5 business days';
+  showScreen('success-screen');
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function renderProgress(elId, current, total) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = Array.from({length: total}, (_,i) =>
+    `<div class="sp-dot ${i < current ? 'done' : i === current ? 'active' : 'pending'}"></div>`
+  ).join('');
+}
+
+function fmt(n) { return Number(n).toLocaleString('en-IN', {maximumFractionDigits:0}); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>

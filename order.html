@@ -581,6 +581,11 @@ html,body{
     </button>
   </div>
   <nav class="sb-nav">
+    <a class="sb-link" id="sb-returns-link" href="/returns" onclick="sbReturnClick(event)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+      Return / Exchange
+    </a>
+    <div class="sb-divider"></div>
     <a class="sb-link" href="https://croscrow.com" target="_blank" rel="noopener">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       Back to CROSCROW
@@ -1241,6 +1246,15 @@ function goRR(type) {
   if (!orderData) return;
   location.href=`/track?order=${encodeURIComponent(orderData.order_name)}&contact=na&action=${type}`;
 }
+function sbReturnClick(e) {
+  if (orderData) {
+    e.preventDefault();
+    const num = (orderData.order_name || '').replace('#','');
+    const contact = document.getElementById('inp-contact')?.value?.trim() || 'na';
+    location.href = `/returns?o=${encodeURIComponent(num)}&contact=${encodeURIComponent(contact)}`;
+  }
+}
+
 function fmt(n){return Number(n).toLocaleString('en-IN',{maximumFractionDigits:0});}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
