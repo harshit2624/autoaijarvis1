@@ -18553,11 +18553,15 @@ async function scGetOrderStatus(orderName, contact) {
     // Orders stuck in new/hold, or cancelled before confirmation, need the
     // customer to actively confirm them — surface that link directly so the
     // bot can offer it instead of just explaining the order isn't moving.
-    const CONFIRMABLE_STAGES = ['new', 'hold'];
-    const confirm_url = CONFIRMABLE_STAGES.includes(payload.stage)
-      ? `${SERVER_URL}/confirm-order?o=${encodeURIComponent(payload.order_name.replace(/^#/, ''))}`
-      : null;
-    return { found: true, ...payload, track_url: SUPPORT_TRACK_URL(payload.order_name, contact), confirm_url };
+    const DISPATCHED_STAGES = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
+    const isPrepaidOrder = order.financial_status === 'paid';
+    const metaDoc = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { advance_paid:1, confirmation_paid:1, _id:0 } }) || {};
+    const alreadyPaid = !!(metaDoc.confirmation_paid) || (parseFloat(metaDoc.advance_paid||0) >= 99) || isPrepaidOrder;
+    const needsConfirm = !isPrepaidOrder && !alreadyPaid && !DISPATCHED_STAGES.includes(payload.stage);
+    const orderPageUrl = `${SERVER_URL}/order?o=${encodeURIComponent(payload.order_name.replace(/^#/, ''))}&contact=na`;
+    const confirm_url = needsConfirm ? orderPageUrl : null;
+    const track_url   = needsConfirm ? null : orderPageUrl;
+    return { found: true, ...payload, track_url, confirm_url, needs_confirm: needsConfirm };
   } catch (e) { return { found: false, error: e.message }; }
 }
 
@@ -18629,7 +18633,7 @@ async function scRunTool(name, args, contact) {
 
 const SC_SYSTEM_PROMPT = `You are the CROSCROW support concierge — warm, sharp, concise, never robotic. You help customers:
 1. Find products ("I'm looking for sweatpants") — use search_products, then describe 2-3 best matches naturally and mention they're shown as cards below your message. If a matching collection page is returned too, mention they can browse the full collection for more options.
-2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking card is shown automatically below your message, so don't repeat every detail — just the headline). If the order's stage is "new", "hold", or "cancelled", a confirm_url will be present in the tool result — proactively tell the customer they need to confirm the order and that the confirm link is shown below your message, instead of just saying it hasn't shipped yet.
+2. Track orders — use get_order_status. Always ask for the order number if not given. Once you have it, briefly summarize the status in plain words (the actual tracking/confirm card is shown automatically below your message). If the result has needs_confirm=true, tell the customer they need to pay ₹99 to get the order moving — the link is shown below. Keep it to one short sentence.
 3. Explain delays — use get_delay_reason. If there's a specific vendor reason, relay it warmly with the ETA. If not, use the generic explanation, but reassure them it's being handled.
 4. Returns/exchanges — use start_return_exchange and point them to the link/card shown below your message.
 Rules:
@@ -18650,19 +18654,19 @@ TOOLS:
 5. check_order_confirmation — use whenever customer mentions confirming order, ₹99 payment, or confirmation link.
 
 ORDER CONFIRMATION PROCESS (very important — know this well):
-- CROSCROW requires a ₹99 advance for COD orders. This is NOT an extra charge — it's adjusted in the final COD amount (customer pays total minus ₹99 at delivery).
-- Purpose: prevents fake/mistaken orders, speeds up dispatch, supports independent brands.
-- Confirmation link format: https://croscrow.com/pages/orderconfirm?o=ORDER_NAME
-- The ₹99 is collected via this link. After payment, team verifies and marks order confirmed.
+- CROSCROW requires a ₹99 advance for all COD orders before dispatch. NOT an extra charge — adjusted at delivery (customer pays ₹99 less COD).
+- Any COD order that isn't prepaid and hasn't paid ₹99 yet will have needs_confirm=true in get_order_status result. The confirmation+payment page link is sent automatically after your reply — do NOT repeat it in your message.
+- When needs_confirm=true: give ONE short sentence telling them to pay ₹99 via the link below. Example: "Pay ₹99 via the link below to confirm your order — it's adjusted at delivery, not extra." That's it. Don't explain the whole system unless they ask why.
 
 HOW TO HANDLE EACH CONFIRMATION SCENARIO:
-- Customer asks "how do I confirm?" or link not received → use check_order_confirmation, if not confirmed send fresh link, say: "Here's your confirmation link — pay ₹99 to get your order moving:"
+- Customer asks order status and needs_confirm=true → say exactly: "Your order needs a ₹99 confirmation payment to start dispatch. Tap the link below — it takes 2 minutes and the amount is adjusted at delivery 👇"
+- Customer asks "how do I confirm?" or link not received → use get_order_status, if needs_confirm say: "Here's your payment link 👇" (link follows automatically)
 - "Link not working / payment page not opening" → say: "I've flagged this to our team right now, they'll send you an alternative shortly." (flags admin)
-- "I already paid ₹99 / sent screenshot" → say: "Thank you! Our team will verify your payment and confirm your order within a few hours. You'll receive a confirmation once done 🙏"
-- "Why do I need to pay ₹99? Other sites don't do this" → say: "The ₹99 is a small advance that gets adjusted in your final delivery amount — so you pay ₹99 less at the door. It helps us ensure orders are genuine and dispatch happens faster for everyone. It's not extra, just early 😊"
-- "I'll pay full on delivery / I don't want to pay ₹99" → say: "Noted! I've flagged this to our team and they'll manually confirm your order. Please keep the full amount ready at delivery. You should receive a confirmation message shortly." (flags admin)
-- "I already confirmed but still getting messages" → use check_order_confirmation to verify; if confirmed say "Your order is confirmed on our end — the messages may have been sent before the update. You're all good!"; if not confirmed, say "There seems to be a delay in the system — I've flagged this to our team to resolve immediately." (flags admin)
-- "I want to cancel my order" → say: "I've noted your cancellation request and flagged it to our team. They'll process it within a few hours and confirm over WhatsApp." (flags admin)
+- "I already paid ₹99 / sent screenshot" → say: "Got it! Our team will verify and confirm your order within a few hours 🙏"
+- "Why ₹99? Other sites don't do this" → say: "It's adjusted at delivery — you pay ₹99 less COD. Confirms the order is genuine so we dispatch faster 😊"
+- "I'll pay full on delivery / don't want to pay ₹99" → say: "Noted, flagging to our team — they'll manually confirm it. Keep full amount ready at delivery." (flags admin)
+- "I already confirmed but still getting messages" → use get_order_status; if needs_confirm=false say "You're confirmed — messages were sent before the update. All good!"; if still needs_confirm say "Flagging to our team to resolve right now." (flags admin)
+- "I want to cancel my order" → say: "Flagged to our team — they'll process it within a few hours and confirm over WhatsApp." (flags admin)
 - "How long will delivery take?" / "When will it arrive?" / "Can you deliver by [date]?" → follow this logic in order:
   1. If delivery_status has a live update (e.g. "Out for Delivery", "In Transit at Delhi") — share that exact status: "Your order is currently [delivery_status]. You should receive it very soon!"
   2. If AWB exists but no live delivery_status — use the dispatch date from the order (created_at or fulfillment date) to give a rough estimate: "Your order was dispatched on [date] — it typically takes 3–5 days to arrive, so you should receive it around [dispatch date + 4 days]. If you need a more precise update, I can connect you with our team 👇\n\n1️⃣ Connect with support team\n\nOr call: 📞 *6375668971* | 🕐 2–8 PM" and set session menu to offer_human.
@@ -18696,15 +18700,14 @@ function waLinksFromMeta(meta) {
   const lines = [];
   if (meta.type === 'tracking_card') {
     const d = meta.data;
-    // Always use contact=na for WhatsApp links — avoids Baileys LID leaking into URLs
-    // and na is accepted by the tracker to view any order without contact validation
-    const trackUrl = d.order_name
-      ? `https://dashboard.croscrow.com/track?order=${encodeURIComponent(d.order_name)}&contact=na`
-      : d.track_url;
-    if (d.confirm_url) {
-      lines.push(`✅ Confirm your order: ${d.confirm_url}`);
-    } else if (trackUrl) {
-      lines.push(`📦 Track your order: ${trackUrl}`);
+    // Single /order page handles both confirm and track — no separate links needed
+    const orderUrl = d.order_name
+      ? `${SERVER_URL}/order?o=${encodeURIComponent(String(d.order_name).replace(/^#/,''))}&contact=na`
+      : d.track_url || d.confirm_url;
+    if (d.needs_confirm && orderUrl) {
+      lines.push(`💳 Pay ₹99 & confirm: ${orderUrl}`);
+    } else if (orderUrl) {
+      lines.push(`📦 Track your order: ${orderUrl}`);
     }
     if (d.return_requests?.length) {
       const open = d.return_requests.find(r => !['completed','rejected','cancelled'].includes(r.status));
@@ -18781,8 +18784,10 @@ async function scRunChatTurn(chat, history, customerText, { systemPrompt, forceC
         else if (tc.function.name === 'get_delay_reason') newTags.add('Delay Inquiry');
         else if (tc.function.name === 'check_order_confirmation') {
           newTags.add('Confirmation Query');
-          if (result.found && !result.confirmed && result.confirm_url) {
-            cardMeta = { type:'action_link', data: { label:'Confirm Your Order', url: result.confirm_url } };
+          // check_order_confirmation is legacy — get_order_status now handles confirm/track in one page
+          if (result.found && !result.confirmed) {
+            const orderUrl = result.confirm_url || result.track_url;
+            if (orderUrl) cardMeta = { type:'action_link', data: { label:'Pay ₹99 & Confirm Order', url: orderUrl } };
           }
         }
         if (result.shopify_order_id) {
@@ -20860,10 +20865,10 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
 
     case 'order_not_confirmed':
       if (num === 1) {
-        const url = d?.confirm_url || trackUrl;
-        await sock.sendMessage(sender, { text: `Here's your order confirmation link 👇\n\n✅ ${url}\n\nTap it and confirm — your vendor will start processing immediately!` });
+        const url = d?.confirm_url || d?.track_url;
+        await sock.sendMessage(sender, { text: `Pay ₹99 to confirm your order 👇\n\n${url}\n\nThis ₹99 is adjusted at delivery — you pay that much less COD.` });
       } else if (num === 2) {
-        await sock.sendMessage(sender, { text: `We confirm orders to make sure you're ready to receive them — it reduces failed deliveries and gets your order moving faster 🚀\n\nOnce confirmed, the vendor starts preparing right away!\n\n✅ Confirm here: ${d?.confirm_url || trackUrl}` });
+        await sock.sendMessage(sender, { text: `The ₹99 is NOT extra — it's deducted from your COD amount at delivery. It confirms you're ready to receive the order so we can start packing right away 🚀` });
       } else if (num === 3) {
         await waTalkToHuman(sock, sender, chat, phone, `Customer needs help confirming order ${d?.order_name || ''}`);
         return true;
@@ -20971,7 +20976,7 @@ async function waMenuForOrder(meta) {
   const stage = d.stage;
   // If AWB exists the order is effectively in transit regardless of DB stage
   const effectiveStage = d.awb ? 'transit' : stage;
-  if (['new', 'hold'].includes(effectiveStage) && d.confirm_url) return { menu: 'order_not_confirmed', orderData: d };
+  if (d.needs_confirm) return { menu: 'order_not_confirmed', orderData: d };
   if (['confirmed', 'partial'].includes(effectiveStage)) {
     const hrs = await waHoursConfirmed(d.shopify_order_id);
     return hrs <= 24
