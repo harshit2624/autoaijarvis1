@@ -488,6 +488,18 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
   </div>
   <div class="step-body">
     <div class="item-select-grid" id="items-grid"></div>
+    <div id="items-admin-wrap" class="hidden" style="margin-top:20px">
+      <span class="admin-code-toggle" id="items-admin-toggle" onclick="toggleItemsAdminCode()">Admin override</span>
+      <div class="admin-code-wrap" id="items-admin-code-wrap">
+        <div class="admin-code-row">
+          <input class="inp" id="items-admin-code-inp" type="text" placeholder="Enter force code"
+            autocomplete="off" style="font-size:14px">
+          <button class="btn-primary" style="width:auto;padding:14px 18px;flex-shrink:0"
+            onclick="applyItemsAdminCode()">Apply</button>
+        </div>
+        <div id="items-admin-code-result"></div>
+      </div>
+    </div>
   </div>
   <div class="step-cta">
     <button class="btn-step" id="items-next-btn" onclick="goToReason()" disabled>
@@ -607,6 +619,7 @@ let adminCodeType = null; // 'fee_waiver' | 'force_enable' | null
 let uploadedPhotoUrls = [];
 let rrFee = 199;
 let submitting = false;
+let adminForceItems = false; // set true when force code applied at items step
 
 const REASONS_RETURN = [
   'Wrong size / fit issue',
@@ -877,6 +890,7 @@ function startFlow(type) {
   adminCodeType = null;
   uploadedPhotoUrls = [];
   Object.keys(itemOptionSel).forEach(k => delete itemOptionSel[k]);
+  adminForceItems = false;
   stepHistory = [];
   buildItemsStep();
   showStep('items');
@@ -903,10 +917,10 @@ function buildItemsStep() {
   const items = orderData?.items || [];
   const returnConfigs = orderData?.return_configs || {};
 
-  // Show notice if some items are blocked in return flow
+  // Show notice + admin override when some items are blocked in return flow
   const blockedCount = !isEx ? items.filter(it => {
     const cfg = returnConfigs[it.vendor] || {};
-    return cfg.return_enabled === false;
+    return cfg.return_enabled === false && !adminForceItems;
   }).length : 0;
   const itemsNotice = document.getElementById('items-step-notice');
   if (itemsNotice) itemsNotice.remove();
@@ -914,14 +928,18 @@ function buildItemsStep() {
     const noticeDiv = document.createElement('div');
     noticeDiv.id = 'items-step-notice';
     noticeDiv.style.cssText = 'margin-bottom:12px';
-    noticeDiv.innerHTML = `<div class="notice-box info">${IC_INFO}<div class="notice-text" style="margin-left:10px">Some items are <strong>exchange only</strong> — the seller does not accept returns for those products.</div></div>`;
+    noticeDiv.innerHTML = `<div class="notice-box info" style="display:flex;gap:10px;align-items:flex-start">${IC_INFO}<div class="notice-text" style="margin-left:2px">Some items are <strong>exchange only</strong> — the seller does not accept returns for those products.</div></div>`;
     document.getElementById('items-grid').before(noticeDiv);
+    // Show admin override section (discreetly)
+    document.getElementById('items-admin-wrap').classList.remove('hidden');
+  } else {
+    document.getElementById('items-admin-wrap').classList.add('hidden');
   }
 
   document.getElementById('items-grid').innerHTML = items.map((it, idx) => {
     const price = parseFloat(it.price) * (it.quantity || 1);
     const vendorCfg = returnConfigs[it.vendor] || {};
-    const returnAllowed = vendorCfg.return_enabled === true || Object.keys(returnConfigs).length === 0;
+    const returnAllowed = vendorCfg.return_enabled === true || Object.keys(returnConfigs).length === 0 || adminForceItems;
     const blocked = !isEx && !returnAllowed; // only block in return flow
 
     return `<div class="item-select-row${blocked ? ' item-blocked' : ''}" id="item-row-${idx}"
@@ -1076,6 +1094,38 @@ function renderVariantPicker(idx, item, data) {
   }
 
   render();
+}
+
+function toggleItemsAdminCode() {
+  const w = document.getElementById('items-admin-code-wrap');
+  w.style.display = w.style.display === 'flex' ? 'none' : 'flex';
+  w.style.flexDirection = 'column';
+}
+
+async function applyItemsAdminCode() {
+  const code = document.getElementById('items-admin-code-inp').value.trim();
+  const resultEl = document.getElementById('items-admin-code-result');
+  if (!code) return;
+  try {
+    const r = await fetch(`${API}/track/validate-admin-code`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ code })
+    });
+    const d = await r.json();
+    if (d.valid && d.type === 'force_enable') {
+      adminForceItems = true;
+      adminCodeType = 'force_enable'; // carry into submission
+      resultEl.innerHTML = `<div class="admin-badge force">✓ Return unlocked for all items</div>`;
+      // Re-render items grid with all items now selectable
+      setTimeout(() => buildItemsStep(), 300);
+    } else if (d.valid && d.type === 'fee_waiver') {
+      adminCodeType = 'fee_waiver';
+      resultEl.innerHTML = `<div class="admin-badge waiver">✓ Fee waiver applied — items still exchange only</div>`;
+    } else {
+      resultEl.innerHTML = `<div class="admin-badge invalid">✗ Invalid code</div>`;
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<div class="admin-badge invalid">✗ Could not validate</div>`;
+  }
 }
 
 function pickOption(itemIdx, optionIdx, val) {
