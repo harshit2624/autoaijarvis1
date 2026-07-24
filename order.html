@@ -903,7 +903,9 @@ function renderConfirm(d) {
   document.getElementById('confirm-view').style.display = 'flex';
   document.getElementById('track-view').style.display = 'none';
 
-  document.getElementById('order-badge').textContent = `ORDER ${d.order_name} · COD ₹${fmt(d.total)}`;
+  const badgeEl = document.getElementById('order-badge');
+  badgeEl.textContent = `ORDER ${d.order_name} · COD ₹${fmt(d.total)}`;
+  badgeEl.classList.remove('hidden');
 
   const firstImg = d.items?.find(i => i.image_url)?.image_url;
   if (firstImg) {
