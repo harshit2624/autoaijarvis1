@@ -18821,10 +18821,12 @@ async function scGetDelayReason(orderName, contact) {
 async function scStartReturnExchange(orderName, contact) {
   const status = await scGetOrderStatus(orderName, contact);
   if (!status.found) return status;
+  const num = String(status.order_name).replace(/^#/, '');
+  const returns_url = `${SERVER_URL}/returns?o=${encodeURIComponent(num)}&contact=na`;
   return {
-    found: true, order_name: status.order_name, track_url: status.track_url,
+    found: true, order_name: status.order_name, track_url: returns_url,
     return_configs: status.return_configs,
-    message: 'Returns and exchanges are started from the order tracking page — it has the full flow (photo upload, reason, pickup scheduling).',
+    message: 'Returns and exchanges can be raised from the link below — photo upload, reason selection and pickup scheduling are all there.',
   };
 }
 
@@ -18842,7 +18844,7 @@ async function scCheckOrderConfirmation(orderName) {
       order_name: order.name,
       confirmed,
       financial_status: order.financial_status,
-      confirm_url: confirmed ? null : `https://croscrow.com/pages/orderconfirm?o=${encodeURIComponent(order.name)}`,
+      confirm_url: confirmed ? null : `${SERVER_URL}/o/${encodeURIComponent(order.name.replace(/^#/, ''))}`,
     };
   } catch (e) { return { found: false, error: e.message }; }
 }
@@ -18946,7 +18948,10 @@ function waLinksFromMeta(meta) {
     }
     if (d.return_requests?.length) {
       const open = d.return_requests.find(r => !['completed','rejected','cancelled'].includes(r.status));
-      if (open?.track_url) lines.push(`🔄 Return/Exchange status: ${open.track_url}`);
+      if (open) {
+        const rrNum = String(d.order_name||'').replace(/^#/,'');
+        lines.push(`🔄 Return/Exchange status: ${SERVER_URL}/returns?o=${encodeURIComponent(rrNum)}&contact=na`);
+      }
     }
   } else if (meta.type === 'action_link') {
     lines.push(`🔗 ${meta.data.label}: ${meta.data.url}`);
