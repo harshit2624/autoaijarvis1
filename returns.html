@@ -828,7 +828,15 @@ function renderPortal(d) {
         noticeEl.classList.remove('hidden');
         noticeEl.innerHTML = (noticeEl.innerHTML || '') + `<div class="notice-box info" style="margin-top:8px">
           <div class="notice-icon" style="color:var(--blue)">${IC_INFO}</div>
-          <div class="notice-text">This vendor does not accept returns — only exchanges are available.</div>
+          <div class="notice-text">This vendor does not accept returns — only exchanges are available. <span class="admin-inline-toggle" onclick="togglePortalAdminCode()" style="color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline;margin-left:4px">Admin override</span></div>
+        </div>
+        <div id="portal-admin-wrap" class="hidden" style="margin-top:10px;padding:12px 14px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Enter force-return code to unlock return option</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="portal-admin-inp" type="text" placeholder="Admin code" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--input-bg);color:var(--text)" />
+            <button onclick="applyPortalAdminCode()" style="padding:8px 14px;background:var(--text);color:var(--bg);border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Apply</button>
+          </div>
+          <div id="portal-admin-result" style="margin-top:6px;font-size:12px"></div>
         </div>`;
       }
     }
@@ -1120,6 +1128,40 @@ async function applyItemsAdminCode() {
     } else if (d.valid && d.type === 'fee_waiver') {
       adminCodeType = 'fee_waiver';
       resultEl.innerHTML = `<div class="admin-badge waiver">✓ Fee waiver applied — items still exchange only</div>`;
+    } else {
+      resultEl.innerHTML = `<div class="admin-badge invalid">✗ Invalid code</div>`;
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<div class="admin-badge invalid">✗ Could not validate</div>`;
+  }
+}
+
+function togglePortalAdminCode() {
+  const w = document.getElementById('portal-admin-wrap');
+  if (w) w.classList.toggle('hidden');
+}
+
+async function applyPortalAdminCode() {
+  const code = (document.getElementById('portal-admin-inp').value || '').trim();
+  const resultEl = document.getElementById('portal-admin-result');
+  if (!code) return;
+  try {
+    const r = await fetch(`${API}/track/validate-admin-code`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ code })
+    });
+    const d = await r.json();
+    if (d.valid && d.type === 'force_enable') {
+      adminForceItems = true;
+      adminCodeType = 'force_enable';
+      resultEl.innerHTML = `<div class="admin-badge force">✓ Return unlocked</div>`;
+      // Show the return button and re-render portal
+      const returnBtn = document.querySelector('.return-card');
+      if (returnBtn) returnBtn.style.display = '';
+      const wrap = document.getElementById('portal-admin-wrap');
+      if (wrap) setTimeout(() => wrap.classList.add('hidden'), 1200);
+    } else if (d.valid && d.type === 'fee_waiver') {
+      adminCodeType = 'fee_waiver';
+      resultEl.innerHTML = `<div class="admin-badge waiver">✓ Fee waiver applied — return still not available from vendor</div>`;
     } else {
       resultEl.innerHTML = `<div class="admin-badge invalid">✗ Invalid code</div>`;
     }
