@@ -5740,6 +5740,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       // confirmedTagMap: for not-confirmed stages, count orders that carry the "Order Confirmed" tag
       const confirmedTagMap = { hold: 0, cancelled: 0, new: 0, misc: 0 };
       let revDispatched=0, revPending=0, revDelivered=0, revInTransit=0, revRto=0, revNotDispatched=0, revNotConfirmed=0, revCancelled=0;
+      let revReady=0, revPickup=0, revTransit=0, revOfd=0, revConfirmed=0, revPartial=0, revNew=0, revHold=0, revMisc=0;
       const IN_TRANSIT_SET = new Set(['ready','pickup','transit']);
       const NOT_CONFIRMED_SET = new Set(['hold','cancelled','new','misc']);
 
@@ -5761,20 +5762,18 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         }
 
         const price = parseFloat(o.total_price || 0);
-        if (DISPATCHED_SET.has(stage)) {
-          revDispatched += price;
-          if (stage === 'delivered') revDelivered += price;
-          else if (stage === 'rto') revRto += price;
-          else if (IN_TRANSIT_SET.has(stage)) revInTransit += price;
-        } else if (PENDING_SET.has(stage)) {
-          revPending += price;
-          revNotDispatched += price;  // confirmed + partial
-        } else if (stage === 'new' || stage === 'hold' || stage === 'misc') {
-          revNotDispatched += price;
-          revNotConfirmed  += price;  // new + hold + misc
-        } else if (stage === 'cancelled') {
-          revCancelled += price;
-        }
+        if (stage === 'delivered')       { revDispatched+=price; revDelivered+=price; }
+        else if (stage === 'rto')        { revDispatched+=price; revRto+=price; }
+        else if (stage === 'ready')      { revDispatched+=price; revInTransit+=price; revReady+=price; }
+        else if (stage === 'pickup')     { revDispatched+=price; revInTransit+=price; revPickup+=price; }
+        else if (stage === 'transit')    { revDispatched+=price; revInTransit+=price; revTransit+=price; }
+        else if (stage === 'ofd')        { revDispatched+=price; revInTransit+=price; revOfd+=price; }
+        else if (stage === 'confirmed')  { revPending+=price; revNotDispatched+=price; revConfirmed+=price; }
+        else if (stage === 'partial')    { revPending+=price; revNotDispatched+=price; revPartial+=price; }
+        else if (stage === 'new')        { revNotDispatched+=price; revNotConfirmed+=price; revNew+=price; }
+        else if (stage === 'hold')       { revNotDispatched+=price; revNotConfirmed+=price; revHold+=price; }
+        else if (stage === 'misc')       { revNotDispatched+=price; revNotConfirmed+=price; revMisc+=price; }
+        else if (stage === 'cancelled')  { revCancelled+=price; }
       });
 
       // Derived counts — all from stageMap (unique orders)
@@ -5803,8 +5802,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         revInTransit:     parseFloat(revInTransit.toFixed(2)),
         revRto:           parseFloat(revRto.toFixed(2)),
         revNotDispatched:  parseFloat(revNotDispatched.toFixed(2)),
-        revNotConfirmed:   parseFloat(revNotConfirmed.toFixed(2)),  // new + hold + misc
+        revNotConfirmed:   parseFloat(revNotConfirmed.toFixed(2)),
         revCancelled:      parseFloat(revCancelled.toFixed(2)),
+        // per-stage revenues
+        revReady: parseFloat(revReady.toFixed(2)), revPickup: parseFloat(revPickup.toFixed(2)),
+        revTransit: parseFloat(revTransit.toFixed(2)), revOfd: parseFloat(revOfd.toFixed(2)),
+        revConfirmedStage: parseFloat(revConfirmed.toFixed(2)), revPartial: parseFloat(revPartial.toFixed(2)),
+        revNew: parseFloat(revNew.toFixed(2)), revHold: parseFloat(revHold.toFixed(2)), revMisc: parseFloat(revMisc.toFixed(2)),
         rto_rate: dispatched > 0 ? Math.round(rto / dispatched * 100) : 0,
         // legacy aliases so existing frontend doesn't break
         confirmed:     active,

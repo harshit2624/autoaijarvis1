@@ -3216,6 +3216,113 @@
             );
           })()}
 
+          {/* ── Revenue Pipeline card ── */}
+          {!aLoading && a?.fulfillStats && (() => {
+            const fs = a.fulfillStats;
+            const sm = fs.stageMap || {};
+            const totalRev = (fs.revDispatched||0)+(fs.revPending||0)+(fs.revNotConfirmed||0)+(fs.revCancelled||0);
+
+            // Dead money: cancelled + RTO — entered the system, won't become payout
+            const deadRev = (fs.revCancelled||0)+(fs.revRto||0);
+            // Revenue at risk: orders in transit × RTO rate (could still return)
+            const rtoRate = fs.dispatched>0 ? (fs.rto||0)/fs.dispatched : 0;
+            const revAtRisk = Math.round((fs.revInTransit||0) * rtoRate);
+            // COD pipeline: delivered orders that haven't been settled yet (approx: revDelivered - revRto)
+            const codPipeline = Math.max(0,(fs.revDelivered||0));
+            // Effective revenue: delivered minus estimated platform share (commission ~20%)
+            const estCommission = Math.round((fs.revDelivered||0)*0.20);
+            const effectiveRev = Math.round((fs.revDelivered||0) - estCommission);
+
+            const pct = v => totalRev>0 ? Math.round(v/totalRev*100) : 0;
+
+            const StageRow = ({label, rev, count, color, indent, subtotal}) => {
+              const w = pct(rev);
+              return (
+                <div style={{padding: subtotal?'6px 0 2px':'3px 0', borderBottom: subtotal?'none':'1px solid var(--border)'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    {indent && <div style={{width:10,flexShrink:0}}/>}
+                    <div style={{flex:1,fontSize: subtotal?10:11,fontWeight:subtotal?800:500,color: subtotal?color:'var(--text-dim)',letterSpacing:subtotal?0.5:0}}>{label}</div>
+                    <div style={{width:60,height:subtotal?5:3,background:'var(--border)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                      <div style={{height:'100%',width:`${w}%`,background:color,borderRadius:2}}/>
+                    </div>
+                    <div style={{fontSize:subtotal?12:10,fontWeight:subtotal?800:600,color,minWidth:72,textAlign:'right'}}>{fmtCur(rev)}</div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{count!=null?count:w+'%'}</div>
+                  </div>
+                </div>
+              );
+            };
+
+            const InsightPill = ({label, value, color, sub}) => (
+              <div style={{background:`${color}12`,border:`1px solid ${color}30`,borderRadius:10,padding:'10px 14px',flex:1,minWidth:120}}>
+                <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color,fontWeight:700,marginBottom:3}}>{label}</div>
+                <div style={{fontSize:16,fontWeight:900,color,lineHeight:1,marginBottom:3}}>{value}</div>
+                {sub && <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.4}}>{sub}</div>}
+              </div>
+            );
+
+            return (
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-header">
+                  <span className="card-title">💰 Revenue Pipeline</span>
+                  <span className="card-sub">Full stage breakdown · {periodLabel}</span>
+                </div>
+                <div style={{padding:'12px 16px',display:'flex',flexDirection:'column',gap:0}}>
+
+                  {/* DISPATCHED group */}
+                  <StageRow label="DISPATCHED" rev={fs.revDispatched||0} count={fs.dispatched||0} color="#10b981" subtotal={true}/>
+                  <StageRow label="Delivered" rev={fs.revDelivered||0} count={sm.delivered||0} color="#10b981" indent={true}/>
+                  <StageRow label="Out for Delivery" rev={fs.revOfd||0} count={sm.ofd||0} color="#34d399" indent={true}/>
+                  <StageRow label="In Transit" rev={fs.revTransit||0} count={sm.transit||0} color="#60a5fa" indent={true}/>
+                  <StageRow label="Pickup Pending" rev={fs.revPickup||0} count={sm.pickup||0} color="#93c5fd" indent={true}/>
+                  <StageRow label="Ready / Packed" rev={fs.revReady||0} count={sm.ready||0} color="#bfdbfe" indent={true}/>
+                  <StageRow label="RTO" rev={fs.revRto||0} count={sm.rto||0} color="#f87171" indent={true}/>
+
+                  <div style={{height:1,background:'var(--border)',margin:'8px 0'}}/>
+
+                  {/* PENDING group */}
+                  <StageRow label="PENDING DISPATCH" rev={fs.revPending||0} count={(sm.confirmed||0)+(sm.partial||0)} color="#f59e0b" subtotal={true}/>
+                  <StageRow label="Confirmed" rev={fs.revConfirmedStage||0} count={sm.confirmed||0} color="#fbbf24" indent={true}/>
+                  <StageRow label="Partial Paid" rev={fs.revPartial||0} count={sm.partial||0} color="#fde68a" indent={true}/>
+
+                  <div style={{height:1,background:'var(--border)',margin:'8px 0'}}/>
+
+                  {/* NOT CONFIRMED group */}
+                  <StageRow label="NOT CONFIRMED" rev={fs.revNotConfirmed||0} count={(sm.new||0)+(sm.hold||0)+(sm.misc||0)} color="#94a3b8" subtotal={true}/>
+                  <StageRow label="New" rev={fs.revNew||0} count={sm.new||0} color="#94a3b8" indent={true}/>
+                  <StageRow label="On Hold" rev={fs.revHold||0} count={sm.hold||0} color="#cbd5e1" indent={true}/>
+                  <StageRow label="Misc" rev={fs.revMisc||0} count={sm.misc||0} color="#e2e8f0" indent={true}/>
+
+                  <div style={{height:1,background:'var(--border)',margin:'8px 0'}}/>
+
+                  {/* CANCELLED */}
+                  <StageRow label="CANCELLED" rev={fs.revCancelled||0} count={sm.cancelled||0} color="#ef4444" subtotal={true}/>
+
+                  {/* Insights row */}
+                  <div style={{marginTop:14,display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <InsightPill
+                      label="Dead Money"
+                      value={fmtCur(deadRev)}
+                      color="#ef4444"
+                      sub={`RTO ₹${Math.round((fs.revRto||0)/1000)}k + Cancelled ₹${Math.round((fs.revCancelled||0)/1000)}k — won't convert`}
+                    />
+                    <InsightPill
+                      label="Revenue at Risk"
+                      value={fmtCur(revAtRisk)}
+                      color="#f59e0b"
+                      sub={`${Math.round(rtoRate*100)}% RTO rate × ₹${Math.round((fs.revInTransit||0)/1000)}k in transit`}
+                    />
+                    <InsightPill
+                      label="Est. Net Payout"
+                      value={fmtCur(effectiveRev)}
+                      color="#10b981"
+                      sub={`Delivered ₹${Math.round((fs.revDelivered||0)/1000)}k minus ~20% platform cut`}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Dispatch Quality card — turnaround time from confirmed → dispatched */}
           {!aLoading && a?.dispatchQuality && (() => {
             const dq = a.dispatchQuality;
