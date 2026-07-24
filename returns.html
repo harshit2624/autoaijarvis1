@@ -830,9 +830,9 @@ function renderPortal(d) {
     // Normal eligible state — reset any dimming applied by earlier branches
     [returnBtn, exchangeBtn].forEach(b => { if(b) { b.style.opacity = ''; b.style.pointerEvents = ''; b.style.display = ''; } });
     actionSec.classList.remove('hidden');
-    // Hide return button if vendor disables returns
+    // Hide return button if vendor disables returns — but not if admin already force-unlocked
     if (returnBtn) {
-      if (!anyReturnEnabled) {
+      if (!anyReturnEnabled && !adminForceItems) {
         returnBtn.style.display = 'none';
         noticeEl.classList.remove('hidden');
         noticeEl.innerHTML = (noticeEl.innerHTML || '') + `<div class="notice-box info" style="margin-top:8px">
