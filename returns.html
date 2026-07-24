@@ -391,7 +391,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
     <input class="inp" id="inp-order" type="text" inputmode="numeric"
       placeholder="Order number (e.g. 2688)" autocomplete="off">
     <input class="inp" id="inp-contact" type="text" inputmode="email"
-      placeholder="Email or phone" autocomplete="off">
+      placeholder="Email or phone (optional)" autocomplete="off">
     <button class="btn-primary" type="button" onclick="doLookup()" id="lookup-btn">Continue</button>
     <div class="err-msg" id="lookup-err"></div>
   </form>
@@ -666,7 +666,6 @@ async function doLookup() {
   const errEl = document.getElementById('lookup-err');
 
   if (!q) { errEl.textContent = 'Please enter your order number.'; return; }
-  if (!fromBot && contact === 'na') { errEl.textContent = 'Please enter your email or phone.'; return; }
   errEl.textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');
