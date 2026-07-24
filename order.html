@@ -616,7 +616,7 @@ html,body{
     <input class="inp" id="inp-order" type="text" inputmode="numeric"
       placeholder="Order number (e.g. 2688)" autocomplete="off" autocorrect="off">
     <input class="inp" id="inp-contact" type="text" inputmode="email"
-      placeholder="Email or phone (optional)" autocomplete="off" autocorrect="off">
+      placeholder="Email or phone" autocomplete="off" autocorrect="off">
     <button class="btn-primary" type="submit" id="lookup-btn">Track Order</button>
     <div class="err-msg" id="lookup-err"></div>
   </form>
@@ -872,8 +872,9 @@ function showScreen(id) {
 
 async function doLookup() {
   const q = document.getElementById('inp-order').value.trim().replace('#','');
-  const contact = document.getElementById('inp-contact').value.trim() || 'na';
+  const contact = (document.getElementById('inp-contact').value.trim() || '').toLowerCase() || 'na';
   if (!q) { document.getElementById('lookup-err').textContent = 'Please enter your order number.'; return; }
+  if (!contact || (contact !== 'na' && contact.length < 3)) { document.getElementById('lookup-err').textContent = 'Please enter your email or phone.'; return; }
   document.getElementById('lookup-err').textContent = '';
   document.getElementById('lookup-btn').disabled = true;
   showScreen('loading-screen');
