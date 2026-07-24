@@ -844,6 +844,26 @@ const API = '';
 let orderData = null;
 let lastContact = 'na';
 let paying = false;
+let confirmPageOpenedAt = null;
+
+function trackConfirmEvent(type, extra) {
+  try {
+    const d = orderData;
+    if (!d) return;
+    const body = {
+      type,
+      shopify_order_id: String(d.shopify_order_id),
+      order_name: d.order_name,
+      products: (d.items||[]).map(i => i.title).filter(Boolean),
+      state: d.shipping_state || '',
+      city: d.shipping_city || '',
+      total: parseFloat(d.total||0),
+      ts: Date.now(),
+      ...extra,
+    };
+    fetch(`${API}/admin/confirm-page-event`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).catch(()=>{});
+  } catch(e) {}
+}
 
 // ── Inline SVG icon sets ──────────────────────────────────────
 const IC = {
@@ -977,6 +997,9 @@ function renderConfirm(d) {
     document.getElementById('product-info').classList.add('hidden');
     document.getElementById('sum-confirm-row').classList.add('hidden');
     document.getElementById('price-cod').textContent = '';
+  } else {
+    confirmPageOpenedAt = Date.now();
+    trackConfirmEvent('view');
   }
 }
 
@@ -1270,6 +1293,8 @@ async function pay(mode) {
           const vd = await vr.json();
           if (!vr.ok){alert(vd.error||'Verification failed');return;}
           orderData.already_confirmed = true;
+          const timeOnPage = confirmPageOpenedAt ? Math.round((Date.now() - confirmPageOpenedAt) / 1000) : null;
+          trackConfirmEvent('paid', { mode, time_on_page_sec: timeOnPage });
           if (mode==='prepaid') document.getElementById('success-sub').innerHTML=`You've paid in full. Your order is confirmed and will be dispatched shortly.`;
           document.getElementById('success-overlay').classList.add('visible');
         } catch(e){alert('Payment verified but could not update. Please contact support.');}

@@ -10966,6 +10966,118 @@
             )}
           </div>
         )}
+        <ConfirmAnalytics token={token} />
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
+     CONFIRM PAGE ANALYTICS
+  ══════════════════════════════════ */
+  function ConfirmAnalytics({ token }) {
+    const [days,    setDays]    = useState(30);
+    const [data,    setData]    = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [tab,     setTab]     = useState('product');
+
+    const load = async (d) => {
+      setLoading(true); setData(null);
+      try {
+        const r = await fetch(`${API}/admin/confirm-analytics?days=${d}`, { headers:{ Authorization:'Bearer '+token } });
+        setData(await r.json());
+      } catch(e) {}
+      setLoading(false);
+    };
+
+    useEffect(() => { load(days); }, []);
+
+    const rateColor = r => r >= 70 ? '#10b981' : r >= 40 ? '#f59e0b' : '#ef4444';
+    const fmtTime = s => s == null ? '—' : s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+    const rows = data ? (tab === 'product' ? data.by_product : data.by_state) : [];
+
+    return (
+      <div style={{marginTop:28}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:20}}>📱</span>
+            <div>
+              <div style={{fontWeight:700,color:'var(--text)',fontSize:15}}>Confirm Page Analytics</div>
+              <div style={{fontSize:11,color:'var(--text-muted)'}}>How customers behave on the ₹99 confirm page</div>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:6}}>
+            {[7,14,30,60].map(d =>
+              <button key={d} className="btn btn-sm btn-ghost"
+                style={{background:days===d?'var(--indigo)':'',color:days===d?'#fff':''}}
+                onClick={()=>{ setDays(d); load(d); }}>{d}d</button>
+            )}
+          </div>
+        </div>
+
+        {loading && <div style={{color:'var(--text-muted)',fontSize:13,padding:'20px 0'}}>Loading…</div>}
+
+        {data && !loading && (
+          <>
+            {/* KPI strip */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10,marginBottom:20}}>
+              {[
+                { label:'Page Views',   value: data.total_views,   sub: 'unique orders' },
+                { label:'Paid',         value: data.total_paid,    sub: 'confirmed' },
+                { label:'Conv. Rate',   value: data.overall_rate+'%', sub: 'views → paid', color: rateColor(data.overall_rate) },
+                { label:'Avg Time (paid)', value: fmtTime(data.avg_time_sec), sub: 'time on page' },
+              ].map(k => (
+                <div key={k.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+                  <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:'1px',textTransform:'uppercase',marginBottom:4}}>{k.label}</div>
+                  <div style={{fontSize:22,fontWeight:700,color:k.color||'var(--text)',fontVariantNumeric:'tabular-nums'}}>{k.value}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{k.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Tab toggle */}
+            <div style={{display:'flex',gap:6,marginBottom:12}}>
+              {[['product','By Product'],['state','By State']].map(([id,lbl]) =>
+                <button key={id} className="btn btn-sm"
+                  style={{background:tab===id?'var(--indigo)':'var(--bg-card)',color:tab===id?'#fff':'var(--text-muted)',border:'1px solid var(--border)'}}
+                  onClick={()=>setTab(id)}>{lbl}</button>
+              )}
+            </div>
+
+            {/* Table */}
+            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:'1px solid var(--border)'}}>
+                    <th style={{padding:'9px 14px',textAlign:'left',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>{tab==='product'?'Product':'State'}</th>
+                    <th style={{padding:'9px 10px',textAlign:'right',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>Views</th>
+                    <th style={{padding:'9px 10px',textAlign:'right',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>Paid</th>
+                    <th style={{padding:'9px 10px',textAlign:'right',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>Rate</th>
+                    <th style={{padding:'9px 14px',textAlign:'right',color:'var(--text-muted)',fontSize:10,letterSpacing:'1px',textTransform:'uppercase'}}>Avg Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && (
+                    <tr><td colSpan={5} style={{padding:'20px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No data yet for this period</td></tr>
+                  )}
+                  {rows.map((r,i) => (
+                    <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                      <td style={{padding:'9px 14px',color:'var(--text)',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}</td>
+                      <td style={{padding:'9px 10px',textAlign:'right',color:'var(--text-muted)',fontVariantNumeric:'tabular-nums'}}>{r.views}</td>
+                      <td style={{padding:'9px 10px',textAlign:'right',color:'var(--text)',fontVariantNumeric:'tabular-nums'}}>{r.paid}</td>
+                      <td style={{padding:'9px 10px',textAlign:'right'}}>
+                        <span style={{fontWeight:700,color:rateColor(r.rate),fontVariantNumeric:'tabular-nums'}}>{r.rate}%</span>
+                        <div style={{height:3,borderRadius:2,background:'var(--border)',marginTop:3,width:60,display:'inline-block',marginLeft:6,verticalAlign:'middle'}}>
+                          <div style={{height:'100%',borderRadius:2,background:rateColor(r.rate),width:Math.min(r.rate,100)+'%'}}/>
+                        </div>
+                      </td>
+                      <td style={{padding:'9px 14px',textAlign:'right',color:'var(--text-muted)',fontVariantNumeric:'tabular-nums'}}>{fmtTime(r.avg_time_sec)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     );
   }

@@ -15076,6 +15076,88 @@ async function reportCronJob() {
 }
 setInterval(reportCronJob, 60 * 60 * 1000); // check every hour
 
+// ── Confirm page event tracking ──────────────────────────────────────────────
+app.post("/admin/confirm-page-event", async (req, res) => {
+  // No auth — called from customer-facing page. Rate-limit by order_name is enough.
+  try {
+    const { type, shopify_order_id, order_name, products, state, city, total, ts, mode, time_on_page_sec } = req.body;
+    if (!type || !shopify_order_id) return res.json({ ok: false });
+    await mdb.collection('confirm_page_events').insertOne({
+      type, shopify_order_id: String(shopify_order_id), order_name,
+      products: products || [], state: state || '', city: city || '',
+      total: total || 0, mode: mode || null,
+      time_on_page_sec: time_on_page_sec || null,
+      ts: ts || Date.now(), created_at: new Date(),
+    });
+    res.json({ ok: true });
+  } catch(e) { res.json({ ok: false }); }
+});
+
+app.get("/admin/confirm-analytics", adminAuth, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days || '30');
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+
+    const events = await mdb.collection('confirm_page_events').find({ created_at: { $gte: since } }).toArray();
+
+    const views = events.filter(e => e.type === 'view');
+    const paids = events.filter(e => e.type === 'paid');
+
+    // Deduplicate views per order (first view only)
+    const viewMap = {};
+    for (const v of views) {
+      if (!viewMap[v.shopify_order_id]) viewMap[v.shopify_order_id] = v;
+    }
+    const uniqueViews = Object.values(viewMap);
+    const paidSet = new Set(paids.map(p => p.shopify_order_id));
+
+    // Overall
+    const totalViews = uniqueViews.length;
+    const totalPaid = uniqueViews.filter(v => paidSet.has(v.shopify_order_id)).length;
+    const overallRate = totalViews ? Math.round(totalPaid / totalViews * 100) : 0;
+    const paidTimes = paids.filter(p => p.time_on_page_sec > 0 && p.time_on_page_sec < 1800).map(p => p.time_on_page_sec);
+    const avgTimeAll = paidTimes.length ? Math.round(paidTimes.reduce((a,b)=>a+b,0)/paidTimes.length) : null;
+
+    // By product
+    const prodMap = {};
+    for (const v of uniqueViews) {
+      const prd = (v.products && v.products[0]) || 'Unknown';
+      if (!prodMap[prd]) prodMap[prd] = { views: 0, paid: 0, times: [] };
+      prodMap[prd].views++;
+      if (paidSet.has(v.shopify_order_id)) {
+        prodMap[prd].paid++;
+        const pt = paids.find(p => p.shopify_order_id === v.shopify_order_id);
+        if (pt?.time_on_page_sec > 0 && pt.time_on_page_sec < 1800) prodMap[prd].times.push(pt.time_on_page_sec);
+      }
+    }
+    const byProduct = Object.entries(prodMap).map(([name, d]) => ({
+      name, views: d.views, paid: d.paid,
+      rate: d.views ? Math.round(d.paid / d.views * 100) : 0,
+      avg_time_sec: d.times.length ? Math.round(d.times.reduce((a,b)=>a+b,0)/d.times.length) : null,
+    })).sort((a,b) => b.views - a.views).slice(0, 20);
+
+    // By state
+    const stateMap = {};
+    for (const v of uniqueViews) {
+      const st = v.state || 'Unknown';
+      if (!stateMap[st]) stateMap[st] = { views: 0, paid: 0, times: [] };
+      stateMap[st].views++;
+      if (paidSet.has(v.shopify_order_id)) {
+        stateMap[st].paid++;
+        const pt = paids.find(p => p.shopify_order_id === v.shopify_order_id);
+        if (pt?.time_on_page_sec > 0 && pt.time_on_page_sec < 1800) stateMap[st].times.push(pt.time_on_page_sec);
+      }
+    }
+    const byState = Object.entries(stateMap).map(([name, d]) => ({
+      name, views: d.views, paid: d.paid,
+      rate: d.views ? Math.round(d.paid / d.views * 100) : 0,
+      avg_time_sec: d.times.length ? Math.round(d.times.reduce((a,b)=>a+b,0)/d.times.length) : null,
+    })).sort((a,b) => b.views - a.views).slice(0, 20);
+
+    res.json({ days, total_views: totalViews, total_paid: totalPaid, overall_rate: overallRate, avg_time_sec: avgTimeAll, by_product: byProduct, by_state: byState });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Report API endpoints ──────────────────────────────────────────────────
 app.get("/admin/reports/settings", adminAuth, async (req, res) => {
   res.json(await RS.get());
@@ -16575,6 +16657,8 @@ app.get("/order/lookup", async (req, res) => {
       customer_email: trackPayload.customer_email,
       customer_phone: trackPayload.customer_phone,
       created_at: order.created_at,
+      shipping_city: order.shipping_address?.city || order.billing_address?.city || '',
+      shipping_state: order.shipping_address?.province || order.billing_address?.province || '',
     });
   } catch (e) {
     console.error('❌ /order/lookup:', e.message);
