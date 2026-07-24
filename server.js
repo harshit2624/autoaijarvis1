@@ -16538,7 +16538,17 @@ async function buildOrderPayload(order) {
     title: li.title, variant_title: li.variant_title, sku: li.sku,
     qty: li.quantity, price: li.price, vendor: li.vendor || '',
   }));
-  const stage = meta.stage || 'new';
+  // Use the most-advanced stage across order_meta and all vendor stages
+  // so vendor dispatching (OVS → ready) is immediately reflected even if order_meta lags
+  const STAGE_ORD = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+  const metaStage = meta.stage || 'new';
+  let bestIdx = STAGE_ORD.indexOf(metaStage);
+  if (bestIdx < 0) bestIdx = 0;
+  for (const vs of vendorStages) {
+    const vi = STAGE_ORD.indexOf(vs.stage);
+    if (vi > bestIdx) bestIdx = vi;
+  }
+  const stage = STAGE_ORD[bestIdx] || metaStage;
   let awb = null, trackingUrl = null;
   for (const f of (order.fulfillments || [])) { if (f.tracking_number) { awb = f.tracking_number; trackingUrl = f.tracking_url || null; break; } }
   const customerName = order.shipping_address
