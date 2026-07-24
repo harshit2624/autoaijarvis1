@@ -901,28 +901,51 @@ function buildItemsStep() {
     : 'Select items you want to return';
 
   const items = orderData?.items || [];
+  const returnConfigs = orderData?.return_configs || {};
+
+  // Show notice if some items are blocked in return flow
+  const blockedCount = !isEx ? items.filter(it => {
+    const cfg = returnConfigs[it.vendor] || {};
+    return cfg.return_enabled === false;
+  }).length : 0;
+  const itemsNotice = document.getElementById('items-step-notice');
+  if (itemsNotice) itemsNotice.remove();
+  if (!isEx && blockedCount > 0) {
+    const noticeDiv = document.createElement('div');
+    noticeDiv.id = 'items-step-notice';
+    noticeDiv.style.cssText = 'margin-bottom:12px';
+    noticeDiv.innerHTML = `<div class="notice-box info">${IC_INFO}<div class="notice-text" style="margin-left:10px">Some items are <strong>exchange only</strong> — the seller does not accept returns for those products.</div></div>`;
+    document.getElementById('items-grid').before(noticeDiv);
+  }
+
   document.getElementById('items-grid').innerHTML = items.map((it, idx) => {
     const price = parseFloat(it.price) * (it.quantity || 1);
-    return `<div class="item-select-row" id="item-row-${idx}" onclick="toggleItem(${idx})">
+    const vendorCfg = returnConfigs[it.vendor] || {};
+    const returnAllowed = vendorCfg.return_enabled === true || Object.keys(returnConfigs).length === 0;
+    const blocked = !isEx && !returnAllowed; // only block in return flow
+
+    return `<div class="item-select-row${blocked ? ' item-blocked' : ''}" id="item-row-${idx}"
+        onclick="${blocked ? '' : `toggleItem(${idx})`}" style="${blocked ? 'cursor:default;opacity:.55' : ''}">
       ${it.image_url
         ? `<img class="item-sel-thumb" src="${esc(it.image_url)}" alt="">`
         : `<div class="item-sel-ph"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`}
       <div class="item-sel-info">
         <div class="item-sel-title">${esc(it.title)}</div>
         <div class="item-sel-meta">${esc(it.variant_title || '')}${it.quantity > 1 ? ` · ×${it.quantity}` : ''}</div>
+        ${blocked ? `<div style="margin-top:4px;display:inline-block;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px;border-radius:100px;background:var(--blue-light);color:var(--blue);border:1px solid var(--blue-border)">Exchange only</div>` : ''}
       </div>
       <div class="item-sel-price">₹${fmt(price)}</div>
-      <div class="check-circle" id="check-${idx}">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-      </div>
+      ${blocked
+        ? `<div style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);background:var(--bg);flex-shrink:0"></div>`
+        : `<div class="check-circle" id="check-${idx}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`}
     </div>
-    ${isEx ? `<div class="variant-picker hidden" id="variant-picker-${idx}">
+    ${!blocked && isEx ? `<div class="variant-picker hidden" id="variant-picker-${idx}">
       <div class="variant-loading" id="variant-loading-${idx}">
         <div class="mini-spin"></div> Loading options…
       </div>
       <div id="variant-options-${idx}" class="hidden"></div>
     </div>` : ''}
-    ${it.quantity > 1 ? `<div class="qty-row hidden" id="qty-row-${idx}">
+    ${!blocked && it.quantity > 1 ? `<div class="qty-row hidden" id="qty-row-${idx}">
       <span class="qty-label">Qty to ${flowType}:</span>
       <div class="qty-ctrl">
         <button class="qty-btn" onclick="changeQty(${idx},-1,event)">−</button>

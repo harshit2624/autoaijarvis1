@@ -16542,6 +16542,7 @@ app.get("/order/lookup", async (req, res) => {
       title: li.title, variant_title: li.variant_title || '',
       quantity: li.quantity, price: li.price, image_url: li.image_url || null,
       product_id: li.product_id || null, variant_id: li.variant_id || null,
+      vendor: li.vendor || '',
     }));
 
     // Build track payload
