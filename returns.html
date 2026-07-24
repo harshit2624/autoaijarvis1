@@ -857,9 +857,16 @@ function renderPortal(d) {
 
   showScreen('portal-screen');
 
-  // Auto-start flow if action param passed
+  // Auto-highlight the relevant button if action param passed — do NOT skip portal eligibility checks
   if (urlType === 'return' || urlType === 'exchange') {
-    setTimeout(() => startFlow(urlType), 200);
+    setTimeout(() => {
+      const btn = document.querySelector(urlType === 'return' ? '.return-card' : '.exchange-card');
+      if (btn && btn.style.display !== 'none') {
+        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        btn.style.boxShadow = '0 0 0 3px var(--blue)';
+        setTimeout(() => { btn.style.boxShadow = ''; }, 2000);
+      }
+    }, 300);
   }
 }
 
