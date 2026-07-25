@@ -16641,13 +16641,13 @@ app.get("/order", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'order.html'));
 });
 
-// Short link — /o/2558 or /o/#2558 (hash read client-side) or /o/%232558
-app.get("/o/:num?", (req, res) => {
-  const num = (req.params.num || '').replace(/^#/, '');
-  if (num) {
-    return res.redirect(302, `/order?order=${encodeURIComponent(num)}&contact=na`);
-  }
-  // No num in path — order.name sent as URL fragment (#2743), read it client-side
+// Short link — /o/2558 or /o/%232558
+app.get("/o/:num", (req, res) => {
+  const num = req.params.num.replace(/^#/, '');
+  res.redirect(302, `/order?order=${encodeURIComponent(num)}&contact=na`);
+});
+// Short link — /o/#2743 (Shopify {{order.name}} sends hash, read client-side)
+app.get("/o", (req, res) => {
   res.send(`<!doctype html><html><head><meta charset="utf-8">
 <script>
   var h = location.hash.replace(/^#/,'') || new URLSearchParams(location.search).get('o') || '';
