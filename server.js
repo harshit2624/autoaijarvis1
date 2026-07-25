@@ -16641,11 +16641,19 @@ app.get("/order", (req, res) => {
   res.sendFile(require('path').join(__dirname, 'order.html'));
 });
 
-// Short link for direct customer sends — /o/2558 or /o/%232558
-// No contact verification needed since we're sending the link directly to them
-app.get("/o/:num", (req, res) => {
-  const num = req.params.num.replace(/^#/, '');
-  res.redirect(302, `/order?order=${encodeURIComponent(num)}&contact=na`);
+// Short link — /o/2558 or /o/#2558 (hash read client-side) or /o/%232558
+app.get("/o/:num?", (req, res) => {
+  const num = (req.params.num || '').replace(/^#/, '');
+  if (num) {
+    return res.redirect(302, `/order?order=${encodeURIComponent(num)}&contact=na`);
+  }
+  // No num in path — order.name sent as URL fragment (#2743), read it client-side
+  res.send(`<!doctype html><html><head><meta charset="utf-8">
+<script>
+  var h = location.hash.replace(/^#/,'') || new URLSearchParams(location.search).get('o') || '';
+  if (h) { location.replace('/order?order=' + encodeURIComponent(h) + '&contact=na'); }
+  else { location.replace('/order'); }
+</script></head><body></body></html>`);
 });
 
 app.get("/returns", (req, res) => {
