@@ -853,11 +853,13 @@ app.post('/admin/staff', adminAuth, async (req, res) => {
   res.json({ success: true, username: clean, password: password || STAFF_DEFAULT_PASS });
 });
 app.put('/admin/staff/:username', adminAuth, async (req, res) => {
-  const { name, permissions, password } = req.body || {};
+  const { name, permissions, password, wa_phone, wa_topics } = req.body || {};
   const fields = {};
   if (name !== undefined) fields.name = name;
   if (Array.isArray(permissions)) fields.permissions = permissions;
   if (password) fields.password_hash = hashStaffPassword(password);
+  if (wa_phone !== undefined) fields.wa_phone = (wa_phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+  if (Array.isArray(wa_topics)) fields.wa_topics = wa_topics;
   await mdb.collection('staff_accounts').updateOne({ username: req.params.username }, { $set: fields });
   auditLog('admin', 'staff_update', req.params.username, { permissions });
   res.json({ success: true });
@@ -21351,6 +21353,28 @@ async function waSessionClear(sender) {
 const WA_ADMIN_NO = process.env.WHATSAPP_ADMIN_NUMBER || '8209544626';
 const WA_ADMIN_CODE = process.env.WHATSAPP_ADMIN_CODE || '4626';
 
+// ── Staff WA notification broadcast ──────────────────────────────────────────
+// Topics: 'order_ticket' | 'stuck_orders' | 'dispatch_alert' | 'support_escalation' | 'digest'
+async function notifyStaff(topic, message) {
+  if (!mdb || !waSocket) return;
+  try {
+    const staffList = await mdb.collection('staff_accounts').find(
+      { wa_phone: { $exists: true, $ne: '' } },
+      { projection: { wa_phone: 1, wa_topics: 1, name: 1 } }
+    ).toArray();
+    for (const s of staffList) {
+      const topics = s.wa_topics || ['order_ticket','stuck_orders','dispatch_alert','support_escalation','digest'];
+      if (!topics.includes(topic)) continue;
+      const raw = (s.wa_phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+      if (raw.length !== 10) continue;
+      const jid = `91${raw}@s.whatsapp.net`;
+      waSocket.sendMessage(jid, { text: message }).catch(e => console.error(`Staff WA notify failed (${s.name}):`, e.message));
+    }
+  } catch (e) {
+    console.error('notifyStaff error:', e.message);
+  }
+}
+
 async function waAdminSessionSet(sender) {
   // Admin mode stored separately with no expiry — persists until explicitly cleared
   await mdb.collection('wa_admin_sessions').updateOne(
@@ -21376,7 +21400,7 @@ async function waLogVendorSendFailure(vendor, phone, type, orderName, error) {
   } catch (_) {}
 }
 
-async function waAdminAlert(message) {
+async function waAdminAlert(message, staffTopic = null) {
   if (!waSocket) return;
   try {
     // Prefer the resolved JID from DB (handles LID-based accounts on newer WA)
@@ -21395,6 +21419,7 @@ async function waAdminAlert(message) {
     }
     const jid = adminJidDoc?.jid || `91${WA_ADMIN_NO}@s.whatsapp.net`;
     await waSocket.sendMessage(jid, { text: message });
+    if (staffTopic) notifyStaff(staffTopic, message).catch(()=>{});
   } catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
 
@@ -21495,6 +21520,10 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
     });
     ticketId = r.insertedId;
   }
+
+  // Notify staff
+  const staffMsg = `🎫 *Admin Order Ticket ${existingTicket ? 'Updated' : 'Created'}*\n\n📦 Order: *${orderName}*${vendor_name ? `\n🏪 Vendor: ${vendor_name}` : ''}\n📋 Issue: ${issue_type.replace(/_/g,' ')}\n🚨 Priority: ${priority.toUpperCase()}\n\n"${description}"`;
+  notifyStaff('order_ticket', staffMsg).catch(()=>{});
 
   const lines = [`🎫 *Ticket ${existingTicket ? 'Updated' : 'Created'}* — ${orderName}`];
   if (vendor_name) lines.push(`🏪 Vendor: ${vendor_name}`);
@@ -21613,6 +21642,7 @@ ${urgentLines.length ? `\n*Most Urgent (48h+):*\n${urgentLines.join('\n')}` : ''
 Use *!stuck* for full list · *!tickets* for tickets · *!digest* to refresh`;
 
     await sock.sendMessage(adminJid, { text: msg });
+    notifyStaff('digest', msg).catch(()=>{});
   } catch (e) {
     console.error('adminMorningDigest error:', e.message);
   }
@@ -21923,7 +21953,7 @@ async function ticketSLACron() {
           { _id: t._id },
           { $set: { status: 'overdue', updated_at: new Date().toISOString() } }
         );
-        await waAdminAlert(`🚨 *Ticket Overdue — 8h SLA breached*\n${categoryLabel}\nOrder / Customer: *${label}*\n\n🔗 ${panelLink}`);
+        await waAdminAlert(`🚨 *Ticket Overdue — 8h SLA breached*\n${categoryLabel}\nOrder / Customer: *${label}*\n\n🔗 ${panelLink}`, 'support_escalation');
       }
 
       // T+12h — ping vendor if dispatch/return issue and not already pinged
@@ -21972,6 +22002,73 @@ setInterval(async () => {
   }
 }, 10 * 60 * 1000); // check every 10 min
 
+// ── Dispatch alert cron — every 2h, fires alerts for orders stuck >4 days ──
+let _dispatchAlertLastRun = 0;
+async function dispatchAlertCron() {
+  if (!mdb || !waSocket) return;
+  const now = Date.now();
+  if (now - _dispatchAlertLastRun < 90 * 60 * 1000) return; // min 90min between runs
+  _dispatchAlertLastRun = now;
+  try {
+    const cutoff4d = now - 4 * 24 * 3600000;
+    const STUCK_STAGES = ['confirmed', 'processing', 'packed'];
+
+    // Get all vendor stages stuck >4 days
+    const stuckRows = await mdb.collection('order_vendor_stage').find(
+      { stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff4d } }
+    ).sort({ stage_started_at: 1 }).limit(30).toArray();
+
+    if (!stuckRows.length) return;
+
+    // Dedup — only fire once per order per day
+    const deduped = [];
+    for (const r of stuckRows) {
+      const key = `dispatch_alert:${r.shopify_id}:${r.vendor_name}`;
+      const recent = await mdb.collection('staff_alert_log').findOne({ key, sent_at: { $gt: now - 20 * 3600000 } });
+      if (!recent) deduped.push(r);
+    }
+    if (!deduped.length) return;
+
+    // Enrich with order meta
+    const shopifyIds = [...new Set(deduped.map(r => r.shopify_id))];
+    const metas = await mdb.collection('order_meta').find(
+      { shopify_order_id: { $in: shopifyIds } },
+      { projection: { shopify_order_id: 1, order_name: 1, payment_status: 1, partial_payment: 1, customer_name: 1, _id: 0 } }
+    ).toArray();
+    const metaMap = {};
+    for (const m of metas) metaMap[String(m.shopify_order_id)] = m;
+
+    const lines = [];
+    for (const r of deduped) {
+      const meta = metaMap[String(r.shopify_id)] || {};
+      const daysStuck = Math.floor((now - r.stage_started_at) / 86400000);
+      const orderRef = meta.order_name || `#${r.shopify_id}`;
+      const isPrepaid = meta.payment_status === 'paid' || (!meta.partial_payment);
+      const payTag = isPrepaid ? '💳 Prepaid' : '🔶 Partial/COD';
+      lines.push(`• *${orderRef}* (${r.vendor_name}) — ${r.stage} ${daysStuck}d | ${payTag}`);
+      await mdb.collection('staff_alert_log').updateOne(
+        { key: `dispatch_alert:${r.shopify_id}:${r.vendor_name}` },
+        { $set: { key: `dispatch_alert:${r.shopify_id}:${r.vendor_name}`, sent_at: now } },
+        { upsert: true }
+      );
+    }
+
+    const msg =
+`🚨 *Dispatch Alert — Orders Stuck 4+ Days* (${deduped.length})
+
+${lines.join('\n')}
+
+Please follow up with vendors or escalate. Use *!stuck* for full list.
+
+_CROSCROW Ops_`;
+
+    await waAdminAlert(msg, 'dispatch_alert');
+  } catch (e) {
+    console.error('dispatchAlertCron error:', e.message);
+  }
+}
+setInterval(dispatchAlertCron, 2 * 60 * 60 * 1000); // every 2h
+
 async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerMsg = true, forceMsg = false } = {}) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
   const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID — Order ${_hci.order_name}` : null);
@@ -21992,7 +22089,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
   // Create ticket first so WA alert includes ticket context
   const ticket = await createSupportTicket(chat, context).catch(() => null);
 
-  await waAdminAlert(`🎫 *New Support Ticket*\n${_category}\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\nSLA: 8 hours\n\n🔗 ${_panelLink}`);
+  await waAdminAlert(`🎫 *New Support Ticket*\n${_category}\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\nSLA: 8 hours\n\n🔗 ${_panelLink}`, 'support_escalation');
 
   // Only send the customer-facing message if this is a fresh escalation (not already done recently)
   const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
