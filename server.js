@@ -14438,6 +14438,33 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
       { $set: { [`wa_notif_sent.${stage}`]: new Date().toISOString() } }
     );
     console.log(`📲 WA notif sent: ${orderName} → ${stage} → +91${digits}`);
+
+    // Fix #5: Proactive resolution — if customer has an open support chat for this order, auto-resolve it
+    if (['pickup','delivered'].includes(stage) && mdb) {
+      try {
+        const openChat = await mdb.collection('support_chats').findOne({
+          $or: [
+            { order_name: { $regex: String(orderName).replace(/^#/,''), $options:'i' } },
+            { shopify_order_id: String(shopifyId) },
+            { whatsapp_sender: `91${digits}@s.whatsapp.net` }
+          ],
+          resolved: { $ne: true },
+        });
+        if (openChat) {
+          const proactiveMsg = stage === 'delivered'
+            ? `Your order *${orderName}* has been delivered! 🎊 Hope you love your CROSCROW picks!\n\nIf anything's not right, just reply here within 7 days and we'll sort it out 🙏`
+            : `Great news! Your order *${orderName}* just shipped 🚀\n\nTrack it here: ${`${process.env.SERVER_URL || ''}/o/${String(orderName).replace(/^#/,'')}`}`;
+          if (waSocket && waConnected) {
+            await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: proactiveMsg }).catch(() => {});
+          }
+          await mdb.collection('support_chats').updateOne(
+            { _id: openChat._id },
+            { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+          );
+          console.log(`✅ Proactive resolve: support chat for ${orderName} auto-closed on ${stage}`);
+        }
+      } catch (e) { console.error('Proactive resolve error:', e.message); }
+    }
   } catch (e) {
     console.error(`❌ WA notif failed (${orderName} ${stage}):`, e.message);
   }
@@ -19019,7 +19046,44 @@ const SUPPORT_TOOLS = [
   { type:'function', function:{ name:'get_delay_reason', description:'Explain why an order has not shipped yet — checks if the vendor submitted a specific delay reason, otherwise gives a generic explanation.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'start_return_exchange', description:'Customer wants to return or exchange an item from an order. Returns a link to the self-serve return/exchange flow.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
   { type:'function', function:{ name:'check_order_confirmation', description:'Check if a COD order has been confirmed (has Order Confirmed tag on Shopify). Use when customer asks about confirming their order, says they already paid ₹99, or says the confirmation link is not working.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
+  { type:'function', function:{ name:'get_orders_by_phone', description:'Look up ALL orders placed by this customer using their WhatsApp phone number. Use this when customer doesn\'t know or doesn\'t mention their order number — do NOT ask for order number first, call this tool immediately. Returns their most recent orders so you can help without making them search.', parameters:{ type:'object', properties:{}, required:[] } } },
+  { type:'function', function:{ name:'get_return_status', description:'Check the status of a return or exchange request for a given order number. Use when customer asks "where is my return?", "when will I get my refund?", "what happened to my exchange?" etc.', parameters:{ type:'object', properties:{ order_name:{type:'string'} }, required:['order_name'] } } },
 ];
+
+async function scGetOrdersByPhone(phone) {
+  if (!phone || phone === 'unknown') return { found: false, message: 'Phone number not available' };
+  const digits = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10) return { found: false, message: 'Could not determine phone number' };
+  const orders = await mdb.collection('order_meta').find(
+    { customer_phone: { $regex: digits } },
+    { projection: { shopify_id: 1, order_name: 1, stage: 1, created_at: 1, customer_name: 1, _id: 0 } }
+  ).sort({ created_at: -1 }).limit(3).toArray();
+  if (!orders.length) return { found: false, message: 'No orders found for this phone number' };
+  // For most recent order, get full status
+  const top = orders[0];
+  const fullStatus = await scGetOrderStatus(top.order_name, 'na');
+  return { found: true, orders: orders.map(o => ({ order_name: o.order_name, stage: o.stage, placed_at: o.created_at })), primary: fullStatus };
+}
+
+async function scGetReturnStatus(order_name) {
+  if (!order_name) return { found: false, message: 'Order number required' };
+  const name = String(order_name).replace(/^#/, '').trim();
+  const rr = await mdb.collection('return_requests').findOne(
+    { order_name: { $regex: name, $options: 'i' } },
+    { sort: { created_at: -1 }, projection: { request_id:1, type:1, status:1, items:1, created_at:1, reverse_shipment:1, forward_shipment:1, _id:0 } }
+  );
+  if (!rr) return { found: false, message: `No return or exchange request found for order #${name}` };
+  const STATUS_LABELS = { submitted:'Request received', pickup_scheduled:'Pickup scheduled', picked_up:'Item picked up', received_at_warehouse:'Received at warehouse', refund_initiated:'Refund initiated', exchange_dispatched:'Exchange shipped', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
+  return {
+    found: true,
+    type: rr.type || 'return',
+    status: rr.status,
+    status_label: STATUS_LABELS[rr.status] || rr.status,
+    items: (rr.items || []).map(i => i.title || i.product_title || 'item'),
+    created_at: rr.created_at,
+    awb: rr.reverse_shipment?.awb || rr.forward_shipment?.awb || null,
+  };
+}
 
 async function scRunTool(name, args, contact) {
   switch (name) {
@@ -19028,6 +19092,8 @@ async function scRunTool(name, args, contact) {
     case 'get_delay_reason':         return scGetDelayReason(args.order_name, contact);
     case 'start_return_exchange':    return scStartReturnExchange(args.order_name, contact);
     case 'check_order_confirmation': return scCheckOrderConfirmation(args.order_name);
+    case 'get_orders_by_phone':      return scGetOrdersByPhone(contact);
+    case 'get_return_status':        return scGetReturnStatus(args.order_name);
     default: return { error: 'Unknown tool' };
   }
 }
@@ -19046,6 +19112,7 @@ Rules:
 const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CROSCROW support concierge — warm, sharp, concise, never robotic. You're replying on WhatsApp so there are NO cards or buttons — only plain text.
 
 TOOLS:
+0. get_orders_by_phone — use IMMEDIATELY when customer doesn't mention their order number or doesn't know it. Do NOT ask them to find the number — call this tool first. It auto-looks up their orders by WhatsApp number. If you get results, present the most recent order status and ask if this is the one they're asking about.
 1. search_products — when customer is browsing/shopping. Two possible results:
    • If result has products: describe 2-3 matches naturally ("We have X, Y and Z — here are the links:"). Links follow automatically.
    • If result has curated_url=true (no products, just a collections entry): say something like "Here's our full [category] collection — browse and pick what you like 👇" and the link is appended automatically. Keep it short.
@@ -19053,6 +19120,7 @@ TOOLS:
 3. get_delay_reason — explain why order hasn't shipped. Relay vendor reason warmly with ETA if available.
 4. start_return_exchange — customer wants return/exchange. Link follows automatically.
 5. check_order_confirmation — use whenever customer mentions confirming order, ₹99 payment, or confirmation link.
+6. get_return_status — use when customer asks about their return, exchange status, or refund update by order number. Gives live RR request status (pickup_scheduled, picked_up, refund_initiated etc.).
 
 ORDER CONFIRMATION PROCESS (very important — know this well):
 - CROSCROW requires a ₹99 advance for all COD orders before dispatch. NOT an extra charge — adjusted at delivery (customer pays ₹99 less COD).
@@ -19081,8 +19149,9 @@ REFUND RULES (very important):
 - For RTO orders (returned to origin): refund is processed within 3-5 business days once item is received at our warehouse.
 
 ORDER NUMBER HELP:
-- If customer seems to not know their order number, first tell them: "Your order number is a 4-digit number like #2434. You can find it in the confirmation message or email you received from CROSCROW." Do not immediately ask for phone number.
-- Only if they still can't find it after that guidance, our system will ask for their mobile number separately.
+- If customer seems to not know their order number, IMMEDIATELY call get_orders_by_phone — it automatically looks them up by their WhatsApp number. Do NOT ask them to find their order number first. Just say "Let me check your orders right away!" and call the tool. Only if get_orders_by_phone returns no results should you ask them to check their confirmation message.
+- get_return_status — use when customer asks about their return, exchange, or refund status by order number. Gives current status of RR request.
+- get_orders_by_phone returns their most recent orders automatically — no phone number argument needed.
 
 RULES:
 - CRITICAL: call the relevant tool on EVERY turn that needs live data. Never answer from memory.
@@ -19137,7 +19206,7 @@ async function scCallLLM(messages) {
       const r = await fetch(apiUrl, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${apiKey}` },
-        body: JSON.stringify({ model, max_tokens:500, messages, tools: SUPPORT_TOOLS, tool_choice:'auto' }),
+        body: JSON.stringify({ model, max_tokens:800, messages, tools: SUPPORT_TOOLS, tool_choice:'auto' }),
         signal: controller.signal,
       });
       const d = await r.json();
@@ -19157,8 +19226,18 @@ async function scRunChatTurn(chat, history, customerText, { systemPrompt, forceC
   const contact = forceContact || chat.customer_email || chat.customer_phone || '';
   // Trim to last 12 messages — prevents context pollution when customer queries multiple orders
   const recentHistory = history.slice(-12);
+  // Inject known context (order memory, customer name) so bot doesn't re-ask
+  let sysContent = systemPrompt || SC_SYSTEM_PROMPT;
+  const knownOrder = chat.order_name || chat.last_order_name || null;
+  const knownName = chat.customer_name || null;
+  if (knownOrder || knownName) {
+    const hints = [];
+    if (knownName) hints.push(`Customer's name: ${knownName}`);
+    if (knownOrder) hints.push(`Customer's most recent order: #${String(knownOrder).replace(/^#/, '')} — use this if they ask without specifying an order number`);
+    sysContent = sysContent + `\n\n[Known context: ${hints.join(' | ')}]`;
+  }
   const messages = [
-    { role:'system', content: systemPrompt || SC_SYSTEM_PROMPT },
+    { role:'system', content: sysContent },
     ...recentHistory.map(m => ({ role: m.sender === 'customer' ? 'user' : (m.sender === 'assistant' ? 'assistant' : 'user'), content: m.sender==='vendor'||m.sender==='admin' ? `[${m.sender} note: ${m.text}]` : m.text })),
     { role:'user', content: customerText },
   ];
@@ -19185,6 +19264,15 @@ async function scRunChatTurn(chat, history, customerText, { systemPrompt, forceC
         }
         else if (tc.function.name === 'search_products' && (result.found || result.collections?.length)) { cardMeta = { type:'product_cards', data: { products: result.products, collections: result.collections || [] } }; newTags.add('Product Inquiry'); }
         else if (tc.function.name === 'start_return_exchange' && result.found) { cardMeta = { type:'action_link', data: { label:'Open Return/Exchange', url: result.track_url } }; newTags.add('Exchange Issue'); }
+        else if (tc.function.name === 'get_orders_by_phone' && result.found && result.primary?.found) {
+          const p = result.primary;
+          const existingChat = await scFindExistingChatForOrder(p.shopify_order_id, chat._id);
+          cardMeta = { type:'tracking_card', data: { ...p, existing_chat: existingChat } };
+          if (['new','confirmed','partial','hold'].includes(p.stage)) newTags.add('Not Dispatched');
+          if (p.stage === 'rto') newTags.add('RTO');
+          if (p.shopify_order_id) await SC.update(chat._id, { order_name: p.order_name, shopify_order_id: String(p.shopify_order_id), vendor_names: p.vendor_names || [] });
+        }
+        else if (tc.function.name === 'get_return_status' && result.found) { newTags.add(result.type === 'exchange' ? 'Exchange Issue' : 'Return Issue'); }
         else if (tc.function.name === 'get_delay_reason') newTags.add('Delay Inquiry');
         else if (tc.function.name === 'check_order_confirmation') {
           newTags.add('Confirmation Query');
@@ -20089,7 +20177,46 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
   const chat = await SC.get(req.params.id);
   if (!chat) return res.status(404).json({ error: 'Chat not found' });
   const msg = await SC.addMessage(chat._id, { sender:'admin', sender_name:'CROSCROW Support', text: text.trim() });
+
+  // Close any open ticket for this chat
+  await closeSupportTicket(chat._id, 'admin').catch(() => {});
+
+  // Re-enable bot and unmark needs_human so bot can follow up if needed
+  await mdb.collection('support_chats').updateOne(
+    { _id: chat._id },
+    { $set: { bot_paused_until: 0, updated_at: new Date().toISOString() } }
+  );
+
+  // Ping customer on WA so they know team replied
+  if (chat.whatsapp_sender && waSocket && waConnected) {
+    const custJid = chat.whatsapp_sender;
+    const notif = `Hi! 👋 Our support team just left you a message above 👆\n\nLet us know if you need anything else!`;
+    await waSocket.sendMessage(custJid, { text: notif }).catch(() => {});
+    await SC.addMessage(chat._id, { sender: 'assistant', text: notif });
+  }
+
   res.json({ message: msg });
+});
+
+// ── Support tickets API ───────────────────────────────────────────────────
+app.get('/admin/support/tickets', adminAuth, async (req, res) => {
+  try {
+    const status = req.query.status; // 'open','in_progress','overdue','closed' or omit for all active
+    const query = status ? { status } : { status: { $in: ['open','in_progress','overdue'] } };
+    const tickets = await mdb.collection('support_tickets').find(query).sort({ created_at: -1 }).limit(100).toArray();
+    res.json({ tickets });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/support/tickets/:id/close', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    await mdb.collection('support_tickets').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status: 'closed', closed_at: new Date().toISOString(), closed_by: 'admin', updated_at: new Date().toISOString() } }
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Vendor panel (logged-in) view of their own order chats ─────────────────
@@ -21330,6 +21457,130 @@ async function waDelayReason(shopifyOrderId) {
 
 // ── Escalate to human + pause bot ────────────────────────────────────────
 // sendCustomerMsg: true = send the handoff line to customer (only on first escalation or explicit request)
+// ── Detect issue category from chat tags for ticket classification ────────
+function scTicketCategory(chat) {
+  const tags = (chat.tags || []).map(t => t.toLowerCase());
+  if (tags.some(t => t.includes('exchange') || t.includes('return'))) return 'return_exchange';
+  if (tags.some(t => t.includes('refund'))) return 'refund';
+  if (tags.some(t => t.includes('delay') || t.includes('dispatch'))) return 'dispatch_delay';
+  return 'general';
+}
+
+const TICKET_CATEGORY_LABELS = {
+  dispatch_delay:  '⏳ Dispatch delay',
+  return_exchange: '🔄 Return / Exchange',
+  refund:          '💰 Refund',
+  general:         '💬 General query',
+};
+
+// ── Create support ticket when chat escalates to human ────────────────────
+async function createSupportTicket(chat, contextNote) {
+  if (!mdb) return null;
+  // Only one open ticket per chat
+  const existing = await mdb.collection('support_tickets').findOne({ chat_id: String(chat._id), status: { $in: ['open','in_progress','overdue'] } });
+  if (existing) return existing;
+  const category = scTicketCategory(chat);
+  const allMsgs = await SC.messages(chat._id).catch(() => []);
+  const lastCust = allMsgs.filter(m => m.sender === 'customer').slice(-1)[0]?.text || '';
+  const now = new Date().toISOString();
+  const slaDeadline = new Date(Date.now() + 8 * 3600000).toISOString(); // 8h SLA
+  const r = await mdb.collection('support_tickets').insertOne({
+    chat_id: String(chat._id),
+    order_name: chat.order_name || null,
+    customer_phone: chat.customer_phone || null,
+    issue_category: category,
+    context_tags: chat.tags || [],
+    context_note: contextNote || '',
+    last_customer_msg: lastCust.slice(0, 300),
+    status: 'open',
+    assigned_to: null,
+    sla_deadline: slaDeadline,
+    reminder_sent_at: null,
+    vendor_pinged_at: null,
+    created_at: now,
+    updated_at: now,
+    closed_at: null,
+    closed_by: null,
+  });
+  return { _id: r.insertedId, chat_id: String(chat._id), order_name: chat.order_name, category, sla_deadline: slaDeadline };
+}
+
+// ── Close ticket when admin replies or chat resolves ──────────────────────
+async function closeSupportTicket(chatId, closedBy = 'admin') {
+  if (!mdb) return;
+  await mdb.collection('support_tickets').updateOne(
+    { chat_id: String(chatId), status: { $in: ['open','in_progress','overdue'] } },
+    { $set: { status: 'closed', closed_at: new Date().toISOString(), closed_by: closedBy, updated_at: new Date().toISOString() } }
+  );
+}
+
+// ── Ticket SLA cron — runs every 30 min ──────────────────────────────────
+async function ticketSLACron() {
+  if (!mdb) return;
+  try {
+    const now = Date.now();
+    const openTickets = await mdb.collection('support_tickets').find(
+      { status: { $in: ['open','in_progress'] } }
+    ).toArray();
+
+    for (const t of openTickets) {
+      const createdAt = new Date(t.created_at).getTime();
+      const slaDeadline = new Date(t.sla_deadline).getTime();
+      const label = t.order_name || t.customer_phone || String(t._id);
+      const categoryLabel = TICKET_CATEGORY_LABELS[t.issue_category] || '💬 Query';
+      const panelLink = `https://dashboard.croscrow.com/admin#supporttickets`;
+
+      // T+6h — first WA reminder to admin if not yet sent
+      if (!t.reminder_sent_at && now >= createdAt + 6 * 3600000) {
+        const hrsOpen = Math.round((now - createdAt) / 3600000);
+        await waAdminAlert(
+          `⏰ *Ticket Still Open — ${hrsOpen}h*\n${categoryLabel}\nOrder / Customer: *${label}*\n${t.context_note ? `Context: ${t.context_note.slice(0,100)}\n` : ''}Last msg: "${(t.last_customer_msg||'').slice(0,80)}"\n\n🔗 ${panelLink}`
+        );
+        await mdb.collection('support_tickets').updateOne(
+          { _id: t._id },
+          { $set: { reminder_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+        );
+      }
+
+      // T+8h — mark overdue
+      if (now >= slaDeadline && t.status !== 'overdue') {
+        await mdb.collection('support_tickets').updateOne(
+          { _id: t._id },
+          { $set: { status: 'overdue', updated_at: new Date().toISOString() } }
+        );
+        await waAdminAlert(`🚨 *Ticket Overdue — 8h SLA breached*\n${categoryLabel}\nOrder / Customer: *${label}*\n\n🔗 ${panelLink}`);
+      }
+
+      // T+12h — ping vendor if dispatch/return issue and not already pinged
+      const isVendorIssue = ['dispatch_delay','return_exchange'].includes(t.issue_category);
+      if (isVendorIssue && !t.vendor_pinged_at && now >= createdAt + 12 * 3600000) {
+        // Find vendor from chat and ping via WA
+        const chatDoc = await mdb.collection('support_chats').findOne({ _id: new (require('mongodb').ObjectId)(t.chat_id) }).catch(() => null);
+        if (chatDoc?.vendor_names?.length && waSocket && waConnected) {
+          for (const vendorName of chatDoc.vendor_names) {
+            try {
+              const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1 } });
+              const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (rawPhone.length === 10) {
+                const jidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: rawPhone }).catch(() => null);
+                const jid = jidDoc?.jid || `91${rawPhone}@s.whatsapp.net`;
+                await waSocket.sendMessage(jid, {
+                  text: `🔔 *Follow-up — Order ${t.order_name || ''}*\n\nHi ${vendorName},\n\nA customer query about this order has been open for 12+ hours. Please share an update so we can close this — ${categoryLabel}\n\n_CROSCROW Support_`
+                });
+              }
+            } catch (_) {}
+          }
+        }
+        await mdb.collection('support_tickets').updateOne(
+          { _id: t._id },
+          { $set: { vendor_pinged_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+        );
+      }
+    }
+  } catch (e) { console.error('ticketSLACron error:', e.message); }
+}
+setInterval(ticketSLACron, 30 * 60 * 1000); // every 30 min
+
 async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerMsg = true, forceMsg = false } = {}) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
   const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID — Order ${_hci.order_name}` : null);
@@ -21341,23 +21592,27 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
     ? '\n\n💬 *Last messages:*\n' + _lastMsgs.map(m => `"${(m.text || '').slice(0, 120)}"`).join('\n')
     : '';
 
-  const _panelLink = `https://dashboard.croscrow.com/admin#supportchats`;
+  const _panelLink = `https://dashboard.croscrow.com/admin#supporttickets`;
   const _nameStr = _hci.name ? `Name: *${_hci.name}*\n` : '';
   const _phoneStr = _hPhone ? `Phone: ${_hPhone}\n` : '';
   const _orderStr = _hci.order_name ? `Order: *${_hci.order_name}*\n` : '';
+  const _category = TICKET_CATEGORY_LABELS[scTicketCategory(chat)] || '💬 Query';
 
-  await waAdminAlert(`👤 *Human Support Requested*\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\n\n🔗 Open chat: ${_panelLink}`);
+  // Create ticket first so WA alert includes ticket context
+  const ticket = await createSupportTicket(chat, context).catch(() => null);
+
+  await waAdminAlert(`🎫 *New Support Ticket*\n${_category}\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\nSLA: 8 hours\n\n🔗 ${_panelLink}`);
 
   // Only send the customer-facing message if this is a fresh escalation (not already done recently)
   const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
-  const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000; // within 6 hours
+  const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
   if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
-    const msg = `If you feel I'm not being helpful enough, our support team is available to assist you directly 🙏\n\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM\n\nOr just reply *"human"* anytime and I'll connect you right away.`;
+    const msg = `Our support team has been notified and will get back to you shortly 🙏\n\n📞 *6375668971* | 🕐 2:00 PM – 8:00 PM`;
     await sock.sendMessage(sender, { text: msg });
     await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
   }
 
-  const pauseUntil = Date.now() + 24 * 60 * 60 * 1000;
+  const pauseUntil = Date.now() + 4 * 60 * 60 * 1000; // 4h pause (not 24h — cron re-enables after)
   await mdb.collection('support_chats').updateOne(
     { _id: chat._id },
     { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, last_escalated_at: new Date().toISOString(), confused_count: 0, updated_at: new Date().toISOString() } }
@@ -21740,6 +21995,7 @@ async function startBaileysBot() {
                     { _id: outChat._id },
                     { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
                   );
+                  await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
                   const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
                   await waAdminAlert(`✅ *Chat Resolved (Manual)*\nOrder / Customer: *${_label}*\nYou closed it by sending: "${outText.slice(0,40)}"`);
                   console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
@@ -21898,14 +22154,29 @@ async function startBaileysBot() {
             }
           }
 
-          // Find or create chat thread
-          let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender });
+          // Find or create chat thread — one active thread per session.
+          // A chat is "active" if it's unresolved AND was updated in the last 48h.
+          // Resolved or old chats get a fresh thread so resolution stats stay accurate.
+          const _48hAgo = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+          let chat = await mdb.collection('support_chats').findOne(
+            { whatsapp_sender: sender, resolved: { $ne: true }, updated_at: { $gte: _48hAgo } },
+            { sort: { updated_at: -1 } }
+          );
           if (!chat) {
+            // Carry over last_order_name from the most recent previous thread (returning customer)
+            const prevChat = await mdb.collection('support_chats').findOne(
+              { whatsapp_sender: sender },
+              { sort: { updated_at: -1 }, projection: { order_name: 1, customer_phone: 1, _id: 0 } }
+            );
             const r = await mdb.collection('support_chats').insertOne({
-              whatsapp_sender: sender, customer_phone: phone, source: 'whatsapp',
-              created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+              whatsapp_sender: sender,
+              customer_phone: phone || prevChat?.customer_phone || null,
+              last_order_name: prevChat?.order_name || null,
+              source: 'whatsapp',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             });
-            chat = { _id: r.insertedId, whatsapp_sender: sender, customer_phone: phone };
+            chat = { _id: r.insertedId, whatsapp_sender: sender, customer_phone: phone, order_name: prevChat?.order_name || null };
           }
           _chatRef = chat; // expose to catch block
           // Backfill: if old chat stored LID as customer_phone, fix it now (only write valid phone)
@@ -22013,7 +22284,7 @@ async function startBaileysBot() {
           }
 
           // ── 2c. Detect conversation-closing messages → resolve chat ────
-          const CLOSING_PHRASES = /^(ok|okay|okk|thanks|thank you|thank u|thx|ty|thnks|thnk u|noted|got it|alright|sure|👍|🙏|perfect|great|done|bye|goodbye|no worries|np|no problem|😊|😄|👌|appreciate it|appreciate|all good|sounds good|will do)[\s!.]*$/i;
+          const CLOSING_PHRASES = /^(ok|okay|okk|thanks|thank you|thank u|thx|ty|thnks|thnk u|noted|got it|alright|sure|👍|🙏|perfect|great|done|bye|goodbye|no worries|np|no problem|😊|😄|👌|appreciate it|appreciate|all good|sounds good|will do|theek hai|theek|haan|han|achha|acha|accha|ji haan|shukriya|dhanyawad|ho gaya|sorted|bilkul|thik|thik hai|🫡|💯|✅|🎉|bas|bas ho gaya)[\s!.]*$/i;
           if (CLOSING_PHRASES.test(text.trim())) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
             // Only respond if bot sent something meaningful recently (not just another close)
