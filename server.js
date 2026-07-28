@@ -21846,8 +21846,10 @@ async function startBaileysBot() {
             const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved') && freshChat.status !== 'resolved';
             const orderFound = freshChat.tags?.includes('order_found');
 
-            // Rule A: 10+ bot messages with no order found and no resolution (genuinely stuck)
-            const rulA = botMessages.length >= 10 && noResolution && !orderFound;
+            // Rule A: 5+ bot messages today with no resolution (genuinely stuck)
+            const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+            const botMessagesToday = allMessages.filter(m => m.sender === 'assistant' && new Date(m.created_at || 0) >= todayStart).length;
+            const rulA = botMessagesToday >= 5 && noResolution;
 
             // Rule B: customer repeated a high-frustration keyword in 3 consecutive messages
             const repeatedKeyword = STICKY_KEYWORDS.find(kw =>
