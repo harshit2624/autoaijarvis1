@@ -19144,20 +19144,48 @@ async function scFindExistingChatForOrder(shopifyOrderId, excludeChatId) {
 async function scNotifyVendorsIfNeeded(chatId) {
   const chat = await SC.get(chatId);
   if (!chat || !chat.vendor_names?.length || chat.vendor_notified_at) return;
-  const cfg = await getSmtpConfig();
-  if (!cfg?.host) return;
   for (const vendorName of chat.vendor_names) {
     const vc = await VC.get(vendorName);
-    if (!vc?.email) continue;
     const link = `${SERVER_URL}/support/vendor-view?token=${signSupportToken(chat._id, vendorName)}`;
-    const html = emailBase(
-      `Customer chat about Order ${chat.order_name}`,
-      '#6366f1',
-      `<div class="subtitle">A customer is chatting with CROSCROW support about <strong>${chat.order_name}</strong>, which includes your products. You can read the conversation and reply directly if relevant.</div>
-       <div style="text-align:center;margin-top:20px"><a href="${link}" class="cta">Open Chat →</a></div>`
-    );
-    try { await sendEmail({ to: vc.email, subject: `💬 Customer asking about Order ${chat.order_name}`, html, shopifyId: chat.shopify_order_id, trigger: 'support_chat_vendor_notify' }); }
-    catch (e) { console.error('Support chat vendor notify failed:', vendorName, e.message); }
+
+    // Email notification
+    if (vc?.email) {
+      const cfg = await getSmtpConfig();
+      if (cfg?.host) {
+        const html = emailBase(
+          `Customer chat about Order ${chat.order_name}`,
+          '#6366f1',
+          `<div class="subtitle">A customer is chatting with CROSCROW support about <strong>${chat.order_name}</strong>, which includes your products. You can read the conversation and reply directly if relevant.</div>
+           <div style="text-align:center;margin-top:20px"><a href="${link}" class="cta">Open Chat →</a></div>`
+        );
+        try { await sendEmail({ to: vc.email, subject: `💬 Customer asking about Order ${chat.order_name}`, html, shopifyId: chat.shopify_order_id, trigger: 'support_chat_vendor_notify' }); }
+        catch (e) { console.error('Support chat vendor notify email failed:', vendorName, e.message); }
+      }
+    }
+
+    // WA notification — uses same phone field as 24h penalty cron
+    if (waSocket && waConnected) {
+      try {
+        const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1, _id: 0 } });
+        const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+        if (rawPhone.length === 10) {
+          const jidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: rawPhone }).catch(() => null);
+          const jid = jidDoc?.jid || `91${rawPhone}@s.whatsapp.net`;
+          const waMsg =
+`💬 *Customer Query — Order ${chat.order_name || ''}*
+
+Hi ${vendorName},
+
+A customer is asking about their order. Please check if there's an update on dispatch or any issue on your end.
+
+🔗 View & reply: ${link}
+
+_Please respond so we can close this query — CROSCROW Support_`;
+          await waSocket.sendMessage(jid, { text: waMsg });
+          console.log(`📲 WA vendor support notify sent: ${chat.order_name} / ${vendorName}`);
+        }
+      } catch (e) { console.error('Support chat vendor notify WA failed:', vendorName, e.message); }
+    }
   }
   await SC.update(chatId, { vendor_notified_at: new Date().toISOString() });
 }
