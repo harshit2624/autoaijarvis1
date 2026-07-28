@@ -20073,9 +20073,14 @@ app.post('/admin/support/chats/:id/hide', adminAuth, async (req, res) => {
 });
 app.post('/admin/support/chats/:id/resolve', adminAuth, async (req, res) => {
   const { resolved } = req.body || {};
+  const chat = await SC.get(req.params.id).catch(() => null);
   await SC.update(req.params.id, resolved
     ? { resolved: true, resolved_at: new Date().toISOString(), resolved_by: 'admin' }
     : { resolved: false, resolved_at: null, resolved_by: null });
+  if (resolved && chat) {
+    const label = chat.order_name || chat.customer_phone || req.params.id;
+    waAdminAlert(`✅ *Chat Resolved (Dashboard)*\nOrder / Customer: *${label}*\nMarked resolved manually from admin panel.`).catch(() => {});
+  }
   res.json({ success: true });
 });
 app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
@@ -21735,6 +21740,8 @@ async function startBaileysBot() {
                     { _id: outChat._id },
                     { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
                   );
+                  const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
+                  await waAdminAlert(`✅ *Chat Resolved (Manual)*\nOrder / Customer: *${_label}*\nYou closed it by sending: "${outText.slice(0,40)}"`);
                   console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
                 }
                 // Store in chat_message_analytics for bot improvement tracking
@@ -22022,6 +22029,8 @@ async function startBaileysBot() {
               { _id: chat._id },
               { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
             );
+            const _resolveLabel = chat.order_name || chat.customer_phone || String(chat._id);
+            waAdminAlert(`✅ *Chat Resolved (Bot)*\nOrder / Customer: *${_resolveLabel}*\nCustomer said: "${text.slice(0,60)}"`).catch(() => {});
             // Record bot-resolved outcome for analytics
             const _allMsgsR = await SC.messages(chat._id).catch(() => []);
             const _botMsgsR = _allMsgsR.filter(m => m.sender === 'assistant');
