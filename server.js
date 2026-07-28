@@ -1089,17 +1089,12 @@ function renderScanLog(history, stage) {
   const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
 
   function fmtDateTime(ev) {
-    // Try to parse date+time from stored fields
-    if (ev.date || ev.time) {
-      const parts = [ev.date, ev.time].filter(Boolean);
-      return parts.join(' ');
-    }
-    // Fallback: try raw fields with common names
+    // Stored normalized fields (ActionDate/ActionTime mapped to date/time)
+    if (ev.date || ev.time) return [ev.date, ev.time].filter(Boolean).join(' ');
+    // Raw fallback (in case stored before normalization)
     const raw = ev.raw || {};
-    const candidates = [raw.ActionDate, raw.ScanDate, raw.Date, raw.EventDate, raw.DateTime, raw.Datetime];
-    const timeCandidates = [raw.ActionTime, raw.ScanTime, raw.Time, raw.EventTime];
-    const d = candidates.find(Boolean);
-    const t = timeCandidates.find(Boolean);
+    const d = raw.ActionDate || raw.ScanDate || raw.Date || raw.EventDate || '';
+    const t = raw.ActionTime || raw.ScanTime || raw.Time || raw.EventTime || '';
     return [d, t].filter(Boolean).join(' ') || '';
   }
 
