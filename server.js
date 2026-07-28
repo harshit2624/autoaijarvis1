@@ -21833,27 +21833,30 @@ async function startBaileysBot() {
           const chatStartedAt = new Date(freshChat.created_at || Date.now()).getTime();
           const chatAgeMinutes = (Date.now() - chatStartedAt) / 60000;
 
-          const lastTwoCustomer = customerMessages.slice(-2).map(m => (m.text || '').toLowerCase());
+          const lastThreeCustomer = customerMessages.slice(-3).map(m => (m.text || '').toLowerCase());
           const STICKY_KEYWORDS = ['refund', 'return', 'exchange', 'cancel', 'size', 'wrong', 'damaged', 'missing', 'delay', 'not received', 'not delivered'];
 
-          // Safety net — skip entirely if already escalated (needs_human already set)
-          // to prevent repeat "support executive" messages on every turn after 24h pause expires
+          // Safety net — only fires if not already escalated and enough turns have passed
           const alreadyEscalated = !!freshChat.needs_human;
-          if (!alreadyEscalated) {
-            // Rule A: 6+ bot messages, no resolution, and order was never found
+          // Track when we last sent the soft human offer (stored in chat, not a full escalation)
+          const lastHumanOffer = freshChat.last_human_offer_at ? new Date(freshChat.last_human_offer_at).getTime() : 0;
+          const humanOfferRecentlySent = (Date.now() - lastHumanOffer) < 30 * 60 * 1000; // once per 30 min
+
+          if (!alreadyEscalated && !humanOfferRecentlySent) {
             const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved') && freshChat.status !== 'resolved';
             const orderFound = freshChat.tags?.includes('order_found');
-            const rulA = botMessages.length >= 6 && noResolution && !orderFound;
 
-            // Rule B: customer repeated same keyword twice with no resolution
+            // Rule A: 10+ bot messages with no order found and no resolution (genuinely stuck)
+            const rulA = botMessages.length >= 10 && noResolution && !orderFound;
+
+            // Rule B: customer repeated a high-frustration keyword in 3 consecutive messages
             const repeatedKeyword = STICKY_KEYWORDS.find(kw =>
-              lastTwoCustomer.length === 2 && lastTwoCustomer.every(t => t.includes(kw))
+              lastThreeCustomer.length === 3 && lastThreeCustomer.every(t => t.includes(kw))
             );
 
-            // Rule D: 5+ minutes in chat, 3+ messages, no order found yet
-            const ruleD = chatAgeMinutes >= 5 && botMessages.length >= 3 && noResolution && !orderFound;
+            // Rule D removed — "5 min + 3 messages" fired on almost every normal conversation
 
-            const safetyNetTrigger = repeatedKeyword ? 'repeated_keyword' : rulA ? 'message_count' : ruleD ? 'time_limit' : null;
+            const safetyNetTrigger = repeatedKeyword ? 'repeated_keyword' : rulA ? 'message_count' : null;
 
             if (safetyNetTrigger) {
               await waLogConfusionInsight(chat, phone, text, reply, safetyNetTrigger, {
@@ -21862,7 +21865,15 @@ async function startBaileysBot() {
                 chatAgeMinutes: Math.round(chatAgeMinutes),
                 repeatedKeyword: repeatedKeyword || null,
               });
-              await waTalkToHuman(sock, sender, chat, phone, `Safety net: ${safetyNetTrigger}${repeatedKeyword ? ` (keyword: ${repeatedKeyword})` : ''}`, { sendCustomerMsg: true });
+              // Soft offer only — bot stays active, no forced escalation
+              // Customer must explicitly choose to contact a human
+              const offerMsg = `Need to speak with our team directly? Here's how:\n\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM\n\nOr reply *"human"* and I'll flag this for a support exec right away 🙏`;
+              await sock.sendMessage(sender, { text: offerMsg });
+              await SC.addMessage(chat._id, { sender: 'assistant', text: offerMsg });
+              await mdb.collection('support_chats').updateOne(
+                { _id: chat._id },
+                { $set: { last_human_offer_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+              );
             }
           }
 
