@@ -9471,6 +9471,73 @@
     return { label:'Custom', color:'#94a3b8' };
   }
 
+  const WA_TOPICS = [
+    { id:'order_ticket',       label:'🎫 Order Tickets',       desc:'Admin WA tickets created' },
+    { id:'dispatch_alert',     label:'🚚 Dispatch Alerts',     desc:'Orders stuck 4+ days' },
+    { id:'stuck_orders',       label:'🔴 Stuck Orders',        desc:'Vendor stuck order nudges' },
+    { id:'support_escalation', label:'💬 Support Escalations', desc:'Customer tickets + SLA overdue' },
+    { id:'digest',             label:'🌅 Morning Digest',      desc:'Daily 9 AM summary' },
+  ];
+
+  function StaffWaNotifs({ staff: s, saveWaPhone, saveWaTopics }) {
+    const [waPhone,  setWaPhone]  = useState(s.wa_phone || '');
+    const [waTopics, setWaTopics] = useState(s.wa_topics || WA_TOPICS.map(t => t.id));
+    const [waSaved,  setWaSaved]  = useState(false);
+
+    const toggleTopic = (id) => {
+      const next = waTopics.includes(id) ? waTopics.filter(t => t !== id) : [...waTopics, id];
+      setWaTopics(next);
+      saveWaTopics(s, next);
+    };
+
+    const handlePhoneSave = async () => {
+      await saveWaPhone(s, waPhone);
+      setWaSaved(true);
+      setTimeout(() => setWaSaved(false), 2000);
+    };
+
+    const phoneDigits = waPhone.replace(/\D/g, '');
+
+    return (
+      <div style={{marginTop:16,paddingTop:14,borderTop:'1px solid var(--border)'}}>
+        <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,marginBottom:10}}>📲 WHATSAPP NOTIFICATIONS</div>
+        <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12}}>
+          <input
+            className="form-input"
+            value={waPhone}
+            onChange={e => setWaPhone(e.target.value)}
+            placeholder="10-digit WA number (no +91)"
+            style={{width:220,fontSize:13}}
+          />
+          <button className="btn btn-indigo btn-sm" onClick={handlePhoneSave}>{waSaved ? '✓ Saved!' : 'Save Number'}</button>
+          {s.wa_phone && <span style={{fontSize:11,color:'#10b981'}}>📱 +91{s.wa_phone}</span>}
+        </div>
+        {phoneDigits.length >= 10 && (
+          <div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>Send notifications for:</div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {WA_TOPICS.map(t => {
+                const on = waTopics.includes(t.id);
+                return (
+                  <button key={t.id} onClick={() => toggleTopic(t.id)} title={t.desc} style={{
+                    padding:'5px 12px',borderRadius:99,fontSize:11,fontWeight:600,cursor:'pointer',border:'1px solid',
+                    borderColor:on?'#6366f1':'var(--border)',
+                    background:on?'#6366f122':'transparent',
+                    color:on?'#6366f1':'var(--text-muted)',
+                    transition:'all .15s',
+                  }}>{on ? '✓ ' : ''}{t.label}</button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {!s.wa_phone && phoneDigits.length < 10 && (
+          <div style={{fontSize:11,color:'var(--text-muted)'}}>Add a WA number to enable push notifications for this staff member.</div>
+        )}
+      </div>
+    );
+  }
+
   function StaffAccounts({ token }) {
     const [staff,       setStaff]       = useState([]);
     const [loading,     setLoading]     = useState(true);
@@ -9698,67 +9765,7 @@
                   </div>
 
                   {/* WhatsApp Notifications */}
-                  {(()=>{
-                    const WA_TOPICS = [
-                      { id:'order_ticket', label:'🎫 Order Tickets', desc:'Admin WA tickets created' },
-                      { id:'dispatch_alert', label:'🚚 Dispatch Alerts', desc:'Orders stuck 4+ days' },
-                      { id:'stuck_orders', label:'🔴 Stuck Orders', desc:'Vendor stuck order nudges' },
-                      { id:'support_escalation', label:'💬 Support Escalations', desc:'Customer tickets + SLA overdue' },
-                      { id:'digest', label:'🌅 Morning Digest', desc:'Daily 9 AM summary' },
-                    ];
-                    const [waPhone, setWaPhone] = React.useState(s.wa_phone || '');
-                    const [waTopics, setWaTopics] = React.useState(s.wa_topics || WA_TOPICS.map(t=>t.id));
-                    const [waSaved, setWaSaved] = React.useState(false);
-
-                    const toggleTopic = (id) => {
-                      const next = waTopics.includes(id) ? waTopics.filter(t=>t!==id) : [...waTopics, id];
-                      setWaTopics(next);
-                      saveWaTopics(s, next);
-                    };
-
-                    const handlePhoneSave = async () => {
-                      await saveWaPhone(s, waPhone);
-                      setWaSaved(true);
-                      setTimeout(()=>setWaSaved(false), 2000);
-                    };
-
-                    return (
-                      <div style={{marginTop:16,paddingTop:14,borderTop:'1px solid var(--border)'}}>
-                        <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:.5,marginBottom:10}}>📲 WHATSAPP NOTIFICATIONS</div>
-                        <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12}}>
-                          <input
-                            className="form-input"
-                            value={waPhone}
-                            onChange={e=>setWaPhone(e.target.value)}
-                            placeholder="10-digit WA number (no +91)"
-                            style={{width:220,fontSize:13}}
-                          />
-                          <button className="btn btn-indigo btn-sm" onClick={handlePhoneSave}>{waSaved ? '✓ Saved!' : 'Save Number'}</button>
-                          {s.wa_phone && <span style={{fontSize:11,color:'#10b981'}}>📱 +91{s.wa_phone}</span>}
-                        </div>
-                        {waPhone.replace(/\D/g,'').length >= 10 && (
-                          <div>
-                            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>Send notifications for:</div>
-                            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                              {WA_TOPICS.map(t=>{
-                                const on = waTopics.includes(t.id);
-                                return (
-                                  <button key={t.id} onClick={()=>toggleTopic(t.id)} title={t.desc} style={{
-                                    padding:'5px 12px',borderRadius:99,fontSize:11,fontWeight:600,cursor:'pointer',border:'1px solid',
-                                    borderColor:on?'#6366f1':'var(--border)',
-                                    background:on?'#6366f122':'transparent',
-                                    color:on?'#6366f1':'var(--text-muted)',
-                                    transition:'all .15s',
-                                  }}>{on?'✓ ':''}{t.label}</button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                        {!s.wa_phone && !waPhone && <div style={{fontSize:11,color:'var(--text-muted)'}}>Add a WA number to enable push notifications for this staff member.</div>}
-                      </div>
-                    );
-                  })()}
+                  <StaffWaNotifs staff={s} saveWaPhone={saveWaPhone} saveWaTopics={saveWaTopics} />
                 </div>
               )}
             </div>
