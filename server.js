@@ -14143,6 +14143,75 @@ async function autoHoldCronJob() {
 autoHoldCronJob().catch(() => {});
 setInterval(autoHoldCronJob, 6 * 60 * 60 * 1000);
 
+// ── Post-delivery WA followup — FLAT500 surprise, fires 7 days after delivery ──
+const FLAT500_IMAGE = 'https://i.ibb.co/0p9BkzY7/USE-CODE-FLAT500.png';
+
+async function deliveryFollowupCron() {
+  if (!mdb || !waSocket || !waConnected) return;
+  try {
+    const now = Date.now();
+    const DAY7_MIN = now - (7 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000); // 7d + 1hr buffer
+    const DAY7_MAX = now - (7 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000); // 7d - 1hr buffer
+
+    // Find delivered orders where delivery_status_updated_at is ~7 days ago and followup not sent
+    const candidates = await mdb.collection('order_meta').find({
+      stage: 'delivered',
+      wa_flat500_sent: { $ne: true },
+      delivery_status_updated_at: {
+        $gte: new Date(DAY7_MIN).toISOString(),
+        $lte: new Date(DAY7_MAX).toISOString(),
+      },
+    }, { projection: { shopify_id: 1, delivery_status_updated_at: 1 } }).toArray();
+
+    if (!candidates.length) return;
+    console.log(`🎁 FLAT500 followup: ${candidates.length} eligible orders`);
+
+    // Fetch image buffer once
+    const https = require('https');
+    const http = require('http');
+    const imageBuffer = await new Promise((resolve, reject) => {
+      const client = FLAT500_IMAGE.startsWith('https') ? https : http;
+      client.get(FLAT500_IMAGE, res => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+
+    for (const meta of candidates) {
+      try {
+        const data = await shopifyREST(`/orders/${meta.shopify_id}.json?fields=id,name,shipping_address,billing_address,phone,customer`);
+        const order = data.order;
+        if (!order) continue;
+
+        const phone = (order.shipping_address?.phone || order.billing_address?.phone || order.phone || order.customer?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+        if (phone.length !== 10) continue;
+
+        const name = order.shipping_address?.first_name || order.customer?.first_name || 'there';
+        const msg = `Hey ${name}! 🎁\n\nWe decided to do something special for you.\n\nAs a thank-you for shopping with CROSCROW, we've got a surprise —\n\n*FLAT ₹500 OFF* on your next order 🛍️\n\nUse code: *FLAT500* at checkout\n👉 croscrow.com\n\nValid for 30 days. Don't let it go to waste! 😊\n\n— Team CROSCROW`;
+
+        const jid = `91${phone}@s.whatsapp.net`;
+        await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
+
+        await mdb.collection('order_meta').updateOne(
+          { shopify_id: meta.shopify_id },
+          { $set: { wa_flat500_sent: true, wa_flat500_sent_at: new Date().toISOString() } }
+        );
+        console.log(`✅ FLAT500 sent to order ${meta.shopify_id} (${phone})`);
+
+        // Small delay to avoid WA rate limits
+        await new Promise(r => setTimeout(r, 3000));
+      } catch (e) {
+        console.error(`❌ FLAT500 followup for ${meta.shopify_id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('❌ deliveryFollowupCron:', e.message);
+  }
+}
+setInterval(deliveryFollowupCron, 60 * 60 * 1000); // runs every hour
+
 
 // ══════════════════════════════════════════════════════════════════════════
 //  SHIPSAGAR INTEGRATION
