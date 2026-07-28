@@ -284,6 +284,32 @@ html,body{
 .w-dot{width:5px;height:5px;border-radius:50%;background:var(--border);flex-shrink:0}
 .w-dot.green{background:var(--green)}
 
+/* ── Scan log timeline ── */
+.scan-log{margin-top:10px;border-radius:12px;border:1px solid var(--border);background:var(--card);overflow:hidden}
+.scan-log-header{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.scan-log-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.scan-log-toggle{font-size:11px;color:var(--indigo,#6366f1);font-weight:600;display:flex;align-items:center;gap:4px}
+.scan-log-toggle svg{transition:transform .2s}
+.scan-log-toggle.open svg{transform:rotate(180deg)}
+.scan-log-body{padding:0 16px;transition:max-height .3s ease,opacity .2s;max-height:0;opacity:0;overflow:hidden}
+.scan-log-body.visible{max-height:2000px;opacity:1;padding-bottom:14px}
+.scan-events{display:flex;flex-direction:column;position:relative}
+.scan-events::before{content:'';position:absolute;left:6px;top:8px;bottom:8px;width:1px;background:var(--border)}
+.scan-event{display:grid;grid-template-columns:14px 1fr;gap:10px;align-items:start;padding:9px 0}
+.scan-event:first-child{padding-top:4px}
+.scan-dot{width:13px;height:13px;border-radius:50%;border:2px solid var(--border);background:var(--card);flex-shrink:0;margin-top:2px;position:relative;z-index:1;transition:background .15s,border-color .15s}
+.scan-dot.latest{background:var(--indigo,#6366f1);border-color:var(--indigo,#6366f1)}
+.scan-dot.delivered{background:var(--green,#22c55e);border-color:var(--green,#22c55e)}
+.scan-content{}
+.scan-status{font-size:12px;font-weight:600;color:var(--text);line-height:1.35}
+.scan-status.latest{color:var(--indigo,#6366f1)}
+.scan-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+.scan-time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.scan-loc{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:2px}
+.scan-loc::before{content:'·'}
+.scan-collapsed-peek{padding:10px 16px 13px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.scan-peek-text{font-size:12px;color:var(--muted)}
+
 .delivered-card{
   background:var(--green-light);border:1px solid var(--green-border);border-radius:12px;
   padding:22px;text-align:center;
@@ -793,6 +819,8 @@ html,body{
 
       <!-- Status card (single vendor) -->
       <div id="status-card" style="margin-top:16px"></div>
+      <!-- Courier scan log — shown below status card for transit/ofd/delivered stages -->
+      <div id="scan-log-wrap"></div>
 
       <!-- Shipment info (single vendor) -->
       <div id="shipment-wrap" class="hidden">
@@ -1046,6 +1074,96 @@ function buildStepper(stage, mini = false) {
   }).join('')+`</div>`;
 }
 
+// ── Courier scan log ─────────────────────────────────────────
+function renderScanLog(history, stage) {
+  const wrap = document.getElementById('scan-log-wrap');
+  if (!wrap) return;
+  const SCAN_STAGES = ['transit','pickup','ofd','delivered'];
+  if (!SCAN_STAGES.includes(stage) || !history || !history.length) { wrap.innerHTML = ''; return; }
+
+  // Reverse so newest is first
+  const events = [...history].reverse();
+  const total = events.length;
+  const INITIAL_SHOW = 2; // how many show without expanding
+
+  const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+
+  function fmtDateTime(ev) {
+    // Stored normalized fields (ActionDate/ActionTime mapped to date/time)
+    if (ev.date || ev.time) return [ev.date, ev.time].filter(Boolean).join(' ');
+    // Raw fallback (in case stored before normalization)
+    const raw = ev.raw || {};
+    const d = raw.ActionDate || raw.ScanDate || raw.Date || raw.EventDate || '';
+    const t = raw.ActionTime || raw.ScanTime || raw.Time || raw.EventTime || '';
+    return [d, t].filter(Boolean).join(' ') || '';
+  }
+
+  function fmtLocation(ev) {
+    const raw = ev.raw || {};
+    return ev.location || raw.City || raw.Location || raw.ScanCity || raw.Hub || raw.DestCity || raw.ScanLocation || '';
+  }
+
+  function eventHtml(ev, idx) {
+    const isLatest = idx === 0;
+    const isDel = stage === 'delivered' && isLatest;
+    const dotCls = isDel ? 'delivered' : isLatest ? 'latest' : '';
+    const statusCls = isLatest ? 'latest' : '';
+    const dt = fmtDateTime(ev);
+    const loc = fmtLocation(ev);
+    return `<div class="scan-event">
+      <div class="scan-dot ${dotCls}"></div>
+      <div class="scan-content">
+        <div class="scan-status ${statusCls}">${esc(ev.desc || '')}</div>
+        <div class="scan-meta">
+          ${dt ? `<span class="scan-time">${esc(dt)}</span>` : ''}
+          ${loc ? `<span class="scan-loc">${esc(loc)}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  const visibleEvents = events.slice(0, INITIAL_SHOW);
+  const hiddenEvents  = events.slice(INITIAL_SHOW);
+  const hasMore = hiddenEvents.length > 0;
+  const logId = 'scan-log-' + Date.now();
+
+  wrap.innerHTML = `
+    <div class="scan-log" id="${logId}">
+      <div class="scan-log-header" onclick="toggleScanLog('${logId}')">
+        <span class="scan-log-title">Shipment Updates</span>
+        <span class="scan-log-toggle" id="${logId}-toggle">${total > INITIAL_SHOW ? `See all ${total} scans ${chevron}` : chevron}</span>
+      </div>
+      <div class="scan-log-body visible" id="${logId}-body">
+        <div class="scan-events">
+          ${visibleEvents.map((ev,i) => eventHtml(ev, i)).join('')}
+        </div>
+        ${hasMore ? `<div id="${logId}-more" style="display:none"><div class="scan-events">${hiddenEvents.map((ev,i) => eventHtml(ev, i+INITIAL_SHOW)).join('')}</div></div>` : ''}
+      </div>
+      ${hasMore ? `<div class="scan-collapsed-peek" id="${logId}-peek" onclick="expandScanLog('${logId}')">
+        <span class="scan-peek-text">+${hiddenEvents.length} more scan${hiddenEvents.length>1?'s':''}</span>
+        <span class="scan-log-toggle">${chevron}</span>
+      </div>` : ''}
+    </div>`;
+}
+
+function toggleScanLog(id) {
+  const body = document.getElementById(id+'-body');
+  const toggle = document.getElementById(id+'-toggle');
+  if (!body) return;
+  const isOpen = body.classList.contains('visible');
+  body.classList.toggle('visible', !isOpen);
+  if (toggle) toggle.classList.toggle('open', !isOpen);
+}
+
+function expandScanLog(id) {
+  const more = document.getElementById(id+'-more');
+  const peek = document.getElementById(id+'-peek');
+  const toggle = document.getElementById(id+'-toggle');
+  if (more) more.style.display = '';
+  if (peek) peek.style.display = 'none';
+  if (toggle) { toggle.textContent = ''; toggle.innerHTML = 'Show less <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="18 15 12 9 6 15"/></svg>'; }
+}
+
 // ── Status card HTML for a given stage ───────────────────────
 function statusCardHtml(stage, d) {
   if (stage === 'delivered') {
@@ -1127,6 +1245,7 @@ function renderTrack(d) {
     document.getElementById('track-hero-wrap').classList.add('hidden');
     document.getElementById('stepper').classList.add('hidden');
     document.getElementById('status-card').innerHTML = '';
+    document.getElementById('scan-log-wrap').innerHTML = '';
     document.getElementById('shipment-wrap').classList.add('hidden');
     document.getElementById('vendor-cards').classList.remove('hidden');
 
@@ -1197,6 +1316,9 @@ function renderTrack(d) {
 
     // Status card
     document.getElementById('status-card').innerHTML = statusCardHtml(displayStage, d);
+
+    // Courier scan log — below status card for transit/ofd/delivered
+    renderScanLog(d.tracking_history || [], displayStage);
 
     // Single shipment cards
     const allS = d.vendor_shipments||[];
