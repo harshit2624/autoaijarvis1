@@ -21128,6 +21128,67 @@ async function waSendToCustomer(phone, message) {
 async function waHandleAdminQuery(sock, sender, text) {
   if (!mdb) return;
   try {
+    // ── Admin resolve shortcut — "👍 / sorted / done / resolved / handled / ✅" ──
+    const ADMIN_RESOLVE = /^(👍|✅|sorted|done|resolved|handled|close|closed|complete|finished|ok done|ho gaya|theek hai|kr do close|resolve kr do)[\s!.]*$/i;
+    if (ADMIN_RESOLVE.test(text.trim())) {
+      const pending = await mdb.collection('support_chats').find(
+        { needs_human: true, resolved: { $ne: true }, source: { $ne: 'wa_admin' } },
+        { projection: { _id: 1, order_name: 1, customer_phone: 1, updated_at: 1 } }
+      ).sort({ updated_at: -1 }).limit(5).toArray();
+
+      if (!pending.length) {
+        await sock.sendMessage(sender, { text: '✅ No open escalated chats right now — all clear!' });
+        return;
+      }
+
+      if (pending.length === 1) {
+        const c = pending[0];
+        await mdb.collection('support_chats').updateOne(
+          { _id: c._id },
+          { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+        );
+        const label = c.order_name || c.customer_phone || String(c._id);
+        await sock.sendMessage(sender, { text: `✅ Chat resolved — *${label}*` });
+        return;
+      }
+
+      // Multiple pending — list them, admin replies with number
+      const lines = pending.map((c, i) => {
+        const label = c.order_name || c.customer_phone || String(c._id);
+        const ago = Math.round((Date.now() - new Date(c.updated_at).getTime()) / 60000);
+        return `${i + 1}️⃣ ${label} (${ago}m ago)`;
+      });
+      await sock.sendMessage(sender, {
+        text: `You have *${pending.length}* open escalated chats:\n\n${lines.join('\n')}\n\nReply with a number to resolve that one, or *"sorted all"* to close all.`
+      });
+      await waSessionSet(sender, { type: 'admin_resolve_pick', chats: pending.map(c => ({ id: String(c._id), label: c.order_name || c.customer_phone || String(c._id) })) });
+      return;
+    }
+
+    // Admin picks which chat to resolve from the list above
+    const adminSession = await waSessionGet(sender);
+    if (adminSession?.type === 'admin_resolve_pick') {
+      const { chats } = adminSession;
+      const ALL = /^sorted all$/i.test(text.trim());
+      const num = parseInt(text.trim());
+      const targets = ALL ? chats : (num >= 1 && num <= chats.length ? [chats[num - 1]] : []);
+      if (targets.length) {
+        const { ObjectId } = require('mongodb');
+        for (const t of targets) {
+          await mdb.collection('support_chats').updateOne(
+            { _id: new ObjectId(t.id) },
+            { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
+          );
+        }
+        const labels = targets.map(t => `*${t.label}*`).join(', ');
+        await sock.sendMessage(sender, { text: `✅ Resolved: ${labels}` });
+        await waSessionClear(sender);
+        return;
+      }
+      // Not a valid pick — fall through to Jarvis
+      await waSessionClear(sender);
+    }
+
     // Maintain a rolling history per admin session (last 10 exchanges)
     let chat = await mdb.collection('support_chats').findOne({ whatsapp_sender: sender, source: 'wa_admin' });
     if (!chat) {
@@ -21584,7 +21645,39 @@ async function startBaileysBot() {
         }
 
         if (type !== 'notify') continue;
-        if (msg.key.fromMe) continue;
+
+        // ── Outgoing message sent manually from the bot's own phone ──────────
+        // Detect when a human (admin/support) picks up the bot's phone and
+        // manually sends a message to a customer. Log it as admin reply in the
+        // chat transcript; resolve the chat if it's a closing phrase.
+        if (msg.key.fromMe && !msg.key.remoteJid?.endsWith('@g.us')) {
+          const outText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+          const outTo = msg.key.remoteJid; // customer's JID
+          if (outText && outTo) {
+            try {
+              const outChat = await mdb.collection('support_chats').findOne({ whatsapp_sender: outTo });
+              if (outChat && !outChat.resolved) {
+                // Log the manual admin message in the chat transcript
+                await SC.addMessage(outChat._id, { sender: 'admin', text: outText });
+                await mdb.collection('support_chats').updateOne(
+                  { _id: outChat._id },
+                  { $set: { needs_human: true, updated_at: new Date().toISOString() } }
+                );
+                // If it's a closing/resolve phrase → mark resolved, re-enable bot
+                const HUMAN_RESOLVE = /^(👍|✅|sorted|done|resolved|handled|close|closed|complete|finished|ok done|ho gaya|theek hai|shukriya|thanks|thank you|thx|🙏|😊|bye|take care|all good|all set)[\s!.]*$/i;
+                if (HUMAN_RESOLVE.test(outText)) {
+                  await mdb.collection('support_chats').updateOne(
+                    { _id: outChat._id },
+                    { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
+                  );
+                  console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
+                }
+              }
+            } catch (e) { console.error('fromMe handler error:', e.message); }
+          }
+          continue;
+        }
+
         if (msg.key.remoteJid?.endsWith('@g.us')) continue;
         const sender = msg.key.remoteJid;
         const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
