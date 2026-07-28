@@ -9324,11 +9324,12 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
 });
 
 // ── Vendor Update Token (magic link for WA nudges) ────────────────────────
-async function createVendorUpdateToken(shopify_id, order_name, vendor_name, product_names) {
+async function createVendorUpdateToken(shopify_id, order_name, vendor_name, product_names, query_context = null) {
   const token = crypto.randomBytes(16).toString('hex');
   await mdb.collection('wa_vendor_update_tokens').insertOne({
     token, shopify_id: String(shopify_id), order_name, vendor_name,
     product_names: product_names || '',
+    query_context: query_context || null,
     created_at: Date.now(), expires_at: Date.now() + 72 * 3600000, used: false,
   });
   return token;
@@ -9703,6 +9704,22 @@ function vendorUpdatePage(doc, state, ovs, shopifyOrder, nudge, errMsg) {
     form: `<div class="page">
       ${orderHeader}
       ${errMsg ? `<div class="err-banner">${errMsg}</div>` : ''}
+      ${doc?.query_context ? `<div class="query-context-banner">
+        <span class="qc-icon">${
+          doc.query_context === 'return_exchange' ? '🔄' :
+          doc.query_context === 'delay' ? '⏳' :
+          doc.query_context === 'refund' ? '💰' : '📦'
+        }</span>
+        <div>
+          <div class="qc-title">Customer query topic</div>
+          <div class="qc-label">${
+            doc.query_context === 'return_exchange' ? 'Return / Exchange issue' :
+            doc.query_context === 'delay' ? 'Order not dispatched — delay inquiry' :
+            doc.query_context === 'refund' ? 'Refund inquiry' :
+            'Order status / dispatch update needed'
+          }</div>
+        </div>
+      </div>` : ''}
       <form method="POST" id="main-form">
         <div class="update-type-label">What do you want to update?</div>
         <div class="type-tabs">
@@ -9863,6 +9880,10 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .dt-sub{font-size:11px;color:var(--muted)}
 /* ── Error banner ── */
 .err-banner{margin:12px 16px 0;background:#2d1515;border:1px solid #ef444460;color:#fca5a5;padding:10px 14px;border-radius:10px;font-size:13px}
+.query-context-banner{display:flex;align-items:center;gap:12px;margin:12px 16px 0;background:#0e1a2e;border:1px solid #1e3a5f;border-radius:10px;padding:12px 14px}
+.qc-icon{font-size:22px;flex-shrink:0}
+.qc-title{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#60a5fa;margin-bottom:2px}
+.qc-label{font-size:13px;color:#e2e8f0;font-weight:500}
 </style>
 </head>
 <body>
@@ -19141,51 +19162,76 @@ async function scFindExistingChatForOrder(shopifyOrderId, excludeChatId) {
   return { chat_id: String(prior._id), message_count: msgCount, updated_at: prior.updated_at, last_message: lastMsg?.text?.slice(0, 80) || '' };
 }
 
+// Detect what the customer is asking about based on chat tags / context
+function scDetectVendorQueryContext(chat) {
+  const tags = (chat.tags || []).map(t => t.toLowerCase());
+  if (tags.some(t => t.includes('exchange') || t.includes('return')))
+    return { type: 'return_exchange', label: 'Return / Exchange issue', emoji: '🔄' };
+  if (tags.some(t => t.includes('delay') || t.includes('dispatch')))
+    return { type: 'delay', label: 'Order not dispatched — delay inquiry', emoji: '⏳' };
+  if (tags.some(t => t.includes('refund')))
+    return { type: 'refund', label: 'Refund inquiry', emoji: '💰' };
+  return { type: 'status', label: 'Order status / dispatch update needed', emoji: '📦' };
+}
+
 async function scNotifyVendorsIfNeeded(chatId) {
   const chat = await SC.get(chatId);
   if (!chat || !chat.vendor_names?.length || chat.vendor_notified_at) return;
+  if (!waSocket || !waConnected) return;
+
+  const ctx = scDetectVendorQueryContext(chat);
+  const orderName = chat.order_name || '';
+
   for (const vendorName of chat.vendor_names) {
-    const vc = await VC.get(vendorName);
-    const link = `${SERVER_URL}/support/vendor-view?token=${signSupportToken(chat._id, vendorName)}`;
+    try {
+      const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1, _id: 0 } });
+      const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (rawPhone.length !== 10) continue;
 
-    // Email notification
-    if (vc?.email) {
-      const cfg = await getSmtpConfig();
-      if (cfg?.host) {
-        const html = emailBase(
-          `Customer chat about Order ${chat.order_name}`,
-          '#6366f1',
-          `<div class="subtitle">A customer is chatting with CROSCROW support about <strong>${chat.order_name}</strong>, which includes your products. You can read the conversation and reply directly if relevant.</div>
-           <div style="text-align:center;margin-top:20px"><a href="${link}" class="cta">Open Chat →</a></div>`
-        );
-        try { await sendEmail({ to: vc.email, subject: `💬 Customer asking about Order ${chat.order_name}`, html, shopifyId: chat.shopify_order_id, trigger: 'support_chat_vendor_notify' }); }
-        catch (e) { console.error('Support chat vendor notify email failed:', vendorName, e.message); }
-      }
-    }
+      const jidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: rawPhone }).catch(() => null);
+      const jid = jidDoc?.jid || `91${rawPhone}@s.whatsapp.net`;
 
-    // WA notification — uses same phone field as 24h penalty cron
-    if (waSocket && waConnected) {
-      try {
-        const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1, _id: 0 } });
-        const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-        if (rawPhone.length === 10) {
-          const jidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: rawPhone }).catch(() => null);
-          const jid = jidDoc?.jid || `91${rawPhone}@s.whatsapp.net`;
-          const waMsg =
-`💬 *Customer Query — Order ${chat.order_name || ''}*
+      // Create update token so vendor can submit via web form (fallback)
+      const updateToken = await createVendorUpdateToken(
+        chat.shopify_order_id || orderName, orderName, vendorName, '', ctx.type
+      ).catch(() => null);
+      const formLink = updateToken ? `${SERVER_URL}/vendor/update/${updateToken}` : null;
+
+      const waMsg =
+`💬 *Customer Query — Order ${orderName}*
 
 Hi ${vendorName},
 
-A customer is asking about their order. Please check if there's an update on dispatch or any issue on your end.
+A customer is asking about: ${ctx.emoji} *${ctx.label}*
 
-🔗 View & reply: ${link}
+Please reply so we can update them:
 
-_Please respond so we can close this query — CROSCROW Support_`;
-          await waSocket.sendMessage(jid, { text: waMsg });
-          console.log(`📲 WA vendor support notify sent: ${chat.order_name} / ${vendorName}`);
-        }
-      } catch (e) { console.error('Support chat vendor notify WA failed:', vendorName, e.message); }
-    }
+1️⃣ Report delay (share reason + dispatch date)
+2️⃣ Already shipped (share AWB / tracking)
+3️⃣ Other / I've already handled this — inform CROSCROW team${formLink ? `\n\n🔗 Or update via form: ${formLink}` : ''}
+
+Reply with *1*, *2* or *3* 👇`;
+
+      const sent = await waSocket.sendMessage(jid, { text: waMsg });
+      const actualJid = sent?.key?.remoteJid || jid;
+
+      // Store session so numbered reply gets routed correctly
+      await waSessionSet(actualJid, {
+        type: 'support_vendor_reply',
+        chat_id: String(chat._id),
+        order_name: orderName,
+        shopify_id: String(chat.shopify_order_id || ''),
+        vendor: vendorName,
+        query_context: ctx,
+        form_link: formLink,
+      });
+      await mdb.collection('wa_vendor_jids').updateOne(
+        { phone: rawPhone },
+        { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } },
+        { upsert: true }
+      ).catch(() => {});
+      console.log(`📲 WA vendor support notify sent: ${orderName} / ${vendorName} (${ctx.type})`);
+    } catch (e) { console.error('Support chat vendor notify WA failed:', vendorName, e.message); }
   }
   await SC.update(chatId, { vendor_notified_at: new Date().toISOString() });
 }
@@ -20501,6 +20547,56 @@ async function waHandleVendorReply(sock, sender, text) {
 
   // Check session for pending menu interaction
   const session = await waSessionGet(sender);
+
+  // ── Support chat vendor reply (3-option menu from scNotifyVendorsIfNeeded) ──
+  if (session?.type === 'support_vendor_reply') {
+    const { order_name, shopify_id, vendor, query_context, form_link, chat_id } = session;
+    const orderRef = String(shopify_id).replace(/^#/, '');
+
+    if (trimmed === '1') {
+      await waSessionSet(sender, { type: 'vendor_delay', order_name, shopify_id, orderRef, vendor });
+      await sendAndLog(
+        `📝 *Order ${order_name} — Delay Reason*\n\nPlease share the reason and when you'll dispatch. Just type naturally, e.g.:\n\n_Stitching pending, will ship by 20 July_\n_Stock shortage, dispatching by 18 Jul_\n\nType your message 👇`,
+        vendor
+      );
+      return;
+    }
+
+    if (trimmed === '2') {
+      await waSessionSet(sender, { type: 'vendor_tracking', order_name, shopify_id, orderRef, vendor });
+      await sendAndLog(
+        `📦 *Order ${order_name} — Tracking Update*\n\nShare AWB + courier naturally, e.g.:\n\n_123456789 Delhivery_\n_Shipped via Shiprocket, AWB 9876543210_\n\nType your message 👇`,
+        vendor
+      );
+      return;
+    }
+
+    if (trimmed === '3') {
+      // Vendor says they've already handled it or it's an unrelated issue
+      await waAdminAlert(
+        `ℹ️ *Vendor Self-Resolved / Other*\nOrder: *${order_name}*\nVendor: ${vendor}\nQuery: ${query_context?.label || 'general'}\nVendor says they've already handled this or it needs CROSCROW attention.${chat_id ? `\n\n🔗 https://dashboard.croscrow.com/admin#supportchats` : ''}`
+      );
+      if (chat_id) {
+        await mdb.collection('support_chats').updateOne(
+          { _id: new (require('mongodb').ObjectId)(chat_id) },
+          { $set: { vendor_self_resolved: true, updated_at: new Date().toISOString() } }
+        ).catch(() => {});
+      }
+      await sendAndLog(
+        `✅ Got it, ${vendor}! Noted as handled — our team has been informed and will follow up with the customer directly. Thank you! 🙏`,
+        vendor
+      );
+      await waSessionClear(sender);
+      return;
+    }
+
+    // Unrecognised reply — re-prompt
+    await sendAndLog(
+      `Please reply with *1*, *2* or *3*:\n\n1️⃣ Report delay reason\n2️⃣ Already shipped (share AWB)\n3️⃣ Other / already handled${form_link ? `\n\n🔗 Or use form: ${form_link}` : ''}`,
+      vendor
+    );
+    return;
+  }
 
   if (session?.type === 'vendor_menu') {
     const { order_name, shopify_id, orderRef, vendor } = session;
