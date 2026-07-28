@@ -15263,6 +15263,72 @@ app.post("/admin/track-page-event", async (req, res) => {
   } catch(e) { res.json({ ok: false }); }
 });
 
+app.get("/admin/chat-analytics", adminAuth, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days || '30');
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const records = await mdb.collection('chat_message_analytics').find({ recorded_at: { $gte: since } }).toArray();
+
+    const botResolved   = records.filter(r => r.source === 'bot_resolved');
+    const adminManual   = records.filter(r => r.source === 'admin_manual');
+    const adminResolves = adminManual.filter(r => r.is_resolve);
+    const adminReplies  = adminManual.filter(r => !r.is_resolve);
+
+    const total = botResolved.length + adminManual.length;
+    const botRate = total ? Math.round(botResolved.length / total * 100) : 0;
+    const avgBotTurnsBotResolved = botResolved.length
+      ? Math.round(botResolved.reduce((s, r) => s + (r.bot_turns_before || 0), 0) / botResolved.length * 10) / 10
+      : 0;
+    const avgBotTurnsHuman = adminManual.length
+      ? Math.round(adminManual.reduce((s, r) => s + (r.bot_turns_before || 0), 0) / adminManual.length * 10) / 10
+      : 0;
+    const avgChatDuration = botResolved.length
+      ? Math.round(botResolved.reduce((s, r) => s + (r.chat_duration_min || 0), 0) / botResolved.length)
+      : 0;
+
+    // Topic breakdown from tags
+    const topicCount = {};
+    adminManual.forEach(r => {
+      const tags = (r.tags || []).length ? r.tags : ['untagged'];
+      tags.forEach(t => { topicCount[t] = (topicCount[t] || 0) + 1; });
+    });
+    const topicBreakdown = Object.entries(topicCount)
+      .sort((a, b) => b[1] - a[1])
+      .map(([tag, count]) => ({ tag, count }));
+
+    // Most common admin reply phrases (word frequency, min 4 chars)
+    const wordFreq = {};
+    adminReplies.forEach(r => {
+      (r.admin_text || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+        .filter(w => w.length >= 4)
+        .forEach(w => { wordFreq[w] = (wordFreq[w] || 0) + 1; });
+    });
+    const topPhrases = Object.entries(wordFreq)
+      .filter(([, c]) => c > 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([word, count]) => ({ word, count }));
+
+    // Daily trend (last 14 days)
+    const dailyMap = {};
+    records.forEach(r => {
+      const day = (r.recorded_at || '').slice(0, 10);
+      if (!dailyMap[day]) dailyMap[day] = { bot: 0, human: 0 };
+      if (r.source === 'bot_resolved') dailyMap[day].bot++;
+      else dailyMap[day].human++;
+    });
+    const daily = Object.entries(dailyMap).sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, v]) => ({ date, ...v }));
+
+    res.json({
+      total, botResolved: botResolved.length, adminManual: adminManual.length,
+      adminResolves: adminResolves.length, adminReplies: adminReplies.length,
+      botRate, avgBotTurnsBotResolved, avgBotTurnsHuman, avgChatDuration,
+      topicBreakdown, topPhrases, daily,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/track-analytics", adminAuth, async (req, res) => {
   try {
     const days = parseInt(req.query.days || '30');
@@ -21652,26 +21718,43 @@ async function startBaileysBot() {
         // chat transcript; resolve the chat if it's a closing phrase.
         if (msg.key.fromMe && !msg.key.remoteJid?.endsWith('@g.us')) {
           const outText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
-          const outTo = msg.key.remoteJid; // customer's JID
+          const outTo = msg.key.remoteJid;
           if (outText && outTo) {
             try {
               const outChat = await mdb.collection('support_chats').findOne({ whatsapp_sender: outTo });
               if (outChat && !outChat.resolved) {
-                // Log the manual admin message in the chat transcript
                 await SC.addMessage(outChat._id, { sender: 'admin', text: outText });
                 await mdb.collection('support_chats').updateOne(
                   { _id: outChat._id },
                   { $set: { needs_human: true, updated_at: new Date().toISOString() } }
                 );
-                // If it's a closing/resolve phrase → mark resolved, re-enable bot
                 const HUMAN_RESOLVE = /^(👍|✅|sorted|done|resolved|handled|close|closed|complete|finished|ok done|ho gaya|theek hai|shukriya|thanks|thank you|thx|🙏|😊|bye|take care|all good|all set)[\s!.]*$/i;
-                if (HUMAN_RESOLVE.test(outText)) {
+                const isResolve = HUMAN_RESOLVE.test(outText);
+                if (isResolve) {
                   await mdb.collection('support_chats').updateOne(
                     { _id: outChat._id },
                     { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
                   );
                   console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
                 }
+                // Store in chat_message_analytics for bot improvement tracking
+                const allMsgs = await SC.messages(outChat._id).catch(() => []);
+                const botMsgs = allMsgs.filter(m => m.sender === 'assistant');
+                const custMsgs = allMsgs.filter(m => m.sender === 'customer');
+                const lastCustMsg = custMsgs.slice(-1)[0]?.text || '';
+                await mdb.collection('chat_message_analytics').insertOne({
+                  chat_id: String(outChat._id),
+                  order_name: outChat.order_name || null,
+                  tags: outChat.tags || [],
+                  source: 'admin_manual',
+                  admin_text: outText,
+                  is_resolve: isResolve,
+                  bot_turns_before: botMsgs.length,
+                  customer_turns: custMsgs.length,
+                  last_customer_msg: lastCustMsg.slice(0, 200),
+                  needs_human: true,
+                  recorded_at: new Date().toISOString(),
+                });
               }
             } catch (e) { console.error('fromMe handler error:', e.message); }
           }
@@ -21939,6 +22022,23 @@ async function startBaileysBot() {
               { _id: chat._id },
               { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
             );
+            // Record bot-resolved outcome for analytics
+            const _allMsgsR = await SC.messages(chat._id).catch(() => []);
+            const _botMsgsR = _allMsgsR.filter(m => m.sender === 'assistant');
+            const _custMsgsR = _allMsgsR.filter(m => m.sender === 'customer');
+            const _chatStartR = new Date(chat.created_at || Date.now()).getTime();
+            await mdb.collection('chat_message_analytics').insertOne({
+              chat_id: String(chat._id),
+              order_name: chat.order_name || null,
+              tags: chat.tags || [],
+              source: 'bot_resolved',
+              is_resolve: true,
+              needs_human: false,
+              bot_turns_before: _botMsgsR.length,
+              customer_turns: _custMsgsR.length,
+              chat_duration_min: Math.round((Date.now() - _chatStartR) / 60000),
+              recorded_at: new Date().toISOString(),
+            }).catch(() => {});
             await waSessionClear(sender);
             waPending.delete(sender);
             continue;

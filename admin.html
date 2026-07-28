@@ -10968,6 +10968,127 @@
         )}
         <TrackAnalytics token={token} />
         <ConfirmAnalytics token={token} />
+        <ChatBotAnalytics token={token} />
+      </div>
+    );
+  }
+
+  function ChatBotAnalytics({ token }) {
+    const [data, setData] = React.useState(null);
+    const [days, setDays] = React.useState(30);
+    const [loading, setLoading] = React.useState(false);
+
+    React.useEffect(() => {
+      setLoading(true);
+      fetch(`/admin/chat-analytics?days=${days}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+    }, [days]);
+
+    const kpiStyle = { background:'var(--card-bg)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px', minWidth:120 };
+    const tagColor = (tag) => {
+      if (/delay|dispatch/i.test(tag)) return '#f59e0b';
+      if (/exchange|return/i.test(tag)) return '#60a5fa';
+      if (/refund/i.test(tag)) return '#a78bfa';
+      if (/product/i.test(tag)) return '#34d399';
+      return '#94a3b8';
+    };
+
+    return (
+      <div style={{marginTop:32}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:15}}>🤖 Bot vs Human — Chat Analytics</div>
+          <div style={{display:'flex',gap:6}}>
+            {[7,14,30,60].map(d => (
+              <button key={d} onClick={() => setDays(d)}
+                style={{padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background: days===d ? 'var(--primary)' : 'var(--card-bg)',color: days===d ? '#fff' : 'var(--text)',cursor:'pointer',fontSize:12}}>
+                {d}d
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading...</div>}
+        {data && !loading && (
+          <>
+            {/* KPI strip */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:10,marginBottom:18}}>
+              {[
+                { label:'Total chats tracked', val: data.total },
+                { label:'Bot resolved', val: data.botResolved, color:'#22c55e' },
+                { label:'Needed human', val: data.adminManual, color: data.adminManual > data.botResolved ? '#ef4444' : '#f59e0b' },
+                { label:'Bot resolution rate', val: `${data.botRate}%`, color: data.botRate >= 60 ? '#22c55e' : data.botRate >= 40 ? '#f59e0b' : '#ef4444' },
+                { label:'Avg bot turns (bot resolved)', val: data.avgBotTurnsBotResolved },
+                { label:'Avg bot turns before human', val: data.avgBotTurnsHuman },
+                { label:'Avg chat duration (bot)', val: `${data.avgChatDuration}m` },
+              ].map(k => (
+                <div key={k.label} style={kpiStyle}>
+                  <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)',marginBottom:4}}>{k.label}</div>
+                  <div style={{fontSize:22,fontWeight:700,color: k.color || 'var(--text)',fontVariantNumeric:'tabular-nums'}}>{k.val ?? '—'}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+              {/* Topics that needed human */}
+              <div style={{background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:16}}>
+                <div style={{fontWeight:600,fontSize:13,marginBottom:12}}>Topics requiring human intervention</div>
+                {data.topicBreakdown.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13}}>No data yet</div>}
+                {data.topicBreakdown.slice(0,10).map(t => (
+                  <div key={t.tag} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                    <div style={{width:8,height:8,borderRadius:'50%',background:tagColor(t.tag),flexShrink:0}}/>
+                    <div style={{fontSize:13,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.tag}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text-muted)',fontVariantNumeric:'tabular-nums'}}>{t.count}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Common admin reply phrases */}
+              <div style={{background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:16}}>
+                <div style={{fontWeight:600,fontSize:13,marginBottom:12}}>Top words in human replies <span style={{color:'var(--text-muted)',fontWeight:400}}>(bot training signals)</span></div>
+                {data.topPhrases.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13}}>No manual replies recorded yet</div>}
+                <div style={{display:'flex',flexWrap:'wrap',gap:7}}>
+                  {data.topPhrases.map(p => (
+                    <span key={p.word} style={{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:20,padding:'3px 10px',fontSize:12,color:'var(--text)'}}>
+                      {p.word} <span style={{color:'var(--text-muted)'}}>{p.count}×</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Daily trend */}
+            {data.daily.length > 1 && (
+              <div style={{background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:16}}>
+                <div style={{fontWeight:600,fontSize:13,marginBottom:12}}>Daily — Bot resolved vs Human needed</div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead>
+                      <tr>
+                        {['Date','Bot resolved','Human needed','Bot rate'].map(h => (
+                          <th key={h} style={{textAlign:'left',padding:'6px 10px',color:'var(--text-muted)',fontWeight:600,borderBottom:'1px solid var(--border)'}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.daily.slice(-14).reverse().map(d => {
+                        const total = d.bot + d.human;
+                        const rate = total ? Math.round(d.bot / total * 100) : 0;
+                        return (
+                          <tr key={d.date}>
+                            <td style={{padding:'6px 10px'}}>{d.date}</td>
+                            <td style={{padding:'6px 10px',color:'#22c55e',fontWeight:600}}>{d.bot}</td>
+                            <td style={{padding:'6px 10px',color: d.human > d.bot ? '#ef4444' : '#f59e0b',fontWeight:600}}>{d.human}</td>
+                            <td style={{padding:'6px 10px',color: rate >= 60 ? '#22c55e' : rate >= 40 ? '#f59e0b' : '#ef4444',fontWeight:700}}>{rate}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
     );
   }
