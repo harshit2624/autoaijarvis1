@@ -14392,7 +14392,7 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
   const sent = meta?.wa_notif_sent || {};
   if (sent[stage]) return; // already sent
 
-  const trackUrl = `https://dashboard.croscrow.com/track?order=${encodeURIComponent(orderName)}&contact=na`;
+  const trackUrl = `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`;
   const name = (customerName || '').split(' ')[0] || 'there';
   let msg = '';
 
@@ -14461,7 +14461,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
   } else if (event === 'exchange_dispatched') {
     const awb = extra.awb || rr.forward_shipment?.awb || '';
     const courier = extra.courier || rr.forward_shipment?.courier || 'Our delivery partner';
-    const trackUrl = orderName ? `https://dashboard.croscrow.com/track?order=${encodeURIComponent(orderName)}&contact=na` : '';
+    const trackUrl = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
     msg = `Your exchange order is on its way! 🚀\n\n*${orderName} — Exchange*\n\n📦 New item: ${itemNames || 'Your item'}\n🚚 Courier: ${courier}${awb ? `\n📍 AWB: ${awb}` : ''}${trackUrl ? `\n\nTrack here: ${trackUrl}` : ''}\n\nDelivery in 3–5 days. Thanks for your patience 🙏`;
   } else if (event === 'rejected') {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
@@ -18701,7 +18701,7 @@ app.post("/admin/cc-inventory/check", adminAuth, async (req, res) => {
 
 const { ObjectId: SC_ObjectId } = require('mongodb');
 const STOREFRONT_URL = process.env.STOREFRONT_URL || 'https://croscrow.com';
-const SUPPORT_TRACK_URL = (orderName, contact) => `https://dashboard.croscrow.com/track?order=${encodeURIComponent(orderName)}&contact=${encodeURIComponent(contact?.trim() || 'na')}`;
+const SUPPORT_TRACK_URL = (orderName) => `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`;
 
 const SC = {
   async createChat({ shop_domain, customer_email, customer_phone }) {
@@ -21161,7 +21161,7 @@ const WA_MENUS = {
 async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
   const { menu, orderData: d } = session;
   const trackUrl = d?.order_name
-    ? `https://dashboard.croscrow.com/track?order=${encodeURIComponent(d.order_name)}&contact=na`
+    ? `${SERVER_URL}/o/${encodeURIComponent(String(d.order_name).replace(/^#/, ''))}`
     : null;
 
   switch (menu) {
