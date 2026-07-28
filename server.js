@@ -17052,16 +17052,36 @@ async function buildOrderPayload(order) {
     ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim()
     : order.customer ? `${order.customer.first_name||''} ${order.customer.last_name||''}`.trim() : '';
 
-  // Per-vendor shipment details for multi-vendor progress display
+  // Per-vendor shipment details — include full timing and delay data for bot
+  const delayRemarks = await mdb.collection('delay_remarks').find(
+    { shopify_id: String(order.id) },
+    { projection: { _id: 0, vendor_name: 1, reason: 1, eta_date: 1, submitted_at: 1 } }
+  ).sort({ submitted_at: -1 }).toArray();
+
   const vendorShipments = vendorNames.map(v => {
     const vs = vendorStages.find(s => s.vendor_name === v) || {};
     const vendorItems = items.filter(i => i.vendor === v);
+    const vendorRemarks = delayRemarks.filter(r => r.vendor_name === v);
+    const latestRemark = vendorRemarks[0] || null;
+    const confirmedAt = vs.stage_started_at ? new Date(vs.stage_started_at).toISOString() : null;
+    const dispatchedAt = vs.dispatched_at ? new Date(vs.dispatched_at).toISOString() : null;
+    const hoursInConfirmed = vs.stage_started_at && ['confirmed','partial'].includes(vs.stage)
+      ? Math.round((Date.now() - vs.stage_started_at) / 3600000)
+      : null;
     return {
       vendor_name: v,
       stage: vs.stage || stage || 'new',
       awb: vs.awb || null,
       courier: vs.courier || null,
       tracking_url: vs.tracking_url || null,
+      confirmed_at: confirmedAt,
+      dispatched_at: dispatchedAt,
+      hours_waiting_dispatch: hoursInConfirmed,
+      delay_remark: latestRemark ? {
+        reason: latestRemark.reason,
+        eta_date: latestRemark.eta_date,
+        submitted_at: latestRemark.submitted_at ? new Date(latestRemark.submitted_at).toISOString() : null,
+      } : null,
       items: vendorItems,
     };
   });
@@ -17082,12 +17102,35 @@ async function buildOrderPayload(order) {
     ).toArray();
   }
 
+  // Courier from fulfillment or vendor stage (whichever is available)
+  const courierName = order.fulfillments?.[0]?.tracking_company
+    || vendorStages.find(vs => vs.courier)?.courier
+    || meta.courier || '';
+
+  const STAGE_LABELS = {
+    new: 'Order placed, awaiting vendor confirmation',
+    hold: 'Order on hold',
+    confirmed: 'Order confirmed by vendor — awaiting dispatch',
+    partial: 'Partially confirmed — some items awaiting vendor',
+    ready: 'Ready to ship — courier pickup scheduled',
+    pickup: 'Dispatched — picked up by courier',
+    transit: 'In transit — moving to destination',
+    ofd: 'Out for delivery today',
+    delivered: 'Delivered',
+    rto: 'Returned to origin',
+    cancelled: 'Order cancelled',
+  };
+
   return {
     shopify_order_id: order.id, order_name: order.name, customer_name: customerName,
     customer_email: order.email || '', customer_phone: order.shipping_address?.phone || order.billing_address?.phone || order.phone || '',
-    stage, financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
-    created_at: order.created_at, awb, tracking_url: trackingUrl, items, vendor_names: vendorNames,
-    vendor_shipments: vendorShipments, return_configs: returnConfigs, return_requests: returnRequests,
+    stage, stage_label: STAGE_LABELS[stage] || stage,
+    financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
+    created_at: order.created_at,
+    awb, courier: courierName, tracking_url: trackingUrl,
+    items, vendor_names: vendorNames,
+    vendor_shipments: vendorShipments,
+    return_configs: returnConfigs, return_requests: returnRequests,
     cc_stock: ccStockItems,
     delivery_status: meta.delivery_status || '',
     delivery_status_updated_at: meta.delivery_status_updated_at || '',
@@ -18928,18 +18971,27 @@ async function scSearchProducts(query) {
     const terms = words.map(clauseForWord).join(' OR ');
     const collTerms = clauseForWord(words[0] || '');
 
-    const [productData, collectionData] = await Promise.all([
-      shopifyGQL(`{ products(first: 10, query: "status:active AND (${terms})") {
+    // Also search by vendor tag and full query phrase for better name matching
+    const fullPhrase = query.trim().replace(/"/g, '');
+    const [productData, collectionData, nameData] = await Promise.all([
+      shopifyGQL(`{ products(first: 12, query: "status:active AND (${terms})") {
         edges { node { title handle featuredImage { url }
           variants(first: 10) { edges { node { price availableForSale } } } } } } }`),
       shopifyGQL(`{ collections(first: 3, query: "${collTerms}") {
         edges { node { title handle image { url } } } } }`),
+      // Exact phrase / product name search (catches "MOCKING BIRD BOXY FIT" style names)
+      shopifyGQL(`{ products(first: 8, query: "status:active AND title:*${fullPhrase}*") {
+        edges { node { title handle featuredImage { url }
+          variants(first: 10) { edges { node { price availableForSale } } } } } } }`),
     ]);
 
-    const edges = productData.data?.products?.edges || [];
-    const products = edges
-      .map(e => e.node)
-      .filter(p => p.variants.edges.some(v => v.node.availableForSale));
+    const seenHandles = new Set();
+    const dedup = (node) => { if (seenHandles.has(node.handle)) return false; seenHandles.add(node.handle); return true; };
+
+    const nameEdges = (nameData.data?.products?.edges || []).map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale));
+    const kwEdges = (productData.data?.products?.edges || []).map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale));
+    // Name-matches first (more precise), then keyword matches
+    const products = [...nameEdges, ...kwEdges].filter(dedup);
 
     const collections = (collectionData.data?.collections?.edges || []).map(e => ({
       title: e.node.title,
@@ -19113,11 +19165,24 @@ const SC_WHATSAPP_SYSTEM_PROMPT = `You are the CROSCROW support concierge — wa
 
 TOOLS:
 0. get_orders_by_phone — use IMMEDIATELY when customer doesn't mention their order number or doesn't know it. Do NOT ask them to find the number — call this tool first. It auto-looks up their orders by WhatsApp number. If you get results, present the most recent order status and ask if this is the one they're asking about.
-1. search_products — when customer is browsing/shopping. Two possible results:
+1. search_products — use this for ANY product mention: category browsing ("show me hoodies"), specific product name ("do you have MOCKING BIRD shirt?"), or vague requests ("something in black"). Always call this before answering about products — you have no catalog knowledge without it. Two possible results:
    • If result has products: describe 2-3 matches naturally ("We have X, Y and Z — here are the links:"). Links follow automatically.
    • If result has curated_url=true (no products, just a collections entry): say something like "Here's our full [category] collection — browse and pick what you like 👇" and the link is appended automatically. Keep it short.
-2. get_order_status — track any order. Summarize status in plain words. Links follow automatically. If order not found, ask them to double-check — our order numbers are 4-digit numbers like 1994 or 2101 (never suggest #CR or #CC prefixes).
-3. get_delay_reason — explain why order hasn't shipped. Relay vendor reason warmly with ETA if available.
+2. get_order_status — track any order. Returns rich data — USE ALL OF IT to give a complete answer:
+   • stage + stage_label: current position in lifecycle (confirmed / dispatched / in transit / delivered etc.)
+   • awb: courier tracking number — share this if customer asks
+   • courier: which courier company (Delhivery, Shiprocket, etc.) — mention by name
+   • delivery_status: live courier scan update (e.g. "In Transit at Delhi HUB", "Out for Delivery") — always share this if present
+   • delivery_status_updated_at: when that scan happened
+   • vendor_shipments[].confirmed_at: when vendor confirmed the order
+   • vendor_shipments[].dispatched_at: when vendor actually dispatched (handed to courier)
+   • vendor_shipments[].hours_waiting_dispatch: hours spent in confirmed state — if >48, the order is delayed
+   • vendor_shipments[].delay_remark: if vendor submitted a delay reason, it has .reason, .eta_date, .submitted_at — relay this to customer
+   • created_at: order placed date — use to estimate delivery if no AWB yet (placed + 5-7 days typical)
+   Use these together: if stage=transit and delivery_status="In Transit at Delhi HUB", say "Your order is on the way — last scan shows it's at Delhi hub. Should reach you in 1-2 days 🚚"
+   If stage=confirmed and hours_waiting_dispatch>48, say "Order's been ready but not yet dispatched (Xh delay) — I'm flagging this to our team right now" (flags admin).
+   If delay_remark exists: "The vendor mentioned [reason] and expects to dispatch by [eta_date] (submitted [submitted_at]) — apologies for the wait 🙏"
+3. get_delay_reason — additional context on why order hasn't shipped. Relay vendor reason warmly with ETA if available.
 4. start_return_exchange — customer wants return/exchange. Link follows automatically.
 5. check_order_confirmation — use whenever customer mentions confirming order, ₹99 payment, or confirmation link.
 6. get_return_status — use when customer asks about their return, exchange status, or refund update by order number. Gives live RR request status (pickup_scheduled, picked_up, refund_initiated etc.).
@@ -21422,15 +21487,26 @@ async function waHandleAdminQuery(sock, sender, text) {
 
 // ── Send product images one by one ────────────────────────────────────────
 async function waSendProductImages(sock, sender, products) {
-  for (const p of products.slice(0, 3)) {
-    if (!p.image) continue;
+  const list = products.slice(0, 3);
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    const priceStr = p.price_from ? `₹${Math.round(p.price_from)}` : '';
+    const caption = [
+      `*${p.title}*`,
+      priceStr ? `💰 ${priceStr}` : '',
+      p.url ? `🛍️ Shop now: ${p.url}` : '',
+    ].filter(Boolean).join('\n');
     try {
-      await sock.sendMessage(sender, {
-        image: { url: p.image },
-        caption: `*${p.title}*\n₹${p.price_from || '—'}\n${p.url}`,
-      });
-      await new Promise(r => setTimeout(r, 700));
-    } catch (e) { console.error('❌ Product image send failed:', e.message); }
+      if (p.image) {
+        await sock.sendMessage(sender, { image: { url: p.image }, caption });
+      } else {
+        await sock.sendMessage(sender, { text: caption });
+      }
+      await new Promise(r => setTimeout(r, 800));
+    } catch (e) {
+      // Image fetch failed — fall back to text card
+      try { await sock.sendMessage(sender, { text: caption }); } catch {}
+    }
   }
 }
 
