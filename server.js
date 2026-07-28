@@ -148,6 +148,10 @@ async function startServer() {
       mdb.collection("order_shipments").createIndex({ "items.vendor": 1 }),
       mdb.collection("abandoned_carts").createIndex({ received_at: -1 }),
       mdb.collection("abandoned_carts").createIndex({ email: 1 }),
+      // Order snapshot indexes — enable DB-first track/my-orders queries
+      mdb.collection("order_meta").createIndex({ customer_phone: 1 }),
+      mdb.collection("order_meta").createIndex({ customer_email: 1 }),
+      mdb.collection("order_meta").createIndex({ order_name: 1 }),
     ];
     await Promise.all(idxOps.map(p => p.catch(()=>{})));
 
@@ -231,6 +235,78 @@ const OM = {
     );
   },
 };
+
+// ── Order snapshot — saves full Shopify order data to order_meta ──────────────
+// Called on every orders/create + orders/updated webhook so DB is always current.
+// Callers that need customer/address/items data read from here instead of hitting Shopify live.
+async function snapshotOrder(payload) {
+  if (!mdb || !payload?.id) return;
+  const sid = String(payload.id);
+  const rawPhone = payload.shipping_address?.phone || payload.billing_address?.phone || payload.phone || '';
+  const phone = rawPhone.replace(/\D/g,'').replace(/^91/,'').slice(-10);
+  const customerName = payload.shipping_address
+    ? `${payload.shipping_address.first_name||''} ${payload.shipping_address.last_name||''}`.trim()
+    : payload.customer ? `${payload.customer.first_name||''} ${payload.customer.last_name||''}`.trim() : '';
+  const items = (payload.line_items || []).map(li => ({
+    line_item_id: li.id, product_id: li.product_id, variant_id: li.variant_id,
+    title: li.title, variant_title: li.variant_title, sku: li.sku,
+    qty: li.quantity, price: li.price, vendor: li.vendor || '',
+  }));
+  const vendors = [...new Set(items.map(i => i.vendor).filter(Boolean))];
+  const fulfillments = (payload.fulfillments || []).map(f => ({
+    tracking_number: f.tracking_number || '',
+    tracking_url: f.tracking_url || '',
+    tracking_company: f.tracking_company || '',
+  }));
+  await OM.upsert(sid, {
+    order_name: payload.name || '',
+    customer_name: customerName,
+    customer_email: (payload.email || '').toLowerCase().trim(),
+    customer_phone: phone,
+    shipping_address: payload.shipping_address || null,
+    financial_status: payload.financial_status || '',
+    fulfillment_status: payload.fulfillment_status || null,
+    total_price: payload.total_price || '0.00',
+    subtotal_price: payload.subtotal_price || '0.00',
+    currency: payload.currency || 'INR',
+    tags: payload.tags || '',
+    items,
+    vendors,
+    fulfillments,
+    shopify_created_at: payload.created_at || null,
+    shopify_updated_at: payload.updated_at || null,
+    snapshot_at: new Date().toISOString(),
+  });
+}
+
+// Reconstruct a Shopify-shaped order stub from an order_meta snapshot.
+// Used to pass into buildOrderPayload without a live API call.
+function orderStubFromMeta(meta) {
+  return {
+    id: meta.shopify_id,
+    name: meta.order_name,
+    email: meta.customer_email || '',
+    phone: meta.customer_phone || '',
+    shipping_address: meta.shipping_address || null,
+    billing_address: null,
+    financial_status: meta.financial_status || '',
+    fulfillment_status: meta.fulfillment_status || null,
+    total_price: meta.total_price || '0.00',
+    currency: meta.currency || 'INR',
+    created_at: meta.shopify_created_at || null,
+    tags: meta.tags || '',
+    line_items: (meta.items || []).map(i => ({
+      id: i.line_item_id, product_id: i.product_id, variant_id: i.variant_id,
+      title: i.title, variant_title: i.variant_title, sku: i.sku,
+      quantity: i.qty, price: i.price, vendor: i.vendor || '',
+    })),
+    fulfillments: (meta.fulfillments || []).map(f => ({
+      tracking_number: f.tracking_number,
+      tracking_url: f.tracking_url,
+      tracking_company: f.tracking_company,
+    })),
+  };
+}
 
 const OVS = {
   async upsert(shopify_id, vendor_name, fields, { respectManualOverride = false, respectStageOrder = false } = {}) {
@@ -1211,6 +1287,9 @@ app.post("/webhooks/orders", (req, res) => {
 
       // ── orders/create: email customer + notify vendors ─────────────────
       if (topic === 'orders/create') {
+        // Snapshot full order data first — enables DB-first track page & bot queries
+        snapshotOrder(payload).catch(e => console.error('snapshotOrder create failed:', e.message));
+
         const settingsRow = await ES.get();
         if (settingsRow?.enabled === 0) return;
         const cfg = await getSmtpConfig();
@@ -1306,6 +1385,8 @@ app.post("/webhooks/orders", (req, res) => {
 
       // ── orders/updated: tag → stage auto-mapping ───────────────────────
       if (topic === 'orders/updated' && sid) {
+        // Re-snapshot on every update — keeps customer data, fulfillments, tags current
+        snapshotOrder(payload).catch(e => console.error('snapshotOrder update failed:', e.message));
         // Use the same applyTagMappings function as the sync button — handles case-insensitive matching + priority
         await applyTagMappings(sid, payload.tags || '', payload.financial_status || '');
         const newMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
@@ -1330,6 +1411,7 @@ app.post("/webhooks/orders", (req, res) => {
 
       // ── orders/cancelled: set stage cancelled ──────────────────────────
       if (topic === 'orders/cancelled' && sid) {
+        snapshotOrder(payload).catch(e => console.error('snapshotOrder cancel failed:', e.message));
         await OM.upsert(sid, { stage: 'cancelled', updated_at: new Date().toISOString() });
         // Also cancel all vendor stages
         const vendors = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
@@ -1369,9 +1451,27 @@ app.post("/webhooks/fulfillments", (req, res) => {
 
       if (!shopifyId) return;
 
-      // Fetch full order to find vendor of these line items
-      const orderRes = await shopifyREST(`/orders/${shopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
-      const order = orderRes?.order;
+      // Update fulfillment data in snapshot so track page gets AWB without extra call
+      if (awb) {
+        const existingMeta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { fulfillments: 1 } }).catch(() => null);
+        const existingFulfillments = existingMeta?.fulfillments || [];
+        const alreadyHas = existingFulfillments.some(f => f.tracking_number === awb);
+        if (!alreadyHas) {
+          await OM.upsert(shopifyId, {
+            fulfillments: [...existingFulfillments, { tracking_number: awb, tracking_url: trackUrl, tracking_company: courier }],
+          });
+        }
+      }
+
+      // Try to get line_items from snapshot first; fall back to live Shopify only if missing
+      const snapMeta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { items: 1, order_name: 1, customer_email: 1, shipping_address: 1, financial_status: 1 } }).catch(() => null);
+      let order;
+      if (snapMeta?.items?.length) {
+        order = orderStubFromMeta({ ...snapMeta, shopify_id: shopifyId });
+      } else {
+        const orderRes = await shopifyREST(`/orders/${shopifyId}.json?fields=id,name,email,line_items,shipping_address,financial_status`);
+        order = orderRes?.order;
+      }
       if (!order) return;
 
       const fulfilledLineItemIds = new Set((payload.line_items || []).map(li => li.id));
@@ -13457,6 +13557,34 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
   }
 });
 
+// ── POST /admin/orders/backfill-snapshots — one-time backfill of order snapshots ──
+// Fetches all Shopify orders and saves them to order_meta so DB-first track page works
+// for orders placed before the snapshot feature. Safe to run multiple times (upserts).
+app.post("/admin/orders/backfill-snapshots", adminAuth, async (req, res) => {
+  res.json({ message: 'Backfill started in background — check server logs for progress.' });
+  (async () => {
+    try {
+      let total = 0, page_info = null;
+      const BATCH = 250;
+      let url = `/orders.json?status=any&limit=${BATCH}&fields=id,name,email,phone,shipping_address,billing_address,financial_status,fulfillment_status,total_price,subtotal_price,currency,created_at,updated_at,tags,line_items,fulfillments,customer`;
+      let safety = 0;
+      while (safety++ < 40) {
+        const { data, link } = await shopifyRESTRaw(page_info ? `/orders.json?limit=${BATCH}&page_info=${page_info}&fields=id,name,email,phone,shipping_address,billing_address,financial_status,fulfillment_status,total_price,subtotal_price,currency,created_at,updated_at,tags,line_items,fulfillments,customer` : url);
+        const orders = data?.orders || [];
+        for (const o of orders) { await snapshotOrder(o).catch(() => {}); }
+        total += orders.length;
+        console.log(`📸 Snapshot backfill: ${total} orders processed`);
+        // Extract next page_info from Link header
+        const nextMatch = (link || '').match(/<[^>]*page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+        if (!nextMatch || orders.length < BATCH) break;
+        page_info = nextMatch[1];
+        await new Promise(r => setTimeout(r, 600)); // stay under rate limit
+      }
+      console.log(`✅ Snapshot backfill complete: ${total} orders snapshotted`);
+    } catch (e) { console.error('Backfill error:', e.message); }
+  })();
+});
+
 // POST /admin/confirm-resync — retroactively re-apply tags + send notification
 // emails for an order whose /track/confirm-payment-verify run failed to do so
 // (e.g. due to the shopifyToken bug fixed alongside this endpoint).
@@ -17154,23 +17282,46 @@ app.get("/track/order", async (req, res) => {
   try {
     const { q, contact } = req.query;
     if (!q) return res.status(400).json({ error: "Order number is required" });
-    if (!contact || (!contact.trim() && contact.trim().toLowerCase() !== 'na'))
-      return res.status(400).json({ error: "Email or mobile number is required" });
 
     const normalized = q.replace(/^#/, '').trim();
     const name = `#${normalized}`;
+    const skipContact = !contact || contact.trim().toLowerCase() === 'na';
+    const contactClean = (contact || '').toLowerCase().trim();
+    const contactPhone = normalizePhone(contact || '');
 
+    // ── DB-first path (fast — ~30ms) ─────────────────────────────────────────
+    const snap = await mdb.collection('order_meta').findOne(
+      { order_name: name },
+      { projection: { _id: 0 } }
+    ).catch(() => null);
+
+    if (snap?.items?.length) {
+      // Verify contact against snapshot data
+      if (!skipContact) {
+        const snapPhone = snap.customer_phone || '';
+        const snapEmail = (snap.customer_email || '').toLowerCase().trim();
+        const phoneMatch = contactPhone.length >= 10 && snapPhone === contactPhone;
+        const emailMatch = contactClean.includes('@') && snapEmail === contactClean;
+        if (!phoneMatch && !emailMatch) {
+          // Contact mismatch — don't reveal order exists, fall through to Shopify for safety
+          console.log(`[track/order] DB snapshot contact mismatch for ${name} — falling back to Shopify`);
+          // fall through below
+        } else {
+          return res.json(await buildOrderPayload(orderStubFromMeta(snap)));
+        }
+      } else {
+        return res.json(await buildOrderPayload(orderStubFromMeta(snap)));
+      }
+    }
+
+    // ── Shopify fallback (snapshot missing or contact mismatch) ──────────────
     const data = await shopifyREST(`/orders.json?name=${encodeURIComponent(name)}&status=any&limit=10`);
     const orders = data.orders || [];
 
-    // If contact is "na" or empty — return by order number only (no identity check)
-    const skipContact = !contact || contact.trim().toLowerCase() === 'na';
     let order;
     if (skipContact) {
       order = orders[0];
     } else {
-      const contactClean = contact.toLowerCase().trim();
-      const contactPhone = normalizePhone(contact);
       order = orders.find(o => {
         const oEmail = (o.email || o.contact_email || o.billing_address?.email || '').toLowerCase().trim();
         const oPhone = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
@@ -17180,7 +17331,9 @@ app.get("/track/order", async (req, res) => {
 
     if (!order) return res.status(404).json({ error: "Order not found. Please check the order number and your contact details." });
 
-    // Get meta (stage, AWB etc.)
+    // Opportunistically save snapshot for next time
+    snapshotOrder(order).catch(() => {});
+
     res.json(await buildOrderPayload(order));
   } catch (err) {
     console.error("❌ /track/order:", err.message);
@@ -17198,11 +17351,44 @@ app.get("/track/my-orders", async (req, res) => {
     const contactPhone = normalizePhone(contact);
     const isPhone = /^\d{7,}$/.test(contactPhone);
 
+    // ── DB-first path — instant query via indexed customer_phone / customer_email ──
+    let dbQuery;
+    if (isPhone && contactPhone.length >= 10) {
+      dbQuery = { customer_phone: contactPhone };
+    } else if (contactClean.includes('@')) {
+      dbQuery = { customer_email: contactClean };
+    }
+
+    if (dbQuery) {
+      const snaps = await mdb.collection('order_meta').find(dbQuery, {
+        projection: { shopify_id:1, order_name:1, customer_name:1, shopify_created_at:1, stage:1,
+                      financial_status:1, items:1, total_price:1, currency:1, _id:0 },
+        sort: { shopify_created_at: -1 },
+        limit: 20,
+      }).toArray();
+
+      if (snaps.length) {
+        const result = snaps.map(s => ({
+          shopify_order_id: s.shopify_id,
+          order_name: s.order_name,
+          customer_name: s.customer_name || '',
+          created_at: s.shopify_created_at,
+          stage: s.stage || 'new',
+          financial_status: s.financial_status || '',
+          item_count: (s.items || []).reduce((acc, i) => acc + (i.qty || 0), 0),
+          items_preview: (s.items || []).slice(0, 2).map(i => i.title).filter(Boolean).join(', '),
+          total: s.total_price || '0.00',
+          currency: s.currency || 'INR',
+        }));
+        return res.json({ orders: result, source: 'db' });
+      }
+    }
+
+    // ── Shopify fallback — only fires for orders placed before snapshot feature ──
     // Fetch all orders and filter locally — Shopify's phone/email params are unreliable
     let allOrders = [];
     let page = await shopifyREST(`/orders.json?status=any&limit=250`);
     allOrders = allOrders.concat(page.orders || []);
-    // follow pagination if needed (up to 1000 recent orders)
     for (let i = 0; i < 3 && (page.orders||[]).length === 250; i++) {
       const lastId = page.orders[page.orders.length - 1]?.id;
       if (!lastId) break;
@@ -17219,7 +17405,9 @@ app.get("/track/my-orders", async (req, res) => {
 
     if (!shopifyOrders.length) return res.status(404).json({ error: "No orders found for this contact." });
 
-    // Get meta for all orders
+    // Opportunistically snapshot all found orders for future DB-first hits
+    shopifyOrders.forEach(o => snapshotOrder(o).catch(() => {}));
+
     const ids = shopifyOrders.map(o => String(o.id));
     const metas = await mdb.collection('order_meta').find({ shopify_id: { $in: ids } }, { projection: { shopify_id:1, stage:1, _id:0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
@@ -17230,20 +17418,16 @@ app.get("/track/my-orders", async (req, res) => {
         ? `${o.shipping_address.first_name||''} ${o.shipping_address.last_name||''}`.trim()
         : o.customer ? `${o.customer.first_name||''} ${o.customer.last_name||''}`.trim() : '';
       return {
-        shopify_order_id: o.id,
-        order_name: o.name,
-        customer_name: customerName,
-        created_at: o.created_at,
-        stage: meta.stage || 'new',
+        shopify_order_id: o.id, order_name: o.name, customer_name: customerName,
+        created_at: o.created_at, stage: meta.stage || 'new',
         financial_status: o.financial_status,
         item_count: (o.line_items||[]).reduce((s,li)=>s+li.quantity,0),
         items_preview: (o.line_items||[]).slice(0,2).map(li=>li.title).join(', '),
-        total: o.total_price,
-        currency: o.currency,
+        total: o.total_price, currency: o.currency,
       };
     });
 
-    res.json({ orders: result });
+    res.json({ orders: result, source: 'shopify' });
   } catch (err) {
     console.error("❌ /track/my-orders:", err.message);
     res.status(500).json({ error: err.message });
