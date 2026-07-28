@@ -20295,6 +20295,29 @@ app.post('/admin/support/tickets/:id/close', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Admin order tickets (admin WA tracker) ────────────────────────────────
+app.get('/admin/order-tickets', adminAuth, async (req, res) => {
+  try {
+    const status = req.query.status;
+    const query = status ? { status } : { status: { $ne: 'resolved' } };
+    const tickets = await mdb.collection('admin_order_tickets').find(query).sort({ priority: -1, created_at: -1 }).limit(100).toArray();
+    res.json({ tickets });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/admin/order-tickets/:id', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { status, notes } = req.body;
+    const upd = { updated_at: new Date().toISOString() };
+    if (status) upd.status = status;
+    if (status === 'resolved') upd.resolved_at = new Date().toISOString();
+    if (notes !== undefined) upd.notes = notes;
+    await mdb.collection('admin_order_tickets').updateOne({ _id: new ObjectId(req.params.id) }, { $set: upd });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Vendor panel (logged-in) view of their own order chats ─────────────────
 app.get('/vendor/support/chats', vendorAuth, async (req, res) => {
   const chats = await mdb.collection('support_chats').find({ vendor_names: req.vendor, hidden_from_vendors: { $ne: true } }).sort({ updated_at: -1 }).toArray();
@@ -21399,6 +21422,202 @@ async function waSendToCustomer(phone, message) {
 
 // ── Admin WhatsApp AI — routes admin messages to Jarvis with waMode formatting ─
 
+// ── Admin Order Ticket helpers ────────────────────────────────────────────────
+
+function parseAdminOrderIssue(text) {
+  const orderMatch = text.match(/(?:order\s*#?|#)?(\d{3,6})/i);
+  if (!orderMatch) return null;
+  const order_num = orderMatch[1];
+
+  // Vendor name heuristic: word before "in <order>" or quoted
+  let vendor_name = null;
+  const vendorInMatch = text.match(/^([\w\s]+?)\s+(?:in|for)\s+(?:order\s*#?)?\d+/i);
+  if (vendorInMatch) {
+    const candidate = vendorInMatch[1].trim().toLowerCase();
+    // Only treat as vendor if short (likely a name, not a description)
+    if (candidate.split(' ').length <= 3 && !/not|is|are|has|was|still|been/.test(candidate)) {
+      vendor_name = vendorInMatch[1].trim();
+    }
+  }
+
+  // Issue type classification
+  const t = text.toLowerCase();
+  let issue_type = 'other';
+  let priority = 'medium';
+  if (/not\s+dispatch|unship|not\s+ship|pending\s+dispatch|awaiting\s+dispatch/.test(t)) { issue_type = 'not_dispatched'; priority = 'high'; }
+  else if (/delay|late|taking\s+long|slow/.test(t)) { issue_type = 'delayed'; priority = 'medium'; }
+  else if (/lost|missing|not\s+received|not\s+delivered/.test(t)) { issue_type = 'lost_in_transit'; priority = 'high'; }
+  else if (/return|refund|rto/.test(t)) { issue_type = 'return_issue'; priority = 'medium'; }
+  else if (/wrong|incorrect|different/.test(t)) { issue_type = 'wrong_item'; priority = 'high'; }
+  else if (/pending|stuck|no\s+update|no\s+movement/.test(t)) { issue_type = 'stuck'; priority = 'medium'; }
+
+  return { order_num, vendor_name, issue_type, priority, description: text.trim() };
+}
+
+async function handleAdminOrderTicket(sock, jid, parsed) {
+  if (!mdb) return 'Database unavailable.';
+  const { order_num, vendor_name, issue_type, priority, description } = parsed;
+
+  // Look up order
+  const meta = await mdb.collection('order_meta').findOne(
+    { $or: [{ order_name: { $regex: order_num } }, { order_name: `#${order_num}` }] },
+    { projection: { order_name: 1, shopify_order_id: 1, customer_name: 1, customer_phone: 1, delivery_status: 1, vendors: 1, items: 1, _id: 0 } }
+  );
+
+  const orderName = meta?.order_name || `#${order_num}`;
+  const now = new Date().toISOString();
+
+  // Check for duplicate open ticket
+  const existingTicket = await mdb.collection('admin_order_tickets').findOne({
+    order_name: orderName, issue_type, status: { $ne: 'resolved' }
+  });
+
+  let ticketId;
+  if (existingTicket) {
+    ticketId = existingTicket._id;
+    await mdb.collection('admin_order_tickets').updateOne(
+      { _id: ticketId },
+      { $set: { description, updated_at: now, priority }, $inc: { follow_up_count: 1 } }
+    );
+  } else {
+    const r = await mdb.collection('admin_order_tickets').insertOne({
+      order_name: orderName,
+      shopify_order_id: meta?.shopify_order_id || null,
+      vendor_name: vendor_name || null,
+      issue_type,
+      priority,
+      description,
+      status: 'open',
+      follow_up_count: 0,
+      vendor_pinged: false,
+      created_at: now,
+      updated_at: now,
+    });
+    ticketId = r.insertedId;
+  }
+
+  const lines = [`🎫 *Ticket ${existingTicket ? 'Updated' : 'Created'}* — ${orderName}`];
+  if (vendor_name) lines.push(`🏪 Vendor: ${vendor_name}`);
+  lines.push(`📋 Issue: ${issue_type.replace(/_/g, ' ')}`);
+  lines.push(`🚨 Priority: ${priority.toUpperCase()}`);
+  if (meta?.delivery_status) lines.push(`📦 Current status: ${meta.delivery_status}`);
+
+  // Ping relevant vendor on WA
+  const vendorsToAlert = [];
+  if (vendor_name) {
+    vendorsToAlert.push(vendor_name);
+  } else if (meta?.vendors?.length) {
+    vendorsToAlert.push(...meta.vendors);
+  } else if (meta?.items?.length) {
+    const unique = [...new Set(meta.items.map(i => i.vendor).filter(Boolean))];
+    vendorsToAlert.push(...unique);
+  }
+
+  let vendorPinged = false;
+  for (const vn of vendorsToAlert) {
+    const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vn }, { projection: { phone: 1 } });
+    const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (rawPhone.length !== 10) continue;
+    const vjid = `91${rawPhone}@s.whatsapp.net`;
+    const prio = priority === 'high' ? '🚨 URGENT' : '⚠️ Action Required';
+    const vendorMsg =
+`${prio} — Order ${orderName}
+
+Hi ${vn},
+
+CROSCROW admin has flagged an issue with your order:
+📋 *${issue_type.replace(/_/g, ' ').toUpperCase()}*
+
+${description}
+
+Please update the order status immediately.
+
+Reply with:
+*1️⃣* — Give reason + ETA
+*2️⃣* — Already resolved (share proof)
+*3️⃣* — Need assistance
+
+_CROSCROW Operations_`;
+    try {
+      await waSocket.sendMessage(vjid, { text: vendorMsg });
+      await waLogVendorMessage(vjid, vn, 'bot', vendorMsg);
+      await mdb.collection('admin_order_tickets').updateOne({ _id: ticketId }, { $set: { vendor_pinged: true, vendor_pinged_at: new Date().toISOString() } });
+      vendorPinged = true;
+      lines.push(`\n📲 Vendor *${vn}* pinged on WhatsApp`);
+    } catch (e) {
+      lines.push(`\n⚠️ Could not ping vendor ${vn}: ${e.message}`);
+    }
+  }
+
+  if (!vendorPinged && vendorsToAlert.length === 0) {
+    lines.push('\n⚠️ No vendor found — check order number or assign manually');
+  }
+
+  lines.push(`\nUse *!resolve ${order_num}* when done, or *!watch ${order_num}* for auto-updates.`);
+  return lines.join('\n');
+}
+
+async function adminStuckOrdersReport() {
+  if (!mdb) return 'Database unavailable.';
+  const STUCK_STAGES = ['confirmed', 'processing', 'packed'];
+  const cutoff = Date.now() - 24 * 3600000;
+  const stuckRows = await mdb.collection('order_vendor_stage').find({
+    stage: { $in: STUCK_STAGES },
+    stage_started_at: { $lt: cutoff },
+  }).sort({ stage_started_at: 1 }).limit(20).toArray();
+
+  if (!stuckRows.length) return '✅ No stuck orders right now — all good!';
+
+  const lines = [`🚨 *Stuck Orders (${stuckRows.length})*\n`];
+  for (const r of stuckRows) {
+    const hrs = Math.round((Date.now() - r.stage_started_at) / 3600000);
+    lines.push(`• *${r.order_name || r.shopify_id}* — ${r.vendor_name} | ${r.stage} | ${hrs}h`);
+  }
+  lines.push(`\nSend *"<vendor> in <order#> not dispatched"* to create a ticket and ping vendor.`);
+  return lines.join('\n');
+}
+
+async function adminMorningDigest(sock, adminJid) {
+  if (!mdb || !sock) return;
+  try {
+    const STUCK_STAGES = ['confirmed', 'processing', 'packed'];
+    const cutoff24h = Date.now() - 24 * 3600000;
+    const cutoff48h = Date.now() - 48 * 3600000;
+
+    const [stuck24, stuck48, openTickets, openChats] = await Promise.all([
+      mdb.collection('order_vendor_stage').countDocuments({ stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff24h } }),
+      mdb.collection('order_vendor_stage').countDocuments({ stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff48h } }),
+      mdb.collection('admin_order_tickets').countDocuments({ status: { $ne: 'resolved' } }),
+      mdb.collection('support_chats').countDocuments({ needs_human: true, resolved: { $ne: true } }),
+    ]);
+
+    const topStuck = await mdb.collection('order_vendor_stage').find(
+      { stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff48h } }
+    ).sort({ stage_started_at: 1 }).limit(5).toArray();
+
+    const urgentLines = topStuck.map(r => {
+      const hrs = Math.round((Date.now() - r.stage_started_at) / 3600000);
+      return `  • *${r.order_name || r.shopify_id}* (${r.vendor_name}) — ${hrs}h in ${r.stage}`;
+    });
+
+    const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+    const msg =
+`🌅 *CROSCROW Morning Digest* — ${now} IST
+
+📦 Orders stuck >24h: *${stuck24}*
+🚨 Orders stuck >48h: *${stuck48}*
+🎫 Open admin tickets: *${openTickets}*
+💬 Escalated support chats: *${openChats}*
+${urgentLines.length ? `\n*Most Urgent (48h+):*\n${urgentLines.join('\n')}` : ''}
+
+Use *!stuck* for full list · *!tickets* for tickets · *!digest* to refresh`;
+
+    await sock.sendMessage(adminJid, { text: msg });
+  } catch (e) {
+    console.error('adminMorningDigest error:', e.message);
+  }
+}
+
 async function waHandleAdminQuery(sock, sender, text) {
   if (!mdb) return;
   try {
@@ -21437,6 +21656,75 @@ async function waHandleAdminQuery(sock, sender, text) {
       });
       await waSessionSet(sender, { type: 'admin_resolve_pick', chats: pending.map(c => ({ id: String(c._id), label: c.order_name || c.customer_phone || String(c._id) })) });
       return;
+    }
+
+    // ── Admin Order Tracker Commands ─────────────────────────────────────────
+    const trimmed = text.trim();
+
+    // !stuck — list all stuck orders right now
+    if (/^!stuck$/i.test(trimmed)) {
+      await sock.sendMessage(sender, { text: '🔍 Fetching stuck orders...' });
+      const report = await adminStuckOrdersReport();
+      await sock.sendMessage(sender, { text: report });
+      return;
+    }
+
+    // !tickets — list open admin order tickets
+    if (/^!tickets$/i.test(trimmed)) {
+      const tix = await mdb.collection('admin_order_tickets').find({ status: { $ne: 'resolved' } }).sort({ created_at: -1 }).limit(10).toArray();
+      if (!tix.length) { await sock.sendMessage(sender, { text: '✅ No open order tickets — all clear!' }); return; }
+      const lines = tix.map((t, i) => {
+        const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 3600000);
+        const icon = t.priority === 'high' ? '🔴' : t.priority === 'medium' ? '🟡' : '🟢';
+        return `${icon} *${t.order_name}*${t.vendor_name ? ` (${t.vendor_name})` : ''}\n   ${t.issue_type} · ${age}h ago\n   ${t.description}`;
+      });
+      await sock.sendMessage(sender, { text: `📋 *Open Order Tickets (${tix.length})*\n\n${lines.join('\n\n')}` });
+      return;
+    }
+
+    // !resolve #XXXX or !resolve 2588 — resolve ticket by order number
+    const resolveMatch = trimmed.match(/^!resolve\s+#?(\d+)/i);
+    if (resolveMatch) {
+      const orderNum = resolveMatch[1];
+      const res = await mdb.collection('admin_order_tickets').updateMany(
+        { order_name: { $regex: orderNum }, status: { $ne: 'resolved' } },
+        { $set: { status: 'resolved', resolved_at: new Date().toISOString() } }
+      );
+      await sock.sendMessage(sender, { text: res.modifiedCount > 0 ? `✅ Resolved ${res.modifiedCount} ticket(s) for order *#${orderNum}*` : `⚠️ No open tickets found for order #${orderNum}` });
+      return;
+    }
+
+    // !watch #XXXX [notes] — watch an order, get auto-updates
+    const watchMatch = trimmed.match(/^!watch\s+#?(\d+)(.*)$/i);
+    if (watchMatch) {
+      const orderNum = watchMatch[1];
+      const notes = watchMatch[2].trim();
+      await mdb.collection('admin_order_tickets').updateOne(
+        { order_name: { $regex: orderNum }, status: { $ne: 'resolved' } },
+        { $set: { watched: true, watch_notes: notes, updated_at: new Date().toISOString() } }
+      );
+      await sock.sendMessage(sender, { text: `👁️ Watching order *#${orderNum}* — you'll get updates when status changes.${notes ? `\n📝 Notes: ${notes}` : ''}` });
+      return;
+    }
+
+    // !digest — trigger manual morning digest
+    if (/^!digest$/i.test(trimmed)) {
+      await sock.sendMessage(sender, { text: '📊 Generating digest...' });
+      await adminMorningDigest(sock, sender);
+      return;
+    }
+
+    // Natural language order issue detection
+    // Matches: "2588 is not dispatched", "fitcheck pants in 2578 pending", "#2588 stuck"
+    const orderIssueMatch = trimmed.match(/(?:order\s*#?|#)?(\d{3,6})/i);
+    if (orderIssueMatch && trimmed.length > 4) {
+      const parsed = parseAdminOrderIssue(trimmed);
+      if (parsed) {
+        await sock.sendMessage(sender, { text: `🎫 On it! Creating ticket for order *#${parsed.order_num}*...` });
+        const result = await handleAdminOrderTicket(sock, sender, parsed);
+        await sock.sendMessage(sender, { text: result });
+        return;
+      }
     }
 
     // Admin picks which chat to resolve from the list above
@@ -21667,6 +21955,22 @@ async function ticketSLACron() {
   } catch (e) { console.error('ticketSLACron error:', e.message); }
 }
 setInterval(ticketSLACron, 30 * 60 * 1000); // every 30 min
+
+// ── Daily 9 AM IST morning digest ────────────────────────────────────────────
+let _digestLastSent = 0;
+setInterval(async () => {
+  const now = new Date();
+  const istHour = (now.getUTCHours() + 5) % 24 + (now.getUTCMinutes() >= 30 ? 0 : 0);
+  const istH = Math.floor((now.getUTCHours() * 60 + now.getUTCMinutes() + 330) / 60) % 24;
+  const istM = (now.getUTCMinutes() + 30) % 60;
+  if (istH === 9 && istM < 30 && Date.now() - _digestLastSent > 3600000) {
+    _digestLastSent = Date.now();
+    const adminJid = WA_ADMIN_NO ? `91${WA_ADMIN_NO.replace(/\D/g, '').replace(/^91/, '').slice(-10)}@s.whatsapp.net` : null;
+    if (adminJid && waSocket) {
+      adminMorningDigest(waSocket, adminJid).catch(e => console.error('Morning digest error:', e.message));
+    }
+  }
+}, 10 * 60 * 1000); // check every 10 min
 
 async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerMsg = true, forceMsg = false } = {}) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);

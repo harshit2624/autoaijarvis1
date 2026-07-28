@@ -10146,6 +10146,95 @@
       );
     };
 
+    const OrderTicketsPanel = ({ token }) => {
+      const [tickets, setTickets] = React.useState(null);
+      const [filter, setFilter] = React.useState('open');
+      const [resolving, setResolving] = React.useState(null);
+
+      const load = () => {
+        const qs = filter === 'resolved' ? '?status=resolved' : '';
+        fetch(`/admin/order-tickets${qs}`, { headers:{ Authorization:'Bearer '+token } })
+          .then(r=>r.json()).then(d=>setTickets(d.tickets||[])).catch(()=>setTickets([]));
+      };
+      React.useEffect(load, [filter]);
+
+      const resolveTicket = async (id) => {
+        setResolving(id);
+        await fetch(`/admin/order-tickets/${id}`, { method:'PATCH', headers:{ Authorization:'Bearer '+token,'Content-Type':'application/json' }, body: JSON.stringify({ status:'resolved' }) });
+        setResolving(null);
+        load();
+      };
+
+      const PRIORITY_COLOR = { high:'#ef4444', medium:'#f59e0b', low:'#22c55e' };
+      const ISSUE_LABEL = {
+        not_dispatched:'🚚 Not Dispatched', delayed:'⏳ Delayed', lost_in_transit:'📦 Lost in Transit',
+        return_issue:'🔄 Return Issue', wrong_item:'❌ Wrong Item', stuck:'🔴 Stuck', other:'📋 Other',
+      };
+
+      return (
+        <div style={{padding:'16px',overflowY:'auto',flex:1}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:15}}>Admin Order Tickets</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Created via WhatsApp · Send <code style={{background:'var(--bg)',padding:'1px 4px',borderRadius:3}}>!tickets</code> or <code style={{background:'var(--bg)',padding:'1px 4px',borderRadius:3}}>!stuck</code> to Jarvis</div>
+            </div>
+            <div style={{display:'flex',gap:6}}>
+              {[['open','Open'],['resolved','Resolved']].map(([v,l])=>(
+                <button key={v} onClick={()=>setFilter(v)} style={{padding:'5px 14px',borderRadius:6,border:'1px solid var(--border)',background:filter===v?'var(--indigo)':'var(--card-bg)',color:filter===v?'#fff':'var(--text)',cursor:'pointer',fontSize:12,fontWeight:600}}>{l}</button>
+              ))}
+              <button onClick={load} style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--card-bg)',color:'var(--text)',cursor:'pointer',fontSize:12}}>↻</button>
+            </div>
+          </div>
+
+          {/* WA command cheatsheet */}
+          {filter === 'open' && (
+            <div style={{background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:10,padding:'10px 16px',marginBottom:16,fontSize:12,color:'var(--text)'}}>
+              <strong style={{color:'var(--indigo)'}}>WhatsApp commands:</strong>
+              <span style={{marginLeft:8}}>
+                <code>!stuck</code> · <code>!tickets</code> · <code>!digest</code> · <code>!resolve 2588</code> · <code>!watch 2588</code>
+                <span style={{marginLeft:8,color:'var(--text-muted)'}}>or just say <em>"2588 is not dispatched"</em></span>
+              </span>
+            </div>
+          )}
+
+          {tickets === null && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading...</div>}
+          {tickets?.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13,padding:'32px 0',textAlign:'center'}}>
+            {filter === 'open' ? '✅ No open order tickets — all good!' : 'No resolved tickets found'}
+          </div>}
+
+          {tickets?.map(t => {
+            const pColor = PRIORITY_COLOR[t.priority] || '#94a3b8';
+            const ageH = Math.round((Date.now() - new Date(t.created_at).getTime()) / 3600000);
+            return (
+              <div key={String(t._id)} style={{background:'var(--card-bg)',border:`1px solid var(--border)`,borderLeft:`3px solid ${pColor}`,borderRadius:10,padding:'14px 16px',marginBottom:10}}>
+                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
+                      <span style={{background:pColor+'22',color:pColor,fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,textTransform:'uppercase',letterSpacing:'.06em'}}>{t.priority||'medium'}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{t.order_name}</span>
+                      {t.vendor_name && <span style={{fontSize:11,color:'var(--indigo)',background:'rgba(99,102,241,0.1)',padding:'2px 8px',borderRadius:4,fontWeight:600}}>🏪 {t.vendor_name}</span>}
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>{ISSUE_LABEL[t.issue_type]||t.issue_type}</span>
+                    </div>
+                    <div style={{fontSize:12,color:'var(--text)',marginBottom:6,lineHeight:1.5}}>{t.description}</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',display:'flex',gap:12,flexWrap:'wrap'}}>
+                      <span>Created: {new Date(t.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                      <span>{ageH}h ago</span>
+                      {t.vendor_pinged && <span style={{color:'#10b981'}}>📲 Vendor pinged {t.vendor_pinged_at ? new Date(t.vendor_pinged_at).toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</span>}
+                      {t.follow_up_count > 0 && <span style={{color:'#f59e0b'}}>⚠️ {t.follow_up_count} follow-ups</span>}
+                      {t.watched && <span style={{color:'var(--indigo)'}}>👁️ Watching</span>}
+                    </div>
+                  </div>
+                  <div style={{flexShrink:0}}>
+                    {filter === 'open' && <button onClick={()=>resolveTicket(String(t._id))} disabled={resolving===String(t._id)} style={{padding:'5px 14px',borderRadius:6,border:'none',background:'#22c55e22',color:'#22c55e',cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>{resolving===String(t._id)?'Resolving...':'✓ Resolve'}</button>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
     const InsightsPanel = () => {
       const latest = insights?.[0];
       return (
@@ -10224,7 +10313,7 @@
       <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)'}}>
         {/* Top tab bar: Chats | Insights */}
         <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0}}>
-          {[['chats','💬 Chats'],['tickets','🎫 Tickets'],['vendors','🏪 Vendor WA'],['jidsetup','🔗 JID Setup'],['insights','🔍 Insights']].map(([id,label])=>(
+          {[['chats','💬 Chats'],['tickets','🎫 Tickets'],['ordertickets','📋 Order Tickets'],['vendors','🏪 Vendor WA'],['jidsetup','🔗 JID Setup'],['insights','🔍 Insights']].map(([id,label])=>(
             <button key={id} onClick={()=>setMainTab(id)} style={{
               padding:'12px 20px',fontSize:13,fontWeight:700,border:'none',cursor:'pointer',fontFamily:'var(--font-family)',
               background:'transparent', color: mainTab===id ? 'var(--indigo)' : 'var(--text-muted)',
@@ -10236,6 +10325,8 @@
         {mainTab === 'insights' && <InsightsPanel />}
 
         {mainTab === 'tickets' && <TicketsPanel token={token} now={now} onOpenChat={(id)=>{setMainTab('chats');setSelectedId(id);}} />}
+
+        {mainTab === 'ordertickets' && <OrderTicketsPanel token={token} />}
 
         {mainTab === 'jidsetup' && (()=>{
           const loadJids = () => {
