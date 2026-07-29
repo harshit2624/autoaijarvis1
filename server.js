@@ -809,7 +809,7 @@ async function applyTagMappings(orderId, tags, financialStatus) {
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CROSCROWAdmin@00";
 // Admin sessions stored in MongoDB — survives server restarts/redeploys
 async function adminAuth(req, res, next) {
-  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  const token = ((req.headers.authorization || "").replace("Bearer ", "") || req.query.token || "").trim();
   if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
     const s = await mdb.collection('admin_sessions').findOne({ token });
