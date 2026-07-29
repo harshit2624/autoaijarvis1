@@ -7317,14 +7317,14 @@ app.get('/admin/leakage-data', adminAuth, async (req, res) => {
       hold: 'hold', cancelled: 'cancelled', new: 'new', misc: 'misc',
     };
 
-    // Per-vendor revenue accumulator per group
-    // vendorMap[group][vendor] = { rev, count, orders }
-    const vendorMap = {};
-    const addV = (group, vendor, rev, orderId) => {
-      if (!vendorMap[group]) vendorMap[group] = {};
-      if (!vendorMap[group][vendor]) vendorMap[group][vendor] = { rev: 0, count: 0 };
-      vendorMap[group][vendor].rev   += rev;
-      vendorMap[group][vendor].count += 1;
+    // Per-vendor revenue accumulator — both by group AND by individual stage
+    const vendorMap = {};      // vendorMap[group][vendor]
+    const stageVendorMap = {}; // stageVendorMap[stage][vendor]
+    const addV = (bucket, map, vendor, rev) => {
+      if (!map[bucket]) map[bucket] = {};
+      if (!map[bucket][vendor]) map[bucket][vendor] = { rev: 0, count: 0 };
+      map[bucket][vendor].rev   += rev;
+      map[bucket][vendor].count += 1;
     };
 
     // Totals per group
@@ -7345,21 +7345,27 @@ app.get('/admin/leakage-data', adminAuth, async (req, res) => {
       stageRevMap[orderStage] = (stageRevMap[orderStage] || 0) + price;
 
       if (vendors.length) {
-        // Split price equally among vendors (approximation for leakage attribution)
         const share = price / vendors.length;
         for (const v of vendors) {
-          if ((STAGE_GROUP[v.stage] || 'misc') === group) {
-            addV(group, v.vendor_name, share, sid);
+          const vGroup = STAGE_GROUP[v.stage] || 'misc';
+          if (vGroup === group) {
+            addV(group,   vendorMap,      v.vendor_name, share);
+            addV(v.stage, stageVendorMap, v.vendor_name, share);
           }
         }
-        // If no vendor matched the order group (e.g. order-level cancelled), attribute to first vendor
         if (!vendors.some(v => (STAGE_GROUP[v.stage]||'misc') === group)) {
-          addV(group, vendors[0].vendor_name, price, sid);
+          addV(group,     vendorMap,      vendors[0].vendor_name, price);
+          addV(orderStage, stageVendorMap, vendors[0].vendor_name, price);
         }
       } else {
-        addV(group, 'Unassigned', price, sid);
+        addV(group,     vendorMap,      'Unassigned', price);
+        addV(orderStage, stageVendorMap, 'Unassigned', price);
       }
     }
+
+    const sortVendors = (map, key) => Object.entries(map[key] || {})
+      .map(([name, d]) => ({ name, rev: Math.round(d.rev), count: d.count }))
+      .sort((a,b) => b.rev - a.rev).slice(0, 10);
 
     // Sort vendors per group by revenue desc, return top 10
     const topVendors = {};
@@ -7388,6 +7394,10 @@ app.get('/admin/leakage-data', adminAuth, async (req, res) => {
       },
       stages: Object.fromEntries(Object.entries(stageRevMap).map(([k,v])=>[k,Math.round(v)])),
       topVendors,
+      stageVendors: Object.fromEntries(
+        ['ready','pickup','transit','ofd','confirmed','partial','cancelled','hold','new','misc','rto','delivered']
+          .map(s => [s, sortVendors(stageVendorMap, s)])
+      ),
     });
   } catch (e) {
     console.error('leakage-data error:', e.message);

@@ -15648,7 +15648,28 @@
       );
     };
 
+    const VendorList = ({ vendors, color, total }) => {
+      if (!vendors.length) return <div style={{padding:'12px 14px', fontSize:10, color:'var(--text-muted)'}}>No data</div>;
+      const maxRev = vendors[0]?.rev || 1;
+      return vendors.map((v,i) => (
+        <div key={v.name} style={{padding:'8px 14px', borderBottom:'1px solid var(--border)'}}>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:3}}>
+            <div style={{width:15,height:15,borderRadius:3,background:'var(--bg-card2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:800,color:'var(--text-muted)',flexShrink:0}}>{i+1}</div>
+            <div style={{flex:1,fontSize:11,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={v.name}>{v.name}</div>
+            <div style={{fontSize:12,fontWeight:800,color}}>{fmt(v.rev)}</div>
+          </div>
+          <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginLeft:23,marginBottom:3}}>
+            <div style={{height:'100%',width:`${v.rev/maxRev*100}%`,background:color,borderRadius:2}}/>
+          </div>
+          <div style={{fontSize:9,color:'var(--text-muted)',marginLeft:23}}>
+            {v.count} orders · {pct(v.rev,total)}% of stage · {pct(v.rev,gross)}% of gross
+          </div>
+        </div>
+      ));
+    };
+
     const VendorPanel = ({ rowKey }) => {
+      const [subStage, setSubStage] = React.useState(null);
       const row = rows.find(r => r.key === rowKey);
       if (!row) return (
         <div style={{height:'100%', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:8, color:'var(--text-muted)', padding:24, textAlign:'center'}}>
@@ -15656,42 +15677,63 @@
           <div style={{fontSize:12}}>Click a stage to see<br/>vendor breakdown</div>
         </div>
       );
-      const vendors = [];
+
+      const isDispatched = row.key === 'dispatched';
+      const dispatchedSubStages = [
+        { key:'ready',   label:'Ready',   color:'#60a5fa' },
+        { key:'pickup',  label:'Pickup',  color:'#60a5fa' },
+        { key:'transit', label:'Transit', color:C.blue },
+        { key:'ofd',     label:'OFD',     color:'#1d4ed8' },
+      ].filter(s => (data.stages?.[s.key] || 0) > 0);
+
+      // Overall vendors for this row
+      const allVendors = [];
       for (const sg of row.subgroups) {
         for (const v of (data.topVendors?.[sg] || [])) {
-          const ex = vendors.find(x => x.name === v.name);
-          if (ex) { ex.rev += v.rev; ex.count += v.count; } else vendors.push({...v});
+          const ex = allVendors.find(x => x.name === v.name);
+          if (ex) { ex.rev += v.rev; ex.count += v.count; } else allVendors.push({...v});
         }
       }
-      vendors.sort((a,b) => b.rev - a.rev);
-      const maxRev = vendors[0]?.rev || 1;
-      const total  = vendors.reduce((s,v) => s + v.rev, 0);
+      allVendors.sort((a,b) => b.rev - a.rev);
+      const allTotal = allVendors.reduce((s,v) => s + v.rev, 0);
+
+      // Sub-stage vendors
+      const activeStage = isDispatched && subStage ? dispatchedSubStages.find(s=>s.key===subStage) : null;
+      const subVendors  = activeStage ? (data.stageVendors?.[activeStage.key] || []) : [];
+      const subTotal    = subVendors.reduce((s,v) => s + v.rev, 0);
+
+      const displayVendors = activeStage ? subVendors : allVendors;
+      const displayTotal   = activeStage ? subTotal   : allTotal;
+      const displayColor   = activeStage ? activeStage.color : row.color;
+
       return (
         <div>
           <div style={{padding:'12px 14px', borderBottom:'1px solid var(--border)'}}>
             <div style={{fontSize:12, fontWeight:800, color:row.color}}>{row.label}</div>
-            <div style={{fontSize:10, color:'var(--text-muted)', marginTop:2}}>Top vendors · {fmt(total)} total</div>
-          </div>
-          {vendors.slice(0,10).map((v,i) => (
-            <div key={v.name} style={{padding:'9px 14px', borderBottom:'1px solid var(--border)'}}>
-              <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:4}}>
-                <div style={{
-                  width:16, height:16, borderRadius:3, background:'var(--bg-card2)',
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  fontSize:8, fontWeight:800, color:'var(--text-muted)', flexShrink:0,
-                }}>{i+1}</div>
-                <div style={{flex:1, fontSize:11, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={v.name}>{v.name}</div>
-                <div style={{fontSize:12, fontWeight:800, color:row.color}}>{fmt(v.rev)}</div>
-              </div>
-              <div style={{height:3, background:'var(--border)', borderRadius:2, overflow:'hidden', marginLeft:24, marginBottom:3}}>
-                <div style={{height:'100%', width:`${v.rev/maxRev*100}%`, background:row.color, borderRadius:2}}/>
-              </div>
-              <div style={{fontSize:9, color:'var(--text-muted)', marginLeft:24}}>
-                {v.count} orders · {pct(v.rev,total)}% of stage · {pct(v.rev,gross)}% of gross
-              </div>
+            <div style={{fontSize:10, color:'var(--text-muted)', marginTop:2}}>
+              {activeStage ? `${activeStage.label} · ${fmt(displayTotal)}` : `All vendors · ${fmt(allTotal)}`}
             </div>
-          ))}
-          {!vendors.length && <div style={{padding:24, textAlign:'center', color:'var(--text-muted)', fontSize:11}}>No vendor data</div>}
+          </div>
+
+          {/* Sub-stage tabs for dispatched */}
+          {isDispatched && dispatchedSubStages.length > 0 && (
+            <div style={{display:'flex', gap:4, padding:'8px 14px', borderBottom:'1px solid var(--border)', flexWrap:'wrap'}}>
+              <button onClick={()=>setSubStage(null)} style={{
+                padding:'3px 9px', borderRadius:5, fontSize:10, fontWeight:700, cursor:'pointer', border:'none',
+                background: !subStage ? row.color : 'var(--bg-card2)',
+                color: !subStage ? '#fff' : 'var(--text-muted)',
+              }}>All</button>
+              {dispatchedSubStages.map(s => (
+                <button key={s.key} onClick={()=>setSubStage(s.key)} style={{
+                  padding:'3px 9px', borderRadius:5, fontSize:10, fontWeight:700, cursor:'pointer', border:'none',
+                  background: subStage===s.key ? s.color : 'var(--bg-card2)',
+                  color: subStage===s.key ? '#fff' : 'var(--text-muted)',
+                }}>{s.label} <span style={{fontWeight:400,opacity:.8}}>{fmt(data.stages?.[s.key]||0)}</span></button>
+              ))}
+            </div>
+          )}
+
+          <VendorList vendors={displayVendors.slice(0,10)} color={displayColor} total={displayTotal}/>
         </div>
       );
     };
