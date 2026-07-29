@@ -1286,6 +1286,9 @@ function renderTrack(d) {
       </div>`;
     }).join('');
 
+    // Courier scan log for multivendor (same tracking_history, shown below vendor cards)
+    renderScanLog(d.tracking_history || [], displayStage);
+
     // Show return/exchange if any vendor is delivered
     const anyDelivered = (d.vendor_shipments||[]).some(vs=>vs.stage==='delivered')||displayStage==='delivered';
     if (anyDelivered) {

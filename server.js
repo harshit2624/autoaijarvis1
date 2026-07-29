@@ -7284,63 +7284,133 @@ app.get("/admin/settlements", adminAuth, async (req, res) => {
 
 // ── GET /admin/settlements/gst-export ────────────────────────────────────
 // All delivered orders in date range → one row per vendor → CA GST format CSV
+// Mirrors invoice generator exactly: OVS-based delivered filter, price overrides,
+// delivered-vendor-only advance split, confirmed penalties, in-memory product rules.
 app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
 
   try {
-    // Fetch orders created in the specified period (matches how settlement invoices are generated)
     const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
 
-    // Load supporting data
-    const metas = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
-    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray();
-    const vConfigs  = await VC.all();
-    const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
-    const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
-    const allVendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
-    const vendorStageMap = {};
-    allVendorStages.forEach(r => {
-      if (!vendorStageMap[r.shopify_id]) vendorStageMap[r.shopify_id] = {};
-      vendorStageMap[r.shopify_id][canonicalVendor(r.vendor_name)] = r.stage;
-    });
+    // Load all supporting data in parallel (same as dashboard)
+    const [metas, vProfiles, vConfigs, allProductRules, allVendorStages, priceOverrideDocs, confirmedPenalties] = await Promise.all([
+      mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
+      VC.all(),
+      mdb.collection('product_commission_rules').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray(),
+      mdb.collection('order_price_overrides').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
+    ]);
 
-    // Aggregate per-vendor totals — only delivered orders
+    const metaMap       = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const vProfileMap   = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
+    const vConfigMap    = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+
+    // In-memory product rules — same as dashboard (fix: was doing per-item DB query)
+    const productRulesMap = {};
+    for (const r of allProductRules) {
+      if (!productRulesMap[r.vendor_name]) productRulesMap[r.vendor_name] = { byProduct: {}, bySku: {} };
+      if (r.product_id) productRulesMap[r.vendor_name].byProduct[String(r.product_id)] = r;
+      if (r.sku)        productRulesMap[r.vendor_name].bySku[r.sku] = r;
+    }
+    const findRuleFast = (vendor, product_id, sku) => {
+      const vm = productRulesMap[vendor];
+      if (!vm) return null;
+      if (product_id && vm.byProduct[String(product_id)]) return vm.byProduct[String(product_id)];
+      if (sku && vm.bySku[sku]) return vm.bySku[sku];
+      return null;
+    };
+
+    // OVS stage map — same as invoice generator: { shopify_id: { vendor_name: stage } }
+    const ovsMap = {};
+    for (const r of allVendorStages) {
+      if (!ovsMap[r.shopify_id]) ovsMap[r.shopify_id] = {};
+      // keep highest stage if duplicate vendor name rows
+      const existing = ovsMap[r.shopify_id][r.vendor_name];
+      ovsMap[r.shopify_id][r.vendor_name] = existing ? higherStage(existing, r.stage) : r.stage;
+    }
+
+    // Price overrides map: { shopify_order_id: { line_item_id: price } }
+    const priceOverrideMap = {};
+    for (const ov of priceOverrideDocs) {
+      if (!priceOverrideMap[ov.shopify_order_id]) priceOverrideMap[ov.shopify_order_id] = {};
+      priceOverrideMap[ov.shopify_order_id][ov.line_item_id] = ov.overridden_price;
+    }
+
+    // Confirmed penalties per vendor (same as invoice net payable)
+    const penaltyByVendor = {};
+    for (const p of confirmedPenalties) {
+      if (!p.vendor_name) continue;
+      penaltyByVendor[p.vendor_name] = (penaltyByVendor[p.vendor_name] || 0) + (p.penalty_amount || 0);
+    }
+
+    // Aggregate per-vendor — only delivered orders, using OVS stage (not order_meta.stage)
     const vendorMap = {};
     for (const o of allOrders) {
       const sid = String(o.id);
       const meta = metaMap[sid] || {};
-      const orderStage = meta.stage || 'new';
       const payType = meta.payment_type || 'cod';
       const isCod = payType !== 'prepaid';
       const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
-      const ordVendorSet = new Set((o.line_items || []).map(li => canonicalVendor(li.vendor)).filter(Boolean));
-      const shippingPerVendor = ordVendorSet.size > 0 ? orderShipping / ordVendorSet.size : 0;
+      const orderOverrides = priceOverrideMap[sid] || {};
+      const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : parseFloat(li.price || 0);
+
+      // Track which vendors have delivered items in this order (for advance split)
+      const deliveredVendorsInOrder = new Set();
+      for (const li of (o.line_items || [])) {
+        const vendor = li.vendor;
+        if (!vendor) continue;
+        const vendorDbStage = ovsMap[sid]?.[vendor] || 'new';
+        const shopifyStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor] || null;
+        const effectiveStage = higherStage(vendorDbStage, shopifyStage || 'new');
+        if (effectiveStage === 'delivered') deliveredVendorsInOrder.add(vendor);
+      }
 
       for (const li of (o.line_items || [])) {
-        const vendor = canonicalVendor(li.vendor);
+        const vendor = li.vendor;
         if (!vendor) continue;
-        const effectiveStage = vendorStageMap[sid]?.[vendor] || orderStage;
-        if (effectiveStage !== 'delivered') continue;
-        if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, ordersAdded: new Set() };
-        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        if (!deliveredVendorsInOrder.has(vendor)) continue;
+
+        if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
+
+        // Gross uses raw Shopify price (matches dashboard). effectivePrice only for commission basis.
+        const rawPrice  = parseFloat(li.price || 0);
+        const liPrice   = effectivePrice(li);
+        const rawRev    = rawPrice * (li.quantity || 1);
         const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
-        // Use product-level rule if exists, else standard %
-        const productRule = await findProductRule(vendor, li.product_id, li.sku);
+        const productRule = findRuleFast(vendor, li.product_id, li.sku);
         const calc = productRule
-          ? calcProductCommission(productRule, li.price, li.quantity || 1, payType)
-          : calcCommission(itemRev, payType, commPct, 0);
-        vendorMap[vendor].gross += itemRev;
-        if (!isCod) vendorMap[vendor].prepaidDiscount += (itemRev - calc.base);
+          ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
+          : calcCommission(liPrice * (li.quantity || 1), payType, commPct, 0);
+
+        vendorMap[vendor].gross += rawRev;
+        if (!isCod) vendorMap[vendor].prepaidDiscount += (rawRev - calc.base);
         vendorMap[vendor].commission += calc.commission;
         vendorMap[vendor].gst += calc.gst;
+
+        // Advance + shipping: once per order per vendor, split among delivered vendors only
         if (!vendorMap[vendor].ordersAdded.has(sid)) {
           vendorMap[vendor].ordersAdded.add(sid);
-          if ((meta.advance_paid || 0) > 0) vendorMap[vendor].advance += (meta.advance_paid || 0) / ordVendorSet.size;
-          if (isCod) vendorMap[vendor].shipping += shippingPerVendor;
+          const deliveredCount = deliveredVendorsInOrder.size || 1;
+          if (isCod && (meta.advance_paid || 0) > 0)
+            vendorMap[vendor].advance += parseFloat(((meta.advance_paid || 0) / deliveredCount).toFixed(2));
+          if (isCod && orderShipping > 0)
+            vendorMap[vendor].shipping += parseFloat((orderShipping / deliveredVendorsInOrder.size).toFixed(2));
         }
       }
+    }
+
+    // Attach confirmed penalties (in the period — filtered by penalty created_at)
+    const fromTs = new Date(`${from}T00:00:00Z`).getTime();
+    const toTs   = new Date(`${to}T23:59:59Z`).getTime();
+    for (const p of confirmedPenalties) {
+      if (!p.vendor_name) continue;
+      const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
+      if (pTs < fromTs || pTs > toTs) continue;
+      if (!vendorMap[p.vendor_name]) vendorMap[p.vendor_name] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
+      vendorMap[p.vendor_name].penalty += (p.penalty_amount || 0);
     }
 
     const escCsv = v => {
@@ -7354,7 +7424,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       'DATE','COMMISSION INVOICE NO','VENDOR','VENDOR GST (IF AVAILABLE)',
       'OFFICE LOCATION (CITY/STATE)','TOTAL SALES','TOTAL VENDOR DISCOUNT',
       'TOTAL COMMISSIONABLE SALES','COMMISSION ON SALES','SHIPPING CHARGES',
-      'CROSCROW DISCOUNT','SUBTOTAL','HSN CODE','IGST(18%)','SGST(9%)','CGST(9%)',
+      'PENALTY CHARGES','SUBTOTAL','HSN CODE','IGST(18%)','SGST(9%)','CGST(9%)',
       'TOTAL GST','TOTAL COMMISSION WITH GST',
     ];
 
@@ -7367,16 +7437,19 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const vendorDiscount = parseFloat(d.prepaidDiscount.toFixed(2));
       const commissionable = parseFloat((totalSales - vendorDiscount).toFixed(2));
       const commission     = parseFloat(d.commission.toFixed(2));
-      // COD shipping is GST-inclusive — extract base and GST components
+      const penalty        = parseFloat((d.penalty || 0).toFixed(2));
+
+      // COD shipping is GST-inclusive — extract base and GST
       const shippingTotal  = parseFloat(d.shipping.toFixed(2));
       const shippingBase   = parseFloat((shippingTotal * 100 / 118).toFixed(2));
       const shippingGst    = parseFloat((shippingTotal * 18 / 118).toFixed(2));
-      // Commission + shipping base (both excl. GST) = taxable subtotal
-      const subtotal       = parseFloat((commission + shippingBase).toFixed(2));
-      const totalGst       = parseFloat((d.gst + shippingGst).toFixed(2));
-      const hsnCode        = '998599';
 
-      // IGST if inter-state (CROSCROW = Rajasthan, state code 08). Same state → SGST+CGST
+      // Subtotal = commission base + shipping base + penalty (all excl. GST)
+      const subtotal   = parseFloat((commission + shippingBase + penalty).toFixed(2));
+      const totalGst   = parseFloat((d.gst + shippingGst).toFixed(2));
+      const hsnCode    = '998599';
+
+      // IGST if inter-state (CROSCROW = Rajasthan, state code 08)
       const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
       const isIGST = !vendorStateCode || vendorStateCode !== '08';
       const igst = isIGST ? totalGst : 0;
@@ -7387,7 +7460,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       return [
         periodLabel, '', vendorName, gstNo, location,
         totalSales.toFixed(2), vendorDiscount.toFixed(2), commissionable.toFixed(2),
-        commission.toFixed(2), shippingBase.toFixed(2), '0.00',
+        commission.toFixed(2), shippingBase.toFixed(2), penalty.toFixed(2),
         subtotal.toFixed(2), hsnCode,
         igst.toFixed(2), sgst.toFixed(2), cgst.toFixed(2),
         totalGst.toFixed(2), totalWithGst.toFixed(2),
@@ -7399,17 +7472,19 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     const tSales     = parseFloat(allV.reduce((s,d) => s + d.gross, 0).toFixed(2));
     const tDisc      = parseFloat(allV.reduce((s,d) => s + d.prepaidDiscount, 0).toFixed(2));
     const tComm      = parseFloat(allV.reduce((s,d) => s + d.commission, 0).toFixed(2));
+    const tPenalty   = parseFloat(allV.reduce((s,d) => s + (d.penalty||0), 0).toFixed(2));
     const tShipTotal = parseFloat(allV.reduce((s,d) => s + d.shipping, 0).toFixed(2));
     const tShipBase  = parseFloat((tShipTotal * 100 / 118).toFixed(2));
     const tShipGst   = parseFloat((tShipTotal * 18 / 118).toFixed(2));
     const tGst       = parseFloat((allV.reduce((s,d) => s + d.gst, 0) + tShipGst).toFixed(2));
     const tCommable  = parseFloat((tSales - tDisc).toFixed(2));
-    const tSubtotal  = parseFloat((tComm + tShipBase).toFixed(2));
+    const tSubtotal  = parseFloat((tComm + tShipBase + tPenalty).toFixed(2));
     const tTotal     = parseFloat((tSubtotal + tGst).toFixed(2));
+
     const totalsRow = [
       'TOTAL','','','','',
       tSales.toFixed(2), tDisc.toFixed(2), tCommable.toFixed(2),
-      tComm.toFixed(2), tShipBase.toFixed(2), '0.00',
+      tComm.toFixed(2), tShipBase.toFixed(2), tPenalty.toFixed(2),
       tSubtotal.toFixed(2), '',
       tGst.toFixed(2), '0.00', '0.00',
       tGst.toFixed(2), tTotal.toFixed(2),
@@ -11988,44 +12063,17 @@ app.post("/vendor/delay-remark", async (req, res) => {
 
   await DR.insert(order, vendor, reason, eta_date);
 
-  // Fetch order details to send emails
+  // Notify customer (email + WA) + admin (email) via shared helper
+  notifyDelayToCustomer(order, vendor, reason, eta_date).catch(e => console.error('Delay notify error:', e.message));
+
+  // Admin WA alert
   try {
-    const shopifyOrder = await shopifyREST(`/orders/${order}.json?fields=id,name,email,shipping_address,line_items`);
-    const ord = shopifyOrder?.order;
-    const customerEmail = ord?.email;
-    const adminEmail = (await getSmtpConfig())?.user;
-    const etaFormatted = new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' });
-
-    const delayHtmlCustomer = emailBase(`We're Sorry — Your Order Is Delayed`, '#f59e0b', `
-      <div class="subtitle">We sincerely apologise for the delay in fulfilling your order.</div>
-      <div class="info-box">
-        <div class="info-row"><span class="info-label">Order ID</span><span class="info-val" style="color:#6366f1">${ord?.name || order}</span></div>
-        <div class="info-row"><span class="info-label">Expected Dispatch By</span><span class="info-val" style="color:#10b981;font-weight:700">${etaFormatted}</span></div>
-      </div>
-      <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:14px 18px;margin-bottom:16px;font-size:13px;color:#713f12;line-height:1.7">
-        We understand this is inconvenient and apologise for the delay. Your order is being prepared and will be dispatched by <strong>${etaFormatted}</strong>.
-        You will receive a shipping confirmation with tracking details as soon as it's dispatched.
-      </div>
-      <p style="font-size:13px;color:#6b7280">If you have any questions, please reply to this email or contact us on WhatsApp.</p>
-    `);
-
-    const delayHtmlAdmin = vendorEmailSky('#f59e0b', 'DELAY<br>REPORTED.', 'FULFILMENT ALERT',
-      `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Vendor delay remark submitted.</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Vendor <strong style="color:#e0e0e0;">${vendor}</strong> has submitted a delay remark for order <strong style="color:#e0e0e0;">${ord?.name || order}</strong>. Review and monitor for ETA breach.</div>
-      ${vendorInfoBoxSky([
-        ['Order', ord?.name || order, '#a5b4fc'],
-        ['Vendor', vendor, '#e0e0e0'],
-        ['ETA Dispatch', etaFormatted, '#fbbf24'],
-        ['Reason', reason, '#888'],
-      ])}
-      ${vendorAlertBoxSky('If the order is not dispatched by the ETA date, it will be automatically moved to the penalty queue.', '#f59e0b')}`
-    );
-
-    if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || order} is Delayed`, html: delayHtmlCustomer, shopifyId: order, trigger: 'delay_remark_customer' });
-    if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || order} — ${vendor}`, html: delayHtmlAdmin, shopifyId: order, trigger: 'delay_remark_admin' });
-  } catch (e) {
-    console.error("Delay remark email error:", e.message);
-  }
+    const snap = await mdb.collection('order_meta').findOne({ shopify_id: String(order) }, { projection: { order_name: 1 } }).catch(() => null);
+    const orderName = snap?.order_name || `#${order}`;
+    const etaFormatted = eta_date ? new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'not specified';
+    const adminMsg = `⏳ *Vendor Delay Submitted (Form)*\n\nOrder: *${orderName}*\nVendor: ${vendor}\nReason: ${reason}\nExpected dispatch by: *${etaFormatted}*\n\nCustomer has been notified on email & WhatsApp.`;
+    await waAdminAlert(adminMsg, 'dispatch_alert');
+  } catch (e) { console.error('Delay admin WA error:', e.message); }
 
   res.json({ success: true });
 });
@@ -13583,6 +13631,14 @@ app.post("/admin/orders/backfill-snapshots", adminAuth, async (req, res) => {
       console.log(`✅ Snapshot backfill complete: ${total} orders snapshotted`);
     } catch (e) { console.error('Backfill error:', e.message); }
   })();
+});
+
+app.post("/admin/support-chats-bulk-resolve", adminAuth, async (req, res) => {
+  const result = await mdb.collection('support_chats').updateMany(
+    { resolved: { $ne: true } },
+    { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), resolved_by: 'admin_bulk' } }
+  );
+  res.json({ success: true, resolved: result.modifiedCount });
 });
 
 // POST /admin/confirm-resync — retroactively re-apply tags + send notification
@@ -19624,7 +19680,7 @@ Please reply so we can update them:
 
 1️⃣ Report delay (share reason + dispatch date)
 2️⃣ Already shipped (share AWB / tracking)
-3️⃣ Other / I've already handled this — inform CROSCROW team${formLink ? `\n\n🔗 Or update via form: ${formLink}` : ''}
+3️⃣ Other / I've already handled this — inform CROSCROW team${formLink ? `\n\n🔗 Submit update via form: ${formLink}` : ''}
 
 Reply with *1*, *2* or *3* 👇`;
 
@@ -21124,7 +21180,8 @@ async function waHandleVendorReply(sock, sender, text) {
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
     await waSessionClear(sender);
     await sendAndLog(`✅ Delay recorded for *${order_name}*\n\nReason: ${reason}\nExpected by: *${etaDisplay}*\n\nWe'll update the customer. Thank you! 🙏`, vendor);
-    await waAdminAlert(`⏳ *Vendor Delay (via WA)*\nOrder: *${order_name}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaDisplay}`);
+    notifyDelayToCustomer(shopify_id, vendor, reason, etaIso).catch(() => {});
+    await waAdminAlert(`⏳ *Vendor Delay (via WA)*\nOrder: *${order_name}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaDisplay}\n\nCustomer notified on WA & email.`, 'dispatch_alert');
     return;
   }
 
@@ -21638,27 +21695,36 @@ function parseAdminOrderIssue(text) {
   if (!orderMatch) return null;
   const order_num = orderMatch[1];
 
-  // Vendor name heuristic: word before "in <order>" or quoted
+  const t = text.toLowerCase();
+
+  // "ticket" keyword = explicit intent — always create, no signal check needed
+  const explicitTicket = /\bticket\b/.test(t);
+
+  // Otherwise must have at least one issue signal word so normal order queries
+  // like "status of 2612" don't accidentally create tickets
+  const hasIssueSignal = explicitTicket || /not\s+dispatch|unship|not\s+ship|pending\s+dispatch|dispatch|delay|late|slow|lost|missing|not\s+received|not\s+delivered|return|refund|rto|wrong|incorrect|pending|stuck|no\s+update|no\s+movement|days|week|issue|problem|kyun|kyu|nahi|nhi|kab|abhi|still|hold|cancel/.test(t);
+  if (!hasIssueSignal) return null;
+
+  // Vendor name: word(s) before "in/for <order_num>"
   let vendor_name = null;
   const vendorInMatch = text.match(/^([\w\s]+?)\s+(?:in|for)\s+(?:order\s*#?)?\d+/i);
   if (vendorInMatch) {
     const candidate = vendorInMatch[1].trim().toLowerCase();
-    // Only treat as vendor if short (likely a name, not a description)
     if (candidate.split(' ').length <= 3 && !/not|is|are|has|was|still|been/.test(candidate)) {
       vendor_name = vendorInMatch[1].trim();
     }
   }
 
-  // Issue type classification
-  const t = text.toLowerCase();
-  let issue_type = 'other';
+  // Issue type + priority — Hindi keywords included
+  let issue_type = 'stuck';
   let priority = 'medium';
-  if (/not\s+dispatch|unship|not\s+ship|pending\s+dispatch|awaiting\s+dispatch/.test(t)) { issue_type = 'not_dispatched'; priority = 'high'; }
-  else if (/delay|late|taking\s+long|slow/.test(t)) { issue_type = 'delayed'; priority = 'medium'; }
-  else if (/lost|missing|not\s+received|not\s+delivered/.test(t)) { issue_type = 'lost_in_transit'; priority = 'high'; }
-  else if (/return|refund|rto/.test(t)) { issue_type = 'return_issue'; priority = 'medium'; }
-  else if (/wrong|incorrect|different/.test(t)) { issue_type = 'wrong_item'; priority = 'high'; }
-  else if (/pending|stuck|no\s+update|no\s+movement/.test(t)) { issue_type = 'stuck'; priority = 'medium'; }
+  if (/not\s+dispatch|unship|not\s+ship|pending\s+dispatch|nahi\s+bheja|nhi\s+bheja/.test(t)) { issue_type = 'not_dispatched'; priority = 'high'; }
+  else if (/delay|late|taking\s+long|slow|der|bahut\s+time/.test(t)) { issue_type = 'delayed'; priority = 'medium'; }
+  else if (/lost|missing|not\s+received|not\s+delivered|mila\s+nahi/.test(t)) { issue_type = 'lost_in_transit'; priority = 'high'; }
+  else if (/return|refund|rto|wapas/.test(t)) { issue_type = 'return_issue'; priority = 'medium'; }
+  else if (/wrong|incorrect|different|galat/.test(t)) { issue_type = 'wrong_item'; priority = 'high'; }
+  else if (/pending|stuck|no\s+update|no\s+movement|days|week|abhi\s+tak|still/.test(t)) { issue_type = 'stuck'; priority = 'medium'; }
+  // explicit ticket with no specific type = keep 'stuck' as default
 
   return { order_num, vendor_name, issue_type, priority, description: text.trim() };
 }
@@ -21667,10 +21733,11 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
   if (!mdb) return 'Database unavailable.';
   const { order_num, vendor_name, issue_type, priority, description } = parsed;
 
-  // Look up order
+  // Exact-match lookup — avoid #2612 matching #26120
   const meta = await mdb.collection('order_meta').findOne(
-    { $or: [{ order_name: { $regex: order_num } }, { order_name: `#${order_num}` }] },
-    { projection: { order_name: 1, shopify_order_id: 1, customer_name: 1, customer_phone: 1, delivery_status: 1, vendors: 1, items: 1, _id: 0 } }
+    { order_name: `#${order_num}` },
+    { projection: { order_name: 1, shopify_order_id: 1, customer_name: 1, customer_phone: 1,
+                    delivery_status: 1, vendors: 1, items: 1, stage: 1, shopify_created_at: 1, _id: 0 } }
   );
 
   const orderName = meta?.order_name || `#${order_num}`;
@@ -21709,11 +21776,17 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
   const staffMsg = `🎫 *Admin Order Ticket ${existingTicket ? 'Updated' : 'Created'}*\n\n📦 Order: *${orderName}*${vendor_name ? `\n🏪 Vendor: ${vendor_name}` : ''}\n📋 Issue: ${issue_type.replace(/_/g,' ')}\n🚨 Priority: ${priority.toUpperCase()}\n\n"${description}"`;
   notifyStaff('order_ticket', staffMsg).catch(()=>{});
 
-  const lines = [`🎫 *Ticket ${existingTicket ? 'Updated' : 'Created'}* — ${orderName}`];
+  const ISSUE_LABELS = {
+    not_dispatched:'Not dispatched', delayed:'Delayed', lost_in_transit:'Lost in transit',
+    return_issue:'Return issue', wrong_item:'Wrong item', stuck:'Stuck', other:'Other',
+  };
+  const lines = [`🎫 *Ticket ${existingTicket ? 'Updated' : 'Created'}* — *${orderName}*`];
+  if (meta?.customer_name) lines.push(`👤 Customer: ${meta.customer_name}${meta.customer_phone ? ` (+91${meta.customer_phone})` : ''}`);
   if (vendor_name) lines.push(`🏪 Vendor: ${vendor_name}`);
-  lines.push(`📋 Issue: ${issue_type.replace(/_/g, ' ')}`);
-  lines.push(`🚨 Priority: ${priority.toUpperCase()}`);
-  if (meta?.delivery_status) lines.push(`📦 Current status: ${meta.delivery_status}`);
+  lines.push(`📋 Issue: ${ISSUE_LABELS[issue_type] || issue_type} · Priority: ${priority.toUpperCase()}`);
+  if (meta?.stage) lines.push(`📦 Stage in DB: ${meta.stage}`);
+  if (meta?.delivery_status) lines.push(`🚚 Courier status: ${meta.delivery_status}`);
+  if (!meta) lines.push(`⚠️ Order not found in DB — ticket created but check order number`);
 
   // Ping relevant vendor on WA
   const vendorsToAlert = [];
@@ -21724,6 +21797,18 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
   } else if (meta?.items?.length) {
     const unique = [...new Set(meta.items.map(i => i.vendor).filter(Boolean))];
     vendorsToAlert.push(...unique);
+  } else {
+    // Fallback: order_vendor_stage always has vendor data even for pre-snapshot orders
+    // Try by shopify_order_id if we have meta, otherwise try by order_name field
+    const ovsQuery = meta?.shopify_order_id
+      ? { shopify_id: String(meta.shopify_order_id) }
+      : { order_name: `#${order_num}` };
+    const ovsList = await mdb.collection('order_vendor_stage').find(
+      ovsQuery,
+      { projection: { vendor_name: 1, _id: 0 } }
+    ).toArray();
+    const fromOvs = [...new Set(ovsList.map(v => v.vendor_name).filter(Boolean))];
+    vendorsToAlert.push(...fromOvs);
   }
 
   let vendorPinged = false;
@@ -21732,28 +21817,72 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
     const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
     if (rawPhone.length !== 10) continue;
     const vjid = `91${rawPhone}@s.whatsapp.net`;
-    const prio = priority === 'high' ? '🚨 URGENT' : '⚠️ Action Required';
+
+    // Enrich vendor message with real order context from snapshot
+    const vendorItems = (meta?.items || []).filter(i => !i.vendor || i.vendor === vn);
+    const itemNames = vendorItems.length ? vendorItems.map(i => `• ${i.title}${i.variant_title && i.variant_title !== 'Default Title' ? ` (${i.variant_title})` : ''} × ${i.qty}`).join('\n') : '';
+
+    // Days stuck from OVS if available
+    const ovs = await mdb.collection('order_vendor_stage').findOne(
+      { shopify_id: String(meta?.shopify_order_id || ''), vendor_name: vn },
+      { projection: { stage: 1, stage_started_at: 1 } }
+    ).catch(() => null);
+    const daysStuck = ovs?.stage_started_at ? Math.floor((Date.now() - ovs.stage_started_at) / 86400000) : null;
+
+    const urgencyLine = priority === 'high' ? '🚨 *URGENT — Immediate Action Required*' : '⚠️ *Action Required*';
+
+    // Generate a no-login vendor update token for the form link
+    const updateToken = await createVendorUpdateToken(
+      meta?.shopify_order_id || orderName, orderName, vn, '', issue_type
+    ).catch(() => null);
+    const formLink = updateToken ? `${SERVER_URL}/vendor/update/${updateToken}` : null;
+
+    const issueLabel = {
+      not_dispatched: 'Order has not been dispatched',
+      delay: 'Order dispatch is delayed',
+      wrong_item: 'Wrong item may have been packed',
+      damaged: 'Item reported as damaged',
+      missing_item: 'Item is missing from the order',
+      other: 'Issue flagged on this order',
+    }[issue_type] || issue_type.replace(/_/g, ' ');
+
     const vendorMsg =
-`${prio} — Order ${orderName}
+`${urgencyLine} — Order ${orderName}
 
 Hi ${vn},
 
-CROSCROW admin has flagged an issue with your order:
-📋 *${issue_type.replace(/_/g, ' ').toUpperCase()}*
+CROSCROW has flagged an issue with the above order that requires your *immediate attention*.
 
-${description}
+📋 *Issue:* ${issueLabel}${daysStuck !== null ? `\n⏳ *Pending since:* ${daysStuck} day${daysStuck !== 1 ? 's' : ''}` : ''}${meta?.customer_name ? `\n👤 *Customer:* ${meta.customer_name}` : ''}
+${itemNames ? `\n📦 *Items:*\n${itemNames}` : ''}
 
-Please update the order status immediately.
+Kindly update the order status at the earliest. If already shipped, share the AWB and courier details.
 
 Reply with:
-*1️⃣* — Give reason + ETA
-*2️⃣* — Already resolved (share proof)
-*3️⃣* — Need assistance
+*1️⃣* — Delayed (share reason + expected dispatch date)
+*2️⃣* — Already shipped (share AWB + courier)
+*3️⃣* — Need assistance from CROSCROW${formLink ? `\n\n🔗 *Update via form (no login needed):*\n${formLink}` : ''}
 
-_CROSCROW Operations_`;
+_CROSCROW Operations Team_`;
     try {
-      await waSocket.sendMessage(vjid, { text: vendorMsg });
-      await waLogVendorMessage(vjid, vn, 'bot', vendorMsg);
+      const sent = await waSocket.sendMessage(vjid, { text: vendorMsg });
+      const actualJid = sent?.key?.remoteJid || vjid;
+      await waLogVendorMessage(actualJid, vn, 'bot', vendorMsg);
+      // Set session so vendor 1/2/3 reply routes correctly
+      await waSessionSet(actualJid, {
+        type: 'support_vendor_reply',
+        order_name: orderName,
+        shopify_id: String(meta?.shopify_order_id || ''),
+        vendor: vn,
+        query_context: { type: issue_type, label: issueLabel, emoji: '📋' },
+        form_link: formLink,
+        chat_id: null,
+      });
+      await mdb.collection('wa_vendor_jids').updateOne(
+        { phone: rawPhone },
+        { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } },
+        { upsert: true }
+      ).catch(() => {});
       await mdb.collection('admin_order_tickets').updateOne({ _id: ticketId }, { $set: { vendor_pinged: true, vendor_pinged_at: new Date().toISOString() } });
       vendorPinged = true;
       lines.push(`\n📲 Vendor *${vn}* pinged on WhatsApp`);
@@ -21766,7 +21895,9 @@ _CROSCROW Operations_`;
     lines.push('\n⚠️ No vendor found — check order number or assign manually');
   }
 
-  lines.push(`\nUse *!resolve ${order_num}* when done, or *!watch ${order_num}* for auto-updates.`);
+  lines.push(`\n────────────────`);
+  lines.push(`*!resolve ${order_num}* → close this ticket once issue is fixed`);
+  lines.push(`*!tickets* → see all open tickets`);
   return lines.join('\n');
 }
 
@@ -22524,11 +22655,21 @@ async function startBaileysBot() {
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
+        const sessionReplaced = code === 405;
         waConnected = false;
         waStarting = false;
         waSocket = null;
-        if (loggedOut) {
-          if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+        if (loggedOut || sessionReplaced) {
+          // Clear all auth so Baileys generates fresh credentials and shows a new QR
+          if (mdb) {
+            await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+            await mdb.collection('whatsapp_sessions').deleteMany({}).catch(() => {});
+          }
+          if (sessionReplaced) {
+            console.log(`🔄 WhatsApp session replaced (405) — auth cleared, waiting 15s before QR regeneration…`);
+            setTimeout(startBaileysBot, 15000);
+            return;
+          }
         }
         console.log(`🔄 WhatsApp disconnected (code ${code}), reconnecting in 5s…`);
         setTimeout(startBaileysBot, 5000);
