@@ -12921,6 +12921,7 @@
       { id:'vendorsync',  icon:'🔄', label:'Vendor Sync',   section:'finance' },
       { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
       { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
+      { id:'commandcenter',icon:'⚡', label:'Command Center',   section:'main' },
       { id:'leakage',     icon:'🔻', label:'Revenue Leakage', section:'finance' },
       { id:'brains',      icon:'🧠', label:'Brains',        section:'finance' },
       { id:'supportchats', icon:'💬', label:'Support Chats', section:'main' },
@@ -13028,6 +13029,7 @@
           {view==='emailsettings' && <EmailSettings token={token}/>}
           {view==='vendorsync'  && <VendorSync token={token}/>}
           {view==='penalties'   && <PenaltyManager token={token}/>}
+          {view==='commandcenter' && <CommandCenter token={token}/>}
           {view==='leakage'     && <LeakageFunnel token={token}/>}
           {view==='reports'     && <Reports token={token}/>}
           {view==='brains'      && <Brains token={token}/>}
@@ -15525,6 +15527,516 @@
 
 
   // ── REVENUE LEAKAGE FUNNEL ───────────────────────────────────────────────
+
+  function CommandCenter({ token }) {
+    const [period, setPeriod]   = React.useState(30);
+    const [data,   setData]     = React.useState({});
+    const [loading,setLoading]  = React.useState(true);
+    const [ts,     setTs]       = React.useState('');
+
+    const api = p => fetch(p, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.ok?r.json():null).catch(()=>null);
+
+    React.useEffect(() => {
+      setLoading(true);
+      const now = new Date(), from = new Date(Date.now() - (period-1)*86400000);
+      from.setHours(0,0,0,0); now.setHours(23,59,59,999);
+      const fStr = from.toISOString(), tStr = now.toISOString();
+      Promise.all([
+        api(`/admin/dashboard`),
+        api(`/admin/analytics?from=${fStr}&to=${tStr}`),
+        api(`/admin/leakage-data?days=${period}`),
+        api(`/admin/pixel-tracker/summary?from=${fStr}&to=${tStr}`),
+        api(`/admin/pixel-tracker/leaderboard?from=${fStr}&to=${tStr}&limit=5&minViews=1`),
+        api(`/admin/confirm-analytics?days=${period}`),
+        api(`/admin/dashboard/stage-timings`),
+        api(`/admin/ops-map?days=${period}`),
+        api(`/admin/pattern-report/preview`),
+      ]).then(([dash, anal, leak, pix, pixTop, conf, timing, ops, pattern]) => {
+        setData({ dash, anal, leak, pix, pixTop, conf, timing, ops, pattern });
+        setTs(new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}));
+        setLoading(false);
+      });
+    }, [period]);
+
+    // ── Formatters ──────────────────────────────────────────────
+    const fmt = v => {
+      if (!v && v!==0) return '—';
+      if (v >= 10000000) return '₹'+(v/10000000).toFixed(1)+'Cr';
+      if (v >= 100000)   return '₹'+(v/100000).toFixed(1)+'L';
+      if (v >= 1000)     return '₹'+(v/1000).toFixed(0)+'k';
+      return '₹'+Math.round(v).toLocaleString('en-IN');
+    };
+    const pct  = (v,g) => g>0 ? (v/g*100).toFixed(1)+'%' : '0%';
+    const num  = v => v!=null ? Math.round(v).toLocaleString('en-IN') : '—';
+    const hrs  = v => v!=null ? (v<1?Math.round(v*60)+'m':v.toFixed(1)+'h') : '—';
+    const C    = { green:'#10b981', blue:'#3b82f6', amber:'#f59e0b', red:'#ef4444', purple:'#a855f7', slate:'#64748b' };
+
+    const health = (v, good, warn) => v==null?C.slate : v>=good?C.green : v>=warn?C.amber : C.red;
+    const healthLow = (v, good, warn) => v==null?C.slate : v<=good?C.green : v<=warn?C.amber : C.red; // lower=better
+
+    if (loading) return (
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:400,gap:12}}>
+        <div style={{fontSize:22,animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</div>
+        <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading Command Center — fetching 9 data sources…</div>
+      </div>
+    );
+
+    const { dash={}, anal={}, leak={}, pix={}, pixTop=[], conf={}, timing={}, ops={}, pattern={} } = data;
+    const g   = leak.groups || {};
+    const st  = leak.stages || {};
+    const gross     = leak.gross || 0;
+    const delivered = g.delivered || 0;
+    const inFlight  = g.in_flight || 0;
+    const rto       = g.rto || 0;
+    const pending   = g.pending || 0;
+    const notConf   = (g.cancelled||0)+(g.hold||0)+(g.misc||0)+(g.new||0);
+    const dispatchRate = anal.fulfillStats?.dispatchRate;
+    const rtoRate      = (inFlight+rto+delivered)>0 ? rto/(inFlight+rto+delivered)*100 : 0;
+    const convRate     = gross>0 ? delivered/gross*100 : 0;
+    const stageCounts  = dash.stageCounts || {};
+    const pipeline     = (stageCounts.confirmed||0)+(stageCounts.partial||0)+(stageCounts.ready||0)+(stageCounts.pickup||0)+(stageCounts.transit||0)+(stageCounts.ofd||0);
+
+    // ── Sub-components ───────────────────────────────────────────
+
+    const KCard = ({ label, value, sub, color, size=22, border }) => (
+      <div style={{
+        background:'var(--bg-card)', border:`1px solid ${border||'var(--border)'}`,
+        borderRadius:10, padding:'12px 14px',
+      }}>
+        <div style={{fontSize:9,letterSpacing:1.2,textTransform:'uppercase',fontWeight:700,color:'var(--text-muted)',marginBottom:5}}>{label}</div>
+        <div style={{fontSize:size,fontWeight:900,color:color||'var(--text)',lineHeight:1,marginBottom:sub?4:0}}>{value}</div>
+        {sub && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{sub}</div>}
+      </div>
+    );
+
+    const SectionHead = ({ icon, title, sub }) => (
+      <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:12,marginTop:4}}>
+        <span style={{fontSize:14}}>{icon}</span>
+        <div>
+          <div style={{fontSize:13,fontWeight:800}}>{title}</div>
+          {sub && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{sub}</div>}
+        </div>
+      </div>
+    );
+
+    // Mini horizontal bar
+    const Bar = ({ val, max, color, h=4 }) => (
+      <div style={{height:h,background:'var(--border)',borderRadius:h,overflow:'hidden',marginTop:3}}>
+        <div style={{height:'100%',width:`${max>0?Math.min(val/max*100,100):0}%`,background:color,borderRadius:h}}/>
+      </div>
+    );
+
+    // ── Section 1: PULSE STRIP ───────────────────────────────────
+    const PulseStrip = () => (
+      <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:8,marginBottom:20}}>
+        <KCard label="Gross GMV" value={fmt(gross)} sub={`${period}D window`} color="var(--text)"/>
+        <KCard label="Delivered" value={fmt(delivered)} sub={pct(delivered,gross)+' of gross'} color={C.green} border={`${C.green}40`}/>
+        <KCard label="Active Pipeline" value={num(pipeline)} sub="confirmed→transit" color={C.blue}/>
+        <KCard label="RTO Rate" value={rtoRate.toFixed(1)+'%'} sub="of dispatched" color={healthLow(rtoRate,10,20)}/>
+        <KCard label="COD Confirm" value={conf.overall_rate ? (conf.overall_rate*100).toFixed(1)+'%' : '—'} sub="customers who paid advance" color={health(conf.overall_rate*100,60,40)}/>
+        <KCard label="Avg Dispatch" value={hrs(timing.avgConfirmedToDeliveredHours)} sub="confirmed→delivered" color={healthLow(timing.avgConfirmedToDeliveredHours,72,120)}/>
+      </div>
+    );
+
+    // ── Section 2: REVENUE PIPELINE ─────────────────────────────
+    const RevenuePipeline = () => {
+      const segs = [
+        { l:'Delivered', v:delivered, c:C.green },
+        { l:'In Motion', v:inFlight,  c:C.blue  },
+        { l:'RTO',       v:rto,       c:C.red   },
+        { l:'Pending',   v:pending,   c:C.amber  },
+        { l:'Not Conf',  v:notConf,   c:'#fbbf24'},
+      ].filter(s=>s.v>0);
+
+      // Pixel funnel
+      const viewToPurch = pix.viewToPurchaseRate ? (pix.viewToPurchaseRate*100).toFixed(1)+'%' : '—';
+      const atcRate     = pix.viewToAtcRate      ? (pix.viewToAtcRate*100).toFixed(1)+'%'      : '—';
+      const checkRate   = pix.atcToCheckoutRate  ? (pix.atcToCheckoutRate*100).toFixed(1)+'%'  : '—';
+      const purchRate   = pix.checkoutToPurchaseRate ? (pix.checkoutToPurchaseRate*100).toFixed(1)+'%' : '—';
+
+      return (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+          {/* Revenue composition */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="💰" title="Revenue Pipeline" sub={`${fmt(gross)} gross · ${period}D`}/>
+            <div style={{height:28,borderRadius:5,overflow:'hidden',display:'flex',marginBottom:8}}>
+              {segs.map(s=>{
+                const w=s.v/gross*100;
+                return (
+                  <div key={s.l} title={`${s.l}: ${fmt(s.v)}`} style={{width:`${w}%`,background:s.c,minWidth:2,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {w>8 && <span style={{fontSize:8,fontWeight:800,color:'rgba(255,255,255,.95)'}}>{fmt(s.v)}</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+              {segs.map(s=>(
+                <div key={s.l} style={{display:'flex',alignItems:'center',gap:6}}>
+                  <div style={{width:7,height:7,borderRadius:2,background:s.c,flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)'}}>{s.l}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:s.c}}>{fmt(s.v)} <span style={{fontWeight:400,fontSize:9,color:'var(--text-muted)'}}>({pct(s.v,gross)})</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {anal.revenueGrowth!=null && (
+              <div style={{marginTop:10,padding:'6px 10px',background:'var(--bg-card2)',borderRadius:6,fontSize:10,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:6}}>
+                <span style={{color:anal.revenueGrowth>=0?C.green:C.red,fontWeight:700,fontSize:12}}>{anal.revenueGrowth>=0?'↑':'↓'}{Math.abs(anal.revenueGrowth).toFixed(1)}%</span>
+                revenue vs prior {period}D
+              </div>
+            )}
+          </div>
+
+          {/* Pixel funnel */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="🎯" title="Storefront Funnel" sub={`${num(pix.views||0)} views → ${num(pix.purchases||0)} purchases`}/>
+            {[
+              { l:'View → Add to Cart',       v:pix.viewToAtcRate,       fmt:atcRate,   c:C.blue   },
+              { l:'ATC → Checkout',           v:pix.atcToCheckoutRate,   fmt:checkRate, c:C.purple },
+              { l:'Checkout → Purchase',      v:pix.checkoutToPurchaseRate, fmt:purchRate, c:C.amber },
+              { l:'View → Purchase (overall)',v:pix.viewToPurchaseRate,  fmt:viewToPurch,c:C.green  },
+            ].map(row=>(
+              <div key={row.l} style={{marginBottom:8}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>
+                  <span style={{fontSize:10,color:'var(--text-muted)'}}>{row.l}</span>
+                  <span style={{fontSize:11,fontWeight:800,color:row.c}}>{row.fmt}</span>
+                </div>
+                <Bar val={row.v||0} max={1} color={row.c}/>
+              </div>
+            ))}
+            {pixTop?.length>0 && (
+              <div style={{marginTop:10,borderTop:'1px solid var(--border)',paddingTop:8}}>
+                <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:1,color:'var(--text-muted)',fontWeight:700,marginBottom:5}}>Top Converting Products</div>
+                {(pixTop.products||pixTop||[]).slice(0,3).map((p,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,fontSize:10}}>
+                    <div style={{fontSize:9,fontWeight:800,color:'var(--text-muted)',width:14,flexShrink:0}}>{i+1}</div>
+                    <div style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}}>{p.productName||p.name}</div>
+                    <div style={{fontWeight:700,color:C.green,flexShrink:0}}>{p.viewToPurchaseRate!=null?(p.viewToPurchaseRate*100).toFixed(1)+'%':''}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // ── Section 3: OPERATIONS HEALTH ────────────────────────────
+    const OpsHealth = () => {
+      const stages = [
+        { k:'new',       l:'New',       c:C.slate  },
+        { k:'confirmed', l:'Confirmed', c:'#818cf8' },
+        { k:'partial',   l:'Partial',   c:'#a78bfa' },
+        { k:'hold',      l:'Hold',      c:C.amber  },
+        { k:'ready',     l:'Ready',     c:'#60a5fa' },
+        { k:'pickup',    l:'Pickup',    c:C.blue   },
+        { k:'transit',   l:'Transit',   c:'#2563eb' },
+        { k:'ofd',       l:'OFD',       c:'#1d4ed8' },
+        { k:'delivered', l:'Delivered', c:C.green  },
+        { k:'rto',       l:'RTO',       c:C.red    },
+        { k:'cancelled', l:'Cancelled', c:'#dc2626' },
+      ];
+      const maxCount = Math.max(...stages.map(s=>stageCounts[s.k]||0), 1);
+
+      // Stage timing key transitions
+      const keyTimings = (timing.transitions||[]).filter(t=>
+        ['confirmed→ready','confirmed→pickup','confirmed→transit','confirmed→delivered','confirmed→rto'].includes(`${t.from}→${t.to}`)
+      ).slice(0,5);
+
+      // Vendor leaderboard from dashboard
+      const vendors = (dash.vendorLeaderboard||[]).slice(0,6);
+
+      return (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
+          {/* Stage distribution */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="📦" title="Order Stages" sub="current distribution"/>
+            {stages.map(s=>{
+              const cnt = stageCounts[s.k]||0;
+              return (
+                <div key={s.k} style={{marginBottom:5}}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:1}}>
+                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{s.l}</span>
+                    <span style={{fontSize:10,fontWeight:700,color:s.c}}>{num(cnt)}</span>
+                  </div>
+                  <Bar val={cnt} max={maxCount} color={s.c} h={3}/>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Dispatch timing */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="⏱️" title="Dispatch Timing" sub="avg hours per transition"/>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+              <div style={{background:'var(--bg-card2)',borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1}}>To Delivered</div>
+                <div style={{fontSize:18,fontWeight:900,color:C.green,marginTop:2}}>{hrs(timing.avgConfirmedToDeliveredHours)}</div>
+              </div>
+              <div style={{background:'var(--bg-card2)',borderRadius:8,padding:'8px 10px',textAlign:'center'}}>
+                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1}}>To RTO</div>
+                <div style={{fontSize:18,fontWeight:900,color:C.red,marginTop:2}}>{hrs(timing.avgConfirmedToRtoHours)}</div>
+              </div>
+            </div>
+            <div style={{borderTop:'1px solid var(--border)',paddingTop:8}}>
+              <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Key Transitions</div>
+              {keyTimings.map((t,i)=>(
+                <div key={i} style={{display:'flex',justifyContent:'space-between',marginBottom:5,alignItems:'center'}}>
+                  <span style={{fontSize:9,color:'var(--text-dim)'}}>{t.from} → {t.to}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.blue}}>{hrs(t.avgHours)}</span>
+                    <span style={{fontSize:9,color:'var(--text-muted)'}}>({num(t.count)})</span>
+                  </div>
+                </div>
+              ))}
+              {keyTimings.length===0 && <div style={{fontSize:10,color:'var(--text-muted)'}}>No timing data</div>}
+            </div>
+          </div>
+
+          {/* Vendor leaderboard */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="🏆" title="Vendor Dispatch" sub="top vendors by pending orders"/>
+            {vendors.map((v,i)=>(
+              <div key={v.vendor_name||i} style={{marginBottom:8,paddingBottom:8,borderBottom:i<vendors.length-1?'1px solid var(--border)':'none'}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
+                  <div style={{width:15,height:15,borderRadius:3,background:'var(--bg-card2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:800,color:'var(--text-muted)',flexShrink:0}}>{i+1}</div>
+                  <div style={{flex:1,fontSize:10,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v.vendor_name}</div>
+                  <div style={{fontSize:9,color:healthLow(v.pendingOrders,5,15),fontWeight:700}}>{num(v.pendingOrders)} pending</div>
+                </div>
+                <div style={{display:'flex',gap:8,marginLeft:21}}>
+                  <span style={{fontSize:9,color:'var(--text-muted)'}}>dispatched: <b style={{color:C.blue}}>{num(v.dispatchedOrders)}</b></span>
+                  {v.dispatchRate!=null && <span style={{fontSize:9,color:health(v.dispatchRate*100,70,40)}}>{(v.dispatchRate*100).toFixed(0)}% rate</span>}
+                </div>
+              </div>
+            ))}
+            {!vendors.length && <div style={{fontSize:10,color:'var(--text-muted)'}}>No vendor data</div>}
+          </div>
+        </div>
+      );
+    };
+
+    // ── Section 4: CONVERSION & SUPPORT ─────────────────────────
+    const ConversionRow = () => {
+      // COD confirm
+      const codRate = conf.overall_rate ? (conf.overall_rate*100).toFixed(1) : null;
+      const topStates = (conf.by_state||[]).slice(0,5);
+      // Chat analytics - not fetched separately but we have pattern data
+      // Abandoned carts signal from analytics
+      const avgVisits = anal.trackVisitsPerOrder;
+
+      return (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+          {/* COD Confirmation */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="✅" title="COD Confirmation Rate" sub="% customers who paid ₹99 advance"/>
+            <div style={{display:'flex',alignItems:'flex-end',gap:12,marginBottom:12}}>
+              <div style={{fontSize:36,fontWeight:900,color:health(codRate,60,40),lineHeight:1}}>{codRate?codRate+'%':'—'}</div>
+              <div style={{paddingBottom:4}}>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>overall · {period}D</div>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>{num(conf.total_paid||0)} paid / {num(conf.total_views||0)} shown</div>
+              </div>
+            </div>
+            {/* SVG donut for confirm rate */}
+            {codRate && (() => {
+              const r=28, cx=36, cy=36, circ=2*Math.PI*r;
+              const filled = circ*(codRate/100);
+              return (
+                <svg width={72} height={72} style={{marginBottom:8,display:'block'}}>
+                  <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border)" strokeWidth={7}/>
+                  <circle cx={cx} cy={cy} r={r} fill="none" stroke={health(codRate,60,40)} strokeWidth={7}
+                    strokeDasharray={`${filled} ${circ-filled}`} strokeLinecap="round"
+                    transform={`rotate(-90 ${cx} ${cy})`}/>
+                  <text x={cx} y={cy+4} textAnchor="middle" fontSize={10} fontWeight={800} fill={health(codRate,60,40)}>{codRate}%</text>
+                </svg>
+              );
+            })()}
+            {topStates.length>0 && (
+              <div>
+                <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:1,color:'var(--text-muted)',fontWeight:700,marginBottom:5}}>Top States</div>
+                {topStates.map(s=>(
+                  <div key={s.state} style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{s.state||'Unknown'}</span>
+                    <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                      <span style={{fontSize:10,fontWeight:700,color:health(s.rate*100,60,40)}}>{(s.rate*100).toFixed(0)}%</span>
+                      <span style={{fontSize:9,color:'var(--text-muted)'}}>({num(s.paid)}/{num(s.views)})</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Fulfillment stats */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+            <SectionHead icon="📈" title="Fulfillment Health" sub={`${period}D orders · ${num(anal.totalOrders||0)} total`}/>
+            {anal.fulfillStats && (() => {
+              const fs = anal.fulfillStats;
+              const rows = [
+                { l:'Dispatch Rate',  v:fs.dispatchRate,    c:health(fs.dispatchRate*100,70,50), fmt:(fs.dispatchRate*100).toFixed(1)+'%' },
+                { l:'Delivery Rate',  v:fs.deliveryRate,    c:health(fs.deliveryRate*100,60,40), fmt:(fs.deliveryRate*100).toFixed(1)+'%' },
+                { l:'RTO Rate',       v:fs.rtoRate,         c:healthLow(fs.rtoRate*100,10,20),   fmt:(fs.rtoRate*100).toFixed(1)+'%' },
+                { l:'Cancel Rate',    v:fs.cancelRate,      c:healthLow(fs.cancelRate*100,5,15),  fmt:(fs.cancelRate*100).toFixed(1)+'%' },
+              ];
+              return (
+                <div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+                    {rows.map(r=>(
+                      <div key={r.l} style={{background:'var(--bg-card2)',borderRadius:7,padding:'8px 10px'}}>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>{r.l}</div>
+                        <div style={{fontSize:16,fontWeight:900,color:r.c}}>{r.fmt}</div>
+                        <Bar val={r.v} max={1} color={r.c} h={3}/>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{borderTop:'1px solid var(--border)',paddingTop:8}}>
+                    <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:1,color:'var(--text-muted)',fontWeight:700,marginBottom:6}}>Order Counts</div>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                      {[
+                        {l:'Dispatched',v:fs.dispatched,c:C.blue},
+                        {l:'Delivered', v:fs.delivered, c:C.green},
+                        {l:'RTO',       v:fs.rto,       c:C.red},
+                        {l:'Cancelled', v:fs.cancelled, c:'#dc2626'},
+                        {l:'Pending',   v:fs.pending,   c:C.amber},
+                      ].map(x=>(
+                        <div key={x.l} style={{display:'flex',alignItems:'center',gap:4,fontSize:10}}>
+                          <div style={{width:6,height:6,borderRadius:1,background:x.c}}/>
+                          <span style={{color:'var(--text-muted)'}}>{x.l}</span>
+                          <b style={{color:x.c}}>{num(x.v)}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      );
+    };
+
+    // ── Section 5: GEOGRAPHY ─────────────────────────────────────
+    const Geography = () => {
+      const cities = (ops.cities||[]).slice(0,10);
+      if (!cities.length) return null;
+      const maxGmv = Math.max(...cities.map(c=>c.gmv||0), 1);
+      return (
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:20}}>
+          <SectionHead icon="🗺️" title="Geographic Ops" sub={`top cities · ${period}D`}/>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:4}}>
+            {cities.map((c,i)=>(
+              <div key={c.city} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
+                <div style={{width:16,fontSize:9,fontWeight:800,color:'var(--text-muted)',flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:10,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.city}</div>
+                  <Bar val={c.gmv||0} max={maxGmv} color={C.blue} h={2}/>
+                </div>
+                <div style={{textAlign:'right',flexShrink:0}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.blue}}>{fmt(c.gmv||0)}</div>
+                  <div style={{fontSize:9,color:healthLow(c.rto_pct||0,10,25)}}>{(c.rto_pct||0).toFixed(0)}% RTO</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // ── Section 6: SIGNALS & ANOMALIES ───────────────────────────
+    const Signals = () => {
+      const findings = pattern.findings || [];
+      if (!findings.length) return null;
+      const sevColor = s => s==='high'?C.red : s==='medium'?C.amber : C.slate;
+      return (
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:20}}>
+          <SectionHead icon="🧠" title="Pattern Signals" sub="AI-detected anomalies & trends"/>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8}}>
+            {findings.slice(0,6).map((f,i)=>(
+              <div key={i} style={{padding:'8px 10px',background:'var(--bg-card2)',borderRadius:7,borderLeft:`3px solid ${sevColor(f.severity)}`}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                  <span style={{fontSize:9,fontWeight:800,textTransform:'uppercase',color:sevColor(f.severity)}}>{f.severity||'info'}</span>
+                  <span style={{fontSize:9,color:'var(--text-muted)'}}>{f.metric||f.type||''}</span>
+                </div>
+                <div style={{fontSize:10,color:'var(--text)',lineHeight:1.4}}>{f.detail||f.message||f.finding||JSON.stringify(f).slice(0,80)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // ── Section 7: DAILY TREND SPARKLINE ────────────────────────
+    const TrendSpark = () => {
+      const daily = anal.dailyTrends || anal.daily || [];
+      if (!daily.length) return null;
+      const revs = daily.map(d=>d.revenue||d.gmv||0);
+      const maxR = Math.max(...revs, 1);
+      const W=300, H=50, pad=4;
+      const bw = (W-pad*2)/Math.max(revs.length,1);
+      return (
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:20}}>
+          <SectionHead icon="📉" title="Daily Revenue Trend" sub={`${daily.length} day sparkline`}/>
+          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:'block',overflow:'visible'}}>
+            {revs.map((v,i)=>{
+              const bh = Math.max(v/maxR*(H-pad*2),1);
+              const x = pad + i*bw;
+              const y = H - pad - bh;
+              return (
+                <g key={i}>
+                  <rect x={x+1} y={y} width={Math.max(bw-2,1)} height={bh} rx={1}
+                    fill={i===revs.length-1?C.blue:C.green} opacity={i===revs.length-1?1:0.6}/>
+                  {i===revs.length-1 && (
+                    <text x={x+bw/2} y={y-3} textAnchor="middle" fontSize={7} fill={C.blue} fontWeight={700}>{fmt(v)}</text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+          <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+            <span style={{fontSize:9,color:'var(--text-muted)'}}>{daily[0]?.date||''}</span>
+            <span style={{fontSize:9,color:'var(--text-muted)'}}>{daily[daily.length-1]?.date||'today'}</span>
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div style={{padding:'20px 24px', maxWidth:1200}}>
+        {/* Page header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:900,letterSpacing:-0.5}}>⚡ Command Center</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Complete business overview · updated {ts}</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <div style={{display:'flex',gap:2,background:'var(--bg-card2)',borderRadius:7,padding:3}}>
+              {[7,30,90].map(d=>(
+                <button key={d} onClick={()=>setPeriod(d)} style={{
+                  padding:'4px 12px',borderRadius:5,fontSize:11,fontWeight:700,
+                  cursor:'pointer',border:'none',
+                  background:period===d?'var(--indigo)':'transparent',
+                  color:period===d?'#fff':'var(--text-muted)',
+                }}>{d}D</button>
+              ))}
+            </div>
+            <button onClick={()=>{setLoading(true);setPeriod(p=>p);}} style={{
+              padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',
+              border:'1px solid var(--border)',background:'var(--bg-card)',color:'var(--text)',
+            }}>↻ Refresh</button>
+          </div>
+        </div>
+
+        <PulseStrip/>
+        <RevenuePipeline/>
+        <OpsHealth/>
+        <ConversionRow/>
+        <TrendSpark/>
+        <Geography/>
+        <Signals/>
+      </div>
+    );
+  }
+
   function LeakageFunnel({ token }) {
     const [days, setDays]       = React.useState(30);
     const [data, setData]       = React.useState(null);
