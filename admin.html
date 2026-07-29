@@ -15529,7 +15529,8 @@
     const [days, setDays]       = React.useState(30);
     const [data, setData]       = React.useState(null);
     const [loading, setLoading] = React.useState(true);
-    const [active, setActive]   = React.useState(null); // which row is selected for vendor panel
+    const [active, setActive]   = React.useState(null);
+    const [tab, setTab]         = React.useState('funnel'); // 'funnel' | 'charts'
 
     React.useEffect(() => {
       setLoading(true); setData(null);
@@ -15742,24 +15743,38 @@
       <div style={{padding:'20px 24px', maxWidth:1100}}>
 
         {/* Header */}
-        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20}}>
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:10}}>
           <div>
             <div style={{fontSize:15, fontWeight:800}}>Revenue Leakage Funnel</div>
-            <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Last {days} days · click any stage for vendor breakdown</div>
+            <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Last {days} days</div>
           </div>
-          <div style={{display:'flex', gap:3, background:'var(--bg-card2)', borderRadius:7, padding:3}}>
-            {[7,30,90,180].map(d => (
-              <button key={d} onClick={()=>setDays(d)} style={{
-                padding:'4px 11px', borderRadius:5, fontSize:11, fontWeight:700,
-                cursor:'pointer', border:'none',
-                background: days===d ? 'var(--indigo)' : 'transparent',
-                color: days===d ? '#fff' : 'var(--text-muted)',
-              }}>{d===180?'6M':d+'D'}</button>
-            ))}
+          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+            {/* Tab toggle */}
+            <div style={{display:'flex', gap:2, background:'var(--bg-card2)', borderRadius:7, padding:3}}>
+              {[['funnel','📋 Funnel'],['charts','📊 Charts']].map(([k,l]) => (
+                <button key={k} onClick={()=>setTab(k)} style={{
+                  padding:'4px 12px', borderRadius:5, fontSize:11, fontWeight:700,
+                  cursor:'pointer', border:'none',
+                  background: tab===k ? 'var(--indigo)' : 'transparent',
+                  color: tab===k ? '#fff' : 'var(--text-muted)',
+                }}>{l}</button>
+              ))}
+            </div>
+            {/* Period picker */}
+            <div style={{display:'flex', gap:2, background:'var(--bg-card2)', borderRadius:7, padding:3}}>
+              {[7,30,90,180].map(d => (
+                <button key={d} onClick={()=>setDays(d)} style={{
+                  padding:'4px 11px', borderRadius:5, fontSize:11, fontWeight:700,
+                  cursor:'pointer', border:'none',
+                  background: days===d ? 'var(--indigo)' : 'transparent',
+                  color: days===d ? '#fff' : 'var(--text-muted)',
+                }}>{d===180?'6M':d+'D'}</button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Summary strip */}
+        {/* Summary strip — always visible */}
         <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:20}}>
           {[
             { l:'Gross Sales',  v: fmt(gross),          c:'var(--text)',  s:'' },
@@ -15778,7 +15793,7 @@
           ))}
         </div>
 
-        <div style={{display:'grid', gridTemplateColumns:'1fr 280px', gap:16, alignItems:'start'}}>
+        {tab === 'funnel' && <div style={{display:'grid', gridTemplateColumns:'1fr 280px', gap:16, alignItems:'start'}}>
 
           {/* LEFT: Funnel */}
           <div style={{display:'flex', flexDirection:'column', gap:0}}>
@@ -15852,7 +15867,183 @@
           }}>
             <VendorPanel rowKey={active}/>
           </div>
-        </div>
+        </div>}
+
+        {/* ── Charts view ── */}
+        {tab === 'charts' && (() => {
+          // Waterfall math — running totals
+          const nc = notConfirmed, conf = confirmed, disp = dispatched;
+          // Stacked bar segments (left=delivered to right=not confirmed)
+          const segments = [
+            { l:'Delivered',  v:delivered,    c:C.green  },
+            { l:'In Motion',  v:disp,         c:C.blue   },
+            { l:'RTO',        v:rto,           c:C.red    },
+            { l:'Pending',    v:conf,          c:'#f59e0b'},
+            { l:'Not Conf',   v:nc,            c:C.amber  },
+          ].filter(s=>s.v>0);
+
+          // Waterfall SVG constants
+          const SVG_W=600, SVG_H=260, MT=16, MB=36, ML=56, MR=12;
+          const CW=SVG_W-ML-MR, CH=SVG_H-MT-MB;
+          const sc = v => v/gross*CH;
+          const BW=66, BGAP=18;
+          // 6 bars: Gross, NC, Pending, RTO, InMotion, Delivered
+          const wBars = [
+            { label:'Gross',      hi:gross,         lo:0,                              color:C.green,  isTotal:true },
+            { label:'Not Conf',   hi:gross,          lo:gross-nc,                       color:C.amber,  isLeak:true  },
+            { label:'Pending',    hi:gross-nc,       lo:gross-nc-conf,                  color:'#f59e0b',isLeak:true  },
+            { label:'RTO',        hi:gross-nc-conf,  lo:gross-nc-conf-rto,              color:C.red,    isLeak:true  },
+            { label:'In Motion',  hi:gross-nc-conf-rto, lo:gross-nc-conf-rto-disp,      color:C.blue,   isMid:true   },
+            { label:'Delivered',  hi:delivered,      lo:0,                              color:C.green,  isTotal:true },
+          ];
+          const totalBarW = wBars.length*BW + (wBars.length-1)*BGAP;
+          const startX = ML + (CW - totalBarW)/2;
+          const barXs = wBars.map((_,i) => startX + i*(BW+BGAP));
+
+          // Connector y-levels (bottom of each "floating" bar = the running-total line)
+          const connY = [
+            null,                    // after Gross: connector at top (y=MT)
+            MT + sc(nc),             // after NC: line at gross-nc level
+            MT + sc(nc+conf),        // after Pending
+            MT + sc(nc+conf+rto),    // after RTO
+            MT + sc(nc+conf+rto+disp), // after InMotion = MT+CH-sc(delivered)
+          ];
+
+          // Dispatched sub-stage bar data
+          const dispBars = [
+            { l:'Ready',   v:st.ready||0,   c:'#93c5fd' },
+            { l:'Pickup',  v:st.pickup||0,  c:'#60a5fa' },
+            { l:'Transit', v:st.transit||0, c:C.blue    },
+            { l:'OFD',     v:st.ofd||0,     c:'#1d4ed8' },
+          ].filter(s=>s.v>0);
+          const maxDisp = Math.max(...dispBars.map(s=>s.v), 1);
+
+          return (
+            <div style={{display:'flex', flexDirection:'column', gap:20}}>
+
+              {/* 1. Stacked composition bar */}
+              <div style={{background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px'}}>
+                <div style={{fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:10}}>Revenue Composition · {fmt(gross)} gross</div>
+                <div style={{height:40, borderRadius:6, overflow:'hidden', display:'flex'}}>
+                  {segments.map(s => {
+                    const w = s.v/gross*100;
+                    return (
+                      <div key={s.l} title={`${s.l}: ${fmt(s.v)} (${pct(s.v,gross)}%)`}
+                        style={{width:`${w}%`, background:s.c, display:'flex', alignItems:'center', justifyContent:'center', minWidth:2, transition:'width .3s'}}>
+                        {w > 7 && <span style={{fontSize:9, fontWeight:800, color:'rgba(255,255,255,0.95)', whiteSpace:'nowrap', textShadow:'0 1px 2px rgba(0,0,0,.3)'}}>{fmt(s.v)}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display:'flex', gap:12, marginTop:8, flexWrap:'wrap'}}>
+                  {segments.map(s => (
+                    <div key={s.l} style={{display:'flex', alignItems:'center', gap:5, fontSize:10}}>
+                      <div style={{width:8, height:8, borderRadius:2, background:s.c, flexShrink:0}}/>
+                      <span style={{color:'var(--text-muted)'}}>{s.l}</span>
+                      <span style={{fontWeight:700, color:s.c}}>{fmt(s.v)}</span>
+                      <span style={{color:'var(--text-muted)', fontSize:9}}>({pct(s.v,gross)}%)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Waterfall chart */}
+              <div style={{background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px'}}>
+                <div style={{fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:10}}>Revenue Waterfall — how gross becomes delivered</div>
+                <svg width="100%" viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{display:'block', overflow:'visible'}}>
+                  {/* Y-axis grid lines */}
+                  {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                    const y = MT + CH - CH*f;
+                    return (
+                      <g key={f}>
+                        <line x1={ML} y1={y} x2={SVG_W-MR} y2={y} stroke="var(--border)" strokeWidth={f===0||f===1?1.5:0.5} strokeDasharray={f===0||f===1?'':'4,4'}/>
+                        <text x={ML-6} y={y+4} textAnchor="end" fontSize={8} fill="var(--text-muted)">{fmt(gross*f)}</text>
+                      </g>
+                    );
+                  })}
+
+                  {/* Connector lines between bars */}
+                  {connY.map((cy, i) => {
+                    if (cy === null) return null;
+                    const x1 = barXs[i] + BW;
+                    const x2 = barXs[i+1];
+                    return (
+                      <line key={i} x1={x1} y1={cy} x2={x2} y2={cy}
+                        stroke="var(--text-muted)" strokeWidth={1} strokeDasharray="5,4" opacity={0.45}/>
+                    );
+                  })}
+
+                  {/* Bars */}
+                  {wBars.map((bar, i) => {
+                    const barH = Math.max(sc(bar.hi - bar.lo), 3);
+                    const barY = MT + CH - sc(bar.hi);
+                    const x = barXs[i];
+                    const isLast = i === wBars.length - 1;
+
+                    return (
+                      <g key={bar.label}>
+                        {/* Shadow / glow on bar */}
+                        <rect x={x+1} y={barY+2} width={BW-2} height={barH} rx={4} fill={bar.color} opacity={0.15}/>
+                        {/* Bar */}
+                        <rect x={x} y={barY} width={BW} height={barH} rx={4} fill={bar.color} opacity={bar.isLeak?0.85:bar.isMid?0.7:1}/>
+                        {/* Stripe pattern for in-motion (unresolved) */}
+                        {bar.isMid && barH > 12 && (
+                          <rect x={x} y={barY} width={BW} height={barH} rx={4}
+                            fill="url(#stripe)" opacity={0.15}/>
+                        )}
+                        {/* Amount label */}
+                        <text x={x+BW/2} y={barY - 5} textAnchor="middle" fontSize={9} fontWeight={800} fill={bar.color}>
+                          {fmt(bar.hi - bar.lo)}
+                        </text>
+                        {/* % label inside bar if tall enough */}
+                        {barH > 20 && (
+                          <text x={x+BW/2} y={barY + barH/2 + 4} textAnchor="middle" fontSize={9} fontWeight={700} fill="rgba(255,255,255,0.9)">
+                            {pct(bar.hi-bar.lo, gross)}%
+                          </text>
+                        )}
+                        {/* Stage label below */}
+                        <text x={x+BW/2} y={SVG_H - MB + 14} textAnchor="middle" fontSize={9} fill="var(--text-muted)">
+                          {bar.label}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {/* Stripe pattern def for in-motion */}
+                  <defs>
+                    <pattern id="stripe" patternUnits="userSpaceOnUse" width={6} height={6} patternTransform="rotate(45)">
+                      <line x1={0} y1={0} x2={0} y2={6} stroke="white" strokeWidth={2}/>
+                    </pattern>
+                  </defs>
+                </svg>
+                <div style={{fontSize:9, color:'var(--text-muted)', marginTop:4, textAlign:'center'}}>
+                  Dashed connectors show the running total · In Motion (striped) = dispatched but outcome pending
+                </div>
+              </div>
+
+              {/* 3. Dispatched sub-stage bars */}
+              {dispBars.length > 0 && (
+                <div style={{background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:'14px 16px'}}>
+                  <div style={{fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:12}}>Dispatched Breakdown — {fmt(disp)} in motion</div>
+                  <div style={{display:'flex', gap:16, alignItems:'flex-end'}}>
+                    {dispBars.map(s => {
+                      const hPx = Math.max(s.v/maxDisp*100, 4);
+                      return (
+                        <div key={s.l} style={{display:'flex', flexDirection:'column', alignItems:'center', gap:5, flex:1}}>
+                          <div style={{fontSize:10, fontWeight:800, color:s.c}}>{fmt(s.v)}</div>
+                          <div style={{fontSize:9, color:'var(--text-muted)'}}>{pct(s.v, gross)}% of gross</div>
+                          <div style={{width:'100%', maxWidth:80, height:hPx, background:s.c, borderRadius:'4px 4px 0 0', minHeight:4, alignSelf:'flex-end'}}/>
+                          <div style={{fontSize:10, fontWeight:600, color:'var(--text-muted)'}}>{s.l}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          );
+        })()}
       </div>
     );
   }
