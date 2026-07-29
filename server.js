@@ -23481,10 +23481,184 @@ async function startBaileysBot() {
   }
 }
 
+// Old bot startup disabled — replaced by waBot2 below
+// if (process.env.WHATSAPP_BOT_ENABLED === 'true') setTimeout(startBaileysBot, 25000);
+
+// ── WA BOT V2 — clean slate, fresh collection, simple logic ──────────────
+let waBot2Socket    = null;
+let waBot2Connected = false;
+let waBot2QR        = null;
+let waBot2Starting  = false;
+let waBot2Timer     = null;
+
+async function useWA2Auth() {
+  const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
+  const col   = mdb.collection('wa2_auth');
+  const docs  = await col.find({}).toArray().catch(() => []);
+  const cache = new Map(docs.map(d => {
+    try { return [d._id, JSON.parse(d.v, BufferJSON.reviver)]; } catch { return null; }
+  }).filter(Boolean));
+
+  const write = (id, data) => {
+    cache.set(id, data);
+    col.updateOne({ _id: id }, { $set: { v: JSON.stringify(data, BufferJSON.replacer) } }, { upsert: true }).catch(() => {});
+  };
+  const del = id => { cache.delete(id); col.deleteOne({ _id: id }).catch(() => {}); };
+  const creds = cache.get('creds') || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: (type, ids) => {
+          const out = {};
+          for (const id of ids) {
+            let v = cache.get(`${type}-${id}`) ?? null;
+            if (type === 'app-state-sync-key' && v) v = proto.Message.AppStateSyncKeyData.fromObject(v);
+            out[id] = v;
+          }
+          return out;
+        },
+        set: async data => {
+          for (const [cat, entries] of Object.entries(data))
+            for (const [id, val] of Object.entries(entries || {}))
+              val ? write(`${cat}-${id}`, val) : del(`${cat}-${id}`);
+        },
+      },
+    },
+    saveCreds: () => write('creds', creds),
+  };
+}
+
+async function startWA2() {
+  if (waBot2Starting) return;
+  waBot2Starting = true;
+  console.log('🤖 WA Bot v2 starting…');
+  try {
+    const { makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+    const pino    = require('pino');
+    const qrcode  = require('qrcode-terminal');
+
+    // Wait for DB
+    await new Promise(resolve => {
+      if (mdb) return resolve();
+      const t = setInterval(() => { if (mdb) { clearInterval(t); resolve(); } }, 300);
+    });
+
+    const { state, saveCreds } = await useWA2Auth();
+
+    const sock = makeWASocket({
+      auth:              state,
+      browser:           Browsers.macOS('Safari'),
+      logger:            pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      syncFullHistory:   false,
+    });
+
+    waBot2Socket = sock;
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        waBot2QR = qr;
+        console.log('\n📱 WA v2 QR — scan now (or visit /admin/wa2-qr):');
+        qrcode.generate(qr, { small: true });
+      }
+
+      if (connection === 'close') {
+        const code = lastDisconnect?.error?.output?.statusCode;
+        // Kill listeners immediately so saveCreds never fires during wait
+        try { sock.ev.removeAllListeners(); } catch (_) {}
+        waBot2Connected = false;
+        waBot2Starting  = false;
+        waBot2Socket    = null;
+        if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
+
+        const shouldClearAuth = code === 401 || code === 405;
+        console.log(`🔄 WA v2 disconnected (code ${code})${shouldClearAuth ? ' — clearing auth' : ''}`);
+
+        if (shouldClearAuth && mdb) {
+          await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
+        }
+
+        const delay = code === 405 ? 20000 : 5000;
+        waBot2Timer = setTimeout(startWA2, delay);
+      }
+
+      if (connection === 'open') {
+        waBot2Connected = true;
+        waBot2Starting  = false;
+        waBot2QR        = null;
+        console.log('✅ WA Bot v2 connected!');
+        // Hand off to existing message handler by swapping waSocket alias
+        waSocket    = sock;
+        waConnected = true;
+      }
+    });
+
+    // Reuse existing message handler — wire v2 socket into existing event pipeline
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        try { await handleIncomingWAMessage(msg, sock); } catch (e) { console.error('WA v2 msg error:', e.message); }
+      }
+    });
+
+  } catch (e) {
+    console.error('❌ WA Bot v2 failed:', e.message);
+    waBot2Starting = false;
+    waBot2Timer = setTimeout(startWA2, 10000);
+  }
+}
+
+// QR page for v2
+app.get('/admin/wa2-qr', adminAuth, async (req, res) => {
+  if (waBot2Connected) {
+    return res.send(`<!DOCTYPE html><html><head><title>WA v2</title>
+<meta http-equiv="refresh" content="5">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
+</head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+<h2 style="color:#10b981">✅ WhatsApp Connected</h2><p style="color:#64748b">Bot is live.</p>
+<p style="margin-top:16px"><a href="/admin/wa2-qr/reset?token=${req.query.token||''}" style="color:#ef4444;font-size:13px">🔄 Reconnect</a></p>
+</div></body></html>`);
+  }
+  if (!waBot2QR) {
+    return res.send(`<!DOCTYPE html><html><head><title>WA v2 QR</title>
+<meta http-equiv="refresh" content="4">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
+</head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+<h2 style="color:#f59e0b">⏳ Waiting for QR…</h2><p style="color:#64748b">Refreshing every 4s. Check Render logs for ASCII QR.</p>
+<p style="margin-top:16px"><a href="/admin/wa2-qr/reset?token=${req.query.token||''}" style="color:#ef4444;font-size:13px">🔄 Force reset & regenerate</a></p>
+</div></body></html>`);
+  }
+  const QRCode = require('qrcode');
+  const img    = await QRCode.toDataURL(waBot2QR, { width: 300, margin: 2 });
+  res.send(`<!DOCTYPE html><html><head><title>Scan WA QR</title>
+<meta http-equiv="refresh" content="30;url=/admin/wa2-qr?token=${req.query.token||''}">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
+</head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+<h2 style="margin-bottom:16px">📱 Scan with WhatsApp</h2>
+<img src="${img}" style="width:280px;height:280px;border-radius:8px">
+<p style="color:#64748b;font-size:12px;margin-top:12px">Opens → 3-dot menu → Linked Devices → Link a Device</p>
+<p style="font-size:11px;color:#94a3b8;margin-top:6px">QR refreshes every 30s automatically</p>
+</div></body></html>`);
+});
+
+app.get('/admin/wa2-qr/reset', adminAuth, async (req, res) => {
+  try { waBot2Socket?.ev?.removeAllListeners?.(); } catch (_) {}
+  waBot2Socket    = null;
+  waBot2Connected = false;
+  waBot2QR        = null;
+  waBot2Starting  = false;
+  if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
+  if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
+  waBot2Timer = setTimeout(startWA2, 1500);
+  res.redirect(`/admin/wa2-qr?token=${req.query.token||''}`);
+});
+
 if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
-  // Delay initial start by 25s to let any overlapping Render deploy instance fully exit
-  // (zero-downtime deploys overlap for ~10-15s; old instance 405s the new one otherwise)
-  console.log('⏳ WhatsApp bot will start in 25s (letting previous instance exit)…');
-  setTimeout(startBaileysBot, 25000);
+  console.log('⏳ WA Bot v2 starting in 20s…');
+  setTimeout(startWA2, 20000);
 }
 
