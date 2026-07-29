@@ -23600,29 +23600,10 @@ async function startWA2() {
   if (waBot2Starting) return;
   waBot2Starting = true;
 
-  // Wait for DB
   await new Promise(resolve => {
     if (mdb) return resolve();
     const t = setInterval(() => { if (mdb) { clearInterval(t); resolve(); } }, 300);
   });
-
-  // Try to acquire distributed lock — only one Render instance should run the socket
-  const gotLock = await acquireWA2Lock();
-  if (!gotLock) {
-    console.log('⏸️  WA v2: another instance holds the lock — backing off 60s');
-    waBot2Starting = false;
-    waBot2Timer = setTimeout(startWA2, 60000);
-    return;
-  }
-
-  // Renew lock every 30s while we hold it
-  wa2LockRenewer = setInterval(async () => {
-    if (!mdb) return;
-    await mdb.collection('wa_bot_lock_v2').updateOne(
-      { _id:'lock', holder:WA2_LOCK_INSTANCE },
-      { $set: { expiresAt: Date.now() + WA2_LOCK_TTL } }
-    ).catch(()=>{});
-  }, 30000);
 
   console.log('🤖 WA Bot v2 starting…');
   try {
@@ -23658,23 +23639,13 @@ async function startWA2() {
         waBot2Socket    = null;
         if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
 
-        // 401 = truly logged out → clear auth + reconnect fast
-        // 405 = session replaced by another client (another Render instance or phone)
-        //       → DO NOT clear auth (creds are fine), wait 5 min for other instance to die
-        // other → reconnect after short delay
         if (code === 401) {
-          console.log('🔄 WA v2: logged out (401) — clearing auth, reconnecting in 10s');
+          console.log('🔄 WA v2: logged out — clearing auth, reconnecting in 5s');
           if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(()=>{});
-          await releaseWA2Lock();
-          waBot2Timer = setTimeout(startWA2, 10000);
-        } else if (code === 405) {
-          console.log('🔄 WA v2: session replaced (405) — waiting 5 min for competing instance to die');
-          await releaseWA2Lock(); // release so other instance can hold it; we'll re-compete after 5 min
-          waBot2Timer = setTimeout(startWA2, 5 * 60 * 1000);
+          waBot2Timer = setTimeout(startWA2, 5000);
         } else {
-          console.log(`🔄 WA v2: disconnected (code ${code}) — reconnecting in 15s`);
-          await releaseWA2Lock();
-          waBot2Timer = setTimeout(startWA2, 15000);
+          console.log(`🔄 WA v2: disconnected (code ${code}) — reconnecting in 5s`);
+          waBot2Timer = setTimeout(startWA2, 5000);
         }
       }
 
@@ -23697,9 +23668,8 @@ async function startWA2() {
 
   } catch (e) {
     console.error('❌ WA Bot v2 failed:', e.message);
-    await releaseWA2Lock();
     waBot2Starting = false;
-    waBot2Timer = setTimeout(startWA2, 15000);
+    waBot2Timer = setTimeout(startWA2, 5000);
   }
 }
 
@@ -23715,25 +23685,65 @@ app.get('/admin/wa2-qr', adminAuth, async (req, res) => {
 </div></body></html>`);
   }
   if (!waBot2QR) {
+    const tk = req.query.token||'';
     return res.send(`<!DOCTYPE html><html><head><title>WA v2 QR</title>
-<meta http-equiv="refresh" content="4">
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
 </head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
-<h2 style="color:#f59e0b">⏳ Waiting for QR…</h2><p style="color:#64748b">Refreshing every 4s. Check Render logs for ASCII QR.</p>
-<p style="margin-top:16px"><a href="/admin/wa2-qr/reset?token=${req.query.token||''}" style="color:#ef4444;font-size:13px">🔄 Force reset & regenerate</a></p>
-</div></body></html>`);
+<h2 style="color:#f59e0b">⏳ Waiting for QR…</h2>
+<p style="color:#64748b;margin-bottom:20px">Checking every 2s — QR will appear here automatically.</p>
+<div id="status" style="font-size:12px;color:#94a3b8;margin-bottom:16px">Loading…</div>
+<a href="/admin/wa2-qr/reset?token=${tk}" style="color:#ef4444;font-size:13px">🔄 Force reset & regenerate</a>
+</div>
+<script>
+async function poll(){
+  try{
+    const r=await fetch('/admin/wa2-qr/status?token=${tk}');
+    const d=await r.json();
+    if(d.connected){location.reload();}
+    else if(d.hasQR){location.reload();}
+    else{document.getElementById('status').textContent=d.message||'Still starting…';}
+  }catch(e){}
+  setTimeout(poll,2000);
+}
+poll();
+</script>
+</body></html>`);
   }
   const QRCode = require('qrcode');
   const img    = await QRCode.toDataURL(waBot2QR, { width: 300, margin: 2 });
+  const tk2    = req.query.token||'';
   res.send(`<!DOCTYPE html><html><head><title>Scan WA QR</title>
-<meta http-equiv="refresh" content="30;url=/admin/wa2-qr?token=${req.query.token||''}">
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
 </head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
 <h2 style="margin-bottom:16px">📱 Scan with WhatsApp</h2>
 <img src="${img}" style="width:280px;height:280px;border-radius:8px">
-<p style="color:#64748b;font-size:12px;margin-top:12px">Opens → 3-dot menu → Linked Devices → Link a Device</p>
-<p style="font-size:11px;color:#94a3b8;margin-top:6px">QR refreshes every 30s automatically</p>
-</div></body></html>`);
+<p style="color:#64748b;font-size:13px;margin-top:16px">WhatsApp → 3-dot menu → Linked Devices → Link a Device</p>
+<p style="font-size:11px;color:#94a3b8;margin-top:8px">Page stays open — will redirect automatically once connected.</p>
+<div id="st" style="margin-top:12px;font-size:11px;color:#94a3b8"></div>
+<a href="/admin/wa2-qr/reset?token=${tk2}" style="display:block;margin-top:16px;color:#ef4444;font-size:12px">🔄 Force reset</a>
+</div>
+<script>
+async function poll(){
+  try{
+    const r=await fetch('/admin/wa2-qr/status?token=${tk2}');
+    const d=await r.json();
+    if(d.connected){document.getElementById('st').textContent='✅ Connected! Redirecting…';setTimeout(()=>location.reload(),1000);}
+    else if(!d.hasQR){document.getElementById('st').textContent='QR expired — reloading…';setTimeout(()=>location.reload(),1000);}
+  }catch(e){}
+  setTimeout(poll,3000);
+}
+poll();
+</script>
+</body></html>`);
+});
+
+app.get('/admin/wa2-qr/status', adminAuth, (req, res) => {
+  res.json({
+    connected: waBot2Connected === true,
+    hasQR: !!waBot2QR,
+    starting: waBot2Starting,
+    message: waBot2Connected ? 'Connected' : waBot2QR ? 'QR ready' : waBot2Starting ? 'Starting…' : 'Idle'
+  });
 });
 
 app.get('/admin/wa2-qr/reset', adminAuth, async (req, res) => {
