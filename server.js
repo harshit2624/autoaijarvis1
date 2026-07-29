@@ -22629,6 +22629,9 @@ async function waMenuForOrder(meta) {
 const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|hai|hola|namaste|👋|jai hind|good morning|good evening|good afternoon|gm|ge)$/i;
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
 
+const WA_INSTANCE_ID = `${process.pid}-${Date.now()}`;
+let waBotHeartbeat = null;
+
 async function startBaileysBot() {
   if (waStarting) return;
   waStarting = true;
@@ -22642,6 +22645,35 @@ async function startBaileysBot() {
       const t = setInterval(() => { if (mdb) { clearInterval(t); resolve(); } }, 500);
     });
     await waitForMdb();
+
+    // Distributed lock: only one Render instance runs the bot at a time.
+    // Try to claim the lock (expires after 20s). If another instance claimed it recently, back off.
+    const lockCol = mdb.collection('wa_bot_lock');
+    const now = Date.now();
+    try {
+      const res = await lockCol.updateOne(
+        { _id: 'singleton', updatedAt: { $lt: new Date(now - 20000) } },
+        { $set: { instanceId: WA_INSTANCE_ID, updatedAt: new Date(now) } },
+        { upsert: true }
+      );
+      if (res.upsertedCount === 0 && res.modifiedCount === 0) {
+        console.log(`⏸️  WA bot lock held by another instance — this instance backing off`);
+        waStarting = false;
+        waReconnectTimer = setTimeout(startBaileysBot, 25000);
+        return;
+      }
+    } catch (lockErr) {
+      // Duplicate key = another instance just upserted, we lost the race
+      console.log(`⏸️  WA bot lock race lost — backing off`);
+      waStarting = false;
+      waReconnectTimer = setTimeout(startBaileysBot, 25000);
+      return;
+    }
+    // Refresh the lock every 10s while connected
+    if (waBotHeartbeat) clearInterval(waBotHeartbeat);
+    waBotHeartbeat = setInterval(() => {
+      lockCol.updateOne({ _id: 'singleton', instanceId: WA_INSTANCE_ID }, { $set: { updatedAt: new Date() } }).catch(() => {});
+    }, 10000);
 
     const { state, saveCreds } = await useMongoAuthState();
     const sock = makeWASocket({
@@ -22668,6 +22700,8 @@ async function startBaileysBot() {
         waConnected = false;
         waStarting = false;
         waSocket = null;
+        // Stop heartbeat so another instance can claim the lock
+        if (waBotHeartbeat) { clearInterval(waBotHeartbeat); waBotHeartbeat = null; }
         // Cancel any pending reconnect before scheduling a new one
         if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
         if (loggedOut || sessionReplaced) {
