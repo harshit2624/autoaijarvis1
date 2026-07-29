@@ -568,7 +568,7 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
-const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+const STAGE_ORDER = ['misc','new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled'];
 const TERMINAL_STAGES = ['rto','cancelled']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
   const aTerm = TERMINAL_STAGES.includes(a);
