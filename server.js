@@ -22647,29 +22647,31 @@ async function startBaileysBot() {
     await waitForMdb();
 
     // Distributed lock: only one Render instance runs the bot at a time.
-    // Try to claim the lock (expires after 20s). If another instance claimed it recently, back off.
     const lockCol = mdb.collection('wa_bot_lock');
     const now = Date.now();
-    try {
-      const res = await lockCol.updateOne(
-        { _id: 'singleton', updatedAt: { $lt: new Date(now - 20000) } },
-        { $set: { instanceId: WA_INSTANCE_ID, updatedAt: new Date(now) } },
-        { upsert: true }
-      );
-      if (res.upsertedCount === 0 && res.modifiedCount === 0) {
-        console.log(`⏸️  WA bot lock held by another instance — this instance backing off`);
+    // If we already hold the lock (reconnecting after 405), skip the race
+    const existing = await lockCol.findOne({ _id: 'singleton' }).catch(() => null);
+    if (existing?.instanceId !== WA_INSTANCE_ID) {
+      try {
+        const res = await lockCol.updateOne(
+          { _id: 'singleton', updatedAt: { $lt: new Date(now - 20000) } },
+          { $set: { instanceId: WA_INSTANCE_ID, updatedAt: new Date(now) } },
+          { upsert: true }
+        );
+        if (res.upsertedCount === 0 && res.modifiedCount === 0) {
+          console.log(`⏸️  WA bot lock held by another instance — this instance backing off`);
+          waStarting = false;
+          waReconnectTimer = setTimeout(startBaileysBot, 25000);
+          return;
+        }
+      } catch (lockErr) {
+        console.log(`⏸️  WA bot lock race lost — backing off`);
         waStarting = false;
         waReconnectTimer = setTimeout(startBaileysBot, 25000);
         return;
       }
-    } catch (lockErr) {
-      // Duplicate key = another instance just upserted, we lost the race
-      console.log(`⏸️  WA bot lock race lost — backing off`);
-      waStarting = false;
-      waReconnectTimer = setTimeout(startBaileysBot, 25000);
-      return;
     }
-    // Refresh the lock every 10s while connected
+    // Refresh the lock every 10s so other instances keep backing off
     if (waBotHeartbeat) clearInterval(waBotHeartbeat);
     waBotHeartbeat = setInterval(() => {
       lockCol.updateOne({ _id: 'singleton', instanceId: WA_INSTANCE_ID }, { $set: { updatedAt: new Date() } }).catch(() => {});
@@ -22700,8 +22702,7 @@ async function startBaileysBot() {
         waConnected = false;
         waStarting = false;
         waSocket = null;
-        // Stop heartbeat so another instance can claim the lock
-        if (waBotHeartbeat) { clearInterval(waBotHeartbeat); waBotHeartbeat = null; }
+        // Keep heartbeat running — don't release lock on disconnect so other instances stay backed off
         // Cancel any pending reconnect before scheduling a new one
         if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
         if (loggedOut || sessionReplaced) {
