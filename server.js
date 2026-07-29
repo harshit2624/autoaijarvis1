@@ -23743,7 +23743,6 @@ async function pair(){
 }
 </script></body></html>`);
 });
-});
 
 app.get('/admin/wa2-qr/status', adminAuth, (req, res) => {
   res.json({
