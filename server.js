@@ -22706,6 +22706,9 @@ async function startBaileysBot() {
         // Cancel any pending reconnect before scheduling a new one
         if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
         if (loggedOut || sessionReplaced) {
+          // Kill all listeners on this socket so saveCreds can NEVER rewrite stale
+          // creds back to DB during the wait period (that was causing the 405 loop)
+          try { sock.ev.removeAllListeners(); } catch (_) {}
           // Clear all auth so Baileys generates fresh credentials and shows a new QR
           if (mdb) {
             await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
