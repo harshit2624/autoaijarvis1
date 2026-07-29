@@ -23567,20 +23567,68 @@ async function useWA2Auth() {
   };
 }
 
+// ── Distributed lock: only ONE Render instance runs the WA socket ────────────
+// 405 = "session replaced by another client" — fix is to back off long enough
+// for the competing instance to die, then reconnect WITHOUT clearing auth.
+const WA2_LOCK_INSTANCE = `${process.pid}-${Date.now()}`;
+const WA2_LOCK_TTL      = 75000; // 75s — longer than Render's overlap window
+let   wa2LockRenewer    = null;
+
+async function acquireWA2Lock() {
+  if (!mdb) return false;
+  const col = mdb.collection('wa_bot_lock_v2');
+  const now = Date.now();
+  // Take lock only if unclaimed or expired
+  try {
+    await col.updateOne(
+      { _id: 'lock', expiresAt: { $lt: now } },
+      { $set: { holder: WA2_LOCK_INSTANCE, expiresAt: now + WA2_LOCK_TTL } },
+      { upsert: true }
+    );
+    const doc = await col.findOne({ _id: 'lock' });
+    return doc?.holder === WA2_LOCK_INSTANCE;
+  } catch { return false; }
+}
+
+async function releaseWA2Lock() {
+  if (!mdb) return;
+  if (wa2LockRenewer) { clearInterval(wa2LockRenewer); wa2LockRenewer = null; }
+  await mdb.collection('wa_bot_lock_v2').deleteOne({ _id:'lock', holder:WA2_LOCK_INSTANCE }).catch(()=>{});
+}
+
 async function startWA2() {
   if (waBot2Starting) return;
   waBot2Starting = true;
+
+  // Wait for DB
+  await new Promise(resolve => {
+    if (mdb) return resolve();
+    const t = setInterval(() => { if (mdb) { clearInterval(t); resolve(); } }, 300);
+  });
+
+  // Try to acquire distributed lock — only one Render instance should run the socket
+  const gotLock = await acquireWA2Lock();
+  if (!gotLock) {
+    console.log('⏸️  WA v2: another instance holds the lock — backing off 60s');
+    waBot2Starting = false;
+    waBot2Timer = setTimeout(startWA2, 60000);
+    return;
+  }
+
+  // Renew lock every 30s while we hold it
+  wa2LockRenewer = setInterval(async () => {
+    if (!mdb) return;
+    await mdb.collection('wa_bot_lock_v2').updateOne(
+      { _id:'lock', holder:WA2_LOCK_INSTANCE },
+      { $set: { expiresAt: Date.now() + WA2_LOCK_TTL } }
+    ).catch(()=>{});
+  }, 30000);
+
   console.log('🤖 WA Bot v2 starting…');
   try {
-    const { makeWASocket, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
-    const pino    = require('pino');
-    const qrcode  = require('qrcode-terminal');
-
-    // Wait for DB
-    await new Promise(resolve => {
-      if (mdb) return resolve();
-      const t = setInterval(() => { if (mdb) { clearInterval(t); resolve(); } }, 300);
-    });
+    const { makeWASocket, Browsers } = require('@whiskeysockets/baileys');
+    const pino   = require('pino');
+    const qrcode = require('qrcode-terminal');
 
     const { state, saveCreds } = await useWA2Auth();
 
@@ -23593,7 +23641,6 @@ async function startWA2() {
     });
 
     waBot2Socket = sock;
-
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
@@ -23605,22 +23652,30 @@ async function startWA2() {
 
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
-        // Kill listeners immediately so saveCreds never fires during wait
         try { sock.ev.removeAllListeners(); } catch (_) {}
         waBot2Connected = false;
         waBot2Starting  = false;
         waBot2Socket    = null;
         if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
 
-        const shouldClearAuth = code === 401 || code === 405;
-        console.log(`🔄 WA v2 disconnected (code ${code})${shouldClearAuth ? ' — clearing auth' : ''}`);
-
-        if (shouldClearAuth && mdb) {
-          await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
+        // 401 = truly logged out → clear auth + reconnect fast
+        // 405 = session replaced by another client (another Render instance or phone)
+        //       → DO NOT clear auth (creds are fine), wait 5 min for other instance to die
+        // other → reconnect after short delay
+        if (code === 401) {
+          console.log('🔄 WA v2: logged out (401) — clearing auth, reconnecting in 10s');
+          if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(()=>{});
+          await releaseWA2Lock();
+          waBot2Timer = setTimeout(startWA2, 10000);
+        } else if (code === 405) {
+          console.log('🔄 WA v2: session replaced (405) — waiting 5 min for competing instance to die');
+          await releaseWA2Lock(); // release so other instance can hold it; we'll re-compete after 5 min
+          waBot2Timer = setTimeout(startWA2, 5 * 60 * 1000);
+        } else {
+          console.log(`🔄 WA v2: disconnected (code ${code}) — reconnecting in 15s`);
+          await releaseWA2Lock();
+          waBot2Timer = setTimeout(startWA2, 15000);
         }
-
-        const delay = code === 405 ? 20000 : 5000;
-        waBot2Timer = setTimeout(startWA2, delay);
       }
 
       if (connection === 'open') {
@@ -23628,13 +23683,11 @@ async function startWA2() {
         waBot2Starting  = false;
         waBot2QR        = null;
         console.log('✅ WA Bot v2 connected!');
-        // Hand off to existing message handler by swapping waSocket alias
         waSocket    = sock;
         waConnected = true;
       }
     });
 
-    // Reuse existing message handler — wire v2 socket into existing event pipeline
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
@@ -23644,8 +23697,9 @@ async function startWA2() {
 
   } catch (e) {
     console.error('❌ WA Bot v2 failed:', e.message);
+    await releaseWA2Lock();
     waBot2Starting = false;
-    waBot2Timer = setTimeout(startWA2, 10000);
+    waBot2Timer = setTimeout(startWA2, 15000);
   }
 }
 
@@ -23683,19 +23737,26 @@ app.get('/admin/wa2-qr', adminAuth, async (req, res) => {
 });
 
 app.get('/admin/wa2-qr/reset', adminAuth, async (req, res) => {
+  // Full hard reset: kill socket, clear auth, nuke lock so this instance can re-acquire
   try { waBot2Socket?.ev?.removeAllListeners?.(); } catch (_) {}
   waBot2Socket    = null;
   waBot2Connected = false;
   waBot2QR        = null;
   waBot2Starting  = false;
   if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
-  if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
-  waBot2Timer = setTimeout(startWA2, 1500);
+  if (wa2LockRenewer) { clearInterval(wa2LockRenewer); wa2LockRenewer = null; }
+  if (mdb) {
+    await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
+    await mdb.collection('wa_bot_lock_v2').deleteMany({}).catch(() => {}); // nuke lock so this instance wins
+  }
+  waBot2Timer = setTimeout(startWA2, 2000);
   res.redirect(`/admin/wa2-qr?token=${req.query.token||''}`);
 });
 
 if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
-  console.log('⏳ WA Bot v2 starting in 20s…');
-  setTimeout(startWA2, 20000);
+  // Stagger startup: random 10-40s delay so not all Render instances race at once
+  const startDelay = 10000 + Math.floor(Math.random() * 30000);
+  console.log(`⏳ WA Bot v2 starting in ${Math.round(startDelay/1000)}s…`);
+  setTimeout(startWA2, startDelay);
 }
 
