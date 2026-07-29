@@ -19838,9 +19838,13 @@ app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
 app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
   waConnected = false;
   waLatestQR = null;
+  if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
   if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
-  if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
-  setTimeout(() => startBaileysBot(), 2000);
+  if (mdb) {
+    await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+    await mdb.collection('whatsapp_sessions').deleteMany({}).catch(() => {});
+  }
+  waReconnectTimer = setTimeout(() => startBaileysBot(), 2000);
   res.json({ success: true });
 });
 
@@ -19890,9 +19894,13 @@ app.get('/admin/whatsapp-qr/reset', waQrAuth, async (req, res) => {
   waConnected = false;
   waLatestQR = null;
   if (waSocket) { try { await waSocket.logout(); } catch (_) {} waSocket = null; }
-  if (mdb) await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+  if (mdb) {
+    await mdb.collection('whatsapp_auth').deleteMany({}).catch(() => {});
+    await mdb.collection('whatsapp_sessions').deleteMany({}).catch(() => {});
+  }
   // Restart bot so it immediately generates a new QR
-  setTimeout(() => startBaileysBot(), 2000);
+  if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
+  waReconnectTimer = setTimeout(() => startBaileysBot(), 2000);
   res.send(`<!DOCTYPE html><html><head><title>Reset</title><meta http-equiv="refresh" content="4;url=/admin/whatsapp-qr${t}">
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
 .box{text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08)}</style></head>
@@ -21010,6 +21018,7 @@ let waSocket = null;
 let waConnected = false;
 let waLatestQR = null;
 let waStarting = false;
+let waReconnectTimer = null;
 const waPending = new Set();
 
 // MongoDB-backed auth state for Baileys — survives server restarts/redeploys
@@ -22659,6 +22668,8 @@ async function startBaileysBot() {
         waConnected = false;
         waStarting = false;
         waSocket = null;
+        // Cancel any pending reconnect before scheduling a new one
+        if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
         if (loggedOut || sessionReplaced) {
           // Clear all auth so Baileys generates fresh credentials and shows a new QR
           if (mdb) {
@@ -22667,12 +22678,12 @@ async function startBaileysBot() {
           }
           if (sessionReplaced) {
             console.log(`🔄 WhatsApp session replaced (405) — auth cleared, waiting 15s before QR regeneration…`);
-            setTimeout(startBaileysBot, 15000);
+            waReconnectTimer = setTimeout(startBaileysBot, 15000);
             return;
           }
         }
         console.log(`🔄 WhatsApp disconnected (code ${code}), reconnecting in 5s…`);
-        setTimeout(startBaileysBot, 5000);
+        waReconnectTimer = setTimeout(startBaileysBot, 5000);
       }
       if (connection === 'open') {
         waConnected = true;
