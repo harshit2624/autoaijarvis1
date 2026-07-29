@@ -1438,6 +1438,9 @@
         .then(r=>r.json()).then(d=>setConnectedPartners(d.partners||[])).catch(()=>{});
     },[order.shopifyId]);
 
+    // Auto-load delivery status on open — no need to click Refresh manually
+    useEffect(()=>{ refreshDelivery(); },[order.shopifyId]);
+
     useEffect(()=>{
       if (!shipPartner) { setWarehouses([]); setShipPickup(''); return; }
       fetch(`${API}/admin/shipping/warehouses?partner=${encodeURIComponent(shipPartner)}`,{headers:{Authorization:`Bearer ${token}`}})
