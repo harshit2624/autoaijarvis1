@@ -3323,6 +3323,158 @@
             );
           })()}
 
+          {/* ── Revenue Leakage Funnel ── */}
+          {!aLoading && a?.fulfillStats && (() => {
+            const fs = a.fulfillStats;
+            const sm = fs.stageMap || {};
+            const gross = (fs.revDispatched||0)+(fs.revPending||0)+(fs.revNotConfirmed||0)+(fs.revCancelled||0);
+            if (!gross) return null;
+
+            const pct = v => gross > 0 ? (v/gross*100).toFixed(1) : '0.0';
+
+            // Gate values
+            const lostNotConfirmed = (fs.revCancelled||0)+(fs.revHold||0)+(fs.revMisc||0);
+            const reachConfirmed   = gross - lostNotConfirmed;
+            const lostNotDispatched= fs.revPending||0; // confirmed but not yet dispatched
+            const reachDispatched  = fs.revDispatched||0;
+            const lostInTransit    = (fs.revTransit||0)+(fs.revPickup||0)+(fs.revReady||0)+(fs.revOfd||0); // dispatched but not settled
+            const lostRto          = fs.revRto||0;
+            const delivered        = fs.revDelivered||0;
+
+            const Gate = ({label, gross: g, lost, lostLabel, lostBreakdown, color, barColor}) => {
+              const retained = g - (lost||0);
+              const leakPct  = g > 0 ? ((lost||0)/g*100).toFixed(1) : '0.0';
+              return (
+                <div style={{marginBottom:0}}>
+                  {/* Gate header */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0 4px'}}>
+                    <div style={{width:10,height:10,borderRadius:'50%',background:color,flexShrink:0}}/>
+                    <div style={{flex:1,fontSize:11,fontWeight:800,letterSpacing:0.5,color,textTransform:'uppercase'}}>{label}</div>
+                    <div style={{fontSize:13,fontWeight:900,color}}>{fmtCur(g)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',minWidth:40,textAlign:'right'}}>{pct(g)}%</div>
+                  </div>
+                  {/* Full-width bar showing leakage */}
+                  <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',margin:'2px 0 4px'}}>
+                    <div style={{height:'100%',width:`${g>0?(retained/g*100):0}%`,background:barColor,borderRadius:3,transition:'width 0.3s'}}/>
+                  </div>
+                  {/* Leakage breakdown */}
+                  {lost > 0 && (
+                    <div style={{paddingLeft:20,marginBottom:4}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6,padding:'2px 0'}}>
+                        <span style={{fontSize:10,color:'#ef4444',fontWeight:700}}>↳ Leaked: {fmtCur(lost)} ({leakPct}% of gate)</span>
+                      </div>
+                      {lostBreakdown && lostBreakdown.map(([lbl,val,c])=> val>0 && (
+                        <div key={lbl} style={{display:'flex',gap:6,padding:'1px 0 1px 10px',fontSize:10,color:'var(--text-dim)'}}>
+                          <span style={{color:c||'#ef4444',fontWeight:600,minWidth:12}}>·</span>
+                          <span style={{flex:1}}>{lbl}</span>
+                          <span style={{fontWeight:700,color:c||'#ef4444'}}>{fmtCur(val)}</span>
+                          <span style={{color:'var(--text-muted)',minWidth:36,textAlign:'right'}}>{g>0?(val/g*100).toFixed(1):0}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            const rtoRate = fs.dispatched > 0 ? ((fs.rto||0)/fs.dispatched*100).toFixed(0) : 0;
+            const convRate= gross > 0 ? (delivered/gross*100).toFixed(1) : 0;
+
+            return (
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-header">
+                  <span className="card-title">🔻 Revenue Leakage Funnel</span>
+                  <span className="card-sub">Where gross sales bleed out · {periodLabel}</span>
+                </div>
+                <div style={{padding:'12px 16px'}}>
+
+                  {/* Gross bar */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8,padding:'6px 10px',background:'var(--bg-alt)',borderRadius:8}}>
+                    <div style={{fontSize:10,fontWeight:800,letterSpacing:1,color:'var(--text-dim)',textTransform:'uppercase',flex:1}}>Gross Sales</div>
+                    <div style={{fontSize:16,fontWeight:900,color:'var(--text)'}}>{fmtCur(gross)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)'}}>100%</div>
+                  </div>
+
+                  {/* Connector */}
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  <Gate
+                    label="Not Confirmed Gate"
+                    g={gross}
+                    lost={lostNotConfirmed}
+                    barColor="#94a3b8"
+                    color="#64748b"
+                    lostBreakdown={[
+                      ['Cancelled', fs.revCancelled||0, '#ef4444'],
+                      ['On Hold',   fs.revHold||0,      '#f59e0b'],
+                      ['Misc',      fs.revMisc||0,      '#94a3b8'],
+                    ]}
+                  />
+
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  <Gate
+                    label="Dispatch Gate"
+                    g={reachConfirmed}
+                    lost={lostNotDispatched}
+                    barColor="#f59e0b"
+                    color="#d97706"
+                    lostBreakdown={[
+                      ['Confirmed (not shipped)', fs.revConfirmedStage||0, '#f59e0b'],
+                      ['Partial paid (pending)',  fs.revPartial||0,        '#fbbf24'],
+                    ]}
+                  />
+
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  <Gate
+                    label="Transit Gate"
+                    g={reachDispatched}
+                    lost={lostInTransit + lostRto}
+                    barColor="#60a5fa"
+                    color="#3b82f6"
+                    lostBreakdown={[
+                      ['RTO (returning)',     lostRto,          '#ef4444'],
+                      ['In Transit',         fs.revTransit||0, '#60a5fa'],
+                      ['Out for Delivery',   fs.revOfd||0,     '#34d399'],
+                      ['Pickup Pending',     fs.revPickup||0,  '#93c5fd'],
+                      ['Ready / Packed',     fs.revReady||0,   '#bfdbfe'],
+                    ]}
+                  />
+
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  {/* Delivered — final */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'#10b98112',border:'1px solid #10b98130',borderRadius:8,marginTop:2}}>
+                    <div style={{width:10,height:10,borderRadius:'50%',background:'#10b981',flexShrink:0}}/>
+                    <div style={{flex:1,fontSize:11,fontWeight:800,letterSpacing:0.5,color:'#10b981',textTransform:'uppercase'}}>✅ Delivered</div>
+                    <div style={{fontSize:14,fontWeight:900,color:'#10b981'}}>{fmtCur(delivered)}</div>
+                    <div style={{fontSize:10,color:'#10b981',fontWeight:700}}>{pct(delivered)}% of gross</div>
+                  </div>
+
+                  {/* Summary strip */}
+                  <div style={{marginTop:12,display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <div style={{flex:1,minWidth:100,padding:'8px 12px',background:'#10b98110',borderRadius:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#10b981',fontWeight:700,marginBottom:2}}>Conversion</div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#10b981'}}>{convRate}%</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>gross → delivered</div>
+                    </div>
+                    <div style={{flex:1,minWidth:100,padding:'8px 12px',background:'#ef444410',borderRadius:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#ef4444',fontWeight:700,marginBottom:2}}>Total Leaked</div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#ef4444'}}>{fmtCur(gross-delivered)}</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>not yet delivered</div>
+                    </div>
+                    <div style={{flex:1,minWidth:100,padding:'8px 12px',background:'#f59e0b10',borderRadius:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#f59e0b',fontWeight:700,marginBottom:2}}>RTO Rate</div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#f59e0b'}}>{rtoRate}%</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>of dispatched orders</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Dispatch Quality card — turnaround time from confirmed → dispatched */}
           {!aLoading && a?.dispatchQuality && (() => {
             const dq = a.dispatchQuality;
