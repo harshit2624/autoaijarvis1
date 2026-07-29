@@ -22756,6 +22756,8 @@ const WA_INSTANCE_ID = `${process.pid}-${Date.now()}`;
 let waBotHeartbeat = null;
 
 async function startBaileysBot() {
+  // Old bot permanently disabled — replaced by startWA2()
+  return;
   if (waStarting) return;
   waStarting = true;
   try {
@@ -23482,7 +23484,8 @@ async function startBaileysBot() {
 }
 
 // Old bot startup disabled — replaced by waBot2 below
-// if (process.env.WHATSAPP_BOT_ENABLED === 'true') setTimeout(startBaileysBot, 25000);
+// Old bot disabled — kill any pending reconnect timer it may have scheduled
+if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null; }
 
 // ── WA BOT V2 — clean slate, fresh collection, simple logic ──────────────
 let waBot2Socket    = null;
