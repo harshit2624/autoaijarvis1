@@ -10897,9 +10897,12 @@
      WHATSAPP BOT — Connection & Status
   ══════════════════════════════════ */
   function WhatsAppSettings({ token }) {
-    const [status, setStatus]   = useState(null); // null=loading, {connected, qrDataUrl}
+    const [status, setStatus]   = useState(null);
     const [resetting, setResetting] = useState(false);
     const [msg, setMsg]         = useState('');
+    const [phone, setPhone]     = useState('916375668971');
+    const [pairing, setPairing] = useState(false);
+    const [pairCode, setPairCode] = useState(null);
 
     const load = async () => {
       try {
@@ -10920,6 +10923,17 @@
         setTimeout(load, 3000);
       } catch { setMsg('Reset failed.'); }
       setResetting(false);
+    };
+
+    const requestPairCode = async () => {
+      setPairing(true); setMsg(''); setPairCode(null);
+      try {
+        const r = await fetch(`${API}/admin/wa2-qr/pair?token=${token}&phone=${phone.replace(/\D/g,'')}`, { method:'POST', headers:{ Authorization:'Bearer '+token } });
+        const d = await r.json();
+        if (d.ok) { setPairCode(d.code); setMsg(''); }
+        else setMsg('❌ ' + (d.error || 'Failed to get pairing code'));
+      } catch(e) { setMsg('❌ ' + e.message); }
+      setPairing(false);
     };
 
     const [testing, setTesting] = useState(false);
@@ -10952,7 +10966,22 @@
         {status && !status.connected && !status.qrDataUrl && (
           <div style={{background:'rgba(245,158,11,0.08)',border:'1px solid rgba(245,158,11,0.3)',borderRadius:12,padding:'20px 24px',marginBottom:24}}>
             <div style={{fontSize:15,fontWeight:700,color:'#f59e0b',marginBottom:4}}>⚠️ Disconnected</div>
-            <div style={{fontSize:13,color:'var(--text-muted)'}}>Bot is not connected. Click "Generate New QR" to reconnect.</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:16}}>Use phone number pairing to connect (works on cloud servers).</div>
+            {pairCode ? (
+              <div style={{textAlign:'center'}}>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>Enter this code in WhatsApp → 3-dot menu → Linked Devices → Link with phone number</div>
+                <div style={{fontSize:36,fontWeight:700,letterSpacing:10,color:'var(--text)',background:'var(--bg)',padding:'14px 20px',borderRadius:10,display:'inline-block',marginBottom:8}}>{pairCode}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)'}}>Waiting for you to enter the code in WhatsApp…</div>
+              </div>
+            ) : (
+              <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                <input className="form-input" value={phone} onChange={e=>setPhone(e.target.value)}
+                  placeholder="919876543210" style={{width:180,fontSize:13}}/>
+                <button className="btn btn-indigo btn-sm" onClick={requestPairCode} disabled={pairing}>
+                  {pairing ? 'Requesting…' : '🔑 Get Pairing Code'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
