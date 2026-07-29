@@ -23596,6 +23596,8 @@ async function releaseWA2Lock() {
   await mdb.collection('wa_bot_lock_v2').deleteOne({ _id:'lock', holder:WA2_LOCK_INSTANCE }).catch(()=>{});
 }
 
+let waBot2PairingCode = null; // set when pairing code is available
+
 async function startWA2() {
   if (waBot2Starting) return;
   waBot2Starting = true;
@@ -23650,9 +23652,10 @@ async function startWA2() {
       }
 
       if (connection === 'open') {
-        waBot2Connected = true;
-        waBot2Starting  = false;
-        waBot2QR        = null;
+        waBot2Connected   = true;
+        waBot2Starting    = false;
+        waBot2QR          = null;
+        waBot2PairingCode = null;
         console.log('✅ WA Bot v2 connected!');
         waSocket    = sock;
         waConnected = true;
@@ -23673,94 +23676,113 @@ async function startWA2() {
   }
 }
 
-// QR page for v2
+// QR / pairing page for v2
 app.get('/admin/wa2-qr', adminAuth, async (req, res) => {
+  const tk = req.query.token || '';
   if (waBot2Connected) {
-    return res.send(`<!DOCTYPE html><html><head><title>WA v2</title>
-<meta http-equiv="refresh" content="5">
+    return res.send(`<!DOCTYPE html><html><head><title>WA Connected</title>
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
 </head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
 <h2 style="color:#10b981">✅ WhatsApp Connected</h2><p style="color:#64748b">Bot is live.</p>
-<p style="margin-top:16px"><a href="/admin/wa2-qr/reset?token=${req.query.token||''}" style="color:#ef4444;font-size:13px">🔄 Reconnect</a></p>
+<p style="margin-top:16px"><a href="/admin/wa2-qr/reset?token=${tk}" style="color:#ef4444;font-size:13px">🔄 Reconnect</a></p>
 </div></body></html>`);
   }
-  if (!waBot2QR) {
-    const tk = req.query.token||'';
-    return res.send(`<!DOCTYPE html><html><head><title>WA v2 QR</title>
+
+  // Show pairing code if available
+  if (waBot2PairingCode) {
+    return res.send(`<!DOCTYPE html><html><head><title>WA Pairing Code</title>
 <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
 </head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
-<h2 style="color:#f59e0b">⏳ Waiting for QR…</h2>
-<p style="color:#64748b;margin-bottom:20px">Checking every 2s — QR will appear here automatically.</p>
-<div id="status" style="font-size:12px;color:#94a3b8;margin-bottom:16px">Loading…</div>
-<a href="/admin/wa2-qr/reset?token=${tk}" style="color:#ef4444;font-size:13px">🔄 Force reset & regenerate</a>
+<h2 style="margin-bottom:8px">🔑 Pairing Code</h2>
+<p style="color:#64748b;margin-bottom:24px;font-size:13px">Enter this in WhatsApp → 3-dot menu → Linked Devices → Link with phone number</p>
+<div style="font-size:48px;font-weight:700;letter-spacing:12px;color:#1e293b;background:#f1f5f9;padding:20px 32px;border-radius:12px;margin-bottom:24px">${waBot2PairingCode}</div>
+<div id="st" style="font-size:12px;color:#94a3b8;margin-bottom:16px">Waiting for you to enter the code…</div>
+<a href="/admin/wa2-qr/reset?token=${tk}" style="color:#ef4444;font-size:12px">🔄 Reset & start over</a>
 </div>
 <script>
 async function poll(){
   try{
     const r=await fetch('/admin/wa2-qr/status?token=${tk}');
     const d=await r.json();
-    if(d.connected){location.reload();}
-    else if(d.hasQR){location.reload();}
-    else{document.getElementById('status').textContent=d.message||'Still starting…';}
-  }catch(e){}
-  setTimeout(poll,2000);
-}
-poll();
-</script>
-</body></html>`);
-  }
-  const QRCode = require('qrcode');
-  const img    = await QRCode.toDataURL(waBot2QR, { width: 300, margin: 2 });
-  const tk2    = req.query.token||'';
-  res.send(`<!DOCTYPE html><html><head><title>Scan WA QR</title>
-<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}</style>
-</head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
-<h2 style="margin-bottom:16px">📱 Scan with WhatsApp</h2>
-<img src="${img}" style="width:280px;height:280px;border-radius:8px">
-<p style="color:#64748b;font-size:13px;margin-top:16px">WhatsApp → 3-dot menu → Linked Devices → Link a Device</p>
-<p style="font-size:11px;color:#94a3b8;margin-top:8px">Page stays open — will redirect automatically once connected.</p>
-<div id="st" style="margin-top:12px;font-size:11px;color:#94a3b8"></div>
-<a href="/admin/wa2-qr/reset?token=${tk2}" style="display:block;margin-top:16px;color:#ef4444;font-size:12px">🔄 Force reset</a>
-</div>
-<script>
-async function poll(){
-  try{
-    const r=await fetch('/admin/wa2-qr/status?token=${tk2}');
-    const d=await r.json();
-    if(d.connected){document.getElementById('st').textContent='✅ Connected! Redirecting…';setTimeout(()=>location.reload(),1000);}
-    else if(!d.hasQR){document.getElementById('st').textContent='QR expired — reloading…';setTimeout(()=>location.reload(),1000);}
+    if(d.connected){document.getElementById('st').textContent='✅ Connected!';setTimeout(()=>location.reload(),1000);}
+    else if(!d.pairingCode){document.getElementById('st').textContent='Code expired — reloading…';setTimeout(()=>location.reload(),2000);}
   }catch(e){}
   setTimeout(poll,3000);
 }
 poll();
-</script>
-</body></html>`);
+</script></body></html>`);
+  }
+
+  // Default: show phone number form to request pairing code
+  res.send(`<!DOCTYPE html><html><head><title>WA Connect</title>
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc}
+input{padding:12px 16px;font-size:16px;border:2px solid #e2e8f0;border-radius:8px;width:220px;outline:none}
+input:focus{border-color:#6366f1}
+button{padding:12px 24px;background:#6366f1;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin-top:12px}
+button:hover{background:#4f46e5}</style>
+</head><body><div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08);min-width:340px">
+<h2 style="margin-bottom:8px">📱 Connect WhatsApp</h2>
+<p style="color:#64748b;font-size:13px;margin-bottom:24px">Enter the CROSCROW WhatsApp number to get a pairing code</p>
+<div id="status" style="font-size:13px;color:#64748b;margin-bottom:16px">Bot status: ${waBot2Starting ? 'Starting…' : 'Waiting'}</div>
+<input id="phone" type="tel" placeholder="919876543210" value="916375668971">
+<br>
+<button onclick="pair()">Get Pairing Code</button>
+<div id="msg" style="margin-top:16px;font-size:13px;color:#64748b"></div>
+<p style="margin-top:24px"><a href="/admin/wa2-qr/reset?token=${tk}" style="color:#ef4444;font-size:12px">🔄 Reset auth & restart bot</a></p>
+</div>
+<script>
+async function pair(){
+  const phone = document.getElementById('phone').value.trim().replace(/\\D/g,'');
+  document.getElementById('msg').textContent = 'Requesting pairing code…';
+  try{
+    const r = await fetch('/admin/wa2-qr/pair?token=${tk}&phone='+phone, {method:'POST'});
+    const d = await r.json();
+    if(d.ok){ document.getElementById('msg').textContent = '✅ Code requested — reloading…'; setTimeout(()=>location.reload(),1500); }
+    else { document.getElementById('msg').textContent = '❌ ' + (d.error||'Failed'); }
+  }catch(e){ document.getElementById('msg').textContent = '❌ Error: '+e.message; }
+}
+</script></body></html>`);
+});
 });
 
 app.get('/admin/wa2-qr/status', adminAuth, (req, res) => {
   res.json({
     connected: waBot2Connected === true,
     hasQR: !!waBot2QR,
+    pairingCode: waBot2PairingCode || null,
     starting: waBot2Starting,
-    message: waBot2Connected ? 'Connected' : waBot2QR ? 'QR ready' : waBot2Starting ? 'Starting…' : 'Idle'
+    message: waBot2Connected ? 'Connected' : waBot2PairingCode ? 'Enter pairing code' : waBot2QR ? 'QR ready' : waBot2Starting ? 'Starting…' : 'Idle'
   });
 });
 
 app.get('/admin/wa2-qr/reset', adminAuth, async (req, res) => {
-  // Full hard reset: kill socket, clear auth, nuke lock so this instance can re-acquire
   try { waBot2Socket?.ev?.removeAllListeners?.(); } catch (_) {}
-  waBot2Socket    = null;
-  waBot2Connected = false;
-  waBot2QR        = null;
-  waBot2Starting  = false;
+  waBot2Socket      = null;
+  waBot2Connected   = false;
+  waBot2QR          = null;
+  waBot2PairingCode = null;
+  waBot2Starting    = false;
   if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
-  if (wa2LockRenewer) { clearInterval(wa2LockRenewer); wa2LockRenewer = null; }
   if (mdb) {
     await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
-    await mdb.collection('wa_bot_lock_v2').deleteMany({}).catch(() => {}); // nuke lock so this instance wins
+    await mdb.collection('wa_bot_lock_v2').deleteMany({}).catch(() => {});
   }
   waBot2Timer = setTimeout(startWA2, 2000);
   res.redirect(`/admin/wa2-qr?token=${req.query.token||''}`);
+});
+
+app.post('/admin/wa2-qr/pair', adminAuth, async (req, res) => {
+  const phone = (req.query.phone || '').replace(/\D/g, '');
+  if (!phone) return res.json({ ok: false, error: 'Phone number required' });
+  if (!waBot2Socket) return res.json({ ok: false, error: 'Bot socket not ready — wait a moment and try again' });
+  try {
+    const code = await waBot2Socket.requestPairingCode(phone);
+    waBot2PairingCode = code;
+    console.log(`🔑 WA v2 pairing code for ${phone}: ${code}`);
+    res.json({ ok: true, code });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
 
 if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
