@@ -15520,10 +15520,10 @@
 
   // ── REVENUE LEAKAGE FUNNEL ───────────────────────────────────────────────
   function LeakageFunnel({ token }) {
-    const [days, setDays]     = React.useState(30);
-    const [data, setData]     = React.useState(null);
+    const [days, setDays]       = React.useState(30);
+    const [data, setData]       = React.useState(null);
     const [loading, setLoading] = React.useState(true);
-    const [panel, setPanel]   = React.useState(null);
+    const [active, setActive]   = React.useState(null); // which row is selected for vendor panel
 
     React.useEffect(() => {
       setLoading(true); setData(null);
@@ -15532,70 +15532,109 @@
     }, [days]);
 
     const fmt = v => {
-      if (v >= 10000000) return '₹' + (v/10000000).toFixed(2) + 'Cr';
-      if (v >= 100000)   return '₹' + (v/100000).toFixed(2) + 'L';
-      if (v >= 1000)     return '₹' + (v/1000).toFixed(1) + 'k';
+      if (!v) return '₹0';
+      if (v >= 10000000) return '₹' + (v/10000000).toFixed(1) + 'Cr';
+      if (v >= 100000)   return '₹' + (v/100000).toFixed(1) + 'L';
+      if (v >= 1000)     return '₹' + (v/1000).toFixed(0) + 'k';
       return '₹' + Math.round(v).toLocaleString('en-IN');
     };
-    const fmtFull = v => '₹' + Math.round(v).toLocaleString('en-IN');
     const pct = (v, g) => g > 0 ? (v/g*100).toFixed(1) : '0.0';
-    const C = { green:'#10b981', blue:'#3b82f6', amber:'#f59e0b', red:'#ef4444', slate:'#64748b', purple:'#a855f7' };
 
-    if (loading) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,gap:10,color:'var(--text-dim)'}}><span style={{fontSize:20,animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Crunching revenue data…</div>;
-    if (!data)   return <div style={{padding:40,textAlign:'center',color:'var(--text-muted)'}}>Failed to load.</div>;
+    if (loading) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,gap:10,color:'var(--text-muted)'}}>
+      <span style={{fontSize:18,animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span> Loading…
+    </div>;
+    if (!data) return <div style={{padding:40,textAlign:'center',color:'var(--text-muted)'}}>Failed to load.</div>;
 
-    const g = data.groups || {};
-    const gross         = data.gross || 0;
-    const notConfirmed  = (g.cancelled||0)+(g.hold||0)+(g.misc||0)+(g.new||0);
-    const pendingDisp   = g.pending || 0;
-    const inFlight      = g.in_flight || 0;
-    const rto           = g.rto || 0;
-    const delivered     = g.delivered || 0;
-    const convRate      = pct(delivered, gross);
-    const rtoRate       = (inFlight+rto+delivered)>0 ? pct(rto,inFlight+rto+delivered) : '0.0';
-
-    // Surviving revenue at each gate entry
+    const g  = data.groups || {};
+    const st = data.stages  || {};
+    const gross        = data.gross || 0;
+    const notConfirmed = (g.cancelled||0) + (g.hold||0) + (g.misc||0) + (g.new||0);
+    const confirmed    = g.pending  || 0;
+    const dispatched   = g.in_flight || 0;
+    const rto          = g.rto       || 0;
+    const delivered    = g.delivered || 0;
     const afterNC      = gross - notConfirmed;
-    const afterPending = afterNC - pendingDisp;
-    // afterPending = dispatched = inFlight + rto + delivered
+    const afterConf    = afterNC - confirmed;
+    const convRate     = pct(delivered, gross);
+    const rtoRate      = (dispatched+rto) > 0 ? pct(rto, dispatched+rto+delivered) : '0.0';
 
-    // Surviving connector between stages
-    const Survivor = ({ amount, fromColor, toColor, label }) => (
-      <div style={{display:'flex',alignItems:'stretch',margin:'0 0 0 0',gap:0}}>
-        <div style={{display:'flex',flexDirection:'column',alignItems:'center',width:32,flexShrink:0}}>
-          <div style={{width:2,flex:1,background:`linear-gradient(${fromColor},${toColor})`}}/>
-        </div>
-        <div style={{flex:1,display:'flex',alignItems:'center',padding:'6px 0'}}>
-          <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'5px 12px',display:'flex',alignItems:'center',gap:8,fontSize:11}}>
-            <span style={{color:'var(--text-muted)'}}>↓ {label} reached here:</span>
-            <span style={{fontWeight:900,color:toColor,fontSize:13}}>{fmt(amount)}</span>
-            <span style={{fontSize:10,color:'var(--text-muted)'}}>({pct(amount,gross)}% of gross)</span>
-          </div>
-        </div>
-      </div>
-    );
+    const C = { green:'#10b981', blue:'#3b82f6', amber:'#f59e0b', red:'#ef4444', muted:'#64748b' };
 
-    // Gate node (leakage box)
-    const Gate = ({ group, subgroups, label, amount, basis, color, chips, isActive, onSelect }) => {
-      const wPct = basis > 0 ? Math.max(3, amount/basis*100) : 0;
+    // Each funnel row definition
+    const rows = [
+      {
+        key: 'not_confirmed', label: 'Not Confirmed', color: C.amber,
+        amount: notConfirmed, pctOf: gross,
+        survived: null,
+        subgroups: ['cancelled','hold','misc','new'],
+        chips: [
+          { l:'Cancelled', v: g.cancelled||0, c: C.red },
+          { l:'On Hold',   v: g.hold||0,      c: C.amber },
+          { l:'New',       v: g.new||0,        c: C.muted },
+          { l:'Misc',      v: g.misc||0,       c: C.muted },
+        ],
+      },
+      {
+        key: 'confirmed', label: 'Confirmed · Not Dispatched', color: '#f59e0b',
+        amount: confirmed, pctOf: gross,
+        survived: { label: `${fmt(afterNC)} confirmed`, pct: pct(afterNC, gross) },
+        subgroups: ['pending'],
+        chips: [
+          { l:'Awaiting dispatch', v: confirmed, c: '#f59e0b' },
+        ],
+      },
+      {
+        key: 'dispatched', label: 'Dispatched · In Motion', color: C.blue,
+        amount: dispatched, pctOf: gross,
+        survived: { label: `${fmt(afterConf)} dispatched`, pct: pct(afterConf, gross) },
+        subgroups: ['in_flight'],
+        chips: [
+          { l:'Ready',    v: st.ready   ||0, c: '#60a5fa' },
+          { l:'Pickup',   v: st.pickup  ||0, c: '#60a5fa' },
+          { l:'Transit',  v: st.transit ||0, c: C.blue },
+          { l:'OFD',      v: st.ofd     ||0, c: '#1d4ed8' },
+        ],
+      },
+      {
+        key: 'rto', label: 'RTO — Returning', color: C.red,
+        amount: rto, pctOf: gross,
+        survived: null,
+        subgroups: ['rto'],
+        chips: [{ l:'Returning', v: rto, c: C.red }],
+      },
+    ];
+
+    const FunnelRow = ({ row, isActive, onSelect }) => {
+      const barW = gross > 0 ? Math.max(2, row.amount / gross * 100) : 0;
       return (
-        <div onClick={onSelect} style={{background:isActive?`${color}08`:'var(--bg-card)',border:`1px solid ${isActive?color:'var(--border)'}`,borderRadius:12,padding:'13px 16px',cursor:'pointer',transition:'all .15s'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:7}}>
-            <div style={{width:7,height:7,borderRadius:'50%',background:color,flexShrink:0,boxShadow:`0 0 6px ${color}80`}}/>
-            <div style={{flex:1,fontSize:10,fontWeight:800,letterSpacing:1,color,textTransform:'uppercase'}}>{label}</div>
-            <div style={{fontSize:16,fontWeight:900,color}}>{fmt(amount)}</div>
-            <div style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`${color}18`,color,border:`1px solid ${color}30`}}>{pct(amount,gross)}% of gross</div>
+        <div onClick={onSelect} style={{
+          background: isActive ? `${row.color}10` : 'var(--bg-card)',
+          border: `1px solid ${isActive ? row.color : 'var(--border)'}`,
+          borderRadius: 10, padding: '12px 14px', cursor: 'pointer',
+          transition: 'border-color .15s, background .15s',
+        }}>
+          <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8}}>
+            <div style={{width:8, height:8, borderRadius:'50%', background:row.color, flexShrink:0}}/>
+            <div style={{flex:1, fontSize:11, fontWeight:700, color:'var(--text)'}}>{row.label}</div>
+            <div style={{fontSize:15, fontWeight:800, color:row.color}}>{fmt(row.amount)}</div>
+            <div style={{
+              fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:12,
+              background:`${row.color}18`, color:row.color,
+            }}>{pct(row.amount, gross)}%</div>
           </div>
-          <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:7}}>
-            <div style={{height:'100%',width:`${wPct}%`,background:color,borderRadius:2}}/>
+          <div style={{height:3, background:'var(--border)', borderRadius:2, overflow:'hidden', marginBottom:8}}>
+            <div style={{height:'100%', width:`${barW}%`, background:row.color, borderRadius:2}}/>
           </div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
-            {chips.filter(c=>c.v>0).map(c=>(
-              <div key={c.l} style={{display:'flex',alignItems:'center',gap:4,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:5,padding:'3px 8px',fontSize:10}}>
-                <div style={{width:5,height:5,borderRadius:'50%',background:c.c}}/>
+          <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+            {row.chips.filter(c => c.v > 0).map(c => (
+              <div key={c.l} style={{
+                display:'flex', alignItems:'center', gap:5,
+                background:'var(--bg-card2)', border:'1px solid var(--border)',
+                borderRadius:5, padding:'2px 7px', fontSize:10,
+              }}>
+                <div style={{width:5, height:5, borderRadius:'50%', background:c.c}}/>
                 <span style={{color:'var(--text-dim)'}}>{c.l}</span>
-                <span style={{fontWeight:700,color:c.c,marginLeft:2}}>{fmt(c.v)}</span>
-                <span style={{color:'var(--text-muted)',fontSize:9,marginLeft:1}}>({pct(c.v,gross)}%)</span>
+                <span style={{fontWeight:700, color:c.c}}>{fmt(c.v)}</span>
               </div>
             ))}
           </div>
@@ -15603,153 +15642,167 @@
       );
     };
 
-    const VendorPanel = ({ panel }) => {
-      if (!panel) return <div style={{padding:'40px 16px',textAlign:'center',color:'var(--text-muted)',fontSize:12,lineHeight:1.7}}>Click any stage<br/>to see vendor breakdown</div>;
+    const VendorPanel = ({ rowKey }) => {
+      const row = rows.find(r => r.key === rowKey);
+      if (!row) return (
+        <div style={{height:'100%', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:8, color:'var(--text-muted)', padding:24, textAlign:'center'}}>
+          <div style={{fontSize:20}}>←</div>
+          <div style={{fontSize:12}}>Click a stage to see<br/>vendor breakdown</div>
+        </div>
+      );
       const vendors = [];
-      for (const sg of panel.subgroups) {
+      for (const sg of row.subgroups) {
         for (const v of (data.topVendors?.[sg] || [])) {
-          const ex = vendors.find(x=>x.name===v.name);
-          if (ex) { ex.rev+=v.rev; ex.count+=v.count; } else vendors.push({...v});
+          const ex = vendors.find(x => x.name === v.name);
+          if (ex) { ex.rev += v.rev; ex.count += v.count; } else vendors.push({...v});
         }
       }
-      vendors.sort((a,b)=>b.rev-a.rev);
-      const max = vendors[0]?.rev || 1;
-      const total = vendors.reduce((s,v)=>s+v.rev,0);
+      vendors.sort((a,b) => b.rev - a.rev);
+      const maxRev = vendors[0]?.rev || 1;
+      const total  = vendors.reduce((s,v) => s + v.rev, 0);
       return (
         <div>
-          <div style={{padding:'12px 14px 10px',borderBottom:'1px solid var(--border)'}}>
-            <div style={{fontSize:11,fontWeight:800,color:panel.color,marginBottom:2}}>{panel.label}</div>
-            <div style={{fontSize:10,color:'var(--text-muted)'}}>Vendor share · {fmtFull(total)} total</div>
+          <div style={{padding:'12px 14px', borderBottom:'1px solid var(--border)'}}>
+            <div style={{fontSize:12, fontWeight:800, color:row.color}}>{row.label}</div>
+            <div style={{fontSize:10, color:'var(--text-muted)', marginTop:2}}>Top vendors · {fmt(total)} total</div>
           </div>
-          {vendors.slice(0,10).map((v,i)=>(
-            <div key={v.name} style={{padding:'8px 14px',borderBottom:'1px solid var(--border)'}}>
-              <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:4}}>
-                <div style={{width:15,height:15,borderRadius:3,background:'var(--bg-card2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:800,color:'var(--text-muted)',flexShrink:0}}>{i+1}</div>
-                <div style={{flex:1,fontSize:11,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={v.name}>{v.name}</div>
-                <div style={{fontSize:12,fontWeight:900,color:panel.color}}>{fmt(v.rev)}</div>
+          {vendors.slice(0,10).map((v,i) => (
+            <div key={v.name} style={{padding:'9px 14px', borderBottom:'1px solid var(--border)'}}>
+              <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:4}}>
+                <div style={{
+                  width:16, height:16, borderRadius:3, background:'var(--bg-card2)',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:8, fontWeight:800, color:'var(--text-muted)', flexShrink:0,
+                }}>{i+1}</div>
+                <div style={{flex:1, fontSize:11, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={v.name}>{v.name}</div>
+                <div style={{fontSize:12, fontWeight:800, color:row.color}}>{fmt(v.rev)}</div>
               </div>
-              <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginLeft:22,marginBottom:3}}>
-                <div style={{height:'100%',width:`${v.rev/max*100}%`,background:panel.color,borderRadius:2}}/>
+              <div style={{height:3, background:'var(--border)', borderRadius:2, overflow:'hidden', marginLeft:24, marginBottom:3}}>
+                <div style={{height:'100%', width:`${v.rev/maxRev*100}%`, background:row.color, borderRadius:2}}/>
               </div>
-              <div style={{display:'flex',gap:8,marginLeft:22}}>
-                <span style={{fontSize:9,color:'var(--text-muted)'}}>{v.count} orders</span>
-                <span style={{fontSize:9,color:'var(--text-muted)'}}>·</span>
-                <span style={{fontSize:9,color:panel.color,fontWeight:700}}>{pct(v.rev,total)}% of stage</span>
-                <span style={{fontSize:9,color:'var(--text-muted)'}}>·</span>
-                <span style={{fontSize:9,color:'var(--text-muted)'}}>{pct(v.rev,gross)}% of gross</span>
+              <div style={{fontSize:9, color:'var(--text-muted)', marginLeft:24}}>
+                {v.count} orders · {pct(v.rev,total)}% of stage · {pct(v.rev,gross)}% of gross
               </div>
             </div>
           ))}
-          {!vendors.length && <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:11}}>No vendor data</div>}
+          {!vendors.length && <div style={{padding:24, textAlign:'center', color:'var(--text-muted)', fontSize:11}}>No vendor data</div>}
         </div>
       );
     };
 
-    const setP = (group, label, color, subgroups) =>
-      setPanel(p => p?.group===group ? null : { group, label, color, subgroups });
-
     return (
-      <div style={{padding:'20px 24px'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+      <div style={{padding:'20px 24px', maxWidth:1100}}>
+
+        {/* Header */}
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20}}>
           <div>
-            <div style={{fontSize:16,fontWeight:800,marginBottom:2}}>🔻 Revenue Leakage Funnel</div>
-            <div style={{fontSize:11,color:'var(--text-muted)'}}>Where every rupee goes between sale and delivery · click any stage for vendor breakdown</div>
+            <div style={{fontSize:15, fontWeight:800}}>Revenue Leakage Funnel</div>
+            <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Last {days} days · click any stage for vendor breakdown</div>
           </div>
-          <div style={{display:'flex',gap:4,background:'var(--bg-card2)',borderRadius:8,padding:3}}>
-            {[7,30,90,180].map(d=>(
-              <button key={d} onClick={()=>setDays(d)} style={{padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',border:'none',background:days===d?'var(--indigo)':'transparent',color:days===d?'#fff':'var(--text-muted)'}}>
-                {d===180?'6M':d+'D'}
-              </button>
+          <div style={{display:'flex', gap:3, background:'var(--bg-card2)', borderRadius:7, padding:3}}>
+            {[7,30,90,180].map(d => (
+              <button key={d} onClick={()=>setDays(d)} style={{
+                padding:'4px 11px', borderRadius:5, fontSize:11, fontWeight:700,
+                cursor:'pointer', border:'none',
+                background: days===d ? 'var(--indigo)' : 'transparent',
+                color: days===d ? '#fff' : 'var(--text-muted)',
+              }}>{d===180?'6M':d+'D'}</button>
             ))}
           </div>
         </div>
 
-        <div style={{display:'grid',gridTemplateColumns:'1fr 290px',gap:16,alignItems:'start'}}>
-          <div style={{display:'flex',flexDirection:'column'}}>
+        {/* Summary strip */}
+        <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:20}}>
+          {[
+            { l:'Gross Sales',  v: fmt(gross),          c:'var(--text)',  s:'' },
+            { l:'Delivered',    v: fmt(delivered),       c: C.green,      s:`${convRate}% of gross` },
+            { l:'RTO Rate',     v: `${rtoRate}%`,        c: C.red,        s:'of dispatched' },
+            { l:'Total Leaked', v: fmt(gross-delivered), c: C.amber,      s:`${pct(gross-delivered,gross)}% unrealized` },
+          ].map(s => (
+            <div key={s.l} style={{
+              background:'var(--bg-card)', border:'1px solid var(--border)',
+              borderRadius:9, padding:'10px 14px',
+            }}>
+              <div style={{fontSize:9, letterSpacing:1, textTransform:'uppercase', fontWeight:700, color:'var(--text-muted)', marginBottom:4}}>{s.l}</div>
+              <div style={{fontSize:18, fontWeight:800, color:s.c}}>{s.v}</div>
+              {s.s && <div style={{fontSize:9, color:'var(--text-muted)', marginTop:2}}>{s.s}</div>}
+            </div>
+          ))}
+        </div>
 
-            {/* GROSS */}
-            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 18px'}}>
-              <div style={{fontSize:9,letterSpacing:2,fontWeight:800,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:6}}>Gross Sales · Last {days} days</div>
-              <div style={{fontSize:30,fontWeight:900,letterSpacing:-1,marginBottom:2}}>{fmtFull(gross)}</div>
-              <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:8}}>
-                <div style={{height:'100%',width:'100%',background:`linear-gradient(90deg,${C.green},#34d399)`,borderRadius:2}}/>
+        <div style={{display:'grid', gridTemplateColumns:'1fr 280px', gap:16, alignItems:'start'}}>
+
+          {/* LEFT: Funnel */}
+          <div style={{display:'flex', flexDirection:'column', gap:0}}>
+
+            {/* Gross bar */}
+            <div style={{
+              background:'var(--bg-card)', border:'1px solid var(--border)',
+              borderRadius:10, padding:'12px 14px', marginBottom:4,
+            }}>
+              <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6}}>
+                <div style={{fontSize:11, fontWeight:700}}>Gross Sales</div>
+                <div style={{fontSize:16, fontWeight:800, color:C.green}}>{fmt(gross)}</div>
+              </div>
+              <div style={{height:6, background:'var(--border)', borderRadius:3, overflow:'hidden'}}>
+                <div style={{height:'100%', width:'100%', background:C.green, borderRadius:3}}/>
               </div>
             </div>
 
-            {/* → NOT CONFIRMED */}
-            <Survivor amount={gross} fromColor={C.green} toColor={C.amber} label="Full gross"/>
-            <Gate group="not_confirmed" subgroups={['cancelled','hold','misc','new']} label="🚫 Not Confirmed — leaked here"
-              amount={notConfirmed} basis={gross} color={C.amber} isActive={panel?.group==='not_confirmed'}
-              onSelect={()=>setP('not_confirmed','NOT CONFIRMED',C.amber,['cancelled','hold','misc','new'])}
-              chips={[{l:'Cancelled',v:g.cancelled||0,c:C.red},{l:'On Hold',v:g.hold||0,c:C.amber},{l:'New',v:g.new||0,c:C.slate},{l:'Misc',v:g.misc||0,c:C.slate}]}/>
-
-            {/* → CONFIRMED NOT DISPATCHED */}
-            <Survivor amount={afterNC} fromColor={C.amber} toColor={'#fbbf24'} label="Passed confirmation"/>
-            <Gate group="pending" subgroups={['pending']} label="⏳ Confirmed · Not Dispatched — stuck here"
-              amount={pendingDisp} basis={afterNC} color={'#fbbf24'} isActive={panel?.group==='pending'}
-              onSelect={()=>setP('pending','CONFIRMED · NOT DISPATCHED','#fbbf24',['pending'])}
-              chips={[{l:'Awaiting dispatch',v:pendingDisp,c:'#fbbf24'}]}/>
-
-            {/* → IN TRANSIT */}
-            <Survivor amount={afterPending} fromColor={'#fbbf24'} toColor={C.blue} label="Reached dispatch"/>
-            <Gate group="in_flight" subgroups={['in_flight']} label="🚚 In Transit / Out for Delivery"
-              amount={inFlight} basis={afterPending} color={C.blue} isActive={panel?.group==='in_flight'}
-              onSelect={()=>setP('in_flight','IN TRANSIT / OFD',C.blue,['in_flight'])}
-              chips={[{l:'In Transit + OFD',v:inFlight,c:C.blue}]}/>
-
-            {/* RTO — separate red stage */}
-            <div style={{display:'flex',alignItems:'stretch',gap:0}}>
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',width:32,flexShrink:0}}>
-                <div style={{width:2,height:16,background:C.blue}}/>
-                <div style={{width:2,height:16,background:`linear-gradient(${C.blue},${C.red})`}}/>
-              </div>
-              <div style={{flex:1,display:'flex',alignItems:'center',padding:'4px 0'}}>
-                <div style={{background:'var(--bg-card2)',border:`1px solid ${C.red}30`,borderRadius:8,padding:'5px 12px',display:'flex',alignItems:'center',gap:8,fontSize:11}}>
-                  <span style={{color:'var(--text-muted)'}}>↳ Returning:</span>
-                  <span style={{fontWeight:900,color:C.red,fontSize:13}}>{fmt(rto)}</span>
-                  <span style={{fontSize:10,color:C.red}}>({pct(rto,gross)}% of gross · {rtoRate}% of dispatched)</span>
+            {rows.map((row, i) => (
+              <React.Fragment key={row.key}>
+                {/* Connector */}
+                <div style={{display:'flex', alignItems:'center', gap:8, padding:'3px 0 3px 10px'}}>
+                  <div style={{width:1, height:16, background:'var(--border)'}}/>
+                  {row.survived && (
+                    <div style={{fontSize:10, color:'var(--text-muted)'}}>
+                      {row.survived.label}
+                      <span style={{marginLeft:4, color:'var(--text-dim)', fontWeight:600}}>({row.survived.pct}%)</span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
-            <Gate group="rto" subgroups={['rto']} label="↩ RTO — returning to sender"
-              amount={rto} basis={afterPending} color={C.red} isActive={panel?.group==='rto'}
-              onSelect={()=>setP('rto','RTO — RETURNING',C.red,['rto'])}
-              chips={[{l:'Being returned',v:rto,c:C.red}]}/>
-
-            {/* → DELIVERED */}
-            <Survivor amount={delivered} fromColor={C.blue} toColor={C.green} label="Actually delivered"/>
-            <div onClick={()=>setP('delivered','✅ DELIVERED',C.green,['delivered'])}
-              style={{background:panel?.group==='delivered'?'#052e1680':'var(--bg-card)',border:`1px solid ${panel?.group==='delivered'?C.green:'var(--border)'}`,borderRadius:12,padding:'14px 18px',cursor:'pointer',transition:'all .15s'}}>
-              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-                <div style={{fontSize:10,fontWeight:800,letterSpacing:1,color:C.green,textTransform:'uppercase',flex:1}}>✅ DELIVERED — NET REALIZED</div>
-                <div style={{fontSize:18,fontWeight:900,color:C.green}}>{fmtFull(delivered)}</div>
-                <div style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:'#10b98118',color:C.green,border:'1px solid #10b98130'}}>{convRate}% of gross</div>
-              </div>
-              <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
-                <div style={{height:'100%',width:`${convRate}%`,background:C.green,borderRadius:2}}/>
-              </div>
-            </div>
-
-            {/* Summary */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginTop:14}}>
-              {[
-                {l:'Conversion',v:`${convRate}%`,s:'gross → delivered',c:C.green},
-                {l:'Total Leaked',v:fmt(gross-delivered),s:`${pct(gross-delivered,gross)}% not delivered`,c:C.red},
-                {l:'RTO Rate',v:`${rtoRate}%`,s:'of dispatched',c:C.red},
-                {l:'In Flight',v:fmt(inFlight),s:'transit + OFD now',c:C.blue},
-              ].map(s=>(
-                <div key={s.l} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'10px 12px',textAlign:'center'}}>
-                  <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',fontWeight:700,color:s.c,marginBottom:3}}>{s.l}</div>
-                  <div style={{fontSize:16,fontWeight:900,color:s.c}}>{s.v}</div>
-                  <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{s.s}</div>
+                <div style={{marginBottom:4}}>
+                  <FunnelRow row={row} isActive={active===row.key} onSelect={()=>setActive(a=>a===row.key?null:row.key)}/>
                 </div>
-              ))}
+              </React.Fragment>
+            ))}
+
+            {/* Delivered */}
+            <div style={{padding:'3px 0 3px 10px', display:'flex', alignItems:'center', gap:8}}>
+              <div style={{width:1, height:16, background:'var(--border)'}}/>
+              <div style={{fontSize:10, color:'var(--text-muted)'}}>
+                {fmt(delivered)} delivered
+                <span style={{marginLeft:4, color:C.green, fontWeight:600}}>({convRate}%)</span>
+              </div>
+            </div>
+            <div
+              onClick={()=>setActive(a=>a==='delivered'?null:'delivered')}
+              style={{
+                background: active==='delivered' ? `${C.green}10` : 'var(--bg-card)',
+                border: `1px solid ${active==='delivered' ? C.green : 'var(--border)'}`,
+                borderRadius:10, padding:'12px 14px', cursor:'pointer',
+                transition:'border-color .15s, background .15s',
+              }}
+            >
+              <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+                <div style={{width:8, height:8, borderRadius:'50%', background:C.green}}/>
+                <div style={{flex:1, fontSize:11, fontWeight:700}}>Delivered</div>
+                <div style={{fontSize:15, fontWeight:800, color:C.green}}>{fmt(delivered)}</div>
+                <div style={{fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:12, background:`${C.green}18`, color:C.green}}>{convRate}%</div>
+              </div>
+              <div style={{height:3, background:'var(--border)', borderRadius:2, overflow:'hidden'}}>
+                <div style={{height:'100%', width:`${convRate}%`, background:C.green, borderRadius:2}}/>
+              </div>
             </div>
           </div>
 
-          {/* RIGHT panel */}
-          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden',position:'sticky',top:20,maxHeight:'80vh',overflowY:'auto'}}>
-            <VendorPanel panel={panel}/>
+          {/* RIGHT: Vendor panel */}
+          <div style={{
+            background:'var(--bg-card)', border:'1px solid var(--border)',
+            borderRadius:10, overflow:'hidden', position:'sticky', top:20,
+            maxHeight:'75vh', overflowY:'auto',
+          }}>
+            <VendorPanel rowKey={active}/>
           </div>
         </div>
       </div>
