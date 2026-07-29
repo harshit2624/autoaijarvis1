@@ -15581,7 +15581,15 @@
       </div>
     );
 
-    const { dash={}, anal={}, leak={}, pix={}, pixTop=[], conf={}, timing={}, ops={}, pattern={} } = data;
+    const dash    = data.dash    || {};
+    const anal    = data.anal    || {};
+    const leak    = data.leak    || {};
+    const pix     = data.pix     || {};
+    const pixTop  = data.pixTop  || [];
+    const conf    = data.conf    || {};
+    const timing  = data.timing  || {};
+    const ops     = data.ops     || {};
+    const pattern = data.pattern || {};
     const g   = leak.groups || {};
     const st  = leak.stages || {};
     const gross     = leak.gross || 0;
