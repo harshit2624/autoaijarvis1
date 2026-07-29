@@ -7272,6 +7272,129 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
   }
 });
 
+// ── GET /admin/leakage ── serve dedicated leakage page ───────────────────
+app.get('/admin/leakage', adminAuth, (req, res) => res.sendFile('leakage.html', { root: __dirname }));
+
+// ── GET /admin/leakage-data ── vendor-level stage breakdown for leakage funnel ──
+app.get('/admin/leakage-data', adminAuth, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 365);
+    const DAY  = 86400000;
+    const from = new Date(Date.now() - (days - 1) * DAY); from.setHours(0,0,0,0);
+    const to   = new Date(); to.setHours(23,59,59,999);
+
+    // Fetch Shopify orders in window
+    const raw = await fetchAllOrders('any', from.toISOString(), to.toISOString());
+    const orderIds = new Set(raw.map(o => String(o.id)));
+    const priceMap = Object.fromEntries(raw.map(o => [String(o.id), parseFloat(o.total_price||0)]));
+    const nameMap  = Object.fromEntries(raw.map(o => [String(o.id), o.name || `#${o.id}`]));
+
+    // Fetch all OVS for these orders
+    const ovsList = await mdb.collection('order_vendor_stage').find(
+      { shopify_id: { $in: [...orderIds] } },
+      { projection: { shopify_id:1, vendor_name:1, stage:1, awb:1, _id:0 } }
+    ).toArray();
+
+    // Fetch metas for base stage
+    const metaList = await mdb.collection('order_meta').find(
+      { shopify_id: { $in: [...orderIds] } },
+      { projection: { shopify_id:1, stage:1, _id:0 } }
+    ).toArray();
+    const metaMap = Object.fromEntries(metaList.map(m => [m.shopify_id, m]));
+
+    // Build per-order vendor map
+    const ovsMap = {};
+    for (const r of ovsList) {
+      if (!ovsMap[r.shopify_id]) ovsMap[r.shopify_id] = [];
+      ovsMap[r.shopify_id].push(r);
+    }
+
+    // Stage groups
+    const STAGE_GROUP = {
+      delivered: 'delivered', ofd: 'in_flight', transit: 'in_flight',
+      pickup: 'in_flight', ready: 'in_flight', rto: 'rto',
+      confirmed: 'pending', partial: 'pending',
+      hold: 'hold', cancelled: 'cancelled', new: 'new', misc: 'misc',
+    };
+
+    // Per-vendor revenue accumulator per group
+    // vendorMap[group][vendor] = { rev, count, orders }
+    const vendorMap = {};
+    const addV = (group, vendor, rev, orderId) => {
+      if (!vendorMap[group]) vendorMap[group] = {};
+      if (!vendorMap[group][vendor]) vendorMap[group][vendor] = { rev: 0, count: 0 };
+      vendorMap[group][vendor].rev   += rev;
+      vendorMap[group][vendor].count += 1;
+    };
+
+    // Totals per group
+    const groupTotals = {};
+    const stageRevMap = {};
+
+    for (const o of raw) {
+      const sid    = String(o.id);
+      const price  = priceMap[sid] || 0;
+      const base   = o.cancelled_at ? 'cancelled' : (metaMap[sid]?.stage || 'new');
+      const vendors = ovsMap[sid] || [];
+
+      // Effective order stage = higherStage across all vendors
+      const orderStage = vendors.reduce((best, r) => higherStage(best, r.stage||'new'), base);
+      const group = STAGE_GROUP[orderStage] || 'misc';
+
+      groupTotals[group] = (groupTotals[group] || 0) + price;
+      stageRevMap[orderStage] = (stageRevMap[orderStage] || 0) + price;
+
+      if (vendors.length) {
+        // Split price equally among vendors (approximation for leakage attribution)
+        const share = price / vendors.length;
+        for (const v of vendors) {
+          if ((STAGE_GROUP[v.stage] || 'misc') === group) {
+            addV(group, v.vendor_name, share, sid);
+          }
+        }
+        // If no vendor matched the order group (e.g. order-level cancelled), attribute to first vendor
+        if (!vendors.some(v => (STAGE_GROUP[v.stage]||'misc') === group)) {
+          addV(group, vendors[0].vendor_name, price, sid);
+        }
+      } else {
+        addV(group, 'Unassigned', price, sid);
+      }
+    }
+
+    // Sort vendors per group by revenue desc, return top 10
+    const topVendors = {};
+    for (const [group, vmap] of Object.entries(vendorMap)) {
+      topVendors[group] = Object.entries(vmap)
+        .map(([name, d]) => ({ name, rev: Math.round(d.rev), count: d.count }))
+        .sort((a,b) => b.rev - a.rev)
+        .slice(0, 10);
+    }
+
+    // Gross = sum of all groups
+    const gross = Object.values(groupTotals).reduce((s,v) => s+v, 0);
+
+    res.json({
+      gross: Math.round(gross),
+      days,
+      groups: {
+        delivered:  Math.round(groupTotals.delivered  || 0),
+        in_flight:  Math.round(groupTotals.in_flight  || 0),
+        rto:        Math.round(groupTotals.rto        || 0),
+        pending:    Math.round(groupTotals.pending    || 0),
+        hold:       Math.round(groupTotals.hold       || 0),
+        cancelled:  Math.round(groupTotals.cancelled  || 0),
+        new:        Math.round(groupTotals.new        || 0),
+        misc:       Math.round(groupTotals.misc       || 0),
+      },
+      stages: Object.fromEntries(Object.entries(stageRevMap).map(([k,v])=>[k,Math.round(v)])),
+      topVendors,
+    });
+  } catch (e) {
+    console.error('leakage-data error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GET /admin/settlements ────────────────────────────────────────────────
 app.get("/admin/settlements", adminAuth, async (req, res) => {
   const { vendor_name, status } = req.query;

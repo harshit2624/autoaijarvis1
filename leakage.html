@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Revenue Leakage — CROSCROW</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--bg2:#111118;--bg3:#18181f;--border:#ffffff0f;--border2:#ffffff18;
+  --text:#f1f5f9;--muted:#64748b;--dim:#94a3b8;
+  --green:#10b981;--blue:#3b82f6;--amber:#f59e0b;--red:#ef4444;--purple:#a855f7;
+  --green2:#059669;--blue2:#2563eb;--amber2:#d97706;--red2:#dc2626;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;overflow-x:hidden}
+
+/* ─ HEADER ─ */
+.header{display:flex;align-items:center;justify-content:space-between;padding:18px 32px;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:100;backdrop-filter:blur(8px)}
+.header-left h1{font-size:18px;font-weight:800;letter-spacing:-0.5px}
+.header-left p{font-size:11px;color:var(--muted);margin-top:2px}
+.period-tabs{display:flex;gap:4px;background:var(--bg3);border-radius:8px;padding:3px}
+.period-tab{padding:5px 14px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;border:none;background:transparent;color:var(--muted);transition:all .15s;letter-spacing:0.5px}
+.period-tab.active{background:var(--border2);color:var(--text)}
+.back-link{font-size:11px;color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:4px}
+.back-link:hover{color:var(--text)}
+
+/* ─ MAIN LAYOUT ─ */
+.layout{display:grid;grid-template-columns:1fr 340px;gap:0;min-height:calc(100vh - 61px)}
+.funnel-col{padding:28px 24px 28px 32px;border-right:1px solid var(--border)}
+.panel-col{padding:0;position:sticky;top:61px;height:calc(100vh - 61px);overflow-y:auto}
+
+/* ─ GROSS BAR ─ */
+.gross-bar{background:linear-gradient(135deg,#1e293b,#0f172a);border:1px solid var(--border2);border-radius:14px;padding:20px 24px;margin-bottom:6px;position:relative;overflow:hidden}
+.gross-bar::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff04);pointer-events:none}
+.gross-label{font-size:10px;letter-spacing:2px;font-weight:800;color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+.gross-val{font-size:36px;font-weight:900;letter-spacing:-1.5px;line-height:1}
+.gross-sub{font-size:11px;color:var(--muted);margin-top:4px}
+.gross-bar-track{height:4px;background:var(--border);border-radius:2px;margin-top:14px}
+.gross-bar-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--green),#34d399)}
+
+/* ─ CONNECTOR ─ */
+.connector{display:flex;flex-direction:column;align-items:flex-start;padding-left:28px;gap:0;margin:0}
+.connector-line{width:2px;height:16px;background:var(--border2);margin-left:0}
+.connector-arrow{font-size:10px;color:var(--border2);margin-left:-3px}
+
+/* ─ GATE NODE ─ */
+.gate{border-radius:14px;margin-bottom:0;cursor:pointer;transition:all .2s;border:1px solid transparent;position:relative}
+.gate:hover{border-color:var(--border2);transform:translateX(2px)}
+.gate.active-gate{border-color:var(--border2);box-shadow:0 0 0 1px var(--border2)}
+.gate-inner{padding:16px 20px}
+.gate-top{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.gate-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.gate-label{font-size:10px;letter-spacing:1.5px;font-weight:800;text-transform:uppercase;flex:1}
+.gate-amount{font-size:22px;font-weight:900;letter-spacing:-0.5px}
+.gate-pct-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:0.5px}
+.gate-bar-track{height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;margin-bottom:8px}
+.gate-bar-fill{height:100%;border-radius:3px;transition:width .4s cubic-bezier(.4,0,.2,1)}
+/* Leakage chips */
+.leakage-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:6px;padding:4px 8px;font-size:10px}
+.chip-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.chip-label{color:var(--dim)}
+.chip-val{font-weight:700;margin-left:2px}
+
+/* ─ DELIVERED NODE ─ */
+.delivered-node{background:linear-gradient(135deg,#052e16,#064e3b);border:1px solid #10b98130;border-radius:14px;padding:20px 24px;position:relative;overflow:hidden}
+.delivered-node::after{content:'✅';position:absolute;right:20px;top:50%;transform:translateY(-50%);font-size:32px;opacity:.15}
+.delivered-label{font-size:10px;letter-spacing:2px;font-weight:800;color:var(--green);text-transform:uppercase;margin-bottom:6px}
+.delivered-val{font-size:28px;font-weight:900;letter-spacing:-1px;color:var(--green)}
+.delivered-sub{font-size:11px;color:#34d399;margin-top:4px}
+
+/* ─ SUMMARY STRIP ─ */
+.summary-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:20px}
+.stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center}
+.stat-card-label{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;margin-bottom:4px}
+.stat-card-val{font-size:20px;font-weight:900;line-height:1;margin-bottom:2px}
+.stat-card-sub{font-size:9px;color:var(--muted);line-height:1.3}
+
+/* ─ RIGHT PANEL ─ */
+.panel-header{padding:18px 20px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2);z-index:10}
+.panel-title{font-size:13px;font-weight:800;margin-bottom:2px}
+.panel-sub{font-size:10px;color:var(--muted)}
+.panel-body{padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+
+/* ─ VENDOR ROW ─ */
+.vendor-row{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
+.vendor-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.vendor-rank{width:18px;height:18px;border-radius:4px;background:var(--border2);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--muted);flex-shrink:0}
+.vendor-name{font-size:12px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vendor-rev{font-size:13px;font-weight:900}
+.vendor-count{font-size:9px;color:var(--muted)}
+.vendor-bar-track{height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.vendor-bar-fill{height:100%;border-radius:2px;transition:width .3s}
+.vendor-pct{font-size:9px;color:var(--muted);text-align:right;margin-top:2px}
+
+.loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--muted);font-size:13px;gap:8px}
+.spin{animation:spin 1s linear infinite;font-size:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.no-data{padding:40px 20px;text-align:center;color:var(--muted);font-size:12px}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+@media(max-width:900px){
+  .layout{grid-template-columns:1fr}
+  .panel-col{position:static;height:auto}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>🔻 Revenue Leakage Funnel</h1>
+    <p>Track where every rupee stalls between sale and delivery</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="period-tabs" id="periodTabs">
+      <button class="period-tab" data-days="7">7D</button>
+      <button class="period-tab active" data-days="30">30D</button>
+      <button class="period-tab" data-days="90">90D</button>
+      <button class="period-tab" data-days="180">6M</button>
+    </div>
+    <a href="/admin" class="back-link">← Dashboard</a>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- FUNNEL COLUMN -->
+  <div class="funnel-col" id="funnelCol">
+    <div class="loading"><span class="spin">⟳</span> Loading revenue data…</div>
+  </div>
+
+  <!-- PANEL COLUMN -->
+  <div class="panel-col">
+    <div class="panel-header">
+      <div class="panel-title" id="panelTitle">Vendor Breakdown</div>
+      <div class="panel-sub" id="panelSub">Click a stage to see vendor attribution</div>
+    </div>
+    <div class="panel-body" id="panelBody">
+      <div class="no-data">👆 Select a stage on the left</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = localStorage.getItem('admin_token');
+if (!TOKEN) { window.location.href = '/admin'; }
+
+let currentData = null;
+let activeDays   = 30;
+let activeGroup  = null;
+
+const fmt = v => {
+  if (v >= 10000000) return '₹' + (v/10000000).toFixed(1) + 'Cr';
+  if (v >= 100000)   return '₹' + (v/100000).toFixed(1) + 'L';
+  if (v >= 1000)     return '₹' + (v/1000).toFixed(0) + 'k';
+  return '₹' + Math.round(v).toLocaleString('en-IN');
+};
+const fmtFull = v => '₹' + Math.round(v).toLocaleString('en-IN');
+const pct = (v, g) => g > 0 ? (v/g*100).toFixed(1) : '0.0';
+
+function colorFor(group) {
+  return {
+    delivered:'#10b981', in_flight:'#3b82f6', rto:'#ef4444',
+    pending:'#f59e0b', hold:'#f59e0b', cancelled:'#ef4444',
+    new:'#64748b', misc:'#475569',
+  }[group] || '#64748b';
+}
+function bgFor(group) {
+  return {
+    delivered:'linear-gradient(135deg,#052e16,#064e3b)',
+    in_flight:'linear-gradient(135deg,#0c1a3a,#1e3a6e)',
+    rto:'linear-gradient(135deg,#2d0a0a,#4c1414)',
+    pending:'linear-gradient(135deg,#2d1a00,#4a2e00)',
+    hold:'linear-gradient(135deg,#2d1a00,#4a2e00)',
+    cancelled:'linear-gradient(135deg,#2d0808,#4c1010)',
+    new:'linear-gradient(135deg,#0f172a,#1e293b)',
+    misc:'linear-gradient(135deg,#0f172a,#1e293b)',
+  }[group] || 'linear-gradient(135deg,#111,#1e293b)';
+}
+
+async function load(days) {
+  document.getElementById('funnelCol').innerHTML = '<div class="loading"><span class="spin">⟳</span> Crunching ₹ data…</div>';
+  document.getElementById('panelBody').innerHTML = '<div class="no-data">Loading…</div>';
+  try {
+    const r = await fetch(`/admin/leakage-data?days=${days}`, { headers:{ Authorization:`Bearer ${TOKEN}` } });
+    if (!r.ok) throw new Error('Unauthorized');
+    currentData = await r.json();
+    render();
+  } catch(e) {
+    document.getElementById('funnelCol').innerHTML = `<div class="loading" style="color:#ef4444">⚠ ${e.message}</div>`;
+  }
+}
+
+function render() {
+  const d = currentData;
+  const g = d.groups;
+  const gross = d.gross;
+
+  // Derived values
+  const notConfirmed   = (g.cancelled||0) + (g.hold||0) + (g.misc||0) + (g.new||0);
+  const afterNC        = gross - notConfirmed;
+  const pendingDisp    = g.pending || 0;
+  const afterPending   = afterNC - pendingDisp;
+  const inFlight       = g.in_flight || 0;
+  const rto            = g.rto || 0;
+  const delivered      = g.delivered || 0;
+  const convRate       = pct(delivered, gross);
+  const totalLeaked    = gross - delivered;
+  const rtoOfDisp      = (inFlight + rto + delivered) > 0 ? pct(rto, inFlight+rto+delivered) : '0.0';
+
+  const col = document.getElementById('funnelCol');
+  col.innerHTML = '';
+
+  // ── GROSS ──
+  const grossDiv = document.createElement('div');
+  grossDiv.className = 'gross-bar';
+  grossDiv.innerHTML = `
+    <div class="gross-label">Gross Sales · Last ${d.days} days</div>
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <div class="gross-val">${fmtFull(gross)}</div>
+      <div style="font-size:11px;color:var(--muted)">${d.days}D window</div>
+    </div>
+    <div class="gross-sub">${(d.total_orders||'—')} orders tracked across all stages</div>
+    <div class="gross-bar-track"><div class="gross-bar-fill" style="width:100%"></div></div>
+  `;
+  col.appendChild(grossDiv);
+
+  // Gate definitions (top-to-bottom funnel)
+  const gates = [
+    {
+      group: 'not_confirmed',
+      subgroups: ['cancelled','hold','misc','new'],
+      label: 'NOT CONFIRMED',
+      amount: notConfirmed,
+      basis: gross,
+      chips: [
+        { label:'Cancelled', val: g.cancelled||0, color:'#ef4444' },
+        { label:'On Hold',   val: g.hold||0,      color:'#f59e0b' },
+        { label:'New',       val: g.new||0,        color:'#64748b' },
+        { label:'Misc',      val: g.misc||0,       color:'#475569' },
+      ],
+      bg: 'linear-gradient(135deg,#1a0e00,#2d1e00)',
+      color: '#f59e0b',
+      desc: 'Revenue that never got past confirmation',
+    },
+    {
+      group: 'pending',
+      subgroups: ['pending'],
+      label: 'CONFIRMED · NOT DISPATCHED',
+      amount: pendingDisp,
+      basis: afterNC,
+      chips: [
+        { label:'Awaiting dispatch', val: pendingDisp, color:'#fbbf24' },
+      ],
+      bg: 'linear-gradient(135deg,#1a1200,#2d2000)',
+      color: '#fbbf24',
+      desc: 'Confirmed but vendor hasn\'t shipped yet',
+    },
+    {
+      group: 'dispatched',
+      subgroups: ['in_flight','rto'],
+      label: 'DISPATCHED · IN PIPELINE',
+      amount: inFlight + rto,
+      basis: afterPending,
+      chips: [
+        { label:'In Transit / OFD', val: inFlight, color:'#60a5fa' },
+        { label:'RTO (returning)',   val: rto,       color:'#ef4444' },
+      ],
+      bg: 'linear-gradient(135deg,#0c1535,#0c1e50)',
+      color: '#3b82f6',
+      desc: 'Revenue in the logistics pipeline',
+    },
+  ];
+
+  gates.forEach(gate => {
+    // connector
+    const conn = document.createElement('div');
+    conn.className = 'connector';
+    conn.innerHTML = '<div class="connector-line"></div><div class="connector-arrow">▼</div><div class="connector-line"></div>';
+    col.appendChild(conn);
+
+    const node = document.createElement('div');
+    node.className = 'gate';
+    node.style.background = gate.bg;
+    const widthPct = gate.basis > 0 ? Math.max(2, (gate.amount / gate.basis)*100) : 0;
+    const pctOfGross = pct(gate.amount, gross);
+
+    node.innerHTML = `
+      <div class="gate-inner">
+        <div class="gate-top">
+          <div class="gate-dot" style="background:${gate.color}"></div>
+          <div class="gate-label" style="color:${gate.color}">${gate.label}</div>
+          <div class="gate-amount" style="color:${gate.color}">${fmt(gate.amount)}</div>
+          <div class="gate-pct-pill" style="background:${gate.color}20;color:${gate.color}">${pctOfGross}%</div>
+        </div>
+        <div class="gate-bar-track">
+          <div class="gate-bar-fill" style="width:${widthPct}%;background:${gate.color}"></div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">${gate.desc} · ${fmtFull(gate.amount)} stalled here</div>
+        <div class="leakage-chips">
+          ${gate.chips.filter(c=>c.val>0).map(c=>`
+            <div class="chip">
+              <div class="chip-dot" style="background:${c.color}"></div>
+              <span class="chip-label">${c.label}</span>
+              <span class="chip-val" style="color:${c.color}">${fmt(c.val)}</span>
+              <span style="font-size:9px;color:var(--muted)">${pct(c.val,gross)}%</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    node.addEventListener('click', () => showPanel(gate.group, gate.label, gate.color, gate.subgroups));
+    col.appendChild(node);
+  });
+
+  // connector to delivered
+  const connFinal = document.createElement('div');
+  connFinal.className = 'connector';
+  connFinal.innerHTML = '<div class="connector-line"></div><div class="connector-arrow">▼</div><div class="connector-line"></div>';
+  col.appendChild(connFinal);
+
+  // Delivered
+  const del = document.createElement('div');
+  del.className = 'delivered-node';
+  del.style.cursor = 'pointer';
+  del.innerHTML = `
+    <div class="delivered-label">✅ Delivered — Net Realized</div>
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <div class="delivered-val">${fmtFull(delivered)}</div>
+      <div style="font-size:12px;color:#34d399;font-weight:700">${convRate}% of gross</div>
+    </div>
+    <div class="delivered-sub">${fmtFull(totalLeaked)} didn't make it yet · ${rtoOfDisp}% RTO rate on dispatched</div>
+    <div style="margin-top:12px;height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden">
+      <div style="height:100%;width:${convRate}%;background:var(--green);border-radius:2px"></div>
+    </div>
+  `;
+  del.addEventListener('click', () => showPanel('delivered', 'DELIVERED', '#10b981', ['delivered']));
+  col.appendChild(del);
+
+  // Summary strip
+  const strip = document.createElement('div');
+  strip.className = 'summary-strip';
+  strip.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-card-label" style="color:var(--green)">Conversion</div>
+      <div class="stat-card-val" style="color:var(--green)">${convRate}%</div>
+      <div class="stat-card-sub">gross → delivered</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label" style="color:var(--red)">Total Leaked</div>
+      <div class="stat-card-val" style="color:var(--red)">${fmt(totalLeaked)}</div>
+      <div class="stat-card-sub">${pct(totalLeaked,gross)}% not yet delivered</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label" style="color:var(--amber)">RTO Rate</div>
+      <div class="stat-card-val" style="color:var(--amber)">${rtoOfDisp}%</div>
+      <div class="stat-card-sub">of dispatched orders</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label" style="color:var(--blue)">In Flight</div>
+      <div class="stat-card-val" style="color:var(--blue)">${fmt(inFlight)}</div>
+      <div class="stat-card-sub">transit + OFD</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label" style="color:var(--amber)">Pending Dispatch</div>
+      <div class="stat-card-val" style="color:var(--amber)">${fmt(pendingDisp)}</div>
+      <div class="stat-card-sub">confirmed, not shipped</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label" style="color:var(--muted)">Not Confirmed</div>
+      <div class="stat-card-val" style="color:var(--dim)">${fmt(notConfirmed)}</div>
+      <div class="stat-card-sub">cancelled + hold + misc</div>
+    </div>
+  `;
+  col.appendChild(strip);
+}
+
+function showPanel(group, label, color, subgroups) {
+  const d = currentData;
+  if (!d) return;
+
+  // Mark active gate
+  document.querySelectorAll('.gate').forEach(g => g.classList.remove('active-gate'));
+  event?.currentTarget?.classList?.add('active-gate');
+
+  document.getElementById('panelTitle').textContent = label;
+  document.getElementById('panelSub').textContent = 'Top vendors by revenue in this stage';
+
+  // Collect vendors across all subgroups
+  const vendorMap = {};
+  for (const sg of subgroups) {
+    const list = d.topVendors?.[sg] || [];
+    for (const v of list) {
+      if (!vendorMap[v.name]) vendorMap[v.name] = { rev:0, count:0 };
+      vendorMap[v.name].rev   += v.rev;
+      vendorMap[v.name].count += v.count;
+    }
+  }
+  const vendors = Object.entries(vendorMap)
+    .map(([name,v])=>({name,...v}))
+    .sort((a,b)=>b.rev-a.rev)
+    .slice(0,12);
+
+  const stageTotal = vendors.reduce((s,v)=>s+v.rev,0);
+  const body = document.getElementById('panelBody');
+
+  if (!vendors.length) {
+    body.innerHTML = '<div class="no-data">No vendor data for this stage</div>';
+    return;
+  }
+
+  const maxRev = vendors[0]?.rev || 1;
+  body.innerHTML = vendors.map((v,i) => `
+    <div class="vendor-row">
+      <div class="vendor-top">
+        <div class="vendor-rank">${i+1}</div>
+        <div class="vendor-name" title="${v.name}">${v.name}</div>
+        <div>
+          <div class="vendor-rev" style="color:${color}">${fmt(v.rev)}</div>
+          <div class="vendor-count" style="text-align:right">${v.count} order${v.count!==1?'s':''}</div>
+        </div>
+      </div>
+      <div class="vendor-bar-track">
+        <div class="vendor-bar-fill" style="width:${(v.rev/maxRev*100).toFixed(1)}%;background:${color}"></div>
+      </div>
+      <div class="vendor-pct">${pct(v.rev, stageTotal)}% of stage · ${pct(v.rev, d.gross)}% of gross</div>
+    </div>
+  `).join('');
+}
+
+// Period tabs
+document.getElementById('periodTabs').addEventListener('click', e => {
+  const btn = e.target.closest('.period-tab');
+  if (!btn) return;
+  document.querySelectorAll('.period-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeDays = parseInt(btn.dataset.days);
+  activeGroup = null;
+  document.getElementById('panelBody').innerHTML = '<div class="no-data">👆 Select a stage on the left</div>';
+  load(activeDays);
+});
+
+load(activeDays);
+</script>
+</body>
+</html>
