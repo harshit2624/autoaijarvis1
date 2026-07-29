@@ -1438,8 +1438,20 @@
         .then(r=>r.json()).then(d=>setConnectedPartners(d.partners||[])).catch(()=>{});
     },[order.shopifyId]);
 
-    // Auto-load delivery status on open — no need to click Refresh manually
-    useEffect(()=>{ refreshDelivery(); },[order.shopifyId]);
+    // Load stored tracking history from DB on open — instant, no ShipSagar call
+    useEffect(()=>{
+      setRefreshing(true);
+      fetch(`${API}/admin/orders/${order.shopifyId}/tracking-cached`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{
+          if (d.status) setDelivStatus(d.status);
+          if (d.history?.length) setTrackHistory(d.history);
+          if (d.vendors?.length) {
+            const vMap = {};
+            d.vendors.forEach(v => { vMap[v.vendor] = v; });
+            setVendorTracking2(vMap);
+          }
+        }).catch(()=>{}).finally(()=>setRefreshing(false));
+    },[order.shopifyId]);
 
     useEffect(()=>{
       if (!shipPartner) { setWarehouses([]); setShipPickup(''); return; }
@@ -1915,39 +1927,51 @@
                       </div>
                   }
                   {/* Multi-vendor: per-vendor tracking results */}
-                  {Object.keys(vendorTracking2).length > 0 ? (
-                    <div style={{marginTop:8,borderTop:'1px solid var(--border)',paddingTop:8}}>
-                      {Object.entries(vendorTracking2).map(([vName, vd])=>(
-                        <div key={vName} style={{marginBottom:10,padding:'8px 10px',borderRadius:7,background:'var(--bg-card2)',border:'1px solid var(--border)'}}>
-                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-                            <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{vName}</span>
-                            <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                              {vd.tag && <span style={{fontSize:10,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 8px'}}>{vd.tag}</span>}
-                              <span style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--font-family)'}}>{vd.awb}</span>
+                  {(() => {
+                    // Normalize a history entry regardless of raw vs saved-DB shape
+                    const norm = h => ({
+                      desc:     h.desc || h.ActionDescription || h.Status || h.EventDescription || '',
+                      date:     h.date || h.ActionDate || h.ScanDate || h.Date || '',
+                      time:     h.time || h.ActionTime || h.ScanTime || h.Time || '',
+                      location: h.location || h.ActionLocation || h.City || h.Hub || h.ScanCity || '',
+                    });
+                    const TrackList = ({ entries, latest }) => (
+                      <div style={{marginTop:6}}>
+                        {[...entries].reverse().map((h,i)=>{
+                          const n = norm(h);
+                          const isLatest = i === 0;
+                          return (
+                            <div key={i} style={{display:'flex',gap:8,alignItems:'flex-start',marginBottom:5,paddingBottom:5,borderBottom:i<entries.length-1?'1px solid var(--border)':'none'}}>
+                              <div style={{width:7,height:7,borderRadius:'50%',background:isLatest?'#10b981':'var(--border)',flexShrink:0,marginTop:3}}/>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:11,fontWeight:isLatest?700:400,color:isLatest?'var(--text)':'var(--text-dim)'}}>{n.desc}</div>
+                                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{[n.date,n.time,n.location].filter(Boolean).join(' · ')}</div>
+                              </div>
                             </div>
+                          );
+                        })}
+                      </div>
+                    );
+                    if (Object.keys(vendorTracking2).length > 0) return (
+                      <div style={{marginTop:8,borderTop:'1px solid var(--border)',paddingTop:8}}>
+                        {Object.entries(vendorTracking2).map(([vName, vd])=>(
+                          <div key={vName} style={{marginBottom:10,padding:'8px 10px',borderRadius:7,background:'var(--bg-card2)',border:'1px solid var(--border)'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                              <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{vName}</span>
+                              <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                                {vd.tag && <span style={{fontSize:10,background:'#1e1b4b',border:'1px solid #6366f1',color:'#a5b4fc',borderRadius:99,padding:'2px 8px'}}>{vd.tag}</span>}
+                                <span style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--font-family)'}}>{vd.awb}</span>
+                              </div>
+                            </div>
+                            {vd.message && <div style={{fontSize:10,color:'var(--text-muted)'}}>{vd.message}</div>}
+                            {(vd.history||[]).length > 0 && <TrackList entries={vd.history} latest={vd.history[vd.history.length-1]}/>}
                           </div>
-                          {vd.message && <div style={{fontSize:10,color:'var(--text-muted)'}}>{vd.message}</div>}
-                          {(vd.history||[]).map((h,i)=>(
-                            <div key={i} style={{display:'flex',gap:8,fontSize:10,color:i===vd.history.length-1?'var(--text)':'var(--text-muted)',marginBottom:2}}>
-                              <span style={{whiteSpace:'nowrap',minWidth:90}}>{h.ActionDate} {h.ActionTime}</span>
-                              <span>{h.ActionDescription}{h.ActionLocation?` · ${h.ActionLocation}`:''}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                      <div style={{fontSize:9,color:'var(--text-muted)'}}>via ShipSagar</div>
-                    </div>
-                  ) : trackHistory.length > 0 && (
-                    <div style={{marginTop:8,borderTop:'1px solid var(--border)',paddingTop:8}}>
-                      {trackHistory.map((h,i)=>(
-                        <div key={i} style={{display:'flex',gap:8,fontSize:10,color: i===trackHistory.length-1?'var(--text)':'var(--text-muted)',marginBottom:3,alignItems:'baseline'}}>
-                          <span style={{whiteSpace:'nowrap',color:'var(--text-muted)',minWidth:90}}>{h.ActionDate} {h.ActionTime}</span>
-                          <span>{h.ActionDescription}{h.ActionLocation?` · ${h.ActionLocation}`:''}</span>
-                        </div>
-                      ))}
-                      <div style={{fontSize:9,color:'var(--text-muted)',marginTop:4}}>via ShipSagar</div>
-                    </div>
-                  )}
+                        ))}
+                        <div style={{fontSize:9,color:'var(--text-muted)'}}>via ShipSagar · ↻ Refresh for live update</div>
+                      </div>
+                    );
+                    return null;
+                  })()}
                   {awb && (() => { const u=trackUrl||trackingUrlFromCourier(courier,awb); return u?<a href={u} target="_blank" rel="noreferrer" style={{display:'block',marginTop:6,fontSize:11,color:'var(--indigo)',fontWeight:600}}>🔗 Track Shipment →</a>:null; })()}
                 </div>
                 <div className="form-full">

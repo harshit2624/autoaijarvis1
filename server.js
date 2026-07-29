@@ -5604,7 +5604,7 @@ app.get("/vendor/orders/:shopifyId/delivery-status", vendorAuth, async (req, res
 
     if (result.history?.length) {
       const status = result.desc;
-      return res.json({ status, awb, source: 'shipsagar', history: result.history.slice(-5), tag: shipsagarDescToTag(status) });
+      return res.json({ status, awb, source: 'shipsagar', history: result.history, tag: shipsagarDescToTag(status) });
     }
 
     if (result !== null) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
@@ -9443,6 +9443,30 @@ app.put("/vendor/shipping/partners/:partner/locations", vendorAuth, async (req, 
 });
 
 
+// Cheap DB-only read: returns stored tracking_history + per-vendor last status — no ShipSagar call
+app.get("/admin/orders/:shopifyId/tracking-cached", requirePermission('orders'), async (req, res) => {
+  try {
+    const { shopifyId } = req.params;
+    const meta = await mdb.collection('order_meta').findOne(
+      { shopify_id: shopifyId },
+      { projection: { delivery_status: 1, delivery_status_updated_at: 1, tracking_history: 1, awb: 1, courier: 1, _id: 0 } }
+    );
+    const vendorStages = await mdb.collection('order_vendor_stage').find(
+      { shopify_id: shopifyId, awb: { $exists: true, $ne: '' } },
+      { projection: { vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
+    ).toArray();
+    res.json({
+      status:      meta?.delivery_status || '',
+      updated_at:  meta?.delivery_status_updated_at || null,
+      history:     meta?.tracking_history || [],
+      awb:         meta?.awb || '',
+      courier:     meta?.courier || '',
+      vendors:     vendorStages.map(v => ({ vendor: v.vendor_name, awb: v.awb, courier: v.courier, stage: v.stage })),
+      source:      'db',
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Admin delivery status refresh — tracks all vendor AWBs, updates vendor-level stages
 app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'), async (req, res) => {
   try {
@@ -9478,7 +9502,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'),
         const histSave = ss.history.map(h => ({ desc: h.ActionDescription||h.Status||h.EventDescription||h.Description||'', date: h.ActionDate||h.ScanDate||h.Date||h.EventDate||'', time: h.ActionTime||h.ScanTime||h.Time||h.EventTime||'', location: h.City||h.Location||h.ScanCity||h.Hub||h.DestCity||h.ScanLocation||'', raw: h })).filter(h=>h.desc);
         if (newStage) await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString(), tracking_history: histSave });
         applyShipSagarTag(shopifyId, status).catch(() => {});
-        return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+        return res.json({ status, awb, source: 'shipsagar', history: ss.history, tag: shipsagarDescToTag(status) });
       }
       if (ss?.found) return res.json({ status: cached?.delivery_status || '', awb, message: 'No events yet.' });
       { const soData = await shopifyREST(`/orders/${shopifyId}.json?fields=name,email,shipping_address`).catch(() => null); const so = soData?.order || {}; shipsagarPushShipment({ awb, courierCode: courier, orderNo: so.name || shopifyId, customerName: ((so.shipping_address?.first_name||'') + ' ' + (so.shipping_address?.last_name||'')).trim(), email: so.email || '', mobileNo: (so.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {}); }
@@ -9501,7 +9525,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'),
         const status = result.desc;
         latestOverallStatus = status;
         latestOverallTag = shipsagarDescToTag(status);
-        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status, stage: result.newStage || vs.stage, history: result.history.slice(-5), tag: shipsagarDescToTag(status) });
+        vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status, stage: result.newStage || vs.stage, history: result.history, tag: shipsagarDescToTag(status) });
       } else if (result) {
         vendorResults.push({ vendor: vs.vendor_name, awb: vs.awb, status: '', stage: vs.stage, message: 'No events yet.' });
       } else {
@@ -17623,7 +17647,7 @@ app.get("/track/shipment-status", async (req, res) => {
       const result = await syncShipSagarStage(shopify_order_id, vendor_name, awb);
       if (!result) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
       if (result.history?.length) {
-        return res.json({ status: result.desc, awb, source: 'shipsagar', history: result.history.slice(-5), tag: shipsagarDescToTag(result.desc), stage: result.newStage });
+        return res.json({ status: result.desc, awb, source: 'shipsagar', history: result.history, tag: shipsagarDescToTag(result.desc), stage: result.newStage });
       }
     } else {
       // No order context — just track and return, no DB writes
@@ -17632,7 +17656,7 @@ app.get("/track/shipment-status", async (req, res) => {
       if (ss.found && ss.history?.length) {
         const latest = ss.history[ss.history.length - 1];
         const status = latest.ActionDescription || '';
-        return res.json({ status, awb, source: 'shipsagar', history: ss.history.slice(-5), tag: shipsagarDescToTag(status), stage: shipsagarStatusToStage(status) });
+        return res.json({ status, awb, source: 'shipsagar', history: ss.history, tag: shipsagarDescToTag(status), stage: shipsagarStatusToStage(status) });
       }
     }
 
@@ -17895,7 +17919,7 @@ app.get("/track/rr-shipment-status", async (req, res) => {
           { $set: { [`${field}.tracking_status`]: status, [`${field}.tracking_updated_at`]: new Date().toISOString() } }
         ).catch(() => {});
       }
-      return res.json({ status, awb, history: ss.history.slice(-5), tag: shipsagarDescToTag(status) });
+      return res.json({ status, awb, history: ss.history, tag: shipsagarDescToTag(status) });
     }
     if (ss.found) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
     // Not on ShipSagar — fetch full RR doc to get courier + customer data, then push
