@@ -22677,8 +22677,8 @@ async function startBaileysBot() {
             await mdb.collection('whatsapp_sessions').deleteMany({}).catch(() => {});
           }
           if (sessionReplaced) {
-            console.log(`🔄 WhatsApp session replaced (405) — auth cleared, waiting 15s before QR regeneration…`);
-            waReconnectTimer = setTimeout(startBaileysBot, 15000);
+            console.log(`🔄 WhatsApp session replaced (405) — auth cleared, waiting 30s before QR regeneration…`);
+            waReconnectTimer = setTimeout(startBaileysBot, 30000);
             return;
           }
         }
@@ -23320,5 +23320,10 @@ async function startBaileysBot() {
   }
 }
 
-if (process.env.WHATSAPP_BOT_ENABLED === 'true') startBaileysBot();
+if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
+  // Delay initial start by 25s to let any overlapping Render deploy instance fully exit
+  // (zero-downtime deploys overlap for ~10-15s; old instance 405s the new one otherwise)
+  console.log('⏳ WhatsApp bot will start in 25s (letting previous instance exit)…');
+  setTimeout(startBaileysBot, 25000);
+}
 
