@@ -1572,16 +1572,17 @@
 
     const [trackHistory,  setTrackHistory]  = useState([]);
     const [trackTag,      setTrackTag]      = useState('');
+    const [trackMsg,      setTrackMsg]      = useState('');
     const [vendorTracking2, setVendorTracking2] = useState({}); // { vendorName: { status, history, tag, message } }
     const refreshDelivery = async () => {
-      setRefreshing(true);
+      setRefreshing(true); setTrackMsg('');
       try {
         const r = await fetch(`${API}/admin/orders/${order.shopifyId}/delivery-status`, { headers:{ Authorization:`Bearer ${token}` } });
         const d = await r.json();
         if (d.status) setDelivStatus(d.status);
         if (d.tag)    setTrackTag(d.tag);
         if (d.history) setTrackHistory(d.history);
-        if (d.message) setMsg({ type:'info', text: d.message });
+        if (d.message) setTrackMsg(d.message); // show inline near Refresh, not at top of modal
         // Multi-vendor: store per-vendor results
         if (d.vendors?.length) {
           const vMap = {};
@@ -1926,6 +1927,11 @@
                         {order.shopifyFulfilled && <span style={{marginLeft:8,fontSize:9,border:'1px solid var(--border)',borderRadius:3,padding:'1px 5px'}}>fulfilled via Shopify</span>}
                       </div>
                   }
+                  {trackMsg && (
+                    <div style={{marginTop:6,padding:'6px 10px',borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',fontSize:11,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:6}}>
+                      <span>⏳</span><span>{trackMsg}</span>
+                    </div>
+                  )}
                   {/* Multi-vendor: per-vendor tracking results */}
                   {(() => {
                     // Normalize a history entry regardless of raw vs saved-DB shape
