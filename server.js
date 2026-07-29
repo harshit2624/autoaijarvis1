@@ -7273,7 +7273,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/leakage ── serve dedicated leakage page ───────────────────
-app.get('/admin/leakage', adminAuth, (req, res) => res.sendFile('leakage.html', { root: __dirname }));
+app.get('/admin/leakage', (req, res) => res.sendFile('leakage.html', { root: __dirname }));
 
 // ── GET /admin/leakage-data ── vendor-level stage breakdown for leakage funnel ──
 app.get('/admin/leakage-data', adminAuth, async (req, res) => {
