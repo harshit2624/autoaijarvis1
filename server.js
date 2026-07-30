@@ -5652,22 +5652,44 @@ app.post("/vendor/orders/:shopifyId/tag", vendorAuth, async (req, res) => {
 });
 
 // ── POST /admin/orders/:id/tag ────────────────────────────────────────────
+// Tags matching these patterns are "informational" — never auto-stripped on tag save
+const PROTECTED_TAG_PATTERNS = [
+  /partial/i,       // "99 Partial", "200 partial", etc.
+  /confirm/i,       // "Confirmed on Call", "Order Confirmed", etc.
+  /prepaid/i,       // "Converted to Prepaid", "Prepaid"
+  /converted/i,     // "Converted to Prepaid"
+  /on\s+call/i,     // "Confirmed on Call"
+];
+function isProtectedTag(tag) {
+  return PROTECTED_TAG_PATTERNS.some(p => p.test(tag));
+}
+
 app.post("/admin/orders/:id/tag", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { tags } = req.body || {};
   if (tags === undefined) return res.status(400).json({ error: "tags field required." });
   try {
     const token = await getAccessToken();
+    // Fetch current Shopify tags so we can preserve protected ones
+    const currentOd = await shopifyREST(`/orders/${id}.json?fields=id,tags,financial_status`).catch(()=>null);
+    const currentTags = (currentOd?.order?.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    const newTagsArr  = (tags || '').split(',').map(t => t.trim()).filter(Boolean);
+    // Re-add any protected tags from current that admin didn't explicitly include
+    for (const ct of currentTags) {
+      if (isProtectedTag(ct) && !newTagsArr.some(t => t.toLowerCase() === ct.toLowerCase())) {
+        newTagsArr.push(ct);
+      }
+    }
+    const mergedTags = newTagsArr.join(', ');
     const r = await fetch(
       `https://${SHOP}.myshopify.com/admin/api/2025-01/orders/${id}.json`,
       { method: "PUT", headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-        body: JSON.stringify({ order: { id, tags } }) }
+        body: JSON.stringify({ order: { id, tags: mergedTags } }) }
     );
     if (!r.ok) throw new Error(`Shopify error ${r.status}`);
     const d = await r.json();
-    // Re-apply tag mappings with new tags
     applyTagMappings(id, d.order.tags, d.order.financial_status);
-    auditLog("admin", "update_tags", id, { tags });
+    auditLog("admin", "update_tags", id, { tags: mergedTags });
     res.json({ success: true, tags: d.order.tags });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -6601,11 +6623,11 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
           changed = true;
         }
       }
-      // Remove tags
+      // Remove tags — never strip protected informational tags
       if (remove_tags.length > 0) {
         const removeLower = remove_tags.map(t => t.toLowerCase());
         const before = currentTagsArr.length;
-        currentTagsArr = currentTagsArr.filter(t => !removeLower.includes(t.toLowerCase()));
+        currentTagsArr = currentTagsArr.filter(t => removeLower.includes(t.toLowerCase()) ? !isProtectedTag(t) : true);
         if (currentTagsArr.length !== before) changed = true;
       }
 
