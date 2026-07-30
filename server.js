@@ -6623,11 +6623,11 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
           changed = true;
         }
       }
-      // Remove tags — never strip protected informational tags
+      // Remove tags
       if (remove_tags.length > 0) {
         const removeLower = remove_tags.map(t => t.toLowerCase());
         const before = currentTagsArr.length;
-        currentTagsArr = currentTagsArr.filter(t => removeLower.includes(t.toLowerCase()) ? !isProtectedTag(t) : true);
+        currentTagsArr = currentTagsArr.filter(t => !removeLower.includes(t.toLowerCase()));
         if (currentTagsArr.length !== before) changed = true;
       }
 
