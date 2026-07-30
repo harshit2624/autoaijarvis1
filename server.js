@@ -634,6 +634,8 @@ function deriveVendorStage(o, vendorName, vStageMap, metaMap) {
   const meta = metaMap[String(o.id)] || {};
   const stored = vStageMap[String(o.id)]?.stage || 'new';
   const metaStage = meta.stage || 'new';
+  // misc is a manual admin override — it always wins, no Shopify or meta merge
+  if (stored === 'misc' || metaStage === 'misc') return 'misc';
   const shopifyDerived = vendorStagesFromFulfillments(o.fulfillments, o.line_items)[vendorName] || null;
   const BEYOND_READY = ['transit', 'ofd', 'delivered', 'rto', 'cancelled', 'misc'];
   const ordVendors = [...new Set((o.line_items || []).map(li => canonicalVendor(li.vendor)).filter(Boolean))];
@@ -6391,6 +6393,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             // that stage, showing it in the UI would contradict what the settlement includes.
             const TERMINAL = ['delivered', 'rto', 'cancelled'];
             const safeStage = (stored, shopifyDerived) => {
+              if (stored === 'misc') return 'misc'; // misc is a manual override — never overwritten
               if (!shopifyDerived) return stored;
               // Don't let Shopify terminal override a non-terminal OVS stage
               if (TERMINAL.includes(shopifyDerived) && !TERMINAL.includes(stored)) return stored;
@@ -6417,6 +6420,8 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         stage:          (() => {
             const base = meta.stage || 'new';
             const allVS = vsMap[String(o.id)] || {};
+            // misc is a manual admin override — it always wins, no Shopify merge
+            if (base === 'misc' || Object.values(allVS).includes('misc')) return 'misc';
             const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
             // Apply the same terminal-stage guard used in vendorStages:
             // Shopify can signal non-terminal stages (transit, ready) but cannot
