@@ -6171,8 +6171,10 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     // ── Dispatch Quality — turnaround time from confirmed/partial → first dispatched stage
     // Only includes orders dispatched since dispatch-time tracking was added (dispatched_at present).
     const dispatchQuality = (() => {
-      const GOOD_HRS = 96;   // <= 4 days
-      const BAD_HRS  = 168;  // <= 7 days, else "very bad"
+      const VERY_GOOD_HRS = 30;   // <= 30h
+      const GOOD_HRS      = 48;   // <= 48h
+      const FINE_HRS      = 96;   // <= 4 days
+      const BAD_HRS       = 168;  // <= 7 days, else "very bad"
 
       const rows = allVS.filter(r => r.dispatched_at && r.stage_started_at && r.dispatched_at > r.stage_started_at);
       const inPeriod = rows.filter(r => {
@@ -6180,13 +6182,17 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         return d >= periodFrom && d <= periodTo;
       });
 
-      let good = 0, bad = 0, veryBad = 0, totalHrs = 0;
+      let veryGood = 0, good = 0, fine = 0, bad = 0, veryBad = 0, totalHrs = 0;
       const vendorIssues = {};
       inPeriod.forEach(r => {
         const hrs = (r.dispatched_at - r.stage_started_at) / 3600000;
         totalHrs += hrs;
-        if (hrs <= GOOD_HRS) {
+        if (hrs <= VERY_GOOD_HRS) {
+          veryGood++;
+        } else if (hrs <= GOOD_HRS) {
           good++;
+        } else if (hrs <= FINE_HRS) {
+          fine++;
         } else if (hrs <= BAD_HRS) {
           bad++;
           vendorIssues[r.vendor_name] = vendorIssues[r.vendor_name] || { bad: 0, veryBad: 0 };
@@ -6205,11 +6211,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         .slice(0, 5);
 
       return {
-        total, good, bad, veryBad,
-        goodPct:    total > 0 ? Math.round(good    / total * 100) : 0,
-        badPct:     total > 0 ? Math.round(bad     / total * 100) : 0,
-        veryBadPct: total > 0 ? Math.round(veryBad / total * 100) : 0,
-        avgHours:   total > 0 ? Math.round(totalHrs / total) : 0,
+        total, veryGood, good, fine, bad, veryBad,
+        veryGoodPct: total > 0 ? Math.round(veryGood / total * 100) : 0,
+        goodPct:     total > 0 ? Math.round(good     / total * 100) : 0,
+        finePct:     total > 0 ? Math.round(fine     / total * 100) : 0,
+        badPct:      total > 0 ? Math.round(bad      / total * 100) : 0,
+        veryBadPct:  total > 0 ? Math.round(veryBad  / total * 100) : 0,
+        avgHours:    total > 0 ? Math.round(totalHrs / total) : 0,
         topOffenders,
       };
     })();

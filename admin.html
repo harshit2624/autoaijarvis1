@@ -3800,14 +3800,18 @@
                         <span style={{fontSize:11,color:'var(--text-muted)'}}>Avg dispatch time: <strong style={{color:'var(--text)'}}>{dq.avgHours < 24 ? `${dq.avgHours}h` : `${(dq.avgHours/24).toFixed(1)}d`}</strong></span>
                       </div>
                       <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',display:'flex',marginBottom:12}}>
+                        <div style={{height:'100%',width:`${dq.veryGoodPct}%`,background:'#6366f1'}}/>
                         <div style={{height:'100%',width:`${dq.goodPct}%`,background:'#10b981'}}/>
+                        <div style={{height:'100%',width:`${dq.finePct}%`,background:'#3b82f6'}}/>
                         <div style={{height:'100%',width:`${dq.badPct}%`,background:'#f59e0b'}}/>
                         <div style={{height:'100%',width:`${dq.veryBadPct}%`,background:'#ef4444'}}/>
                       </div>
                       <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:dq.topOffenders.length?14:0}}>
-                        <Seg label="Good"      icon="✅" count={dq.good}    pct={dq.goodPct}    color="#10b981" sub="Dispatched within 4 days"/>
-                        <Seg label="Bad"       icon="⚠️" count={dq.bad}     pct={dq.badPct}     color="#f59e0b" sub="Dispatched in 4–7 days"/>
-                        <Seg label="Very Bad"  icon="🔴" count={dq.veryBad} pct={dq.veryBadPct} color="#ef4444" sub="Dispatched after 7 days"/>
+                        <Seg label="Very Good" icon="⚡" count={dq.veryGood} pct={dq.veryGoodPct} color="#6366f1" sub="Dispatched within 30 hrs"/>
+                        <Seg label="Good"      icon="✅" count={dq.good}     pct={dq.goodPct}     color="#10b981" sub="Dispatched within 48 hrs"/>
+                        <Seg label="Fine"      icon="🔵" count={dq.fine}     pct={dq.finePct}     color="#3b82f6" sub="Dispatched within 4 days"/>
+                        <Seg label="Bad"       icon="⚠️" count={dq.bad}      pct={dq.badPct}      color="#f59e0b" sub="Dispatched in 4–7 days"/>
+                        <Seg label="Very Bad"  icon="🔴" count={dq.veryBad}  pct={dq.veryBadPct}  color="#ef4444" sub="Dispatched after 7 days"/>
                       </div>
                       {dq.topOffenders.length > 0 && (
                         <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
