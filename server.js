@@ -6673,6 +6673,44 @@ app.get("/admin/orders/:id/vendor-stages", requirePermission('orders'), async (r
   res.json({ vendorStages: Object.fromEntries(rows.map(r => [r.vendor_name, r.stage])) });
 });
 
+// ── GET /admin/orders/:id/customer-history ───────────────────────────────
+// Returns past orders by the same customer (via Shopify customer_id)
+app.get("/admin/orders/:id/customer-history", requirePermission('orders'), async (req, res) => {
+  try {
+    const od = await shopifyREST(`/orders/${req.params.id}.json?fields=id,name,customer`);
+    const customerId = od?.order?.customer?.id;
+    if (!customerId) return res.json({ orders: [] });
+
+    const data = await shopifyREST(`/customers/${customerId}/orders.json?status=any&limit=50&fields=id,name,created_at,financial_status,line_items,fulfillment_status`);
+    const raw = (data?.orders || []).filter(o => String(o.id) !== String(req.params.id));
+
+    // Pull our internal stages for these orders
+    const ids = raw.map(o => String(o.id));
+    const metas = ids.length ? await mdb.collection('order_meta').find({ shopify_id: { $in: ids } }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray() : [];
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m.stage]));
+
+    const orders = raw.map(o => ({
+      id: o.name,
+      shopifyId: String(o.id),
+      date: o.created_at,
+      stage: metaMap[String(o.id)] || (o.fulfillment_status === 'fulfilled' ? 'delivered' : 'new'),
+      items: (o.line_items || []).slice(0, 3).map(li => ({
+        title: li.title,
+        image: li.image?.src || null,
+        vendor: li.vendor,
+        qty: li.quantity,
+      })),
+      total: (o.line_items || []).reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0),
+      itemCount: (o.line_items || []).length,
+    }));
+
+    res.json({ orders });
+  } catch (e) {
+    console.error('customer-history:', e.message);
+    res.json({ orders: [] });
+  }
+});
+
 // ── POST /admin/orders/:id/fulfill-vendor ────────────────────────────────
 // Partially fulfill only a specific vendor's line items on Shopify, save AWB, send customer email
 app.post("/admin/orders/:id/fulfill-vendor", requirePermission('orders'), async (req, res) => {

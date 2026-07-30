@@ -1324,6 +1324,9 @@
     const [shipRateInfo,    setShipRateInfo]    = useState(null);
     const [shipRateLoad,    setShipRateLoad]    = useState(false);
 
+    // Customer order history
+    const [custHistory,     setCustHistory]     = useState(null); // null=loading, []=none
+
     // Customer communications panel
     const [commOpen,        setCommOpen]        = useState(false);
     const [commChats,       setCommChats]       = useState(null); // null=not loaded, []=loaded empty
@@ -1436,6 +1439,9 @@
         .then(r=>r.json()).then(d=>setAvailTags(d.tags||[])).catch(()=>{});
       fetch(`${API}/admin/shipping-creds`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setConnectedPartners(d.partners||[])).catch(()=>{});
+      // Customer order history
+      fetch(`${API}/admin/orders/${order.shopifyId}/customer-history`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setCustHistory(d.orders||[])).catch(()=>setCustHistory([]));
     },[order.shopifyId]);
 
     // Load stored tracking history from DB on open; if no cache yet, fetch live automatically
@@ -1802,6 +1808,53 @@
                 })}
               </div>
             </div>
+
+            {/* ── Customer Order History ── */}
+            {custHistory === null && (
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:12}}>Loading order history…</div>
+            )}
+            {custHistory && custHistory.length > 0 && (() => {
+              const STAGE_COLOR = { delivered:'#10b981', rto:'#ef4444', cancelled:'#6b7280', new:'#6366f1', confirmed:'#6366f1', partial:'#a78bfa', ready:'#3b82f6', pickup:'#3b82f6', transit:'#f59e0b', misc:'#f59e0b' };
+              const STAGE_LABEL = { delivered:'Delivered', rto:'RTO', cancelled:'Cancelled', new:'New', confirmed:'Confirmed', partial:'Partial', ready:'Ready', pickup:'Pickup', transit:'In Transit', misc:'Misc' };
+              return (
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',marginBottom:16}}>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:10}}>
+                    🕐 Customer's Past Orders ({custHistory.length})
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                    {custHistory.map(h => {
+                      const sc = STAGE_COLOR[h.stage] || '#6b7280';
+                      const sl = STAGE_LABEL[h.stage] || h.stage;
+                      return (
+                        <div key={h.shopifyId} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg)',borderRadius:6,border:'1px solid var(--border)'}}>
+                          {/* Item photos */}
+                          <div style={{display:'flex',gap:4,flexShrink:0}}>
+                            {h.items.map((it,ii) => (
+                              it.image
+                                ? <img key={ii} src={it.image} alt="" style={{width:36,height:36,borderRadius:4,objectFit:'cover',border:'1px solid var(--border)'}}/>
+                                : <div key={ii} style={{width:36,height:36,borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>📦</div>
+                            ))}
+                          </div>
+                          {/* Order info */}
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                              <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)'}}>{h.id}</span>
+                              <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:`${sc}22`,color:sc,fontWeight:700}}>{sl}</span>
+                              <span style={{fontSize:10,color:'var(--text-muted)'}}>{new Date(h.date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</span>
+                            </div>
+                            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                              {h.items.map(it=>`${it.title}${it.qty>1?' ×'+it.qty:''}`).join(' · ')}
+                              {h.itemCount > h.items.length ? ` +${h.itemCount - h.items.length} more` : ''}
+                            </div>
+                          </div>
+                          <div style={{fontSize:12,fontWeight:700,color:'var(--text)',flexShrink:0}}>{fmtCur(h.total)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
               <div className="detail-box-title" style={{marginBottom:14}}>CROSCROW Metadata</div>
