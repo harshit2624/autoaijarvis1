@@ -7725,14 +7725,20 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
       const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : parseFloat(li.price || 0);
 
       const deliveredVendorsInOrder = new Set();
+      const allVendorsInOrder = new Set();
       for (const li of (o.line_items || [])) {
         const vendor = li.vendor;
         if (!vendor) continue;
+        allVendorsInOrder.add(vendor);
         const vendorDbStage = ovsMap[sid]?.[vendor] || 'new';
         const shopifyStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor] || null;
         const effectiveStage = higherStage(vendorDbStage, shopifyStage || 'new');
         if (effectiveStage === 'delivered') deliveredVendorsInOrder.add(vendor);
       }
+
+      // Shipping split matches settlement invoice: divide by ALL vendors in order (not just delivered)
+      const shippingSplit = isCod && allVendorsInOrder.size > 0
+        ? parseFloat((orderShipping / allVendorsInOrder.size).toFixed(2)) : 0;
 
       for (const li of (o.line_items || [])) {
         const vendor = li.vendor;
@@ -7741,17 +7747,17 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
 
         if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
 
-        const rawPrice = parseFloat(li.price || 0);
-        const liPrice  = effectivePrice(li);
-        const rawRev   = rawPrice * (li.quantity || 1);
-        const commPct  = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+        // Use effectivePrice for gross — matches settlement invoice (respects price overrides)
+        const liPrice = effectivePrice(li);
+        const liRev   = liPrice * (li.quantity || 1);
+        const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
         const productRule = findRuleFast(vendor, li.product_id, li.sku);
         const calc = productRule
           ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
-          : calcCommission(liPrice * (li.quantity || 1), payType, commPct, 0);
+          : calcCommission(liRev, payType, commPct, 0);
 
-        vendorMap[vendor].gross += rawRev;
-        if (!isCod) vendorMap[vendor].prepaidDiscount += (rawRev - calc.base);
+        vendorMap[vendor].gross += liRev;
+        if (!isCod) vendorMap[vendor].prepaidDiscount += (liRev - calc.base);
         vendorMap[vendor].commission += calc.commission;
         vendorMap[vendor].gst += calc.gst;
 
@@ -7760,8 +7766,8 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
           const deliveredCount = deliveredVendorsInOrder.size || 1;
           if (isCod && (meta.advance_paid || 0) > 0)
             vendorMap[vendor].advance += parseFloat(((meta.advance_paid || 0) / deliveredCount).toFixed(2));
-          if (isCod && orderShipping > 0)
-            vendorMap[vendor].shipping += parseFloat((orderShipping / deliveredVendorsInOrder.size).toFixed(2));
+          if (shippingSplit > 0)
+            vendorMap[vendor].shipping += shippingSplit;
         }
       }
     }

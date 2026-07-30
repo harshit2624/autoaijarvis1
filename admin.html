@@ -6205,39 +6205,90 @@
               <div style={{textAlign:'center',padding:40,color:'var(--text-dim)'}}>No GST invoices yet. Select a period and click Generate.</div>
             ) : (
               <div style={{overflowX:'auto'}}>
-                <table className="data-table">
+                <table className="data-table" style={{fontSize:11}}>
                   <thead><tr>
                     <th>Invoice No</th>
                     <th>Vendor</th>
                     <th>GST No</th>
-                    <th>Period</th>
                     <th style={{textAlign:'right'}}>Total Sales</th>
+                    <th style={{textAlign:'right'}}>Vendor Disc</th>
+                    <th style={{textAlign:'right'}}>Commissionable</th>
                     <th style={{textAlign:'right'}}>Commission</th>
-                    <th style={{textAlign:'right'}}>GST on Comm</th>
+                    <th style={{textAlign:'right'}}>Shipping (excl. GST)</th>
+                    <th style={{textAlign:'right'}}>Penalty</th>
+                    <th style={{textAlign:'right'}}>Subtotal</th>
+                    <th style={{textAlign:'right'}}>GST (18%)</th>
+                    <th style={{textAlign:'right'}}>Total Billed</th>
                     <th style={{textAlign:'right'}}>Orders</th>
                     <th></th>
                   </tr></thead>
                   <tbody>
-                    {gstInvList.map(inv=>(
-                      <tr key={inv.invoice_no}>
-                        <td><strong style={{color:'var(--indigo)',fontFamily:'monospace'}}>{inv.invoice_no}</strong></td>
-                        <td style={{fontSize:12}}>{inv.vendor_name}</td>
-                        <td style={{fontSize:11,color:'var(--text-dim)'}}>{inv.gst_no||'—'}</td>
-                        <td style={{fontSize:11,color:'var(--text-dim)'}}>{inv.period_from} → {inv.period_to}</td>
-                        <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.total_taxable||0).toFixed(2)}</td>
-                        <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.commission_base||0).toFixed(2)}</td>
-                        <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{((inv.igst||0)+(inv.cgst||0)+(inv.sgst||0)).toFixed(2)}</td>
-                        <td style={{textAlign:'right'}}>{inv.order_count||0}</td>
-                        <td>
-                          <button className="btn btn-danger btn-sm" onClick={async()=>{
-                            if(!confirm(`Delete ${inv.invoice_no}?`)) return;
-                            await fetch(`${API}/admin/gst-invoices/${inv.invoice_no}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
-                            loadGstInvoices(gstInvFrom,gstInvTo);
-                          }}>✕</button>
-                        </td>
-                      </tr>
-                    ))}
+                    {gstInvList.map(inv=>{
+                      const totalGst = (inv.igst||0)+(inv.cgst||0)+(inv.sgst||0);
+                      const gstType = inv.igst > 0 ? `IGST ₹${(inv.igst||0).toFixed(2)}` : `SGST ₹${(inv.sgst||0).toFixed(2)} + CGST ₹${(inv.cgst||0).toFixed(2)}`;
+                      return (
+                        <tr key={inv.invoice_no}>
+                          <td><strong style={{color:'var(--indigo)',fontFamily:'monospace'}}>{inv.invoice_no}</strong></td>
+                          <td>{inv.vendor_name}<div style={{fontSize:10,color:'var(--text-dim)'}}>{inv.period_from} → {inv.period_to}</div></td>
+                          <td style={{color:'var(--text-dim)'}}>{inv.gst_no||'—'}</td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.total_sales||0).toFixed(2)}</td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums',color:(inv.vendor_discount||0)>0?'var(--orange)':'var(--text-dim)'}}>
+                            {(inv.vendor_discount||0)>0?`-₹${(inv.vendor_discount||0).toFixed(2)}`:'—'}
+                          </td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.commissionable||0).toFixed(2)}</td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.commission||0).toFixed(2)}</td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums',color:(inv.shipping_base||0)>0?'inherit':'var(--text-dim)'}}>
+                            {(inv.shipping_base||0)>0?`₹${(inv.shipping_base||0).toFixed(2)}`:'—'}
+                          </td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums',color:(inv.penalty||0)>0?'var(--red)':'var(--text-dim)'}}>
+                            {(inv.penalty||0)>0?`₹${(inv.penalty||0).toFixed(2)}`:'—'}
+                          </td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.subtotal||0).toFixed(2)}</td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+                            <div>₹{totalGst.toFixed(2)}</div>
+                            <div style={{fontSize:9,color:'var(--text-dim)'}}>{gstType}</div>
+                          </td>
+                          <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums',fontWeight:600}}>₹{(inv.total_with_gst||0).toFixed(2)}</td>
+                          <td style={{textAlign:'right'}}>{inv.order_count||0}</td>
+                          <td>
+                            <button className="btn btn-danger btn-sm" onClick={async()=>{
+                              if(!confirm(`Delete ${inv.invoice_no}?`)) return;
+                              await fetch(`${API}/admin/gst-invoices/${inv.invoice_no}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                              loadGstInvoices(gstInvFrom,gstInvTo);
+                            }}>✕</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
+                  {gstInvList.length > 1 && (()=>{
+                    const tot = gstInvList.reduce((a,inv)=>({
+                      sales: a.sales+(inv.total_sales||0),
+                      disc:  a.disc+(inv.vendor_discount||0),
+                      comm:  a.comm+(inv.commissionable||0),
+                      commission: a.commission+(inv.commission||0),
+                      ship: a.ship+(inv.shipping_base||0),
+                      pen:  a.pen+(inv.penalty||0),
+                      sub:  a.sub+(inv.subtotal||0),
+                      gst:  a.gst+(inv.igst||0)+(inv.cgst||0)+(inv.sgst||0),
+                      total:a.total+(inv.total_with_gst||0),
+                    }),{sales:0,disc:0,comm:0,commission:0,ship:0,pen:0,sub:0,gst:0,total:0});
+                    return (
+                      <tfoot><tr style={{fontWeight:600,borderTop:'2px solid var(--border)'}}>
+                        <td colSpan={3}>TOTAL</td>
+                        <td style={{textAlign:'right'}}>₹{tot.sales.toFixed(2)}</td>
+                        <td style={{textAlign:'right'}}>{tot.disc>0?`-₹${tot.disc.toFixed(2)}`:'—'}</td>
+                        <td style={{textAlign:'right'}}>₹{tot.comm.toFixed(2)}</td>
+                        <td style={{textAlign:'right'}}>₹{tot.commission.toFixed(2)}</td>
+                        <td style={{textAlign:'right'}}>{tot.ship>0?`₹${tot.ship.toFixed(2)}`:'—'}</td>
+                        <td style={{textAlign:'right'}}>{tot.pen>0?`₹${tot.pen.toFixed(2)}`:'—'}</td>
+                        <td style={{textAlign:'right'}}>₹{tot.sub.toFixed(2)}</td>
+                        <td style={{textAlign:'right'}}>₹{tot.gst.toFixed(2)}</td>
+                        <td style={{textAlign:'right'}}>₹{tot.total.toFixed(2)}</td>
+                        <td colSpan={2}></td>
+                      </tr></tfoot>
+                    );
+                  })()}
                 </table>
               </div>
             )}
