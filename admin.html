@@ -5717,7 +5717,7 @@
         const blob = await r.blob();
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `CROSCROW_GST_${gstFrom}_to_${gstTo}.csv`;
+        a.download = `CROSCROW_GST_${gstFrom}_to_${gstTo}.xlsx`;
         a.click();
         URL.revokeObjectURL(a.href);
         setGstMsg({ type:'success', text:'GST sheet downloaded!' });

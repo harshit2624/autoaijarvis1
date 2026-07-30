@@ -7435,9 +7435,10 @@ app.get("/admin/settlements", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/settlements/gst-export ────────────────────────────────────
-// All delivered orders in date range → one row per vendor → CA GST format CSV
+// All delivered orders in date range → one row per vendor → CA GST format XLSX
 // Mirrors invoice generator exactly: OVS-based delivered filter, price overrides,
 // delivered-vendor-only advance split, confirmed penalties, in-memory product rules.
+const ExcelJS = require('exceljs');
 app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
@@ -7565,20 +7566,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       vendorMap[p.vendor_name].penalty += (p.penalty_amount || 0);
     }
 
-    const escCsv = v => {
-      const s = v == null ? '' : String(v);
-      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-
     const periodLabel = `${from.split('-').reverse().join('/')}-${to.split('-').reverse().join('/')}`;
-
-    const headers = [
-      'DATE','COMMISSION INVOICE NO','VENDOR','VENDOR GST (IF AVAILABLE)',
-      'OFFICE LOCATION (CITY/STATE)','TOTAL SALES','TOTAL VENDOR DISCOUNT',
-      'TOTAL COMMISSIONABLE SALES','COMMISSION ON SALES','SHIPPING CHARGES',
-      'PENALTY CHARGES','SUBTOTAL','HSN CODE','IGST(18%)','SGST(9%)','CGST(9%)',
-      'TOTAL GST','TOTAL COMMISSION WITH GST',
-    ];
 
     // Load saved GST invoices for this period to auto-fill invoice numbers
     const savedInvoices = await mdb.collection('gst_invoices')
@@ -7586,7 +7574,8 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       .toArray();
     const invoiceNoMap = Object.fromEntries(savedInvoices.map(i => [i.vendor_name, i.invoice_no]));
 
-    const rows = Object.entries(vendorMap).sort((a,b) => b[1].gross - a[1].gross).map(([vendorName, d]) => {
+    // Build data rows
+    const dataRows = Object.entries(vendorMap).sort((a,b) => b[1].gross - a[1].gross).map(([vendorName, d]) => {
       const prof = vProfileMap[vendorName] || {};
       const gstNo = prof.gst_no || 'NA';
       const location = [prof.city, prof.state].filter(Boolean).join('/') || 'NA';
@@ -7597,18 +7586,11 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const commissionable = parseFloat((totalSales - vendorDiscount).toFixed(2));
       const commission     = parseFloat(d.commission.toFixed(2));
       const penalty        = parseFloat((d.penalty || 0).toFixed(2));
-
-      // COD shipping is GST-inclusive — extract base and GST
       const shippingTotal  = parseFloat(d.shipping.toFixed(2));
       const shippingBase   = parseFloat((shippingTotal * 100 / 118).toFixed(2));
       const shippingGst    = parseFloat((shippingTotal * 18 / 118).toFixed(2));
-
-      // Subtotal = commission base + shipping base + penalty (all excl. GST)
-      const subtotal   = parseFloat((commission + shippingBase + penalty).toFixed(2));
-      const totalGst   = parseFloat((d.gst + shippingGst).toFixed(2));
-      const hsnCode    = '998599';
-
-      // IGST if inter-state (CROSCROW = Rajasthan, state code 08)
+      const subtotal       = parseFloat((commission + shippingBase + penalty).toFixed(2));
+      const totalGst       = parseFloat((d.gst + shippingGst).toFixed(2));
       const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
       const isIGST = !vendorStateCode || vendorStateCode !== '08';
       const igst = isIGST ? totalGst : 0;
@@ -7618,15 +7600,15 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
 
       return [
         periodLabel, invoiceNo, vendorName, gstNo, location,
-        totalSales.toFixed(2), vendorDiscount.toFixed(2), commissionable.toFixed(2),
-        commission.toFixed(2), shippingBase.toFixed(2), penalty.toFixed(2),
-        subtotal.toFixed(2), hsnCode,
-        igst.toFixed(2), sgst.toFixed(2), cgst.toFixed(2),
-        totalGst.toFixed(2), totalWithGst.toFixed(2),
-      ].map(escCsv).join(',');
+        totalSales, vendorDiscount, commissionable,
+        commission, shippingBase, penalty,
+        subtotal, '998599',
+        igst, sgst, cgst,
+        totalGst, totalWithGst,
+      ];
     });
 
-    // Totals row
+    // Totals
     const allV = Object.values(vendorMap);
     const tSales     = parseFloat(allV.reduce((s,d) => s + d.gross, 0).toFixed(2));
     const tDisc      = parseFloat(allV.reduce((s,d) => s + d.prepaidDiscount, 0).toFixed(2));
@@ -7640,20 +7622,95 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     const tSubtotal  = parseFloat((tComm + tShipBase + tPenalty).toFixed(2));
     const tTotal     = parseFloat((tSubtotal + tGst).toFixed(2));
 
-    const totalsRow = [
-      'TOTAL','','','','',
-      tSales.toFixed(2), tDisc.toFixed(2), tCommable.toFixed(2),
-      tComm.toFixed(2), tShipBase.toFixed(2), tPenalty.toFixed(2),
-      tSubtotal.toFixed(2), '',
-      tGst.toFixed(2), '0.00', '0.00',
-      tGst.toFixed(2), tTotal.toFixed(2),
-    ].map(escCsv).join(',');
+    // ── Build XLSX ────────────────────────────────────────────────────────
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'CROSCROW';
+    const ws = wb.addWorksheet('GST Report', { views: [{ state: 'frozen', ySplit: 1 }] });
 
-    const csv = [headers.join(','), ...rows, totalsRow].join('\r\n');
-    const filename = `CROSCROW_GST_${from}_to_${to}.csv`;
-    res.setHeader('Content-Type', 'text/csv');
+    // Column definitions
+    // Highlighted (yellow bg) = GST-filing critical columns
+    // Col indices (1-based): 2=Invoice No, 3=Vendor, 4=GST No, 5=State, 8=Commissionable, 9=Commission, 14=IGST, 15=SGST, 16=CGST, 17=Total GST, 18=Total with GST
+    const HIGHLIGHT_COLS = new Set([2, 3, 4, 5, 8, 9, 14, 15, 16, 17, 18]);
+    const YELLOW_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9C4' } };
+    const PLAIN_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+    const HEADER_FILL_HL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9A825' } }; // amber for highlighted header
+    const HEADER_FILL_PL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF616161' } }; // grey for plain header
+    const TOTAL_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };    // light green for totals
+
+    const headers = [
+      'DATE','COMMISSION INVOICE NO','VENDOR','VENDOR GST NO',
+      'STATE','TOTAL SALES','VENDOR DISCOUNT',
+      'COMMISSIONABLE SALES','COMMISSION','SHIPPING (EXCL GST)',
+      'PENALTY','SUBTOTAL','HSN CODE','IGST (18%)','SGST (9%)','CGST (9%)',
+      'TOTAL GST','TOTAL BILLED',
+    ];
+
+    ws.columns = headers.map((h, i) => ({
+      header: h,
+      key: `c${i+1}`,
+      width: [12, 18, 22, 20, 14, 14, 14, 18, 14, 16, 10, 12, 10, 12, 12, 12, 12, 14][i],
+    }));
+
+    // Style header row
+    const headerRow = ws.getRow(1);
+    headerRow.height = 28;
+    headers.forEach((_, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.fill  = HIGHLIGHT_COLS.has(i + 1) ? HEADER_FILL_HL : HEADER_FILL_PL;
+      cell.font  = { bold: true, color: { argb: 'FFFFFFFF' }, size: 9 };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      cell.border = { bottom: { style: 'medium', color: { argb: 'FF000000' } } };
+    });
+
+    // Data rows
+    dataRows.forEach((row, ri) => {
+      const wsRow = ws.addRow(row);
+      wsRow.height = 18;
+      row.forEach((_, i) => {
+        const cell = wsRow.getCell(i + 1);
+        cell.fill = HIGHLIGHT_COLS.has(i + 1) ? YELLOW_FILL : PLAIN_FILL;
+        cell.font = { size: 9, bold: HIGHLIGHT_COLS.has(i + 1) };
+        cell.alignment = { vertical: 'middle', horizontal: i < 5 ? 'left' : 'right' };
+        if (i >= 5 && i !== 12) { // numeric cols (not HSN)
+          cell.numFmt = '#,##0.00';
+        }
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } },
+          right: HIGHLIGHT_COLS.has(i + 1) ? { style: 'thin', color: { argb: 'FFF9A825' } } : undefined,
+        };
+      });
+    });
+
+    // Totals row
+    const totalsRow = ws.addRow([
+      'TOTAL', '', '', '', '',
+      tSales, tDisc, tCommable,
+      tComm, tShipBase, tPenalty,
+      tSubtotal, '',
+      tGst, 0, 0,
+      tGst, tTotal,
+    ]);
+    totalsRow.height = 22;
+    totalsRow.eachCell((cell, colNum) => {
+      cell.fill = TOTAL_FILL;
+      cell.font = { bold: true, size: 9 };
+      cell.alignment = { vertical: 'middle', horizontal: colNum <= 5 ? 'left' : 'right' };
+      if (colNum >= 6 && colNum !== 13) cell.numFmt = '#,##0.00';
+      cell.border = { top: { style: 'medium', color: { argb: 'FF388E3C' } } };
+    });
+
+    // Legend row (2 rows below totals)
+    const legendRow = ws.addRow([]);
+    ws.addRow(['★ Highlighted columns (amber/yellow) are required for GST filing.', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+    const legCell = ws.getCell(`A${legendRow.number + 1}`);
+    legCell.font = { italic: true, size: 8, color: { argb: 'FF6D4C41' } };
+    ws.mergeCells(`A${legendRow.number + 1}:R${legendRow.number + 1}`);
+
+    const buf = await wb.xlsx.writeBuffer();
+    const filename = `CROSCROW_GST_${from}_to_${to}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csv);
+    res.send(buf);
   } catch (err) {
     console.error("❌ /admin/settlements/gst-export:", err.message);
     res.status(500).json({ error: err.message });
