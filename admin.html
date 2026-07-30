@@ -2751,14 +2751,21 @@
                 </thead>
                 <tbody>
                   {/* Row 1: Marketplace commission */}
+                  {(()=>{
+                    const commPct = inv.commissionable > 0
+                      ? ((inv.commission / inv.commissionable) * 100).toFixed(1)
+                      : null;
+                    return (
                   <tr>
                     <td>1</td>
                     <td>
-                      <div style={{fontWeight:600}}>Marketplace Commission on Sales</div>
-                      <div style={{fontSize:9,color:'#666',marginTop:2}}>
-                        Total Sales: ₹{(inv.total_sales||0).toFixed(2)}
-                        {(inv.vendor_discount||0)>0 && <> · Vendor Disc: −₹{(inv.vendor_discount||0).toFixed(2)}</>}
-                        {' '}· Commissionable: ₹{(inv.commissionable||0).toFixed(2)}
+                      <div style={{fontWeight:700,fontSize:11}}>Marketplace Commission on Sales</div>
+                      {/* Plain-language summary for vendor */}
+                      <div style={{marginTop:5,padding:'6px 8px',background:'#f7f7f7',borderLeft:'3px solid #6366f1',borderRadius:'0 3px 3px 0',fontSize:9.5,lineHeight:1.8,color:'#333'}}>
+                        <div><span style={{color:'#888'}}>Your total sales on CROSCROW:</span> <strong>₹{(inv.total_sales||0).toFixed(2)}</strong></div>
+                        {(inv.vendor_discount||0)>0 && <div><span style={{color:'#888'}}>Prepaid discount adjusted:</span> <strong style={{color:'#e67e22'}}>− ₹{(inv.vendor_discount||0).toFixed(2)}</strong></div>}
+                        <div><span style={{color:'#888'}}>Commission charged on:</span> <strong>₹{(inv.commissionable||0).toFixed(2)}</strong>{commPct && <span style={{marginLeft:6,background:'#ede9fe',color:'#6366f1',padding:'1px 6px',borderRadius:3,fontWeight:700}}>@ {commPct}%</span>}</div>
+                        <div style={{marginTop:2,color:'#888',fontSize:9}}>Commission = ₹{(inv.commissionable||0).toFixed(2)} × {commPct||'?'}% = <strong style={{color:'#111'}}>₹{(inv.commission||0).toFixed(2)}</strong></div>
                       </div>
                     </td>
                     <td>{inv.hsn_code||'998599'}</td>
@@ -2769,6 +2776,8 @@
                     }
                     <td className="r" style={{fontWeight:600}}>₹{((inv.commission||0)+(isIGST?inv.igst||0:(inv.sgst||0)+(inv.cgst||0))).toFixed(2)}</td>
                   </tr>
+                    );
+                  })()}
 
                   {/* Row 2: Shipping (if any) */}
                   {(inv.shipping_base||0) > 0 && (
