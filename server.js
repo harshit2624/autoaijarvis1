@@ -6684,16 +6684,41 @@ app.get("/admin/orders/:id/customer-history", requirePermission('orders'), async
     const data = await shopifyREST(`/customers/${customerId}/orders.json?status=any&limit=50&fields=id,name,created_at,financial_status,line_items,fulfillment_status`);
     const raw = (data?.orders || []).filter(o => String(o.id) !== String(req.params.id));
 
-    // Pull our internal stages for these orders
+    // Pull internal stages: order_meta (base) + OVS (per-vendor, source of truth for RTO/delivered)
     const ids = raw.map(o => String(o.id));
-    const metas = ids.length ? await mdb.collection('order_meta').find({ shopify_id: { $in: ids } }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray() : [];
+    const [metas, ovsRows] = ids.length ? await Promise.all([
+      mdb.collection('order_meta').find({ shopify_id: { $in: ids } }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray(),
+      mdb.collection('order_vendor_stage').find({ shopify_id: { $in: ids } }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray(),
+    ]) : [[], []];
+
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m.stage]));
+
+    // OVS: pick the highest-priority stage across all vendors for each order
+    const ovsMap = {};
+    for (const r of ovsRows) {
+      ovsMap[r.shopify_id] = ovsMap[r.shopify_id]
+        ? higherStage(ovsMap[r.shopify_id], r.stage)
+        : r.stage;
+    }
+
+    const deriveStage = (sid, fulfillmentStatus) => {
+      const ovs  = ovsMap[sid];
+      const meta = metaMap[sid];
+      if (ovs === 'misc' || meta === 'misc') return 'misc';
+      // Terminal stages from OVS always win
+      if (ovs === 'rto' || ovs === 'cancelled') return ovs;
+      if (meta === 'rto' || meta === 'cancelled') return meta;
+      // OVS takes priority over meta
+      if (ovs) return ovs;
+      if (meta) return meta;
+      return fulfillmentStatus === 'fulfilled' ? 'delivered' : 'new';
+    };
 
     const orders = raw.map(o => ({
       id: o.name,
       shopifyId: String(o.id),
       date: o.created_at,
-      stage: metaMap[String(o.id)] || (o.fulfillment_status === 'fulfilled' ? 'delivered' : 'new'),
+      stage: deriveStage(String(o.id), o.fulfillment_status),
       items: (o.line_items || []).slice(0, 3).map(li => ({
         title: li.title,
         image: li.image?.src || null,
