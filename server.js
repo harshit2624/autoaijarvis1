@@ -7561,10 +7561,17 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       'TOTAL GST','TOTAL COMMISSION WITH GST',
     ];
 
+    // Load saved GST invoices for this period to auto-fill invoice numbers
+    const savedInvoices = await mdb.collection('gst_invoices')
+      .find({ period_from: from, period_to: to }, { projection: { vendor_name: 1, invoice_no: 1, _id: 0 } })
+      .toArray();
+    const invoiceNoMap = Object.fromEntries(savedInvoices.map(i => [i.vendor_name, i.invoice_no]));
+
     const rows = Object.entries(vendorMap).sort((a,b) => b[1].gross - a[1].gross).map(([vendorName, d]) => {
       const prof = vProfileMap[vendorName] || {};
       const gstNo = prof.gst_no || 'NA';
       const location = [prof.city, prof.state].filter(Boolean).join('/') || 'NA';
+      const invoiceNo = invoiceNoMap[vendorName] || '';
 
       const totalSales     = parseFloat(d.gross.toFixed(2));
       const vendorDiscount = parseFloat(d.prepaidDiscount.toFixed(2));
@@ -7591,7 +7598,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const totalWithGst = parseFloat((subtotal + totalGst).toFixed(2));
 
       return [
-        periodLabel, '', vendorName, gstNo, location,
+        periodLabel, invoiceNo, vendorName, gstNo, location,
         totalSales.toFixed(2), vendorDiscount.toFixed(2), commissionable.toFixed(2),
         commission.toFixed(2), shippingBase.toFixed(2), penalty.toFixed(2),
         subtotal.toFixed(2), hsnCode,
@@ -7632,6 +7639,194 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     console.error("❌ /admin/settlements/gst-export:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// GST INVOICES  (collection: gst_invoices, prefix CCINV1000+)
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── GET /admin/gst-invoices ───────────────────────────────────────────────
+app.get("/admin/gst-invoices", adminAuth, async (req, res) => {
+  try {
+    const { from, to, vendor } = req.query;
+    const filter = {};
+    if (from) filter.period_from = { $gte: from };
+    if (to)   filter.period_to   = { ...(filter.period_to||{}), $lte: to };
+    if (vendor) filter.vendor_name = vendor;
+    const invoices = await mdb.collection('gst_invoices')
+      .find(filter, { projection: { _id: 0 } })
+      .sort({ invoice_no: -1 })
+      .toArray();
+    res.json({ invoices });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /admin/gst-invoices/generate ────────────────────────────────────
+// Generates one GST invoice per vendor for the given date range.
+// Uses identical math to gst-export. Idempotent: existing invoices for the
+// same vendor+period are replaced.
+app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
+  const { from, to } = req.body;
+  if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required" });
+
+  try {
+    const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
+    const [metas, vProfiles, vConfigs, allProductRules, allVendorStages, priceOverrideDocs, confirmedPenalties, croscrowProfile] = await Promise.all([
+      mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
+      VC.all(),
+      mdb.collection('product_commission_rules').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray(),
+      mdb.collection('order_price_overrides').find({}, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
+      mdb.collection('croscrow_profile').findOne({ id: 1 }, { projection: { _id: 0 } }),
+    ]);
+
+    const metaMap     = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
+    const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+    const productRulesMap = {};
+    for (const r of allProductRules) {
+      if (!productRulesMap[r.vendor_name]) productRulesMap[r.vendor_name] = { byProduct: {}, bySku: {} };
+      if (r.product_id) productRulesMap[r.vendor_name].byProduct[String(r.product_id)] = r;
+      if (r.sku)        productRulesMap[r.vendor_name].bySku[r.sku] = r;
+    }
+    const stageMap = {};
+    for (const s of allVendorStages) {
+      if (!stageMap[s.shopify_id]) stageMap[s.shopify_id] = {};
+      stageMap[s.shopify_id][s.vendor_name] = s.stage;
+    }
+    const overrideMap = {};
+    for (const o of priceOverrideDocs) {
+      if (!overrideMap[o.shopify_id]) overrideMap[o.shopify_id] = {};
+      overrideMap[o.shopify_id][o.line_item_id] = o.override_price;
+    }
+
+    // Same vendor aggregation as gst-export
+    const vendorMap = {};
+    for (const order of allOrders) {
+      const oid = String(order.id);
+      const meta = metaMap[oid] || {};
+      if (!['delivered'].includes((meta.delivery_status || '').toLowerCase())) continue;
+      for (const item of (order.line_items || [])) {
+        const vn = item.vendor;
+        if (!vn) continue;
+        const stg = (stageMap[oid] || {})[vn] || '';
+        if (!['delivered'].includes(stg.toLowerCase())) continue;
+        const overridePrice = (overrideMap[oid] || {})[String(item.id)];
+        const linePrice = overridePrice != null ? parseFloat(overridePrice) : parseFloat(item.price) * item.quantity;
+        if (!vendorMap[vn]) vendorMap[vn] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set(), orderNos: [] };
+        const d = vendorMap[vn];
+        const cfg = vConfigMap[vn] || {};
+        const rules = productRulesMap[vn] || { byProduct: {}, bySku: {} };
+        const prodRule = rules.byProduct[String(item.product_id)] || rules.bySku[item.sku];
+        const calc = prodRule ? calculateProdRuleCommission(linePrice, prodRule)
+                               : calculateCommission(linePrice, cfg.commission_pct || 0, cfg.advance_paid || 0, cfg.commission_type || 'percentage');
+        d.gross      += linePrice;
+        d.commission += calc.commission;
+        d.gst        += calc.gst;
+        if (!d.ordersAdded.has(oid)) {
+          d.ordersAdded.add(oid);
+          if (order.name) d.orderNos.push(order.name);
+        }
+      }
+    }
+    // Add penalties
+    const fromTs = new Date(`${from}T00:00:00Z`).getTime();
+    const toTs   = new Date(`${to}T23:59:59Z`).getTime();
+    for (const p of confirmedPenalties) {
+      if (!p.vendor_name) continue;
+      const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
+      if (pTs < fromTs || pTs > toTs) continue;
+      if (!vendorMap[p.vendor_name]) vendorMap[p.vendor_name] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set(), orderNos: [] };
+      vendorMap[p.vendor_name].penalty = (vendorMap[p.vendor_name].penalty || 0) + (p.penalty_amount || 0);
+    }
+
+    // Get next invoice number counter
+    const counterDoc = await mdb.collection('gst_invoice_counter').findOneAndUpdate(
+      { _id: 'counter' },
+      { $setOnInsert: { seq: 1000 } },
+      { upsert: true, returnDocument: 'after' }
+    );
+
+    const periodLabel = `${from.split('-').reverse().join('/')}-${to.split('-').reverse().join('/')}`;
+    const generated = [];
+    const col = mdb.collection('gst_invoices');
+
+    for (const [vendorName, d] of Object.entries(vendorMap)) {
+      const prof = vProfileMap[vendorName] || {};
+      const gstNo = prof.gst_no || 'NA';
+      const location = [prof.city, prof.state].filter(Boolean).join('/') || 'NA';
+
+      const totalSales     = parseFloat(d.gross.toFixed(2));
+      const vendorDiscount = parseFloat((d.prepaidDiscount || 0).toFixed(2));
+      const commissionable = parseFloat((totalSales - vendorDiscount).toFixed(2));
+      const commission     = parseFloat(d.commission.toFixed(2));
+      const penalty        = parseFloat((d.penalty || 0).toFixed(2));
+      const shippingTotal  = parseFloat((d.shipping || 0).toFixed(2));
+      const shippingBase   = parseFloat((shippingTotal * 100 / 118).toFixed(2));
+      const shippingGst    = parseFloat((shippingTotal * 18 / 118).toFixed(2));
+      const subtotal       = parseFloat((commission + shippingBase + penalty).toFixed(2));
+      const totalGst       = parseFloat((d.gst + shippingGst).toFixed(2));
+      const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
+      const isIGST = !vendorStateCode || vendorStateCode !== '08';
+      const igst = isIGST ? totalGst : 0;
+      const sgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
+      const cgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
+      const totalWithGst = parseFloat((subtotal + totalGst).toFixed(2));
+
+      if (totalWithGst === 0) continue; // skip vendors with no activity
+
+      // Check if invoice already exists for this vendor+period
+      const existing = await col.findOne({ vendor_name: vendorName, period_from: from, period_to: to });
+      let invoiceNo;
+      if (existing) {
+        invoiceNo = existing.invoice_no;
+        await col.updateOne({ _id: existing._id }, { $set: {
+          total_sales: totalSales, vendor_discount: vendorDiscount, commissionable,
+          commission, penalty, shipping_base: shippingBase, shipping_gst: shippingGst,
+          subtotal, igst, sgst, cgst, total_gst: totalGst, total_with_gst: totalWithGst,
+          gst_no: gstNo, location, updated_at: new Date().toISOString()
+        }});
+      } else {
+        // Assign next invoice number
+        const ctr = await mdb.collection('gst_invoice_counter').findOneAndUpdate(
+          { _id: 'counter' },
+          { $inc: { seq: 1 } },
+          { returnDocument: 'before' }
+        );
+        const seq = (ctr?.seq ?? ctr?.value?.seq ?? 1000);
+        invoiceNo = `CCINV${seq}`;
+        await col.insertOne({
+          invoice_no: invoiceNo, vendor_name: vendorName,
+          period_from: from, period_to: to, period_label: periodLabel,
+          gst_no: gstNo, location,
+          total_sales: totalSales, vendor_discount: vendorDiscount, commissionable,
+          commission, penalty, shipping_base: shippingBase, shipping_gst: shippingGst,
+          subtotal, igst, sgst, cgst, total_gst: totalGst, total_with_gst: totalWithGst,
+          hsn_code: '998599', is_igst: isIGST,
+          croscrow_gst: croscrowProfile?.gst_no || '',
+          croscrow_name: croscrowProfile?.name || 'CROSCROW',
+          order_count: d.ordersAdded.size,
+          created_at: new Date().toISOString(),
+        });
+      }
+      generated.push({ invoice_no: invoiceNo, vendor_name: vendorName, total_with_gst: totalWithGst });
+    }
+
+    res.json({ ok: true, count: generated.length, invoices: generated });
+  } catch(e) {
+    console.error('❌ gst-invoices/generate:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── DELETE /admin/gst-invoices/:invoiceNo ─────────────────────────────────
+app.delete("/admin/gst-invoices/:invoiceNo", adminAuth, async (req, res) => {
+  try {
+    await mdb.collection('gst_invoices').deleteOne({ invoice_no: req.params.invoiceNo });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── GET /admin/settlements/:id ────────────────────────────────────────────
