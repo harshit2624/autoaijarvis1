@@ -2630,6 +2630,245 @@
   }
 
   /* ══════════════════════════════════
+     GST INVOICE MODAL
+  ══════════════════════════════════ */
+  function GstInvoiceModal({ inv, croscrow={}, onClose }) {
+    const totalGst   = (inv.igst||0)+(inv.cgst||0)+(inv.sgst||0);
+    const isIGST     = (inv.igst||0) > 0;
+    const fileName   = `CCINV_${inv.vendor_name.replace(/\s+/g,'-')}_${inv.period_from}_${inv.period_to}_${inv.invoice_no}`;
+
+    const handlePrint = () => {
+      const el = document.getElementById('gst-invoice-print');
+      if (!el) return;
+      const win = window.open('', '_blank', 'width=900,height=700');
+      win.document.write(`<!DOCTYPE html><html><head><title>${fileName}</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { background:#fff; font-family:Arial,Helvetica,sans-serif; font-size:10.5px; color:#111; }
+          .wrap { padding:28px 32px; }
+          .hdr  { border-bottom:2.5px solid #111; padding-bottom:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:flex-start; }
+          .co-name { font-size:18px; font-weight:800; letter-spacing:1.5px; }
+          .co-sub  { font-size:8.5px; color:#888; letter-spacing:1px; margin-top:2px; }
+          .co-detail { font-size:9px; color:#555; margin-top:3px; }
+          .inv-badge { text-align:right; }
+          .inv-type  { font-size:14px; font-weight:800; letter-spacing:1px; }
+          .inv-no    { font-size:10px; color:#666; margin-top:3px; }
+          .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px 20px; margin-bottom:16px; }
+          .field-label { font-size:7.5px; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:2px; }
+          .field-val   { font-weight:700; font-size:11px; }
+          .field-sub   { font-size:9px; color:#555; margin-top:1px; }
+          table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+          th { background:#f2f2f2; padding:6px 8px; font-size:8px; letter-spacing:0.5px; text-transform:uppercase; text-align:left; border-bottom:1.5px solid #ccc; }
+          th.r,td.r { text-align:right; }
+          td { padding:6px 8px; border-bottom:1px solid #eee; font-size:10px; }
+          .subtotal-row td { border-top:1.5px solid #bbb; font-weight:600; }
+          .total-row   td { border-top:2.5px solid #111; font-weight:800; font-size:12px; }
+          .note-box { background:#f9f9f9; border:1px solid #ddd; border-radius:4px; padding:10px 14px; margin-bottom:14px; font-size:9.5px; }
+          .gst-split { display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid #ddd; border-radius:4px; overflow:hidden; margin-bottom:16px; }
+          .gst-cell  { padding:8px 12px; }
+          .gst-cell + .gst-cell { border-left:1px solid #ddd; }
+          .footer { border-top:1px solid #ddd; padding-top:10px; font-size:8.5px; color:#888; display:flex; justify-content:space-between; }
+          .stamp { border:2px solid #111; border-radius:4px; padding:6px 10px; font-size:8px; letter-spacing:1px; text-align:center; font-weight:700; color:#111; display:inline-block; margin-top:10px; }
+          @page { margin:10mm; size:A4; }
+        </style>
+      </head><body><div class="wrap">${el.innerHTML}</div></body></html>`);
+      win.document.close();
+      win.focus();
+      setTimeout(()=>{ win.print(); win.close(); }, 400);
+    };
+
+    return (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+        <div className="modal" style={{maxWidth:780,width:'95vw'}}>
+          <div className="modal-header no-print">
+            <div className="modal-title">GST Invoice — {inv.invoice_no}</div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-ghost btn-sm" onClick={handlePrint}>⎙ Print / Save PDF</button>
+              <button className="modal-close" onClick={onClose}>✕</button>
+            </div>
+          </div>
+
+          <div className="modal-body" style={{padding:0,maxHeight:'82vh',overflowY:'auto'}}>
+            <div className="invoice-wrap" id="gst-invoice-print">
+
+              {/* Header */}
+              <div className="inv-header">
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div>
+                    <div className="inv-title">{croscrow.company_name||'CROSCROW'}</div>
+                    <div className="inv-sub">Marketplace · GST Tax Invoice</div>
+                    {croscrow.address && <div style={{fontSize:9,color:'#666',marginTop:3}}>{croscrow.address}{croscrow.city?', '+croscrow.city:''}{croscrow.state?', '+croscrow.state:''} {croscrow.pincode||''}</div>}
+                    {croscrow.gst_no  && <div style={{fontSize:9,color:'#666'}}>GSTIN: <strong>{croscrow.gst_no}</strong></div>}
+                    {croscrow.pan_no  && <div style={{fontSize:9,color:'#666'}}>PAN: {croscrow.pan_no}</div>}
+                    {croscrow.email   && <div style={{fontSize:9,color:'#666'}}>{croscrow.email}</div>}
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontWeight:800,fontSize:14,letterSpacing:1}}>TAX INVOICE</div>
+                    <div style={{fontWeight:700,fontSize:12,color:'#6366f1',marginTop:4,fontFamily:'monospace'}}>{inv.invoice_no}</div>
+                    <div style={{fontSize:10,color:'#666',marginTop:2}}>{fmtDate(inv.created_at||inv.updated_at)}</div>
+                    <div style={{fontSize:9,color:'#999',marginTop:2}}>HSN: {inv.hsn_code||'998599'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* From / To / Period */}
+              <div className="inv-grid" style={{marginBottom:16}}>
+                <div>
+                  <span className="inv-label">Bill To (Vendor)</span>
+                  <span className="inv-val">{inv.vendor_name}</span>
+                  {inv.gst_no && inv.gst_no!=='NA' && <span style={{fontSize:9,color:'#666'}}>GSTIN: {inv.gst_no}</span>}
+                  {inv.location && inv.location!=='NA' && <span style={{fontSize:9,color:'#666'}}>Location: {inv.location}</span>}
+                </div>
+                <div>
+                  <span className="inv-label">Service Period</span>
+                  <span className="inv-val">{fmtDate(inv.period_from)} – {fmtDate(inv.period_to)}</span>
+                  <span style={{fontSize:9,color:'#666'}}>{inv.order_count||0} delivered orders</span>
+                </div>
+                <div>
+                  <span className="inv-label">Place of Supply</span>
+                  <span className="inv-val">{isIGST ? 'Inter-State (IGST)' : 'Intra-State — Rajasthan (SGST+CGST)'}</span>
+                </div>
+                <div>
+                  <span className="inv-label">Tax Type</span>
+                  <span className="inv-val">{isIGST ? 'IGST @ 18%' : 'SGST 9% + CGST 9%'}</span>
+                </div>
+              </div>
+
+              {/* Main charges table */}
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{width:'4%'}}>#</th>
+                    <th>Description of Service</th>
+                    <th style={{width:'10%'}}>HSN</th>
+                    <th className="r" style={{width:'14%'}}>Taxable Value (₹)</th>
+                    {isIGST
+                      ? <th className="r" style={{width:'14%'}}>IGST 18% (₹)</th>
+                      : <><th className="r" style={{width:'11%'}}>SGST 9% (₹)</th><th className="r" style={{width:'11%'}}>CGST 9% (₹)</th></>
+                    }
+                    <th className="r" style={{width:'14%'}}>Amount (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Row 1: Marketplace commission */}
+                  <tr>
+                    <td>1</td>
+                    <td>
+                      <div style={{fontWeight:600}}>Marketplace Commission on Sales</div>
+                      <div style={{fontSize:9,color:'#666',marginTop:2}}>
+                        Total Sales: ₹{(inv.total_sales||0).toFixed(2)}
+                        {(inv.vendor_discount||0)>0 && <> · Vendor Disc: −₹{(inv.vendor_discount||0).toFixed(2)}</>}
+                        {' '}· Commissionable: ₹{(inv.commissionable||0).toFixed(2)}
+                      </div>
+                    </td>
+                    <td>{inv.hsn_code||'998599'}</td>
+                    <td className="r">₹{(inv.commission||0).toFixed(2)}</td>
+                    {isIGST
+                      ? <td className="r">₹{(inv.igst||0).toFixed(2)}</td>
+                      : <><td className="r">₹{(inv.sgst||0).toFixed(2)}</td><td className="r">₹{(inv.cgst||0).toFixed(2)}</td></>
+                    }
+                    <td className="r" style={{fontWeight:600}}>₹{((inv.commission||0)+(isIGST?inv.igst||0:(inv.sgst||0)+(inv.cgst||0))).toFixed(2)}</td>
+                  </tr>
+
+                  {/* Row 2: Shipping (if any) */}
+                  {(inv.shipping_base||0) > 0 && (
+                    <tr>
+                      <td>2</td>
+                      <td>
+                        <div style={{fontWeight:600}}>COD Shipping Recovery</div>
+                        <div style={{fontSize:9,color:'#666',marginTop:2}}>Shipping collected by vendor from customer on delivery (excl. GST)</div>
+                      </td>
+                      <td>996812</td>
+                      <td className="r">₹{(inv.shipping_base||0).toFixed(2)}</td>
+                      {isIGST
+                        ? <td className="r">₹{(inv.shipping_gst||0).toFixed(2)}</td>
+                        : <><td className="r">₹{((inv.shipping_gst||0)/2).toFixed(2)}</td><td className="r">₹{((inv.shipping_gst||0)/2).toFixed(2)}</td></>
+                      }
+                      <td className="r" style={{fontWeight:600}}>₹{((inv.shipping_base||0)+(inv.shipping_gst||0)).toFixed(2)}</td>
+                    </tr>
+                  )}
+
+                  {/* Row 3: Penalty (if any) */}
+                  {(inv.penalty||0) > 0 && (
+                    <tr>
+                      <td>{(inv.shipping_base||0)>0?3:2}</td>
+                      <td>
+                        <div style={{fontWeight:600,color:'#ef4444'}}>Penalty Charges</div>
+                        <div style={{fontSize:9,color:'#666',marginTop:2}}>Confirmed penalties raised during the period</div>
+                      </td>
+                      <td>—</td>
+                      <td className="r">₹{(inv.penalty||0).toFixed(2)}</td>
+                      {isIGST
+                        ? <td className="r">—</td>
+                        : <><td className="r">—</td><td className="r">—</td></>
+                      }
+                      <td className="r" style={{fontWeight:600,color:'#ef4444'}}>₹{(inv.penalty||0).toFixed(2)}</td>
+                    </tr>
+                  )}
+
+                  {/* Subtotal */}
+                  <tr className="subtotal-row">
+                    <td colSpan={isIGST?3:4} style={{textAlign:'right',fontWeight:700}}>Subtotal</td>
+                    <td className="r">₹{(inv.subtotal||0).toFixed(2)}</td>
+                    {isIGST
+                      ? <td className="r">₹{totalGst.toFixed(2)}</td>
+                      : <><td className="r">₹{((inv.sgst||0)+(inv.shipping_gst||0)/2).toFixed(2)}</td><td className="r">₹{((inv.cgst||0)+(inv.shipping_gst||0)/2).toFixed(2)}</td></>
+                    }
+                    <td className="r">₹{(inv.total_with_gst||0).toFixed(2)}</td>
+                  </tr>
+
+                  {/* Grand total */}
+                  <tr className="total-row">
+                    <td colSpan={isIGST?4:5} style={{textAlign:'right'}}>TOTAL PAYABLE TO CROSCROW</td>
+                    <td className="r">₹{(inv.total_with_gst||0).toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* GST summary box */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+                <div className="inv-summary">
+                  <div style={{fontSize:8,letterSpacing:1,textTransform:'uppercase',color:'#888',marginBottom:8,fontWeight:700}}>Tax Summary</div>
+                  <div className="inv-row"><span>Total Taxable Value</span><span style={{fontWeight:600}}>₹{(inv.subtotal||0).toFixed(2)}</span></div>
+                  {isIGST
+                    ? <div className="inv-row"><span>IGST @ 18%</span><span style={{fontWeight:600}}>₹{totalGst.toFixed(2)}</span></div>
+                    : <>
+                        <div className="inv-row"><span>SGST @ 9%</span><span style={{fontWeight:600}}>₹{((inv.sgst||0)+(inv.shipping_gst||0)/2).toFixed(2)}</span></div>
+                        <div className="inv-row"><span>CGST @ 9%</span><span style={{fontWeight:600}}>₹{((inv.cgst||0)+(inv.shipping_gst||0)/2).toFixed(2)}</span></div>
+                      </>
+                  }
+                  <div className="inv-row" style={{borderTop:'1px solid #ddd',paddingTop:4,marginTop:4,fontWeight:700}}>
+                    <span>Total Tax</span><span>₹{totalGst.toFixed(2)}</span>
+                  </div>
+                  <div className="inv-row inv-total"><span>Grand Total</span><span>₹{(inv.total_with_gst||0).toFixed(2)}</span></div>
+                </div>
+                <div className="inv-summary">
+                  <div style={{fontSize:8,letterSpacing:1,textTransform:'uppercase',color:'#888',marginBottom:8,fontWeight:700}}>How to use this invoice</div>
+                  <div style={{fontSize:10,color:'#555',lineHeight:1.7}}>
+                    <div>• Use invoice no. <strong>{inv.invoice_no}</strong> when filing GSTR-2B</div>
+                    <div>• CROSCROW GSTIN: <strong>{inv.croscrow_gst||croscrow.gst_no||'—'}</strong></div>
+                    <div>• This invoice covers all delivered orders in the period</div>
+                    <div>• {isIGST ? 'IGST can be claimed as input tax credit' : 'SGST & CGST can be claimed as input tax credit'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="inv-footer">
+                <div style={{display:'flex',justifyContent:'space-between'}}>
+                  <span>Computer-generated GST Invoice · {inv.invoice_no} · {inv.hsn_code||'998599'}</span>
+                  <span>{croscrow.email||''}</span>
+                </div>
+                <div style={{marginTop:3}}>{croscrow.company_name||'CROSCROW'} · This is a system-generated invoice and does not require a physical signature.</div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      DASHBOARD VIEW
   ══════════════════════════════════ */
   function Sparkline({ data, color }) {
@@ -5388,6 +5627,8 @@
     const [gstInvLoading, setGstInvLoading] = useState(false);
     const [gstInvMsg,     setGstInvMsg]     = useState(null);
     const [gstInvGen,     setGstInvGen]     = useState(false);
+    const [gstInvView,    setGstInvView]    = useState(null); // inv object being viewed
+    const [ccProfile,     setCcProfile2]    = useState({});
 
     const loadSummary = (period, forceRefresh) => {
       setSumLoading(true);
@@ -5413,7 +5654,10 @@
         .then(r=>r.json()).then(d=>setGstInvList(d.invoices||[])).catch(()=>{}).finally(()=>setGstInvLoading(false));
     };
 
-    useEffect(()=>{ loadSummary(); loadInvoices(); loadGstInvoices(); },[token]);
+    useEffect(()=>{
+      loadSummary(); loadInvoices(); loadGstInvoices();
+      fetch(`${API}/admin/croscrow-profile`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setCcProfile2(d||{})).catch(()=>{});
+    },[token]);
 
     const generate = async () => {
       if(!genVendor||!genStart||!genEnd) { setGenMsg({type:'error',text:'All fields required.'}); return; }
@@ -6251,11 +6495,14 @@
                           <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums',fontWeight:600}}>₹{(inv.total_with_gst||0).toFixed(2)}</td>
                           <td style={{textAlign:'right'}}>{inv.order_count||0}</td>
                           <td>
-                            <button className="btn btn-danger btn-sm" onClick={async()=>{
-                              if(!confirm(`Delete ${inv.invoice_no}?`)) return;
-                              await fetch(`${API}/admin/gst-invoices/${inv.invoice_no}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
-                              loadGstInvoices(gstInvFrom,gstInvTo);
-                            }}>✕</button>
+                            <div style={{display:'flex',gap:4}}>
+                              <button className="btn btn-ghost btn-sm" onClick={()=>setGstInvView(inv)}>⎙ View</button>
+                              <button className="btn btn-danger btn-sm" onClick={async()=>{
+                                if(!confirm(`Delete ${inv.invoice_no}?`)) return;
+                                await fetch(`${API}/admin/gst-invoices/${inv.invoice_no}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                                loadGstInvoices(gstInvFrom,gstInvTo);
+                              }}>✕</button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -6313,6 +6560,7 @@
 
         {editing && <EditSettlementModal settlement={editing} token={token} onClose={()=>setEditing(null)} onSaved={()=>{ setEditing(null); loadInvoices(); loadSummary(); }}/>}
         {invoice  && <InvoiceModal settlement={invoice.settlement} orders={invoice.orders} croscrow={invoice.croscrow||{}} vendorProfile={invoice.vendorProfile||{}} onClose={()=>setInvoice(null)}/>}
+        {gstInvView && <GstInvoiceModal inv={gstInvView} croscrow={ccProfile} onClose={()=>setGstInvView(null)}/>}
       </div>
     );
   }
