@@ -1623,6 +1623,13 @@
     };
 
     const save = async () => {
+      // Warn before moving a delivered order to misc — it will be excluded from settlement
+      if (stage === 'misc' && (order.stage === 'delivered' || order.deliveryStatus?.toLowerCase() === 'delivered')) {
+        const ok = window.confirm(
+          '⚠️ This order is marked DELIVERED.\n\nMoving it to MISC will exclude it from settlement — the vendor will NOT be paid for this order.\n\nOnly do this for influencer/gifted orders.\n\nContinue?'
+        );
+        if (!ok) return;
+      }
       setSaving(true); setMsg(null);
       try {
         const r1 = await fetch(`${API}/admin/orders/${order.shopifyId}/stage`, {

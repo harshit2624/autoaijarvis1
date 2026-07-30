@@ -6484,6 +6484,11 @@ app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res)
   const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
+  // RTO is a courier-confirmed terminal — never allow misc override
+  const currentMeta = await OM.get(id);
+  if (stage === 'misc' && currentMeta?.stage === 'rto')
+    return res.status(400).json({ error: "RTO orders cannot be moved to misc. RTO is a courier-confirmed terminal stage." });
+
   const now = new Date().toISOString();
   const nowMs = Date.now();
   await OM.upsert(id, { stage, updated_at: now });
@@ -15151,11 +15156,50 @@ async function shipsagarTrackingCron() {
     if (!creds?.api_key) { runLog.message = 'ShipSagar not configured.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
 
     // All OVS records with an AWB that aren't in a terminal stage — no date gate,
-    // catches all historical orders that may have been missed by earlier cron runs
+    // catches all historical orders that may have been missed by earlier cron runs.
+    // misc is excluded: it's a manual override that ShipSagar must never touch.
     const activeStages = await mdb.collection('order_vendor_stage').find(
-      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'new'] }, awb: { $exists: true, $ne: '' }, manually_overridden: { $ne: true } },
+      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'new', 'misc'] }, awb: { $exists: true, $ne: '' }, manually_overridden: { $ne: true } },
       { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
     ).toArray();
+
+    // Separately check misc orders — if courier now says delivered, alert admin without changing stage
+    const miscWithAwb = await mdb.collection('order_vendor_stage').find(
+      { stage: 'misc', awb: { $exists: true, $ne: '' } },
+      { projection: { shopify_id: 1, vendor_name: 1, awb: 1, _id: 0 } }
+    ).toArray();
+    for (const rec of miscWithAwb) {
+      try {
+        const ss = await shipsagarTrackShipment(rec.awb);
+        if (!ss?.found || !ss.history?.length) continue;
+        const latest = ss.history[ss.history.length - 1];
+        const desc = latest.ActionDescription || ss.currentStatus || '';
+        const detectedStage = shipsagarStatusToStage(desc);
+        if (detectedStage === 'delivered') {
+          // Update tracking history/display only — do NOT change stage
+          const now2 = new Date().toISOString();
+          const histToSave = ss.history.map(h => ({
+            desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
+            date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
+            time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
+            location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
+            raw: h,
+          })).filter(h => h.desc);
+          await OM.upsert(rec.shopify_id, { delivery_status: desc, delivery_status_updated_at: now2, tracking_history: histToSave });
+
+          // WA alert to admin — stage NOT changed
+          const alreadyAlerted = await mdb.collection('misc_delivery_alerts').findOne({ shopify_id: rec.shopify_id, vendor_name: rec.vendor_name });
+          if (!alreadyAlerted) {
+            await mdb.collection('misc_delivery_alerts').insertOne({ shopify_id: rec.shopify_id, vendor_name: rec.vendor_name, awb: rec.awb, alerted_at: now2 });
+            if (waBot2Socket && waBot2Connected && WA_ADMIN_NO) {
+              const msg = `⚠️ MISC ORDER DELIVERED\n\nOrder #${rec.shopify_id}\nVendor: ${rec.vendor_name}\nAWB: ${rec.awb}\n\nCourier says: *${desc}*\n\nThis order is in MISC stage — stage has NOT been changed.\n\nIf this should be settled, open the order and move it to Delivered manually.`;
+              waBot2Socket.sendMessage(`${WA_ADMIN_NO}@s.whatsapp.net`, { text: msg }).catch(() => {});
+            }
+            console.log(`⚠️ Misc-delivered alert: order ${rec.shopify_id} vendor ${rec.vendor_name} AWB ${rec.awb}`);
+          }
+        }
+      } catch(e) { /* skip silently */ }
+    }
 
     // Deduplicate by AWB — one ShipSagar call per unique AWB
     const awbMap = new Map();
