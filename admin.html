@@ -1438,11 +1438,13 @@
         .then(r=>r.json()).then(d=>setConnectedPartners(d.partners||[])).catch(()=>{});
     },[order.shopifyId]);
 
-    // Load stored tracking history from DB on open — instant, no ShipSagar call
+    // Load stored tracking history from DB on open; if no cache yet, fetch live automatically
     useEffect(()=>{
+      if (!order.awb) return; // no AWB, nothing to load
       setRefreshing(true);
       fetch(`${API}/admin/orders/${order.shopifyId}/tracking-cached`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>{
+          const hasData = d.history?.length || d.vendors?.length;
           if (d.status) setDelivStatus(d.status);
           if (d.history?.length) setTrackHistory(d.history);
           if (d.vendors?.length) {
@@ -1450,7 +1452,10 @@
             d.vendors.forEach(v => { vMap[v.vendor] = v; });
             setVendorTracking2(vMap);
           }
-        }).catch(()=>{}).finally(()=>setRefreshing(false));
+          setRefreshing(false);
+          // No cache yet — auto-fetch live so user doesn't have to click Refresh
+          if (!hasData) refreshDelivery();
+        }).catch(()=>{ setRefreshing(false); refreshDelivery(); });
     },[order.shopifyId]);
 
     useEffect(()=>{
