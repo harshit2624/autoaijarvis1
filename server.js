@@ -6333,7 +6333,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
     });
     allVS.forEach(r => {
       if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
-      vsMap[r.shopify_id][r.vendor_name] = r.stage;
+      vsMap[r.shopify_id][r.vendor_name.toLowerCase()] = r.stage;
       if (r.awb || r.courier || r.tracking_url) {
         if (!vtMap[r.shopify_id]) vtMap[r.shopify_id] = {};
         vtMap[r.shopify_id][r.vendor_name] = { awb: r.awb || '', courier: r.courier || '', trackingUrl: r.tracking_url || '' };
@@ -6402,24 +6402,31 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             if (vendors.length > 1) {
               // Multi-vendor: each vendor stage is independent
               return Object.fromEntries(vendors.map(v => {
-                const stored = vsMap[String(o.id)]?.[v] || 'new';
+                const stored = vsMap[String(o.id)]?.[v.toLowerCase()] || 'new';
                 const shopifyDerived = shopifyMap[v];
                 return [v, safeStage(stored, shopifyDerived)];
               }));
             } else {
               // Single-vendor: suppress shopify 'ready' if order_meta is already past ready
-              const m = { ...(vsMap[String(o.id)] || {}) };
+              const ovs = vsMap[String(o.id)] || {};
+              const m = {};
               for (const [v, s] of Object.entries(shopifyMap)) {
+                const stored = ovs[v.toLowerCase()] || 'new';
                 if (s === 'ready' && isSingleVendor && metaIsBeyondReady)
-                  m[v] = higherStage(m[v] || metaStage, metaStage);
-                else m[v] = safeStage(m[v] || 'new', s);
+                  m[v] = higherStage(stored || metaStage, metaStage);
+                else m[v] = safeStage(stored, s);
+              }
+              // Also include vendors that have OVS but no shopify fulfillment
+              for (const [vl, stage] of Object.entries(ovs)) {
+                const vRaw = vendors.find(v => v.toLowerCase() === vl) || vl;
+                if (!m[vRaw]) m[vRaw] = stage;
               }
               return m;
             }
           })(),
         stage:          (() => {
             const base = meta.stage || 'new';
-            const allVS = vsMap[String(o.id)] || {};
+            const allVS = vsMap[String(o.id)] || {}; // keys are lowercased
             // misc is a manual admin override — it always wins, no Shopify merge
             if (base === 'misc' || Object.values(allVS).includes('misc')) return 'misc';
             const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
@@ -6431,7 +6438,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             const allStages = [
               ...Object.values(allVS),
               ...Object.entries(shopifyMap).map(([v, shopifyDerived]) => {
-                const stored = allVS[v] || base;
+                const stored = allVS[v.toLowerCase()] || base;
                 if (TERMINAL.includes(shopifyDerived) && !TERMINAL.includes(stored)) return stored;
                 return shopifyDerived;
               }),
