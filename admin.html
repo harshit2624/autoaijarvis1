@@ -5376,6 +5376,13 @@
     const [gstMsg,      setGstMsg]      = useState(null);
     const [invVendorFilter, setInvVendorFilter] = useState('');
     const [invStatusFilter, setInvStatusFilter] = useState('');
+    // ── Tab 3: GST Invoices ────────────────────────────────────────────────
+    const [gstInvList,    setGstInvList]    = useState([]);
+    const [gstInvFrom,    setGstInvFrom]    = useState('');
+    const [gstInvTo,      setGstInvTo]      = useState('');
+    const [gstInvLoading, setGstInvLoading] = useState(false);
+    const [gstInvMsg,     setGstInvMsg]     = useState(null);
+    const [gstInvGen,     setGstInvGen]     = useState(false);
 
     const loadSummary = (period, forceRefresh) => {
       setSumLoading(true);
@@ -5394,7 +5401,14 @@
       ]).then(([sd, vd])=>{ setSettlements(sd.settlements||[]); setVendors(vd.vendors||[]); }).catch(()=>{}).finally(()=>setInvLoading(false));
     };
 
-    useEffect(()=>{ loadSummary(); loadInvoices(); },[token]);
+    const loadGstInvoices = (from, to) => {
+      setGstInvLoading(true);
+      let qs = from && to ? `?from=${from}&to=${to}` : '';
+      fetch(`${API}/admin/gst-invoices${qs}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setGstInvList(d.invoices||[])).catch(()=>{}).finally(()=>setGstInvLoading(false));
+    };
+
+    useEffect(()=>{ loadSummary(); loadInvoices(); loadGstInvoices(); },[token]);
 
     const generate = async () => {
       if(!genVendor||!genStart||!genEnd) { setGenMsg({type:'error',text:'All fields required.'}); return; }
@@ -5453,7 +5467,7 @@
       <div className="page">
         {/* Tab switcher */}
         <div style={{display:'flex',gap:0,marginBottom:20,borderBottom:'2px solid var(--border)'}}>
-          {[['delivered','📦 Delivered Orders'],['invoices','🧾 Settlement Invoices']].map(([id,label])=>(
+          {[['delivered','📦 Delivered Orders'],['invoices','🧾 Settlement Invoices'],['gstinv','🧾 GST Invoices']].map(([id,label])=>(
             <button key={id} onClick={()=>setActiveTab(id)}
               style={{padding:'9px 22px',fontSize:12,fontWeight:600,border:'none',background:'transparent',cursor:'pointer',
                 color:activeTab===id?'var(--indigo)':'var(--text-muted)',
@@ -6137,6 +6151,91 @@
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── TAB 3: GST Invoices ──────────────────────────────────────────────── */}
+        {activeTab==='gstinv' && (
+          <div className="card" style={{padding:20}}>
+            <div style={{marginBottom:16}}>
+              <div className="card-title" style={{marginBottom:4}}>GST Invoices</div>
+              <div style={{fontSize:11,color:'var(--text-dim)'}}>Generate per-vendor GST invoices for a period. Invoice numbers are auto-filled in GST export CSV.</div>
+            </div>
+
+            {/* Generate controls */}
+            <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end',marginBottom:16,padding:14,background:'var(--bg-alt)',borderRadius:8,border:'1px solid var(--border)'}}>
+              <div>
+                <label className="form-label">Period From</label>
+                <input className="form-input" type="date" value={gstInvFrom} onChange={e=>setGstInvFrom(e.target.value)} style={{width:140}}/>
+              </div>
+              <div>
+                <label className="form-label">Period To</label>
+                <input className="form-input" type="date" value={gstInvTo} onChange={e=>setGstInvTo(e.target.value)} style={{width:140}}/>
+              </div>
+              <button className="btn btn-indigo" disabled={gstInvGen||!gstInvFrom||!gstInvTo} onClick={async()=>{
+                setGstInvGen(true); setGstInvMsg(null);
+                try {
+                  const r = await fetch(`${API}/admin/gst-invoices/generate`,{
+                    method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+                    body: JSON.stringify({ from: gstInvFrom, to: gstInvTo }),
+                  });
+                  const d = await r.json();
+                  if (!r.ok) throw new Error(d.error||'Failed');
+                  setGstInvMsg({type:'success', text:`Generated ${d.count} GST invoice(s) successfully.`});
+                  loadGstInvoices(gstInvFrom, gstInvTo);
+                } catch(e){ setGstInvMsg({type:'error',text:e.message}); }
+                setGstInvGen(false);
+              }}>
+                {gstInvGen?<><span className="spin">↻</span> Generating…</>:'⚡ Generate All Invoices'}
+              </button>
+              <button className="btn btn-ghost" disabled={!gstInvFrom||!gstInvTo} onClick={()=>loadGstInvoices(gstInvFrom,gstInvTo)}>Filter</button>
+              <button className="btn btn-ghost" onClick={()=>{ setGstInvFrom(''); setGstInvTo(''); loadGstInvoices(); }}>Clear</button>
+            </div>
+
+            {gstInvMsg && <div className={`alert alert-${gstInvMsg.type}`} style={{marginBottom:12}}>{gstInvMsg.type==='success'?'✓':'⚠'} {gstInvMsg.text}</div>}
+
+            {gstInvLoading ? (
+              <div style={{textAlign:'center',padding:40,color:'var(--text-dim)'}}>Loading…</div>
+            ) : gstInvList.length===0 ? (
+              <div style={{textAlign:'center',padding:40,color:'var(--text-dim)'}}>No GST invoices yet. Select a period and click Generate.</div>
+            ) : (
+              <div style={{overflowX:'auto'}}>
+                <table className="data-table">
+                  <thead><tr>
+                    <th>Invoice No</th>
+                    <th>Vendor</th>
+                    <th>GST No</th>
+                    <th>Period</th>
+                    <th style={{textAlign:'right'}}>Total Sales</th>
+                    <th style={{textAlign:'right'}}>Commission</th>
+                    <th style={{textAlign:'right'}}>GST on Comm</th>
+                    <th style={{textAlign:'right'}}>Orders</th>
+                    <th></th>
+                  </tr></thead>
+                  <tbody>
+                    {gstInvList.map(inv=>(
+                      <tr key={inv.invoice_no}>
+                        <td><strong style={{color:'var(--indigo)',fontFamily:'monospace'}}>{inv.invoice_no}</strong></td>
+                        <td style={{fontSize:12}}>{inv.vendor_name}</td>
+                        <td style={{fontSize:11,color:'var(--text-dim)'}}>{inv.gst_no||'—'}</td>
+                        <td style={{fontSize:11,color:'var(--text-dim)'}}>{inv.period_from} → {inv.period_to}</td>
+                        <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.total_taxable||0).toFixed(2)}</td>
+                        <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{(inv.commission_base||0).toFixed(2)}</td>
+                        <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{((inv.igst||0)+(inv.cgst||0)+(inv.sgst||0)).toFixed(2)}</td>
+                        <td style={{textAlign:'right'}}>{inv.order_count||0}</td>
+                        <td>
+                          <button className="btn btn-danger btn-sm" onClick={async()=>{
+                            if(!confirm(`Delete ${inv.invoice_no}?`)) return;
+                            await fetch(`${API}/admin/gst-invoices/${inv.invoice_no}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+                            loadGstInvoices(gstInvFrom,gstInvTo);
+                          }}>✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
