@@ -14253,56 +14253,74 @@ async function getAuthedPeopleClient() {
 
 async function upsertGoogleContact({ name, phone, orderName }) {
   const people = await getAuthedPeopleClient();
-  const contactName = `${name} — ${orderName}`;
-  const phoneClean  = (phone || "").replace(/\D/g, "");
+  const phoneClean = (phone || "").replace(/\D/g, "");
 
   // Search for existing contact by phone
-  let existingResourceName = null;
+  let existingPerson = null;
   try {
     const search = await people.people.searchContacts({
       query: phoneClean,
-      readMask: 'names,phoneNumbers,biographies',
+      readMask: 'names,phoneNumbers,biographies,metadata',
       pageSize: 5,
     });
-    const results = search.data?.results || [];
-    for (const r of results) {
+    for (const r of (search.data?.results || [])) {
       const phones = r.person?.phoneNumbers || [];
       if (phones.some(p => (p.value || "").replace(/\D/g, "").endsWith(phoneClean.slice(-10)))) {
-        existingResourceName = r.person.resourceName;
+        existingPerson = r.person;
         break;
       }
     }
-  } catch {}
+  } catch (e) {
+    console.error('Google Contacts search error:', e.message);
+  }
 
-  if (existingResourceName) {
-    // Update: append order number to name if not already there
+  if (existingPerson) {
     try {
-      const existing = await people.people.get({ resourceName: existingResourceName, personFields: 'names,phoneNumbers,biographies,metadata' });
-      const currentName = existing.data?.names?.[0]?.displayName || "";
-      // Append new order to name if not already present
-      const newDisplayName = currentName.includes(orderName) ? currentName : `${currentName}, ${orderName}`;
+      // Re-fetch with etag for update
+      const fresh = await people.people.get({ resourceName: existingPerson.resourceName, personFields: 'names,phoneNumbers,biographies,metadata' });
+      const currentDisplayName = fresh.data?.names?.[0]?.displayName || "";
+
+      // Extract base customer name (everything before the first order number)
+      // Orders are stored as "#XXXX" tokens — collect existing ones and add new one
+      const orderTokens = (currentDisplayName.match(/#\d+/g) || []);
+      if (!orderTokens.includes(orderName)) orderTokens.push(orderName);
+
+      // Base name: strip all order tokens and separators to get clean customer name
+      const baseName = currentDisplayName.replace(/#\d+/g, '').replace(/[,\s—]+$/, '').replace(/^\s*/, '').trim() || name;
+      const newDisplayName = `${baseName} ${orderTokens.join(', ')}`;
+
+      if (newDisplayName === currentDisplayName) {
+        console.log(`📒 Google Contacts: ${existingPerson.resourceName} already up to date`);
+        return;
+      }
+
       await people.people.updateContact({
-        resourceName: existingResourceName,
+        resourceName: existingPerson.resourceName,
         updatePersonFields: 'names',
         requestBody: {
-          etag: existing.data.etag,
+          etag: fresh.data.etag,
           names: [{ givenName: newDisplayName }],
         },
       });
-      console.log(`📒 Google Contacts: updated ${existingResourceName} → ${newDisplayName}`);
+      console.log(`📒 Google Contacts: updated → "${newDisplayName}"`);
     } catch (e) {
       console.error('Google Contacts update error:', e.message);
     }
   } else {
-    // Create new contact
-    await people.people.createContact({
-      requestBody: {
-        names: [{ givenName: contactName }],
-        phoneNumbers: [{ value: phone, type: 'mobile' }],
-        memberships: [{ contactGroupMembership: { contactGroupId: 'myContacts' } }],
-      },
-    });
-    console.log(`📒 Google Contacts: created "${contactName}" (${phone})`);
+    // Create new contact with customer name + first order
+    try {
+      const contactName = `${name} ${orderName}`;
+      await people.people.createContact({
+        requestBody: {
+          names: [{ givenName: contactName }],
+          phoneNumbers: [{ value: phone, type: 'mobile' }],
+          memberships: [{ contactGroupMembership: { contactGroupId: 'myContacts' } }],
+        },
+      });
+      console.log(`📒 Google Contacts: created "${contactName}" (${phone})`);
+    } catch (e) {
+      console.error('Google Contacts create error:', e.message);
+    }
   }
 }
 
