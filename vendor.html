@@ -2194,7 +2194,12 @@
                 </div>
               ))
             ) : rows.length===0 ? (
-              <div className="empty" style={{padding:40}}><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div>
+              <div className="empty" style={{padding:40}}>
+                {search && allLoading
+                  ? <><div className="empty-icon" style={{opacity:1}}>🔍</div><div className="empty-title">Searching all orders…</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Looking through your full order history</div></>
+                  : <><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></>
+                }
+              </div>
             ) : (
               groupByDate(rows).map(group=>(
                 <div key={group.label}>
@@ -2244,7 +2249,12 @@
                   <tbody>
                     {loading ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={11}/>) :
                      rows.length===0 ? (
-                      <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></div></td></tr>
+                      <tr><td colSpan={12}><div className="empty">
+                        {search && allLoading
+                          ? <><div className="empty-icon" style={{opacity:1}}>🔍</div><div className="empty-title">Searching all orders…</div><div style={{fontSize:11,color:'var(--text-muted)'}}>Looking through your full order history</div></>
+                          : <><div className="empty-icon">📦</div><div className="empty-title">{search||stage!=='all'?'No orders match.':'No orders found.'}</div></>
+                        }
+                      </div></td></tr>
                      ) :
                      rows.map((o,i)=>{
                        const qty=o.myItems.reduce((s,x)=>s+x.quantity,0);
