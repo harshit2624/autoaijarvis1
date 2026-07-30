@@ -6485,9 +6485,11 @@ app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res)
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   // RTO is a courier-confirmed terminal — never allow misc override
-  const currentMeta = await OM.get(id);
-  if (stage === 'misc' && currentMeta?.stage === 'rto')
-    return res.status(400).json({ error: "RTO orders cannot be moved to misc. RTO is a courier-confirmed terminal stage." });
+  if (stage === 'misc') {
+    const currentMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(id) }, { projection: { stage: 1, _id: 0 } });
+    if (currentMeta?.stage === 'rto')
+      return res.status(400).json({ error: "RTO orders cannot be moved to misc. RTO is a courier-confirmed terminal stage." });
+  }
 
   const now = new Date().toISOString();
   const nowMs = Date.now();
