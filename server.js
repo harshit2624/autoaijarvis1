@@ -7685,60 +7685,95 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
     const metaMap     = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     const vProfileMap = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
     const vConfigMap  = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+
     const productRulesMap = {};
     for (const r of allProductRules) {
       if (!productRulesMap[r.vendor_name]) productRulesMap[r.vendor_name] = { byProduct: {}, bySku: {} };
       if (r.product_id) productRulesMap[r.vendor_name].byProduct[String(r.product_id)] = r;
       if (r.sku)        productRulesMap[r.vendor_name].bySku[r.sku] = r;
     }
-    const stageMap = {};
+    const findRuleFast = (vendor, product_id, sku) => {
+      const vm = productRulesMap[vendor];
+      if (!vm) return null;
+      if (product_id && vm.byProduct[String(product_id)]) return vm.byProduct[String(product_id)];
+      if (sku && vm.bySku[sku]) return vm.bySku[sku];
+      return null;
+    };
+
+    const ovsMap = {};
     for (const s of allVendorStages) {
-      if (!stageMap[s.shopify_id]) stageMap[s.shopify_id] = {};
-      stageMap[s.shopify_id][s.vendor_name] = s.stage;
-    }
-    const overrideMap = {};
-    for (const o of priceOverrideDocs) {
-      if (!overrideMap[o.shopify_id]) overrideMap[o.shopify_id] = {};
-      overrideMap[o.shopify_id][o.line_item_id] = o.override_price;
+      if (!ovsMap[s.shopify_id]) ovsMap[s.shopify_id] = {};
+      const existing = ovsMap[s.shopify_id][s.vendor_name];
+      ovsMap[s.shopify_id][s.vendor_name] = existing ? higherStage(existing, s.stage) : s.stage;
     }
 
-    // Same vendor aggregation as gst-export
+    const priceOverrideMap = {};
+    for (const ov of priceOverrideDocs) {
+      if (!priceOverrideMap[ov.shopify_order_id]) priceOverrideMap[ov.shopify_order_id] = {};
+      priceOverrideMap[ov.shopify_order_id][ov.line_item_id] = ov.overridden_price;
+    }
+
+    // Identical aggregation to gst-export
     const vendorMap = {};
-    for (const order of allOrders) {
-      const oid = String(order.id);
-      const meta = metaMap[oid] || {};
-      if (!['delivered'].includes((meta.delivery_status || '').toLowerCase())) continue;
-      for (const item of (order.line_items || [])) {
-        const vn = item.vendor;
-        if (!vn) continue;
-        const stg = (stageMap[oid] || {})[vn] || '';
-        if (!['delivered'].includes(stg.toLowerCase())) continue;
-        const overridePrice = (overrideMap[oid] || {})[String(item.id)];
-        const linePrice = overridePrice != null ? parseFloat(overridePrice) : parseFloat(item.price) * item.quantity;
-        if (!vendorMap[vn]) vendorMap[vn] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set(), orderNos: [] };
-        const d = vendorMap[vn];
-        const cfg = vConfigMap[vn] || {};
-        const rules = productRulesMap[vn] || { byProduct: {}, bySku: {} };
-        const prodRule = rules.byProduct[String(item.product_id)] || rules.bySku[item.sku];
-        const calc = prodRule ? calculateProdRuleCommission(linePrice, prodRule)
-                               : calculateCommission(linePrice, cfg.commission_pct || 0, cfg.advance_paid || 0, cfg.commission_type || 'percentage');
-        d.gross      += linePrice;
-        d.commission += calc.commission;
-        d.gst        += calc.gst;
-        if (!d.ordersAdded.has(oid)) {
-          d.ordersAdded.add(oid);
-          if (order.name) d.orderNos.push(order.name);
+    for (const o of allOrders) {
+      const sid = String(o.id);
+      const meta = metaMap[sid] || {};
+      const payType = meta.payment_type || 'cod';
+      const isCod = payType !== 'prepaid';
+      const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+      const orderOverrides = priceOverrideMap[sid] || {};
+      const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : parseFloat(li.price || 0);
+
+      const deliveredVendorsInOrder = new Set();
+      for (const li of (o.line_items || [])) {
+        const vendor = li.vendor;
+        if (!vendor) continue;
+        const vendorDbStage = ovsMap[sid]?.[vendor] || 'new';
+        const shopifyStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor] || null;
+        const effectiveStage = higherStage(vendorDbStage, shopifyStage || 'new');
+        if (effectiveStage === 'delivered') deliveredVendorsInOrder.add(vendor);
+      }
+
+      for (const li of (o.line_items || [])) {
+        const vendor = li.vendor;
+        if (!vendor) continue;
+        if (!deliveredVendorsInOrder.has(vendor)) continue;
+
+        if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
+
+        const rawPrice = parseFloat(li.price || 0);
+        const liPrice  = effectivePrice(li);
+        const rawRev   = rawPrice * (li.quantity || 1);
+        const commPct  = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+        const productRule = findRuleFast(vendor, li.product_id, li.sku);
+        const calc = productRule
+          ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
+          : calcCommission(liPrice * (li.quantity || 1), payType, commPct, 0);
+
+        vendorMap[vendor].gross += rawRev;
+        if (!isCod) vendorMap[vendor].prepaidDiscount += (rawRev - calc.base);
+        vendorMap[vendor].commission += calc.commission;
+        vendorMap[vendor].gst += calc.gst;
+
+        if (!vendorMap[vendor].ordersAdded.has(sid)) {
+          vendorMap[vendor].ordersAdded.add(sid);
+          const deliveredCount = deliveredVendorsInOrder.size || 1;
+          if (isCod && (meta.advance_paid || 0) > 0)
+            vendorMap[vendor].advance += parseFloat(((meta.advance_paid || 0) / deliveredCount).toFixed(2));
+          if (isCod && orderShipping > 0)
+            vendorMap[vendor].shipping += parseFloat((orderShipping / deliveredVendorsInOrder.size).toFixed(2));
         }
       }
     }
-    // Add penalties
+
+    // Penalties in the period
     const fromTs = new Date(`${from}T00:00:00Z`).getTime();
     const toTs   = new Date(`${to}T23:59:59Z`).getTime();
     for (const p of confirmedPenalties) {
       if (!p.vendor_name) continue;
       const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
       if (pTs < fromTs || pTs > toTs) continue;
-      if (!vendorMap[p.vendor_name]) vendorMap[p.vendor_name] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set(), orderNos: [] };
+      if (!vendorMap[p.vendor_name]) vendorMap[p.vendor_name] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
       vendorMap[p.vendor_name].penalty = (vendorMap[p.vendor_name].penalty || 0) + (p.penalty_amount || 0);
     }
 
