@@ -23596,7 +23596,8 @@ async function releaseWA2Lock() {
   await mdb.collection('wa_bot_lock_v2').deleteOne({ _id:'lock', holder:WA2_LOCK_INSTANCE }).catch(()=>{});
 }
 
-let waBot2PairingCode = null; // set when pairing code is available
+let waBot2PairingCode  = null;
+let waBot2PairingPhone = null; // set by /pair endpoint; bot auto-requests code on next start
 
 async function startWA2() {
   if (waBot2Starting) return;
@@ -23617,7 +23618,7 @@ async function startWA2() {
 
     const sock = makeWASocket({
       auth:              state,
-      browser:           Browsers.macOS('Safari'),
+      browser:           Browsers.ubuntu('Chrome'),
       logger:            pino({ level: 'silent' }),
       printQRInTerminal: false,
       syncFullHistory:   false,
@@ -23625,6 +23626,19 @@ async function startWA2() {
 
     waBot2Socket = sock;
     sock.ev.on('creds.update', saveCreds);
+
+    // As soon as socket is ready and creds not registered, request pairing code automatically
+    if (waBot2PairingPhone && !state.creds.registered) {
+      setTimeout(async () => {
+        try {
+          const code = await sock.requestPairingCode(waBot2PairingPhone);
+          waBot2PairingCode = code;
+          console.log(`🔑 WA v2 pairing code: ${code}`);
+        } catch (e) {
+          console.error('❌ Pairing code request failed:', e.message);
+        }
+      }, 3000); // give socket 3s to finish handshake before requesting
+    }
 
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
       if (qr) {
@@ -23645,6 +23659,9 @@ async function startWA2() {
           console.log('🔄 WA v2: logged out — clearing auth, reconnecting in 5s');
           if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(()=>{});
           waBot2Timer = setTimeout(startWA2, 5000);
+        } else if (code === 515) {
+          console.log('🔄 WA v2: restart required after pairing — reconnecting in 2s');
+          waBot2Timer = setTimeout(startWA2, 2000);
         } else {
           console.log(`🔄 WA v2: disconnected (code ${code}) — reconnecting in 5s`);
           waBot2Timer = setTimeout(startWA2, 5000);
@@ -23656,6 +23673,7 @@ async function startWA2() {
         waBot2Starting    = false;
         waBot2QR          = null;
         waBot2PairingCode = null;
+        waBot2PairingPhone = null;
         console.log('✅ WA Bot v2 connected!');
         waSocket    = sock;
         waConnected = true;
@@ -23773,15 +23791,29 @@ app.get('/admin/wa2-qr/reset', adminAuth, async (req, res) => {
 app.post('/admin/wa2-qr/pair', adminAuth, async (req, res) => {
   const phone = (req.query.phone || '').replace(/\D/g, '');
   if (!phone) return res.json({ ok: false, error: 'Phone number required' });
-  if (!waBot2Socket) return res.json({ ok: false, error: 'Bot socket not ready — wait a moment and try again' });
-  try {
-    const code = await waBot2Socket.requestPairingCode(phone);
-    waBot2PairingCode = code;
-    console.log(`🔑 WA v2 pairing code for ${phone}: ${code}`);
-    res.json({ ok: true, code });
-  } catch (e) {
-    res.json({ ok: false, error: e.message });
+
+  // Store phone and restart bot — it will auto-request code on startup
+  waBot2PairingPhone = phone;
+  waBot2PairingCode  = null;
+
+  // Kill current socket and restart fresh
+  try { waBot2Socket?.ev?.removeAllListeners?.(); } catch (_) {}
+  waBot2Socket    = null;
+  waBot2Connected = false;
+  waBot2QR        = null;
+  waBot2Starting  = false;
+  if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
+  if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(() => {});
+
+  // Start bot — it will request pairing code automatically after 3s
+  waBot2Timer = setTimeout(startWA2, 1000);
+
+  // Wait up to 15s for the pairing code to appear
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    if (waBot2PairingCode) return res.json({ ok: true, code: waBot2PairingCode });
   }
+  res.json({ ok: false, error: 'Timed out waiting for pairing code — check Render logs' });
 });
 
 if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
