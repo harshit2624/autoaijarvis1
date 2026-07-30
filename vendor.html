@@ -2052,9 +2052,22 @@
     const [sort,   setSort]     = useState('date');
     const [dir,    setDir]      = useState('desc');
     const [page,   setPage]     = useState(1);
+    const [allOrders,    setAllOrders]    = useState(null); // null = not loaded yet
+    const [allLoading,   setAllLoading]   = useState(false);
+
+    // When vendor starts searching, lazy-load all-time orders once
+    useEffect(()=>{
+      if(!search.trim() || allOrders !== null || allLoading) return;
+      setAllLoading(true);
+      fetch(`${API}/vendor/orders?created_at_min=2000-01-01T00:00:00Z`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{ setAllOrders(d.orders||[]); setAllLoading(false); })
+        .catch(()=>setAllLoading(false));
+    },[search, allOrders, allLoading, token]);
+
+    const pool = search.trim() ? (allOrders || orders) : orders;
 
     const filtered = useMemo(()=>{
-      let l=[...orders];
+      let l=[...pool];
       if(search.trim()){const q=search.toLowerCase();l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.email||'').toLowerCase().includes(q)||o.myItems.some(i=>i.title.toLowerCase().includes(q)));}
       if(stage!=='all'){
         if(stage==='confirmed') l=l.filter(o=>['confirmed','partial'].includes(o.stage||'new'));
@@ -2066,7 +2079,7 @@
         return dir==='desc'?new Date(b.date)-new Date(a.date):new Date(a.date)-new Date(b.date);
       });
       return l;
-    },[orders,search,stage,sort,dir]);
+    },[pool,search,stage,sort,dir]);
 
     const pages = Math.max(1,Math.ceil(filtered.length/PER));
     const cur   = Math.min(page,pages);
@@ -2146,6 +2159,8 @@
           <div className="search-wrap" style={{marginBottom: isMobile?8:0}}>
             <span className="search-ico">⌕</span>
             <input className="search-input" placeholder="Search order, customer…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/>
+            {search.trim() && allLoading && <span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:11,color:'var(--text-muted)'}}>searching all…</span>}
+            {search.trim() && !allLoading && allOrders && <span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:10,color:'var(--text-muted)'}}>all time</span>}
           </div>
 
           {/* Stage filter tabs — horizontal scroll */}
