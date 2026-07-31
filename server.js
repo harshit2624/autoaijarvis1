@@ -6533,7 +6533,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
 app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   // RTO is a courier-confirmed terminal — never allow misc override
@@ -6548,7 +6548,7 @@ app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res)
   await OM.upsert(id, { stage, updated_at: now });
 
   // Admin manual override — no guards, unconditional sync to all vendors
-  const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
+  const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
   try {
     const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
     const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
@@ -6577,7 +6577,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
   if (!stage && add_tags.length === 0 && remove_tags.length === 0)
     return res.status(400).json({ error: "Specify stage or tags to add/remove." });
 
-  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc"];
   if (stage && !VALID_STAGES.includes(stage))
     return res.status(400).json({ error: "Invalid stage." });
 
@@ -6600,7 +6600,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
         await OM.upsert(id, { stage, updated_at: now });
         fireStageEmails(id, stage).catch(() => {});
         // Admin bulk override — no guards, unconditional sync to all vendors
-        const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
+        const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
         const nowMs = Date.now();
         try {
           const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
@@ -6663,13 +6663,13 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
 app.put("/admin/orders/:id/vendor-stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { vendor_name, stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled","misc"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc"];
   if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   const now = new Date().toISOString();
   const nowMs = Date.now();
-  const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
+  const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
   const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name }, { projection: { _id: 0 } });
 
   const newStartedAt = ['confirmed','partial'].includes(stage) ? nowMs : (existing?.stage_started_at || 0);
@@ -14587,7 +14587,7 @@ _Ship now to avoid penalty — CROSCROW Ops_`;
     const etaPast = await DR.expiredEta(today);
     for (const dr of etaPast) {
       const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: dr.shopify_id, vendor_name: dr.vendor_name }, { projection: { stage: 1, _id: 0 } });
-      const fulfilledStages = ['ready','pickup','transit','delivered','rto','cancelled'];
+      const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
       if (!ovs || !fulfilledStages.includes(ovs.stage)) {
         let orderName = '';
         try { const od = await shopifyREST(`/orders/${dr.shopify_id}.json?fields=name`); orderName = od?.order?.name || ''; } catch {}
