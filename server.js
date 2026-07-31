@@ -15328,6 +15328,8 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
     raw:      h,  // keep raw for future schema changes
   })).filter(h => h.desc);
   await OM.upsert(sid, { delivery_status: desc, delivery_status_updated_at: now, tracking_history: historyToSave });
+  // Also save per-vendor tracking history to OVS so multi-vendor orders show correct scan log per shipment
+  await OVS.upsert(sid, vendorName, { tracking_history: historyToSave, updated_at: now }, { respectManualOverride: false, respectStageOrder: false });
 
   // Apply ShipSagar tag to Shopify order
   if (desc) applyShipSagarTag(sid, desc).catch(() => {});
@@ -17911,6 +17913,7 @@ async function buildOrderPayload(order) {
         eta_date: latestRemark.eta_date,
         submitted_at: latestRemark.submitted_at ? new Date(latestRemark.submitted_at).toISOString() : null,
       } : null,
+      tracking_history: vs.tracking_history || [],
       items: vendorItems,
     };
   });

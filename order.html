@@ -819,6 +819,8 @@ html,body{
 
       <!-- Status card (single vendor) -->
       <div id="status-card" style="margin-top:16px"></div>
+      <!-- Delay banner (single vendor, shown when vendor reported a delay pre-dispatch) -->
+      <div id="delay-banner" style="display:none;margin:10px 0;padding:10px 14px;border-radius:10px;background:#fffbeb;border:1px solid #fcd34d;gap:10px;align-items:flex-start"></div>
       <!-- Courier scan log — shown below status card for transit/ofd/delivered stages -->
       <div id="scan-log-wrap"></div>
 
@@ -1075,23 +1077,17 @@ function buildStepper(stage, mini = false) {
 }
 
 // ── Courier scan log ─────────────────────────────────────────
-function renderScanLog(history, stage) {
-  const wrap = document.getElementById('scan-log-wrap');
-  if (!wrap) return;
+function buildScanLogHtml(history, stage, logId) {
   const SCAN_STAGES = ['transit','pickup','ofd','delivered'];
-  if (!SCAN_STAGES.includes(stage) || !history || !history.length) { wrap.innerHTML = ''; return; }
+  if (!SCAN_STAGES.includes(stage) || !history || !history.length) return '';
 
-  // Reverse so newest is first
   const events = [...history].reverse();
   const total = events.length;
-  const INITIAL_SHOW = 2; // how many show without expanding
-
+  const INITIAL_SHOW = 2;
   const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
 
   function fmtDateTime(ev) {
-    // Stored normalized fields (ActionDate/ActionTime mapped to date/time)
     if (ev.date || ev.time) return [ev.date, ev.time].filter(Boolean).join(' ');
-    // Raw fallback (in case stored before normalization)
     const raw = ev.raw || {};
     const d = raw.ActionDate || raw.ScanDate || raw.Date || raw.EventDate || '';
     const t = raw.ActionTime || raw.ScanTime || raw.Time || raw.EventTime || '';
@@ -1125,9 +1121,8 @@ function renderScanLog(history, stage) {
   const visibleEvents = events.slice(0, INITIAL_SHOW);
   const hiddenEvents  = events.slice(INITIAL_SHOW);
   const hasMore = hiddenEvents.length > 0;
-  const logId = 'scan-log-' + Date.now();
 
-  wrap.innerHTML = `
+  return `
     <div class="scan-log" id="${logId}">
       <div class="scan-log-header" onclick="toggleScanLog('${logId}')">
         <span class="scan-log-title">Shipment Updates</span>
@@ -1144,6 +1139,13 @@ function renderScanLog(history, stage) {
         <span class="scan-log-toggle">${chevron}</span>
       </div>` : ''}
     </div>`;
+}
+
+function renderScanLog(history, stage) {
+  const wrap = document.getElementById('scan-log-wrap');
+  if (!wrap) return;
+  const logId = 'scan-log-' + Date.now();
+  wrap.innerHTML = buildScanLogHtml(history, stage, logId);
 }
 
 function toggleScanLog(id) {
@@ -1275,6 +1277,23 @@ function renderTrack(d) {
             <span class="vendor-name">${esc(vs.vendor_name)}</span>
             <span class="pending-badge">Pending dispatch</span>
           </div>`;
+      // Per-vendor scan log (inline, inside the vendor card)
+      const scanLogId = `scan-${vs.vendor_name.replace(/\s+/g,'-')}`;
+      const scanLogHtml = buildScanLogHtml(vs.tracking_history || [], vsStage, scanLogId);
+
+      // Delay banner — show if vendor submitted a delay and not yet dispatched
+      const dr = vs.delay_remark;
+      const skipDelayStages = ['transit','ofd','delivered','rto','cancelled','pickup'];
+      const delayHtml = (dr && !skipDelayStages.includes(vsStage))
+        ? `<div style="margin:8px 12px;padding:9px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fcd34d;display:flex;gap:8px;align-items:flex-start">
+            <span style="font-size:15px;line-height:1">⏳</span>
+            <div>
+              <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:2px">Slightly Delayed${dr.eta_date ? ` — Expected dispatch by ${new Date(dr.eta_date+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short'})}` : ''}</div>
+              <div style="font-size:11px;color:#78350f;line-height:1.5">${esc(dr.reason)}</div>
+            </div>
+          </div>`
+        : '';
+
       return `<div class="vc">
         ${heroHtml}
         <div class="vc-body">
@@ -1283,11 +1302,12 @@ function renderTrack(d) {
         </div>
         <div class="vc-stepper">${buildStepper(vsStage, true)}</div>
         ${shipHtml}
+        ${delayHtml}
+        ${scanLogHtml}
       </div>`;
     }).join('');
 
-    // Courier scan log for multivendor (same tracking_history, shown below vendor cards)
-    renderScanLog(d.tracking_history || [], displayStage);
+    // No shared scan log for multi-vendor — each card has its own above
 
     // Show return/exchange if any vendor is delivered
     const anyDelivered = (d.vendor_shipments||[]).some(vs=>vs.stage==='delivered')||displayStage==='delivered';
@@ -1319,6 +1339,20 @@ function renderTrack(d) {
 
     // Status card
     document.getElementById('status-card').innerHTML = statusCardHtml(displayStage, d);
+
+    // Delay banner — single vendor
+    const sdr = (d.vendor_shipments||[])[0]?.delay_remark;
+    const skipDelayStagesSV = ['transit','ofd','delivered','rto','cancelled','pickup'];
+    const delayEl = document.getElementById('delay-banner');
+    if (delayEl) {
+      if (sdr && !skipDelayStagesSV.includes(displayStage)) {
+        const etaStr = sdr.eta_date ? ` — Expected dispatch by ${new Date(sdr.eta_date+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short'})}` : '';
+        delayEl.innerHTML = `<span style="font-size:15px;line-height:1">⏳</span><div><div style="font-size:12px;font-weight:700;color:#92400e;margin-bottom:2px">Slightly Delayed${esc(etaStr)}</div><div style="font-size:12px;color:#78350f;line-height:1.5">${esc(sdr.reason)}</div></div>`;
+        delayEl.style.display = 'flex';
+      } else {
+        delayEl.style.display = 'none';
+      }
+    }
 
     // Courier scan log — below status card for transit/ofd/delivered
     renderScanLog(d.tracking_history || [], displayStage);
