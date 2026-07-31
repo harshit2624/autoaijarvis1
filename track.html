@@ -382,6 +382,19 @@
           </div>
         </div>
         <StageProgress stage={shipment.stage}/>
+        {shipment.delay_remark && !['transit','ofd','delivered','rto','cancelled'].includes(shipment.stage) && (() => {
+          const dr = shipment.delay_remark;
+          const eta = dr.eta_date ? new Date(dr.eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'short' }) : null;
+          return (
+            <div style={{margin:'8px 0',padding:'9px 12px',borderRadius:8,background:'#fffbeb',border:'1px solid #fcd34d',display:'flex',gap:8,alignItems:'flex-start'}}>
+              <span style={{fontSize:15,lineHeight:1}}>⏳</span>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:'#92400e',marginBottom:2}}>Slightly Delayed{eta ? ` — Expected dispatch by ${eta}` : ''}</div>
+                <div style={{fontSize:11,color:'#78350f',lineHeight:1.5}}>{dr.reason}</div>
+              </div>
+            </div>
+          );
+        })()}
         {shipment.awb && (
           <div className="awb-row" style={{marginTop:8}}>
             <span className="awb-label">AWB</span>

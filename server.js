@@ -17845,7 +17845,14 @@ function shipmentItemDesc(li) {
 async function buildOrderPayload(order) {
   const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
   const vendorStages = await mdb.collection('order_vendor_stage').find({ shopify_id: String(order.id) }, { projection: { _id: 0 } }).toArray();
-  const vendorNames = [...new Set((order.line_items || []).map(li => li.vendor).filter(Boolean))];
+  // Deduplicate vendor names case-insensitively (raw Shopify names can differ in casing)
+  const vendorNamesRaw = (order.line_items || []).map(li => li.vendor).filter(Boolean);
+  const vendorNamesSeen = new Map();
+  for (const v of vendorNamesRaw) {
+    const key = v.toLowerCase();
+    if (!vendorNamesSeen.has(key)) vendorNamesSeen.set(key, v);
+  }
+  const vendorNames = [...vendorNamesSeen.values()];
   const returnConfigs = {};
   for (const v of vendorNames) {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
@@ -17880,9 +17887,10 @@ async function buildOrderPayload(order) {
   ).sort({ submitted_at: -1 }).toArray();
 
   const vendorShipments = vendorNames.map(v => {
-    const vs = vendorStages.find(s => s.vendor_name === v) || {};
+    const vLow = v.toLowerCase();
+    const vs = vendorStages.find(s => s.vendor_name.toLowerCase() === vLow) || {};
     const vendorItems = items.filter(i => i.vendor === v);
-    const vendorRemarks = delayRemarks.filter(r => r.vendor_name === v);
+    const vendorRemarks = delayRemarks.filter(r => r.vendor_name.toLowerCase() === vLow);
     const latestRemark = vendorRemarks[0] || null;
     const confirmedAt = vs.stage_started_at ? new Date(vs.stage_started_at).toISOString() : null;
     const dispatchedAt = vs.dispatched_at ? new Date(vs.dispatched_at).toISOString() : null;
