@@ -23732,6 +23732,8 @@ async function startBaileysBot() {
             let cleanText = replyText.replace(/\*\*(.+?)\*\*/g, '*$1*');
             // Strip any LID/junk contact params from croscrow track URLs (safety net)
             cleanText = cleanText.replace(/contact=[^&\s"')\n]+/g, 'contact=na');
+            // Strip any track/confirm link the LLM snuck in (waLinksFromMeta appends the canonical one)
+            cleanText = cleanText.replace(/https?:\/\/dashboard\.croscrow\.com\/o\/[^\s\n]*/g, '').replace(/📦\s*Track your order:?\s*\n?/g, '').replace(/\n{3,}/g, '\n\n').trim();
             await SC.addMessage(chat._id, { sender: 'assistant', text: cleanText, meta });
             await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
             await sock.sendMessage(sender, { text: cleanText });
