@@ -23270,8 +23270,16 @@ const WA_INSTANCE_ID = `${process.pid}-${Date.now()}`;
 let waBotHeartbeat = null;
 
 async function startBaileysBot() {
-  // Old bot permanently disabled — replaced by startWA2()
-  return;
+  // V1 socket disabled. Only registers waSharedMessageHandler using v2 socket.
+  if (waSharedMessageHandler) return;
+  const sock = { // proxy to active socket so handler's sock.sendMessage works via v2
+    sendMessage: (...a) => waSocket?.sendMessage(...a),
+    readMessages: (...a) => waSocket?.readMessages(...a),
+    ev: { on: () => {} }, authState: { creds: { me: { id: '' } } },
+  };
+  waPending.clear();
+  // Fall through to waSharedMessageHandler assignment below, then return
+  if (false) { // dead-code fence — v1-only socket setup, never executes
   if (waStarting) return;
   waStarting = true;
   try {
@@ -23419,9 +23427,10 @@ async function startBaileysBot() {
     });
 
     waPending.clear();
+  } catch (_) {} } // close v1 try/catch and if(false) dead-code fence
 
-    waSharedMessageHandler = async ({ messages, type }) => {
-      for (const msg of messages) {
+  waSharedMessageHandler = async ({ messages, type }) => {
+    for (const msg of messages) {
         // ── Handle poll vote responses (type can be 'append', not 'notify') ─
         if (msg.message?.pollUpdateMessage) {
           try {
@@ -23989,13 +23998,8 @@ async function startBaileysBot() {
           waPending.delete(sender);
         }
       }
-    };
-    sock.ev.on('messages.upsert', waSharedMessageHandler);
-  } catch (err) {
-    console.error('❌ Baileys failed to start:', err.message);
-    waStarting = false;
-    setTimeout(startBaileysBot, 10000);
-  }
+  };
+  // waSharedMessageHandler registered — v2 will call it on messages.upsert
 }
 
 // Old bot startup disabled — replaced by waBot2 below
@@ -24158,6 +24162,7 @@ async function startWA2() {
         console.log('✅ WA Bot v2 connected!');
         waSocket    = sock;
         waConnected = true;
+        startBaileysBot().catch(() => {});
       }
     });
 
