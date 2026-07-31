@@ -10034,7 +10034,10 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
   if (!reason || !eta_date) return res.status(400).json({ error: "reason and eta_date required." });
   const sid = req.params.id;
   const vendor = req.vendor;
+
   await DR.insert(sid, vendor, reason, eta_date);
+  // Keep OVS in sync (same as magic link path)
+  await OVS.upsert(sid, vendor, { delay_reason: reason, delay_resolution_date: eta_date, updated_at: new Date().toISOString() });
 
   try {
     const shopifyOrder = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,shipping_address`);
@@ -10064,6 +10067,8 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
     );
     if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || sid} is Delayed`, html: delayHtmlCustomer, shopifyId: sid, trigger: 'delay_remark_customer' });
     if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || sid} — ${vendor}`, html: delayHtmlAdmin, shopifyId: sid, trigger: 'delay_remark_admin' });
+    // WA alert to admin (same as magic link path)
+    await waAdminAlert(`⏳ *Vendor Delay (Order Page)*\nOrder: *${ord?.name || sid}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaFormatted}`).catch(() => {});
   } catch (e) { console.error("Delay remark email:", e.message); }
 
   res.json({ success: true });
