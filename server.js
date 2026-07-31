@@ -21654,6 +21654,7 @@ let waSocket = null;
 let waConnected = false;
 let waLatestQR = null;
 let waStarting = false;
+let waSharedMessageHandler = null; // set by v1 bot; reused by v2
 let waReconnectTimer = null;
 const waPending = new Set();
 
@@ -23419,7 +23420,7 @@ async function startBaileysBot() {
 
     waPending.clear();
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    waSharedMessageHandler = async ({ messages, type }) => {
       for (const msg of messages) {
         // ── Handle poll vote responses (type can be 'append', not 'notify') ─
         if (msg.message?.pollUpdateMessage) {
@@ -23988,7 +23989,8 @@ async function startBaileysBot() {
           waPending.delete(sender);
         }
       }
-    });
+    };
+    sock.ev.on('messages.upsert', waSharedMessageHandler);
   } catch (err) {
     console.error('❌ Baileys failed to start:', err.message);
     waStarting = false;
@@ -24159,10 +24161,9 @@ async function startWA2() {
       }
     });
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
-      for (const msg of messages) {
-        try { await handleIncomingWAMessage(msg, sock); } catch (e) { console.error('WA v2 msg error:', e.message); }
+    sock.ev.on('messages.upsert', async (payload) => {
+      if (waSharedMessageHandler) {
+        try { await waSharedMessageHandler(payload); } catch (e) { console.error('WA v2 msg error:', e.message); }
       }
     });
 
