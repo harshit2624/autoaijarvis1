@@ -22382,7 +22382,7 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
   // Exact-match lookup — avoid #2612 matching #26120
   const meta = await mdb.collection('order_meta').findOne(
     { order_name: `#${order_num}` },
-    { projection: { order_name: 1, shopify_order_id: 1, customer_name: 1, customer_phone: 1,
+    { projection: { order_name: 1, shopify_id: 1, customer_name: 1, customer_phone: 1,
                     delivery_status: 1, vendors: 1, items: 1, stage: 1, shopify_created_at: 1, _id: 0 } }
   );
 
@@ -22404,7 +22404,7 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
   } else {
     const r = await mdb.collection('admin_order_tickets').insertOne({
       order_name: orderName,
-      shopify_order_id: meta?.shopify_order_id || null,
+      shopify_order_id: meta?.shopify_id || null,
       vendor_name: vendor_name || null,
       issue_type,
       priority,
@@ -22435,8 +22435,11 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
   if (!meta) lines.push(`⚠️ Order not found in DB — ticket created but check order number`);
 
   // Ping relevant vendor on WA
+  // Sanity-check vendor_name — AI sometimes fills junk like "Create ticket"
+  const isValidVendorName = vendor_name &&
+    !/^(create|ticket|order|issue|problem|check|help|update|ping|escalate)/i.test(vendor_name.trim());
   const vendorsToAlert = [];
-  if (vendor_name) {
+  if (isValidVendorName) {
     vendorsToAlert.push(vendor_name);
   } else if (meta?.vendors?.length) {
     vendorsToAlert.push(...meta.vendors);
@@ -22444,17 +22447,18 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
     const unique = [...new Set(meta.items.map(i => i.vendor).filter(Boolean))];
     vendorsToAlert.push(...unique);
   } else {
-    // Fallback: order_vendor_stage always has vendor data even for pre-snapshot orders
-    // Try by shopify_order_id if we have meta, otherwise try by order_name field
-    const ovsQuery = meta?.shopify_order_id
-      ? { shopify_id: String(meta.shopify_order_id) }
-      : { order_name: `#${order_num}` };
-    const ovsList = await mdb.collection('order_vendor_stage').find(
-      ovsQuery,
-      { projection: { vendor_name: 1, _id: 0 } }
-    ).toArray();
-    const fromOvs = [...new Set(ovsList.map(v => v.vendor_name).filter(Boolean))];
-    vendorsToAlert.push(...fromOvs);
+    // Fallback: look up vendors via OVS by shopify_id (always use meta's id)
+    if (meta?.shopify_id) {
+      const ovsList = await mdb.collection('order_vendor_stage').find(
+        { shopify_id: String(meta.shopify_id) },
+        { projection: { vendor_name: 1, _id: 0 } }
+      ).toArray();
+      vendorsToAlert.push(...[...new Set(ovsList.map(v => v.vendor_name).filter(Boolean))]);
+    }
+    // Also try order_meta.vendors as last resort
+    if (!vendorsToAlert.length && meta?.vendors?.length) {
+      vendorsToAlert.push(...meta.vendors);
+    }
   }
 
   let vendorPinged = false;
@@ -22470,7 +22474,7 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
 
     // Days stuck from OVS if available
     const ovs = await mdb.collection('order_vendor_stage').findOne(
-      { shopify_id: String(meta?.shopify_order_id || ''), vendor_name: vn },
+      { shopify_id: String(meta?.shopify_id || ''), vendor_name: vn },
       { projection: { stage: 1, stage_started_at: 1 } }
     ).catch(() => null);
     const daysStuck = ovs?.stage_started_at ? Math.floor((Date.now() - ovs.stage_started_at) / 86400000) : null;
@@ -22479,7 +22483,7 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
 
     // Generate a no-login vendor update token for the form link
     const updateToken = await createVendorUpdateToken(
-      meta?.shopify_order_id || orderName, orderName, vn, '', issue_type
+      meta?.shopify_id || orderName, orderName, vn, '', issue_type
     ).catch(() => null);
     const formLink = updateToken ? `${SERVER_URL}/vendor/update/${updateToken}` : null;
 
@@ -22518,7 +22522,7 @@ _CROSCROW Operations Team_`;
       await waSessionSet(actualJid, {
         type: 'support_vendor_reply',
         order_name: orderName,
-        shopify_id: String(meta?.shopify_order_id || ''),
+        shopify_id: String(meta?.shopify_id || ''),
         vendor: vn,
         query_context: { type: issue_type, label: issueLabel, emoji: '📋' },
         form_link: formLink,
