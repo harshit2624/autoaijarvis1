@@ -1283,7 +1283,7 @@ function renderTrack(d) {
 
       // Delay banner — show if vendor submitted a delay and not yet dispatched
       const dr = vs.delay_remark;
-      const skipDelayStages = ['transit','ofd','delivered','rto','cancelled','pickup'];
+      const skipDelayStages = ['transit','ofd','delivered','rto','cancelled'];
       const delayHtml = (dr && !skipDelayStages.includes(vsStage))
         ? `<div style="margin:8px 12px;padding:9px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fcd34d;display:flex;gap:8px;align-items:flex-start">
             <span style="font-size:15px;line-height:1">⏳</span>
@@ -1342,7 +1342,7 @@ function renderTrack(d) {
 
     // Delay banner — single vendor
     const sdr = (d.vendor_shipments||[])[0]?.delay_remark;
-    const skipDelayStagesSV = ['transit','ofd','delivered','rto','cancelled','pickup'];
+    const skipDelayStagesSV = ['transit','ofd','delivered','rto','cancelled'];
     const delayEl = document.getElementById('delay-banner');
     if (delayEl) {
       if (sdr && !skipDelayStagesSV.includes(displayStage)) {
