@@ -6363,7 +6363,11 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
     });
     allVS.forEach(r => {
       if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {};
-      vsMap[r.shopify_id][r.vendor_name.toLowerCase()] = r.stage;
+      const vKey = r.vendor_name.toLowerCase();
+      // higherStage on collision — if two OVS rows for same vendor (different casing), keep the higher
+      vsMap[r.shopify_id][vKey] = vsMap[r.shopify_id][vKey]
+        ? higherStage(vsMap[r.shopify_id][vKey], r.stage)
+        : r.stage;
       if (r.awb || r.courier || r.tracking_url) {
         if (!vtMap[r.shopify_id]) vtMap[r.shopify_id] = {};
         vtMap[r.shopify_id][r.vendor_name] = { awb: r.awb || '', courier: r.courier || '', trackingUrl: r.tracking_url || '' };
@@ -6413,7 +6417,13 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         financial:      o.financial_status || "",
         vendors,
         vendorStages:   (() => {
-            const shopifyMap = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+            // Canonicalize shopifyMap keys to avoid "ODD GRAB" vs "Odd Grab" producing duplicate entries
+            const shopifyMapRaw = vendorStagesFromFulfillments(o.fulfillments, o.line_items);
+            const shopifyMap = {};
+            for (const [v, s] of Object.entries(shopifyMapRaw)) {
+              const cv = canonicalVendor(v);
+              shopifyMap[cv] = shopifyMap[cv] ? higherStage(shopifyMap[cv], s) : s;
+            }
             const metaStage = meta.stage || 'new';
             const BEYOND_READY = ['transit','ofd','delivered','rto','cancelled','misc'];
             const metaIsBeyondReady = BEYOND_READY.includes(metaStage);
@@ -6433,7 +6443,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
               // Multi-vendor: each vendor stage is independent
               return Object.fromEntries(vendors.map(v => {
                 const stored = vsMap[String(o.id)]?.[v.toLowerCase()] || 'new';
-                const shopifyDerived = shopifyMap[v];
+                const shopifyDerived = shopifyMap[canonicalVendor(v)];
                 return [v, safeStage(stored, shopifyDerived)];
               }));
             } else {
