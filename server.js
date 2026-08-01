@@ -6713,6 +6713,32 @@ app.put("/admin/orders/:id/vendor-stage", requirePermission('orders'), async (re
   res.json({ success: true, vendor_name, stage });
 });
 
+// ── POST /admin/backfill-orders — manually trigger order_meta backfill from Shopify ──
+let _backfillRunning = false;
+app.post("/admin/backfill-orders", adminAuth, async (req, res) => {
+  if (_backfillRunning) return res.json({ ok: false, message: 'Backfill already running' });
+  _backfillRunning = true;
+  res.json({ ok: true, message: 'Backfill started in background — check server logs' });
+  try {
+    console.log('⏳  Manual backfill triggered via API...');
+    const orders = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
+    let saved = 0;
+    for (const o of orders) {
+      const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1, shipping_charge: 1, fulfillments: 1 } });
+      if (!existing) { await snapshotOrder(o); saved++; }
+      else {
+        const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids);
+        if (needsPatch) { await snapshotOrder(o); saved++; }
+      }
+    }
+    console.log(`✅  Manual backfill complete — ${saved} upserted of ${orders.length} total`);
+  } catch (e) {
+    console.error('❌  Manual backfill error:', e.message);
+  } finally {
+    _backfillRunning = false;
+  }
+});
+
 // ── POST /admin/migrate/stringify-ids — one-time fix: convert numeric shopify_id to string ──
 app.post("/admin/migrate/stringify-ids", adminAuth, async (req, res) => {
   try {
