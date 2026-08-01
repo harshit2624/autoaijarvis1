@@ -177,10 +177,9 @@ async function startServer() {
         const orders = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
         let saved = 0;
         for (const o of orders) {
-          const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1 } });
+          const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1, shipping_charge: 1, fulfillments: 1 } });
           if (!existing) { await snapshotOrder(o); saved++; }
           else {
-            // Update shipping_charge and fulfillment line_item_ids if missing
             const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids);
             if (needsPatch) { await snapshotOrder(o); saved++; }
           }
@@ -311,11 +310,13 @@ async function snapshotOrder(payload) {
 // Reconstruct a Shopify-shaped order stub from an order_meta snapshot.
 // Used to pass into buildOrderPayload without a live API call.
 function orderStubFromMeta(meta) {
+  const nameParts = (meta.customer_name || '').trim().split(' ');
   return {
     id: meta.shopify_id,
     name: meta.order_name,
     email: meta.customer_email || '',
     phone: meta.customer_phone || '',
+    customer: meta.customer_name ? { first_name: nameParts[0] || '', last_name: nameParts.slice(1).join(' ') || '' } : null,
     shipping_address: meta.shipping_address || null,
     billing_address: null,
     financial_status: meta.financial_status || '',
@@ -333,6 +334,7 @@ function orderStubFromMeta(meta) {
       tracking_number: f.tracking_number,
       tracking_url: f.tracking_url,
       tracking_company: f.tracking_company,
+      line_item_ids: f.line_item_ids || [],
     })),
   };
 }
@@ -5748,7 +5750,7 @@ app.post("/admin/logout", adminAuth, async (req, res) => {
 // ── GET /admin/dashboard ──────────────────────────────────────────────────
 app.get("/admin/dashboard", adminAuth, async (req, res) => {
   try {
-    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 }, sort: { shopify_created_at: -1 } }).toArray();
     const raw    = metaDocs.map(orderStubFromMeta);
     const metaMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
 
@@ -5833,7 +5835,7 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
 // ── GET /admin/analytics ─────────────────────────────────────────────────
 app.get("/admin/analytics", adminAuth, async (req, res) => {
   try {
-    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 }, sort: { shopify_created_at: -1 } }).toArray();
     const raw     = metaDocs.map(orderStubFromMeta);
     const metaMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
     const allVS   = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, awb:1, stage_started_at:1, dispatched_at:1, _id:0 } }).toArray();
@@ -6361,7 +6363,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
   try {
     const { stage, vendor, created_at_min, created_at_max } = req.query;
     // Serve entirely from MongoDB snapshot — no Shopify API call needed
-    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 }, sort: { shopify_created_at: -1 } }).toArray();
     const raw = metaDocs.map(orderStubFromMeta);
     const metaMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
     const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, penalty_triggered: 1, warning_sent: 1, _id: 0 } }).toArray();
