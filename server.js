@@ -22637,10 +22637,19 @@ async function adminStuckOrdersReport() {
 
   if (!stuckRows.length) return '✅ No stuck orders right now — all good!';
 
+  // Resolve order_name from order_meta for rows that only have shopify_id
+  const missingNames = stuckRows.filter(r => !r.order_name).map(r => String(r.shopify_id));
+  const metaMap = {};
+  if (missingNames.length) {
+    const metas = await mdb.collection('order_meta').find({ shopify_id: { $in: missingNames } }, { projection: { shopify_id: 1, order_name: 1, _id: 0 } }).toArray();
+    for (const m of metas) metaMap[m.shopify_id] = m.order_name;
+  }
+
   const lines = [`🚨 *Stuck Orders (${stuckRows.length})*\n`];
   for (const r of stuckRows) {
     const hrs = Math.round((Date.now() - r.stage_started_at) / 3600000);
-    lines.push(`• *${r.order_name || r.shopify_id}* — ${r.vendor_name} | ${r.stage} | ${hrs}h`);
+    const label = r.order_name || metaMap[String(r.shopify_id)] || r.shopify_id;
+    lines.push(`• *${label}* — ${r.vendor_name} | ${r.stage} | ${hrs}h`);
   }
   lines.push(`\nSend *"<vendor> in <order#> not dispatched"* to create a ticket and ping vendor.`);
   return lines.join('\n');
@@ -22664,9 +22673,17 @@ async function adminMorningDigest(sock, adminJid) {
       { stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff48h } }
     ).sort({ stage_started_at: 1 }).limit(5).toArray();
 
+    // Resolve order_name from order_meta for any urgent rows missing it
+    const urgentMissingNames = topStuck.filter(r => !r.order_name).map(r => String(r.shopify_id));
+    const urgentMetaMap = {};
+    if (urgentMissingNames.length) {
+      const ums = await mdb.collection('order_meta').find({ shopify_id: { $in: urgentMissingNames } }, { projection: { shopify_id: 1, order_name: 1, _id: 0 } }).toArray();
+      for (const m of ums) urgentMetaMap[m.shopify_id] = m.order_name;
+    }
     const urgentLines = topStuck.map(r => {
       const hrs = Math.round((Date.now() - r.stage_started_at) / 3600000);
-      return `  • *${r.order_name || r.shopify_id}* (${r.vendor_name}) — ${hrs}h in ${r.stage}`;
+      const label = r.order_name || urgentMetaMap[String(r.shopify_id)] || r.shopify_id;
+      return `  • *${label}* (${r.vendor_name}) — ${hrs}h in ${r.stage}`;
     });
 
     const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });

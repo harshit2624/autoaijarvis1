@@ -4294,7 +4294,7 @@
     const filtered = useMemo(()=>{
       let l=[...periodOrders];
       if(stage && stage!=='all') l=l.filter(o=>orderMatchesStage(o,stage));
-      if(search.trim()){const q=search.toLowerCase(); l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.vendors||[]).some(v=>v.toLowerCase().includes(q)));}
+      if(search.trim()){const q=search.toLowerCase(); l=l.filter(o=>o.id.toLowerCase().includes(q)||o.shopifyId.includes(q)||o.customer.toLowerCase().includes(q)||(o.vendors||[]).some(v=>v.toLowerCase().includes(q)));}
       if(filterVendor!=='all') l=l.filter(o=>(o.vendors||[]).includes(filterVendor));
       if(filterPayment==='prepaid') l=l.filter(o=>o.paymentType==='prepaid');
       if(filterPayment==='cod')     l=l.filter(o=>o.paymentType!=='prepaid' && !(o.advancePaid>0));
