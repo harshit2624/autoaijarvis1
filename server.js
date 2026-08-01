@@ -15308,6 +15308,35 @@ async function sendRRWANotif(rr, event, extra = {}) {
   }
 }
 
+// ── WA ping to vendor for return/exchange events ─────────────────────────
+async function sendRRVendorWANotif(rr, event) {
+  if (!mdb || !waSocket || !waConnected) return;
+  const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: rr.vendor_name }, { projection: { phone: 1 } }).catch(() => null);
+  const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (rawPhone.length !== 10) return;
+
+  const typeLabel = rr.type === 'exchange' ? 'Exchange' : 'Return';
+  const orderName = rr.order_name || rr.shopify_order_id || '';
+  const customerName = rr.customer_name || 'the customer';
+  const itemNames = (rr.items || []).map(i => i.title || i.product_title || 'item').join(', ') || 'the item';
+  const trackUrl = rr.request_id ? `${SERVER_URL}/vendor/return-requests` : '';
+
+  let msg = '';
+  if (event === 'request_received') {
+    msg = `📦 *New ${typeLabel} Request — ${orderName}*\n\nHi ${rr.vendor_name},\n\nA customer (${customerName}) has raised a *${typeLabel.toLowerCase()} request* for their order.\n\n🛍️ Item: ${itemNames}\n\nPlease review and approve/reject it from your Vendor Portal at the earliest.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+  } else if (event === 'approved') {
+    msg = `✅ *${typeLabel} Approved — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe *${typeLabel.toLowerCase()} request* for order *${orderName}* has been approved.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n\nPlease *arrange reverse pickup* from the customer *within 24 hours*. Once scheduled, update the AWB in your Vendor Portal.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+  }
+
+  if (!msg) return;
+  try {
+    await waSocket.sendMessage(`91${rawPhone}@s.whatsapp.net`, { text: msg });
+    console.log(`📲 RR Vendor WA (${event}): ${rr.request_id} → ${rr.vendor_name}`);
+  } catch (e) {
+    console.error(`❌ RR Vendor WA notif failed (${rr.request_id} ${event}):`, e.message);
+  }
+}
+
 // ── Single source of truth for ShipSagar → OVS sync ─────────────────────
 // Call this from anywhere (cron, admin refresh, vendor track, public track).
 // ShipSagar is authoritative for delivery status — if it says delivered, OVS
@@ -18325,6 +18354,7 @@ app.post("/track/request", async (req, res) => {
 
     sendRREmail('submitted', doc).catch(() => {});
     sendRRWANotif(doc, 'request_received').catch(() => {});
+    sendRRVendorWANotif(doc, 'request_received').catch(() => {});
 
     res.json({ success: true, request_id });
   } catch (err) {
@@ -18744,6 +18774,7 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
         if (status === 'rejected') sendRRWANotif(updated, 'rejected', { reason: admin_note || updated.admin_note }).catch(() => {});
         if (status === 'completed' && updated.type === 'return') sendRRWANotif(updated, 'refund_initiated').catch(() => {});
         if (status === 'received') sendRRWANotif(updated, 'received_at_warehouse').catch(() => {});
+        if (status === 'approved') sendRRVendorWANotif(updated, 'approved').catch(() => {});
       }
     }
     res.json({ success: true });
@@ -19220,7 +19251,10 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { $set: update });
     if (status === 'approved') {
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
-      if (updated) sendRREmail('approved_by_vendor', updated).catch(() => {});
+      if (updated) {
+        sendRREmail('approved_by_vendor', updated).catch(() => {});
+        sendRRVendorWANotif(updated, 'approved').catch(() => {});
+      }
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
