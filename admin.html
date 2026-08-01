@@ -10665,7 +10665,7 @@
     const [replyText,  setReplyText]  = useState('');
     const [sending,    setSending]    = useState(false);
     const [now,        setNow]        = useState(Date.now());
-    const [mainTab,    setMainTab]    = useState('chats'); // 'chats' | 'insights' | 'vendors' | 'jidsetup'
+    const [mainTab,    setMainTab]    = useState('chats');
     const [vendorChats,       setVendorChats]       = useState([]);
     const [vendorChatsLoading,setVendorChatsLoading]= useState(false);
     const [selVendorChat,     setSelVendorChat]     = useState(null);
@@ -10679,6 +10679,8 @@
     const [jidResolveResult, setJidResolveResult] = useState(null);
     const [manualJid,  setManualJid]  = useState({ vendor_name:'', jid:'', phone:'' });
     const [manualSaving, setManualSaving] = useState(false);
+    // mobile: hide list when chat is open
+    const [mobileShowDetail, setMobileShowDetail] = useState(false);
 
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
 
@@ -10737,7 +10739,7 @@
     };
     useEffect(() => { if (selectedId) loadMessages(selectedId); }, [selectedId]);
 
-    const selectChat = (id) => setSelectedId(id);
+    const selectChat = (id) => { setSelectedId(id); setMobileShowDetail(true); };
     const selected = chats.find(c => c._id === selectedId);
 
     const toggleResolve = async () => {
@@ -10834,19 +10836,19 @@
       const CAT_LABEL = { dispatch_delay:'⏳ Dispatch delay', return_exchange:'🔄 Return / Exchange', refund:'💰 Refund', general:'💬 General' };
 
       return (
-        <div style={{padding:'16px',overflowY:'auto',flex:1}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+        <div style={{padding:'14px 16px',overflowY:'auto',WebkitOverflowScrolling:'touch',flex:1}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:8}}>
             <div style={{fontWeight:700,fontSize:15}}>Support Tickets</div>
             <div style={{display:'flex',gap:6}}>
               {[['active','Active'],['closed','Closed']].map(([v,l])=>(
-                <button key={v} onClick={()=>setFilter(v)} style={{padding:'5px 14px',borderRadius:6,border:'1px solid var(--border)',background:filter===v?'var(--indigo)':'var(--card-bg)',color:filter===v?'#fff':'var(--text)',cursor:'pointer',fontSize:12,fontWeight:600}}>{l}</button>
+                <button key={v} onClick={()=>setFilter(v)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border)',background:filter===v?'var(--indigo)':'var(--bg-card)',color:filter===v?'#fff':'var(--text)',cursor:'pointer',fontSize:13,fontWeight:600}}>{l}</button>
               ))}
-              <button onClick={load} style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--card-bg)',color:'var(--text)',cursor:'pointer',fontSize:12}}>↻</button>
+              <button onClick={load} style={{padding:'8px 14px',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg-card)',color:'var(--text)',cursor:'pointer',fontSize:13}}>↻</button>
             </div>
           </div>
 
-          {tickets === null && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading...</div>}
-          {tickets?.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13,padding:'32px 0',textAlign:'center'}}>
+          {tickets === null && <div style={{color:'var(--text-muted)',fontSize:13,padding:'32px 0',textAlign:'center'}}>Loading…</div>}
+          {tickets?.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13,padding:'40px 0',textAlign:'center'}}>
             {filter === 'active' ? '✅ No open tickets right now' : 'No closed tickets found'}
           </div>}
 
@@ -10855,35 +10857,24 @@
             const statusColor = STATUS_COLOR[t.status] || '#94a3b8';
             const isOverdue = t.status === 'overdue';
             return (
-              <div key={String(t._id)} style={{background:'var(--card-bg)',border:`1px solid ${isOverdue?'#ef444440':'var(--border)'}`,borderLeft:`3px solid ${statusColor}`,borderRadius:10,padding:'14px 16px',marginBottom:10}}>
-                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
-                      <span style={{background:statusColor+'22',color:statusColor,fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,textTransform:'uppercase',letterSpacing:'.06em'}}>{t.status.replace('_',' ')}</span>
-                      <span style={{fontSize:12,color:'var(--text-muted)'}}>{CAT_LABEL[t.issue_category]||'💬'}</span>
-                      {t.order_name && <span style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>{t.order_name}</span>}
-                      {t.customer_phone && <span style={{fontSize:12,color:'var(--text-muted)'}}>+91{t.customer_phone}</span>}
-                    </div>
-                    {t.last_customer_msg && <div style={{fontSize:13,color:'var(--text)',marginBottom:6,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:400}}>"{t.last_customer_msg}"</div>}
-                    {t.context_note && <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>Context: {t.context_note.slice(0,100)}</div>}
-                    <div style={{fontSize:11,color:'var(--text-muted)'}}>
-                      Created: {new Date(t.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
-                      {t.reminder_sent_at && <span style={{marginLeft:10}}>⏰ Reminded</span>}
-                      {t.vendor_pinged_at && <span style={{marginLeft:10}}>📲 Vendor pinged</span>}
-                    </div>
-                  </div>
-                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8,flexShrink:0}}>
-                    {filter === 'active' && (
-                      <div style={{textAlign:'right'}}>
-                        <div style={{fontSize:13,fontWeight:700,color:cd.color,fontVariantNumeric:'tabular-nums'}}>{cd.text}</div>
-                        <div style={{fontSize:10,color:'var(--text-muted)'}}>SLA deadline</div>
-                      </div>
-                    )}
-                    <div style={{display:'flex',gap:6}}>
-                      {t.chat_id && <button onClick={()=>onOpenChat(t.chat_id)} style={{padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background:'var(--card-bg)',color:'var(--indigo)',cursor:'pointer',fontSize:11,fontWeight:600}}>View chat →</button>}
-                      {filter === 'active' && <button onClick={()=>closeTicket(String(t._id))} disabled={closing===String(t._id)} style={{padding:'4px 10px',borderRadius:6,border:'none',background:'#22c55e22',color:'#22c55e',cursor:'pointer',fontSize:11,fontWeight:600}}>{closing===String(t._id)?'Closing...':'✓ Close'}</button>}
-                    </div>
-                  </div>
+              <div key={String(t._id)} style={{background:'var(--bg-card)',border:`1px solid ${isOverdue?'rgba(239,68,68,0.3)':'var(--border)'}`,borderLeft:`4px solid ${statusColor}`,borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+                <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap',alignItems:'center'}}>
+                  <span style={{background:statusColor+'22',color:statusColor,fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:99,textTransform:'uppercase',letterSpacing:'.06em'}}>{t.status.replace('_',' ')}</span>
+                  <span style={{fontSize:12,color:'var(--text-muted)'}}>{CAT_LABEL[t.issue_category]||'💬'}</span>
+                  {t.order_name && <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{t.order_name}</span>}
+                  {t.customer_phone && <span style={{fontSize:12,color:'#60a5fa'}}>+91{t.customer_phone}</span>}
+                  {filter === 'active' && <span style={{marginLeft:'auto',fontSize:13,fontWeight:700,color:cd.color,fontVariantNumeric:'tabular-nums'}}>{cd.text}</span>}
+                </div>
+                {t.last_customer_msg && <div style={{fontSize:13,color:'var(--text)',marginBottom:8,lineHeight:1.5,wordBreak:'break-word'}}>"{t.last_customer_msg}"</div>}
+                {t.context_note && <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:6}}>Context: {t.context_note.slice(0,120)}</div>}
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10,display:'flex',flexWrap:'wrap',gap:8}}>
+                  <span>{new Date(t.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                  {t.reminder_sent_at && <span>⏰ Reminded</span>}
+                  {t.vendor_pinged_at && <span>📲 Vendor pinged</span>}
+                </div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                  {t.chat_id && <button onClick={()=>onOpenChat(t.chat_id)} style={{flex:'1 1 auto',padding:'9px 14px',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg-card)',color:'var(--indigo)',cursor:'pointer',fontSize:13,fontWeight:600}}>View chat →</button>}
+                  {filter === 'active' && <button onClick={()=>closeTicket(String(t._id))} disabled={closing===String(t._id)} style={{flex:'1 1 auto',padding:'9px 14px',borderRadius:8,border:'none',background:'rgba(34,197,94,0.15)',color:'#22c55e',cursor:'pointer',fontSize:13,fontWeight:600}}>{closing===String(t._id)?'Closing…':'✓ Close'}</button>}
                 </div>
               </div>
             );
@@ -10918,33 +10909,22 @@
       };
 
       return (
-        <div style={{padding:'16px',overflowY:'auto',flex:1}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
+        <div style={{padding:'14px 16px',overflowY:'auto',WebkitOverflowScrolling:'touch',flex:1}}>
+          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:8}}>
             <div>
-              <div style={{fontWeight:700,fontSize:15}}>Admin Order Tickets</div>
-              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Created via WhatsApp · Send <code style={{background:'var(--bg)',padding:'1px 4px',borderRadius:3}}>!tickets</code> or <code style={{background:'var(--bg)',padding:'1px 4px',borderRadius:3}}>!stuck</code> to Jarvis</div>
+              <div style={{fontWeight:700,fontSize:15}}>Order Tickets</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>WA: <code style={{background:'var(--bg)',padding:'1px 5px',borderRadius:3}}>!stuck</code> · <code style={{background:'var(--bg)',padding:'1px 5px',borderRadius:3}}>!tickets</code> · <code style={{background:'var(--bg)',padding:'1px 5px',borderRadius:3}}>!resolve 2588</code></div>
             </div>
             <div style={{display:'flex',gap:6}}>
               {[['open','Open'],['resolved','Resolved']].map(([v,l])=>(
-                <button key={v} onClick={()=>setFilter(v)} style={{padding:'5px 14px',borderRadius:6,border:'1px solid var(--border)',background:filter===v?'var(--indigo)':'var(--card-bg)',color:filter===v?'#fff':'var(--text)',cursor:'pointer',fontSize:12,fontWeight:600}}>{l}</button>
+                <button key={v} onClick={()=>setFilter(v)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border)',background:filter===v?'var(--indigo)':'var(--bg-card)',color:filter===v?'#fff':'var(--text)',cursor:'pointer',fontSize:13,fontWeight:600}}>{l}</button>
               ))}
-              <button onClick={load} style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--card-bg)',color:'var(--text)',cursor:'pointer',fontSize:12}}>↻</button>
+              <button onClick={load} style={{padding:'8px 14px',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg-card)',color:'var(--text)',cursor:'pointer',fontSize:13}}>↻</button>
             </div>
           </div>
 
-          {/* WA command cheatsheet */}
-          {filter === 'open' && (
-            <div style={{background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:10,padding:'10px 16px',marginBottom:16,fontSize:12,color:'var(--text)'}}>
-              <strong style={{color:'var(--indigo)'}}>WhatsApp commands:</strong>
-              <span style={{marginLeft:8}}>
-                <code>!stuck</code> · <code>!tickets</code> · <code>!digest</code> · <code>!resolve 2588</code> · <code>!watch 2588</code>
-                <span style={{marginLeft:8,color:'var(--text-muted)'}}>or just say <em>"2588 is not dispatched"</em></span>
-              </span>
-            </div>
-          )}
-
-          {tickets === null && <div style={{color:'var(--text-muted)',fontSize:13}}>Loading...</div>}
-          {tickets?.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13,padding:'32px 0',textAlign:'center'}}>
+          {tickets === null && <div style={{color:'var(--text-muted)',fontSize:13,padding:'32px 0',textAlign:'center'}}>Loading…</div>}
+          {tickets?.length === 0 && <div style={{color:'var(--text-muted)',fontSize:13,padding:'40px 0',textAlign:'center'}}>
             {filter === 'open' ? '✅ No open order tickets — all good!' : 'No resolved tickets found'}
           </div>}
 
@@ -10952,28 +10932,25 @@
             const pColor = PRIORITY_COLOR[t.priority] || '#94a3b8';
             const ageH = Math.round((Date.now() - new Date(t.created_at).getTime()) / 3600000);
             return (
-              <div key={String(t._id)} style={{background:'var(--card-bg)',border:`1px solid var(--border)`,borderLeft:`3px solid ${pColor}`,borderRadius:10,padding:'14px 16px',marginBottom:10}}>
-                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6,flexWrap:'wrap'}}>
-                      <span style={{background:pColor+'22',color:pColor,fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,textTransform:'uppercase',letterSpacing:'.06em'}}>{t.priority||'medium'}</span>
-                      <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{t.order_name}</span>
-                      {t.vendor_name && <span style={{fontSize:11,color:'var(--indigo)',background:'rgba(99,102,241,0.1)',padding:'2px 8px',borderRadius:4,fontWeight:600}}>🏪 {t.vendor_name}</span>}
-                      <span style={{fontSize:11,color:'var(--text-muted)'}}>{ISSUE_LABEL[t.issue_type]||t.issue_type}</span>
-                    </div>
-                    <div style={{fontSize:12,color:'var(--text)',marginBottom:6,lineHeight:1.5}}>{t.description}</div>
-                    <div style={{fontSize:11,color:'var(--text-muted)',display:'flex',gap:12,flexWrap:'wrap'}}>
-                      <span>Created: {new Date(t.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
-                      <span>{ageH}h ago</span>
-                      {t.vendor_pinged && <span style={{color:'#10b981'}}>📲 Vendor pinged {t.vendor_pinged_at ? new Date(t.vendor_pinged_at).toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</span>}
-                      {t.follow_up_count > 0 && <span style={{color:'#f59e0b'}}>⚠️ {t.follow_up_count} follow-ups</span>}
-                      {t.watched && <span style={{color:'var(--indigo)'}}>👁️ Watching</span>}
-                    </div>
-                  </div>
-                  <div style={{flexShrink:0}}>
-                    {filter === 'open' && <button onClick={()=>resolveTicket(String(t._id))} disabled={resolving===String(t._id)} style={{padding:'5px 14px',borderRadius:6,border:'none',background:'#22c55e22',color:'#22c55e',cursor:'pointer',fontSize:12,fontWeight:600,whiteSpace:'nowrap'}}>{resolving===String(t._id)?'Resolving...':'✓ Resolve'}</button>}
-                  </div>
+              <div key={String(t._id)} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderLeft:`4px solid ${pColor}`,borderRadius:12,padding:'14px 16px',marginBottom:12}}>
+                <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap',alignItems:'center'}}>
+                  <span style={{background:pColor+'22',color:pColor,fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:99,textTransform:'uppercase',letterSpacing:'.06em'}}>{t.priority||'medium'}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>{t.order_name}</span>
+                  {t.vendor_name && <span style={{fontSize:11,color:'var(--indigo)',background:'rgba(99,102,241,0.1)',padding:'3px 9px',borderRadius:99,fontWeight:600}}>🏪 {t.vendor_name}</span>}
+                  <span style={{fontSize:12,color:'var(--text-muted)'}}>{ISSUE_LABEL[t.issue_type]||t.issue_type}</span>
+                  <span style={{marginLeft:'auto',fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{ageH}h ago</span>
                 </div>
+                {t.description && <div style={{fontSize:13,color:'var(--text)',marginBottom:8,lineHeight:1.55,wordBreak:'break-word'}}>{t.description}</div>}
+                <div style={{fontSize:11,color:'var(--text-muted)',display:'flex',gap:10,flexWrap:'wrap',marginBottom:10}}>
+                  <span>{new Date(t.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                  {t.vendor_pinged && <span style={{color:'#10b981'}}>📲 Vendor pinged</span>}
+                  {t.follow_up_count > 0 && <span style={{color:'#f59e0b'}}>⚠️ {t.follow_up_count} follow-ups</span>}
+                  {t.watched && <span style={{color:'var(--indigo)'}}>👁 Watching</span>}
+                </div>
+                {filter === 'open' && <button onClick={()=>resolveTicket(String(t._id))} disabled={resolving===String(t._id)}
+                  style={{width:'100%',padding:'10px',borderRadius:8,border:'none',background:'rgba(34,197,94,0.15)',color:'#22c55e',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                  {resolving===String(t._id)?'Resolving…':'✓ Mark Resolved'}
+                </button>}
               </div>
             );
           })}
@@ -11056,12 +11033,13 @@
     };
 
     return (
-      <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 140px)'}}>
-        {/* Top tab bar: Chats | Insights */}
-        <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0}}>
-          {[['chats','💬 Chats'],['tickets','🎫 Tickets'],['ordertickets','📋 Order Tickets'],['vendors','🏪 Vendor WA'],['jidsetup','🔗 JID Setup'],['insights','🔍 Insights']].map(([id,label])=>(
+      <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 54px)',overflow:'hidden'}}>
+        {/* Top tab bar — scrollable on mobile */}
+        <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+          {[['chats','💬 Chats'],['tickets','🎫 Tickets'],['ordertickets','📋 Order Tickets'],['vendors','🏪 Vendor WA'],['jidsetup','🔗 JID'],['insights','🔍 Insights']].map(([id,label])=>(
             <button key={id} onClick={()=>setMainTab(id)} style={{
-              padding:'12px 20px',fontSize:13,fontWeight:700,border:'none',cursor:'pointer',fontFamily:'var(--font-family)',
+              padding:'13px 16px',fontSize:13,fontWeight:700,border:'none',cursor:'pointer',fontFamily:'var(--font-family)',
+              whiteSpace:'nowrap',flexShrink:0,
               background:'transparent', color: mainTab===id ? 'var(--indigo)' : 'var(--text-muted)',
               borderBottom: mainTab===id ? '2px solid var(--indigo)' : '2px solid transparent',
             }}>{label}</button>
@@ -11187,65 +11165,65 @@
         })()}
 
         {mainTab === 'vendors' && (
-          <div style={{display:'flex',gap:14,flex:1,minHeight:0,padding:'14px 0 0'}}>
+          <div style={{display:'flex',flex:1,minHeight:0,overflow:'hidden'}}>
             {/* Vendor list */}
-            <div style={{width:280,flexShrink:0,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-              <div style={{padding:'12px 14px',borderBottom:'1px solid var(--border)',fontWeight:700,fontSize:12,color:'var(--text-muted)',letterSpacing:1,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                VENDOR CONVERSATIONS
-                <button className="btn btn-ghost btn-sm" onClick={loadVendorChats} style={{fontSize:10}}>↻</button>
+            <div style={{
+              width:'clamp(200px,28%,300px)', flexShrink:0, display:'flex', flexDirection:'column',
+              background:'var(--bg-card)', borderRight:'1px solid var(--border)', overflow:'hidden',
+              ...(selVendorChat ? {display:'none'} : {}),
+            }} className="vendor-list-col">
+              <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+                <span style={{fontWeight:700,fontSize:12,color:'var(--text-muted)',letterSpacing:.8}}>VENDOR CHATS</span>
+                <button className="btn btn-ghost btn-sm" onClick={loadVendorChats} style={{fontSize:11}}>↻</button>
               </div>
-              <div style={{flex:1,overflowY:'auto'}}>
-                {vendorChatsLoading && <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>Loading…</div>}
-                {!vendorChatsLoading && vendorChats.length === 0 && <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>No vendor chats yet. Send a nudge to start.</div>}
+              <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
+                {vendorChatsLoading && <div style={{padding:16,color:'var(--text-muted)',fontSize:12,textAlign:'center'}}>Loading…</div>}
+                {!vendorChatsLoading && vendorChats.length===0 && <div style={{padding:16,color:'var(--text-muted)',fontSize:12}}>No vendor chats yet.</div>}
                 {vendorChats.map(vc => (
                   <div key={vc._id} onClick={()=>loadVendorMessages(vc.vendor_name)}
-                    style={{padding:'10px 14px',cursor:'pointer',borderBottom:'1px solid var(--border)',
+                    style={{padding:'13px 16px',cursor:'pointer',borderBottom:'1px solid var(--border)',
                       background: selVendorChat===vc.vendor_name ? 'rgba(99,102,241,0.08)' : 'transparent',
                       borderLeft: selVendorChat===vc.vendor_name ? '3px solid var(--indigo)' : '3px solid transparent'}}>
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
-                      <span style={{fontWeight:700,fontSize:12,color:'var(--text)'}}>{vc.vendor_name}</span>
+                      <span style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>{vc.vendor_name}</span>
                       <span style={{fontSize:10,color:'var(--text-muted)'}}>{vc.updated_at ? new Date(vc.updated_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : ''}</span>
                     </div>
-                    <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{vc.last_message_from==='vendor'?'Vendor: ':''}{vc.last_message||'—'}</div>
-                    <div style={{display:'flex',gap:8,marginTop:4,flexWrap:'wrap',alignItems:'center'}}>
-                      <span style={{fontSize:10,color:'#10b981'}}>📤 {vc.vendor_msg_count||0} vendor</span>
-                      <span style={{fontSize:10,color:'var(--text-muted)'}}>🤖 {vc.bot_msg_count||0} bot</span>
-                      {vc.phone && <span style={{fontSize:10,color:'#60a5fa',fontFamily:'monospace'}}>📱 {vc.phone}</span>}
-                      {vc.jid ? (
-                        vc.jid.includes('@lid')
-                          ? <span style={{fontSize:9,background:'rgba(245,158,11,0.15)',color:'#f59e0b',borderRadius:4,padding:'1px 5px'}}>LID</span>
-                          : <span style={{fontSize:9,background:'rgba(16,185,129,0.12)',color:'#10b981',borderRadius:4,padding:'1px 5px'}}>JID ✓</span>
-                      ) : <span style={{fontSize:9,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'1px 5px'}}>no JID</span>}
+                    <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:4}}>{vc.last_message_from==='vendor'?'🏪 ':''}{vc.last_message||'—'}</div>
+                    <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                      {vc.phone && <span style={{fontSize:10,color:'#60a5fa'}}>📱 {vc.phone}</span>}
+                      {vc.jid ? (vc.jid.includes('@lid')
+                        ? <span style={{fontSize:9,background:'rgba(245,158,11,0.15)',color:'#f59e0b',borderRadius:4,padding:'1px 5px'}}>LID</span>
+                        : <span style={{fontSize:9,background:'rgba(16,185,129,0.12)',color:'#10b981',borderRadius:4,padding:'1px 5px'}}>JID ✓</span>)
+                      : <span style={{fontSize:9,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'1px 5px'}}>no JID</span>}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-            {/* Chat messages */}
-            <div style={{flex:1,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-              {!selVendorChat && <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13}}>Select a vendor to view chat</div>}
+            {/* Vendor chat messages */}
+            <div style={{flex:1,display:'flex',flexDirection:'column',background:'var(--bg-card)',overflow:'hidden',
+              ...(selVendorChat ? { position:'static' } : {})}}>
+              {!selVendorChat && <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13,flexDirection:'column',gap:10}}><div style={{fontSize:32}}>🏪</div>Select a vendor</div>}
               {selVendorChat && (<>
-                <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
-                  <div style={{fontWeight:700,fontSize:13,flex:1}}>{selVendorChat} — WhatsApp Chat</div>
-                  {(()=>{const vc=vendorChats.find(x=>x.vendor_name===selVendorChat); if(!vc) return null; return(<>
-                    {vc.phone && <span style={{fontSize:11,color:'#60a5fa',fontFamily:'monospace',background:'rgba(96,165,250,0.08)',padding:'3px 8px',borderRadius:6}}>📱 {vc.phone}</span>}
-                    {vc.jid ? (
-                      <span style={{fontSize:10,fontFamily:'monospace',color:'var(--text-muted)',background:'var(--bg)',padding:'3px 8px',borderRadius:6,maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={vc.jid}>
-                        {vc.jid.includes('@lid') ? '🔗 LID: ' : '📋 JID: '}{vc.jid.split('@')[0]}
-                        <span style={{marginLeft:6,fontSize:9,background: vc.jid.includes('@lid')?'rgba(245,158,11,0.15)':'rgba(16,185,129,0.12)',color: vc.jid.includes('@lid')?'#f59e0b':'#10b981',borderRadius:4,padding:'1px 5px'}}>{vc.jid.includes('@lid')?'LID':'STD'}</span>
-                      </span>
-                    ) : <span style={{fontSize:10,color:'#ef4444',background:'rgba(239,68,68,0.08)',padding:'3px 8px',borderRadius:6}}>⚠️ No JID saved</span>}
-                  </>);})()}
+                <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:10,flexShrink:0,flexWrap:'wrap'}}>
+                  <button onClick={()=>setSelVendorChat(null)} className="vendor-back-btn" style={{background:'none',border:'none',cursor:'pointer',color:'var(--indigo)',fontSize:20,padding:'0 4px',display:'none'}}>←</button>
+                  <div style={{fontWeight:700,fontSize:14,flex:1}}>{selVendorChat}</div>
+                  {(()=>{const vc=vendorChats.find(x=>x.vendor_name===selVendorChat); if(!vc) return null; return(
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                      {vc.phone && <span style={{fontSize:11,color:'#60a5fa',background:'rgba(96,165,250,0.08)',padding:'3px 8px',borderRadius:6}}>📱 {vc.phone}</span>}
+                      {vc.jid ? <span style={{fontSize:10,color:'var(--text-muted)',background:'var(--bg)',padding:'3px 8px',borderRadius:6}}>{vc.jid.split('@')[0]}</span> : <span style={{fontSize:10,color:'#ef4444',background:'rgba(239,68,68,0.08)',padding:'3px 8px',borderRadius:6}}>⚠️ No JID</span>}
+                    </div>
+                  );})()}
                 </div>
-                <div style={{flex:1,overflowY:'auto',padding:'12px 16px',display:'flex',flexDirection:'column',gap:8}}>
+                <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'12px 14px',display:'flex',flexDirection:'column',gap:8}}>
                   {vendorMsgs.map((m,i) => (
-                    <div key={i} style={{display:'flex',justifyContent: m.role==='vendor'?'flex-start':'flex-end'}}>
-                      <div style={{maxWidth:'72%',padding:'8px 12px',borderRadius:10,fontSize:12,lineHeight:1.5,
-                        background: m.role==='vendor' ? 'var(--bg-card2)' : 'rgba(99,102,241,0.15)',
-                        color:'var(--text)', border:'1px solid var(--border)'}}>
-                        <div style={{whiteSpace:'pre-wrap'}}>{m.text}</div>
-                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,textAlign:'right'}}>{m.role==='vendor'?'🏪 Vendor':'🤖 Bot'} · {m.created_at ? new Date(m.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
+                    <div key={i} style={{display:'flex',flexDirection:'column',alignItems:m.role==='vendor'?'flex-start':'flex-end',alignSelf:m.role==='vendor'?'flex-start':'flex-end',maxWidth:'82%'}}>
+                      <div style={{padding:'10px 14px',borderRadius: m.role==='vendor'?'16px 16px 16px 4px':'16px 16px 4px 16px',fontSize:13,lineHeight:1.55,
+                        background: m.role==='vendor' ? 'var(--bg)' : 'rgba(99,102,241,0.18)',
+                        color:'var(--text)', border:'1px solid var(--border)',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+                        {m.text}
                       </div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,paddingLeft:4}}>{m.role==='vendor'?'🏪 Vendor':'🤖 Bot'} · {m.created_at ? new Date(m.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
                     </div>
                   ))}
                   {vendorMsgs.length===0 && <div style={{color:'var(--text-muted)',fontSize:12,textAlign:'center',marginTop:40}}>No messages yet</div>}
@@ -11253,118 +11231,162 @@
               </>)}
             </div>
           </div>
+
+          <style>{`
+            @media (max-width: 640px) {
+              .vendor-list-col { width:100%!important; display:flex!important; }
+              .vendor-back-btn { display:block!important; }
+            }
+          `}</style>
         )}
 
-        {mainTab === 'chats' && <div style={{display:'flex',gap:14,flex:1,minHeight:0,padding:'14px 0 0'}}>
-        {/* Chat list */}
-        <div style={{width:320,flexShrink:0,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-          <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg)'}}>
-            {[['all','All'],['web','💬 Web'],['whatsapp','📱 WA']].map(([s, label]) => (
-              <button key={s} onClick={()=>switchSource(s)} style={{
-                flex:1, padding:'8px 0', fontSize:11, fontWeight:700, letterSpacing:0.3,
-                background: source===s ? 'var(--indigo-dim)' : 'transparent', color: source===s ? 'var(--indigo)' : 'var(--text-muted)',
-                border:'none', borderBottom: source===s ? '2px solid var(--indigo)' : '2px solid transparent', cursor:'pointer', fontFamily:'var(--font-family)',
-              }}>{label}</button>
-            ))}
-          </div>
-          <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-            {['pending','resolved'].map(t => (
-              <button key={t} onClick={()=>setTab(t)} style={{
-                flex:1, padding:'10px 0', fontSize:12, fontWeight:700, textTransform:'uppercase', letterSpacing:0.5,
-                background: tab===t ? 'var(--indigo-dim)' : 'transparent', color: tab===t ? 'var(--indigo)' : 'var(--text-muted)',
-                border:'none', cursor:'pointer', fontFamily:'var(--font-family)',
-              }}>{t} {tab===t && `(${filtered.length})`}</button>
-            ))}
-          </div>
-          <div style={{flex:1,overflowY:'auto'}}>
-            {loading && <div style={{padding:20,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>Loading…</div>}
-            {!loading && filtered.length===0 && <div style={{padding:20,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>No {tab} chats.</div>}
-            {filtered.map(c => (
-              <div key={c._id} onClick={()=>selectChat(c._id)} style={{
-                padding:'12px 14px', borderBottom:'1px solid var(--border)', cursor:'pointer',
-                background: selectedId===c._id ? 'var(--bg-hover)' : 'transparent',
-              }}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-                  <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{c.order_name || c.customer_email || c.customer_phone || 'New chat'}</span>
-                  <div style={{display:'flex',alignItems:'center',gap:5}}>
-                    <SourceBadge src={c.source} />
-                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{elapsed(c.last_message?.created_at || c.created_at)}</span>
+        {mainTab === 'chats' && <div style={{display:'flex',flex:1,minHeight:0,overflow:'hidden'}}>
+          {/* Chat list — hidden on mobile when detail is open */}
+          <div style={{
+            width:'clamp(260px,30%,340px)', flexShrink:0,
+            display: mobileShowDetail ? 'none' : 'flex',
+            flexDirection:'column',
+            background:'var(--bg-card)', borderRight:'1px solid var(--border)', overflow:'hidden',
+          }} className="chat-list-col">
+            {/* Source filter */}
+            <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg)',flexShrink:0}}>
+              {[['all','All'],['web','💬 Web'],['whatsapp','📱 WA']].map(([s,label]) => (
+                <button key={s} onClick={()=>switchSource(s)} style={{
+                  flex:1, padding:'10px 0', fontSize:12, fontWeight:700,
+                  background: source===s ? 'rgba(99,102,241,0.1)' : 'transparent',
+                  color: source===s ? 'var(--indigo)' : 'var(--text-muted)',
+                  border:'none', borderBottom: source===s ? '2px solid var(--indigo)' : '2px solid transparent',
+                  cursor:'pointer', fontFamily:'var(--font-family)',
+                }}>{label}</button>
+              ))}
+            </div>
+            {/* Pending / Resolved */}
+            <div style={{display:'flex',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+              {['pending','resolved'].map(t => (
+                <button key={t} onClick={()=>setTab(t)} style={{
+                  flex:1, padding:'11px 0', fontSize:12, fontWeight:700, textTransform:'capitalize',
+                  background: tab===t ? 'rgba(99,102,241,0.08)' : 'transparent',
+                  color: tab===t ? 'var(--indigo)' : 'var(--text-muted)',
+                  border:'none', cursor:'pointer', fontFamily:'var(--font-family)',
+                }}>{t} {tab===t && <span style={{fontSize:10,background:'var(--indigo)',color:'#fff',borderRadius:99,padding:'1px 6px',marginLeft:4}}>{filtered.length}</span>}</button>
+              ))}
+            </div>
+            <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
+              {loading && <div style={{padding:20,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>Loading…</div>}
+              {!loading && filtered.length===0 && <div style={{padding:24,fontSize:12,color:'var(--text-muted)',textAlign:'center'}}>No {tab} chats.</div>}
+              {filtered.map(c => (
+                <div key={c._id} onClick={()=>selectChat(c._id)} style={{
+                  padding:'14px 16px', borderBottom:'1px solid var(--border)', cursor:'pointer',
+                  background: selectedId===c._id ? 'rgba(99,102,241,0.08)' : 'transparent',
+                  borderLeft: selectedId===c._id ? '3px solid var(--indigo)' : '3px solid transparent',
+                }}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4,gap:6}}>
+                    <span style={{fontSize:14,fontWeight:700,color:'var(--text)',flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.order_name || c.customer_phone || c.customer_email || 'New chat'}</span>
+                    <div style={{display:'flex',alignItems:'center',gap:4,flexShrink:0}}>
+                      <SourceBadge src={c.source} />
+                      <span style={{fontSize:10,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{elapsed(c.last_message?.created_at || c.created_at)}</span>
+                    </div>
+                  </div>
+                  {c.last_message && <div style={{fontSize:12,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:5}}>
+                    {c.last_message.sender!=='customer' ? '↩ ' : ''}{c.last_message.text}
+                  </div>}
+                  <div style={{display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
+                    {c.customer_phone && <span style={{fontSize:10,color:'#60a5fa'}}>📱 {c.customer_phone}</span>}
+                    {(c.tags||[]).map(t => <TagPill key={t} tag={t}/>)}
+                    {c.needs_human && <span style={{fontSize:9,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'1px 5px',fontWeight:700}}>🔴 Needs help</span>}
+                    {c.hidden_from_vendors && <span style={{fontSize:9,color:'#ef4444',fontWeight:700}}>🚫</span>}
                   </div>
                 </div>
-                {c.last_message && <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:4}}>
-                  {c.last_message.sender!=='customer' ? '↩ ' : ''}{c.last_message.text}
-                </div>}
-                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
-                  {c.customer_phone && <span style={{fontSize:10,color:'#60a5fa',fontFamily:'monospace'}}>📱 {c.customer_phone}</span>}
-                  {c.source === 'whatsapp' && c.whatsapp_sender && (
-                    c.whatsapp_sender.includes('@lid')
-                      ? <span style={{fontSize:9,background:'rgba(245,158,11,0.15)',color:'#f59e0b',borderRadius:4,padding:'1px 5px'}}>LID</span>
-                      : <span style={{fontSize:9,background:'rgba(16,185,129,0.12)',color:'#10b981',borderRadius:4,padding:'1px 5px'}}>JID ✓</span>
-                  )}
-                  {c.source === 'whatsapp' && !c.whatsapp_sender && <span style={{fontSize:9,background:'rgba(239,68,68,0.12)',color:'#ef4444',borderRadius:4,padding:'1px 5px'}}>no JID</span>}
-                </div>
-                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                  {(c.tags||[]).map(t => <TagPill key={t} tag={t}/>)}
-                  {c.hidden_from_vendors && <span style={{fontSize:9,color:'#ef4444',fontWeight:700}}>🚫 hidden</span>}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Chat detail */}
-        <div style={{flex:1,display:'flex',flexDirection:'column',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
-          {!selected && <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13}}>Select a chat to view the conversation</div>}
-          {selected && (
-            <>
-              <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)',display:'flex',alignItems:'center',gap:8}}>{selected.order_name || 'New chat'} {selected.vendor_names?.length ? `· ${selected.vendor_names.join(', ')}` : ''} <SourceBadge src={selected.source} /></div>
-                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                    <span>Started {elapsed(selected.created_at)}</span>
-                    {selected.customer_phone && <span style={{color:'#60a5fa',fontFamily:'monospace'}}>📱 {selected.customer_phone}</span>}
-                    {selected.whatsapp_sender && (
-                      <span style={{fontFamily:'monospace',fontSize:10}} title={selected.whatsapp_sender}>
-                        {selected.whatsapp_sender.includes('@lid') ? '🔗 LID: ' : '📋 JID: '}{selected.whatsapp_sender.split('@')[0]}
-                        <span style={{marginLeft:5,fontSize:9,background: selected.whatsapp_sender.includes('@lid')?'rgba(245,158,11,0.15)':'rgba(16,185,129,0.12)',color: selected.whatsapp_sender.includes('@lid')?'#f59e0b':'#10b981',borderRadius:4,padding:'1px 4px'}}>{selected.whatsapp_sender.includes('@lid')?'LID':'STD'}</span>
-                      </span>
-                    )}
-                    {(selected.dispatch_info||[]).map(d => (
-                      <span key={d.vendor_name} style={{color: d.dispatched ? '#10b981' : '#f59e0b'}}>
-                        ⏱ {d.vendor_name}: {d.stage}{d.hours_since_stage_started!=null ? ` (${d.hours_since_stage_started}h)` : ''}{d.dispatched ? ' ✓ dispatched' : ''}
-                      </span>
-                    ))}
+          {/* Chat detail — full width on mobile */}
+          <div style={{
+            flex:1, display:'flex', flexDirection:'column',
+            background:'var(--bg-card)', overflow:'hidden',
+            ...(mobileShowDetail ? { position:'absolute', inset:0, top:'auto', zIndex:10, height:'calc(100vh - 107px)' } : {}),
+          }}>
+            {!selected && !mobileShowDetail && (
+              <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13,flexDirection:'column',gap:10}}>
+                <div style={{fontSize:32}}>💬</div>
+                Select a chat to view the conversation
+              </div>
+            )}
+            {selected && (
+              <>
+                {/* Chat header */}
+                <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+                    {/* Back button — mobile only */}
+                    <button onClick={()=>setMobileShowDetail(false)} style={{
+                      display:'none', background:'none', border:'none', cursor:'pointer',
+                      color:'var(--indigo)', fontSize:20, padding:'0 4px', lineHeight:1,
+                    }} className="chat-back-btn">←</button>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:15,fontWeight:700,color:'var(--text)',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                        <span>{selected.order_name || 'Chat'}</span>
+                        {selected.vendor_names?.length > 0 && <span style={{fontSize:12,color:'var(--text-muted)'}}>· {selected.vendor_names.join(', ')}</span>}
+                        <SourceBadge src={selected.source} />
+                      </div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3,display:'flex',flexWrap:'wrap',gap:8}}>
+                        <span>{elapsed(selected.created_at)}</span>
+                        {selected.customer_phone && <span style={{color:'#60a5fa'}}>📱 {selected.customer_phone}</span>}
+                        {(selected.dispatch_info||[]).map(d => (
+                          <span key={d.vendor_name} style={{color: d.dispatched ? '#10b981' : '#f59e0b'}}>
+                            {d.vendor_name}: {d.stage}{d.hours_since_stage_started!=null ? ` (${d.hours_since_stage_started}h)` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Action buttons */}
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <button className="btn btn-ghost btn-sm" onClick={toggleHide} style={{flex:'1 1 auto',minWidth:120,padding:'8px 12px',fontSize:12}}>{selected.hidden_from_vendors ? '👁 Unhide' : '🚫 Hide from vendor'}</button>
+                    <button className={`btn btn-sm ${selected.resolved?'btn-ghost':'btn-indigo'}`} onClick={toggleResolve} style={{flex:'1 1 auto',minWidth:120,padding:'8px 12px',fontSize:12}}>{selected.resolved ? '↺ Reopen' : '✓ Resolved'}</button>
                   </div>
                 </div>
-                <button className="btn btn-ghost btn-sm" onClick={toggleHide}>{selected.hidden_from_vendors ? '👁 Unhide from vendor' : '🚫 Hide from vendor'}</button>
-                <button className={`btn btn-sm ${selected.resolved?'btn-ghost':'btn-indigo'}`} onClick={toggleResolve}>{selected.resolved ? '↺ Reopen' : '✓ Mark Resolved'}</button>
-              </div>
 
-              <div style={{flex:1,overflowY:'auto',padding:18,display:'flex',flexDirection:'column',gap:10}}>
-                {msgLoading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
-                {messages.map((m,i) => (
-                  <div key={i} style={{alignSelf: m.sender==='customer' ? 'flex-end' : 'flex-start', maxWidth:'70%'}}>
-                    {m.sender!=='customer' && <div style={{fontSize:9,fontWeight:700,color:SEV[m.sender]||'#64748b',marginBottom:3,textTransform:'uppercase'}}>{m.sender_name || m.sender}</div>}
-                    <div style={{
-                      background: m.sender==='customer' ? 'var(--indigo)' : 'var(--bg-hover)',
-                      color: m.sender==='customer' ? '#fff' : 'var(--text)',
-                      border: m.sender==='customer' ? 'none' : '1px solid var(--border)',
-                      borderRadius:12, padding:'9px 13px', fontSize:13, lineHeight:1.5, whiteSpace:'pre-wrap',
-                    }}>{m.text}</div>
-                  </div>
-                ))}
-              </div>
+                {/* Messages */}
+                <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'12px 14px',display:'flex',flexDirection:'column',gap:8}}>
+                  {msgLoading && <div style={{fontSize:12,color:'var(--text-muted)',textAlign:'center',padding:20}}>Loading…</div>}
+                  {messages.map((m,i) => (
+                    <div key={i} style={{display:'flex',flexDirection:'column',alignItems: m.sender==='customer' ? 'flex-end' : 'flex-start', maxWidth:'82%', alignSelf: m.sender==='customer'?'flex-end':'flex-start'}}>
+                      {m.sender!=='customer' && <div style={{fontSize:9,fontWeight:700,color:SEV[m.sender]||'#64748b',marginBottom:3,textTransform:'uppercase',paddingLeft:2}}>{m.sender_name || m.sender}</div>}
+                      <div style={{
+                        background: m.sender==='customer' ? 'var(--indigo)' : 'var(--bg)',
+                        color: m.sender==='customer' ? '#fff' : 'var(--text)',
+                        border: m.sender==='customer' ? 'none' : '1px solid var(--border)',
+                        borderRadius: m.sender==='customer' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                        padding:'10px 14px', fontSize:13, lineHeight:1.55, whiteSpace:'pre-wrap', wordBreak:'break-word',
+                      }}>{m.text}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,paddingLeft:4}}>{m.created_at ? new Date(m.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
+                    </div>
+                  ))}
+                </div>
 
-              <div style={{display:'flex',gap:8,padding:14,borderTop:'1px solid var(--border)'}}>
-                <input className="form-input" placeholder="Reply as CROSCROW Support…" value={replyText}
-                  onChange={e=>setReplyText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendReply()}
-                  style={{flex:1}}/>
-                <button className="btn btn-indigo" onClick={sendReply} disabled={sending||!replyText.trim()}>{sending?'…':'Send'}</button>
-              </div>
-            </>
-          )}
-        </div>
+                {/* Reply bar */}
+                <div style={{display:'flex',gap:8,padding:'10px 12px',borderTop:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0}}>
+                  <input className="form-input" placeholder="Reply as CROSCROW…" value={replyText}
+                    onChange={e=>setReplyText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendReply()}
+                    style={{flex:1,fontSize:14,padding:'10px 14px',borderRadius:22}}/>
+                  <button className="btn btn-indigo" onClick={sendReply} disabled={sending||!replyText.trim()}
+                    style={{borderRadius:22,padding:'10px 20px',fontSize:14,flexShrink:0}}>{sending?'…':'Send'}</button>
+                </div>
+              </>
+            )}
+          </div>
         </div>}
+
+        <style>{`
+          @media (max-width: 640px) {
+            .chat-list-col { width: 100% !important; display: flex !important; }
+            .chat-back-btn { display: block !important; }
+          }
+          @media (min-width: 641px) {
+            .chat-list-col { display: flex !important; position: static !important; }
+          }
+        `}</style>
       </div>
     );
   }
