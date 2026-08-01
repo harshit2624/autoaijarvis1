@@ -170,6 +170,26 @@ async function startServer() {
     console.log(`    Stats   : /orders/stats`);
     console.log(`    Export  : /orders/export`);
     console.log(`    Webhook : POST /webhooks/orders\n`);
+    // Non-blocking backfill: ensure order_meta has snapshots for all Shopify orders
+    setImmediate(async () => {
+      try {
+        console.log('⏳  Background backfill: fetching all orders from Shopify...');
+        const orders = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
+        let saved = 0;
+        for (const o of orders) {
+          const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1 } });
+          if (!existing) { await snapshotOrder(o); saved++; }
+          else {
+            // Update shipping_charge and fulfillment line_item_ids if missing
+            const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids);
+            if (needsPatch) { await snapshotOrder(o); saved++; }
+          }
+        }
+        console.log(`✅  Backfill complete — ${saved} docs upserted, ${orders.length} total`);
+      } catch (e) {
+        console.error('❌  Background backfill failed:', e.message);
+      }
+    });
   });
 }
 
@@ -5728,9 +5748,9 @@ app.post("/admin/logout", adminAuth, async (req, res) => {
 // ── GET /admin/dashboard ──────────────────────────────────────────────────
 app.get("/admin/dashboard", adminAuth, async (req, res) => {
   try {
-    const raw    = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
-    const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
-    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const raw    = metaDocs.map(orderStubFromMeta);
+    const metaMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
 
     const STAGES = ["new","confirmed","partial","ready","pickup","transit","delivered","rto","hold","cancelled"];
     const stageCounts = Object.fromEntries(STAGES.map(s => [s, 0]));
@@ -5813,9 +5833,9 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
 // ── GET /admin/analytics ─────────────────────────────────────────────────
 app.get("/admin/analytics", adminAuth, async (req, res) => {
   try {
-    const raw     = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
-    const metas   = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
-    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const raw     = metaDocs.map(orderStubFromMeta);
+    const metaMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
     const allVS   = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id:1, vendor_name:1, stage:1, awb:1, stage_started_at:1, dispatched_at:1, _id:0 } }).toArray();
 
     const now      = Date.now();
@@ -6340,9 +6360,10 @@ app.get("/admin/dashboard/stage-timings", adminAuth, async (req, res) => {
 app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
   try {
     const { stage, vendor, created_at_min, created_at_max } = req.query;
-    const raw    = await fetchAllOrders("any", created_at_min || "2000-01-01T00:00:00Z", created_at_max || null);
-    const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
-    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    // Serve entirely from MongoDB snapshot — no Shopify API call needed
+    const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
+    const raw = metaDocs.map(orderStubFromMeta);
+    const metaMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
     const allVS  = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_url: 1, stage_started_at: 1, penalty_triggered: 1, warning_sent: 1, _id: 0 } }).toArray();
     const vsMap  = {}; // { shopify_id: { vendor_name: stage } }
     const vtMap  = {}; // { shopify_id: { vendor_name: { awb, courier, tracking_url } } }

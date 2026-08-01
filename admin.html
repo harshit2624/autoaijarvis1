@@ -4181,9 +4181,9 @@
   /* ══════════════════════════════════
      ORDERS VIEW
   ══════════════════════════════════ */
-  function Orders({ token, initialStage }) {
-    const [orders,    setOrders]   = useState([]);
-    const [loading,   setLoading]  = useState(true);
+  function Orders({ token, initialStage, ordersCache }) {
+    const [orders,    setOrders]   = useState(()=> ordersCache && ordersCache.current ? ordersCache.current : []);
+    const [loading,   setLoading]  = useState(()=> !(ordersCache && ordersCache.current));
     const [stage,     setStage]    = useState(initialStage || 'all');
     const [search,    setSearch]   = useState('');
     const [page,      setPage]     = useState(1);
@@ -4211,10 +4211,10 @@
     const load = useCallback(()=>{
       setLoading(true);
       fetch(`${API}/admin/orders?created_at_min=2000-01-01`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>setOrders(d.orders||[])).catch(()=>{}).finally(()=>setLoading(false));
+        .then(r=>r.json()).then(d=>{ const ords=d.orders||[]; setOrders(ords); if(ordersCache) ordersCache.current=ords; }).catch(()=>{}).finally(()=>setLoading(false));
     },[token]);
 
-    useEffect(()=>{ load(); },[load]);
+    useEffect(()=>{ if (!(ordersCache && ordersCache.current)) load(); },[load]);
     useEffect(()=>{
       if(!showTagDrop) return;
       const close = ()=>setShowTagDrop(false);
@@ -13307,6 +13307,7 @@
     const [loginErr,   setLoginErr]   = useState('');
     const [loginLoad,  setLoginLoad]  = useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
+    const ordersCache = React.useRef(null); // persist orders across view switches
     const isAdmin = role === 'admin';
     const canSee = (perm) => isAdmin || permissions.includes(perm);
     const [theme, setTheme] = useState(()=>localStorage.getItem('admin_theme')||'midnight');
@@ -13537,7 +13538,7 @@
           <AnnouncementBar token={token} endpoint={`${API}/admin/announcements/ticker`}/>
 
           {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick} iconStyle={iconStyle}/>}
-          {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter}/>}
+          {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter} ordersCache={ordersCache}/>}
           {view==='vendors'     && <Vendors     token={token} onNewAgreement={name=>{ setView('agreements'); window.__prefillAgreement=name; }}/>}
           {view==='returns'     && <ReturnRequests token={token}/>}
           {view==='ccinventory' && <CCInventory token={token}/>}
