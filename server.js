@@ -334,7 +334,9 @@ function orderStubFromMeta(meta) {
       tracking_number: f.tracking_number,
       tracking_url: f.tracking_url,
       tracking_company: f.tracking_company,
-      line_item_ids: f.line_item_ids || [],
+      shipment_status: f.shipment_status || '',
+      // translate stored line_item_ids back to line_items shape vendorStagesFromFulfillments expects
+      line_items: (f.line_item_ids || []).map(id => ({ id })),
     })),
   };
 }
@@ -5758,6 +5760,13 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
     const stageCounts = Object.fromEntries(STAGES.map(s => [s, 0]));
     let totalRevenue = 0;
 
+    // Fetch OVS first — used in both the stage-count forEach and the leaderboard forEach below
+    const DISPATCHED_S = new Set(['ready','pickup','transit','delivered','rto']);
+    const PENDING_S    = new Set(['confirmed','partial']);
+    const allVS = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, stage_started_at: 1, _id: 0 } }).toArray();
+    const vsMap = {};
+    allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r; });
+
     const SO_DASH = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
     raw.forEach(o => {
       const sid = String(o.id);
@@ -5773,13 +5782,6 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
 
     const pendDocs = await mdb.collection('settlements').find({ status: 'pending' }, { projection: { commission: 1, gst_amount: 1, _id: 0 } }).toArray();
     const pendRow = { t: pendDocs.reduce((s, d) => s + (d.commission || 0) + (d.gst_amount || 0), 0) };
-
-    // ── Vendor fulfillment leaderboard ────────────────────────────────────
-    const DISPATCHED_S = new Set(['ready','pickup','transit','delivered','rto']);
-    const PENDING_S    = new Set(['confirmed','partial']);
-    const allVS = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, stage_started_at: 1, _id: 0 } }).toArray();
-    const vsMap = {};
-    allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r; });
 
     const vendorFulfill = {};
     const now = Date.now();
@@ -6037,7 +6039,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       trendMap[key] = { date: key, orders: 0, revenue: 0, confirmed: 0 };
     }
     ordersMain.forEach(o => {
-      const key = o.created_at.slice(0,10);
+      const key = (o.created_at || '').slice(0,10);
       if (trendMap[key]) {
         trendMap[key].orders++;
         trendMap[key].revenue = parseFloat((trendMap[key].revenue + parseFloat(o.total_price||0)).toFixed(2));
@@ -6414,7 +6416,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
       const meta    = metaMap[String(o.id)] || {};
       const vendors = [...new Set((o.line_items || []).map(li => li.vendor).filter(Boolean))];
       const myRev   = (o.line_items || []).reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
-      const shipping = parseFloat(o.total_shipping_price_set?.shop_money?.amount || 0);
+      const shipping = parseFloat(meta.shipping_charge || o.total_shipping_price_set?.shop_money?.amount || 0);
       const sid = String(o.id);
 
       // Populate vtMap from Shopify fulfillments for vendors without an OVS tracking entry
