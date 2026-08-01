@@ -6307,6 +6307,72 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
   }
 });
 
+// ── GET /admin/vendor-scorecard ───────────────────────────────────────────
+app.get("/admin/vendor-scorecard", adminAuth, async (req, res) => {
+  try {
+    const now = Date.now();
+    const PENDING_STAGES  = new Set(['confirmed','partial','ready','pickup']);
+    const DISPATCH_STAGES = new Set(['ready','pickup','transit','ofd','delivered','rto']);
+
+    const allVS = await mdb.collection('order_vendor_stage').find(
+      {},
+      { projection: { shopify_id:1, vendor_name:1, stage:1, stage_started_at:1, dispatched_at:1, awb:1, _id:0 } }
+    ).toArray();
+
+    // ── 1. Top 10 orders stuck longest in pickup-pending stages
+    const stuckRows = allVS
+      .filter(r => PENDING_STAGES.has(r.stage) && r.stage_started_at > 0)
+      .map(r => ({ shopify_id: r.shopify_id, vendor: r.vendor_name, stage: r.stage, hrs: (now - r.stage_started_at) / 3600000 }))
+      .sort((a, b) => b.hrs - a.hrs)
+      .slice(0, 15);
+
+    // Attach order names from order_meta
+    const stuckIds = [...new Set(stuckRows.map(r => r.shopify_id))];
+    const metaDocs = await mdb.collection('order_meta').find(
+      { shopify_id: { $in: stuckIds } },
+      { projection: { shopify_id:1, order_name:1, _id:0 } }
+    ).toArray();
+    const nameMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m.order_name]));
+    const stuckOrders = stuckRows.map(r => ({ ...r, order_name: nameMap[r.shopify_id] || r.shopify_id }));
+
+    // ── 2. Per-vendor metrics
+    const vendorMap = {}; // vendor_name → { pendingHrs[], dispatchHrs[], totalOrders, stuckCount }
+    allVS.forEach(r => {
+      const v = r.vendor_name;
+      if (!vendorMap[v]) vendorMap[v] = { pendingHrs: [], dispatchHrs: [], totalOrders: 0, stuckCount: 0 };
+      vendorMap[v].totalOrders++;
+
+      // Avg time in pickup-pending (orders still stuck)
+      if (PENDING_STAGES.has(r.stage) && r.stage_started_at > 0) {
+        vendorMap[v].pendingHrs.push((now - r.stage_started_at) / 3600000);
+        vendorMap[v].stuckCount++;
+      }
+      // Avg confirmed→dispatch time (orders that were dispatched)
+      if (r.dispatched_at > 0 && r.stage_started_at > 0 && r.dispatched_at > r.stage_started_at) {
+        vendorMap[v].dispatchHrs.push((r.dispatched_at - r.stage_started_at) / 3600000);
+      }
+    });
+
+    const avg = arr => arr.length ? parseFloat((arr.reduce((s, v) => s + v, 0) / arr.length).toFixed(1)) : null;
+
+    const vendorScores = Object.entries(vendorMap)
+      .filter(([, d]) => d.totalOrders >= 2)
+      .map(([vendor, d]) => ({
+        vendor,
+        totalOrders:   d.totalOrders,
+        stuckCount:    d.stuckCount,
+        avgPendingHrs: avg(d.pendingHrs),   // avg hrs currently stuck orders have been waiting
+        avgDispatchHrs: avg(d.dispatchHrs), // avg hrs from order confirmed to dispatch (historical)
+      }))
+      .sort((a, b) => (b.avgDispatchHrs || 0) - (a.avgDispatchHrs || 0)); // slowest dispatchers first
+
+    res.json({ stuckOrders, vendorScores });
+  } catch (err) {
+    console.error('❌ /admin/vendor-scorecard:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /admin/dashboard/stage-timings ─────────────────────────────────────
 // Mines order_vendor_stage.stage_history (captured by OVS.upsert on every
 // stage change) for avg time spent in each transition, plus avg total

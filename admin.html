@@ -3108,27 +3108,31 @@
     );
   }
 
-  function Dashboard({ token, onStageClick, iconStyle }) {
+  function Dashboard({ token, onStageClick, iconStyle, dashCache }) {
     const [data,      setData]      = useState(null);
-    const [analytics, setAnalytics] = useState(null);
-    const [aLoading,  setALoading]  = useState(true);
+    const [analytics, setAnalytics] = useState(()=> dashCache?.current?.analytics?.[PERIOD_PRESETS[3]?.label] || null);
+    const [aLoading,  setALoading]  = useState(()=> !(dashCache?.current?.analytics?.[PERIOD_PRESETS[3]?.label]));
     const [aTab,      setATab]      = useState('overview');
     const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
-    const [timings,   setTimings]   = useState(null);
-    const [tLoading,  setTLoading]  = useState(true);
+    const [timings,   setTimings]   = useState(()=> dashCache?.current?.timings || null);
+    const [tLoading,  setTLoading]  = useState(()=> !dashCache?.current?.timings);
 
     useEffect(()=>{
+      const key = aPeriod?.label || 'all';
+      const cached = dashCache?.current?.analytics?.[key];
+      if (cached) { setAnalytics(cached); setALoading(false); return; }
       setALoading(true);
       const from = aPeriod ? aPeriod.from : '2020-01-01';
       const to   = aPeriod ? aPeriod.to   : isoToday();
       fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(setAnalytics).catch(()=>{}).finally(()=>setALoading(false));
+        .then(r=>r.json()).then(d=>{ setAnalytics(d); if(dashCache?.current) dashCache.current.analytics[key]=d; }).catch(()=>{}).finally(()=>setALoading(false));
     },[token, aPeriod]);
 
     useEffect(()=>{
+      if (dashCache?.current?.timings) { setTimings(dashCache.current.timings); setTLoading(false); return; }
       setTLoading(true);
       fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(setTimings).catch(()=>{}).finally(()=>setTLoading(false));
+        .then(r=>r.json()).then(d=>{ setTimings(d); if(dashCache?.current) dashCache.current.timings=d; }).catch(()=>{}).finally(()=>setTLoading(false));
     },[token]);
 
     const fmtHrs = (h) => {
@@ -3155,7 +3159,10 @@
           <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
           </div>
-          <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; dashCache.current.timings=null; } setALoading(true); setTLoading(true); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current.timings=d;}).catch(()=>{}).finally(()=>setTLoading(false)); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
+            <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
+          </div>
         </div>
 
         {/* Summary row — small stat cards */}
@@ -9027,8 +9034,97 @@
   // Only permissions wired up to an actual backend check belong here —
   // showing a checkbox that doesn't gate anything would be misleading.
 
+  // ── VendorDispatchMetrics: stuck orders + dispatch timing ─────────────────
+  function VendorDispatchMetrics({ token }) {
+    const [sc, setSc] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+      setLoading(true);
+      fetch(`${API}/admin/vendor-scorecard`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(setSc).catch(() => {}).finally(() => setLoading(false));
+    }, [token]);
+
+    const fmtHrs = h => {
+      if (h == null) return '—';
+      if (h < 1)  return Math.round(h * 60) + 'm';
+      if (h < 24) return h.toFixed(1) + 'h';
+      return Math.floor(h / 24) + 'd ' + Math.round(h % 24) + 'h';
+    };
+    const heatColor = h => {
+      if (h == null) return 'var(--text-muted)';
+      if (h > 72)  return '#ef4444';
+      if (h > 48)  return '#f97316';
+      if (h > 24)  return '#f59e0b';
+      return '#10b981';
+    };
+
+    if (loading) return React.createElement('div', { style:{ padding:40, textAlign:'center', color:'var(--text-muted)' } }, 'Loading performance data…');
+    if (!sc) return React.createElement('div', { style:{ padding:40, textAlign:'center', color:'var(--text-muted)' } }, 'No data');
+
+    return React.createElement('div', { style:{ padding:'0 0 40px' } },
+
+      // ── Stuck Orders ──────────────────────────────────────────────
+      React.createElement('div', { style:{ marginBottom:28 } },
+        React.createElement('div', { style:{ fontSize:13, fontWeight:700, marginBottom:12, color:'var(--text)', letterSpacing:0.5 } }, '⏳ Top Orders Stuck in Pickup Pending'),
+        React.createElement('div', { style:{ overflowX:'auto' } },
+          React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:12 } },
+            React.createElement('thead', null,
+              React.createElement('tr', null,
+                ['Order','Vendor','Stage','Time Stuck'].map(h =>
+                  React.createElement('th', { key:h, style:{ padding:'8px 12px', textAlign:'left', color:'var(--text-muted)', fontWeight:600, fontSize:11, letterSpacing:1, borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' } }, h)
+                )
+              )
+            ),
+            React.createElement('tbody', null,
+              (sc.stuckOrders || []).slice(0,10).map((o, i) =>
+                React.createElement('tr', { key:i, style:{ borderBottom:'1px solid var(--border)' } },
+                  React.createElement('td', { style:{ padding:'10px 12px', fontWeight:700, color:'var(--indigo)' } }, o.order_name),
+                  React.createElement('td', { style:{ padding:'10px 12px', color:'var(--text)' } }, o.vendor),
+                  React.createElement('td', { style:{ padding:'10px 12px' } },
+                    React.createElement('span', { style:{ padding:'2px 8px', borderRadius:4, fontSize:10, fontWeight:700, textTransform:'uppercase', background:'rgba(245,158,11,0.15)', color:'#f59e0b', border:'1px solid rgba(245,158,11,0.3)' } }, o.stage)
+                  ),
+                  React.createElement('td', { style:{ padding:'10px 12px', fontWeight:700, color: heatColor(o.hrs) } }, fmtHrs(o.hrs))
+                )
+              )
+            )
+          )
+        )
+      ),
+
+      // ── Vendor Dispatch Timing ────────────────────────────────────
+      React.createElement('div', null,
+        React.createElement('div', { style:{ fontSize:13, fontWeight:700, marginBottom:4, color:'var(--text)', letterSpacing:0.5 } }, '📊 Vendor Dispatch Performance'),
+        React.createElement('div', { style:{ fontSize:11, color:'var(--text-muted)', marginBottom:12 } }, 'Avg confirmed→dispatch time (historical) · Green < 24h · Red > 72h'),
+        React.createElement('div', { style:{ overflowX:'auto' } },
+          React.createElement('table', { style:{ width:'100%', borderCollapse:'collapse', fontSize:12 } },
+            React.createElement('thead', null,
+              React.createElement('tr', null,
+                ['Vendor','Total Orders','Currently Stuck','Avg Dispatch Time','Avg Wait (stuck)'].map(h =>
+                  React.createElement('th', { key:h, style:{ padding:'8px 12px', textAlign:'left', color:'var(--text-muted)', fontWeight:600, fontSize:11, letterSpacing:1, borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' } }, h)
+                )
+              )
+            ),
+            React.createElement('tbody', null,
+              (sc.vendorScores || []).map((v, i) =>
+                React.createElement('tr', { key:i, style:{ borderBottom:'1px solid var(--border)', background: i%2===0?'transparent':'rgba(255,255,255,0.01)' } },
+                  React.createElement('td', { style:{ padding:'10px 12px', fontWeight:700, color:'var(--text)' } }, v.vendor),
+                  React.createElement('td', { style:{ padding:'10px 12px', color:'var(--text-dim)' } }, v.totalOrders),
+                  React.createElement('td', { style:{ padding:'10px 12px', color: v.stuckCount > 0 ? '#f59e0b' : 'var(--text-muted)', fontWeight: v.stuckCount > 0 ? 700 : 400 } }, v.stuckCount || '—'),
+                  React.createElement('td', { style:{ padding:'10px 12px', fontWeight:700, color: heatColor(v.avgDispatchHrs) } }, fmtHrs(v.avgDispatchHrs)),
+                  React.createElement('td', { style:{ padding:'10px 12px', fontWeight:700, color: heatColor(v.avgPendingHrs) } }, fmtHrs(v.avgPendingHrs))
+                )
+              )
+            )
+          )
+        )
+      )
+    );
+  }
+
   // ── VendorScores: Neural Vendor Score System ─────────────────────────────
   function VendorScores({ token }) {
+    const [tab, setTab] = React.useState('neural');
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [days, setDays] = React.useState(30);
@@ -9124,7 +9220,7 @@
       )
       .sort(SORT_FNS[sortBy] || SORT_FNS.score);
 
-    if (loading) return React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'center', height:300 } },
+    if (loading && tab === 'neural') return React.createElement('div', { style:{ display:'flex', alignItems:'center', justifyContent:'center', height:300 } },
       React.createElement('div', { style:{ textAlign:'center' } },
         React.createElement('div', { style:{ fontSize:32, marginBottom:12 } }, '⚙️'),
         React.createElement('div', { style:{ color:'#6b7280', fontWeight:600 } }, 'Computing vendor scores…'),
@@ -9132,6 +9228,16 @@
     );
 
     return React.createElement('div', { style:{ padding:'0 0 40px' } },
+      // Tab switcher
+      React.createElement('div', { style:{ display:'flex', gap:8, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:10 } },
+        React.createElement('button', { onClick:()=>setTab('neural'), style:{ padding:'6px 16px', borderRadius:6, border:'none', cursor:'pointer', fontWeight:600, fontSize:12, background: tab==='neural'?'var(--indigo)':'transparent', color: tab==='neural'?'#fff':'var(--text-muted)' } }, '🏆 Neural Scores'),
+        React.createElement('button', { onClick:()=>setTab('dispatch'), style:{ padding:'6px 16px', borderRadius:6, border:'none', cursor:'pointer', fontWeight:600, fontSize:12, background: tab==='dispatch'?'var(--indigo)':'transparent', color: tab==='dispatch'?'#fff':'var(--text-muted)' } }, '📊 Dispatch Metrics'),
+      ),
+
+      tab === 'dispatch' && React.createElement(VendorDispatchMetrics, { token }),
+
+      tab === 'neural' && React.createElement('div', null,
+
       // Toast
       toast && React.createElement('div', { style:{ position:'fixed', top:24, right:24, zIndex:9999,
         background: toast.type==='error'?'#fef2f2':'#f0fdf4',
@@ -9320,6 +9426,7 @@
           ),
         ),
       ),
+      ), // end neural tab div
     );
   }
 
@@ -13307,7 +13414,8 @@
     const [loginErr,   setLoginErr]   = useState('');
     const [loginLoad,  setLoginLoad]  = useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
-    const ordersCache = React.useRef(null); // persist orders across view switches
+    const ordersCache   = React.useRef(null); // persist orders across view switches
+    const dashCache     = React.useRef({ analytics: {}, timings: null, scorecard: null }); // persist dashboard data across view switches
     const isAdmin = role === 'admin';
     const canSee = (perm) => isAdmin || permissions.includes(perm);
     const [theme, setTheme] = useState(()=>localStorage.getItem('admin_theme')||'midnight');
@@ -13537,7 +13645,7 @@
 
           <AnnouncementBar token={token} endpoint={`${API}/admin/announcements/ticker`}/>
 
-          {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick} iconStyle={iconStyle}/>}
+          {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick} iconStyle={iconStyle} dashCache={dashCache}/>}
           {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter} ordersCache={ordersCache}/>}
           {view==='vendors'     && <Vendors     token={token} onNewAgreement={name=>{ setView('agreements'); window.__prefillAgreement=name; }}/>}
           {view==='returns'     && <ReturnRequests token={token}/>}
