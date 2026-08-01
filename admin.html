@@ -3116,6 +3116,7 @@
     const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
     const [timings,   setTimings]   = useState(()=> dashCache?.current?.timings || null);
     const [tLoading,  setTLoading]  = useState(()=> !dashCache?.current?.timings);
+    const [scorecard, setScorecard] = useState(()=> dashCache?.current?.scorecard || null);
 
     useEffect(()=>{
       const key = aPeriod?.label || 'all';
@@ -3133,6 +3134,12 @@
       setTLoading(true);
       fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{ setTimings(d); if(dashCache?.current) dashCache.current.timings=d; }).catch(()=>{}).finally(()=>setTLoading(false));
+    },[token]);
+
+    useEffect(()=>{
+      if (dashCache?.current?.scorecard) { setScorecard(dashCache.current.scorecard); return; }
+      fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setScorecard(d); if(dashCache?.current) dashCache.current.scorecard=d; }).catch(()=>{});
     },[token]);
 
     const fmtHrs = (h) => {
@@ -3160,7 +3167,7 @@
             <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
           </div>
           <div style={{display:'flex',gap:6,alignItems:'center'}}>
-            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; dashCache.current.timings=null; } setALoading(true); setTLoading(true); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current.timings=d;}).catch(()=>{}).finally(()=>setTLoading(false)); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
+            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; dashCache.current.timings=null; dashCache.current.scorecard=null; } setALoading(true); setTLoading(true); setScorecard(null); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current.timings=d;}).catch(()=>{}).finally(()=>setTLoading(false)); fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setScorecard(d);if(dashCache?.current)dashCache.current.scorecard=d;}).catch(()=>{}); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
             <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
           </div>
         </div>
@@ -4181,6 +4188,94 @@
             </div>
           ) : null}
         </div>
+
+        {/* ── CRITICAL STUCK ORDERS ── */}
+        {scorecard && (scorecard.stuckOrders||[]).length > 0 && (() => {
+          const fmtH = h => h==null?'—':h<1?Math.round(h*60)+'m':h<24?h.toFixed(1)+'h':Math.floor(h/24)+'d '+Math.round(h%24)+'h';
+          const heatC = h => h==null?'var(--text-muted)':h>72?'#ef4444':h>48?'#f97316':h>24?'#f59e0b':'#10b981';
+          // Sort: prepaid > partial > cod, then by hours stuck desc
+          const payWeight = o => o.payType==='prepaid'?3:o.payType==='partial'?2:1;
+          const sorted = [...(scorecard.stuckOrders||[])].sort((a,b)=>{
+            const pa = payWeight(a), pb = payWeight(b);
+            if (pa!==pb) return pb-pa;
+            return b.hrs-a.hrs;
+          });
+          return (
+            <div className="card" style={{marginTop:16}}>
+              <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
+                <span className="card-title">🚨 Critical Stuck Orders</span>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>Pickup-pending · sorted by severity (partial/confirmed first) then time stuck</span>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    {['Order','Vendor','Stage','Time Stuck'].map(h=>(
+                      <th key={h} style={{textAlign:'left',padding:'8px 12px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:1,whiteSpace:'nowrap'}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {sorted.slice(0,10).map((o,i)=>{
+                      const isPrepaid = o.payType==='prepaid';
+                      const isPartial = o.payType==='partial';
+                      const isHigh = isPrepaid||isPartial;
+                      const stageColor = isHigh?'#ef4444':'#f59e0b';
+                      return (
+                        <tr key={i} style={{borderBottom:'1px solid var(--border)',background:isPrepaid?'rgba(239,68,68,0.06)':isPartial?'rgba(99,102,241,0.05)':'transparent'}}>
+                          <td style={{padding:'10px 12px',fontWeight:700,color:'var(--indigo)'}}>{o.order_name}</td>
+                          <td style={{padding:'10px 12px',color:'var(--text)'}}>{o.vendor}
+                            {isPrepaid&&<span style={{marginLeft:6,fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(16,185,129,0.15)',color:'#10b981',border:'1px solid rgba(16,185,129,0.3)',fontWeight:700}}>PREPAID</span>}
+                            {isPartial&&<span style={{marginLeft:6,fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(99,102,241,0.15)',color:'#6366f1',border:'1px solid rgba(99,102,241,0.3)',fontWeight:700}}>ADVANCE</span>}
+                          </td>
+                          <td style={{padding:'10px 12px'}}>
+                            <span style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,textTransform:'uppercase',
+                              background:isHigh?'rgba(239,68,68,0.15)':'rgba(245,158,11,0.15)',
+                              color:stageColor,border:`1px solid ${isHigh?'rgba(239,68,68,0.3)':'rgba(245,158,11,0.3)'}`}}>{o.stage}</span>
+                          </td>
+                          <td style={{padding:'10px 12px',fontWeight:700,color:heatC(o.hrs)}}>{fmtH(o.hrs)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── VENDOR TIMING PERFORMANCE ── */}
+        {scorecard && (scorecard.vendorScores||[]).length > 0 && (() => {
+          const fmtH = h => h==null?'—':h<1?Math.round(h*60)+'m':h<24?h.toFixed(1)+'h':Math.floor(h/24)+'d '+Math.round(h%24)+'h';
+          const heatC = h => h==null?'var(--text-muted)':h>72?'#ef4444':h>48?'#f97316':h>24?'#f59e0b':'#10b981';
+          return (
+            <div className="card" style={{marginTop:16}}>
+              <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
+                <span className="card-title">📊 Vendor Dispatch Timing</span>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>Avg confirmed → dispatch · heat: green &lt;24h · red &gt;72h</span>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    {['Vendor','Total','Stuck Now','Avg Dispatch Time','Avg Wait (stuck)'].map(h=>(
+                      <th key={h} style={{textAlign:'left',padding:'8px 12px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:1,whiteSpace:'nowrap'}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {(scorecard.vendorScores||[]).map((v,i)=>(
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'transparent':'rgba(255,255,255,0.01)'}}>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:'var(--text)'}}>{v.vendor}</td>
+                        <td style={{padding:'10px 12px',color:'var(--text-dim)'}}>{v.totalOrders}</td>
+                        <td style={{padding:'10px 12px',color:v.stuckCount>0?'#f59e0b':'var(--text-muted)',fontWeight:v.stuckCount>0?700:400}}>{v.stuckCount||'—'}</td>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:heatC(v.avgDispatchHrs)}}>{fmtH(v.avgDispatchHrs)}</td>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:heatC(v.avgPendingHrs)}}>{fmtH(v.avgPendingHrs)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
       </div>
     );
   }

@@ -6326,14 +6326,19 @@ app.get("/admin/vendor-scorecard", adminAuth, async (req, res) => {
       .sort((a, b) => b.hrs - a.hrs)
       .slice(0, 15);
 
-    // Attach order names from order_meta
+    // Attach order names + payment type from order_meta
     const stuckIds = [...new Set(stuckRows.map(r => r.shopify_id))];
     const metaDocs = await mdb.collection('order_meta').find(
       { shopify_id: { $in: stuckIds } },
-      { projection: { shopify_id:1, order_name:1, _id:0 } }
+      { projection: { shopify_id:1, order_name:1, payment_type:1, financial_status:1, _id:0 } }
     ).toArray();
-    const nameMap = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m.order_name]));
-    const stuckOrders = stuckRows.map(r => ({ ...r, order_name: nameMap[r.shopify_id] || r.shopify_id }));
+    const metaByid = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
+    const stuckOrders = stuckRows.map(r => {
+      const m = metaByid[r.shopify_id] || {};
+      const isPrepaid = m.financial_status === 'paid' || m.payment_type === 'prepaid';
+      const isPartial = m.financial_status === 'partially_paid' || m.payment_type === 'advance';
+      return { ...r, order_name: m.order_name || r.shopify_id, payType: isPrepaid ? 'prepaid' : isPartial ? 'partial' : 'cod' };
+    });
 
     // ── 2. Per-vendor metrics
     const vendorMap = {}; // vendor_name → { pendingHrs[], dispatchHrs[], totalOrders, stuckCount }
