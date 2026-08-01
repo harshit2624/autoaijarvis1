@@ -257,7 +257,15 @@ async function snapshotOrder(payload) {
     tracking_number: f.tracking_number || '',
     tracking_url: f.tracking_url || '',
     tracking_company: f.tracking_company || '',
+    shipment_status: f.shipment_status || '',
+    // store which line_item ids belong to this fulfillment so vendorStages can be derived without Shopify
+    line_item_ids: (f.line_items || []).map(li => li.id),
   }));
+  const shipping_charge = parseFloat(
+    payload.total_shipping_price_set?.shop_money?.amount ||
+    (payload.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0) ||
+    0
+  );
   await OM.upsert(sid, {
     order_name: payload.name || '',
     customer_name: customerName,
@@ -273,6 +281,7 @@ async function snapshotOrder(payload) {
     items,
     vendors,
     fulfillments,
+    shipping_charge,
     shopify_created_at: payload.created_at || null,
     shopify_updated_at: payload.updated_at || null,
     snapshot_at: new Date().toISOString(),

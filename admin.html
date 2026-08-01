@@ -191,6 +191,10 @@
       .content { width:100%; padding-bottom:66px; }
       .topbar { padding:0 12px; }
       .topbar-title { font-size:12px; letter-spacing:1px; }
+      .chat-list-col { width:100% !important; }
+      .chat-back-btn { display:block !important; }
+      .vendor-list-col { width:100% !important; }
+      .vendor-back-btn { display:block !important; }
       .hamburger { display:none !important; }
       .page { padding:12px 10px 20px; }
       .stats-grid { grid-template-columns:repeat(2,1fr) !important; gap:8px; }
@@ -209,6 +213,10 @@
       .sidebar-overlay { display:none !important; }
       .sidebar { transform:none !important; position:sticky; }
       .mobile-bottom-nav { display:none !important; }
+      .chat-list-col { width:clamp(260px,30%,340px) !important; display:flex !important; }
+      .chat-back-btn { display:none !important; }
+      .vendor-list-col { width:clamp(200px,28%,300px) !important; display:flex !important; }
+      .vendor-back-btn { display:none !important; }
     }
     /* Mobile bottom nav */
     .mobile-bottom-nav {
@@ -11033,7 +11041,7 @@
     };
 
     return (
-      <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 54px)',overflow:'hidden'}}>
+      <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 130px)',overflow:'hidden'}}>
         {/* Top tab bar — scrollable on mobile */}
         <div style={{display:'flex',borderBottom:'1px solid var(--border)',background:'var(--bg-card)',flexShrink:0,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
           {[['chats','💬 Chats'],['tickets','🎫 Tickets'],['ordertickets','📋 Order Tickets'],['vendors','🏪 Vendor WA'],['jidsetup','🔗 JID'],['insights','🔍 Insights']].map(([id,label])=>(
@@ -11232,12 +11240,6 @@
             </div>
           </div>
 
-          <style>{`
-            @media (max-width: 640px) {
-              .vendor-list-col { width:100%!important; display:flex!important; }
-              .vendor-back-btn { display:block!important; }
-            }
-          `}</style>
         )}
 
         {mainTab === 'chats' && <div style={{display:'flex',flex:1,minHeight:0,overflow:'hidden'}}>
@@ -11305,7 +11307,7 @@
           <div style={{
             flex:1, display:'flex', flexDirection:'column',
             background:'var(--bg-card)', overflow:'hidden',
-            ...(mobileShowDetail ? { position:'absolute', inset:0, top:'auto', zIndex:10, height:'calc(100vh - 107px)' } : {}),
+            ...(mobileShowDetail ? { position:'fixed', inset:0, top:54, zIndex:200, height:'calc(100vh - 54px)' } : {}),
           }}>
             {!selected && !mobileShowDetail && (
               <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13,flexDirection:'column',gap:10}}>
@@ -11378,15 +11380,6 @@
           </div>
         </div>}
 
-        <style>{`
-          @media (max-width: 640px) {
-            .chat-list-col { width: 100% !important; display: flex !important; }
-            .chat-back-btn { display: block !important; }
-          }
-          @media (min-width: 641px) {
-            .chat-list-col { display: flex !important; position: static !important; }
-          }
-        `}</style>
       </div>
     );
   }
