@@ -22372,7 +22372,7 @@ function parseAdminOrderIssue(text) {
   if (/not\s+dispatch|unship|not\s+ship|pending\s+dispatch|nahi\s+bheja|nhi\s+bheja/.test(t)) { issue_type = 'not_dispatched'; priority = 'high'; }
   else if (/delay|late|taking\s+long|slow|der|bahut\s+time/.test(t)) { issue_type = 'delayed'; priority = 'medium'; }
   else if (/lost|missing|not\s+received|not\s+delivered|mila\s+nahi/.test(t)) { issue_type = 'lost_in_transit'; priority = 'high'; }
-  else if (/return|refund|rto|wapas/.test(t)) { issue_type = 'return_issue'; priority = 'medium'; }
+  else if (/exchange|return|refund|rto|wapas/.test(t)) { issue_type = 'return_issue'; priority = 'medium'; }
   else if (/wrong|incorrect|different|galat/.test(t)) { issue_type = 'wrong_item'; priority = 'high'; }
   else if (/pending|stuck|no\s+update|no\s+movement|days|week|abhi\s+tak|still/.test(t)) { issue_type = 'stuck'; priority = 'medium'; }
   // explicit ticket with no specific type = keep 'stuck' as default
@@ -22423,8 +22423,9 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
     ticketId = r.insertedId;
   }
 
-  // Notify staff
-  const staffMsg = `🎫 *Admin Order Ticket ${existingTicket ? 'Updated' : 'Created'}*\n\n📦 Order: *${orderName}*${vendor_name ? `\n🏪 Vendor: ${vendor_name}` : ''}\n📋 Issue: ${issue_type.replace(/_/g,' ')}\n🚨 Priority: ${priority.toUpperCase()}\n\n"${description}"`;
+  // Notify staff — clean up raw description (strip trailing "create ticket" command words)
+  const cleanDesc = description.replace(/\bcreate\s+ticket\b/gi, '').replace(/\s{2,}/g, ' ').trim();
+  const staffMsg = `🎫 *Admin Order Ticket ${existingTicket ? 'Updated' : 'Created'}*\n\n📦 Order: *${orderName}*${vendor_name ? `\n🏪 Vendor: ${vendor_name}` : ''}\n📋 Issue: ${issue_type.replace(/_/g,' ')}\n🚨 Priority: ${priority.toUpperCase()}\n\n📝 Context: ${cleanDesc}`;
   notifyStaff('order_ticket', staffMsg).catch(()=>{});
 
   const ISSUE_LABELS = {
@@ -22493,13 +22494,50 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
     const formLink = updateToken ? `${SERVER_URL}/vendor/update/${updateToken}` : null;
 
     const issueLabel = {
-      not_dispatched: 'Order has not been dispatched',
-      delay: 'Order dispatch is delayed',
+      not_dispatched: 'Order has not been dispatched yet',
+      delayed: 'Order dispatch is delayed',
+      return_issue: 'Return/Exchange pickup pending',
+      lost_in_transit: 'Item appears lost in transit',
       wrong_item: 'Wrong item may have been packed',
       damaged: 'Item reported as damaged',
       missing_item: 'Item is missing from the order',
+      stuck: 'Order requires attention',
       other: 'Issue flagged on this order',
     }[issue_type] || issue_type.replace(/_/g, ' ');
+
+    // AI-rephrase the raw admin note into clean professional vendor context
+    let contextNote = '';
+    try {
+      const rawNote = description.replace(/\bcreate\s+ticket\b/gi, '').replace(/\b\d{3,5}\b/g, '').replace(/\s{2,}/g, ' ').trim();
+      if (rawNote.length > 8) {
+        let rephrased = null;
+        if (DEEPSEEK_KEY) {
+          const resp = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${DEEPSEEK_KEY}` },
+            body: JSON.stringify({
+              model: 'deepseek-chat',
+              max_tokens: 80,
+              messages: [
+                { role: 'system', content: 'You are a professional operations assistant. Rephrase the admin note into one clear, polite sentence suitable for a vendor. Remove any command-like words (like "create ticket"). Return only the rephrased sentence, no quotes.' },
+                { role: 'user', content: rawNote },
+              ],
+            }),
+          });
+          const rd = await resp.json();
+          rephrased = rd?.choices?.[0]?.message?.content?.trim() || null;
+        }
+        contextNote = `\n📝 *Context:* ${rephrased || rawNote}`;
+      }
+    } catch (_) {}
+
+    const actionLine = issue_type === 'return_issue'
+      ? 'Please ensure the return/exchange pickup is arranged at the earliest and update us with the status.'
+      : 'Kindly update the order status at the earliest. If already shipped, share the AWB and courier details.';
+
+    const replyOptions = issue_type === 'return_issue'
+      ? `*1️⃣* — Pickup scheduled (share date/courier)\n*2️⃣* — Already picked up (share details)\n*3️⃣* — Need assistance from CROSCROW`
+      : `*1️⃣* — Delayed (share reason + expected dispatch date)\n*2️⃣* — Already shipped (share AWB + courier)\n*3️⃣* — Need assistance from CROSCROW`;
 
     const vendorMsg =
 `${urgencyLine} — Order ${orderName}
@@ -22508,15 +22546,13 @@ Hi ${vn},
 
 CROSCROW has flagged an issue with the above order that requires your *immediate attention*.
 
-📋 *Issue:* ${issueLabel}${daysStuck !== null ? `\n⏳ *Pending since:* ${daysStuck} day${daysStuck !== 1 ? 's' : ''}` : ''}${meta?.customer_name ? `\n👤 *Customer:* ${meta.customer_name}` : ''}
+📋 *Issue:* ${issueLabel}${daysStuck !== null ? `\n⏳ *Pending since:* ${daysStuck} day${daysStuck !== 1 ? 's' : ''}` : ''}${meta?.customer_name ? `\n👤 *Customer:* ${meta.customer_name}` : ''}${contextNote}
 ${itemNames ? `\n📦 *Items:*\n${itemNames}` : ''}
 
-Kindly update the order status at the earliest. If already shipped, share the AWB and courier details.
+${actionLine}
 
 Reply with:
-*1️⃣* — Delayed (share reason + expected dispatch date)
-*2️⃣* — Already shipped (share AWB + courier)
-*3️⃣* — Need assistance from CROSCROW${formLink ? `\n\n🔗 *Update via form (no login needed):*\n${formLink}` : ''}
+${replyOptions}${formLink ? `\n\n🔗 *Update via form (no login needed):*\n${formLink}` : ''}
 
 _CROSCROW Operations Team_`;
     try {
