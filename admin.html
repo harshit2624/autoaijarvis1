@@ -1428,7 +1428,7 @@
       }
       // Fetch ShipSagar courier list
       fetch(`${API}/admin/shipsagar/couriers`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>setSsCouriers(d.getCourier||[])).catch(()=>{});
+        .then(r=>r.json()).then(d=>{ const list=d.getCourier||[]; if(list.length&&(list[0].CourierName||list[0].CourierCode)) setSsCouriers(list); }).catch(()=>{});
     },[]);
 
     useEffect(()=>{
@@ -4850,11 +4850,21 @@
     const [manualCourier, setManualCourier] = useState('');
     const [manualAwb,     setManualAwb]     = useState('');
     const [savingManual,  setSavingManual]  = useState(false);
+    const FALLBACK_COURIERS = ['DELHIVERY','XPRESSBEES','BLUEDART','DTDC','ECOM EXPRESS','FEDEX','DHL','UPS','ARAMEX','INDIA POST','SHADOWFAX','EKART','SMARTR','PROFESSIONAL'];
     const [ssCouriers,    setSsCouriers]    = useState([]);
+    const [couriersLoading, setCouriersLoading] = useState(true);
 
     useEffect(()=>{
+      setCouriersLoading(true);
       fetch(`${API}/admin/shipsagar/couriers`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>setSsCouriers(d.getCourier||[])).catch(()=>{});
+        .then(r=>r.json())
+        .then(d=>{
+          const list = d.getCourier||[];
+          // Only use ShipSagar list if it has valid entries with names
+          if (list.length && (list[0].CourierName||list[0].CourierCode)) setSsCouriers(list);
+        })
+        .catch(()=>{})
+        .finally(()=>setCouriersLoading(false));
     },[]);
 
     const saveManualAwb = async () => {
@@ -4974,13 +4984,14 @@
             </div>
             <div>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>Courier</div>
-              <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none',minWidth:130}}>
-                <option value="">— Select —</option>
+              <select value={manualCourier} onChange={e=>setManualCourier(e.target.value)} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:11,outline:'none',minWidth:160}}>
+                <option value="">— Select Courier —</option>
                 {ssCouriers.length > 0
                   ? ssCouriers.map(c=><option key={c.CourierCode||c.CourierName} value={c.CourierCode||c.CourierName}>{c.CourierName||c.CourierCode}</option>)
-                  : ['DELHIVERY','XPRESSBEES','BLUEDART','DTDC','ECME','FEDEX','DHL','UPS','ARAMEX','INDIAPOST','SHADOWFAX','EKART'].map(c=><option key={c} value={c}>{c}</option>)
+                  : FALLBACK_COURIERS.map(c=><option key={c} value={c}>{c}</option>)
                 }
               </select>
+              {couriersLoading && <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:4}}>↻</span>}
             </div>
             <div style={{flex:1,minWidth:160}}>
               <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>AWB / Tracking Number</div>

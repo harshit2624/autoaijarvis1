@@ -15785,15 +15785,25 @@ app.post("/admin/shipsagar/register-all", adminAuth, async (req, res) => {
     })().catch(e => console.error('ShipSagar bulk register error:', e.message));
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
-// Get supported couriers
+// Get supported couriers — cached for 1 hour to avoid hammering ShipSagar API
+let _ssCourrierCache = null;
+let _ssCourierCacheAt = 0;
 async function fetchShipSagarCouriers() {
+  if (_ssCourrierCache && Date.now() - _ssCourierCacheAt < 3600000) return _ssCourrierCache;
   const creds = await getShipSagarCreds();
   if (!creds?.api_key) return [];
-  const data = await fetch('https://app.shipsagar.com/api/Web/GetCourier', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code }),
-  }).then(r => r.json());
-  return data.getCourier || [];
+  try {
+    const data = await fetch('https://app.shipsagar.com/api/Web/GetCourier', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Token: creds.api_key, ClientCode: creds.client_code }),
+    }).then(r => r.json());
+    const list = data.getCourier || [];
+    if (list.length) { _ssCourrierCache = list; _ssCourierCacheAt = Date.now(); }
+    return list;
+  } catch (e) {
+    console.error('ShipSagar couriers fetch failed:', e.message);
+    return _ssCourrierCache || []; // serve stale cache on error
+  }
 }
 
 app.get("/admin/shipsagar/couriers", requirePermission('orders'), async (req, res) => {
