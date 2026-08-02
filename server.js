@@ -1629,45 +1629,48 @@ function logEmail(shopifyId, trigger, recipient, subject, status, error='') {
 }
 
 // ── HTML Email Templates ──────────────────────────────────────────────────
-function emailBase(title, accentColor, bodyHtml) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+function emailBase(title, _accentColor, bodyHtml) {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  body{margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;}
-  .wrap{max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);}
-  .header{background:${accentColor};padding:32px 36px;}
-  .header-logo{font-size:22px;font-weight:800;color:#fff;letter-spacing:3px;}
-  .header-sub{font-size:12px;color:rgba(255,255,255,0.7);letter-spacing:2px;margin-top:4px;}
-  .body{padding:32px 36px;}
-  .title{font-size:22px;font-weight:700;color:#1a2a3a;margin-bottom:8px;}
-  .subtitle{font-size:14px;color:#6b7280;margin-bottom:28px;}
-  .info-box{background:#f8fafc;border-radius:8px;padding:20px 24px;margin-bottom:20px;}
-  .info-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e5e7eb;font-size:13px;}
+  body{margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;}
+  .subtitle{font-size:13px;color:#6b7280;line-height:1.6;margin-bottom:24px;}
+  .info-box{border:1px solid #e5e5e5;margin-bottom:20px;}
+  .info-row{display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #f0f0f0;font-size:13px;}
   .info-row:last-child{border-bottom:none;}
-  .info-label{color:#6b7280;font-weight:500;}
-  .info-val{color:#1a2a3a;font-weight:600;text-align:right;}
-  .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;}
+  .info-label{color:#888;font-weight:500;font-size:11px;letter-spacing:.5px;text-transform:uppercase;padding-top:2px;}
+  .info-val{color:#111;font-weight:700;text-align:right;}
+  .badge{display:inline-block;padding:3px 10px;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;}
   .items-table{width:100%;border-collapse:collapse;margin-bottom:20px;}
-  .items-table th{background:#f1f5f9;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:left;}
-  .items-table td{padding:11px 14px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#374151;}
-  .footer{background:#f8fafc;padding:20px 36px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #e5e7eb;}
-  .cta{display:inline-block;margin:20px 0;padding:13px 32px;background:${accentColor};color:#fff;text-decoration:none;border-radius:8px;font-weight:700;font-size:14px;}
-</style></head><body>
-<div class="wrap">
-  <div class="header">
-    <div class="header-logo">CROSCROW</div>
-    <div class="header-sub">ORDER NOTIFICATION</div>
+  .items-table th{background:#f5f5f5;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;padding:10px 14px;text-align:left;border-bottom:2px solid #000;}
+  .items-table td{padding:11px 14px;border-bottom:1px solid #f0f0f0;font-size:13px;color:#333;}
+  .cta{display:inline-block;margin:16px 0;padding:12px 28px;background:#002eff;color:#fff;text-decoration:none;font-weight:700;font-size:13px;letter-spacing:.5px;}
+</style>
+</head><body>
+<div style="max-width:620px;margin:0 auto;background:#fff;">
+
+  <div style="background:#000;padding:28px 36px 24px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #222;padding-bottom:16px;margin-bottom:16px;">
+      <tr>
+        <td>
+          <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:4px;font-family:Arial,sans-serif;">CROSCROW</div>
+          <div style="font-size:9px;color:#555;letter-spacing:3px;text-transform:uppercase;margin-top:3px;">Notification</div>
+        </td>
+      </tr>
+    </table>
+    <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:1px;line-height:1.3;">${title}</div>
   </div>
-  <div class="body">
-    <div class="title">${title}</div>
+
+  <div style="padding:32px 36px;background:#fff;">
     ${bodyHtml}
   </div>
-  <div class="footer">
-    © CROSCROW · Automated notification · Do not reply
-    <div style="margin-top:8px;font-size:10px;letter-spacing:1px;opacity:.45">
-      EMAILS POWERED BY <a href="https://antortiq.onrender.com/" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:1px">ANTORTIQ</a>
-    </div>
+
+  <div style="background:#000;padding:20px 36px;text-align:center;font-size:9px;color:#444;letter-spacing:2px;text-transform:uppercase;">
+    &copy; CROSCROW &middot; Automated Notification &middot; Do Not Reply
   </div>
-</div></body></html>`;
+
+</div>
+</body></html>`;
 }
 
 // ── Return/Exchange Request Email Templates ──────────────────────────────
