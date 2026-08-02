@@ -705,6 +705,15 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
 }
 
 
+// ── Pre-discount (listed) price helper ────────────────────────────────────
+// Shopify stores li.price as post-discount unit price. For vendor settlements
+// CROSCROW's promo discounts are invisible to the vendor — always settle on
+// the listed price (what the vendor expects to sell at).
+function undiscountedPrice(li) {
+  const totalDiscount = (li.discount_allocations || []).reduce((s, d) => s + parseFloat(d.amount || 0), 0);
+  return parseFloat(li.price || 0) + (totalDiscount / (li.quantity || 1));
+}
+
 // ── Product-level flat/margin commission calculator ───────────────────────
 // rule: { mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive }
 // sellingPrice: Shopify line item unit price, qty: quantity, paymentType: 'prepaid'|'cod'
@@ -7176,7 +7185,9 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       const isCod   = payType !== "prepaid";
       const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       const orderOverrides = priceOverrideMap[String(o.id)] || {};
-      const effectivePrice = (li) => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : parseFloat(li.price || 0);
+      // Use pre-discount (listed) price for settlement — CROSCROW promo discounts
+      // are invisible to vendors. Price overrides take precedence when set.
+      const effectivePrice = (li) => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
       const myRev   = myItems.reduce((s, li) => s + effectivePrice(li) * (li.quantity || 1), 0);
 
       // Check product-level rules per line item
@@ -7430,15 +7441,16 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
           const invTag = invoiceOrderMap[vendor]?.[String(o.id)] || null;
           vendorMap[vendor].orderDetails[String(o.id)] = { orderId: String(o.id), orderName: o.name, customer: `${o.customer?.first_name||''} ${o.customer?.last_name||''}`.trim(), paymentType: payType, createdAt: o.created_at, revenue: 0, items: [], invoiceNo: invTag?.invoice_no || null, invoiceStatus: invTag?.status || null };
         }
-        vendorMap[vendor].orderDetails[String(o.id)].revenue += parseFloat(li.price || 0) * (li.quantity || 1);
+        const liListedPrice = undiscountedPrice(li);
+        vendorMap[vendor].orderDetails[String(o.id)].revenue += liListedPrice * (li.quantity || 1);
         vendorMap[vendor].orderDetails[String(o.id)].items.push(`${li.name} x${li.quantity||1}`);
-        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const itemRev = liListedPrice * (li.quantity || 1);
 
         // Check for product-level commission rule (in-memory, no DB query per item)
         const productRule = findProductRuleFast(vendor, li.product_id, li.sku);
         let calc;
         if (productRule) {
-          calc = calcProductCommission(productRule, li.price, li.quantity || 1, payType);
+          calc = calcProductCommission(productRule, liListedPrice, li.quantity || 1, payType);
         } else {
           const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
           calc = calcCommission(itemRev, payType, commPct, 0);
@@ -7742,7 +7754,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const isCod = payType !== 'prepaid';
       const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
       const orderOverrides = priceOverrideMap[sid] || {};
-      const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : parseFloat(li.price || 0);
+      const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
 
       // Track which vendors have delivered items in this order (for advance split)
       const deliveredVendorsInOrder = new Set();
@@ -7762,18 +7774,16 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
 
         if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
 
-        // Gross uses raw Shopify price (matches dashboard). effectivePrice only for commission basis.
-        const rawPrice  = parseFloat(li.price || 0);
         const liPrice   = effectivePrice(li);
-        const rawRev    = rawPrice * (li.quantity || 1);
+        const liRev     = liPrice * (li.quantity || 1);
         const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
         const productRule = findRuleFast(vendor, li.product_id, li.sku);
         const calc = productRule
           ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
-          : calcCommission(liPrice * (li.quantity || 1), payType, commPct, 0);
+          : calcCommission(liRev, payType, commPct, 0);
 
-        vendorMap[vendor].gross += rawRev;
-        if (!isCod) vendorMap[vendor].prepaidDiscount += (rawRev - calc.base);
+        vendorMap[vendor].gross += liRev;
+        if (!isCod) vendorMap[vendor].prepaidDiscount += (liRev - calc.base);
         vendorMap[vendor].commission += calc.commission;
         vendorMap[vendor].gst += calc.gst;
 
@@ -8923,7 +8933,7 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
       const shippingSplit = isCod && ordVendors.size > 0 ? orderShipping / ordVendors.size : 0;
 
       myItems.forEach(li => {
-        const itemRev = parseFloat(li.price || 0) * (li.quantity || 1);
+        const itemRev = undiscountedPrice(li) * (li.quantity || 1);
         const calc = calcCommission(itemRev, payType, commPct, 0);
         gross += itemRev;
         if (!isCod) prepaidDiscount += (itemRev - calc.base);
@@ -18653,7 +18663,7 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
     await mdb.collection('vendor_onboards').insertOne(doc);
     auditLog('public', 'vendor_onboard_submit', '', { email: doc.email, brand: doc.brand_name });
 
-    // Notify admin
+    // Notify admin via email + WA
     const cfg = await getSmtpConfig();
     if (cfg) {
       const adminEmail = 'harshitvj24@gmail.com';
@@ -18673,6 +18683,7 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
       `);
       await sendEmail({ to: adminEmail, subject: `🚨 New Vendor Application — ${doc.brand_name} (${doc.email})`, html, shopifyId: '', trigger: 'vendor_onboard' });
     }
+    waAdminAlert(`🏪 *New Vendor Application*\nBrand: *${doc.brand_name}*\nContact: ${doc.contact_name}\nEmail: ${doc.email}\nPhone: ${doc.phone}${doc.gst_no ? '\nGST: ' + doc.gst_no : ''}\n\nReview in Admin → Onboarding.`).catch(() => {});
 
     res.json({ success: true });
   } catch (err) {
@@ -18762,21 +18773,16 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
       }
     } catch(e) { console.error('Placeholder product creation failed:', e.message); }
 
-    // Email vendor their credentials
+    // Email vendor their credentials using the branded welcome template
     const cfg = await getSmtpConfig();
     if (cfg) {
-      const panelUrl = `${SERVER_URL}/vendor.html`;
-      const html = emailBase('🎉 Welcome to CROSCROW — You\'re Approved!', '#10b981', `
-        <div class="subtitle">Congratulations! Your vendor application has been approved. Here are your login credentials.</div>
-        <div class="info-box">
-          <div class="info-row"><span class="info-label">Panel URL</span><span class="info-val"><a href="${panelUrl}" style="color:#6366f1">${panelUrl}</a></span></div>
-          <div class="info-row"><span class="info-label">Username</span><span class="info-val" style="font-family:monospace;font-weight:700">${username}</span></div>
-          <div class="info-row"><span class="info-label">Password</span><span class="info-val" style="font-family:monospace;font-weight:700">${password}</span></div>
-        </div>
-        <p style="font-size:13px;color:#6b7280;line-height:1.7;margin-top:12px">Please log in and change your password on first login. If you have any questions, reply to this email.</p>
-        <div style="text-align:center;margin-top:20px"><a href="${panelUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 28px;border-radius:8px">Login to Vendor Panel →</a></div>
-      `);
-      await sendEmail({ to: ob.email, subject: '🎉 You\'re Approved — CROSCROW Vendor Access', html, shopifyId: '', trigger: 'vendor_approved' });
+      await sendEmail({
+        to: ob.email,
+        subject: `Welcome to the All-New CROSCROW Vendor Panel 🚀`,
+        html: templateVendorWelcome({ vendorName, username, password }),
+        shopifyId: '',
+        trigger: 'vendor_approved',
+      });
     }
 
     if (placeholderProductId) {
