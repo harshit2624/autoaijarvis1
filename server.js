@@ -177,10 +177,11 @@ async function startServer() {
         const orders = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
         let saved = 0;
         for (const o of orders) {
-          const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1, shipping_charge: 1, fulfillments: 1 } });
+          const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1, shipping_charge: 1, fulfillments: 1, payment_type: 1, advance_paid: 1, financial_status: 1 } });
           if (!existing) { await snapshotOrder(o); saved++; }
           else {
-            const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids);
+            const missingPartialAdvance = o.financial_status === 'partially_paid' && !existing.advance_paid;
+            const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids) || missingPartialAdvance;
             if (needsPatch) { await snapshotOrder(o); saved++; }
           }
         }
@@ -285,6 +286,19 @@ async function snapshotOrder(payload) {
     (payload.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0) ||
     0
   );
+
+  // Derive payment_type and advance_paid directly from Shopify financial data
+  // so partial orders are captured even without a "99 partial" tag.
+  // applyTagMappings may overwrite advance_paid with a tag-based value later.
+  const snapPayType = paymentTypeFromFinancial(payload.financial_status);
+  const snapFields = { payment_type: snapPayType };
+  if (snapPayType === 'partial') {
+    const totalOutstanding = parseFloat(payload.total_outstanding || 0);
+    const totalPrice = parseFloat(payload.total_price || 0);
+    const advance = parseFloat((totalPrice - totalOutstanding).toFixed(2));
+    if (advance > 0) snapFields.advance_paid = advance;
+  }
+
   await OM.upsert(sid, {
     order_name: payload.name || '',
     customer_name: customerName,
@@ -304,6 +318,7 @@ async function snapshotOrder(payload) {
     shopify_created_at: payload.created_at || null,
     shopify_updated_at: payload.updated_at || null,
     snapshot_at: new Date().toISOString(),
+    ...snapFields,
   });
 }
 
@@ -6809,10 +6824,11 @@ app.post("/admin/backfill-orders", adminAuth, async (req, res) => {
     const orders = await fetchAllOrders("any", "2000-01-01T00:00:00Z", null);
     let saved = 0;
     for (const o of orders) {
-      const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1, shipping_charge: 1, fulfillments: 1 } });
+      const existing = await mdb.collection('order_meta').findOne({ shopify_id: String(o.id) }, { projection: { _id: 1, shipping_charge: 1, fulfillments: 1, advance_paid: 1 } });
       if (!existing) { await snapshotOrder(o); saved++; }
       else {
-        const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids);
+        const missingPartialAdvance = o.financial_status === 'partially_paid' && !existing.advance_paid;
+        const needsPatch = !('shipping_charge' in existing) || (existing.fulfillments || []).some(f => !f.line_item_ids) || missingPartialAdvance;
         if (needsPatch) { await snapshotOrder(o); saved++; }
       }
     }
