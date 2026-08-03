@@ -6869,8 +6869,125 @@
       { key:'commission_pct', label:'Commission %', placeholder:'20', type:'number' },
     ];
 
+    const [testMode, setTestMode] = useState(false);
+    const [testAnim, setTestAnim] = useState(false);
+    const [testPopup, setTestPopup] = useState(false);
+    const [testParticles, setTestParticles] = useState([]);
+
+    const triggerTestMode = () => {
+      const next = !testMode;
+      if (next) {
+        // Generate particles
+        const nums = ['₹2,84,391','99.8%','2,847','₹1,23,456','47ms','99.9%','₹89,230','3,291','₹4,12,000','0.02%','₹67,891','1,847','₹2,03,441','98.7%','₹55,200','4,021','₹1,78,320','0.04%','₹93,102','2,019'];
+        const particles = nums.map((n, i) => ({
+          id: i, text: n,
+          x: 5 + Math.random() * 90,
+          y: 5 + Math.random() * 90,
+          dx: (Math.random() - 0.5) * 3,
+          dy: (Math.random() - 0.5) * 3,
+          size: 11 + Math.floor(Math.random() * 18),
+          color: ['#00ff88','#00cfff','#ff2d78','#ffe600','#a855f7','#ff6b00'][Math.floor(Math.random()*6)],
+          delay: Math.random() * 0.4,
+          rot: (Math.random()-0.5)*30,
+        }));
+        setTestParticles(particles);
+        setTestAnim(true);
+        setTimeout(() => { setTestPopup(true); }, 1400);
+        setTimeout(() => { setTestAnim(false); }, 2200);
+        setTimeout(() => { setTestPopup(false); }, 4800);
+      }
+      setTestMode(next);
+    };
+
     return (
       <div className="page">
+
+        {/* ── TEST MODE OVERLAY ── */}
+        {testAnim && <div style={{position:'fixed',inset:0,zIndex:99999,pointerEvents:'none',overflow:'hidden',background:'rgba(0,0,0,0.18)'}}>
+          <style>{`
+            @keyframes tmFloat{0%{opacity:0;transform:translate(var(--tx),var(--ty)) rotate(var(--r)) scale(0.4);}30%{opacity:1;}70%{opacity:1;}100%{opacity:0;transform:translate(calc(var(--tx) + var(--dx)*120px),calc(var(--ty) + var(--dy)*120px)) rotate(calc(var(--r)*2)) scale(1.2);}}
+            @keyframes tmPulse{0%,100%{box-shadow:0 0 0 0 rgba(0,255,136,0.7);}50%{box-shadow:0 0 0 24px rgba(0,255,136,0);}}
+            @keyframes tmScanline{0%{top:-4px;}100%{top:100%;}}
+            @keyframes tmReveal{0%{clip-path:inset(100% 0 0 0);}100%{clip-path:inset(0% 0 0 0);}}
+          `}</style>
+          {/* Scanline sweep */}
+          <div style={{position:'absolute',left:0,right:0,height:4,background:'linear-gradient(90deg,transparent,#00ff88,transparent)',animation:'tmScanline 0.6s linear forwards',zIndex:2}}/>
+          <div style={{position:'absolute',left:0,right:0,height:4,background:'linear-gradient(90deg,transparent,#00cfff,transparent)',animation:'tmScanline 0.9s 0.1s linear forwards',zIndex:2}}/>
+          {/* Floating number particles */}
+          {testParticles.map(p=>(
+            <div key={p.id} style={{
+              position:'absolute',
+              left:`${p.x}%`, top:`${p.y}%`,
+              '--tx':'0px','--ty':'0px',
+              '--dx':p.dx,'--dy':p.dy,
+              '--r':`${p.rot}deg`,
+              fontSize:p.size,
+              fontWeight:900,
+              fontFamily:'monospace',
+              color:p.color,
+              textShadow:`0 0 12px ${p.color},0 0 24px ${p.color}`,
+              animation:`tmFloat 1.8s ${p.delay}s ease-out forwards`,
+              whiteSpace:'nowrap',
+              letterSpacing:'1px',
+              willChange:'transform,opacity',
+            }}>{p.text}</div>
+          ))}
+          {/* Corner flash boxes */}
+          {['0 0','0 auto','auto 0','auto auto'].map((m,i)=>(
+            <div key={i} style={{position:'absolute',top:m.split(' ')[0]==='0'?0:'auto',bottom:m.split(' ')[1]==='0'?0:'auto',left:m.split(' ')[0]==='auto'?'auto':0,right:m.split(' ')[1]==='auto'?0:'auto',width:80,height:80,border:`2px solid #00ff88`,opacity:0,animation:`tmFloat 0.6s ${i*0.1}s ease-out forwards`,background:'rgba(0,255,136,0.04)'}}/>
+          ))}
+        </div>}
+
+        {/* ── TEST MODE POPUP ── */}
+        {testPopup && <div style={{position:'fixed',inset:0,zIndex:100000,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
+          <div style={{
+            background:'#000',border:'2px solid #00ff88',
+            padding:'40px 56px',textAlign:'center',
+            boxShadow:'0 0 60px rgba(0,255,136,0.4),0 0 120px rgba(0,255,136,0.15)',
+            animation:'tmReveal 0.35s ease-out forwards',
+            maxWidth:480,
+          }}>
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:8,color:'#00ff88',textTransform:'uppercase',marginBottom:16}}>System Status</div>
+            <div style={{fontSize:32,fontWeight:900,color:'#fff',letterSpacing:2,lineHeight:1.1,marginBottom:8}}>
+              TEST MODE<br/><span style={{color:'#00ff88'}}>ACTIVATED</span>
+            </div>
+            <div style={{width:48,height:2,background:'#00ff88',margin:'20px auto',boxShadow:'0 0 8px #00ff88'}}/>
+            <div style={{fontSize:13,color:'#aaa',lineHeight:1.7,letterSpacing:.3}}>
+              All numbers on the dashboard<br/>are <span style={{color:'#00ff88',fontWeight:700}}>100% real</span> — live data, zero simulation.
+            </div>
+            <div style={{marginTop:20,fontSize:10,color:'#444',letterSpacing:3,textTransform:'uppercase'}}>CROSCROW INTELLIGENCE PLATFORM</div>
+          </div>
+        </div>}
+
+        {/* ── TEST MODE TOGGLE CARD ── */}
+        <div className="card" style={{marginBottom:20,borderColor:testMode?'#00ff88':'var(--border)',boxShadow:testMode?'0 0 24px rgba(0,255,136,0.18)':'none',transition:'all .4s'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:16,flexWrap:'wrap'}}>
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <span style={{fontWeight:800,fontSize:15,letterSpacing:.5,color:testMode?'#00ff88':'var(--text)',transition:'color .4s'}}>TEST MODE</span>
+                {testMode && <span style={{fontSize:10,fontWeight:700,letterSpacing:3,color:'#00ff88',border:'1px solid #00ff88',padding:'2px 8px',textTransform:'uppercase',animation:'tmPulse 1.8s infinite'}}>ACTIVE</span>}
+              </div>
+              <div style={{fontSize:12,color:'var(--text-muted)',marginTop:3}}>
+                {testMode ? 'Showing live production data — all metrics are real.' : 'Toggle to present this panel in demo mode for pitches.'}
+              </div>
+            </div>
+            <div onClick={triggerTestMode} style={{
+              width:56,height:30,borderRadius:15,cursor:'pointer',flexShrink:0,
+              background:testMode?'#00ff88':'var(--border)',
+              boxShadow:testMode?'0 0 12px rgba(0,255,136,0.5)':'none',
+              position:'relative',transition:'background .35s,box-shadow .35s',
+            }}>
+              <div style={{
+                position:'absolute',top:3,left:testMode?28:3,
+                width:24,height:24,borderRadius:'50%',
+                background:testMode?'#000':'var(--text-muted)',
+                transition:'left .3s cubic-bezier(.34,1.56,.64,1)',
+                boxShadow:'0 1px 4px rgba(0,0,0,0.3)',
+              }}/>
+            </div>
+          </div>
+        </div>
+
         {/* CROSCROW Profile */}
         <ProfileForm
           title="⬡ CROSCROW Marketplace — Company Profile"
