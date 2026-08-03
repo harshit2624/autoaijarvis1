@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CROSCROW — Admin Portal</title>
+  <title>CREP DOG CREW — Admin Portal</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -1059,7 +1059,7 @@
     { id:'pickup',    label:'Pickup Pending', color:'yellow', icon:'⌛' },
     { id:'transit',   label:'In Transit',     color:'orange', icon:'↑' },
     { id:'ofd',       label:'Out for Delivery', color:'blue', icon:'🛵' },
-    { id:'delivered', label:'Delivered',      color:'green',  icon:'✅' },
+    { id:'delivered', label:'Delivered',      color:'green',  icon:'&#10003;' },
     { id:'rto',       label:'RTO',            color:'red',    icon:'↩' },
     { id:'penalty',   label:'Penalty',        color:'red',    icon:'⚠' },
     { id:'hold',      label:'Hold',           color:'purple', icon:'⏸' },
@@ -3172,25 +3172,47 @@
           </div>
         </div>
 
+        {/* ── Bento hero row ── */}
+        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:10,marginBottom:10}}>
+          {/* Big revenue tile */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:'20px 24px',display:'flex',flexDirection:'column',justifyContent:'space-between',minHeight:110}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)'}}>&#8377; Revenue · {periodLabel}</div>
+            <div style={{fontSize:32,fontWeight:900,color:'var(--text)',lineHeight:1.1,marginTop:6}}>{aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0)}</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>All time &nbsp;<span style={{fontWeight:700,color:'var(--text)'}}>{fmtCur(at.revenue||0)}</span></div>
+          </div>
+          {/* Orders */}
+          <div style={{background:'var(--indigo-dim)',border:'1px solid var(--border)',borderRadius:12,padding:'20px 18px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:3,textTransform:'uppercase',color:'var(--indigo)'}}>&#9670; Orders</div>
+            <div style={{fontSize:28,fontWeight:900,color:'var(--indigo)',lineHeight:1,marginTop:6}}>{aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0')}</div>
+            <div style={{fontSize:10,color:'var(--indigo)',opacity:.7,marginTop:4}}>{periodLabel}</div>
+          </div>
+          {/* Delivered */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:'20px 18px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:3,textTransform:'uppercase',color:'#10b981'}}>&#10003; Delivered</div>
+            <div style={{fontSize:28,fontWeight:900,color:'#10b981',lineHeight:1,marginTop:6}}>{aLoading?'…':(sc.delivered||0)}</div>
+            <div style={{fontSize:10,color:'#10b981',opacity:.7,marginTop:4}}>RTO &nbsp;<span style={{fontWeight:700}}>{sc.rto||0}</span></div>
+          </div>
+        </div>
+
         {/* Summary row — small stat cards */}
         <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
-          <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
-          <StatCard color="cyan"   icon="₹" label={'Revenue ('+periodLabel+')'}  value={aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0)} sub={'all time: '+fmtCur(at.revenue||0)}/>
-          <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
-          <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
+          <StatCard color="indigo" icon="&#9670;" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
+          <StatCard color="cyan"   icon="&#8377;" label={'Revenue ('+periodLabel+')'}  value={aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0)} sub={'all time: '+fmtCur(at.revenue||0)}/>
+          <StatCard color="green"  icon="&#10003;" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
+          <StatCard color="red"    icon="&#8629;" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
 
           {/* Commission breakdown card */}
           {!aLoading && at.totalCommission !== undefined && (
             <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
-              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>💰 Commission Breakdown · {periodLabel}</div>
+              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>&#8377; Commission Breakdown &middot; {periodLabel}</div>
               <div className="comm-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
                 {[
-                  { label:'Total Commission',                    comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'📊' },
-                  { label:'Delivered',                           comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
-                  { label:'In Pipeline (Ready/Pickup/Transit/OFD)', comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'🚚' },
-                  { label:'Pending (Confirmed/Partial)',         comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'⏳' },
-                  { label:'Missed (RTO)',                        comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'↩' },
-                  { label:'Cancelled/Hold/Other',                comm: at.otherCommission,     gst: at.otherCommissionGst,     color:'#94a3b8', icon:'✕' },
+                  { label:'Total Commission',                    comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'&#9636;' },
+                  { label:'Delivered',                           comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'&#10003;' },
+                  { label:'In Pipeline (Ready/Pickup/Transit/OFD)', comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'&#9708;' },
+                  { label:'Pending (Confirmed/Partial)',         comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'&#9711;' },
+                  { label:'Missed (RTO)',                        comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'&#8629;' },
+                  { label:'Cancelled/Hold/Other',                comm: at.otherCommission,     gst: at.otherCommissionGst,     color:'#94a3b8', icon:'&#10005;' },
                 ].map(({label, comm, gst, color, icon})=>(
                   <div key={label} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:`3px solid ${color}`}}>
                     <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>{icon} {label}</div>
@@ -3200,7 +3222,7 @@
                 ))}
                 {/* Prepaid collected — no GST breakdown */}
                 <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #34d399'}}>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>💳 Prepaid Collected</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>&#9632; Prepaid Collected</div>
                   <div style={{fontSize:16,fontWeight:800,color:'#34d399'}}>{fmtCur(at.prepaidCollected||0)}</div>
                   <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>orders paid online in period</div>
                 </div>
@@ -3210,7 +3232,7 @@
 
           {/* Stage timing averages — mined from stage_history, all-time */}
           <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
-            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>⏱ Avg Stage Timings · All Time</div>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>&#9711; Avg Stage Timings &middot; All Time</div>
             {tLoading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
             {!tLoading && timings && (
               <>
@@ -3300,10 +3322,10 @@
                   const confirmedPct = grandTotal > 0 ? Math.round(fs.active / grandTotal * 100) : 0;
 
                   const confirmedStages = [
-                    { key:'delivered', label:'Delivered',      icon:'✅', c:'#10b981' },
-                    { key:'transit',   label:'In Transit',     icon:'🚚', c:'#60a5fa' },
+                    { key:'delivered', label:'Delivered',      icon:'&#10003;', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',     icon:'&#9708;', c:'#60a5fa' },
                     { key:'pickup',    label:'Pickup Pending', icon:'⌛', c:'#f59e0b' },
-                    { key:'ready',     label:'Ready to Ship',  icon:'📦', c:'#a78bfa' },
+                    { key:'ready',     label:'Ready to Ship',  icon:'&#9651;', c:'#a78bfa' },
                     { key:'rto',       label:'RTO',            icon:'↩', c:'#f87171' },
                     { key:'confirmed', label:'Confirmed',      icon:'✓',  c:'#34d399' },
                     { key:'partial',   label:'Partial/Advance',icon:'₹', c:'#fbbf24' },
@@ -3417,10 +3439,10 @@
                   const bdr   = pct>=80?'rgba(16,185,129,0.3)':pct>=50?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
 
                   const dispStages = [
-                    { key:'delivered', label:'Delivered',     icon:'✅', c:'#10b981' },
-                    { key:'transit',   label:'In Transit',    icon:'🚚', c:'#60a5fa' },
+                    { key:'delivered', label:'Delivered',     icon:'&#10003;', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',    icon:'&#9708;', c:'#60a5fa' },
                     { key:'pickup',    label:'Pickup Pending',icon:'⌛', c:'#f59e0b' },
-                    { key:'ready',     label:'Ready to Ship', icon:'📦', c:'#a78bfa' },
+                    { key:'ready',     label:'Ready to Ship', icon:'&#9651;', c:'#a78bfa' },
                     { key:'rto',       label:'RTO',           icon:'↩', c:'#f87171' },
                   ];
                   const pendStages = [
@@ -9503,7 +9525,7 @@
         [
           { label:'Platform Avg', value:`${data.platform_avg_score}/100`, icon:'📊', color:'#6366f1' },
           { label:'Elite (A)', value:data.grade_dist.A, icon:'🏆', color:'#10b981' },
-          { label:'Good (B)', value:data.grade_dist.B, icon:'✅', color:'#3b82f6' },
+          { label:'Good (B)', value:data.grade_dist.B, icon:'&#10003;', color:'#3b82f6' },
           { label:'Average (C)', value:data.grade_dist.C, icon:'⚠️', color:'#f59e0b' },
           { label:'At Risk (D+F)', value:(data.grade_dist.D||0)+(data.grade_dist.F||0), icon:'🚨', color:'#ef4444' },
           { label:'Total Vendors', value:data.vendors.length, icon:'🏪', color:'#8b5cf6' },
@@ -9620,9 +9642,9 @@
               [
                 { l:'Revenue', v: selected.stats.revenue > 0 ? `₹${selected.stats.revenue.toLocaleString('en-IN')}` : '—', icon:'💰', hi:true },
                 { l:'Total Orders', v:selected.stats.total_orders, icon:'📋' },
-                { l:'Delivered', v:selected.stats.delivered, icon:'✅' },
+                { l:'Delivered', v:selected.stats.delivered, icon:'&#10003;' },
                 { l:'RTO', v:`${selected.stats.rto_count} (${selected.stats.rto_rate}%)`, icon:'↩️', warn: selected.stats.rto_rate > 15 },
-                { l:'Not Dispatched', v:selected.stats.not_dispatched ?? '—', icon:'📦', warn: (selected.stats.not_dispatched || 0) > 0 },
+                { l:'Not Dispatched', v:selected.stats.not_dispatched ?? '—', icon:'&#9651;', warn: (selected.stats.not_dispatched || 0) > 0 },
                 { l:'Cancelled', v:selected.stats.cancelled ?? '—', icon:'❌', warn: (selected.stats.cancelled || 0) > 5 },
                 { l:'Penalties', v:selected.stats.penalty_count, icon:'🚨', warn: selected.stats.penalty_count > 0 },
                 { l:'Delay Submits', v:selected.stats.delay_count, icon:'📝' },
@@ -10847,7 +10869,7 @@
       ViewContent:       { label:'Views',     icon:'👁', color:'#6366f1' },
       AddToCart:         { label:'Add to Cart', icon:'🛒', color:'#f59e0b' },
       InitiateCheckout:  { label:'Checkout',  icon:'💳', color:'#22d3ee' },
-      Purchase:          { label:'Purchases', icon:'✅', color:'#10b981' },
+      Purchase:          { label:'Purchases', icon:'&#10003;', color:'#10b981' },
     };
     const RATE_OPTIONS = [
       { id:'viewToAtcRate',          label:'View → ATC' },
@@ -12874,7 +12896,7 @@
 
     const QUICK_ACTIONS = [
       { icon:'📅', title:"Today's Summary",    sub:'Orders, revenue, pending',     query:"give me today's full summary — orders, revenue, pending, dispatched" },
-      { icon:'🚚', title:'Dispatch Status',     sub:'AWB coverage, stuck orders',   query:"show dispatch rate per vendor this month and stuck confirmed orders" },
+      { icon:'&#9708;', title:'Dispatch Status',     sub:'AWB coverage, stuck orders',   query:"show dispatch rate per vendor this month and stuck confirmed orders" },
       { icon:'💰', title:'Revenue Report',      sub:'COD, prepaid, by vendor',      query:"revenue breakdown by vendor this month with COD vs prepaid split" },
       { icon:'↩️', title:'RTO & Returns',       sub:'Rates, cities, trends',        query:"overall RTO rate, which vendors and cities have the most RTOs?" },
     ];
@@ -13617,15 +13639,15 @@
   }
 
   // ── CDC Sidebar — pinned items + collapsible more drawer ─────────────────
-  const CDC_PINNED = ['dashboard','orders','vendors','jarvis','returns','supportchats','settlements'];
   function CDCSidebar({ view, setView, closeSidebar, iconStyle, visibleNavItems }) {
     const [moreOpen, setMoreOpen] = useState(false);
     const go = (n) => { if (n.external) { window.open(n.external,'_blank'); closeSidebar(); return; } setView(n.id); closeSidebar(); };
-    const pinned = visibleNavItems.filter(n => CDC_PINNED.includes(n.id));
-    const more   = visibleNavItems.filter(n => !CDC_PINNED.includes(n.id));
+    const pinned = visibleNavItems.filter(n => n.section === 'main');
+    const more   = visibleNavItems.filter(n => n.section === 'more');
     const NavBtn = ({n}) => (
       <button className={`nav-item ${view===n.id?'active':''}`} onClick={()=>go(n)}>
-        <span className="nav-icon"><Icon name={n.id} mode={iconStyle} fallback={n.icon}/></span>{n.label}
+        <span className="nav-icon" dangerouslySetInnerHTML={{__html: n.icon}}/>
+        {n.label}
       </button>
     );
     return (
@@ -13635,7 +13657,7 @@
         <div style={{marginTop:6}}>
           <button onClick={()=>setMoreOpen(o=>!o)} className="nav-item" style={{color:'var(--text-muted)',justifyContent:'space-between'}}>
             <span style={{display:'flex',alignItems:'center',gap:9}}>
-              <span className="nav-icon" style={{fontSize:14}}>{moreOpen?'▾':'▸'}</span>More
+              <span className="nav-icon">{moreOpen?'&#9660;':'&#9654;'}</span>More
             </span>
             <span style={{fontSize:10,background:'var(--bg-hover)',borderRadius:10,padding:'2px 7px'}}>{more.length}</span>
           </button>
@@ -13772,9 +13794,9 @@
     const loginScreen = (
       <div className="login-wrap">
         <div className="login-box">
-          <div className="login-logo">A</div>
-          <div className="login-title">CROSCROW</div>
-          <div className="login-sub">{staffUser!==null ? 'Staff Login' : 'Admin Portal'}</div>
+          <img src="/cdc-logo.png" alt="CDC" style={{width:72,height:72,objectFit:'contain',background:'#000',borderRadius:10,marginBottom:14,display:'block',marginLeft:'auto',marginRight:'auto'}}/>
+          <div className="login-title" style={{fontSize:16,letterSpacing:2}}>CREP DOG CREW</div>
+          <div className="login-sub">{staffUser!==null ? 'Staff Login' : 'Management Portal'}</div>
           {loginErr && <div className="login-error">⚠ {loginErr}</div>}
           {staffUser!==null && <>
             <label className="field-label">Username</label>
@@ -13793,42 +13815,38 @@
     );
 
     const navItems = [
-      { id:'dashboard',   icon:'◈', label:'Dashboard',   section:'main' },
-      { id:'orders',      icon:'◎', label:'Orders',       section:'main' },
-      { id:'vendors',     icon:'🏪', label:'Vendors',      section:'main' },
-      { id:'jarvis',      icon:'⚡', label:'JARVIS AI',    section:'main' },
-      { id:'returns',     icon:'↩', label:'Returns',       section:'main' },
-      { id:'ccinventory', icon:'🏬', label:'CC Inventory',  section:'main' },
-      { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
-      { id:'settings',    icon:'⚙', label:'Settings',     section:'finance' },
-      { id:'tagmappings', icon:'🏷', label:'Tag Mappings', section:'finance' },
-      { id:'shippingcreds', icon:'🚚', label:'Shipping Partners', section:'finance' },
-      { id:'emailsettings', icon:'📧', label:'Email Settings', section:'finance' },
-      { id:'vendorsync',  icon:'🔄', label:'Vendor Sync',   section:'finance' },
-      { id:'penalties',   icon:'⚠️', label:'Penalties',    section:'finance' },
-      { id:'reports',     icon:'📊', label:'Reports',       section:'finance' },
-      { id:'commandcenter',icon:'⚡', label:'Command Center',   section:'main' },
-      { id:'leakage',     icon:'🔻', label:'Revenue Leakage', section:'finance' },
-      { id:'brains',      icon:'🧠', label:'Brains',        section:'finance' },
-      { id:'supportchats', icon:'💬', label:'Support Chats', section:'main' },
-      { id:'whatsapp',    icon:'📱', label:'WhatsApp Bot',  section:'main' },
-      { id:'pixeltracker', icon:'🎯', label:'Pixel Tracker',  section:'main' },
-      { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
-      { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
-      { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
-      { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
-      { id:'abandonedcarts',   icon:'🛒', label:'Abandoned Carts',    section:'main' },
-      { id:'techbrain',        icon:'🧠', label:'Tech Brain',          section:'main' },
-      { id:'opsmap',           icon:'🗺️', label:'Live Ops Map',         section:'main' },
-      { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
-      { id:'agreements',       icon:'📝', label:'Agreements',          section:'finance' },
-      { id:'theme',            icon:'🎨', label:'Theme',               section:'finance' },
-      { id:'announcements',    icon:'📢', label:'Announcements',       section:'finance', external:'/announce.html' },
-      { id:'staffaccounts',    icon:'🔐', label:'Staff Accounts',      section:'finance', adminOnly:true },
-      { id:'marketing',        icon:'🎯', label:'Marketing',           section:'main' },
-      { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
-      { id:'metaads',          icon:'📊', label:'Meta Ads',             section:'main' },
-      { id:'vendorscores',     icon:'🏆', label:'Vendor Scores',        section:'vendors' },
+      { id:'dashboard',        icon:'&#9670;',  label:'Dashboard',         section:'main' },
+      { id:'orders',           icon:'&#9711;',  label:'Orders',            section:'main' },
+      { id:'vendors',          icon:'&#11042;', label:'Vendors',           section:'main' },
+      { id:'jarvis',           icon:'&#9889;',  label:'JARVIS AI',         section:'main' },
+      { id:'returns',          icon:'&#8629;',  label:'Returns',           section:'main' },
+      { id:'supportchats',     icon:'&#9741;',  label:'Support Chats',     section:'main' },
+      { id:'settlements',      icon:'&#8377;',  label:'Settlements',       section:'main' },
+      { id:'ccinventory',      icon:'&#9651;',  label:'CC Inventory',      section:'more' },
+      { id:'settings',         icon:'&#9881;',  label:'Settings',          section:'more' },
+      { id:'tagmappings',      icon:'&#9671;',  label:'Tag Mappings',      section:'more' },
+      { id:'shippingcreds',    icon:'&#9708;',  label:'Shipping Partners', section:'more' },
+      { id:'emailsettings',    icon:'&#9993;',  label:'Email Settings',    section:'more' },
+      { id:'vendorsync',       icon:'&#8635;',  label:'Vendor Sync',       section:'more' },
+      { id:'penalties',        icon:'&#9651;',  label:'Penalties',         section:'more' },
+      { id:'reports',          icon:'&#9636;',  label:'Reports',           section:'more' },
+      { id:'brains',           icon:'&#9632;',  label:'Brains',            section:'more' },
+      { id:'whatsapp',         icon:'&#9997;',  label:'WhatsApp Bot',      section:'more' },
+      { id:'pixeltracker',     icon:'&#9673;',  label:'Pixel Tracker',     section:'more' },
+      { id:'audit',            icon:'&#9741;',  label:'Audit Log',         section:'more' },
+      { id:'googlecontacts',   icon:'&#9737;',  label:'Contacts',          section:'more' },
+      { id:'commissionrules',  icon:'&#37;',    label:'Commission Rules',  section:'more' },
+      { id:'abandonedcarts',   icon:'&#9750;',  label:'Abandoned Carts',   section:'more' },
+      { id:'onboarding',       icon:'&#43;',    label:'Onboarding',        section:'more' },
+      { id:'agreements',       icon:'&#9998;',  label:'Agreements',        section:'more' },
+      { id:'theme',            icon:'&#9675;',  label:'Theme',             section:'more' },
+      { id:'announcements',    icon:'&#9654;',  label:'Announcements',     section:'more', external:'/announce.html' },
+      { id:'staffaccounts',    icon:'&#9632;',  label:'Staff Accounts',    section:'more', adminOnly:true },
+      { id:'marketing',        icon:'&#9650;',  label:'Marketing',         section:'more' },
+      { id:'metafieldaudit',   icon:'&#9670;',  label:'Product Health',    section:'more' },
+      { id:'metaads',          icon:'&#9636;',  label:'Meta Ads',          section:'more' },
+      { id:'vendorscores',     icon:'&#9733;',  label:'Vendor Scores',     section:'more' },
+      { id:'webhooks',         icon:'&#9741;',  label:'Webhooks',          section:'more' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
