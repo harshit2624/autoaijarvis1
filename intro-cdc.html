@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CREP DOG CREW</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background:#AAEC00; font-family:'Inter',sans-serif;
+  }
+
+  /* ── Grid floor ── */
+  .grid-floor {
+    position:fixed; inset:0; z-index:0; perspective:600px; overflow:hidden;
+  }
+  .grid-floor::before {
+    content:''; position:absolute; left:-50%; right:-50%; bottom:0; height:200%;
+    background-image:
+      linear-gradient(rgba(0,0,0,0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,0,0,0.07) 1px, transparent 1px);
+    background-size:60px 60px;
+    transform:rotateX(75deg) translateZ(-100px);
+    transform-origin:bottom;
+    opacity:0;
+    animation: gridMove 6s linear infinite, gridFade 1.5s ease 1.2s forwards;
+  }
+  @keyframes gridMove { from{background-position-y:0;} to{background-position-y:60px;} }
+  @keyframes gridFade { to { opacity:1; } }
+
+  /* ── Stage ── */
+  .stage {
+    position:relative; z-index:2;
+    width:100%; height:100%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    perspective:1400px;
+  }
+
+  /* ── Wordmark ── */
+  .logo-wrap {
+    display:flex; transform-style:preserve-3d; flex-wrap:wrap; justify-content:center;
+    max-width:90vw; gap:0 2px;
+  }
+  .letter {
+    font-family:'Alfa Slab One', serif;
+    font-size:clamp(32px, 7vw, 110px);
+    color:#0a0a0a;
+    line-height:1;
+    letter-spacing:2px;
+    display:inline-block;
+    transform-style:preserve-3d;
+    opacity:0;
+    text-shadow:
+      0 1px 0 rgba(0,0,0,.1),
+      0 3px 6px rgba(0,0,0,.12),
+      0 8px 20px rgba(0,0,0,.08);
+    animation: dropIn 0.9s cubic-bezier(.2,.9,.25,1.2) forwards;
+  }
+  @keyframes dropIn {
+    0%   { opacity:0; transform: translateY(-300px) translateZ(-400px) rotateX(80deg) rotateY(25deg); }
+    60%  { opacity:1; }
+    100% { opacity:1; transform: translateY(0) translateZ(0) rotateX(0deg) rotateY(0deg); }
+  }
+
+  .logo-glow {
+    position:absolute; inset:-40px;
+    background:radial-gradient(ellipse 60% 60% at 50% 50%, rgba(0,0,0,0.07), transparent 70%);
+    filter:blur(30px);
+    opacity:0;
+    animation: glowPulse 1s ease 1.4s forwards, glowBreathe 3s ease-in-out 2.4s infinite;
+    z-index:-1; pointer-events:none;
+  }
+  @keyframes glowPulse { to { opacity:1; } }
+  @keyframes glowBreathe { 0%,100%{ transform:scale(1); opacity:0.6; } 50%{ transform:scale(1.08); opacity:1; } }
+
+  /* ── Tagline ── */
+  .brand-tagline {
+    margin-top:20px;
+    font-family:'Inter',sans-serif;
+    font-style:normal;
+    font-size:clamp(11px, 1.4vw, 15px);
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:4px;
+    color:rgba(0,0,0,.55);
+    opacity:0;
+    animation: fadeUp 0.9s ease 1.6s forwards;
+    text-align:center;
+    padding:0 16px;
+  }
+
+  /* ── Sub-tagline (role descriptor) ── */
+  .sub-tagline {
+    margin-top:14px;
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:5px;
+    text-transform:uppercase;
+    color:rgba(0,0,0,.38);
+    opacity:0;
+    animation: fadeUp 0.8s ease 2s forwards;
+    text-align:center;
+  }
+
+  .underline {
+    width:0;
+    height:1.5px;
+    margin:18px auto 0;
+    background:linear-gradient(90deg, transparent, rgba(0,0,0,.3), rgba(0,0,0,.55), rgba(0,0,0,.3), transparent);
+    animation: lineGrow 1s ease 2.1s forwards;
+  }
+  @keyframes lineGrow { to { width:260px; } }
+
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(10px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+
+  .enter-wrap {
+    margin-top:46px;
+    opacity:0;
+    animation: fadeUp 0.8s ease 2.7s forwards;
+  }
+  .enter-btn {
+    padding:13px 44px;
+    background:transparent;
+    border:2px solid rgba(0,0,0,.3);
+    color:#0a0a0a;
+    font-family:'Inter',sans-serif;
+    font-size:11px;
+    font-weight:800;
+    letter-spacing:3px;
+    text-transform:uppercase;
+    border-radius:999px;
+    cursor:pointer;
+    transition:border-color .3s, letter-spacing .3s, transform .2s, background .3s;
+  }
+  .enter-btn:hover {
+    border-color:#000;
+    background:rgba(0,0,0,.08);
+    letter-spacing:4px;
+    transform:translateY(-2px);
+  }
+
+  .skip {
+    position:fixed; bottom:24px; right:28px; z-index:5;
+    font-size:10px; letter-spacing:2px; color:rgba(0,0,0,.35);
+    cursor:pointer; text-transform:uppercase; background:none; border:none;
+    font-family:'Inter',sans-serif;
+    opacity:0; animation: fadeUp 0.6s ease 1s forwards;
+  }
+  .skip:hover { color:#000; }
+
+  .stage.leaving, .grid-floor.leaving {
+    transition:opacity 0.6s ease;
+    opacity:0;
+  }
+</style>
+</head>
+<body>
+  <div class="grid-floor" id="gridFloor"></div>
+  <button class="skip" id="skip">Skip &#8594;</button>
+
+  <div class="stage" id="stage">
+    <div style="position:relative;">
+      <div class="logo-glow"></div>
+      <div class="logo-wrap" id="logoWrap"></div>
+    </div>
+    <div class="brand-tagline">if it matters, it's at CDC</div>
+    <div class="sub-tagline">Marketplace Operations Platform</div>
+    <div class="underline"></div>
+    <div class="enter-wrap">
+      <button class="enter-btn" id="enterBtn">Enter Site</button>
+    </div>
+  </div>
+
+<script>
+  const word = "CREP DOG CREW";
+  const wrap = document.getElementById('logoWrap');
+  [...word].forEach((ch, i) => {
+    const span = document.createElement('span');
+    span.className = 'letter';
+    span.textContent = ch === ' ' ? ' ' : ch;
+    if (ch === ' ') span.style.width = '0.3em';
+    span.style.animationDelay = `${0.15 + i * 0.06}s`;
+    wrap.appendChild(span);
+  });
+
+  function onMove(e) {
+    const x = (e.clientX / window.innerWidth - 0.5) * 2;
+    const y = (e.clientY / window.innerHeight - 0.5) * 2;
+    wrap.style.transform = `rotateY(${x * 6}deg) rotateX(${-y * 4}deg)`;
+  }
+  document.addEventListener('mousemove', onMove);
+
+  function leaveIntro() {
+    document.removeEventListener('mousemove', onMove);
+    ['gridFloor','stage'].forEach(id => document.getElementById(id).classList.add('leaving'));
+    document.getElementById('skip').style.opacity = 0;
+    setTimeout(() => { window.location.href = '/admin-cdc.html'; }, 650);
+  }
+
+  document.getElementById('enterBtn').addEventListener('click', leaveIntro);
+  document.getElementById('skip').addEventListener('click', leaveIntro);
+
+  // When embedded via ?auto=1 — wait for full animation then signal parent
+  if (new URLSearchParams(location.search).get('auto') === '1') {
+    document.getElementById('enterBtn').style.display = 'none';
+    document.getElementById('skip').style.display = 'none';
+    // Button fully appears at ~3.5s, hold for 2s more so it lands properly
+    setTimeout(() => {
+      try { window.parent.postMessage('cc-intro-done', '*'); } catch {}
+    }, 5500);
+  }
+</script>
+</body>
+</html>
