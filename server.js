@@ -5758,6 +5758,17 @@ app.post("/admin/orders/:id/tag", requirePermission('orders'), async (req, res) 
 // ADMIN PORTAL
 // ══════════════════════════════════════════════════════════════════════════
 
+// Demo login for client-facing panels (e.g. Antortiq CDC demo) — separate password, full read token
+app.post("/demo/login", async (req, res) => {
+  const { password } = req.body || {};
+  const DEMO_PASS = process.env.DEMO_PASSWORD || "crew2025";
+  if (password !== DEMO_PASS) return res.status(401).json({ error: "Invalid demo password." });
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
+  await mdb.collection('admin_sessions').insertOne({ token, expiresAt, created_at: new Date(), demo: true });
+  res.json({ token });
+});
+
 app.post("/admin/login", async (req, res) => {
   const { password } = req.body || {};
   if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: "Invalid admin password." });
@@ -19663,7 +19674,7 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
   // All Meta-supported date presets
   const PRESET_MAP = {
     today:'today', yesterday:'yesterday',
-    last_7d:'last_7_d', last_14d:'last_14_d', last_28d:'last_28_d', last_30d:'last_30_d',
+    last_7d:'last_7d', last_14d:'last_14d', last_28d:'last_28d', last_30d:'last_30d',
     this_week:'this_week_mon_today', last_week:'last_week_mon_sun',
     this_month:'this_month', last_month:'last_month',
     this_quarter:'this_quarter', last_quarter:'last_quarter',
@@ -23800,6 +23811,8 @@ async function startBaileysBot() {
         const sender = msg.key.remoteJid;
         const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
         if (!text || waPending.has(sender)) continue;
+        // Ignore WA Business auto-replies — prevent infinite loops when recipient has an auto-responder
+        if (/thank you for contacting|thanks for (reaching|contacting|messaging)|we.?ll get back|out of (office|hours)|auto.?reply|this is an automated|we have received your (message|query)|our team will (get back|respond|reach)/i.test(text)) continue;
         waPending.add(sender);
 
         let _chatRef = null; // hoisted so catch block can save error to DB
@@ -23991,6 +24004,79 @@ async function startBaileysBot() {
             await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
             await sock.sendMessage(sender, { text: cleanText });
           };
+
+          // ── 0. "✅ Confirm Order" fallback — DISABLED (no order ID in message)
+          // TODO: re-enable once the confirm link includes order number in WA pre-fill text
+          if (false) {
+            const confirmMatch = text.match(/confirm(?:ing)? (?:my )?order #?(\d{3,6})/i)
+                              || text.match(/^✅\s*Confirm Order\s*$/i);
+            if (confirmMatch) {
+              const orderNum = confirmMatch[1] || null; // null only for bare "✅ Confirm Order"
+              // Silently wait 10s for primary automation to fire
+              await new Promise(r => setTimeout(r, 10000));
+              try {
+                // Look up order in Shopify by order number or by customer phone
+                let shopifyOrder = null;
+                if (orderNum) {
+                  const res = await shopifyREST(`/orders.json?name=${encodeURIComponent('#' + orderNum)}&status=any&limit=1`);
+                  shopifyOrder = (res.orders || [])[0] || null;
+                }
+                if (!shopifyOrder && phone && phone !== 'unknown') {
+                  // Fall back to most-recent order for this phone
+                  const res2 = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=1`);
+                  shopifyOrder = (res2.orders || [])[0] || null;
+                }
+                if (shopifyOrder) {
+                  const existingTags = (shopifyOrder.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+                  const tagsLower = existingTags.map(t => t.toLowerCase());
+                  const alreadyTagged = tagsLower.some(t =>
+                    t.includes('order confirmed') ||
+                    t.includes('confirmed on call') ||
+                    t.includes('prepaid') ||
+                    t.includes('99 partial')
+                  );
+                  const isPrepaid = shopifyOrder.financial_status === 'paid';
+                  // Skip if already partially paid, prepaid, dispatched (has fulfillment)
+                  const isDispatched = (shopifyOrder.fulfillments || []).length > 0 ||
+                    shopifyOrder.fulfillment_status === 'fulfilled' ||
+                    shopifyOrder.fulfillment_status === 'partial';
+                  const advanceMeta = await mdb.collection('order_meta').findOne(
+                    { shopify_id: String(shopifyOrder.id) },
+                    { projection: { confirmation_paid: 1, advance_paid: 1, _id: 0 } }
+                  ).catch(() => null);
+                  const alreadyPaid = !!advanceMeta?.confirmation_paid || parseFloat(advanceMeta?.advance_paid || 0) >= 99;
+
+                  if (alreadyTagged || isDispatched || alreadyPaid || isPrepaid) {
+                    // Already handled — if prepaid just acknowledge
+                    if (isPrepaid) {
+                      await sock.sendMessage(sender, { text: `✅ *Order ${shopifyOrder.name} Confirmed!*\n\nThank you for your order on CROSCROW! 🙏\n\nYour payment is already received — no need to pay anything at delivery.\n\n📦 Your order will be packed and shipped soon. We'll send you a tracking link once dispatched.\n\nStay tuned! 🚀` });
+                    }
+                    console.log(`ℹ️ [WA Fallback] Skipping — alreadyTagged:${alreadyTagged} isPrepaid:${isPrepaid} isDispatched:${isDispatched} alreadyPaid:${alreadyPaid}`);
+                  } else {
+                    // Tag not applied — we're the fallback
+                    const newTags = [...existingTags, '✅ Order Confirmed'];
+                    await shopifyREST(`/orders/${shopifyOrder.id}.json`, 'PUT', {
+                      order: { id: shopifyOrder.id, tags: newTags.join(', ') }
+                    });
+                    const orderName = shopifyOrder.name; // e.g. #2304
+                    const oNum = String(orderName).replace(/^#/, '');
+                    const subtotal = parseFloat(shopifyOrder.total_price || 0);
+                    const items = (shopifyOrder.line_items || [])
+                      .map(li => `${li.title} x${li.quantity}`)
+                      .join(', ');
+                    const remaining = Math.max(0, subtotal - 99);
+                    const waMsg = `To confirm your Order *${orderName}* on CROSCROW,\n\nPlease pay *₹99* for ${items}.\nYour Remaining COD amount: *₹${remaining.toFixed(0)}* (₹${subtotal.toFixed(0)} – ₹99)\n\nThis helps avoid fake/mistaken orders, speeds up processing, and supports homegrown brands. 🙌\n\n👉 https://dashboard.croscrow.com/o/${oNum}\n\nShare payment screenshot once done. Thank you! 🙏`;
+                    await sock.sendMessage(sender, { text: waMsg });
+                    console.log(`✅ [WA Fallback] Order confirmed tag added + msg sent for ${orderName}`);
+                  }
+                }
+              } catch (e) {
+                console.error(`❌ [WA Fallback] Confirm order handler error:`, e.message);
+              }
+              waPending.delete(sender);
+              continue;
+            }
+          }
 
           // ── 1. Greeting → show welcome menu ───────────────────────────
           if (WA_GREETING.test(text)) {
