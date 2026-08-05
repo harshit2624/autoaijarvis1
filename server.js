@@ -20714,6 +20714,74 @@ app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
   }
 });
 
+// ── POST /admin/wa-template-preview — send all Direction B templates to admin WA ──
+app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
+  if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
+  const jid = `91${WA_ADMIN_NO}@s.whatsapp.net`;
+  const send = async (msg) => {
+    await waSocket.sendMessage(jid, { text: msg });
+    await new Promise(r => setTimeout(r, 1200));
+  };
+  const TRACK = 'https://dashboard.croscrow.com/o/1234';
+  const CONFIRM = 'https://dashboard.croscrow.com/o/1234';
+  try {
+    await send(`━━━━━━━━━━━━━━━━\n🔲 TEMPLATE PREVIEW — DIRECTION B\nDISPATCH TERMINAL STYLE\n━━━━━━━━━━━━━━━━\n\n${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\nSending ${14} templates below ↓`);
+
+    // 1. Main menu
+    await send(`CROSCROW ─ SUPPORT NODE\n60+ HOMEGROWN LABELS\n────────────────\n[1] ORDER STATUS\n[2] RETURN / EXCHANGE\n[3] AI ASSISTANT\n[4] HUMAN OPERATOR\n────────────────\nINPUT 1–4 TO ROUTE`);
+
+    // 2. Track — ask for order
+    await send(`ORDER LOOKUP ─ ACTIVE\n────────────────\nENTER ORDER ID\nFORMAT: #1234`);
+
+    // 3. Return/Exchange — ask for order
+    await send(`RETURN / EXCHANGE ─ ACTIVE\n────────────────\nENTER ORDER ID\nFORMAT: #1234`);
+
+    // 4. Needs confirmation
+    await send(`ORDER   #1234\nSTATUS  AWAITING CONFIRM\nACTION  ₹99 CONFIRMATION\nNOTE    ADJUSTED AT DELIVERY\n────────────────\nDISPATCH HOLDS UNTIL CONFIRMED\n\nRelease it here 👇\n${CONFIRM}\n\n_Reply 4 — human operator_`);
+
+    // 5. Confirmed — preparing (<24h)
+    await send(`ORDER   #1234\nSTATUS  CONFIRMED\nSTAGE   PACKING IN PROGRESS\nETA     DISPATCH SOON\n────────────────\nSLIGHT DELAY — TEAM IS ON IT 🙏\n\n${TRACK}\n\n_Reply 4 — human operator_`);
+
+    // 6. Confirmed — not shipped (>24h)
+    await send(`ORDER   #1234\nSTATUS  CONFIRMED\nSTAGE   AWAITING DISPATCH\nFLAG    DELAYED — VENDOR PINGED\n────────────────\nFOLLOWING UP WITH VENDOR NOW 🔔\n\n${TRACK}\n\n_Reply 4 — human operator_`);
+
+    // 7. On hold
+    await send(`ORDER   #1234\nSTATUS  ON HOLD\nSTAGE   REVIEW PENDING\nACTION  CONFIRMATION MAY BE NEEDED\n────────────────\nTAP BELOW TO CHECK & CONFIRM\n\n${CONFIRM}\n\n_Reply 4 — human operator_`);
+
+    // 8. In transit
+    await send(`ORDER   #1234\nSTATUS  IN TRANSIT\nSTAGE   VENDOR → YOU\nETA     2–4 DAYS\n────────────────\nLive tracking 👇\n${TRACK}\n\n_Reply 4 — human operator_`);
+
+    // 9. Out for delivery
+    await send(`ORDER   #1234\nSTATUS  OUT FOR DELIVERY\nSTAGE   LAST MILE\nACTION  KEEP PHONE NEARBY 📲\n────────────────\nARRIVING TODAY 🛵\n\n${TRACK}\n\n_Reply 4 — human operator_`);
+
+    // 10. Delivered
+    await send(`ORDER   #1234\nSTATUS  DELIVERED ✅\nSTAGE   COMPLETE\n────────────────\nHope you love your picks! 🙌\n\nAnything not right? Reply here within 7 days.\n\n🔗 Return / Exchange:\n${TRACK}\n\n_Reply 4 — human operator_`);
+
+    // 11. RTO
+    await send(`ORDER   #1234\nSTATUS  RETURNED TO HUB\nCAUSE   DELIVERY FAILED\nNEXT    RE-DISPATCH / REFUND\n────────────────\nOur team is already on it — we'll reach out. Or reply 4 to jump the queue.`);
+
+    // 12. Cancelled
+    await send(`ORDER   #1234\nSTATUS  CANCELLED\nSTAGE   CLOSED\n────────────────\nIf this was a mistake or you'd like to re-order, reply 4 and our team will help.`);
+
+    // 13. Partial shipped
+    await send(`ORDER   #1234\nSTATUS  PARTIALLY SHIPPED\nSTAGE   SPLIT FULFILMENT\nNOTE    REMAINING ITEMS IN PREP\n────────────────\nLive tracking 👇\n${TRACK}\n\n_Reply 4 — human operator_`);
+
+    // 14. Human handoff
+    await send(`OPERATOR ASSIGNED ─ STANDBY\n────────────────\nSomeone from our team will assist you shortly 🙏\n\nPlease share your query below — include your order number (e.g. #1234) for faster resolution.\n\n📞 *6375668971* (2–8 PM)`);
+
+    // 15. Return/Exchange link sent
+    await send(`ORDER   #1234\nACTION  RETURN / EXCHANGE\n────────────────\nNo worries! Go ahead and use the link below to proceed 👇\n\n🔗 ${TRACK}\n\n_Reply 4 if you need help._`);
+
+    // 16. AI mode
+    await send(`AI ASSISTANT ─ ONLINE\n────────────────\nGo ahead — ask me anything about your order, products, sizes or shipping 💬\n\n_Type 0 to return to main menu_`);
+
+    await send(`━━━━━━━━━━━━━━━━\n✅ PREVIEW COMPLETE — ${16} templates sent\nReply with changes or approve to go live\n━━━━━━━━━━━━━━━━`);
+    res.json({ ok: true, sent: 16 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/admin/whatsapp-reset', adminAuth, async (req, res) => {
   waConnected = false;
   waLatestQR = null;
