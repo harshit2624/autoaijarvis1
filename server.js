@@ -23601,6 +23601,16 @@ const WA_MENUS = {
   order_rto: (name) =>
     `${_F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  ${name}\n\nSTATE  Back with us after a\n       failed delivery. Our\n       team will call to set\n       up re-delivery or a\n       refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${_F}`,
 
+  order_split_terminal: (name, url, shipments) => {
+    const STAGE_LABELS_SHORT = { delivered:'DELIVERED', rto:'RETURNED TO HUB', cancelled:'CANCELLED', transit:'IN TRANSIT', ofd:'OUT FOR DELIVERY', pickup:'DISPATCHED', confirmed:'PACKING', new:'PROCESSING' };
+    const total = shipments.length;
+    const lines = shipments.map((s, i) => {
+      const label = STAGE_LABELS_SHORT[s.stage] || (s.stage || 'PROCESSING').toUpperCase();
+      return `${i+1}/${total} ${s.vendor_name ? s.vendor_name.toUpperCase().slice(0,10) : 'ITEM'}  ${label}`;
+    }).join('\n');
+    return `${_F}\n▪ C R O S C R O W ▪\nSPLIT ORDER STATUS\n────────────────\nORDER  ${name}\n\n${lines}\n\nTRACK  ${url}\n────────────────\nREPLY 4 FOR HELP\n${_F}`;
+  },
+
   ai_assistant:
     `${_F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${_F}`,
 
@@ -23699,6 +23709,14 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       await waSessionClear(sender);
       return true;
 
+    case 'order_split_terminal':
+      if (num === 4) {
+        await waTalkToHuman(sock, sender, chat, phone, `Mixed status order ${d?.order_name} — customer needs help`);
+        return true;
+      }
+      await waSessionClear(sender);
+      return true;
+
     case 'offer_human':
       if (num === 1) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer pressed 1 to talk to human');
@@ -23716,9 +23734,32 @@ async function waMenuForOrder(meta) {
   if (!meta || meta.type !== 'tracking_card') return null;
   const d = meta.data;
   const stage = d.stage;
-  // If AWB exists the order is effectively in transit regardless of DB stage
-  const effectiveStage = d.awb ? 'transit' : stage;
+
+  // Terminal stages must never be overridden by AWB presence
+  const TERMINAL = ['delivered', 'rto', 'cancelled', 'ofd'];
+  const effectiveStage = (d.awb && !TERMINAL.includes(stage)) ? 'transit' : stage;
+
   if (d.needs_confirm) return { menu: 'order_not_confirmed', orderData: d };
+
+  // Multi-vendor mixed terminal state detection
+  // e.g. 1 RTO + 1 delivered, or 1 delivered + 1 in-transit
+  const shipments = d.vendor_shipments || [];
+  if (shipments.length > 1) {
+    const terminalStages = ['delivered', 'rto', 'cancelled'];
+    const stages = shipments.map(s => s.stage || 'new');
+    const hasRto = stages.some(s => s === 'rto');
+    const hasDelivered = stages.some(s => s === 'delivered');
+    const allTerminal = stages.every(s => terminalStages.includes(s));
+    // If vendors have genuinely different terminal outcomes, show split view
+    if (allTerminal && new Set(stages).size > 1) {
+      return { menu: 'order_split_terminal', orderData: d };
+    }
+    // If mix of terminal + non-terminal but some are RTO, surface RTO
+    if (hasRto && !allTerminal) {
+      return { menu: 'order_split_terminal', orderData: d };
+    }
+  }
+
   if (['confirmed', 'partial'].includes(effectiveStage)) {
     const hrs = await waHoursConfirmed(d.shopify_order_id);
     return hrs <= 24
@@ -23732,7 +23773,6 @@ async function waMenuForOrder(meta) {
   if (effectiveStage === 'rto') return { menu: 'order_rto', orderData: d };
   if (effectiveStage === 'cancelled') return { menu: 'order_cancelled', orderData: d };
   if (['partial-shipped', 'partial_shipped'].includes(effectiveStage)) return { menu: 'order_partial_shipped', orderData: d };
-  // new/pending with no confirm flag — treat same as confirmed_short
   if (['new', 'pending'].includes(effectiveStage)) return { menu: 'order_confirmed_short', orderData: d };
   return null;
 }
@@ -24443,7 +24483,7 @@ async function startBaileysBot() {
                     if (menuInfo) {
                       const menuFn = WA_MENUS[menuInfo.menu];
                       const menuUrl = oStatus.confirm_url || oStatus.track_url || '';
-                      const menuText = typeof menuFn === 'function' ? menuFn(oStatus.order_name, menuUrl) : menuFn;
+                      const menuText = typeof menuFn === 'function' ? menuFn(oStatus.order_name, menuUrl, oStatus.vendor_shipments || []) : menuFn;
                       await sock.sendMessage(sender, { text: menuText });
                       await waSessionSet(sender, menuInfo);
                     } else {
@@ -24622,7 +24662,7 @@ async function startBaileysBot() {
             if (menuInfo) {
               const menuFn = WA_MENUS[menuInfo.menu];
               const menuUrl = menuInfo.orderData?.confirm_url || menuInfo.orderData?.track_url || '';
-              const menuText = typeof menuFn === 'function' ? menuFn(meta.data.order_name, menuUrl) : menuFn;
+              const menuText = typeof menuFn === 'function' ? menuFn(meta.data.order_name, menuUrl, meta.data.vendor_shipments || []) : menuFn;
               await sock.sendMessage(sender, { text: menuText });
               await waSessionSet(sender, menuInfo);
             }
