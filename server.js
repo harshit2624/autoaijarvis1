@@ -10295,7 +10295,8 @@ async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
     if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || shopify_id} — ${vendor}`, html: delayHtmlAdmin, shopifyId: realId, trigger: 'delay_remark_admin' });
     // Customer WA notification
     if (customerPhone && waSocket && waConnected) {
-      const waMsg = `Hi! 👋\n\nYour *CROSCROW* order ${ord?.name || '#'+shopify_id} update:\n\n⏳ Vendor is preparing your order and will dispatch by *${etaFormatted}*.\n\nYou'll receive tracking details once shipped. Thank you for your patience! 🙏`;
+      const _Fd = '```';
+      const waMsg = `${_Fd}\n▪ C R O S C R O W ▪\nORDER UPDATE\n────────────────\nORDER  ${ord?.name || '#'+shopify_id}\n\nSTATE  Running slightly late.\n       Vendor dispatching by\n       ${etaFormatted}.\n\nTracking link follows\nonce shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fd}`;
       await waSocket.sendMessage(`91${customerPhone}@s.whatsapp.net`, { text: waMsg }).catch(() => {});
     }
   } catch (e) { console.error('notifyDelayToCustomer error:', e.message); }
@@ -14331,11 +14332,13 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
           if (isPrepaidConvert) {
             const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
             const savings = Math.round(total - discountedTotal);
-            const waMsg = `✅ *Payment Confirmed — Order ${orderName}*\n\nYou've converted to *Fully Prepaid* and saved *₹${savings}* 🎉\n\nYou paid: *₹${discountedTotal}*\nOriginal total: ₹${total.toFixed(0)}\n\n${items}\n\nNo payment needed at delivery. Your order is confirmed and will be packed soon. Thank you! 🙏`;
+            const _Fp = '```';
+            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${orderName}\n\nPAID   ₹${discountedTotal}\nSAVED  ₹${savings}\n\nSTATE  Confirmed and moving.\n       No payment at delivery.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
             await waSendToCustomer(customerPhone, waMsg);
           } else {
             const remaining = Math.max(0, total - CONFIRM_FEE);
-            const waMsg = `✅ *Advance Received — Order ${orderName}*\n\nWe've received your advance payment of *₹${CONFIRM_FEE}* 🎉\n\n${items}\n\nOrder total: ₹${total.toFixed(0)}\nAdvance paid: ₹${CONFIRM_FEE}\nRemaining on delivery: *₹${remaining.toFixed(0)} (Cash)*\n\nYour order is now confirmed and will be packed soon. Thank you! 🙏`;
+            const _Fp = '```';
+            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
             await waSendToCustomer(customerPhone, waMsg);
           }
         }
@@ -21543,7 +21546,8 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
   // Ping customer on WA so they know team replied
   if (chat.whatsapp_sender && waSocket && waConnected) {
     const custJid = chat.whatsapp_sender;
-    const notif = `Hi! 👋 Our support team just left you a message above 👆\n\nLet us know if you need anything else!`;
+    const _Fn = '```';
+    const notif = `${_Fn}\n▪ C R O S C R O W ▪\nSUPPORT UPDATE\n────────────────\nSTATE  Team replied above.\n       Check the message.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nREPLY IF YOU NEED MORE HELP\n${_Fn}`;
     await waSocket.sendMessage(custJid, { text: notif }).catch(() => {});
     await SC.addMessage(chat._id, { sender: 'assistant', text: notif });
   }
@@ -23977,7 +23981,7 @@ async function startBaileysBot() {
                   await shopifyREST(`/orders/${order.id}.json`, 'PUT', { order: { id: order.id, tags: existingTags.join(', ') } });
                 }
               }
-              await sock.sendMessage(poll.jid, { text: `✅ Thank you! Your order ${orderName} has been confirmed. We'll start processing it right away 🚀` });
+              const _Fpl = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${orderName}\n\nSTATE  Confirmed and moving.\n       Dispatch update follows\n       once shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fpl}` });
               await waAdminAlert(`✅ *Order Confirmed via Poll*\nOrder: *${orderName}*\nCustomer: ${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}`);
             } else {
               // Add "cancelled" tag on Shopify
@@ -23986,7 +23990,7 @@ async function startBaileysBot() {
               if (order) {
                 await shopifyREST(`/orders/${order.id}/cancel.json`, 'POST', {});
               }
-              await sock.sendMessage(poll.jid, { text: `❌ Got it — your order ${orderName} has been cancelled. If you change your mind, feel free to place a fresh order anytime 😊` });
+              const _Fpl2 = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl2}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${orderName}\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_Fpl2}` });
               await waAdminAlert(`❌ *Order Cancelled via Poll*\nOrder: *${orderName}*\nCustomer: ${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}`);
             }
             await mdb.collection('wa_confirm_polls').deleteOne({ _id: poll._id });
@@ -24368,7 +24372,7 @@ async function startBaileysBot() {
                   if (alreadyTagged || isDispatched || alreadyPaid || isPrepaid) {
                     // Already handled — if prepaid just acknowledge
                     if (isPrepaid) {
-                      await sock.sendMessage(sender, { text: `✅ *Order ${shopifyOrder.name} Confirmed!*\n\nThank you for your order on CROSCROW! 🙏\n\nYour payment is already received — no need to pay anything at delivery.\n\n📦 Your order will be packed and shipped soon. We'll send you a tracking link once dispatched.\n\nStay tuned! 🚀` });
+                      const _Fpp = '```'; await sock.sendMessage(sender, { text: `${_Fpp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${shopifyOrder.name}\n\nSTATE  Prepaid — already sorted.\n       Nothing due at delivery.\n\nTrack link follows once shipped.\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Fpp}` });
                     }
                     console.log(`ℹ️ [WA Fallback] Skipping — alreadyTagged:${alreadyTagged} isPrepaid:${isPrepaid} isDispatched:${isDispatched} alreadyPaid:${alreadyPaid}`);
                   } else {
@@ -24384,7 +24388,7 @@ async function startBaileysBot() {
                       .map(li => `${li.title} x${li.quantity}`)
                       .join(', ');
                     const remaining = Math.max(0, subtotal - 99);
-                    const waMsg = `To confirm your Order *${orderName}* on CROSCROW,\n\nPlease pay *₹99* for ${items}.\nYour Remaining COD amount: *₹${remaining.toFixed(0)}* (₹${subtotal.toFixed(0)} – ₹99)\n\nThis helps avoid fake/mistaken orders, speeds up processing, and supports homegrown brands. 🙌\n\n👉 https://dashboard.croscrow.com/o/${oNum}\n\nShare payment screenshot once done. Thank you! 🙏`;
+                    const _Fcc = '```'; const waMsg = `${_Fcc}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${orderName}\n\nPAY    ₹99 to confirm\nITEMS  ${items}\nCOD    ₹${remaining.toFixed(0)} due at delivery\n\nCONFIRM\nhttps://dashboard.croscrow.com/o/${oNum}\n────────────────\nSCREENSHOT ONCE PAID\n${_Fcc}`;
                     await sock.sendMessage(sender, { text: waMsg });
                     console.log(`✅ [WA Fallback] Order confirmed tag added + msg sent for ${orderName}`);
                   }
@@ -24491,7 +24495,7 @@ async function startBaileysBot() {
                       await sock.sendMessage(sender, { text: menuText });
                       await waSessionSet(sender, menuInfo);
                     } else {
-                      await sock.sendMessage(sender, { text: `Your order *${oStatus.order_name}* status: *${(oStatus.stage || 'processing').toUpperCase()}*\n\nNeed more help? Reply *4* to talk to our team.` });
+                      const _Ffb = '```'; await sock.sendMessage(sender, { text: `${_Ffb}\n▪ C R O S C R O W ▪\nORDER STATUS\n────────────────\nORDER  ${oStatus.order_name}\nSTATE  ${(oStatus.stage || 'processing').toUpperCase()}\n────────────────\nREPLY 4 FOR A HUMAN\n${_Ffb}` });
                     }
                     waVendorNudge({ type: 'tracking_card', data: oStatus }, phone).catch(() => {});
                   }
@@ -24507,11 +24511,11 @@ async function startBaileysBot() {
                 if (found.length) {
                   const latest = found[0];
                   const others = found.length > 1 ? ` (and ${found.length - 1} more)` : '';
-                  await sock.sendMessage(sender, { text: `Found your order! 🎉\n\nOrder: *${latest.order_name}*${others}\n\nLet me pull up the details for you...` });
+                  const _Ffo = '```'; await sock.sendMessage(sender, { text: `${_Ffo}\n▪ C R O S C R O W ▪\nORDER FOUND\n────────────────\nORDER  ${latest.order_name}${others}\n\nPulling up details...\n────────────────\nOne moment\n${_Ffo}` });
                   // Inject order number into session so next turn uses it
                   await waSessionSet(sender, { menu: 'awaiting_order', prefilled_order: latest.order_name });
                 } else {
-                  await sock.sendMessage(sender, { text: `I couldn't find any orders linked to that number. Please double-check and try again, or type your 4-digit order number directly (e.g. #2434).\n\nIf you're still stuck, our team is here:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
+                  const _Fnf = '```'; await sock.sendMessage(sender, { text: `${_Fnf}\n▪ C R O S C R O W ▪\nNOT FOUND\n────────────────\nNo orders linked to that number.\n\nTRY    Type order number #1234\nOR     Reply 4 for a human\n\nSUPPORT  6375668971\nHOURS    2 PM – 8 PM\n${_Fnf}` });
                 }
                 waPending.delete(sender);
                 continue;
@@ -24519,10 +24523,10 @@ async function startBaileysBot() {
                 // Customer says they can't find — give step-by-step guidance
                 const hint = orderSession.hinted_phone ? 2 : 1;
                 if (hint === 1) {
-                  await sock.sendMessage(sender, { text: `No worries! Your order number is a 4-digit number like *#2434*.\n\nYou can find it in:\n• The WhatsApp message you received from CROSCROW at the time of order\n• The confirmation email from CROSCROW\n\nCan you check there and share it with me? 🙏` });
+                  const _Fhnt = '```'; await sock.sendMessage(sender, { text: `${_Fhnt}\n▪ C R O S C R O W ▪\nFIND YOUR ORDER\n────────────────\nOrder number is like  #2434\n\nCHECK\n• CROSCROW WA order message\n• CROSCROW confirmation email\n────────────────\nShare it once you find it\n${_Fhnt}` });
                   await waSessionSet(sender, { menu: 'awaiting_order', hinted_phone: true });
                 } else {
-                  await sock.sendMessage(sender, { text: `That's okay! Please share the mobile number you used while placing the order and I'll look it up for you 📲` });
+                  const _Fhnt2 = '```'; await sock.sendMessage(sender, { text: `${_Fhnt2}\n▪ C R O S C R O W ▪\nFIND YOUR ORDER\n────────────────\nSHARE the mobile number\nyou used while ordering\nand I'll look it up.\n────────────────\nDROP IT BELOW\n${_Fhnt2}` });
                   await waSessionSet(sender, { menu: 'awaiting_order', hinted_phone: true });
                 }
                 waPending.delete(sender);
@@ -24541,8 +24545,9 @@ async function startBaileysBot() {
             const lastBotText = (recentBotMsgs[0]?.text || '').toLowerCase();
             const isAlreadyClosed = /bye|take care|have a great|anything else/i.test(lastBotText);
             if (!isAlreadyClosed) {
-              await sock.sendMessage(sender, { text: `Happy to help! 😊 Feel free to reach out anytime. Have a great day! 🙏` });
-              await SC.addMessage(chat._id, { sender: 'assistant', text: `Happy to help! 😊 Feel free to reach out anytime. Have a great day! 🙏` });
+              const _Fbye = '```'; const _byeMsg = `${_Fbye}\n▪ C R O S C R O W ▪\nHAPPY TO HELP\n────────────────\nWe're here if you need us.\n60+ BRANDS | CROSCROW.COM\n${_Fbye}`;
+              await sock.sendMessage(sender, { text: _byeMsg });
+              await SC.addMessage(chat._id, { sender: 'assistant', text: _byeMsg });
             }
             // Mark chat as resolved
             await mdb.collection('support_chats').updateOne(
@@ -24732,7 +24737,7 @@ async function startBaileysBot() {
               });
               // Soft offer only — bot stays active, no forced escalation
               // Customer must explicitly choose to contact a human
-              const offerMsg = `Need to speak with our team directly? Here's how:\n\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM\n\nOr reply *"human"* and I'll flag this for a support exec right away 🙏`;
+              const _Fof = '```'; const offerMsg = `${_Fof}\n▪ C R O S C R O W ▪\nSUPPORT\n────────────────\nLINE   6375668971\nHOURS  2 PM – 8 PM\n\nOR reply 4 to flag this\nfor a support exec.\n────────────────\nWE'VE GOT YOU\n${_Fof}`;
               await sock.sendMessage(sender, { text: offerMsg });
               await SC.addMessage(chat._id, { sender: 'assistant', text: offerMsg });
               await mdb.collection('support_chats').updateOne(
