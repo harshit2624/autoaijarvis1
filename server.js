@@ -23596,7 +23596,7 @@ const WA_MENUS = {
     `${_F}\n▪ C R O S C R O W ▪\n████████░░░░░░ 55%\nSPLIT DISPATCH\n────────────────\nORDER  ${name}\n\nSTATE  Some items are on\n       their way, rest are\n       being packed.\n\nTRACK  ${url}\n────────────────\nARRIVES IN SEPARATE PACKS\n${_F}`,
 
   order_delivered: (name, url) =>
-    `${_F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  ${name}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n\nRNE    ${url}\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  ${name}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n\nRNE    ${url}\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_F}`,
 
   order_rto: (name) =>
     `${_F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  ${name}\n\nSTATE  Back with us after a\n       failed delivery. Our\n       team will call to set\n       up re-delivery or a\n       refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${_F}`,
@@ -24432,13 +24432,14 @@ async function startBaileysBot() {
               if (orderMatch) {
                 const oNum = orderMatch[1];
                 const oName = `#${oNum}`;
-                const rneUrl = `${SERVER_URL}/o/${oNum}`;
+                const rneUrl = `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`;
+                const _Frne = '```';
                 await sock.sendMessage(sender, {
-                  text: `No worries! Go ahead and use the link below to proceed with your return or exchange for order *${oName}* 👇\n\n🔗 ${rneUrl}\n\nReply *4* if you need help.`,
+                  text: `${_Frne}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nORDER  ${oName}\n\nSTART  ${rneUrl}\n────────────────\nGO ON PAGE TO PROCEED\nREPLY 4 FOR A HUMAN\n${_Frne}`,
                 });
                 await waSessionClear(sender);
               } else {
-                await sock.sendMessage(sender, { text: "Please share your 4-digit order number (e.g. #1234) so I can pull up your return/exchange link 👇" });
+                await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
               }
               waPending.delete(sender);
               continue;
@@ -24482,7 +24483,10 @@ async function startBaileysBot() {
                     const menuInfo = await waMenuForOrder({ type: 'tracking_card', data: oStatus });
                     if (menuInfo) {
                       const menuFn = WA_MENUS[menuInfo.menu];
-                      const menuUrl = oStatus.confirm_url || oStatus.track_url || '';
+                      const oNum = String(oStatus.order_name).replace(/^#/, '');
+                      const menuUrl = menuInfo.menu === 'order_delivered'
+                        ? `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`
+                        : (oStatus.confirm_url || oStatus.track_url || '');
                       const menuText = typeof menuFn === 'function' ? menuFn(oStatus.order_name, menuUrl, oStatus.vendor_shipments || []) : menuFn;
                       await sock.sendMessage(sender, { text: menuText });
                       await waSessionSet(sender, menuInfo);
@@ -24661,7 +24665,10 @@ async function startBaileysBot() {
             const menuInfo = await waMenuForOrder(meta);
             if (menuInfo) {
               const menuFn = WA_MENUS[menuInfo.menu];
-              const menuUrl = menuInfo.orderData?.confirm_url || menuInfo.orderData?.track_url || '';
+              const _oNum2 = String(meta.data.order_name).replace(/^#/, '');
+              const menuUrl = menuInfo.menu === 'order_delivered'
+                ? `${SERVER_URL}/returns?o=${encodeURIComponent(_oNum2)}&contact=na`
+                : (menuInfo.orderData?.confirm_url || menuInfo.orderData?.track_url || '');
               const menuText = typeof menuFn === 'function' ? menuFn(meta.data.order_name, menuUrl, meta.data.vendor_shipments || []) : menuFn;
               await sock.sendMessage(sender, { text: menuText });
               await waSessionSet(sender, menuInfo);
