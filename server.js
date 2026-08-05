@@ -24211,8 +24211,30 @@ async function startBaileysBot() {
               const orderMatch = text.match(/\b(\d{4})\b/);
 
               if (orderMatch) {
-                // Looks like a valid 4-digit order number — clear session, let LLM handle
+                // Look up order directly — skip LLM (needed for menu mode, works in smart mode too)
                 await waSessionClear(sender);
+                const _botModeCheck = await getBotMode();
+                if (_botModeCheck === 'menu') {
+                  const oStatus = await scGetOrderStatus(orderMatch[1], 'na');
+                  if (!oStatus.found) {
+                    await sock.sendMessage(sender, { text: `I couldn't find order *#${orderMatch[1]}*. Please double-check the number and try again, or reply *4* to talk to our team 🙏` });
+                    await waSessionSet(sender, { menu: 'awaiting_order' });
+                  } else {
+                    const menuInfo = await waMenuForOrder({ type: 'tracking_card', data: oStatus });
+                    if (menuInfo) {
+                      const menuFn = WA_MENUS[menuInfo.menu];
+                      const menuUrl = oStatus.confirm_url || oStatus.track_url || '';
+                      const menuText = typeof menuFn === 'function' ? menuFn(oStatus.order_name, menuUrl) : menuFn;
+                      await sock.sendMessage(sender, { text: menuText });
+                      await waSessionSet(sender, menuInfo);
+                    } else {
+                      await sock.sendMessage(sender, { text: `Your order *${oStatus.order_name}* status: *${(oStatus.stage || 'processing').toUpperCase()}*\n\nNeed more help? Reply *4* to talk to our team.` });
+                    }
+                    waVendorNudge({ type: 'tracking_card', data: oStatus }, phone).catch(() => {});
+                  }
+                  waPending.delete(sender);
+                  continue;
+                }
               } else if (digits.length === 10 && /^[6-9]/.test(digits)) {
                 // Customer sent their phone number — look up by phone
                 const found = await mdb.collection('order_meta').find(
