@@ -23417,22 +23417,22 @@ const WA_MENUS = {
     `Hi! 👋 Welcome to CROSCROW.\n\nHow can I help you today?\n\n1️⃣ Track my order\n2️⃣ Return / Exchange\n3️⃣ Ask AI assistant\n4️⃣ Talk to a human\n\n_Reply with a number (1–4)_`,
 
   order_not_confirmed: (name, url) =>
-    `Your order *${name}* needs a ₹99 confirmation to start dispatch — this small step lets us know you're ready to receive it, so we don't pack and ship an order that gets rejected at the door 😊 Tap below — it's adjusted at delivery, not extra.\n\n💳 Pay & confirm:\n${url}\n\n2️⃣ Why ₹99?\n3️⃣ Talk to a human`,
+    `Your order *${name}* needs a ₹99 confirmation to start dispatch — this is adjusted at delivery, not extra 😊\n\n💳 Confirm here:\n${url}\n\nReply *4* to talk to our team.`,
 
-  order_confirmed_short: (name) =>
-    `Your order *${name}* is confirmed and being prepared — there's a slight delay but we're on it! 🙏\n\n1️⃣ Check if vendor gave a reason\n2️⃣ Talk to a human`,
+  order_confirmed_short: (name, url) =>
+    `Your order *${name}* is confirmed and being prepared — slight delay but we're on it! 🙏\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
 
-  order_confirmed_long: (name) =>
-    `Your order *${name}* still hasn't shipped. We're following up with the vendor right now.\n\n1️⃣ Get delay reason\n2️⃣ Escalate to our team\n3️⃣ Talk to a human`,
+  order_confirmed_long: (name, url) =>
+    `Your order *${name}* hasn't shipped yet. We're following up with the vendor right now 🔔\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
 
-  order_transit: (name) =>
-    `Your order *${name}* is on its way! 🚚\n\n1️⃣ Get tracking link\n2️⃣ Report an issue\n3️⃣ Talk to a human`,
+  order_transit: (name, url) =>
+    `Your order *${name}* is on its way! 🚚\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
 
-  order_delivered: (name) =>
-    `Your order *${name}* has been delivered ✅\n\n1️⃣ Start a return\n2️⃣ Start an exchange\n3️⃣ Report an issue (wrong / damaged item)\n4️⃣ Talk to a human`,
+  order_delivered: (name, url) =>
+    `Your order *${name}* has been delivered ✅\n\n🔗 Return / Exchange:\n${url}\n\nReply *4* to talk to our team.`,
 
-  order_rto: (name) =>
-    `Your order *${name}* was returned to our warehouse.\n\n1️⃣ Request re-delivery\n2️⃣ Start refund process\n3️⃣ Talk to a human`,
+  order_rto: (name, url) =>
+    `Your order *${name}* was returned to our warehouse. Our team will reach out shortly 🙏\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
 };
 
 // ── Handle numbered menu reply ─────────────────────────────────────────────
@@ -23474,9 +23474,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_not_confirmed':
-      if (num === 2) {
-        await sock.sendMessage(sender, { text: `The ₹99 is deducted from your COD amount at delivery — so you pay that much less at the door. It confirms the order is genuine so we can start packing right away 🚀` });
-      } else if (num === 3) {
+      if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, `Customer needs help confirming order ${d?.order_name || ''}`);
         return true;
       }
@@ -23484,16 +23482,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_confirmed_short':
-      if (num === 1) {
-        const delayInfo = await waDelayReason(d?.shopify_order_id);
-        if (delayInfo) {
-          const etaLine = delayInfo.eta ? `\n\n📅 Expected by: *${delayInfo.eta}*` : '';
-          await sock.sendMessage(sender, { text: `Here's the update from the vendor:\n\n_"${delayInfo.reason}"_${etaLine}\n\nWe're making sure this is resolved quickly. Sorry for the wait! 🙏` });
-        } else {
-          await sock.sendMessage(sender, { text: `The vendor hasn't shared a specific reason yet — your order was just confirmed recently so it may still be in packing. We've pinged the vendor to update us! 🔔` });
-          if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
-        }
-      } else if (num === 2) {
+      if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — confirmed but delayed <24h`);
         return true;
       }
@@ -23501,20 +23490,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_confirmed_long':
-      if (num === 1) {
-        const delayInfo = await waDelayReason(d?.shopify_order_id);
-        if (delayInfo) {
-          const etaLine = delayInfo.eta ? `\n\n📅 Expected by: *${delayInfo.eta}*` : '';
-          await sock.sendMessage(sender, { text: `The vendor has shared this update:\n\n_"${delayInfo.reason}"_${etaLine}\n\nWe're following up to make sure it ships ASAP. Really sorry for the inconvenience 🙏` });
-        } else {
-          await sock.sendMessage(sender, { text: `No specific reason from the vendor yet. We've sent them a reminder right now asking for an update — you should see movement soon. 🔔` });
-          if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
-        }
-      } else if (num === 2) {
-        await waAdminAlert(`🚨 *Escalation Needed*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}\nHashn't shipped — follow up with vendor immediately.`);
-        if (d) waVendorNudge({ type: 'tracking_card', data: d }, phone).catch(() => {});
-        await sock.sendMessage(sender, { text: `We've escalated this to our team and nudged the vendor directly. You'll get an update within a few hours.\n\nFor urgent help:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
-      } else if (num === 3) {
+      if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — not shipped >24h, customer escalating`);
         return true;
       }
@@ -23522,12 +23498,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_transit':
-      if (num === 1) {
-        await sock.sendMessage(sender, { text: `📦 Track your order here:\n\n${trackUrl}` });
-      } else if (num === 2) {
-        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} in transit — customer reporting issue`);
-        return true;
-      } else if (num === 3) {
+      if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} in transit — human requested`);
         return true;
       }
@@ -23535,15 +23506,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_delivered':
-      if (num === 1) {
-        await sock.sendMessage(sender, { text: `Start your return here 👇\n\n🔗 ${trackUrl}\n\nSelect the items, upload a photo, and schedule a pickup. Returns are processed within 5-7 days of pickup.` });
-      } else if (num === 2) {
-        await sock.sendMessage(sender, { text: `Start your exchange here 👇\n\n🔗 ${trackUrl}\n\nChoose the item, pick your new size/colour, and we'll handle the rest!` });
-      } else if (num === 3) {
-        await waAdminAlert(`⚠️ *Issue with delivered order*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}\nReported: wrong / damaged item.`);
-        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} delivered — issue reported`);
-        return true;
-      } else if (num === 4) {
+      if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} delivered — human requested`);
         return true;
       }
@@ -23551,13 +23514,7 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_rto':
-      if (num === 1) {
-        await waAdminAlert(`📦 *Re-delivery Request*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}`);
-        await sock.sendMessage(sender, { text: `Re-delivery flagged! Our team will coordinate within 24 hours.\n\nFor urgent help:\n📞 *6375668971*\n🕐 2:00 PM – 8:00 PM` });
-      } else if (num === 2) {
-        await waAdminAlert(`💰 *Refund Request (RTO)*\nOrder: *${d?.order_name}*${d?.customer_name ? `\nCustomer: *${d.customer_name}*` : ''}\nPhone: +91${phone}`);
-        await sock.sendMessage(sender, { text: `Refund request noted! It'll be processed within 3-5 business days once the item is received at our warehouse. We'll update you on this number 🙏` });
-      } else if (num === 3) {
+      if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, `RTO order ${d?.order_name} — needs resolution`);
         return true;
       }
