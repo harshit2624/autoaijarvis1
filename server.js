@@ -20714,71 +20714,97 @@ app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
   }
 });
 
-// ── POST /admin/wa-template-preview — send template variants to admin WA ──
+// ── POST /admin/wa-template-preview — send full template set to admin WA ──
 app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
   if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
   const jid = `91${WA_ADMIN_NO}@s.whatsapp.net`;
+  const F = '```';
   const send = async (msg) => {
     await waSocket.sendMessage(jid, { text: msg });
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 1800));
   };
-  const TRACK = 'https://dashboard.croscrow.com/o/1234';
-  const CONFIRM = 'https://dashboard.croscrow.com/o/1234';
   try {
+    const DEMO_TRACK = 'dashboard.croscrow.com/o/1234';
+    const DEMO_CONFIRM = 'dashboard.croscrow.com/o/1234';
+    const DEMO_RNE = 'dashboard.croscrow.com/o/1234';
     const templates = [
+      // 1. menu
+      `${F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  RETURN / EXCHANGE\n3  AI ASSISTANT\n4  HUMAN\n────────────────\nSELECT 1–4\n${F}`,
 
-      // ── HEADER ────────────────────────────────────────────────────────────
-      `CROSCROW ─ TEMPLATE PREVIEW\n${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}\n────────────────\nSending variants below`,
+      // 2. order lookup
+      `${F}\n▪ C R O S C R O W ▪\nORDER LOOKUP\n────────────────\nENTER ORDER ID\nFORMAT  #1234\n────────────────\nDROP IT BELOW\n${F}`,
 
-      // ── MAIN MENU ─────────────────────────────────────────────────────────
-      `[ MAIN MENU ]\n\nCROSCROW ─ SUPPORT NODE\n60+ HOMEGROWN LABELS\n────────────────\n[1] ORDER STATUS\n[2] RETURN / EXCHANGE\n[3] AI ASSISTANT\n[4] HUMAN OPERATOR\n────────────────\nINPUT 1-4 TO ROUTE`,
+      // 3. awaiting confirmation (COD)
+      `${F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  #1234\n\nPay ₹99 to confirm your COD\norder — helps us block fake\nand mistaken orders.\n\nCONFIRM\n${DEMO_CONFIRM}\n────────────────\nGOES ON HOLD AFTER 48 HRS\n${F}`,
 
-      // ── OFD — WAYBILL ─────────────────────────────────────────────────────
-      `[ OFD — WAYBILL ]\n\nCROSCROW ─ WAYBILL\n||||| || |||| | |||\n────────────────\nAWB    #1234\nSTATE  OUT FOR DELIVERY\nWINDOW TODAY\nACTION KEEP PHONE ON\n────────────────\nFINAL SCAN PENDING\n\nTrack here:\n${TRACK}\n\nReply 4 — human operator`,
+      // 4. packing (<24h)
+      `${F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  #1234\n\nSTATE  Confirmed and moving.\n       Next update lands the\n       moment it ships.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nDISPATCH EXPECTED\nWITHIN 24 HRS\n${F}`,
 
-      // ── UNCONFIRMED — WAYBILL ─────────────────────────────────────────────
-      `[ UNCONFIRMED — WAYBILL ]\n\nCROSCROW ─ WAYBILL\n||||| || |||| | |||\n────────────────\nORDER  #1234\nSTATE  UNCONFIRMED\nCARE   Rs.99 TO CONFIRM\n       ADJUSTED AT DELIVERY\n       NOT AN EXTRA CHARGE\n────────────────\nDISPATCH HOLDS UNTIL DONE\n\nConfirm here:\n${CONFIRM}\n\nReply 4 — human operator`,
+      // 5. packing late (>24h)
+      `${F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ RUNNING LATE\n────────────────\nORDER  #1234\n\nSTATE  Running slightly late.\n       Flagged on our side and\n       pushing it on priority.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
-      // ── IN TRANSIT — B: DISPATCH TERMINAL ────────────────────────────────
-      `[ IN TRANSIT — B: DISPATCH TERMINAL ]\n\nORDER   #1234\nSTATUS  IN TRANSIT\nSTAGE   VENDOR → YOU\nETA     2-4 DAYS\n────────────────\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 6. on hold
+      `${F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  #1234\n\nSTATE  Your order is paused,\n       most likely waiting on\n       confirmation. Open it\n       and clear it here:\n\nOPEN   ${DEMO_CONFIRM}\n────────────────\nREPLY 4 FOR A HUMAN\n${F}`,
 
-      // ── IN TRANSIT — B1: PROGRESS RAIL ───────────────────────────────────
-      `[ IN TRANSIT — B1: PROGRESS RAIL ]\n\nCROSCROW ─ ORDER #1234\n────────────────\nCONFIRM  ██████ OK\nPACKED   ██████ OK\nSHIPPED  ██████ OK\nTRANSIT  ███░░░ NOW\nDELIVERY ░░░░░░ -\n────────────────\nSTAGE 4 OF 5\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 7. shipped
+      `${F}\n▪ C R O S C R O W ▪\n█████████░░░░░ 60%\nSHIPPED\n────────────────\nORDER  #1234\n\n●───●───●───◉───○───○\nCNF PCK SHP MOVE OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
-      // ── IN TRANSIT — B2: CONSOLE LOG ─────────────────────────────────────
-      `[ IN TRANSIT — B2: CONSOLE LOG ]\n\n> track --order 1234\n[OK] ORDER FOUND\n[OK] PAYMENT CLEARED\n[OK] VENDOR DISPATCHED\n[..] IN TRANSIT\n[--] AWAITING DELIVERY\n────────────────\nNO ACTION NEEDED\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 8. in transit
+      `${F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  #1234\n\n●───●───●───●───○───○\nCNF PCK SHP MOVE OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
-      // ── IN TRANSIT — B3: AIRWAY BILL ─────────────────────────────────────
-      `[ IN TRANSIT — B3: AIRWAY BILL ]\n\nCROSCROW ─ WAYBILL\n||||| || |||| | |||\n────────────────\nAWB    #1234\nFROM   VENDOR HUB\nTO     YOU\nSVC    STANDARD\nSTATE  IN TRANSIT\nSCAN   HUB OUTBOUND\n────────────────\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 9. out for delivery (COD)
+      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  #1234\n\n●───●───●───●───◉───○\nCNF PCK SHP MOVE OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nKEEP PHONE ON\nKEEP BALANCE READY\n${F}`,
 
-      // ── IN TRANSIT — B4: CARE LABEL ──────────────────────────────────────
-      `[ IN TRANSIT — B4: CARE LABEL ]\n\nC R O S C R O W\n────────────────\nORDER  #1234\nSTATE  IN TRANSIT\nCARE   DO NOT WORRY\n       DO NOT REFRESH\n       TRACK GENTLY\n────────────────\nMADE IN INDIA\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 10. split dispatch (in flight)
+      `${F}\n▪ C R O S C R O W ▪\n████████░░░░░░ 55%\nSPLIT DISPATCH\n────────────────\nORDER  #1234\n\n1/3 ████░░ SENT\n2/3 ████░░ SENT\n3/3 ███░░░ PACKING\n\nTRACK  ${DEMO_TRACK}\n────────────────\nMULTI-LABEL ORDER\nARRIVES IN SEPARATE PACKS\n${F}`,
 
-      // ── CONFIRMED SHORT ───────────────────────────────────────────────────
-      `[ CONFIRMED — PACKING ]\n\nORDER   #1234\nSTATUS  CONFIRMED\nSTAGE   PACKING IN PROGRESS\nETA     DISPATCH SOON\n────────────────\nSLIGHT DELAY — TEAM IS ON IT\n\n${TRACK}\n\nReply 4 — human operator`,
+      // 11. split ofd
+      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  #1234\n\n1/3 █████░ OUT TODAY\n2/3 █████░ OUT TODAY\n3/3 ████░░ SENT\n\nTRACK  ${DEMO_TRACK}\n────────────────\n2 PACKS ARRIVING TODAY\nKEEP YOUR WALLET HANDY\n${F}`,
 
-      // ── CONFIRMED LONG ────────────────────────────────────────────────────
-      `[ CONFIRMED — DELAYED ]\n\nORDER   #1234\nSTATUS  CONFIRMED\nSTAGE   AWAITING DISPATCH\nFLAG    DELAYED — VENDOR PINGED\n────────────────\nFOLLOWING UP WITH VENDOR NOW\n\n${TRACK}\n\nReply 4 — human operator`,
+      // 12. delivered
+      `${F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  #1234\n\n●───●───●───●───●───●\nCNF PCK SHP MOVE OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
-      // ── DELIVERED ─────────────────────────────────────────────────────────
-      `[ DELIVERED ]\n\nORDER   #1234\nSTATUS  DELIVERED\nSTAGE   COMPLETE\n────────────────\nHope you love your picks.\n\nAnything not right? Reply here within 7 days.\n\nReturn / Exchange:\n${TRACK}\n\nReply 4 — human operator`,
+      // 13. delivery attempted
+      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nDELIVERY ATTEMPTED\n────────────────\nORDER  #1234\n\nSTATE  The rider could not\n       reach you. One more\n       attempt is scheduled.\n\nFIX    ${DEMO_TRACK}\n────────────────\nKEEP PHONE REACHABLE\n${F}`,
 
-      // ── RTO ───────────────────────────────────────────────────────────────
-      `[ RTO ]\n\nORDER   #1234\nSTATUS  RETURNED TO HUB\nCAUSE   DELIVERY FAILED\nNEXT    RE-DISPATCH / REFUND\n────────────────\nOur team is already on it — we will reach out. Or reply 4 to jump the queue.`,
+      // 14. rto
+      `${F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  #1234\n\nSTATE  Back with us after a\n       failed delivery. Our\n       team will call to set\n       up re-delivery or a\n       refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${F}`,
 
-      // ── PROGRESS BAR VARIANTS ─────────────────────────────────────────────
-      `[ P1 — PERCENT BAR ]\n\nCROSCROW ─ #1234\n██████████░░░░ 70%\nIN TRANSIT\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 15. cancelled
+      `${F}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  #1234\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
-      `[ P2 — MINI STAGE BAR ]\n\n#1234  ██████░░░  STAGE 4/5\nIN TRANSIT\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 16. return window open
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n░░░░░░░░░░░░░░ 0%\nWINDOW OPEN\n────────────────\nORDER  #1234\n\nSTATE  Your return window is\n       open. Start it here:\n\nSTART  ${DEMO_RNE}\n────────────────\nGO ON PAGE TO PROCEED\n${F}`,
 
-      `[ P3 — ARROW PIPELINE ]\n\nCROSCROW  #1234\nCONFIRM > PACK > SHIP > TRANSIT > DELIVER\n                         ^\n                        NOW\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 17. return received
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  #1234\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team\n       reviews it within\n       24 hours.\n\nTRACK  ${DEMO_RNE}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
-      `[ P4 — DOT RAIL ]\n\nCROSCROW ─ ORDER #1234\n●───●───●───◉───○\nCONF PACK SHIP MOVE DLVR\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 18. return pickup scheduled
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  #1234\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nPACK   Original tags and\n       packaging. Photo or\n       clip while you pack.\n\nTRACK  ${DEMO_RNE}\n────────────────\nKEEP THE PACK READY\n${F}`,
 
-      `[ P5 — BLOCK BAR ]\n\n#1234 ─ IN TRANSIT\n▓▓▓▓▓▓▓▓▓▓▓░░░░░\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+      // 19. return qc
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  #1234\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for\n       a quick check. Takes\n       24 to 48 hours.\n\nTRACK  ${DEMO_RNE}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
-      // ── FOOTER ────────────────────────────────────────────────────────────
-      `PREVIEW COMPLETE\n────────────────\nReply with your pick or changes`,
+      // 20. refund approved
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nSTATE  Reply 4 to claim\n       store credit or a\n       refund.\n────────────────\nSUPPORT WILL SET IT UP\n${F}`,
+
+      // 21. exchange sent
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nEXCHANGE SENT\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nSTATE  Replacement is on\n       its way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNEW PACK ─ SAME ORDER\n${F}`,
+
+      // 22. qc failed
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  #1234\n\nSTATE  The piece did not\n       clear the label's\n       check. Our team will\n       call you today and\n       explain why.\n────────────────\nREPLY 4 TO REACH US NOW\n${F}`,
+
+      // 23. window expired
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\nWINDOW CLOSED\n────────────────\nORDER  #1234\n\nSTATE  The return window on\n       this order has closed.\n       If something is\n       genuinely wrong with\n       the piece, tell us.\n────────────────\nREPLY 4 ─ CASE BY CASE\n${F}`,
+
+      // 24. ai assistant
+      `${F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${F}`,
+
+      // 25. support queue (in hours)
+      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${F}`,
+
+      // 26. support queue (off hours)
+      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${F}`,
     ];
 
     for (const t of templates) await send(t);
