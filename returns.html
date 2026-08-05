@@ -1194,7 +1194,8 @@ function pickOption(itemIdx, optionIdx, val) {
 function setExchangeFor(idx, label, variantId) {
   if (selectedItems[idx]) {
     selectedItems[idx].exchange_for = label;
-    selectedItems[idx].exchange_variant_id = variantId;
+    selectedItems[idx].exchange_size_label = label;
+    selectedItems[idx].exchange_variant_id = variantId !== undefined ? variantId : null;
   }
   updateItemsBtn();
 }
@@ -1413,7 +1414,7 @@ async function submitRequest(paymentId, rzOrderId) {
     return {
       title: it.title, variant_title: it.variant_title || '', quantity: sel.qty,
       sku: it.sku || '', price: it.price, image_url: it.image_url || null,
-      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for, exchange_variant_id: sel.exchange_variant_id || null } : {})
+      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for, exchange_size_label: sel.exchange_for, exchange_variant_id: sel.exchange_variant_id || null } : {})
     };
   });
   const note = document.getElementById('reason-note')?.value?.trim() || '';
