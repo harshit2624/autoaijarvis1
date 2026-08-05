@@ -16383,20 +16383,22 @@ app.get("/admin/chat-analytics", adminAuth, async (req, res) => {
     const records = await mdb.collection('chat_message_analytics').find({ recorded_at: { $gte: since } }).toArray();
 
     const botResolved   = records.filter(r => r.source === 'bot_resolved');
+    const menuResolved  = records.filter(r => r.source === 'menu_resolved');
+    const allBotHandled = [...botResolved, ...menuResolved];
     const adminManual   = records.filter(r => r.source === 'admin_manual');
     const adminResolves = adminManual.filter(r => r.is_resolve);
     const adminReplies  = adminManual.filter(r => !r.is_resolve);
 
-    const total = botResolved.length + adminManual.length;
-    const botRate = total ? Math.round(botResolved.length / total * 100) : 0;
-    const avgBotTurnsBotResolved = botResolved.length
-      ? Math.round(botResolved.reduce((s, r) => s + (r.bot_turns_before || 0), 0) / botResolved.length * 10) / 10
+    const total = allBotHandled.length + adminManual.length;
+    const botRate = total ? Math.round(allBotHandled.length / total * 100) : 0;
+    const avgBotTurnsBotResolved = allBotHandled.length
+      ? Math.round(allBotHandled.reduce((s, r) => s + (r.bot_turns_before || 0), 0) / allBotHandled.length * 10) / 10
       : 0;
     const avgBotTurnsHuman = adminManual.length
       ? Math.round(adminManual.reduce((s, r) => s + (r.bot_turns_before || 0), 0) / adminManual.length * 10) / 10
       : 0;
-    const avgChatDuration = botResolved.length
-      ? Math.round(botResolved.reduce((s, r) => s + (r.chat_duration_min || 0), 0) / botResolved.length)
+    const avgChatDuration = allBotHandled.length
+      ? Math.round(allBotHandled.reduce((s, r) => s + (r.chat_duration_min || 0), 0) / allBotHandled.length)
       : 0;
 
     // Topic breakdown from tags
@@ -16427,14 +16429,16 @@ app.get("/admin/chat-analytics", adminAuth, async (req, res) => {
     records.forEach(r => {
       const day = (r.recorded_at || '').slice(0, 10);
       if (!dailyMap[day]) dailyMap[day] = { bot: 0, human: 0 };
-      if (r.source === 'bot_resolved') dailyMap[day].bot++;
-      else dailyMap[day].human++;
+      if (r.source === 'bot_resolved' || r.source === 'menu_resolved') dailyMap[day].bot++;
+      else if (r.source === 'admin_manual') dailyMap[day].human++;
     });
     const daily = Object.entries(dailyMap).sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, v]) => ({ date, ...v }));
 
     res.json({
-      total, botResolved: botResolved.length, adminManual: adminManual.length,
+      total, botResolved: allBotHandled.length, botResolvedViaMenu: menuResolved.length,
+      botResolvedViaConversation: botResolved.length,
+      adminManual: adminManual.length,
       adminResolves: adminResolves.length, adminReplies: adminReplies.length,
       botRate, avgBotTurnsBotResolved, avgBotTurnsHuman, avgChatDuration,
       topicBreakdown, topPhrases, daily,
@@ -20955,7 +20959,8 @@ async function runSupportInsightAnalysis() {
       const msgs = await mdb.collection('support_messages')
         .find({ chat_id: c._id }).sort({ created_at: 1 }).limit(30).toArray();
       const transcript = msgs.map(m => `${m.sender.toUpperCase()}: ${(m.text||'').slice(0,300)}`).join('\n');
-      return { id: String(c._id), order: c.order_name || '(no order)', source: c.source || 'web', resolved: !!c.resolved, tags: c.tags || [], needs_human: !!c.needs_human, transcript };
+      const menuServedChat = (c.tags || []).includes('menu_served');
+      return { id: String(c._id), order: c.order_name || '(no order)', source: c.source || 'web', resolved: !!c.resolved || menuServedChat, tags: c.tags || [], needs_human: !!c.needs_human && !menuServedChat, transcript };
     }));
 
     const GROQ_KEY = process.env.GROQ_API_KEY;
@@ -20985,7 +20990,7 @@ Categories:
 - missing_info: bot couldn't answer because info wasn't available (track info missing, order not found)
 - other: anything unusual worth flagging
 
-Only flag real issues. If a chat went smoothly, skip it. Output only the JSON array, no other text.
+IMPORTANT CONTEXT: CROSCROW runs a menu-based WhatsApp bot. Many chats are short (3-5 turns) where the bot showed an order status card and the customer left — this is a SUCCESS, not unresolved. Only flag chats where something actually went wrong. Chats tagged "menu_served" with resolved=true are positive outcomes — do not flag these. Output only the JSON array, no other text.
 
 CHATS:
 ${JSON.stringify(summaries, null, 1)}`;
@@ -24494,6 +24499,23 @@ async function startBaileysBot() {
                       const menuText = typeof menuFn === 'function' ? menuFn(oStatus.order_name, menuUrl, oStatus.vendor_shipments || []) : menuFn;
                       await sock.sendMessage(sender, { text: menuText });
                       await waSessionSet(sender, menuInfo);
+                      // Mark chat as menu-served — prevents false escalation/unresolved flags
+                      await mdb.collection('support_chats').updateOne(
+                        { _id: chat._id },
+                        { $addToSet: { tags: 'menu_served' }, $set: { updated_at: new Date().toISOString() } }
+                      );
+                      const _allMsgsM = await SC.messages(chat._id).catch(() => []);
+                      const _botMsgsM = _allMsgsM.filter(m => m.sender === 'assistant');
+                      const _custMsgsM = _allMsgsM.filter(m => m.sender === 'customer');
+                      await mdb.collection('chat_message_analytics').insertOne({
+                        chat_id: String(chat._id), order_name: oStatus.order_name || null,
+                        tags: chat.tags || [], source: 'menu_resolved',
+                        is_resolve: true, needs_human: false,
+                        bot_turns_before: _botMsgsM.length,
+                        customer_turns: _custMsgsM.length,
+                        chat_duration_min: Math.round((Date.now() - new Date(chat.created_at || Date.now()).getTime()) / 60000),
+                        recorded_at: new Date().toISOString(),
+                      }).catch(() => {});
                     } else {
                       const _Ffb = '```'; await sock.sendMessage(sender, { text: `${_Ffb}\n▪ C R O S C R O W ▪\nORDER STATUS\n────────────────\nORDER  ${oStatus.order_name}\nSTATE  ${(oStatus.stage || 'processing').toUpperCase()}\n────────────────\nREPLY 4 FOR A HUMAN\n${_Ffb}` });
                     }
@@ -24714,10 +24736,15 @@ async function startBaileysBot() {
             const noResolution = !freshChat.resolved && !freshChat.tags?.includes('resolved') && freshChat.status !== 'resolved';
             const orderFound = freshChat.tags?.includes('order_found');
 
-            // Rule A: 5+ bot messages today with no resolution (genuinely stuck)
+            // Rule A: bot sent too many messages with no resolution (genuinely stuck)
+            // Threshold is higher in menu mode since menu flows are multi-step by design
+            // Also skip entirely if order was successfully served via menu
+            const menuServed = freshChat.tags?.includes('menu_served');
             const todayStart = new Date(); todayStart.setHours(0,0,0,0);
             const botMessagesToday = allMessages.filter(m => m.sender === 'assistant' && new Date(m.created_at || 0) >= todayStart).length;
-            const rulA = botMessagesToday >= 5 && noResolution;
+            const _curBotMode = await getBotMode().catch(() => 'smart');
+            const ruleAThreshold = _curBotMode === 'menu' ? 10 : 5;
+            const rulA = !menuServed && botMessagesToday >= ruleAThreshold && noResolution;
 
             // Rule B: customer repeated a high-frustration keyword in 3 consecutive messages
             const repeatedKeyword = STICKY_KEYWORDS.find(kw =>
