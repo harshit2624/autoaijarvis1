@@ -15366,16 +15366,18 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
   const name = (customerName || '').split(' ')[0] || 'there';
   let msg = '';
 
+  const _Ft = '```';
   if (stage === 'pickup') {
-    msg = `Hey ${name}! ���\n\nYour CROSCROW order *${orderName}* has been shipped!\n\n🚚 Courier: ${courier || 'Our delivery partner'}\n📍 AWB: ${awb}\n\nTrack your order here:\n${trackUrl}\n\nSit tight — it'll be at your doorstep in 3–5 days 🙌`;
+    const awbLine = awb ? `AWB      ${awb}\n` : '';
+    const courierLine = `COURIER  ${courier || 'Our delivery partner'}\n`;
+    msg = `${_Ft}\n▪ C R O S C R O W ▪\n█████████░░░░░ 60%\nSHIPPED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nCNF PCK SHP OFD DLV\n\n${courierLine}${awbLine}\nTRACK  ${trackUrl}\n────────────────\nNOTHING NEEDED FROM YOU\n${_Ft}`;
   } else if (stage === 'transit') {
-    const statusLine = deliveryStatus ? `📍 Status: ${deliveryStatus}\n` : '';
-    msg = `Quick update on your CROSCROW order *${orderName}* 📦\n\nYour package is currently *in transit* and moving towards you!\n\n${statusLine}🔗 Track here: ${trackUrl}\n\nAlmost there! 🙏`;
+    msg = `${_Ft}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${trackUrl}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Ft}`;
   } else if (stage === 'ofd') {
-    const codLine = codAmount > 0 ? `\n\nCOD customers: keep *₹${codAmount}* ready at the door 💰` : '';
-    msg = `Your order is almost there! 🛵\n\n*${orderName}* is out for delivery today.\n\n📍 Your delivery partner is on the way — please keep your phone nearby.${codLine}`;
+    const codLine = codAmount > 0 ? `KEEP   ₹${codAmount} READY` : 'KEEP PHONE ON';
+    msg = `${_Ft}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${trackUrl}\n────────────────\n${codLine}\n${_Ft}`;
   } else if (stage === 'delivered') {
-    msg = `Your order has been delivered! 🎊\n\nHope you love your CROSCROW picks *${orderName}* 🙌\n\nIf anything's not right — wrong size, damaged item — just reply here within 7 days and we'll sort it out.\n\nHappy shopping! 💫 — Team CROSCROW`;
+    msg = `${_Ft}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_Ft}`;
   }
 
   if (!msg) return;
@@ -15400,9 +15402,7 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
           resolved: { $ne: true },
         });
         if (openChat) {
-          const proactiveMsg = stage === 'delivered'
-            ? `Your order *${orderName}* has been delivered! 🎊 Hope you love your CROSCROW picks!\n\nIf anything's not right, just reply here within 7 days and we'll sort it out 🙏`
-            : `Great news! Your order *${orderName}* just shipped 🚀\n\nTrack it here: ${`${process.env.SERVER_URL || ''}/o/${String(orderName).replace(/^#/,'')}`}`;
+          const proactiveMsg = msg; // same themed message already built above
           if (waSocket && waConnected) {
             await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: proactiveMsg }).catch(() => {});
           }
@@ -15441,28 +15441,33 @@ async function sendRRWANotif(rr, event, extra = {}) {
 
   let msg = '';
 
+  const _Fr = '```';
   if (event === 'request_received') {
-    msg = `Hi ${name}! 👋\n\nWe've received your *${typeLabel} request* for order *${orderName}*.\n\n📋 Request ID: ${reqId}\n📦 Item: ${itemNames || 'Your order'}\n\nOur team will review it and schedule a pickup within 24–48 hours.\n\nYou'll get an update here on WhatsApp 🙏\n— Team CROSCROW`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  ${orderName}\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team\n       reviews it within\n       24 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'pickup_scheduled') {
     const awb = extra.awb || rr.reverse_shipment?.awb || '';
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
-    msg = `Your pickup has been scheduled! 🗓️\n\n*${orderName} — ${TypeLabel}*\n\n🚚 Courier: ${courier}${awb ? `\n📍 AWB: ${awb}` : ''}\n\nPlease keep the item *packed and ready* at the time of pickup.\n\nAny issues? Just reply here 👋`;
+    const awbLine = awb ? `AWB      ${awb}\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${awbLine}\nPACK   Original tags and\n       packaging. Photo or\n       clip while you pack.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
   } else if (event === 'picked_up') {
     const awb = rr.reverse_shipment?.awb || extra.awb || '';
-    msg = `Your item has been picked up! ✅\n\n*${orderName}* is on its way back to us.\n\n${awb ? `🚚 AWB: ${awb}\n` : ''}⏱️ Expected to reach our warehouse in 5–7 days.\n\nWe'll notify you as soon as it arrives and quality check is done 🙏`;
+    const awbLine = awb ? `AWB    ${awb}\n\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKED UP\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nREQ APR PCK QC DONE\n\n${awbLine}STATE  Heading back to us.\n       QC update in 5–7 days.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'received_at_warehouse') {
-    msg = `We've received your ${typeLabel} for order *${orderName}* 📦\n\nOur team is now running a quick quality check — this usually takes 24 hours.\n\nYou'll hear from us as soon as it's done 🙏\n— Team CROSCROW`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for\n       a quick check. Takes\n       24 to 48 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'refund_initiated') {
-    const amt = extra.amount ? `₹${extra.amount}` : '';
-    msg = `Refund processed! 💰\n\nYour return for order *${orderName}* has passed quality check.\n\n${amt ? `✅ Refund Amount: ${amt}\n` : ''}⏱️ Expected in your account within 3–5 business days.\n\nThank you for shopping with CROSCROW 🙌`;
+    const amt = extra.amount ? `AMT    ₹${extra.amount}\n\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\n${amt}STATE  Expected in your\n       account in 3–5 days.\n────────────────\nREPLY 4 FOR STORE CREDIT\n${_Fr}`;
   } else if (event === 'exchange_dispatched') {
     const awb = extra.awb || rr.forward_shipment?.awb || '';
     const courier = extra.courier || rr.forward_shipment?.courier || 'Our delivery partner';
     const trackUrl = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
-    msg = `Your exchange order is on its way! 🚀\n\n*${orderName} — Exchange*\n\n📦 New item: ${itemNames || 'Your item'}\n🚚 Courier: ${courier}${awb ? `\n📍 AWB: ${awb}` : ''}${trackUrl ? `\n\nTrack here: ${trackUrl}` : ''}\n\nDelivery in 3–5 days. Thanks for your patience 🙏`;
+    const awbLine = awb ? `AWB      ${awb}\n` : '';
+    const trackLine = trackUrl ? `\nTRACK  ${trackUrl}\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nEXCHANGE SENT\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${awbLine}${trackLine}────────────────\nNEW PACK ─ SAME ORDER\n${_Fr}`;
   } else if (event === 'rejected') {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
-    msg = `Update on your ${typeLabel} request for *${orderName}* ⚠️\n\nUnfortunately, we couldn't process this request.\n\n❌ Reason: ${reason}\n\nYour item will be shipped back to you within 2–3 days.\n\nFor questions:\n📞 *6375668971* | 🕐 2:00 PM – 8:00 PM`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  ${orderName}\n\nSTATE  ${reason}\n       Your item ships back\n       within 2–3 days.\n────────────────\nREPLY 4 TO REACH US NOW\nHOURS  2 PM – 8 PM\nLINE   6375668971\n${_Fr}`;
   }
 
   if (!msg) return;
@@ -23456,7 +23461,9 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
   const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
   const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
   if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
-    const msg = `Someone from our team will assist you shortly 🙏\n\nPlease share your query below — include your order number (e.g. #1234) for faster resolution.\n\n📞 *6375668971* (2–8 PM)`;
+    const nowHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours();
+    const offHours = nowHour < 14 || nowHour >= 20;
+    const msg = WA_MENUS.support_queue(offHours);
     await sock.sendMessage(sender, { text: msg });
     await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
   }
@@ -23507,44 +23514,56 @@ async function setBotMode(mode) {
   );
 }
 
+const _F = '```';
 const WA_MENUS = {
-  // Smart bot welcome (current — AI handles everything)
   welcome:
-    `Hi! 👋 Welcome to CROSCROW support.\n\nWhat can I help you with?\n\n1️⃣ Track my order\n2️⃣ Browse products\n3️⃣ Return / Exchange\n4️⃣ Talk to a human`,
+    `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  BROWSE PRODUCTS\n3  RETURN / EXCHANGE\n4  HUMAN\n────────────────\nSELECT 1–4\n${_F}`,
 
-  // Menu bot welcome (simple, no AI fallback)
   welcome_menu:
-    `Hi! 👋 Welcome to CROSCROW.\n\nHow can I help you today?\n\n1️⃣ Track my order\n2️⃣ Return / Exchange\n3️⃣ Ask AI assistant\n4️⃣ Talk to a human\n\n_Reply with a number (1–4)_`,
+    `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  RETURN / EXCHANGE\n3  AI ASSISTANT\n4  HUMAN\n────────────────\nSELECT 1–4\n${_F}`,
+
+  order_lookup:
+    `${_F}\n▪ C R O S C R O W ▪\nORDER LOOKUP\n────────────────\nENTER ORDER ID\nFORMAT  #1234\n────────────────\nDROP IT BELOW\n${_F}`,
+
+  order_lookup_rne:
+    `${_F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nENTER ORDER ID\nFORMAT  #1234\n────────────────\nDROP IT BELOW\n${_F}`,
 
   order_not_confirmed: (name, url) =>
-    `Your order *${name}* needs a ₹99 confirmation to start dispatch — this is adjusted at delivery, not extra 😊\n\n💳 Confirm here:\n${url}\n\nReply *4* to talk to our team.`,
+    `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${name}\n\nPay ₹99 to confirm your COD\norder — helps us block fake\nand mistaken orders.\n\nCONFIRM\n${url}\n────────────────\nGOES ON HOLD AFTER 48 HRS\n${_F}`,
 
   order_confirmed_short: (name, url) =>
-    `Your order *${name}* is confirmed and being prepared — slight delay but we're on it! 🙏\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+    `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${name}\n\nSTATE  Confirmed and moving.\n       Next update lands the\n       moment it ships.\n\nTRACK  ${url}\n────────────────\nDISPATCH EXPECTED\nWITHIN 24 HRS\n${_F}`,
 
   order_confirmed_long: (name, url) =>
-    `Your order *${name}* hasn't shipped yet. We're following up with the vendor right now 🔔\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
-
-  order_transit: (name, url) =>
-    `Your order *${name}* is on its way! 🚚 It's currently in transit and will be delivered soon.\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
-
-  order_ofd: (name, url) =>
-    `Great news! Your order *${name}* is out for delivery today 🛵 You should receive it shortly — keep your phone handy!\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+    `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ RUNNING LATE\n────────────────\nORDER  ${name}\n\nSTATE  Running slightly late.\n       Flagged on our side and\n       pushing it on priority.\n\nTRACK  ${url}\n────────────────\nNOTHING NEEDED FROM YOU\n${_F}`,
 
   order_hold: (name, url) =>
-    `Your order *${name}* is currently on hold ⏸️\n\nYou may need to confirm your order to get it moving — tap the link below to check and confirm:\n\n🔗 ${url}\n\nReply *4* to talk to our team.`,
+    `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  ${name}\n\nSTATE  Your order is paused,\n       most likely waiting on\n       confirmation. Open it\n       and clear it here:\n\nOPEN   ${url}\n────────────────\nREPLY 4 FOR A HUMAN\n${_F}`,
+
+  order_transit: (name, url) =>
+    `${_F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  ${name}\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${url}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_F}`,
+
+  order_ofd: (name, url) =>
+    `${_F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  ${name}\n\n●───●───●───◉───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${url}\n────────────────\nKEEP PHONE ON\nKEEP BALANCE READY\n${_F}`,
 
   order_cancelled: (name) =>
-    `Your order *${name}* has been cancelled ❌\n\nIf this was a mistake or you'd like to re-order, reply *4* and our team will help you out.`,
+    `${_F}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${name}\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_F}`,
 
   order_partial_shipped: (name, url) =>
-    `Your order *${name}* has been partially shipped 📦 — some items are on their way while the rest are being prepared.\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+    `${_F}\n▪ C R O S C R O W ▪\n████████░░░░░░ 55%\nSPLIT DISPATCH\n────────────────\nORDER  ${name}\n\nSTATE  Some items are on\n       their way, rest are\n       being packed.\n\nTRACK  ${url}\n────────────────\nARRIVES IN SEPARATE PACKS\n${_F}`,
 
   order_delivered: (name, url) =>
-    `Your order *${name}* has been delivered ✅\n\n🔗 Return / Exchange:\n${url}\n\nReply *4* to talk to our team.`,
+    `${_F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  ${name}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n\nRNE    ${url}\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n${_F}`,
 
-  order_rto: (name, url) =>
-    `Your order *${name}* could not be delivered and has been returned to our warehouse 📦\n\nOur team will contact you to arrange re-delivery or a refund.\n\nReply *4* to talk to our team.`,
+  order_rto: (name) =>
+    `${_F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  ${name}\n\nSTATE  Back with us after a\n       failed delivery. Our\n       team will call to set\n       up re-delivery or a\n       refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${_F}`,
+
+  ai_assistant:
+    `${_F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${_F}`,
+
+  support_queue: (offHours = false) => offHours
+    ? `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${_F}`
+    : `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${_F}`,
 };
 
 // ── Handle numbered menu reply ─────────────────────────────────────────────
@@ -23557,13 +23576,13 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
   switch (menu) {
     case 'welcome':
       if (num === 1) {
-        await sock.sendMessage(sender, { text: "Sure! What's your order number? (e.g. #1234)" });
+        await sock.sendMessage(sender, { text: WA_MENUS.order_lookup });
         await waSessionSet(sender, { menu: 'awaiting_order' });
       } else if (num === 2) {
         await sock.sendMessage(sender, { text: "What are you looking for? (e.g. hoodies, cargo pants, oversized tees)" });
         await waSessionClear(sender);
       } else if (num === 3) {
-        await sock.sendMessage(sender, { text: "What's your order number for the return/exchange?" });
+        await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
         await waSessionSet(sender, { menu: 'awaiting_order' });
       } else if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from welcome menu');
@@ -23572,13 +23591,13 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
 
     case 'welcome_menu':
       if (num === 1) {
-        await sock.sendMessage(sender, { text: "Sure! Please share your order number (e.g. #1234) 👇" });
+        await sock.sendMessage(sender, { text: WA_MENUS.order_lookup });
         await waSessionSet(sender, { menu: 'awaiting_order', returnTo: 'welcome_menu' });
       } else if (num === 2) {
-        await sock.sendMessage(sender, { text: "Please share your order number and I'll send you the return/exchange link right away 👇" });
+        await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
         await waSessionSet(sender, { menu: 'awaiting_order_rne', returnTo: 'welcome_menu' });
       } else if (num === 3) {
-        await sock.sendMessage(sender, { text: "Sure! Go ahead and ask me anything — about your order, our products, sizes, shipping or anything else 💬\n\n_(Type 0 anytime to go back to the main menu)_" });
+        await sock.sendMessage(sender, { text: WA_MENUS.ai_assistant });
         await waSessionSet(sender, { menu: 'ai_mode' });
       } else if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from menu bot');
@@ -24374,7 +24393,7 @@ async function startBaileysBot() {
                 if (_botModeCheck === 'menu') {
                   const oStatus = await scGetOrderStatus(orderMatch[1], 'na');
                   if (!oStatus.found) {
-                    await sock.sendMessage(sender, { text: `I couldn't find order *#${orderMatch[1]}*. Please double-check the number and try again, or reply *4* to talk to our team 🙏` });
+                    await sock.sendMessage(sender, { text: `${_F}\n▪ C R O S C R O W ▪\nORDER NOT FOUND\n────────────────\nID  #${orderMatch[1]}\n\nDouble-check the number\nand try again.\n────────────────\nREPLY 4 FOR A HUMAN\n${_F}` });
                     await waSessionSet(sender, { menu: 'awaiting_order' });
                   } else {
                     const menuInfo = await waMenuForOrder({ type: 'tracking_card', data: oStatus });
