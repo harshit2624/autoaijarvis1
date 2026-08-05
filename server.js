@@ -18712,6 +18712,19 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
         ${doc.gst_document ? `<p style="font-size:12px;color:#6b7280;margin-top:8px">GST document attached — view in Admin panel.</p>` : ''}
       `);
       await sendEmail({ to: adminEmail, subject: `🚨 New Vendor Application — ${doc.brand_name} (${doc.email})`, html, shopifyId: '', trigger: 'vendor_onboard' });
+
+      // Confirmation email to the vendor
+      const vendorHtml = emailBase('Application Received ✓', '#6366f1', `
+        <div class="subtitle">Hi ${doc.contact_name}, we've received your application to join CROSCROW as a vendor partner. Our team will review your details and get back to you within 2–3 business days.</div>
+        <div class="info-box">
+          <div class="info-row"><span class="info-label">Brand</span><span class="info-val"><strong>${doc.brand_name}</strong></span></div>
+          <div class="info-row"><span class="info-label">Email</span><span class="info-val">${doc.email}</span></div>
+          <div class="info-row"><span class="info-label">Phone</span><span class="info-val">${doc.phone}</span></div>
+          <div class="info-row"><span class="info-label">Status</span><span class="info-val" style="color:#f59e0b;font-weight:700">Under Review</span></div>
+        </div>
+        <p style="font-size:13px;color:#6b7280;margin-top:16px">If you have any questions, reply to this email or contact us at <a href="mailto:harshitvj24@gmail.com" style="color:#6366f1">harshitvj24@gmail.com</a>.</p>
+      `);
+      await sendEmail({ to: doc.email, subject: `Application Received — Welcome to CROSCROW, ${doc.contact_name}!`, html: vendorHtml, shopifyId: '', trigger: 'vendor_onboard_confirm' });
     }
     waAdminAlert(`🏪 *New Vendor Application*\nBrand: *${doc.brand_name}*\nContact: ${doc.contact_name}\nEmail: ${doc.email}\nPhone: ${doc.phone}${doc.gst_no ? '\nGST: ' + doc.gst_no : ''}\n\nReview in Admin → Onboarding.`).catch(() => {});
 
@@ -20657,6 +20670,20 @@ async function scEnrichChatsWithDispatchInfo(chats) {
 
 // ── Admin moderation ─────────────────────────────────────────────────────
 // ── WhatsApp bot status & reset JSON APIs (used by admin panel) ──────────────
+// Bot mode toggle
+app.get('/admin/bot-mode', adminAuth, async (req, res) => {
+  try { res.json({ mode: await getBotMode() }); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/admin/bot-mode', adminAuth, async (req, res) => {
+  try {
+    const { mode } = req.body;
+    if (!['smart', 'menu'].includes(mode)) return res.status(400).json({ error: 'mode must be smart or menu' });
+    await setBotMode(mode);
+    auditLog('admin', 'bot_mode_change', '', { mode });
+    res.json({ ok: true, mode });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
   let qrDataUrl = null;
   if (!waConnected && waLatestQR) {
@@ -23329,7 +23356,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
   const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
   const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
   if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
-    const msg = `Our support team has been notified and will get back to you shortly 🙏\n\n📞 *6375668971* | 🕐 2:00 PM – 8:00 PM`;
+    const msg = `Someone from our team will assist you shortly 🙏\n\nYou can share your query after this message.\n\n📞 *6375668971* (2–8 PM)`;
     await sock.sendMessage(sender, { text: msg });
     await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
   }
@@ -23367,9 +23394,27 @@ async function waLogConfusionInsight(chat, phone, customerText, botReply, trigge
 }
 
 // ── Quick reply menus ──────────────────────────────────────────────────────
+// ── Bot mode helpers ───────────────────────────────────────────────────────
+async function getBotMode() {
+  const doc = await mdb.collection('bot_settings').findOne({ _id: 'bot_mode' });
+  return doc?.mode || 'smart'; // 'smart' | 'menu'
+}
+async function setBotMode(mode) {
+  await mdb.collection('bot_settings').updateOne(
+    { _id: 'bot_mode' },
+    { $set: { mode, updated_at: new Date().toISOString() } },
+    { upsert: true }
+  );
+}
+
 const WA_MENUS = {
+  // Smart bot welcome (current — AI handles everything)
   welcome:
     `Hi! 👋 Welcome to CROSCROW support.\n\nWhat can I help you with?\n\n1️⃣ Track my order\n2️⃣ Browse products\n3️⃣ Return / Exchange\n4️⃣ Talk to a human`,
+
+  // Menu bot welcome (simple, no AI fallback)
+  welcome_menu:
+    `Hi! 👋 Welcome to CROSCROW.\n\nHow can I help you today?\n\n1️⃣ Track my order\n2️⃣ Return / Exchange\n3️⃣ Ask AI assistant\n4️⃣ Talk to a human\n\n_Reply with a number (1–4)_`,
 
   order_not_confirmed: (name, url) =>
     `Your order *${name}* needs a ₹99 confirmation to start dispatch — this small step lets us know you're ready to receive it, so we don't pack and ship an order that gets rejected at the door 😊 Tap below — it's adjusted at delivery, not extra.\n\n💳 Pay & confirm:\n${url}\n\n2️⃣ Why ₹99?\n3️⃣ Talk to a human`,
@@ -23410,6 +23455,21 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
         await waSessionSet(sender, { menu: 'awaiting_order' });
       } else if (num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from welcome menu');
+      }
+      return true;
+
+    case 'welcome_menu':
+      if (num === 1) {
+        await sock.sendMessage(sender, { text: "Sure! Please share your order number (e.g. #1234) 👇" });
+        await waSessionSet(sender, { menu: 'awaiting_order', returnTo: 'welcome_menu' });
+      } else if (num === 2) {
+        await sock.sendMessage(sender, { text: "Please share your order number and I'll send you the return/exchange link right away 👇" });
+        await waSessionSet(sender, { menu: 'awaiting_order_rne', returnTo: 'welcome_menu' });
+      } else if (num === 3) {
+        await sock.sendMessage(sender, { text: "Sure! Go ahead and ask me anything — about your order, our products, sizes, shipping or anything else 💬\n\n_(Type 0 anytime to go back to the main menu)_" });
+        await waSessionSet(sender, { menu: 'ai_mode' });
+      } else if (num === 4) {
+        await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from menu bot');
       }
       return true;
 
@@ -24078,23 +24138,67 @@ async function startBaileysBot() {
             }
           }
 
-          // ── 1. Greeting → show welcome menu ───────────────────────────
+          // ── 1. Greeting → show welcome menu (mode-aware) ──────────────
           if (WA_GREETING.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
-            await saveAndSend(WA_MENUS.welcome);
-            await waSessionSet(sender, { menu: 'welcome' });
+            const _gMode = await getBotMode();
+            if (_gMode === 'menu') {
+              await saveAndSend(WA_MENUS.welcome_menu);
+              await waSessionSet(sender, { menu: 'welcome_menu' });
+            } else {
+              await saveAndSend(WA_MENUS.welcome);
+              await waSessionSet(sender, { menu: 'welcome' });
+            }
             waPending.delete(sender);
             continue;
           }
 
           // ── 2. Numbered reply → handle active menu ─────────────────────
-          const num = /^[1-4]$/.test(text) ? parseInt(text) : null;
+          const num = /^[0-4]$/.test(text) ? parseInt(text) : null;
           if (num) {
             const session = await waSessionGet(sender);
             if (session.menu) {
               await SC.addMessage(chat._id, { sender: 'customer', text });
               const handled = await waHandleMenuReply(sock, sender, chat, phone, num, session);
               if (handled) { waPending.delete(sender); continue; }
+            }
+          }
+
+          // ── 2b-rne. awaiting_order_rne: Return/Exchange — look up order then send link ──
+          {
+            const rneSession = await waSessionGet(sender);
+            if (rneSession.menu === 'awaiting_order_rne') {
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              const orderMatch = text.match(/\b(\d{3,6})\b/);
+              if (orderMatch) {
+                const oNum = orderMatch[1];
+                const oName = `#${oNum}`;
+                const rneUrl = `${SERVER_URL}/o/${oNum}`;
+                await sock.sendMessage(sender, {
+                  text: `Got it! Here's your Return / Exchange link for order *${oName}*:\n\n🔗 ${rneUrl}\n\nSteps:\n• Open the link\n• Select the item(s)\n• Choose Return or Exchange\n• Upload a photo if needed\n• Submit — our team will arrange pickup 📦\n\nNeed more help? Reply *4* to talk to our team.`,
+                });
+                await waSessionClear(sender);
+              } else {
+                await sock.sendMessage(sender, { text: "Please share your 4-digit order number (e.g. #1234) so I can pull up your return/exchange link 👇" });
+              }
+              waPending.delete(sender);
+              continue;
+            }
+          }
+
+          // ── 2c-ai. ai_mode: customer opted into AI — run LLM, allow exit ──
+          {
+            const aiModeSession = await waSessionGet(sender);
+            if (aiModeSession.menu === 'ai_mode') {
+              if (/^0$/.test(text.trim())) {
+                await waSessionClear(sender);
+                await SC.addMessage(chat._id, { sender: 'customer', text });
+                await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
+                await waSessionSet(sender, { menu: 'welcome_menu' });
+                waPending.delete(sender);
+                continue;
+              }
+              // Fall through to LLM — no continue here, let step 4 handle it
             }
           }
 
@@ -24195,7 +24299,21 @@ async function startBaileysBot() {
             await waAdminAlert(`🚨 *Angry Customer*\n${_acNameStr}${_acPhoneStr}${_acOrderStr}Message: "${text.slice(0, 200)}"\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`);
           }
 
-          // ── 4. LLM handles everything else ────────────────────────────
+          // ── 4. LLM handles everything else (smart mode only) ─────────
+          // In menu mode, skip AI — show the menu again instead
+          const _botMode = await getBotMode();
+          if (_botMode === 'menu') {
+            const _menuSession = await waSessionGet(sender);
+            // Only skip AI if not in ai_mode (customer explicitly opted in)
+            if (_menuSession.menu !== 'ai_mode') {
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
+              await waSessionSet(sender, { menu: 'welcome_menu' });
+              waPending.delete(sender);
+              continue;
+            }
+          }
+
           const history = await SC.messages(chat._id);
           await SC.addMessage(chat._id, { sender: 'customer', text });
           const { reply, meta } = await scRunChatTurn(chat, history, text, { systemPrompt: SC_WHATSAPP_SYSTEM_PROMPT, forceContact: 'na' });

@@ -11725,12 +11725,19 @@
     const [phone, setPhone]     = useState('916375668971');
     const [pairing, setPairing] = useState(false);
     const [pairCode, setPairCode] = useState(null);
+    const [botMode, setBotModeState] = useState('smart');
+    const [modeLoading, setModeLoading] = useState(false);
 
     const load = async () => {
       try {
-        const r = await fetch(`${API}/admin/whatsapp-status`, { headers: { Authorization: 'Bearer '+token } });
+        const [r, mr] = await Promise.all([
+          fetch(`${API}/admin/whatsapp-status`, { headers: { Authorization: 'Bearer '+token } }),
+          fetch(`${API}/admin/bot-mode`, { headers: { Authorization: 'Bearer '+token } }),
+        ]);
         const d = await r.json();
         setStatus(d);
+        const md = await mr.json();
+        if (md.mode) setBotModeState(md.mode);
       } catch { setStatus({ connected: false, qrDataUrl: null }); }
     };
 
@@ -11756,6 +11763,22 @@
         else setMsg('❌ ' + (d.error || 'Failed to get pairing code'));
       } catch(e) { setMsg('❌ ' + e.message); }
       setPairing(false);
+    };
+
+    const toggleBotMode = async () => {
+      const next = botMode === 'smart' ? 'menu' : 'smart';
+      setModeLoading(true);
+      try {
+        const r = await fetch(`${API}/admin/bot-mode`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer '+token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: next }),
+        });
+        const d = await r.json();
+        if (d.ok) setBotModeState(d.mode);
+        else setMsg('❌ ' + (d.error || 'Failed to update bot mode'));
+      } catch(e) { setMsg('❌ ' + e.message); }
+      setModeLoading(false);
     };
 
     const [testing, setTesting] = useState(false);
@@ -11830,7 +11853,49 @@
           </button>
         </div>
 
-        <div style={{marginTop:32,padding:'16px 20px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,fontSize:12,color:'var(--text-muted)',lineHeight:1.7}}>
+        <div style={{marginTop:28,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:'20px 24px'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:2}}>🤖 Bot Mode</div>
+              <div style={{fontSize:12,color:'var(--text-muted)'}}>
+                {botMode === 'menu'
+                  ? 'Menu Bot — customers pick from a numbered menu (Track, Return, AI, Human)'
+                  : 'Smart Bot — AI-powered free-form replies for all customer messages'}
+              </div>
+            </div>
+            <button
+              onClick={toggleBotMode}
+              disabled={modeLoading}
+              style={{
+                display:'flex', alignItems:'center', gap:8,
+                padding:'8px 18px', borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer',
+                border: botMode === 'menu' ? '1px solid #6366f1' : '1px solid var(--border)',
+                background: botMode === 'menu' ? 'rgba(99,102,241,0.1)' : 'var(--bg)',
+                color: botMode === 'menu' ? '#6366f1' : 'var(--text)',
+              }}
+            >
+              {modeLoading ? 'Switching…' : botMode === 'menu' ? '📋 Menu Bot (active)' : '🧠 Smart Bot (active)'}
+            </button>
+          </div>
+          <div style={{marginTop:14,display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            {[
+              { id:'smart', label:'🧠 Smart Bot', desc:'LLM answers all questions. Best for complex queries.' },
+              { id:'menu', label:'📋 Menu Bot', desc:'Fixed menu: Track / Return / AI opt-in / Human. Zero hallucination risk.' },
+            ].map(opt => (
+              <div key={opt.id} onClick={() => { if (!modeLoading && botMode !== opt.id) toggleBotMode(); }}
+                style={{
+                  padding:'12px 14px', borderRadius:8, cursor: botMode === opt.id ? 'default' : 'pointer',
+                  border: botMode === opt.id ? '2px solid #6366f1' : '1px solid var(--border)',
+                  background: botMode === opt.id ? 'rgba(99,102,241,0.06)' : 'var(--bg)',
+                }}>
+                <div style={{fontSize:13,fontWeight:600,color: botMode === opt.id ? '#6366f1' : 'var(--text)',marginBottom:3}}>{opt.label}</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.5}}>{opt.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{marginTop:16,padding:'16px 20px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,fontSize:12,color:'var(--text-muted)',lineHeight:1.7}}>
           <strong style={{color:'var(--text)'}}>How it works</strong><br/>
           The bot uses Baileys (no phone required on server). Scan the QR once with any WhatsApp account — that number becomes the bot's sender number. The session is saved in MongoDB so it survives server restarts.<br/><br/>
           <strong style={{color:'var(--text)'}}>To switch to a different number:</strong> click "Log Out & Generate New QR", then scan with the new number.
