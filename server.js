@@ -23356,7 +23356,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
   const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
   const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
   if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
-    const msg = `Someone from our team will assist you shortly 🙏\n\nYou can share your query after this message.\n\n📞 *6375668971* (2–8 PM)`;
+    const msg = `Someone from our team will assist you shortly 🙏\n\nPlease share your query below — include your order number (e.g. #1234) for faster resolution.\n\n📞 *6375668971* (2–8 PM)`;
     await sock.sendMessage(sender, { text: msg });
     await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
   }
@@ -24015,9 +24015,73 @@ async function startBaileysBot() {
           // ── Bot pause check (after human handoff — stays silent until admin unpauses) ──
           const pauseUntil = chat.bot_paused_until || 0;
           if (pauseUntil > Date.now()) {
-            // Bot is paused — log the message but stay completely silent.
-            // Only the admin can unpause via the dashboard (or it auto-expires after 24h).
             await SC.addMessage(chat._id, { sender: 'customer', text });
+
+            // ── First message after human handoff = customer query ────────
+            // Detect by checking if this is the first customer message after last_escalated_at
+            const lastEscTs = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
+            const allMsgsNow = await SC.messages(chat._id).catch(() => []);
+            const custMsgsAfterEsc = allMsgsNow.filter(m => m.sender === 'customer' && new Date(m.created_at || 0).getTime() > lastEscTs);
+
+            if (lastEscTs && custMsgsAfterEsc.length === 1) {
+              // This IS the first query message — enrich the ticket
+              const queryText = text.slice(0, 500);
+              const orderMatch = text.match(/\b(\d{3,6})\b/);
+              const mentionedOrder = orderMatch ? `#${orderMatch[1]}` : null;
+
+              // Update ticket with query
+              const ticketUpdate = {
+                query_message: queryText,
+                updated_at: new Date().toISOString(),
+              };
+              if (mentionedOrder) ticketUpdate.order_name = mentionedOrder;
+
+              await mdb.collection('support_tickets').updateOne(
+                { chat_id: String(chat._id), status: { $in: ['open', 'in_progress', 'overdue'] } },
+                { $set: ticketUpdate }
+              ).catch(() => {});
+
+              // If order number found, also update support_chat
+              if (mentionedOrder && !chat.order_name) {
+                await mdb.collection('support_chats').updateOne(
+                  { _id: chat._id },
+                  { $set: { order_name: mentionedOrder, updated_at: new Date().toISOString() } }
+                ).catch(() => {});
+              }
+
+              // Re-alert admin with the query
+              const custPhone = phone !== 'unknown' ? `+91${phone}` : null;
+              const orderStr = mentionedOrder ? `\nOrder: *${mentionedOrder}*` : (chat.order_name ? `\nOrder: *${chat.order_name}*` : '');
+              const phoneStr = custPhone ? `\nPhone: ${custPhone}` : '';
+              await waAdminAlert(
+                `📩 *Customer Query Received*${orderStr}${phoneStr}\n\n💬 "${queryText}"\n\n🔗 https://dashboard.croscrow.com/admin#supporttickets`,
+                'support_escalation'
+              ).catch(() => {});
+
+              // Notify vendor if order number found
+              if (mentionedOrder) {
+                const oNum = mentionedOrder.replace(/^#/, '');
+                const orderMeta = await mdb.collection('order_meta').findOne(
+                  { order_name: { $regex: oNum, $options: 'i' } },
+                  { projection: { vendor_names: 1, shopify_id: 1 } }
+                ).catch(() => null);
+
+                if (orderMeta?.vendor_names?.length) {
+                  for (const vendorName of orderMeta.vendor_names) {
+                    const vendorRow = await mdb.collection('vendor_credentials').findOne(
+                      { vendor_name: vendorName },
+                      { projection: { whatsapp: 1 } }
+                    ).catch(() => null);
+                    if (!vendorRow?.whatsapp) continue;
+                    const vDigits = String(vendorRow.whatsapp).replace(/\D/g, '').slice(-10);
+                    if (vDigits.length !== 10) continue;
+                    const vMsg = `📋 *Customer Query — Order ${mentionedOrder}*\n\nA customer has raised a concern about this order:\n\n💬 _"${queryText}"_\n\nPlease check the order status and be ready to provide an update.\n\n— CROSCROW Team`;
+                    await waSocket.sendMessage(`91${vDigits}@s.whatsapp.net`, { text: vMsg }).catch(() => {});
+                  }
+                }
+              }
+            }
+
             waPending.delete(sender);
             continue;
           }
