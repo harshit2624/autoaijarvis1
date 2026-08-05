@@ -15725,17 +15725,23 @@ async function shipsagarTrackingCron() {
           console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
 
           if (direction === 'reverse') {
+            const reverseStage = shipsagarStatusToStage(desc);
             // Picked up from customer
-            const isPickedUp = PROD_REPLACED_CODES.some(c => descLow.includes(c)) || shipsagarStatusToStage(desc) === 'pickup';
+            const isPickedUp = PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
             if (isPickedUp && !rr.wa_notif_sent?.picked_up) {
               await sendRRWANotif(rr, 'picked_up');
+              if (['approved', 'pickup_scheduled'].includes(rr.status)) {
+                await mdb.collection('return_requests').updateOne(
+                  { request_id: rr.request_id },
+                  { $set: { status: 'picked_up', updated_at: now } }
+                );
+              }
             }
             // Delivered back to warehouse (reverse delivery = received by us)
             const isReceivedBack = DELIVERED_SELLER_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
             if (isReceivedBack && !rr.wa_notif_sent?.received_at_warehouse) {
               await sendRRWANotif(rr, 'received_at_warehouse');
-              // Auto-update RR status to received if still at approved/pickup_scheduled
-              if (['approved','pickup_scheduled'].includes(rr.status)) {
+              if (['approved', 'pickup_scheduled', 'picked_up'].includes(rr.status)) {
                 await mdb.collection('return_requests').updateOne(
                   { request_id: rr.request_id },
                   { $set: { status: 'received', received_at_cc: true, received_at_cc_at: now, updated_at: now } }
@@ -15743,10 +15749,45 @@ async function shipsagarTrackingCron() {
               }
             }
           } else if (direction === 'forward') {
-            // Exchange item picked up by courier = dispatched
-            const isDispatched = shipsagarStatusToStage(desc) === 'pickup';
-            if (isDispatched && !rr.wa_notif_sent?.exchange_dispatched) {
+            const fwdStage = shipsagarStatusToStage(desc);
+            // Exchange picked up by courier = dispatched
+            if (fwdStage === 'pickup' && !rr.wa_notif_sent?.exchange_dispatched) {
               await sendRRWANotif(rr, 'exchange_dispatched');
+            }
+            // Exchange OFD
+            if (fwdStage === 'ofd' && !rr.wa_notif_sent?.exchange_ofd) {
+              const _Fe = '```';
+              const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${encodeURIComponent(String(rr.order_name).replace(/^#/, ''))}` : '';
+              const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is\n       out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
+              const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (digits.length === 10 && /^[6-9]/.test(digits)) {
+                await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: ofdMsg }).catch(() => {});
+                await mdb.collection('return_requests').updateOne(
+                  { request_id: rr.request_id },
+                  { $set: { 'wa_notif_sent.exchange_ofd': now, updated_at: now } }
+                );
+              }
+            }
+            // Exchange delivered to customer
+            if (fwdStage === 'delivered' && !rr.wa_notif_sent?.exchange_delivered) {
+              const _Fe = '```';
+              const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${encodeURIComponent(String(rr.order_name).replace(/^#/, ''))}` : '';
+              const dlvMsg = `${_Fe}\n▪ C R O S C R O W ▪\n██████████████ 100%\nEXCHANGE DELIVERED\n────────────────\nORDER  ${rr.order_name || ''}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_Fe}`;
+              const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (digits.length === 10 && /^[6-9]/.test(digits)) {
+                await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: dlvMsg }).catch(() => {});
+                await mdb.collection('return_requests').updateOne(
+                  { request_id: rr.request_id },
+                  { $set: { 'wa_notif_sent.exchange_delivered': now, updated_at: now } }
+                );
+              }
+              // Auto-complete the RR if exchange delivered
+              if (!['completed', 'cancelled', 'rejected'].includes(rr.status)) {
+                await mdb.collection('return_requests').updateOne(
+                  { request_id: rr.request_id },
+                  { $set: { status: 'completed', completed_at: now, updated_at: now } }
+                );
+              }
             }
           }
 
@@ -18968,7 +19009,9 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
         if (emailType) sendRREmail(emailType, updated).catch(() => {});
         if (status === 'rejected') sendRRWANotif(updated, 'rejected', { reason: admin_note || updated.admin_note }).catch(() => {});
         if (status === 'completed' && updated.type === 'return') sendRRWANotif(updated, 'refund_initiated').catch(() => {});
-        if (status === 'received') sendRRWANotif(updated, 'received_at_warehouse').catch(() => {});
+        if (status === 'completed' && updated.type === 'exchange') sendRRWANotif(updated, 'exchange_dispatched').catch(() => {});
+        if (status === 'received' || status === 'received_at_warehouse') sendRRWANotif(updated, 'received_at_warehouse').catch(() => {});
+        if (status === 'picked_up') sendRRWANotif(updated, 'picked_up').catch(() => {});
         if (status === 'approved') sendRRVendorWANotif(updated, 'approved').catch(() => {});
       }
     }
@@ -20248,7 +20291,7 @@ async function scGetReturnStatus(order_name) {
     { sort: { created_at: -1 }, projection: { request_id:1, type:1, status:1, items:1, created_at:1, reverse_shipment:1, forward_shipment:1, _id:0 } }
   );
   if (!rr) return { found: false, message: `No return or exchange request found for order #${name}` };
-  const STATUS_LABELS = { submitted:'Request received', pickup_scheduled:'Pickup scheduled', picked_up:'Item picked up', received_at_warehouse:'Received at warehouse', refund_initiated:'Refund initiated', exchange_dispatched:'Exchange shipped', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
+  const STATUS_LABELS = { pending:'Request received', submitted:'Request received', approved:'Approved', pickup_scheduled:'Pickup scheduled', picked_up:'Item picked up', received:'Received at warehouse', received_at_warehouse:'Received at warehouse', qc:'Quality check', refund_initiated:'Refund initiated', exchange_dispatched:'Exchange shipped', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
   return {
     found: true,
     type: rr.type || 'return',
