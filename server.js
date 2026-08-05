@@ -20728,7 +20728,7 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
     const templates = [
 
       // ── HEADER ────────────────────────────────────────────────────────────
-      `CROSCROW ─ TEMPLATE PREVIEW\n${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}\n────────────────\nSending 13 variants below`,
+      `CROSCROW ─ TEMPLATE PREVIEW\n${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})}\n────────────────\nSending variants below`,
 
       // ── MAIN MENU ─────────────────────────────────────────────────────────
       `[ MAIN MENU ]\n\nCROSCROW ─ SUPPORT NODE\n60+ HOMEGROWN LABELS\n────────────────\n[1] ORDER STATUS\n[2] RETURN / EXCHANGE\n[3] AI ASSISTANT\n[4] HUMAN OPERATOR\n────────────────\nINPUT 1-4 TO ROUTE`,
@@ -20766,8 +20766,19 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
       // ── RTO ───────────────────────────────────────────────────────────────
       `[ RTO ]\n\nORDER   #1234\nSTATUS  RETURNED TO HUB\nCAUSE   DELIVERY FAILED\nNEXT    RE-DISPATCH / REFUND\n────────────────\nOur team is already on it — we will reach out. Or reply 4 to jump the queue.`,
 
+      // ── PROGRESS BAR VARIANTS ─────────────────────────────────────────────
+      `[ P1 — PERCENT BAR ]\n\nCROSCROW ─ #1234\n██████████░░░░ 70%\nIN TRANSIT\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+
+      `[ P2 — MINI STAGE BAR ]\n\n#1234  ██████░░░  STAGE 4/5\nIN TRANSIT\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+
+      `[ P3 — ARROW PIPELINE ]\n\nCROSCROW  #1234\nCONFIRM > PACK > SHIP > TRANSIT > DELIVER\n                         ^\n                        NOW\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+
+      `[ P4 — DOT RAIL ]\n\nCROSCROW ─ ORDER #1234\n●───●───●───◉───○\nCONF PACK SHIP MOVE DLVR\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+
+      `[ P5 — BLOCK BAR ]\n\n#1234 ─ IN TRANSIT\n▓▓▓▓▓▓▓▓▓▓▓░░░░░\n\nLive tracking:\n${TRACK}\n\nReply 4 — human operator`,
+
       // ── FOOTER ────────────────────────────────────────────────────────────
-      `PREVIEW COMPLETE — 13 variants sent\n────────────────\nReply with your pick or changes`,
+      `PREVIEW COMPLETE\n────────────────\nReply with your pick or changes`,
     ];
 
     for (const t of templates) await send(t);
