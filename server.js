@@ -20747,13 +20747,13 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
       `${F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  #1234\n\nSTATE  Your order is paused,\n       most likely waiting on\n       confirmation. Open it\n       and clear it here:\n\nOPEN   ${DEMO_CONFIRM}\n────────────────\nREPLY 4 FOR A HUMAN\n${F}`,
 
       // 7. shipped
-      `${F}\n▪ C R O S C R O W ▪\n█████████░░░░░ 60%\nSHIPPED\n────────────────\nORDER  #1234\n\n●───●───●───◉───○───○\nCNF PCK SHP MOVE OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n█████████░░░░░ 60%\nSHIPPED\n────────────────\nORDER  #1234\n\n●───●───◉───○───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
       // 8. in transit
-      `${F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  #1234\n\n●───●───●───●───○───○\nCNF PCK SHP MOVE OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  #1234\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
       // 9. out for delivery (COD)
-      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  #1234\n\n●───●───●───●───◉───○\nCNF PCK SHP MOVE OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nKEEP PHONE ON\nKEEP BALANCE READY\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  #1234\n\n●───●───●───◉───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nKEEP PHONE ON\nKEEP BALANCE READY\n${F}`,
 
       // 10. split dispatch (in flight)
       `${F}\n▪ C R O S C R O W ▪\n████████░░░░░░ 55%\nSPLIT DISPATCH\n────────────────\nORDER  #1234\n\n1/3 ████░░ SENT\n2/3 ████░░ SENT\n3/3 ███░░░ PACKING\n\nTRACK  ${DEMO_TRACK}\n────────────────\nMULTI-LABEL ORDER\nARRIVES IN SEPARATE PACKS\n${F}`,
@@ -20762,7 +20762,7 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
       `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  #1234\n\n1/3 █████░ OUT TODAY\n2/3 █████░ OUT TODAY\n3/3 ████░░ SENT\n\nTRACK  ${DEMO_TRACK}\n────────────────\n2 PACKS ARRIVING TODAY\nKEEP YOUR WALLET HANDY\n${F}`,
 
       // 12. delivered
-      `${F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  #1234\n\n●───●───●───●───●───●\nCNF PCK SHP MOVE OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
       // 13. delivery attempted
       `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nDELIVERY ATTEMPTED\n────────────────\nORDER  #1234\n\nSTATE  The rider could not\n       reach you. One more\n       attempt is scheduled.\n\nFIX    ${DEMO_TRACK}\n────────────────\nKEEP PHONE REACHABLE\n${F}`,
