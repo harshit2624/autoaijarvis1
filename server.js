@@ -23426,13 +23426,25 @@ const WA_MENUS = {
     `Your order *${name}* hasn't shipped yet. We're following up with the vendor right now 🔔\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
 
   order_transit: (name, url) =>
-    `Your order *${name}* is on its way! 🚚\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+    `Your order *${name}* is on its way! 🚚 It's currently in transit and will be delivered soon.\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+
+  order_ofd: (name, url) =>
+    `Great news! Your order *${name}* is out for delivery today 🛵 You should receive it shortly — keep your phone handy!\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+
+  order_hold: (name, url) =>
+    `Your order *${name}* is currently on hold ⏸️\n\nYou may need to confirm your order to get it moving — tap the link below to check and confirm:\n\n🔗 ${url}\n\nReply *4* to talk to our team.`,
+
+  order_cancelled: (name) =>
+    `Your order *${name}* has been cancelled ❌\n\nIf this was a mistake or you'd like to re-order, reply *4* and our team will help you out.`,
+
+  order_partial_shipped: (name, url) =>
+    `Your order *${name}* has been partially shipped 📦 — some items are on their way while the rest are being prepared.\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
 
   order_delivered: (name, url) =>
     `Your order *${name}* has been delivered ✅\n\n🔗 Return / Exchange:\n${url}\n\nReply *4* to talk to our team.`,
 
   order_rto: (name, url) =>
-    `Your order *${name}* was returned to our warehouse. Our team will reach out shortly 🙏\n\n📦 Track here:\n${url}\n\nReply *4* to talk to our team.`,
+    `Your order *${name}* could not be delivered and has been returned to our warehouse 📦\n\nOur team will contact you to arrange re-delivery or a refund.\n\nReply *4* to talk to our team.`,
 };
 
 // ── Handle numbered menu reply ─────────────────────────────────────────────
@@ -23498,8 +23510,12 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'order_transit':
+    case 'order_ofd':
+    case 'order_hold':
+    case 'order_cancelled':
+    case 'order_partial_shipped':
       if (num === 4) {
-        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} in transit — human requested`);
+        await waTalkToHuman(sock, sender, chat, phone, `Order ${d?.order_name} — ${menu} — human requested`);
         return true;
       }
       await waSessionClear(sender);
@@ -23547,9 +23563,15 @@ async function waMenuForOrder(meta) {
       ? { menu: 'order_confirmed_short', orderData: d }
       : { menu: 'order_confirmed_long', orderData: d };
   }
-  if (['transit', 'ready', 'pickup', 'ofd'].includes(effectiveStage)) return { menu: 'order_transit', orderData: d };
+  if (effectiveStage === 'ofd') return { menu: 'order_ofd', orderData: d };
+  if (['transit', 'ready', 'pickup'].includes(effectiveStage)) return { menu: 'order_transit', orderData: d };
+  if (effectiveStage === 'hold') return { menu: 'order_hold', orderData: d };
   if (effectiveStage === 'delivered') return { menu: 'order_delivered', orderData: d };
   if (effectiveStage === 'rto') return { menu: 'order_rto', orderData: d };
+  if (effectiveStage === 'cancelled') return { menu: 'order_cancelled', orderData: d };
+  if (['partial-shipped', 'partial_shipped'].includes(effectiveStage)) return { menu: 'order_partial_shipped', orderData: d };
+  // new/pending with no confirm flag — treat same as confirmed_short
+  if (['new', 'pending'].includes(effectiveStage)) return { menu: 'order_confirmed_short', orderData: d };
   return null;
 }
 
@@ -24132,7 +24154,7 @@ async function startBaileysBot() {
                 const oName = `#${oNum}`;
                 const rneUrl = `${SERVER_URL}/o/${oNum}`;
                 await sock.sendMessage(sender, {
-                  text: `Got it! Here's your Return / Exchange link for order *${oName}*:\n\n🔗 ${rneUrl}\n\nSteps:\n• Open the link\n• Select the item(s)\n• Choose Return or Exchange\n• Upload a photo if needed\n• Submit — our team will arrange pickup 📦\n\nNeed more help? Reply *4* to talk to our team.`,
+                  text: `No worries! Go ahead and use the link below to proceed with your return or exchange for order *${oName}* 👇\n\n🔗 ${rneUrl}\n\nReply *4* if you need help.`,
                 });
                 await waSessionClear(sender);
               } else {
