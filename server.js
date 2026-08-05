@@ -24477,10 +24477,11 @@ if (waReconnectTimer) { clearTimeout(waReconnectTimer); waReconnectTimer = null;
 
 // ── WA BOT V2 — clean slate, fresh collection, simple logic ──────────────
 let waBot2Socket    = null;
-let waBot2Connected = false;
-let waBot2QR        = null;
-let waBot2Starting  = false;
-let waBot2Timer     = null;
+let waBot2Connected  = false;
+let waBot2QR         = null;
+let waBot2Starting   = false;
+let waBot2Timer      = null;
+let waBot2FailCount  = 0; // consecutive disconnect count for backoff
 
 async function useWA2Auth() {
   const { initAuthCreds, BufferJSON, proto } = require('@whiskeysockets/baileys');
@@ -24525,7 +24526,7 @@ async function useWA2Auth() {
 // 405 = "session replaced by another client" — fix is to back off long enough
 // for the competing instance to die, then reconnect WITHOUT clearing auth.
 const WA2_LOCK_INSTANCE = `${process.pid}-${Date.now()}`;
-const WA2_LOCK_TTL      = 75000; // 75s — longer than Render's overlap window
+const WA2_LOCK_TTL      = 120000; // 120s — longer than Render's overlap window
 let   wa2LockRenewer    = null;
 
 async function acquireWA2Lock() {
@@ -24571,11 +24572,14 @@ async function startWA2() {
     const { state, saveCreds } = await useWA2Auth();
 
     const sock = makeWASocket({
-      auth:              state,
-      browser:           Browsers.ubuntu('Chrome'),
-      logger:            pino({ level: 'silent' }),
-      printQRInTerminal: false,
-      syncFullHistory:   false,
+      auth:               state,
+      browser:            Browsers.macOS('Safari'),
+      logger:             pino({ level: 'silent' }),
+      printQRInTerminal:  false,
+      syncFullHistory:    false,
+      keepAliveIntervalMs: 30000,  // ping WA every 30s to prevent idle disconnects
+      connectTimeoutMs:   60000,
+      retryRequestDelayMs: 2000,
     });
 
     waBot2Socket = sock;
@@ -24607,26 +24611,42 @@ async function startWA2() {
         waBot2Connected = false;
         waBot2Starting  = false;
         waBot2Socket    = null;
+        waSocket        = null;
+        waConnected     = false;
         if (waBot2Timer) { clearTimeout(waBot2Timer); waBot2Timer = null; }
 
         if (code === 401) {
-          console.log('🔄 WA v2: logged out — clearing auth, reconnecting in 5s');
+          // Logged out — clear auth and reconnect fresh
+          console.log('🔄 WA v2: logged out — clearing auth, reconnecting in 10s');
           if (mdb) await mdb.collection('wa2_auth').deleteMany({}).catch(()=>{});
-          waBot2Timer = setTimeout(startWA2, 5000);
+          waBot2FailCount = 0;
+          waBot2Timer = setTimeout(startWA2, 10000);
         } else if (code === 515) {
-          console.log('🔄 WA v2: restart required after pairing — reconnecting in 2s');
-          waBot2Timer = setTimeout(startWA2, 2000);
+          // Restart required after pairing — this is normal, don't count as failure
+          console.log('🔄 WA v2: restart required after pairing — reconnecting in 3s');
+          waBot2Timer = setTimeout(startWA2, 3000);
+        } else if (code === 405) {
+          // Session replaced by another client — back off long enough for other instance to die
+          waBot2FailCount++;
+          const delay = Math.min(30000, 15000 * waBot2FailCount);
+          console.log(`⏸️  WA v2: session replaced (405) — backing off ${delay/1000}s (attempt ${waBot2FailCount})`);
+          await releaseWA2Lock().catch(() => {});
+          waBot2Timer = setTimeout(startWA2, delay);
         } else {
-          console.log(`🔄 WA v2: disconnected (code ${code}) — reconnecting in 5s`);
-          waBot2Timer = setTimeout(startWA2, 5000);
+          // Any other disconnect — exponential backoff capped at 60s
+          waBot2FailCount++;
+          const delay = Math.min(60000, 5000 * Math.pow(2, Math.min(waBot2FailCount - 1, 4)));
+          console.log(`🔄 WA v2: disconnected (code ${code}) — reconnecting in ${delay/1000}s (attempt ${waBot2FailCount})`);
+          waBot2Timer = setTimeout(startWA2, delay);
         }
       }
 
       if (connection === 'open') {
-        waBot2Connected   = true;
-        waBot2Starting    = false;
-        waBot2QR          = null;
-        waBot2PairingCode = null;
+        waBot2Connected    = true;
+        waBot2Starting     = false;
+        waBot2FailCount    = 0; // reset backoff on successful connection
+        waBot2QR           = null;
+        waBot2PairingCode  = null;
         waBot2PairingPhone = null;
         console.log('✅ WA Bot v2 connected!');
         waSocket    = sock;
