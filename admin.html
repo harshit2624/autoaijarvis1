@@ -11781,6 +11781,18 @@
       setModeLoading(false);
     };
 
+    const [previewing, setPreviewing] = useState(false);
+    const sendTemplatePreview = async () => {
+      setPreviewing(true); setMsg('');
+      try {
+        const r = await fetch(`${API}/admin/wa-template-preview`, { method: 'POST', headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        if (d.ok) setMsg(`✅ ${d.sent} templates sent to admin WA — check your WhatsApp!`);
+        else setMsg('❌ ' + (d.error || 'Failed'));
+      } catch(e) { setMsg('❌ ' + e.message); }
+      setPreviewing(false);
+    };
+
     const [testing, setTesting] = useState(false);
     const testAlert = async () => {
       setTesting(true); setMsg('');
@@ -11846,6 +11858,11 @@
           {status?.connected && (
             <button className="btn btn-sm" style={{background:'#10b981',color:'#fff',borderColor:'#10b981'}} onClick={testAlert} disabled={testing}>
               {testing ? 'Sending…' : '📩 Send Test Alert to Admin'}
+            </button>
+          )}
+          {status?.connected && (
+            <button className="btn btn-sm" style={{background:'#6366f1',color:'#fff',borderColor:'#6366f1'}} onClick={sendTemplatePreview} disabled={previewing}>
+              {previewing ? 'Sending 16 templates…' : '🔲 Preview Bot Templates'}
             </button>
           )}
           <button className="btn btn-sm" style={{background:'#ef4444',color:'#fff',borderColor:'#ef4444'}} onClick={reset} disabled={resetting}>
