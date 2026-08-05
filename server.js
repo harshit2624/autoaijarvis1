@@ -24067,6 +24067,17 @@ async function startBaileysBot() {
                 ).catch(() => null);
 
                 if (orderMeta?.vendor_names?.length) {
+                  // Check if order is confirmed but not yet dispatched
+                  const DISPATCHED_STAGES = ['ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'cancelled'];
+                  const ovsDoc = orderMeta.shopify_id ? await mdb.collection('order_vendor_stage').findOne(
+                    { shopify_id: String(orderMeta.shopify_id) },
+                    { projection: { stage: 1, awb: 1 } }
+                  ).catch(() => null) : null;
+                  const isDispatched = ovsDoc?.awb || DISPATCHED_STAGES.includes(ovsDoc?.stage);
+                  const delayLink = orderMeta.shopify_id
+                    ? `${SERVER_BASE}/vendor.html?openOrder=${orderMeta.shopify_id}&action=delay`
+                    : null;
+
                   for (const vendorName of orderMeta.vendor_names) {
                     const vendorRow = await mdb.collection('vendor_credentials').findOne(
                       { vendor_name: vendorName },
@@ -24075,7 +24086,10 @@ async function startBaileysBot() {
                     if (!vendorRow?.whatsapp) continue;
                     const vDigits = String(vendorRow.whatsapp).replace(/\D/g, '').slice(-10);
                     if (vDigits.length !== 10) continue;
-                    const vMsg = `📋 *Customer Query — Order ${mentionedOrder}*\n\nA customer has raised a concern about this order:\n\n💬 _"${queryText}"_\n\nPlease check the order status and be ready to provide an update.\n\n— CROSCROW Team`;
+                    const delayLine = (!isDispatched && delayLink)
+                      ? `\n\n⚠️ Order not yet dispatched — if there's a delay please report it here:\n🔗 ${delayLink}`
+                      : '';
+                    const vMsg = `📋 *Customer Query — Order ${mentionedOrder}*\n\nA customer has raised a concern about this order:\n\n💬 _"${queryText}"_\n\nPlease check the order status and be ready to provide an update.${delayLine}\n\n— CROSCROW Team`;
                     await waSocket.sendMessage(`91${vDigits}@s.whatsapp.net`, { text: vMsg }).catch(() => {});
                   }
                 }
