@@ -9356,7 +9356,7 @@
     const carouselRef = React.useRef({ idx: 0, timer: null, images: [] });
 
     React.useEffect(() => {
-      fetch(`${API}/admin/vendors/list`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API}/admin/vendors`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.json()).then(d => {
           const list = Array.isArray(d) ? d : (d.vendors || []);
           setVendors(list.map(v => typeof v === 'string' ? v : (v.vendor_name || v.name || '')).filter(Boolean).sort());
