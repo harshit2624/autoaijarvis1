@@ -9346,6 +9346,237 @@
   }
 
   // ── VendorScores: Neural Vendor Score System ─────────────────────────────
+  function BrandReport({ token }) {
+    const [vendors, setVendors] = React.useState([]);
+    const [vendor, setVendor] = React.useState('');
+    const [days, setDays] = React.useState(30);
+    const [loading, setLoading] = React.useState(false);
+    const [status, setStatus] = React.useState('');
+    const [report, setReport] = React.useState(null);
+    const carouselRef = React.useRef({ idx: 0, timer: null, images: [] });
+
+    React.useEffect(() => {
+      fetch(`${API}/admin/vendors/list`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => {
+          const list = Array.isArray(d) ? d : (d.vendors || []);
+          setVendors(list.map(v => typeof v === 'string' ? v : (v.vendor_name || v.name || '')).filter(Boolean).sort());
+        }).catch(() => {});
+    }, [token]);
+
+    async function generate() {
+      if (!vendor) { setStatus('Select a vendor first.'); return; }
+      setLoading(true); setStatus(''); setReport(null);
+      try {
+        const r = await fetch(`${API}/admin/brand-report/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ vendor, days }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed');
+        setReport(d);
+        setTimeout(() => startCarousel(d.topProducts || []), 100);
+      } catch (e) { setStatus('✗ ' + e.message); }
+      finally { setLoading(false); }
+    }
+
+    function startCarousel(images) {
+      const cr = carouselRef.current;
+      if (cr.timer) clearInterval(cr.timer);
+      cr.images = images; cr.idx = 0;
+      if (images.length < 2) return;
+      cr.timer = setInterval(() => shiftSlide(1), 3800);
+    }
+    function shiftSlide(dir) {
+      const cr = carouselRef.current;
+      const slides = document.querySelectorAll('.br-slide');
+      const dots   = document.querySelectorAll('.br-dot');
+      if (!slides.length) return;
+      slides[cr.idx].classList.remove('on'); dots[cr.idx]?.classList.remove('on');
+      cr.idx = (cr.idx + dir + slides.length) % slides.length;
+      slides[cr.idx].classList.add('on'); dots[cr.idx]?.classList.add('on');
+      const nm = document.getElementById('brCName'); if(nm) nm.textContent = cr.images[cr.idx]?.name||'';
+      const ct = document.getElementById('brCCtr'); if(ct) ct.textContent = String(cr.idx+1).padStart(2,'0')+' / '+String(cr.images.length).padStart(2,'0');
+      if (cr.timer) { clearInterval(cr.timer); cr.timer = setInterval(()=>shiftSlide(1), 3800); }
+    }
+    function goSlide(n) {
+      const cr = carouselRef.current;
+      const slides = document.querySelectorAll('.br-slide');
+      const diff = ((n - cr.idx) + slides.length) % slides.length;
+      shiftSlide(diff === 0 ? 0 : diff);
+    }
+
+    function cc(v, a) { if (!a || v==null) return '#888'; return ((v-a)/a)*100>5 ? '#16a34a' : ((v-a)/a)*100<-5 ? '#dc2626' : '#888'; }
+    function cl(v, a) { if (!a || v==null) return ''; const d2=((v-a)/a)*100; return (d2>0?'+':'')+d2.toFixed(0)+'% vs avg'; }
+
+    function parseMd(md) {
+      if (!md) return '';
+      md = md.replace(/\*\*CROSCROW Fit Score:\s*(\d+(?:\.\d+)?)\/10\*\*/g, (_, n) => {
+        const s=parseFloat(n), c=s>=8?'#002eff':s>=6?'#d97706':'#dc2626';
+        return `<div style="display:flex;align-items:center;gap:12px;border:2px solid #000;padding:14px 18px;margin:10px 0 16px;"><div style="font-size:36px;font-weight:900;font-family:'Courier New',monospace;color:${c};line-height:1;">${n}</div><div style="font-size:10px;color:#aaa;letter-spacing:2px;text-transform:uppercase;line-height:1.5;">CROSCROW<br>FIT SCORE<br><span style="font-size:9px;opacity:.5">OUT OF 10</span></div></div>`;
+      });
+      const lines = md.split('\n'); const out=[]; let ul=false;
+      for(const l of lines){
+        if(/^## (.+)/.test(l)){if(ul){out.push('</ul>');ul=false;}out.push(`<div style="font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin:20px 0 10px;padding-bottom:8px;border-bottom:1px solid #e5e5e5;">${l.replace(/^## /,'')}</div>`);}
+        else if(/^# /.test(l)){if(ul){out.push('</ul>');ul=false;}}
+        else if(/^### (.+)/.test(l)){if(ul){out.push('</ul>');ul=false;}out.push(`<div style="font-size:13px;font-weight:700;color:#111;margin:12px 0 4px;">${l.replace(/^### /,'')}</div>`);}
+        else if(/^- (.+)/.test(l)){if(!ul){out.push('<ul style="padding-left:18px;margin-bottom:10px;">');ul=true;}out.push(`<li style="font-size:12px;color:#555;line-height:1.65;margin-bottom:3px;">${inl(l.replace(/^- /,''))}</li>`);}
+        else if(/^---/.test(l)){if(ul){out.push('</ul>');ul=false;}}
+        else if(l.trim()){if(ul){out.push('</ul>');ul=false;}out.push(`<p style="font-size:12px;color:#555;line-height:1.75;margin-bottom:8px;">${inl(l)}</p>`);}
+      }
+      if(ul)out.push('</ul>');
+      return out.join('');
+    }
+    function inl(t){return t.replace(/\*\*(.+?)\*\*/g,'<strong style="color:#111">$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');}
+
+    const st = report?.stats || {};
+    const px = report?.pixelStats || {};
+    const prods = report?.topProducts || [];
+
+    return React.createElement('div', { style:{padding:'28px 24px',maxWidth:900,margin:'0 auto'} },
+      // header
+      React.createElement('div', { style:{marginBottom:24} },
+        React.createElement('div', { style:{fontSize:11,fontWeight:700,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4} }, 'Brand Report Generator'),
+        React.createElement('div', { style:{fontSize:22,fontWeight:800,letterSpacing:-1,color:'var(--text)'} }, 'Vendor Performance Report')
+      ),
+
+      // controls
+      React.createElement('div', { style:{background:'var(--bg-card)',border:'1px solid var(--border)',padding:24,marginBottom:24,borderRadius:8} },
+        React.createElement('div', { style:{fontSize:9,fontWeight:700,letterSpacing:4,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:16,borderBottom:'1px solid var(--border)',paddingBottom:10} }, 'Generate Report'),
+        React.createElement('div', { style:{display:'flex',gap:12,alignItems:'flex-end',flexWrap:'wrap'} },
+          React.createElement('div', { style:{flex:1,minWidth:180} },
+            React.createElement('div', { style:{fontSize:9,color:'var(--text-muted)',letterSpacing:3,textTransform:'uppercase',marginBottom:6} }, 'Select Vendor'),
+            React.createElement('select', {
+              value: vendor, onChange: e => setVendor(e.target.value),
+              style:{background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',padding:'9px 12px',fontSize:13,width:'100%',borderRadius:6,outline:'none'}
+            }, React.createElement('option', { value:'' }, '— Choose a vendor —'), ...vendors.map(v => React.createElement('option', { key:v, value:v }, v)))
+          ),
+          React.createElement('div', null,
+            React.createElement('div', { style:{fontSize:9,color:'var(--text-muted)',letterSpacing:3,textTransform:'uppercase',marginBottom:6} }, 'Period'),
+            React.createElement('div', { style:{display:'flex',gap:6} },
+              [30,60,90].map(d => React.createElement('button', {
+                key:d, onClick:()=>setDays(d),
+                style:{padding:'7px 14px',fontSize:10,cursor:'pointer',fontFamily:'inherit',
+                  background: days===d ? 'var(--indigo)' : 'var(--bg)',
+                  color: days===d ? '#fff' : 'var(--text-muted)',
+                  border: `1px solid ${days===d ? 'var(--indigo)' : 'var(--border)'}`,
+                  borderRadius:6}
+              }, d+'D'))
+            )
+          ),
+          React.createElement('button', {
+            onClick: generate, disabled: loading || !vendor,
+            style:{padding:'9px 24px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:700,letterSpacing:3,textTransform:'uppercase',cursor:'pointer',opacity:(loading||!vendor)?0.5:1,fontFamily:'inherit',whiteSpace:'nowrap'}
+          }, loading ? 'GENERATING...' : 'GENERATE REPORT')
+        ),
+        status && React.createElement('div', { style:{marginTop:10,fontSize:11,color:'#dc2626'} }, status)
+      ),
+
+      // loading
+      loading && React.createElement('div', { style:{textAlign:'center',padding:'48px 0'} },
+        React.createElement('div', { style:{display:'inline-block',width:22,height:22,border:'2px solid var(--border)',borderTopColor:'var(--indigo)',borderRadius:'50%',animation:'spin .65s linear infinite',verticalAlign:'middle',marginRight:10} }),
+        React.createElement('span', { style:{fontSize:11,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',verticalAlign:'middle'} }, 'Fetching data & generating...')
+      ),
+
+      // report card (vendor-email style)
+      report && React.createElement('div', null,
+        // actions
+        React.createElement('div', { style:{display:'flex',gap:10,marginBottom:16,justifyContent:'flex-end'} },
+          React.createElement('button', { onClick:generate, style:{padding:'8px 18px',fontSize:9,fontWeight:700,letterSpacing:3,textTransform:'uppercase',cursor:'pointer',background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:6,fontFamily:'inherit'} }, 'REGENERATE'),
+          React.createElement('button', { onClick:()=>window.print(), style:{padding:'8px 18px',fontSize:9,fontWeight:700,letterSpacing:3,textTransform:'uppercase',cursor:'pointer',background:'var(--indigo)',border:'none',color:'#fff',borderRadius:6,fontFamily:'inherit'} }, 'DOWNLOAD PDF')
+        ),
+
+        React.createElement('div', { id:'brReportCard', style:{background:'#fff',border:'1px solid #d8d8d8',maxWidth:860,margin:'0 auto',color:'#111'} },
+          // header
+          React.createElement('div', { style:{background:'#000',padding:'28px 36px 24px'} },
+            React.createElement('div', { style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',borderBottom:'1px solid #222',paddingBottom:14,marginBottom:14} },
+              React.createElement('div', { style:{fontSize:22,fontWeight:900,color:'#fff',letterSpacing:4} }, 'CROSCROW'),
+              React.createElement('div', { style:{fontSize:9,fontWeight:700,letterSpacing:2,textTransform:'uppercase',color:'#fff',background:'#002eff',padding:'5px 12px'} }, 'BRAND REPORT')
+            ),
+            React.createElement('div', { style:{fontSize:9,color:'#444',letterSpacing:4,textTransform:'uppercase',marginBottom:6} }, 'Vendor'),
+            React.createElement('div', { style:{fontSize:34,fontWeight:900,color:'#fff',letterSpacing:2,fontFamily:'Courier New,monospace',lineHeight:1.1} }, report.vendor)
+          ),
+
+          // carousel
+          prods.length > 0 && React.createElement('div', { style:{position:'relative',background:'#000',height:360,overflow:'hidden'} },
+            ...prods.map((p, i) => React.createElement('div', { key:i, className:`br-slide ${i===0?'on':''}`, style:{position:'absolute',inset:0,opacity:i===0?1:0,transition:'opacity .8s ease'} },
+              React.createElement('img', { src:p.image||'', alt:p.name||'', style:{width:'100%',height:'100%',objectFit:'cover',display:'block'}, onError:e=>{e.target.style.display='none';e.target.parentElement.style.background='#1a1a1a';} }),
+              React.createElement('div', { style:{position:'absolute',bottom:0,left:0,right:0,background:'linear-gradient(transparent,rgba(0,0,0,.8)',padding:'24px 28px 44px',display:'flex',justifyContent:'space-between',alignItems:'flex-end'} },
+                React.createElement('div', { id: i===0?'brCName':undefined, style:{fontSize:15,fontWeight:700,color:'#fff'} }, i===0?p.name||'':''),
+                React.createElement('div', { id: i===0?'brCCtr':undefined, style:{fontSize:10,color:'rgba(255,255,255,.55)',fontFamily:'Courier New,monospace',letterSpacing:2} }, i===0?`01 / ${String(prods.length).padStart(2,'0')}`:'')
+              )
+            )),
+            prods.length > 1 && React.createElement('div', { style:{position:'absolute',bottom:14,left:'50%',transform:'translateX(-50%)',display:'flex',gap:5} },
+              ...prods.map((_, i) => React.createElement('button', { key:i, className:`br-dot ${i===0?'on':''}`, onClick:()=>goSlide(i), style:{width:i===0?16:5,height:5,borderRadius:i===0?2:5,background:i===0?'#002eff':'rgba(255,255,255,.3)',border:'none',cursor:'pointer',padding:0,transition:'all .25s'} }))
+            ),
+            prods.length > 1 && React.createElement('button', { onClick:()=>shiftSlide(-1), style:{position:'absolute',top:'50%',transform:'translateY(-50%)',left:14,background:'rgba(0,0,0,.5)',border:'none',color:'#fff',width:34,height:34,borderRadius:'50%',cursor:'pointer',fontSize:15,display:'flex',alignItems:'center',justifyContent:'center'} }, '‹'),
+            prods.length > 1 && React.createElement('button', { onClick:()=>shiftSlide(1), style:{position:'absolute',top:'50%',transform:'translateY(-50%)',right:14,background:'rgba(0,0,0,.5)',border:'none',color:'#fff',width:34,height:34,borderRadius:'50%',cursor:'pointer',fontSize:15,display:'flex',alignItems:'center',justifyContent:'center'} }, '›')
+          ),
+
+          // body
+          React.createElement('div', { style:{padding:'32px 36px',fontFamily:'Arial,Helvetica,sans-serif'} },
+            // stats
+            React.createElement('div', { style:{fontSize:9,fontWeight:700,letterSpacing:4,textTransform:'uppercase',color:'#aaa',marginBottom:12,paddingBottom:8,borderBottom:'1px solid #e5e5e5'} }, `Performance — Last ${report.days} Days`),
+            React.createElement('div', { style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',border:'1px solid #e5e5e5',marginBottom:24} },
+              ...[
+                { l:'Orders', v: st.orders||0, s:`last ${report.days}d` },
+                { l:'Delivery Rate', v: st.deliveryRate!=null?st.deliveryRate+'%':'—', s:`avg ${st.avgDeliveryRate??'—'}%` },
+                { l:'RTO Rate', v: st.rtoRate!=null?st.rtoRate+'%':'—', s:`avg ${st.avgRtoRate??'—'}%` },
+                { l:'Products', v: st.skuCount||0, s:'tracked in pixel' },
+              ].map((s,i,arr) => React.createElement('div', { key:i, style:{padding:'14px 16px',borderRight:i<arr.length-1?'1px solid #e5e5e5':'none'} },
+                React.createElement('div', { style:{fontSize:9,color:'#aaa',letterSpacing:3,textTransform:'uppercase',marginBottom:4} }, s.l),
+                React.createElement('div', { style:{fontSize:18,fontWeight:900,fontFamily:'Courier New,monospace',color:'#111'} }, String(s.v)),
+                React.createElement('div', { style:{fontSize:10,color:'#888',marginTop:2} }, s.s)
+              ))
+            ),
+
+            // pixel funnel
+            px.hasData && React.createElement('div', null,
+              React.createElement('div', { style:{fontSize:9,fontWeight:700,letterSpacing:4,textTransform:'uppercase',color:'#aaa',marginBottom:12,paddingBottom:8,borderBottom:'1px solid #e5e5e5',marginTop:24} }, 'Pixel Funnel — vs Platform Average'),
+              React.createElement('div', { style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',border:'1px solid #e5e5e5',marginBottom:24} },
+                ...[
+                  { l:'View → Add to Cart', v:px.viewToAtc, a:px.avgViewToAtc },
+                  { l:'Cart → Checkout', v:px.atcToCheckout, a:px.avgAtcToCheckout },
+                  { l:'Checkout → Purchase', v:px.checkoutToPurchase, a:px.avgCheckoutToPurchase },
+                  { l:'View → Purchase', v:px.viewToPurchase, a:px.avgViewToPurchase },
+                ].map((c,i) => React.createElement('div', { key:i, style:{padding:'14px 16px',borderBottom:i<2?'1px solid #e5e5e5':'none',borderRight:i%2===0?'1px solid #e5e5e5':'none'} },
+                  React.createElement('div', { style:{fontSize:9,color:'#aaa',letterSpacing:3,textTransform:'uppercase',marginBottom:4} }, c.l),
+                  React.createElement('div', { style:{fontSize:16,fontWeight:900,fontFamily:'Courier New,monospace',color:cc(c.v,c.a)} }, c.v!=null?c.v.toFixed(1)+'%':'—'),
+                  React.createElement('div', { style:{fontSize:10,color:cc(c.v,c.a),marginTop:3} }, cl(c.v,c.a))
+                ))
+              ),
+              prods.length > 0 && React.createElement('div', null,
+                React.createElement('div', { style:{fontSize:9,fontWeight:700,letterSpacing:4,textTransform:'uppercase',color:'#aaa',marginBottom:12,paddingBottom:8,borderBottom:'1px solid #e5e5e5',marginTop:24} }, 'Top Products — Share of Views'),
+                ...prods.slice(0,8).map((p,i,arr) => {
+                  const max = arr[0]?.viewCount||1;
+                  const pct = Math.round((p.viewCount/max)*100);
+                  return React.createElement('div', { key:i, style:{display:'flex',alignItems:'center',gap:10,marginBottom:8} },
+                    React.createElement('div', { style:{fontSize:10,color:'#555',width:130,flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'} }, p.name||'Product'),
+                    React.createElement('div', { style:{flex:1,height:6,background:'#f0f0f0'} },
+                      React.createElement('div', { style:{width:pct+'%',height:'100%',background:'#002eff'} })
+                    ),
+                    React.createElement('div', { style:{fontSize:9,color:'#aaa',fontFamily:'Courier New,monospace',width:38,textAlign:'right'} }, (p.shareOfViews||pct)+'%')
+                  );
+                })
+              )
+            ),
+
+            // AI report
+            React.createElement('div', { style:{marginTop:28} },
+              React.createElement('div', { style:{fontSize:9,fontWeight:700,letterSpacing:4,textTransform:'uppercase',color:'#aaa',marginBottom:12,paddingBottom:8,borderBottom:'1px solid #e5e5e5'} }, 'AI Analysis'),
+              React.createElement('div', { dangerouslySetInnerHTML:{ __html: parseMd(report.report) } })
+            )
+          ),
+
+          // footer
+          React.createElement('div', { style:{background:'#000',padding:'18px 36px',textAlign:'center',fontSize:9,color:'#444',letterSpacing:2,textTransform:'uppercase'} },
+            `© CROSCROW · Brand Report · ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}`
+          )
+        )
+      )
+    );
+  }
+
   function VendorScores({ token }) {
     const [tab, setTab] = React.useState('neural');
     const [data, setData] = React.useState(null);
@@ -13878,7 +14109,7 @@
       { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
       { id:'metaads',          icon:'📊', label:'Meta Ads',             section:'main' },
       { id:'vendorscores',     icon:'🏆', label:'Vendor Scores',        section:'vendors' },
-      { id:'brandreport',      icon:'📄', label:'Brand Report',          section:'vendors', external:'/admin/brand-report' },
+      { id:'brandreport',      icon:'📄', label:'Brand Report',          section:'vendors' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
@@ -13987,6 +14218,7 @@
           {view==='metafieldaudit' && <MetafieldAudit token={token}/>}
           {view==='metaads'       && <MetaAds token={token}/>}
           {view==='vendorscores'  && <VendorScores token={token}/>}
+          {view==='brandreport'   && <BrandReport token={token}/>}
         </div>
 
         {/* ── Mobile bottom navigation ── */}

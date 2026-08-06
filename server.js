@@ -20773,8 +20773,11 @@ app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
 // BRAND REPORT GENERATOR
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── GET /admin/brand-report — page ────────────────────────────────────────────
+// ── GET /admin/brand-report — legacy redirect (page now lives in admin.html) ──
 app.get('/admin/brand-report', adminAuth, async (req, res) => {
+  return res.redirect('/admin.html');
+  // DEAD CODE below — kept only for reference, never reached
+  async function _unused() {
   const vendors = await getAllVendors().catch(() => []);
   const vendorList = vendors.map(v => v.vendor_name).filter(Boolean).sort();
   res.send(`<!DOCTYPE html>
@@ -21195,9 +21198,7 @@ function parseMarkdown(md) {
 }
 function inl(t){
   return t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
-}
-</script>
-</body></html>`);
+  } // end _unused
 });
 
 // ── POST /admin/brand-report/generate — data + AI report ─────────────────────
