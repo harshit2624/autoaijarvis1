@@ -13878,10 +13878,11 @@
       { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
       { id:'metaads',          icon:'📊', label:'Meta Ads',             section:'main' },
       { id:'vendorscores',     icon:'🏆', label:'Vendor Scores',        section:'vendors' },
+      { id:'brandreport',      icon:'📄', label:'Brand Report',          section:'vendors', external:'/admin/brand-report' },
     ];
     const visibleNavItems = navItems.filter(n => n.adminOnly ? isAdmin : canSee(n.id));
     const sections = [...new Set(visibleNavItems.map(n=>n.section))];
-    const sectionLabels = { main:'Management', finance:'Finance & Logs' };
+    const sectionLabels = { main:'Management', finance:'Finance & Logs', vendors:'Vendors & Reports' };
 
     // Staff default to "dashboard", which they usually can't see — land them
     // on the first page they actually have permission for instead of blank.
