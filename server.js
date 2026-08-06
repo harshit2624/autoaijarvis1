@@ -20769,6 +20769,647 @@ app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// BRAND REPORT GENERATOR
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /admin/brand-report — page ────────────────────────────────────────────
+app.get('/admin/brand-report', adminAuth, async (req, res) => {
+  const vendors = await getAllVendors().catch(() => []);
+  const vendorList = vendors.map(v => v.vendor_name).filter(Boolean).sort();
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brand Report — CROSCROW Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#f0f0ee;font-family:Arial,Helvetica,sans-serif;min-height:100vh;}
+.topbar{background:#000;padding:18px 36px;display:flex;align-items:center;gap:14px;}
+.tb-logo{font-size:20px;font-weight:900;color:#fff;letter-spacing:4px;}
+.tb-pipe{color:#333;margin:0 4px;}
+.tb-sub{font-size:9px;color:#555;letter-spacing:3px;text-transform:uppercase;}
+.tb-back{margin-left:auto;color:#555;font-size:9px;letter-spacing:2px;text-decoration:none;text-transform:uppercase;}
+.tb-back:hover{color:#fff;}
+
+.main{max-width:900px;margin:0 auto;padding:40px 24px 80px;}
+
+/* selector card */
+.sel-card{background:#fff;border:1px solid #e0e0e0;padding:32px;margin-bottom:24px;}
+.sel-eyebrow{font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:20px;border-bottom:1px solid #e5e5e5;padding-bottom:12px;}
+.sel-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
+.sel-field{display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px;}
+.sel-label{font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;}
+select,input[type=text]{background:#f8f8f8;border:1px solid #e0e0e0;padding:10px 14px;font-size:13px;font-family:Arial,sans-serif;outline:none;width:100%;color:#111;}
+select:focus,input[type=text]:focus{border-color:#000;}
+.sel-btn{background:#000;color:#fff;border:none;padding:11px 28px;font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;cursor:pointer;white-space:nowrap;transition:opacity .15s;}
+.sel-btn:hover{opacity:.82;}
+.sel-btn:disabled{opacity:.35;cursor:not-allowed;}
+
+/* days toggle */
+.days-row{display:flex;gap:6px;margin-top:14px;}
+.day-opt{border:1px solid #e0e0e0;padding:5px 12px;font-size:10px;cursor:pointer;font-family:Arial,sans-serif;background:#fff;letter-spacing:1px;transition:background .15s,border-color .15s;}
+.day-opt.on{background:#000;color:#fff;border-color:#000;}
+
+/* status */
+.status{font-size:11px;color:#888;margin-top:10px;height:16px;}
+
+/* loading */
+.loading{display:none;text-align:center;padding:56px 0;}
+.loading.on{display:block;}
+.spin-wrap{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;}
+.spin{width:20px;height:20px;border:2px solid #e0e0e0;border-top-color:#000;border-radius:50%;animation:spin .65s linear infinite;display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.loading-txt{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#aaa;}
+
+/* report — styled like vendor email rendered in browser */
+.report-wrap{display:none;}
+.report-wrap.on{display:block;}
+.rpt-actions{display:flex;gap:10px;margin-bottom:16px;justify-content:flex-end;}
+.rpt-btn{padding:9px 20px;font-size:9px;font-weight:700;letter-spacing:3px;text-transform:uppercase;cursor:pointer;font-family:Arial,sans-serif;}
+.rpt-btn-outline{background:#fff;border:1px solid #000;color:#000;}
+.rpt-btn-outline:hover{background:#f5f5f5;}
+.rpt-btn-solid{background:#000;border:1px solid #000;color:#fff;}
+.rpt-btn-solid:hover{opacity:.82;}
+
+/* report card: email-exact styling */
+.report-card{background:#fff;border:1px solid #d8d8d8;max-width:860px;margin:0 auto;}
+.rpt-header{background:#000;padding:28px 36px 24px;}
+.rpt-header-top{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:1px solid #222;padding-bottom:14px;margin-bottom:14px;}
+.rpt-logo{font-size:22px;font-weight:900;color:#fff;letter-spacing:4px;}
+.rpt-badge{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#fff;background:#002eff;padding:5px 12px;}
+.rpt-sub-label{font-size:9px;color:#444;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;}
+.rpt-hero-name{font-size:34px;font-weight:900;color:#fff;letter-spacing:2px;font-family:'Courier New',monospace;line-height:1.1;}
+
+/* carousel */
+.carousel{position:relative;background:#000;height:380px;overflow:hidden;}
+.c-slide{position:absolute;inset:0;opacity:0;transition:opacity .8s ease;}
+.c-slide.on{opacity:1;}
+.c-slide img{width:100%;height:100%;object-fit:cover;display:block;}
+.c-overlay{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.78));padding:24px 28px 44px;display:flex;justify-content:space-between;align-items:flex-end;}
+.c-prod-name{font-size:15px;font-weight:700;color:#fff;font-family:Arial,sans-serif;}
+.c-counter{font-size:10px;color:rgba(255,255,255,.55);font-family:'Courier New',monospace;letter-spacing:2px;}
+.c-dots{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:5px;}
+.c-dot{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.3);border:none;cursor:pointer;transition:background .25s,width .25s,border-radius .25s;padding:0;}
+.c-dot.on{background:#002eff;width:16px;border-radius:2px;}
+.c-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.15);color:#fff;width:34px;height:34px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;border:none;}
+.c-nav:hover{background:rgba(0,0,0,.75);}
+.c-prev{left:14px;}.c-next{right:14px;}
+
+/* report body */
+.rpt-body{padding:32px 36px;}
+.rpt-section-label{font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #e5e5e5;}
+.rpt-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #e5e5e5;margin-bottom:24px;}
+.rpt-stat{padding:14px 16px;border-right:1px solid #e5e5e5;}
+.rpt-stat:last-child{border-right:none;}
+.rpt-stat-lbl{font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;}
+.rpt-stat-val{font-size:18px;font-weight:900;color:#111;font-family:'Courier New',monospace;}
+.rpt-stat-sub{font-size:10px;color:#888;margin-top:2px;}
+
+/* pixel insights */
+.pixel-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:0;border:1px solid #e5e5e5;margin-bottom:24px;}
+.pixel-cell{padding:14px 16px;border-bottom:1px solid #e5e5e5;border-right:1px solid #e5e5e5;}
+.pixel-cell:nth-child(2n){border-right:none;}
+.pixel-cell:nth-last-child(-n+2){border-bottom:none;}
+.pixel-lbl{font-size:9px;color:#aaa;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px;}
+.pixel-val{font-size:16px;font-weight:900;font-family:'Courier New',monospace;color:#111;}
+.pixel-cmp{font-size:10px;margin-top:3px;}
+.above-avg{color:#16a34a;}.below-avg{color:#dc2626;}.on-avg{color:#888;}
+
+/* bar chart */
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.bar-label{font-size:10px;color:#555;width:130px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bar-track{flex:1;height:6px;background:#f0f0f0;}
+.bar-fill{height:100%;background:#002eff;transition:width .6s ease;}
+.bar-pct{font-size:9px;color:#aaa;font-family:'Courier New',monospace;width:38px;text-align:right;flex-shrink:0;}
+
+/* AI report */
+.ai-block{margin-bottom:24px;}
+.ai-block h2{font-size:9px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:#aaa;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #e5e5e5;}
+.ai-block h3{font-size:13px;font-weight:700;color:#111;margin:12px 0 4px;}
+.ai-block p{font-size:12px;color:#555;line-height:1.75;margin-bottom:8px;}
+.ai-block ul{padding-left:18px;margin-bottom:10px;}
+.ai-block li{font-size:12px;color:#555;line-height:1.65;margin-bottom:3px;}
+.ai-block strong{color:#111;}
+.fit-score{display:flex;align-items:center;gap:12px;border:2px solid #000;padding:14px 18px;margin:10px 0 16px;}
+.fit-n{font-size:36px;font-weight:900;color:#002eff;font-family:'Courier New',monospace;line-height:1;}
+.fit-lbl{font-size:10px;color:#aaa;letter-spacing:2px;text-transform:uppercase;line-height:1.4;}
+
+/* alert strips */
+.alert-info{background:#f0f4ff;border-left:3px solid #002eff;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#1a2a6e;line-height:1.7;}
+.alert-warn{background:#fffbeb;border-left:3px solid #d97706;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#78350f;line-height:1.7;}
+
+.rpt-footer{background:#000;padding:18px 36px;text-align:center;font-size:9px;color:#444;letter-spacing:2px;text-transform:uppercase;}
+
+@media print{
+  .topbar,.sel-card,.rpt-actions{display:none!important;}
+  body{background:#fff;}
+  .main{padding:0;max-width:100%;}
+  .report-wrap{display:block!important;}
+  .carousel{height:300px;}
+  .c-nav,.c-dots{display:none!important;}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="tb-logo">CROSCROW</div>
+  <span class="tb-pipe">|</span>
+  <div class="tb-sub">Brand Report Generator</div>
+  <a class="tb-back" href="/admin.html">← Admin Panel</a>
+</div>
+
+<div class="main">
+
+  <!-- Selector -->
+  <div class="sel-card">
+    <div class="sel-eyebrow">Generate Brand / Collection Report</div>
+    <div class="sel-row">
+      <div class="sel-field">
+        <div class="sel-label">Select Vendor</div>
+        <select id="vendorSel">
+          <option value="">— Choose a vendor —</option>
+          ${vendorList.map(v => `<option value="${v}">${v}</option>`).join('')}
+        </select>
+      </div>
+      <div class="sel-field" style="max-width:200px;">
+        <div class="sel-label">Lookback Period</div>
+        <div class="days-row">
+          <button class="day-opt on" data-days="30" onclick="setDays(30,this)">30D</button>
+          <button class="day-opt" data-days="60" onclick="setDays(60,this)">60D</button>
+          <button class="day-opt" data-days="90" onclick="setDays(90,this)">90D</button>
+        </div>
+      </div>
+      <button class="sel-btn" id="genBtn" onclick="generate()">GENERATE REPORT</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spin-wrap"><div class="spin"></div></div>
+    <div class="loading-txt">Fetching data &amp; generating with Claude...</div>
+  </div>
+
+  <!-- Report -->
+  <div class="report-wrap" id="reportWrap">
+    <div class="rpt-actions">
+      <button class="rpt-btn rpt-btn-outline" onclick="generate()">REGENERATE</button>
+      <button class="rpt-btn rpt-btn-solid" onclick="window.print()">DOWNLOAD PDF</button>
+    </div>
+    <div class="report-card" id="reportCard">
+      <!-- injected by JS -->
+    </div>
+  </div>
+</div>
+
+<script>
+let activeDays = 30;
+let carouselIdx = 0;
+let carouselTimer = null;
+let carouselImages = [];
+
+function setDays(d, el) {
+  activeDays = d;
+  document.querySelectorAll('.day-opt').forEach(b => b.classList.remove('on'));
+  el.classList.add('on');
+}
+
+async function generate() {
+  const vendor = document.getElementById('vendorSel').value;
+  if (!vendor) { alert('Select a vendor first.'); return; }
+
+  document.getElementById('genBtn').disabled = true;
+  document.getElementById('loading').classList.add('on');
+  document.getElementById('reportWrap').classList.remove('on');
+  document.getElementById('status').textContent = '';
+
+  try {
+    const r = await fetch('/admin/brand-report/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vendor, days: activeDays }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Generation failed');
+    renderReport(data);
+  } catch (e) {
+    document.getElementById('status').textContent = '✗ ' + e.message;
+  } finally {
+    document.getElementById('genBtn').disabled = false;
+    document.getElementById('loading').classList.remove('on');
+  }
+}
+
+function renderReport(d) {
+  carouselImages = d.topProducts || [];
+  const card = document.getElementById('reportCard');
+
+  // carousel
+  let carouselHtml = '';
+  if (carouselImages.length) {
+    const slides = carouselImages.map((p, i) => \`
+      <div class="c-slide \${i===0?'on':''}">
+        <img src="\${p.image || ''}" alt="\${p.name || 'Product'}" onerror="this.parentElement.style.background='#111';this.style.display='none'">
+        <div class="c-overlay">
+          <div class="c-prod-name" id="cName">\${p.name || ''}</div>
+          <div class="c-counter" id="cCtr">01 / \${String(carouselImages.length).padStart(2,'0')}</div>
+        </div>
+      </div>\`).join('');
+
+    const dotsHtml = carouselImages.length > 1
+      ? carouselImages.map((_,i) => \`<button class="c-dot \${i===0?'on':''}" onclick="goSlide(\${i})"></button>\`).join('')
+      : '';
+
+    const navHtml = carouselImages.length > 1
+      ? \`<button class="c-nav c-prev" onclick="shiftSlide(-1)">&#8249;</button>
+         <button class="c-nav c-next" onclick="shiftSlide(1)">&#8250;</button>\`
+      : '';
+
+    carouselHtml = \`<div class="carousel" id="carousel">
+      \${slides}
+      <div class="c-dots">\${dotsHtml}</div>
+      \${navHtml}
+    </div>\`;
+  }
+
+  // stat grid
+  const stats = d.stats || {};
+  const statGrid = \`
+    <div class="rpt-stat-grid">
+      <div class="rpt-stat">
+        <div class="rpt-stat-lbl">Orders</div>
+        <div class="rpt-stat-val">\${stats.orders || 0}</div>
+        <div class="rpt-stat-sub">last \${d.days}d</div>
+      </div>
+      <div class="rpt-stat">
+        <div class="rpt-stat-lbl">Delivery Rate</div>
+        <div class="rpt-stat-val">\${stats.deliveryRate || '—'}%</div>
+        <div class="rpt-stat-sub">vs \${stats.avgDeliveryRate || '—'}% avg</div>
+      </div>
+      <div class="rpt-stat">
+        <div class="rpt-stat-lbl">RTO Rate</div>
+        <div class="rpt-stat-val">\${stats.rtoRate || '—'}%</div>
+        <div class="rpt-stat-sub">vs \${stats.avgRtoRate || '—'}% avg</div>
+      </div>
+      <div class="rpt-stat">
+        <div class="rpt-stat-lbl">Products</div>
+        <div class="rpt-stat-val">\${stats.skuCount || 0}</div>
+        <div class="rpt-stat-sub">tracked in pixel</div>
+      </div>
+    </div>\`;
+
+  // pixel insights
+  const px = d.pixelStats || {};
+  function cmpClass(val, avg) {
+    if (!avg || !val) return 'on-avg';
+    const diff = ((val - avg) / avg) * 100;
+    return diff > 5 ? 'above-avg' : diff < -5 ? 'below-avg' : 'on-avg';
+  }
+  function cmpLabel(val, avg, label) {
+    if (!avg || !val) return '';
+    const diff = ((val - avg) / avg) * 100;
+    const sign = diff > 0 ? '+' : '';
+    return \`\${sign}\${diff.toFixed(0)}% vs platform avg\`;
+  }
+
+  const pixelHtml = px.hasData ? \`
+    <div class="rpt-section-label" style="margin-top:24px;">Pixel Performance (vs Platform Average)</div>
+    <div class="pixel-grid">
+      <div class="pixel-cell">
+        <div class="pixel-lbl">View → Add to Cart</div>
+        <div class="pixel-val \${cmpClass(px.viewToAtc, px.avgViewToAtc)}">\${px.viewToAtc?.toFixed(1) || '—'}%</div>
+        <div class="pixel-cmp \${cmpClass(px.viewToAtc, px.avgViewToAtc)}">\${cmpLabel(px.viewToAtc, px.avgViewToAtc)}</div>
+      </div>
+      <div class="pixel-cell">
+        <div class="pixel-lbl">Cart → Checkout</div>
+        <div class="pixel-val \${cmpClass(px.atcToCheckout, px.avgAtcToCheckout)}">\${px.atcToCheckout?.toFixed(1) || '—'}%</div>
+        <div class="pixel-cmp \${cmpClass(px.atcToCheckout, px.avgAtcToCheckout)}">\${cmpLabel(px.atcToCheckout, px.avgAtcToCheckout)}</div>
+      </div>
+      <div class="pixel-cell">
+        <div class="pixel-lbl">Checkout → Purchase</div>
+        <div class="pixel-val \${cmpClass(px.checkoutToPurchase, px.avgCheckoutToPurchase)}">\${px.checkoutToPurchase?.toFixed(1) || '—'}%</div>
+        <div class="pixel-cmp \${cmpClass(px.checkoutToPurchase, px.avgCheckoutToPurchase)}">\${cmpLabel(px.checkoutToPurchase, px.avgCheckoutToPurchase)}</div>
+      </div>
+      <div class="pixel-cell">
+        <div class="pixel-lbl">Overall View → Purchase</div>
+        <div class="pixel-val \${cmpClass(px.viewToPurchase, px.avgViewToPurchase)}">\${px.viewToPurchase?.toFixed(1) || '—'}%</div>
+        <div class="pixel-cmp \${cmpClass(px.viewToPurchase, px.avgViewToPurchase)}">\${cmpLabel(px.viewToPurchase, px.avgViewToPurchase)}</div>
+      </div>
+    </div>
+
+    <div class="rpt-section-label" style="margin-top:24px;">Top Products — Share of Views</div>
+    \${(d.topProducts||[]).slice(0,8).map((p,i,arr) => {
+      const maxV = arr[0]?.viewCount || 1;
+      const pct = Math.round((p.viewCount / maxV) * 100);
+      return \`<div class="bar-row">
+        <div class="bar-label">\${p.name || 'Product'}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:\${pct}%"></div></div>
+        <div class="bar-pct">\${p.shareOfViews || pct}%</div>
+      </div>\`;
+    }).join('')}
+  \` : '';
+
+  // AI report
+  const aiHtml = parseMarkdown(d.report || '');
+
+  card.innerHTML = \`
+    <div class="rpt-header">
+      <div class="rpt-header-top">
+        <div class="rpt-logo">CROSCROW</div>
+        <div class="rpt-badge">BRAND REPORT</div>
+      </div>
+      <div class="rpt-sub-label">Vendor</div>
+      <div class="rpt-hero-name">\${d.vendor}</div>
+    </div>
+    \${carouselHtml}
+    <div class="rpt-body">
+      <div class="rpt-section-label">Performance Summary — Last \${d.days} Days</div>
+      \${statGrid}
+      \${pixelHtml}
+      <div class="rpt-section-label" style="margin-top:28px;">AI Analysis</div>
+      <div class="ai-block">\${aiHtml}</div>
+    </div>
+    <div class="rpt-footer">&copy; CROSCROW &middot; Brand Report &middot; \${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</div>
+  \`;
+
+  document.getElementById('reportWrap').classList.add('on');
+  document.getElementById('reportWrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  carouselIdx = 0;
+  startCarousel();
+}
+
+// ── carousel ──
+function goSlide(n) {
+  const slides = document.querySelectorAll('.c-slide');
+  const dots   = document.querySelectorAll('.c-dot');
+  if (!slides.length) return;
+  slides[carouselIdx].classList.remove('on');
+  dots[carouselIdx]?.classList.remove('on');
+  carouselIdx = (n + slides.length) % slides.length;
+  slides[carouselIdx].classList.add('on');
+  dots[carouselIdx]?.classList.add('on');
+  const cName = document.getElementById('cName');
+  const cCtr  = document.getElementById('cCtr');
+  if (cName) cName.textContent = carouselImages[carouselIdx]?.name || '';
+  if (cCtr)  cCtr.textContent  = String(carouselIdx+1).padStart(2,'0') + ' / ' + String(carouselImages.length).padStart(2,'0');
+  if (carouselTimer) { clearInterval(carouselTimer); carouselTimer = setInterval(()=>shiftSlide(1), 3800); }
+}
+function shiftSlide(dir) { goSlide(carouselIdx + dir); }
+function startCarousel() {
+  if (carouselTimer) clearInterval(carouselTimer);
+  if (carouselImages.length < 2) return;
+  carouselTimer = setInterval(() => shiftSlide(1), 3800);
+}
+
+// ── markdown parser ──
+function parseMarkdown(md) {
+  md = md.replace(/\*\*CROSCROW Fit Score:\s*(\d+(?:\.\d+)?)\/10\*\*/g, (_, n) => {
+    const s = parseFloat(n);
+    const c = s >= 8 ? '#002eff' : s >= 6 ? '#d97706' : '#dc2626';
+    return \`<div class="fit-score"><div class="fit-n" style="color:\${c}">\${n}</div><div class="fit-lbl">CROSCROW<br>FIT SCORE<br><span style="font-size:9px;opacity:.5">OUT OF 10</span></div></div>\`;
+  });
+  const lines = md.split('\\n');
+  const out = []; let inUl = false;
+  for (const line of lines) {
+    if (/^## (.+)/.test(line)) {
+      if (inUl){out.push('</ul>');inUl=false;}
+      out.push(\`<h2>\${line.replace(/^## /,'')}</h2>\`);
+    } else if (/^# (.+)/.test(line)) {
+      if (inUl){out.push('</ul>');inUl=false;}
+      // skip report title — already in header
+    } else if (/^### (.+)/.test(line)) {
+      if (inUl){out.push('</ul>');inUl=false;}
+      out.push(\`<h3>\${line.replace(/^### /,'')}</h3>\`);
+    } else if (/^- (.+)/.test(line)) {
+      if (!inUl){out.push('<ul>');inUl=true;}
+      out.push(\`<li>\${inl(line.replace(/^- /,''))}</li>\`);
+    } else if (/^---/.test(line)) {
+      if (inUl){out.push('</ul>');inUl=false;}
+    } else if (line.trim()) {
+      if (inUl){out.push('</ul>');inUl=false;}
+      out.push(\`<p>\${inl(line)}</p>\`);
+    }
+  }
+  if (inUl) out.push('</ul>');
+  return out.join('');
+}
+function inl(t){
+  return t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>');
+}
+</script>
+</body></html>`);
+});
+
+// ── POST /admin/brand-report/generate — data + AI report ─────────────────────
+app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
+  try {
+    const { vendor, days = 30 } = req.body;
+    if (!vendor) return res.status(400).json({ error: 'vendor required' });
+
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+
+    // ── 1. Order stats for this vendor ──
+    const orders = await mdb.collection('order_meta').find({
+      'vendor_shipments.vendor_name': vendor,
+      created_at: { $gte: since },
+    }).toArray();
+
+    const totalOrders = orders.length;
+    const delivered = orders.filter(o => (o.vendor_shipments || []).some(s => s.vendor_name === vendor && s.stage === 'delivered')).length;
+    const rto       = orders.filter(o => (o.vendor_shipments || []).some(s => s.vendor_name === vendor && s.stage === 'rto')).length;
+    const deliveryRate = totalOrders ? Math.round((delivered / totalOrders) * 100) : null;
+    const rtoRate      = totalOrders ? Math.round((rto / totalOrders) * 100) : null;
+
+    // ── 2. Platform averages (all vendors, same period) ──
+    const allOrders = await mdb.collection('order_meta').find({ created_at: { $gte: since } }, { projection: { vendor_shipments: 1 } }).toArray();
+    let allDel = 0, allRto = 0, allTotal = 0;
+    for (const o of allOrders) {
+      for (const s of (o.vendor_shipments || [])) {
+        allTotal++;
+        if (s.stage === 'delivered') allDel++;
+        if (s.stage === 'rto') allRto++;
+      }
+    }
+    const avgDeliveryRate = allTotal ? Math.round((allDel / allTotal) * 100) : null;
+    const avgRtoRate      = allTotal ? Math.round((allRto / allTotal) * 100) : null;
+
+    // ── 3. Pixel data — vendor's products vs platform ──
+    // Get product names that belong to this vendor (from order line_items)
+    const vendorProducts = new Set();
+    for (const o of orders) {
+      for (const item of (o.items || [])) {
+        if (item.vendor === vendor && item.title) vendorProducts.add(item.title.toLowerCase().trim());
+      }
+    }
+
+    // Platform-wide pixel funnel
+    const [platformPixel] = await mdb.collection('pixel_events').aggregate([
+      { $match: { created_at: { $gte: since } } },
+      { $group: {
+        _id: null,
+        views:     { $sum: { $cond: [{ $eq: ['$eventName','ViewContent'] }, 1, 0] } },
+        atc:       { $sum: { $cond: [{ $eq: ['$eventName','AddToCart'] }, 1, 0] } },
+        checkout:  { $sum: { $cond: [{ $eq: ['$eventName','InitiateCheckout'] }, 1, 0] } },
+        purchases: { $sum: { $cond: [{ $eq: ['$eventName','Purchase'] }, 1, 0] } },
+      }}
+    ]).toArray().catch(() => [{}]);
+
+    const plV = platformPixel?.views || 0, plAtc = Math.max(platformPixel?.atc||0, platformPixel?.checkout||0),
+          plCo = platformPixel?.checkout||0, plPu = platformPixel?.purchases||0;
+    const avgViewToAtc       = plV  ? (plAtc/plV)*100 : null;
+    const avgAtcToCheckout   = plAtc ? (plCo/plAtc)*100 : null;
+    const avgCheckoutToPurchase = plCo ? (plPu/plCo)*100 : null;
+    const avgViewToPurchase  = plV  ? (plPu/plV)*100 : null;
+
+    // Vendor-specific pixel (match by product name)
+    let vendorPixel = null;
+    let topProductsPixel = [];
+    let skuCount = 0;
+
+    if (vendorProducts.size > 0) {
+      // Use regex to match product names (case-insensitive prefix)
+      const nameRegex = [...vendorProducts].map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+      const pxMatch = { created_at: { $gte: since }, productName: { $regex: nameRegex, $options: 'i', $ne: 'N/A' } };
+
+      const [vPx] = await mdb.collection('pixel_events').aggregate([
+        { $match: pxMatch },
+        { $group: {
+          _id: null,
+          views:     { $sum: { $cond: [{ $eq: ['$eventName','ViewContent'] }, 1, 0] } },
+          atc:       { $sum: { $cond: [{ $eq: ['$eventName','AddToCart'] }, 1, 0] } },
+          checkout:  { $sum: { $cond: [{ $eq: ['$eventName','InitiateCheckout'] }, 1, 0] } },
+          purchases: { $sum: { $cond: [{ $eq: ['$eventName','Purchase'] }, 1, 0] } },
+        }}
+      ]).toArray().catch(() => [{}]);
+
+      const vV = vPx?.views||0, vAtc = Math.max(vPx?.atc||0, vPx?.checkout||0),
+            vCo = vPx?.checkout||0, vPu = vPx?.purchases||0;
+
+      vendorPixel = {
+        hasData: vV > 0,
+        viewToAtc: vV ? (vAtc/vV)*100 : null,
+        atcToCheckout: vAtc ? (vCo/vAtc)*100 : null,
+        checkoutToPurchase: vCo ? (vPu/vCo)*100 : null,
+        viewToPurchase: vV ? (vPu/vV)*100 : null,
+        avgViewToAtc, avgAtcToCheckout, avgCheckoutToPurchase, avgViewToPurchase,
+      };
+
+      // Top products with pixel data
+      const topPx = await mdb.collection('pixel_events').aggregate([
+        { $match: { ...pxMatch, eventName: 'ViewContent' } },
+        { $group: { _id: '$productName', viewCount: { $sum: 1 }, image: { $last: '$productImage' } } },
+        { $sort: { viewCount: -1 } },
+        { $limit: 10 },
+      ]).toArray().catch(() => []);
+
+      skuCount = topPx.length;
+      const totalViewsTop = topPx.reduce((s, p) => s + p.viewCount, 0);
+      topProductsPixel = topPx.map(p => ({
+        name: p._id,
+        image: p.image || '',
+        viewCount: p.viewCount,
+        shareOfViews: totalViewsTop ? Math.round((p.viewCount / totalViewsTop) * 100) : 0,
+      }));
+    }
+
+    // ── 4. Build prompt for Claude ──
+    const topProductText = topProductsPixel.map((p, i) =>
+      `${i+1}. ${p.name} — ${p.shareOfViews}% of views`
+    ).join('\n');
+
+    const pixelSummary = vendorPixel?.hasData ? `
+Pixel Funnel (vs Platform Average):
+- View → ATC: ${vendorPixel.viewToAtc?.toFixed(1)}% (platform avg: ${avgViewToAtc?.toFixed(1)}%)
+- ATC → Checkout: ${vendorPixel.atcToCheckout?.toFixed(1)}% (platform avg: ${avgAtcToCheckout?.toFixed(1)}%)
+- Checkout → Purchase: ${vendorPixel.checkoutToPurchase?.toFixed(1)}% (platform avg: ${avgCheckoutToPurchase?.toFixed(1)}%)
+- Overall View → Purchase: ${vendorPixel.viewToPurchase?.toFixed(2)}% (platform avg: ${avgViewToPurchase?.toFixed(2)}%)
+` : 'No pixel data available for this vendor\'s products yet.';
+
+    const prompt = `You are a brand analyst at CROSCROW — a premium Indian multi-vendor fashion marketplace with 60+ homegrown labels.
+
+Generate a sharp, analytical brand performance report for vendor: ${vendor}
+
+DATA (last ${days} days):
+Orders: ${totalOrders}
+Delivery Rate: ${deliveryRate !== null ? deliveryRate + '%' : 'N/A'} (platform avg: ${avgDeliveryRate !== null ? avgDeliveryRate + '%' : 'N/A'})
+RTO Rate: ${rtoRate !== null ? rtoRate + '%' : 'N/A'} (platform avg: ${avgRtoRate !== null ? avgRtoRate + '%' : 'N/A'})
+
+Top Products by Views:
+${topProductText || 'No pixel data'}
+
+${pixelSummary}
+
+Write the report in markdown using EXACTLY this structure:
+
+## EXECUTIVE SUMMARY
+2–3 paragraphs. Overall health of this vendor on CROSCROW. Be direct — good or bad.
+
+## COLLECTION PERFORMANCE
+What the pixel data says about customer interest. Which products pull traffic vs which convert. Specific observations.
+
+## FULFILMENT HEALTH
+Delivery rate and RTO analysis. How does it compare to platform? What's the risk level?
+
+## CROSCROW FIT SCORE
+**CROSCROW Fit Score: X/10**
+3 sentences. Score based on: conversion signals, fulfilment reliability, and product market fit on CROSCROW.
+
+## RECOMMENDATIONS
+5 specific actions — for CROSCROW team, not the vendor. What to do with this brand in the next 30 days.
+
+## RISKS & WATCH POINTS
+2–3 honest flags.
+
+Be specific, data-driven, direct. Reference the actual numbers in your analysis.`;
+
+    // ── 5. Call Claude ──
+    const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+    const DEEPSEEK_KEY  = process.env.DEEPSEEK_API_KEY;
+    const GROQ_KEY      = process.env.GROQ_API_KEY;
+
+    let reportText = '';
+    if (ANTHROPIC_KEY) {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 1800, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const rj = await r.json();
+      reportText = rj.content?.[0]?.text || '';
+    } else if (DEEPSEEK_KEY) {
+      const r = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` },
+        body: JSON.stringify({ model: 'deepseek-chat', max_tokens: 1800, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const rj = await r.json();
+      reportText = rj.choices?.[0]?.message?.content || '';
+    } else if (GROQ_KEY) {
+      const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_KEY}` },
+        body: JSON.stringify({ model: 'llama-3.3-70b-versatile', max_tokens: 1800, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const rj = await r.json();
+      reportText = rj.choices?.[0]?.message?.content || '';
+    } else {
+      reportText = '## NOTE\nNo AI key configured — add ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, or GROQ_API_KEY to your environment.';
+    }
+
+    res.json({
+      vendor, days,
+      stats: { orders: totalOrders, deliveryRate, rtoRate, avgDeliveryRate, avgRtoRate, skuCount },
+      pixelStats: vendorPixel || { hasData: false },
+      topProducts: topProductsPixel,
+      report: reportText,
+    });
+
+  } catch (e) {
+    console.error('brand-report error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /admin/wa-template-preview — send full template set to admin WA ──
 app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
   if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
