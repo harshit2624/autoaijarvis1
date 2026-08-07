@@ -16530,26 +16530,29 @@ app.get('/admin/reports/product-analytics', adminAuth, async (req, res) => {
     const daysInt = parseInt(days);
     const since = daysInt > 0 ? new Date(Date.now() - daysInt * 24 * 3600 * 1000).toISOString() : null;
 
-    // Query order_meta + vendor_shipments for stage data
-    const matchQ = since ? { created_at: { $gte: since } } : {};
+    // Query order_meta — uses shopify_created_at for date field
+    const matchQ = since ? { shopify_created_at: { $gte: since } } : {};
     if (vendor) matchQ['vendor_shipments.vendor_name'] = { $regex: new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
     const orders = await mdb.collection('order_meta').find(matchQ, {
-      projection: { items: 1, vendor_shipments: 1, stage: 1, created_at: 1 }
+      projection: { items: 1, vendor_shipments: 1, stage: 1, shopify_created_at: 1 }
     }).toArray();
 
     // Aggregate per product title
+    const vendorReLP = vendor ? new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
     const prodMap = {};
     for (const o of orders) {
       for (const item of (o.items || [])) {
         if (!item.title) continue;
-        if (vendor && item.vendor && !/^sicos$/i.test('') && item.vendor.toLowerCase() !== vendor.toLowerCase()) continue;
+        if (vendorReLP && item.vendor && !vendorReLP.test(item.vendor)) continue;
         const key = item.title.trim();
         if (search && !key.toLowerCase().includes(search.toLowerCase())) continue;
-        if (!prodMap[key]) prodMap[key] = { name: key, vendor: item.vendor || '', image: item.image_url || '', units: 0, revenue: 0, delivered: 0, rto: 0, cancelled: 0 };
-        const qty = item.quantity || 1;
+        if (!prodMap[key]) prodMap[key] = { name: key, vendor: item.vendor || '', image: '', units: 0, revenue: 0, delivered: 0, rto: 0, cancelled: 0 };
+        const qty = item.qty || item.quantity || 1;
         prodMap[key].units += qty;
         prodMap[key].revenue += parseFloat(item.price || 0) * qty;
-        const vendorShip = (o.vendor_shipments || []).find(s => !vendor || s.vendor_name?.toLowerCase() === vendor.toLowerCase());
+        const vendorShip = vendorReLP
+          ? (o.vendor_shipments || []).find(s => vendorReLP.test(s.vendor_name || ''))
+          : (o.vendor_shipments || [])[0];
         const stage = vendorShip?.stage || o.stage || 'new';
         if (stage === 'delivered') prodMap[key].delivered += qty;
         else if (stage === 'rto') prodMap[key].rto += qty;
@@ -20850,7 +20853,7 @@ app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
     // ── 1. Order stats for this vendor ──
     const orders = await mdb.collection('order_meta').find({
       'vendor_shipments.vendor_name': { $regex: vendorRe },
-      created_at: { $gte: since },
+      shopify_created_at: { $gte: since },
     }).toArray();
 
     const totalOrders = orders.length;
@@ -20860,7 +20863,7 @@ app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
     const rtoRate      = totalOrders ? Math.round((rto / totalOrders) * 100) : null;
 
     // ── 2. Platform averages (all vendors, same period) ──
-    const allOrders = await mdb.collection('order_meta').find({ created_at: { $gte: since } }, { projection: { vendor_shipments: 1 } }).toArray();
+    const allOrders = await mdb.collection('order_meta').find({ shopify_created_at: { $gte: since } }, { projection: { vendor_shipments: 1 } }).toArray();
     let allDel = 0, allRto = 0, allTotal = 0;
     for (const o of allOrders) {
       for (const s of (o.vendor_shipments || [])) {
