@@ -12586,6 +12586,167 @@
         <TrackAnalytics token={token} />
         <ConfirmAnalytics token={token} />
         <ChatBotAnalytics token={token} />
+        <TopProductsAnalytics token={token} />
+      </div>
+    );
+  }
+
+  function TopProductsAnalytics({ token }) {
+    const [vendors, setVendors]   = useState([]);
+    const [vendor, setVendor]     = useState('');
+    const [days, setDays]         = useState(30);
+    const [products, setProducts] = useState([]);
+    const [loading, setLoading]   = useState(false);
+    const [search, setSearch]     = useState('');
+    const [searchQ, setSearchQ]   = useState('');
+    const [searched, setSearched] = useState(false);
+    const [sortBy, setSortBy]     = useState('units');
+
+    useEffect(() => {
+      fetch(`${API}/admin/vendors`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).then(d => setVendors((d.vendors||[]).map(v => typeof v==='string'?v:(v.name||'')).filter(Boolean).sort()))
+        .catch(() => {});
+    }, [token]);
+
+    const load = async (sq = '') => {
+      setLoading(true); setSearched(!!sq);
+      const params = new URLSearchParams({ days, ...(vendor && { vendor }), ...(sq && { search: sq }) });
+      const d = await fetch(`${API}/admin/reports/product-analytics?${params}`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).catch(() => ({ products: [] }));
+      setProducts(d.products || []);
+      setLoading(false);
+    };
+
+    useEffect(() => { load(); }, [vendor, days]);
+
+    const sorted = [...products].sort((a, b) =>
+      sortBy === 'revenue' ? b.revenue - a.revenue :
+      sortBy === 'rto'     ? (b.rtoRate||0) - (a.rtoRate||0) :
+      sortBy === 'cancel'  ? (b.cancelRate||0) - (a.cancelRate||0) :
+      b.units - a.units
+    );
+
+    const rateColor = r => r == null ? '#888' : r <= 15 ? '#10b981' : r <= 30 ? '#f59e0b' : '#ef4444';
+    const delivColor = r => r == null ? '#888' : r >= 70 ? '#10b981' : r >= 50 ? '#f59e0b' : '#ef4444';
+
+    return (
+      <div style={{marginTop:36}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18,flexWrap:'wrap',gap:10}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:16,color:'var(--text)'}}>📦 Top Selling Products</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Sales, delivery, RTO & cancellation by SKU</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            {/* Vendor filter */}
+            <select value={vendor} onChange={e=>{setVendor(e.target.value);setSearchQ('');setSearch('');}}
+              style={{background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text)',padding:'6px 10px',fontSize:12,borderRadius:6,outline:'none'}}>
+              <option value=''>All Vendors</option>
+              {vendors.map(v=><option key={v} value={v}>{v}</option>)}
+            </select>
+            {/* Period */}
+            <div style={{display:'flex',gap:4}}>
+              {[7,30,60,90].map(d=>(
+                <button key={d} onClick={()=>setDays(d)}
+                  style={{padding:'5px 10px',fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:days===d?700:400,
+                    background:days===d?'var(--indigo)':'var(--bg-card)',
+                    color:days===d?'#fff':'var(--text-muted)',
+                    border:`1px solid ${days===d?'var(--indigo)':'var(--border)'}`,borderRadius:5}}>
+                  {d}d
+                </button>
+              ))}
+            </div>
+            {/* Sort */}
+            <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+              style={{background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text)',padding:'6px 10px',fontSize:12,borderRadius:6,outline:'none'}}>
+              <option value='units'>Sort: Units</option>
+              <option value='revenue'>Sort: Revenue</option>
+              <option value='rto'>Sort: RTO%</option>
+              <option value='cancel'>Sort: Cancel%</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Search bar */}
+        <div style={{display:'flex',gap:8,marginBottom:16}}>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter'){setSearch(searchQ);load(searchQ);}}}
+            placeholder='Search any product by name (not in top 50? find it here)...'
+            style={{flex:1,background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text)',padding:'8px 12px',fontSize:12,borderRadius:6,outline:'none'}}/>
+          <button onClick={()=>{setSearch(searchQ);load(searchQ);}}
+            style={{padding:'8px 16px',background:'var(--indigo)',color:'#fff',border:'none',borderRadius:6,fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Search</button>
+          {searched && <button onClick={()=>{setSearchQ('');setSearch('');load('');}}
+            style={{padding:'8px 12px',background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text-muted)',borderRadius:6,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>✕ Clear</button>}
+        </div>
+
+        {loading && <div style={{color:'var(--text-muted)',fontSize:13,padding:'24px 0',textAlign:'center'}}>Loading products...</div>}
+
+        {!loading && products.length === 0 && (
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'32px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>
+            {searched ? 'No products found for that search.' : 'No order data for this period.'}
+          </div>
+        )}
+
+        {!loading && sorted.length > 0 && (
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
+            <div style={{display:'flex',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--border)',background:'var(--bg)',gap:6,flexWrap:'wrap'}}>
+              <span style={{fontSize:11,color:'var(--text-muted)',flex:1}}>{searched?`Search results for "${search}"`:vendor?`Top products — ${vendor}`:'Top products — all vendors'} · {sorted.length} SKUs · last {days}d</span>
+              {searched && <span style={{fontSize:10,color:'var(--indigo)',background:'rgba(99,102,241,0.1)',padding:'2px 8px',borderRadius:4}}>search mode</span>}
+            </div>
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:'1px solid var(--border)',background:'var(--bg)'}}>
+                    <th style={{padding:'8px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5,width:36}}>#</th>
+                    <th style={{padding:'8px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Product</th>
+                    <th style={{padding:'8px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Units</th>
+                    <th style={{padding:'8px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Revenue</th>
+                    <th style={{padding:'8px 10px',textAlign:'center',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Delivery</th>
+                    <th style={{padding:'8px 10px',textAlign:'center',color:'#ef4444',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>RTO%</th>
+                    <th style={{padding:'8px 10px',textAlign:'center',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Cancel%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((p, i) => (
+                    <tr key={p.name} style={{borderBottom:'1px solid var(--border)',transition:'background .1s'}}
+                      onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <td style={{padding:'8px 10px',color:'var(--text-muted)',fontSize:11,fontVariantNumeric:'tabular-nums'}}>{i+1}</td>
+                      <td style={{padding:'8px 10px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          {p.image ? (
+                            <img src={p.image} alt='' style={{width:36,height:36,objectFit:'cover',borderRadius:5,border:'1px solid var(--border)',flexShrink:0}}
+                              onError={e=>{e.target.style.display='none';}}/>
+                          ) : (
+                            <div style={{width:36,height:36,borderRadius:5,border:'1px solid var(--border)',background:'var(--bg)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>📦</div>
+                          )}
+                          <div>
+                            <div style={{fontWeight:600,color:'var(--text)',lineHeight:1.3,maxWidth:260}}>{p.name}</div>
+                            {p.vendor && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{p.vendor}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'var(--text)',fontVariantNumeric:'tabular-nums'}}>{p.units}</td>
+                      <td style={{padding:'8px 10px',textAlign:'right',color:'var(--green)',fontWeight:600,fontVariantNumeric:'tabular-nums'}}>₹{p.revenue.toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
+                      <td style={{padding:'8px 10px',textAlign:'center'}}>
+                        <span style={{fontSize:12,fontWeight:700,color:delivColor(p.deliveryRate),fontVariantNumeric:'tabular-nums'}}>{p.deliveryRate!=null?p.deliveryRate+'%':'—'}</span>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{p.delivered} del</div>
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'center'}}>
+                        <span style={{fontSize:12,fontWeight:700,color:rateColor(p.rtoRate),fontVariantNumeric:'tabular-nums'}}>{p.rtoRate!=null?p.rtoRate+'%':'—'}</span>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{p.rto} rto</div>
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'center'}}>
+                        <span style={{fontSize:12,fontWeight:700,color:rateColor(p.cancelRate),fontVariantNumeric:'tabular-nums'}}>{p.cancelRate!=null?p.cancelRate+'%':'—'}</span>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{p.cancelled} can</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

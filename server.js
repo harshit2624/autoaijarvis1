@@ -16523,6 +16523,68 @@ app.post("/admin/reports/send", adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /admin/reports/product-analytics ─────────────────────────────────
+app.get('/admin/reports/product-analytics', adminAuth, async (req, res) => {
+  try {
+    const { vendor = '', days = '30', search = '' } = req.query;
+    const since = new Date(Date.now() - parseInt(days) * 24 * 3600 * 1000).toISOString();
+
+    // Query order_meta + vendor_shipments for stage data
+    const matchQ = { created_at: { $gte: since } };
+    if (vendor) matchQ['vendor_shipments.vendor_name'] = { $regex: new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
+    const orders = await mdb.collection('order_meta').find(matchQ, {
+      projection: { items: 1, vendor_shipments: 1, stage: 1, created_at: 1 }
+    }).toArray();
+
+    // Aggregate per product title
+    const prodMap = {};
+    for (const o of orders) {
+      for (const item of (o.items || [])) {
+        if (!item.title) continue;
+        if (vendor && item.vendor && !/^sicos$/i.test('') && item.vendor.toLowerCase() !== vendor.toLowerCase()) continue;
+        const key = item.title.trim();
+        if (search && !key.toLowerCase().includes(search.toLowerCase())) continue;
+        if (!prodMap[key]) prodMap[key] = { name: key, vendor: item.vendor || '', image: item.image_url || '', units: 0, revenue: 0, delivered: 0, rto: 0, cancelled: 0 };
+        const qty = item.quantity || 1;
+        prodMap[key].units += qty;
+        prodMap[key].revenue += parseFloat(item.price || 0) * qty;
+        const vendorShip = (o.vendor_shipments || []).find(s => !vendor || s.vendor_name?.toLowerCase() === vendor.toLowerCase());
+        const stage = vendorShip?.stage || o.stage || 'new';
+        if (stage === 'delivered') prodMap[key].delivered += qty;
+        else if (stage === 'rto') prodMap[key].rto += qty;
+        else if (stage === 'cancelled') prodMap[key].cancelled += qty;
+      }
+    }
+
+    // Enrich with pixel images where order image missing
+    const names = Object.keys(prodMap).slice(0, 60);
+    if (names.length) {
+      const escR = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pxDocs = await mdb.collection('pixel_events').aggregate([
+        { $match: { productName: { $regex: names.map(escR).join('|'), $options: 'i' }, productImage: { $exists: true, $ne: '' } } },
+        { $group: { _id: '$productName', image: { $last: '$productImage' } } },
+      ]).toArray().catch(() => []);
+      for (const px of pxDocs) {
+        const match = names.find(n => n.toLowerCase() === (px._id || '').toLowerCase());
+        if (match && !prodMap[match].image) prodMap[match].image = px.image;
+      }
+    }
+
+    const sorted = Object.values(prodMap)
+      .sort((a, b) => b.units - a.units)
+      .slice(0, search ? 100 : 50)
+      .map(p => ({
+        ...p,
+        revenue: parseFloat(p.revenue.toFixed(2)),
+        deliveryRate: p.units ? Math.round(p.delivered / p.units * 100) : null,
+        rtoRate:      p.units ? Math.round(p.rto      / p.units * 100) : null,
+        cancelRate:   p.units ? Math.round(p.cancelled / p.units * 100) : null,
+      }));
+
+    res.json({ products: sorted, total: sorted.length, vendor, days: parseInt(days), search });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // PATTERN INTELLIGENCE — autonomous anomaly + trend detection
 // Finds things nobody asked it to look for: regional tag clusters, dispatch
