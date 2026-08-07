@@ -23670,25 +23670,20 @@ async function ticketSLACron() {
       const categoryLabel = TICKET_CATEGORY_LABELS[t.issue_category] || '💬 Query';
       const panelLink = `https://dashboard.croscrow.com/admin#supporttickets`;
 
-      // T+6h — first WA reminder to admin if not yet sent
+      // Mark reminder_sent_at silently (no WA message — handled by scheduled digest)
       if (!t.reminder_sent_at && now >= createdAt + 6 * 3600000) {
-        const hrsOpen = Math.round((now - createdAt) / 3600000);
-        await waAdminAlert(
-          `⏰ *Ticket Still Open — ${hrsOpen}h*\n${categoryLabel}\nOrder / Customer: *${label}*\n${t.context_note ? `Context: ${t.context_note.slice(0,100)}\n` : ''}Last msg: "${(t.last_customer_msg||'').slice(0,80)}"\n\n🔗 ${panelLink}`
-        );
         await mdb.collection('support_tickets').updateOne(
           { _id: t._id },
           { $set: { reminder_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
         );
       }
 
-      // T+8h — mark overdue
+      // T+8h — mark overdue (status update only, no individual WA message)
       if (now >= slaDeadline && t.status !== 'overdue') {
         await mdb.collection('support_tickets').updateOne(
           { _id: t._id },
           { $set: { status: 'overdue', updated_at: new Date().toISOString() } }
         );
-        await waAdminAlert(`🚨 *Ticket Overdue — 8h SLA breached*\n${categoryLabel}\nOrder / Customer: *${label}*\n\n🔗 ${panelLink}`, 'support_escalation');
       }
 
       // T+12h — ping vendor if dispatch/return issue and not already pinged
@@ -23721,18 +23716,66 @@ async function ticketSLACron() {
 }
 setInterval(ticketSLACron, 30 * 60 * 1000); // every 30 min
 
-// ── Daily 9 AM IST morning digest ────────────────────────────────────────────
+// ── Pending tickets digest (sent at 9 AM and 12 PM IST) ──────────────────
+async function sendTicketDigest(sock, adminJid, label) {
+  if (!mdb || !sock || !adminJid) return;
+  try {
+    const tickets = await mdb.collection('support_tickets').find(
+      { status: { $in: ['open', 'in_progress', 'overdue'] } }
+    ).sort({ created_at: 1 }).toArray();
+
+    if (!tickets.length) {
+      await sock.sendMessage(adminJid, { text: `✅ *${label} — No Pending Tickets*\nAll support tickets are closed. 🎉` });
+      return;
+    }
+
+    const now = Date.now();
+    const overdue = tickets.filter(t => t.status === 'overdue');
+    const urgent  = tickets.filter(t => t.status !== 'overdue' && now - new Date(t.created_at).getTime() >= 6 * 3600000);
+    const normal  = tickets.filter(t => t.status !== 'overdue' && now - new Date(t.created_at).getTime() < 6 * 3600000);
+
+    const fmtTicket = t => {
+      const hrs  = Math.round((now - new Date(t.created_at).getTime()) / 3600000);
+      const ref  = t.order_name || t.customer_phone || String(t._id).slice(-6);
+      const cat  = TICKET_CATEGORY_LABELS[t.issue_category] || '💬 Query';
+      const tags = (t.context_tags || []).filter(Boolean).slice(0, 2).join(', ');
+      return `  • *${ref}* — ${cat} · ${hrs}h open${tags ? ` · ${tags}` : ''}`;
+    };
+
+    const parts = [];
+    if (overdue.length) parts.push(`🚨 *Overdue (${overdue.length}):*\n${overdue.map(fmtTicket).join('\n')}`);
+    if (urgent.length)  parts.push(`⏰ *Aging 6h+ (${urgent.length}):*\n${urgent.map(fmtTicket).join('\n')}`);
+    if (normal.length)  parts.push(`🟡 *Open (${normal.length}):*\n${normal.map(fmtTicket).join('\n')}`);
+
+    const msg = `🎫 *${label} — Ticket Summary*\nTotal pending: *${tickets.length}*\n\n${parts.join('\n\n')}\n\n🔗 https://dashboard.croscrow.com/admin#supporttickets`;
+    await sock.sendMessage(adminJid, { text: msg });
+    notifyStaff('ticket_digest', msg).catch(() => {});
+  } catch (e) { console.error('sendTicketDigest error:', e.message); }
+}
+
+// ── Daily 9 AM IST morning digest + 12 PM ticket digest ──────────────────
 let _digestLastSent = 0;
+let _noonDigestLastSent = 0;
 setInterval(async () => {
   const now = new Date();
-  const istHour = (now.getUTCHours() + 5) % 24 + (now.getUTCMinutes() >= 30 ? 0 : 0);
   const istH = Math.floor((now.getUTCHours() * 60 + now.getUTCMinutes() + 330) / 60) % 24;
   const istM = (now.getUTCMinutes() + 30) % 60;
+  const adminJid = WA_ADMIN_NO ? `91${WA_ADMIN_NO.replace(/\D/g, '').replace(/^91/, '').slice(-10)}@s.whatsapp.net` : null;
+
+  // 9 AM — morning digest + tickets
   if (istH === 9 && istM < 30 && Date.now() - _digestLastSent > 3600000) {
     _digestLastSent = Date.now();
-    const adminJid = WA_ADMIN_NO ? `91${WA_ADMIN_NO.replace(/\D/g, '').replace(/^91/, '').slice(-10)}@s.whatsapp.net` : null;
     if (adminJid && waSocket) {
       adminMorningDigest(waSocket, adminJid).catch(e => console.error('Morning digest error:', e.message));
+      setTimeout(() => sendTicketDigest(waSocket, adminJid, 'Morning Check-in').catch(() => {}), 5000);
+    }
+  }
+
+  // 12 PM — noon ticket digest
+  if (istH === 12 && istM < 30 && Date.now() - _noonDigestLastSent > 3600000) {
+    _noonDigestLastSent = Date.now();
+    if (adminJid && waSocket) {
+      sendTicketDigest(waSocket, adminJid, 'Afternoon Check-in').catch(e => console.error('Noon digest error:', e.message));
     }
   }
 }, 10 * 60 * 1000); // check every 10 min
