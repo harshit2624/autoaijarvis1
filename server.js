@@ -16531,16 +16531,30 @@ app.get('/admin/reports/product-analytics', adminAuth, async (req, res) => {
     const since = daysInt > 0 ? new Date(Date.now() - daysInt * 24 * 3600 * 1000).toISOString() : null;
 
     // Query order_meta — uses shopify_created_at for date field
+    const vendorReLP = vendor ? new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
     const matchQ = since ? { shopify_created_at: { $gte: since } } : {};
-    if (vendor) matchQ['vendor_shipments.vendor_name'] = { $regex: new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
     const orders = await mdb.collection('order_meta').find(matchQ, {
-      projection: { items: 1, vendor_shipments: 1, stage: 1, shopify_created_at: 1 }
+      projection: { shopify_id: 1, items: 1, stage: 1 }
     }).toArray();
 
+    // Build stage map from order_vendor_stage (authoritative source)
+    // { shopify_id: { vendor_name_lower: stage } }
+    const ovsQ = since ? { updated_at: { $gte: since } } : {};
+    if (vendor) ovsQ.vendor_name = { $regex: vendorReLP };
+    const ovsAll = await mdb.collection('order_vendor_stage').find(
+      vendor ? ovsQ : {},
+      { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }
+    ).toArray();
+    const stageMap = {}; // { shopify_id: { vendor_lower: stage } }
+    for (const s of ovsAll) {
+      if (!stageMap[s.shopify_id]) stageMap[s.shopify_id] = {};
+      stageMap[s.shopify_id][(s.vendor_name || '').toLowerCase()] = s.stage;
+    }
+
     // Aggregate per product title
-    const vendorReLP = vendor ? new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
     const prodMap = {};
     for (const o of orders) {
+      const sid = o.shopify_id;
       for (const item of (o.items || [])) {
         if (!item.title) continue;
         if (vendorReLP && item.vendor && !vendorReLP.test(item.vendor)) continue;
@@ -16550,10 +16564,9 @@ app.get('/admin/reports/product-analytics', adminAuth, async (req, res) => {
         const qty = item.qty || item.quantity || 1;
         prodMap[key].units += qty;
         prodMap[key].revenue += parseFloat(item.price || 0) * qty;
-        const vendorShip = vendorReLP
-          ? (o.vendor_shipments || []).find(s => vendorReLP.test(s.vendor_name || ''))
-          : (o.vendor_shipments || [])[0];
-        const stage = vendorShip?.stage || o.stage || 'new';
+        // Stage: look up order_vendor_stage first, fall back to order_meta.stage
+        const itemVendorLower = (item.vendor || '').toLowerCase();
+        const stage = (stageMap[sid] && (stageMap[sid][itemVendorLower] || Object.values(stageMap[sid])[0])) || o.stage || 'new';
         if (stage === 'delivered') prodMap[key].delivered += qty;
         else if (stage === 'rto') prodMap[key].rto += qty;
         else if (stage === 'cancelled') prodMap[key].cancelled += qty;
