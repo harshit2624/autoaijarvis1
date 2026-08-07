@@ -5929,6 +5929,38 @@
       setGenerating(false);
     };
 
+    // ── Backlog invoice state (per-vendor) ────────────────────────────────
+    const [backlogStatus, setBacklogStatus] = useState({}); // { vendorName: { state:'idle'|'loading'|'done'|'error', msg, invoiceNo, orders, net } }
+
+    const generateBacklog = async (vendorName, olderOrders) => {
+      if (!olderOrders.length) return;
+      // period_start = oldest order date, period_end = last day of previous month
+      const now = new Date();
+      const lastDayPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0); // day 0 = last day of prev month
+      const periodEnd = lastDayPrevMonth.toISOString().split('T')[0];
+      const dates = olderOrders.map(o => o.createdAt).sort();
+      const periodStart = dates[0].split('T')[0];
+
+      setBacklogStatus(prev => ({ ...prev, [vendorName]: { state:'loading' } }));
+      try {
+        const r = await fetch(`${API}/admin/settlements/generate`, {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body: JSON.stringify({ vendor_name: vendorName, period_start: periodStart, period_end: periodEnd }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setBacklogStatus(prev => ({ ...prev, [vendorName]: {
+          state:'done', invoiceNo: d.invoiceNo, orders: d.totalOrders,
+          net: d.netPayable, msg: `${d.invoiceNo} · ${d.totalOrders} orders · ${d.netPayable<0?'Pay':'Collect'} ₹${Math.abs(d.netPayable).toFixed(2)}`
+        }}));
+        // Refresh summary cache and invoices list
+        loadSummary(sumPeriod, true);
+        loadInvoices();
+      } catch(e) {
+        setBacklogStatus(prev => ({ ...prev, [vendorName]: { state:'error', msg: e.message } }));
+      }
+    };
+
     const markPaid = async id => {
       await fetch(`${API}/admin/settlements/${id}/mark-paid`,{method:'PUT',headers:{Authorization:`Bearer ${token}`}});
       loadInvoices(); loadSummary();
@@ -6875,11 +6907,30 @@
                     const sectionColor = isOlder ? '#ef4444' : 'var(--indigo)';
                     return (
                       <div key={section} style={{marginBottom:24}}>
-                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,flexWrap:'wrap'}}>
                           <div style={{fontSize:12,fontWeight:700,color:sectionColor}}>{sectionLabel}</div>
-                          <div style={{fontSize:10,color:'var(--text-dim)',background:isOlder?'rgba(239,68,68,0.1)':'rgba(139,92,246,0.1)',padding:'2px 8px',borderRadius:4,color:sectionColor}}>
+                          <div style={{fontSize:10,background:isOlder?'rgba(239,68,68,0.1)':'rgba(139,92,246,0.1)',padding:'2px 8px',borderRadius:4,color:sectionColor}}>
                             {sectionRows.reduce((s,r)=>s+r[section].length,0)} orders · {sectionRows.length} vendors
                           </div>
+                          {isOlder && sectionRows.length > 1 && (()=>{
+                            const allDone  = sectionRows.every(r=>backlogStatus[r.vendor]?.state==='done');
+                            const anyLoading = sectionRows.some(r=>backlogStatus[r.vendor]?.state==='loading');
+                            const doneSoFar  = sectionRows.filter(r=>backlogStatus[r.vendor]?.state==='done').length;
+                            if (allDone) return <span style={{fontSize:10,color:'var(--green)',fontWeight:600}}>✓ All {sectionRows.length} invoices generated</span>;
+                            return (
+                              <button style={{marginLeft:'auto',fontSize:10,fontWeight:700,background:'rgba(239,68,68,0.85)',color:'#fff',border:'none',borderRadius:5,padding:'5px 12px',cursor:anyLoading?'not-allowed':'pointer'}}
+                                disabled={anyLoading}
+                                onClick={()=>{
+                                  sectionRows.forEach(r=>{
+                                    if (!backlogStatus[r.vendor] || backlogStatus[r.vendor]?.state==='error') {
+                                      generateBacklog(r.vendor, r.older);
+                                    }
+                                  });
+                                }}>
+                                {anyLoading?<><span className="spin">↻</span> Generating… ({doneSoFar}/{sectionRows.length})</> : `⚡ Generate All ${sectionRows.length} Backlog Invoices`}
+                              </button>
+                            );
+                          })()}
                         </div>
                         <div style={{overflowX:'auto'}}>
                           <table className="data-table" style={{fontSize:11}}>
@@ -6925,18 +6976,56 @@
                                         {codCount>0&&<span style={{background:'rgba(251,146,60,0.15)',color:'var(--orange)',borderRadius:3,padding:'1px 5px',marginRight:2}}>COD {codCount}</span>}
                                         {prepaidCount>0&&<span style={{background:'rgba(139,92,246,0.15)',color:'var(--indigo)',borderRadius:3,padding:'1px 5px'}}>PP {prepaidCount}</span>}
                                       </td>
-                                      <td>
-                                        <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
-                                          <button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();setExpandedV(expandedV===r.vendor+section?null:r.vendor+section)}} style={{fontSize:10}}>
-                                            {expandedV===r.vendor+section?'▲ Hide':'▼ Orders'}
-                                          </button>
-                                          <button className="btn btn-indigo btn-sm" style={{fontSize:10}} onClick={e=>{
-                                            e.stopPropagation();
-                                            setGenVendor(r.vendor);
-                                            setActiveTab('invoices');
-                                          }} title="Go to invoices tab to generate">
-                                            🧾 Invoice
-                                          </button>
+                                      <td onClick={e=>e.stopPropagation()}>
+                                        <div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-end'}}>
+                                          <div style={{display:'flex',gap:4}}>
+                                            <button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();setExpandedV(expandedV===r.vendor+section?null:r.vendor+section)}} style={{fontSize:10}}>
+                                              {expandedV===r.vendor+section?'▲ Hide':'▼ Orders'}
+                                            </button>
+                                            <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={e=>{
+                                              e.stopPropagation();
+                                              setGenVendor(r.vendor);
+                                              setActiveTab('invoices');
+                                            }} title="Go to invoices tab — manual date range">
+                                              🧾 Manual
+                                            </button>
+                                          </div>
+                                          {/* One-click backlog invoice — older section only */}
+                                          {isOlder && r.older.length > 0 && (()=>{
+                                            const bs = backlogStatus[r.vendor];
+                                            if (bs?.state==='done') return (
+                                              <div style={{textAlign:'right'}}>
+                                                <div style={{fontSize:10,color:'var(--green)',fontWeight:600}}>✓ {bs.invoiceNo}</div>
+                                                <div style={{fontSize:9,color:'var(--text-dim)'}}>{bs.orders} orders · {bs.net<0?'Pay':'Collect'} ₹{Math.abs(bs.net).toFixed(2)}</div>
+                                                <button style={{fontSize:9,color:'var(--indigo)',background:'none',border:'none',cursor:'pointer',padding:0,marginTop:2}} onClick={()=>setActiveTab('invoices')}>View in Invoices →</button>
+                                              </div>
+                                            );
+                                            if (bs?.state==='error') return (
+                                              <div style={{textAlign:'right'}}>
+                                                <div style={{fontSize:9,color:'var(--red)',maxWidth:160}}>{bs.msg}</div>
+                                                <button style={{fontSize:9,color:'var(--text-muted)',background:'none',border:'none',cursor:'pointer',padding:0,marginTop:2}} onClick={()=>setBacklogStatus(prev=>({...prev,[r.vendor]:undefined}))}>Retry</button>
+                                              </div>
+                                            );
+                                            const isLoading = bs?.state==='loading';
+                                            // Date range preview
+                                            const oldestD = r.older.reduce((min,o)=>new Date(o.createdAt)<new Date(min)?o.createdAt:min, r.older[0].createdAt);
+                                            const lastDayPrev = new Date(now.getFullYear(), now.getMonth(), 0);
+                                            const periodLabel = `${oldestD.split('T')[0]} → ${lastDayPrev.toISOString().split('T')[0]}`;
+                                            return (
+                                              <div style={{textAlign:'right'}}>
+                                                <button className="btn btn-sm" style={{
+                                                  fontSize:10,fontWeight:700,
+                                                  background:isLoading?'var(--bg-card2)':'rgba(239,68,68,0.9)',
+                                                  color:isLoading?'var(--text-muted)':'#fff',
+                                                  border:'none',cursor:isLoading?'not-allowed':'pointer',
+                                                  padding:'5px 10px',borderRadius:5,whiteSpace:'nowrap'
+                                                }} disabled={isLoading} onClick={()=>generateBacklog(r.vendor, r.older)}>
+                                                  {isLoading?<><span className="spin">↻</span> Generating…</>:'⚡ Generate Backlog'}
+                                                </button>
+                                                <div style={{fontSize:8,color:'var(--text-dim)',marginTop:2}}>{r.older.length} orders · {periodLabel}</div>
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                       </td>
                                     </tr>
