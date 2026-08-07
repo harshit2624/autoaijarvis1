@@ -20782,16 +20782,17 @@ app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
     if (!vendor) return res.status(400).json({ error: 'vendor required' });
 
     const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const vendorRe = new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
 
     // ── 1. Order stats for this vendor ──
     const orders = await mdb.collection('order_meta').find({
-      'vendor_shipments.vendor_name': vendor,
+      'vendor_shipments.vendor_name': { $regex: vendorRe },
       created_at: { $gte: since },
     }).toArray();
 
     const totalOrders = orders.length;
-    const delivered = orders.filter(o => (o.vendor_shipments || []).some(s => s.vendor_name === vendor && s.stage === 'delivered')).length;
-    const rto       = orders.filter(o => (o.vendor_shipments || []).some(s => s.vendor_name === vendor && s.stage === 'rto')).length;
+    const delivered = orders.filter(o => (o.vendor_shipments || []).some(s => vendorRe.test(s.vendor_name) && s.stage === 'delivered')).length;
+    const rto       = orders.filter(o => (o.vendor_shipments || []).some(s => vendorRe.test(s.vendor_name) && s.stage === 'rto')).length;
     const deliveryRate = totalOrders ? Math.round((delivered / totalOrders) * 100) : null;
     const rtoRate      = totalOrders ? Math.round((rto / totalOrders) * 100) : null;
 
@@ -20809,11 +20810,21 @@ app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
     const avgRtoRate      = allTotal ? Math.round((allRto / allTotal) * 100) : null;
 
     // ── 3. Pixel data — vendor's products vs platform ──
-    // Get product names that belong to this vendor (from order line_items)
+    // Get product names from order line_items first
     const vendorProducts = new Set();
     for (const o of orders) {
       for (const item of (o.items || [])) {
-        if (item.vendor === vendor && item.title) vendorProducts.add(item.title.toLowerCase().trim());
+        if (item.vendor && vendorRe.test(item.vendor) && item.title) vendorProducts.add(item.title.toLowerCase().trim());
+      }
+    }
+    // If no orders, fall back to Shopify catalog (so new vendors still get pixel + images)
+    let shopifyProductImages = {}; // { title_lower: imageUrl }
+    if (vendorProducts.size === 0) {
+      const spData = await shopifyREST(`/products.json?vendor=${encodeURIComponent(vendor)}&limit=250&fields=title,image,vendor`).catch(() => ({}));
+      for (const p of (spData.products || [])) {
+        const key = (p.title || '').toLowerCase().trim();
+        if (key) vendorProducts.add(key);
+        if (p.image?.src) shopifyProductImages[key] = p.image.src;
       }
     }
 
@@ -20882,10 +20893,18 @@ app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
       const totalViewsTop = topPx.reduce((s, p) => s + p.viewCount, 0);
       topProductsPixel = topPx.map(p => ({
         name: p._id,
-        image: p.image || '',
+        image: p.image || shopifyProductImages[(p._id||'').toLowerCase().trim()] || '',
         viewCount: p.viewCount,
         shareOfViews: totalViewsTop ? Math.round((p.viewCount / totalViewsTop) * 100) : 0,
       }));
+    }
+
+    // If still no pixel products but we have Shopify products, surface them as image-only cards
+    if (topProductsPixel.length === 0 && Object.keys(shopifyProductImages).length > 0) {
+      topProductsPixel = Object.entries(shopifyProductImages).slice(0, 10).map(([name, image]) => ({
+        name, image, viewCount: 0, shareOfViews: 0,
+      }));
+      skuCount = topProductsPixel.length;
     }
 
     // ── 4. Build prompt for Claude ──
