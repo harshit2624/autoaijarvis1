@@ -7143,7 +7143,8 @@
 
     const VENDOR_FIELDS = [
       ...PROFILE_FIELDS.filter(f=>f.key!=='website'),
-      { key:'commission_pct', label:'Commission %', placeholder:'20', type:'number' },
+      { key:'commission_pct',        label:'Commission %',        placeholder:'20', type:'number' },
+      { key:'prepaid_discount_pct',  label:'Prepaid Discount %',  placeholder:'10 (default)', type:'number' },
     ];
 
     const [testMode, setTestMode] = useState(false);
@@ -7323,7 +7324,7 @@
                   <div className="form-grid">
                     {VENDOR_FIELDS.map(f=>(
                       <div key={f.key} className={f.full?'form-full':''}>
-                        <label className="form-label">{f.label}{f.key==='commission_pct'&&<span style={{color:'var(--indigo)',marginLeft:6,fontSize:9}}>← auto-used in settlement</span>}</label>
+                        <label className="form-label">{f.label}{f.key==='commission_pct'&&<span style={{color:'var(--indigo)',marginLeft:6,fontSize:9}}>← auto-used in settlement</span>}{f.key==='prepaid_discount_pct'&&<span style={{color:'var(--teal)',marginLeft:6,fontSize:9}}>← overrides global 10% everywhere</span>}</label>
                         <input
                           className="form-input"
                           type={f.type||'text'}

@@ -7135,9 +7135,9 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     // Fetch orders created within the period (use period_start, not 2020 — avoid pulling in all history)
     const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
     const vName  = vendor_name.toLowerCase();
-    const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, _id: 0 } });
+    const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, prepaid_discount_pct: 1, _id: 0 } });
     const vConfig  = await VC.get(vendor_name);
-    const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20 };
+    const config   = { commission_pct: vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20, prepaid_discount_pct: vProfile?.prepaid_discount_pct ?? 10 };
     const metas  = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
     const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
     // Fetch stages with updated_at so we can filter by delivery date
@@ -7237,7 +7237,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
           else if (productRule.mode === 'margin') ruleLabels.add(`Margin ${productRule.margin_pct}%`);
           else if (productRule.mode === 'mixed') ruleLabels.add(`Mixed`);
         } else {
-          liCalc = calcCommission(itemRev, payType, config.commission_pct, 0);
+          liCalc = calcCommission(itemRev, payType, config.commission_pct, 0, config.prepaid_discount_pct);
           hasDefaultRule = true;
         }
         totalItemComm += liCalc.commission;
@@ -7482,8 +7482,9 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
         if (productRule) {
           calc = calcProductCommission(productRule, liListedPrice, li.quantity || 1, payType);
         } else {
-          const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
-          calc = calcCommission(itemRev, payType, commPct, 0);
+          const commPct  = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+          const ppDisc   = vProfileMap[vendor]?.prepaid_discount_pct ?? 10;
+          calc = calcCommission(itemRev, payType, commPct, 0, ppDisc);
         }
 
         vendorMap[vendor].gross += itemRev;
@@ -7807,10 +7808,11 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
         const liPrice   = effectivePrice(li);
         const liRev     = liPrice * (li.quantity || 1);
         const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+        const ppDisc  = vProfileMap[vendor]?.prepaid_discount_pct ?? 10;
         const productRule = findRuleFast(vendor, li.product_id, li.sku);
         const calc = productRule
           ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
-          : calcCommission(liRev, payType, commPct, 0);
+          : calcCommission(liRev, payType, commPct, 0, ppDisc);
 
         vendorMap[vendor].gross += liRev;
         if (!isCod) vendorMap[vendor].prepaidDiscount += (liRev - calc.base);
@@ -8096,10 +8098,11 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
         const liPrice  = effectivePrice(li);
         const rawRev   = rawPrice * (li.quantity || 1);
         const commPct  = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+        const ppDisc   = vProfileMap[vendor]?.prepaid_discount_pct ?? 10;
         const productRule = findRuleFast(vendor, li.product_id, li.sku);
         const calc = productRule
           ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
-          : calcCommission(liPrice * (li.quantity || 1), payType, commPct, 0);
+          : calcCommission(liPrice * (li.quantity || 1), payType, commPct, 0, ppDisc);
 
         vendorMap[vendor].gross += rawRev;
         if (!isCod) vendorMap[vendor].prepaidDiscount += (rawRev - calc.base);
@@ -8485,7 +8488,7 @@ app.get("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
 app.put("/admin/vendors/:name/profile", adminAuth, async (req, res) => {
   const name = decodeURIComponent(req.params.name);
   const f = req.body || {};
-  await mdb.collection('vendor_profiles').updateOne({ vendor_name: name }, { $set: { vendor_name: name, email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', commission_pct: f.commission_pct!=null?parseFloat(f.commission_pct):null, updated_at: new Date().toISOString() } }, { upsert: true });
+  await mdb.collection('vendor_profiles').updateOne({ vendor_name: name }, { $set: { vendor_name: name, email: f.email||'', phone: f.phone||'', address: f.address||'', city: f.city||'', state: f.state||'', pincode: f.pincode||'', gst_no: f.gst_no||'', pan_no: f.pan_no||'', bank_name: f.bank_name||'', account_no: f.account_no||'', ifsc: f.ifsc||'', commission_pct: f.commission_pct!=null?parseFloat(f.commission_pct):null, prepaid_discount_pct: f.prepaid_discount_pct!=null&&f.prepaid_discount_pct!==''?parseFloat(f.prepaid_discount_pct):null, updated_at: new Date().toISOString() } }, { upsert: true });
   // Sync email + commission to vendor_config so notifications fire correctly
   const vcUpdate = {};
   if (f.email) vcUpdate.email = f.email;
@@ -8949,6 +8952,7 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
     const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: req.vendor }, { projection: { _id: 0 } });
     const vConfig  = await VC.get(req.vendor);
     const commPct  = vProfile?.commission_pct ?? vConfig?.commission_pct ?? 20;
+    const ppDisc   = vProfile?.prepaid_discount_pct ?? 10;
 
     const paidSettlDocs = await mdb.collection('settlements').find({ vendor_name: req.vendor, status: 'paid' }, { projection: { net_payable: 1, _id: 0 } }).toArray();
     const totalSettled = paidSettlDocs.reduce((s, d) => s + (d.net_payable || 0), 0);
@@ -8980,7 +8984,7 @@ app.get("/vendor/delivered-summary", vendorAuth, async (req, res) => {
 
       myItems.forEach(li => {
         const itemRev = undiscountedPrice(li) * (li.quantity || 1);
-        const calc = calcCommission(itemRev, payType, commPct, 0);
+        const calc = calcCommission(itemRev, payType, commPct, 0, ppDisc);
         gross += itemRev;
         if (!isCod) prepaidDiscount += (itemRev - calc.base);
         commission += calc.commission;
