@@ -16527,10 +16527,11 @@ app.post("/admin/reports/send", adminAuth, async (req, res) => {
 app.get('/admin/reports/product-analytics', adminAuth, async (req, res) => {
   try {
     const { vendor = '', days = '30', search = '' } = req.query;
-    const since = new Date(Date.now() - parseInt(days) * 24 * 3600 * 1000).toISOString();
+    const daysInt = parseInt(days);
+    const since = daysInt > 0 ? new Date(Date.now() - daysInt * 24 * 3600 * 1000).toISOString() : null;
 
     // Query order_meta + vendor_shipments for stage data
-    const matchQ = { created_at: { $gte: since } };
+    const matchQ = since ? { created_at: { $gte: since } } : {};
     if (vendor) matchQ['vendor_shipments.vendor_name'] = { $regex: new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') };
     const orders = await mdb.collection('order_meta').find(matchQ, {
       projection: { items: 1, vendor_shipments: 1, stage: 1, created_at: 1 }

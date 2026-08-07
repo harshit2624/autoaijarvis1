@@ -12610,7 +12610,7 @@
 
     const load = async (sq = '') => {
       setLoading(true); setSearched(!!sq);
-      const params = new URLSearchParams({ days, ...(vendor && { vendor }), ...(sq && { search: sq }) });
+      const params = new URLSearchParams({ days: days||0, ...(vendor && { vendor }), ...(sq && { search: sq }) });
       const d = await fetch(`${API}/admin/reports/product-analytics?${params}`, { headers: { Authorization: 'Bearer '+token } })
         .then(r => r.json()).catch(() => ({ products: [] }));
       setProducts(d.products || []);
@@ -12646,13 +12646,13 @@
             </select>
             {/* Period */}
             <div style={{display:'flex',gap:4}}>
-              {[7,30,60,90].map(d=>(
+              {[7,30,60,90,0].map(d=>(
                 <button key={d} onClick={()=>setDays(d)}
                   style={{padding:'5px 10px',fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:days===d?700:400,
                     background:days===d?'var(--indigo)':'var(--bg-card)',
                     color:days===d?'#fff':'var(--text-muted)',
                     border:`1px solid ${days===d?'var(--indigo)':'var(--border)'}`,borderRadius:5}}>
-                  {d}d
+                  {d===0?'All':d+'d'}
                 </button>
               ))}
             </div>
@@ -12690,7 +12690,7 @@
         {!loading && sorted.length > 0 && (
           <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
             <div style={{display:'flex',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid var(--border)',background:'var(--bg)',gap:6,flexWrap:'wrap'}}>
-              <span style={{fontSize:11,color:'var(--text-muted)',flex:1}}>{searched?`Search results for "${search}"`:vendor?`Top products — ${vendor}`:'Top products — all vendors'} · {sorted.length} SKUs · last {days}d</span>
+              <span style={{fontSize:11,color:'var(--text-muted)',flex:1}}>{searched?`Search results for "${search}"`:vendor?`Top products — ${vendor}`:'Top products — all vendors'} · {sorted.length} SKUs · {days===0?'all time':`last ${days}d`}</span>
               {searched && <span style={{fontSize:10,color:'var(--indigo)',background:'rgba(99,102,241,0.1)',padding:'2px 8px',borderRadius:4}}>search mode</span>}
             </div>
             <div style={{overflowX:'auto'}}>
