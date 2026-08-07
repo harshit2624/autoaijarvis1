@@ -5665,26 +5665,32 @@
   /* ── Edit Settlement Modal ── */
   function EditSettlementModal({ settlement: init, token, onClose, onSaved }) {
     const [commPct,      setCommPct]      = useState(String(init.custom_commission_pct || ''));
+    const [ppDisc,       setPpDisc]       = useState(String(init.prepaid_discount_pct ?? 10));
     const [discount,     setDiscount]     = useState(String(init.extra_discount     || ''));
     const [shipping,     setShipping]     = useState(String(init.shipping_adjustment || ''));
     const [extraAdv,     setExtraAdv]     = useState(String(init.extra_advance       || ''));
+    const [waiverPct,    setWaiverPct]    = useState(init.penalty_waiver_pct || 0);
     const [notes,        setNotes]        = useState(init.invoice_notes || '');
     const [saving,       setSaving]       = useState(false);
     const [msg,          setMsg]          = useState(null);
-    const [preview,      setPreview]      = useState(null); // { netPayable, commission, gst }
+    const [preview,      setPreview]      = useState(null);
 
-    // Live preview
+    const penaltyAmt = init.penalty_deduction || 0;
+
+    // Live preview (simplified — full recalc happens server-side)
     useEffect(()=>{
       const disc  = parseFloat(discount)||0;
       const ship  = parseFloat(shipping)||0;
       const adv   = parseFloat(extraAdv)||0;
+      const waiver = penaltyAmt * waiverPct / 100;
       const baseNet = init.net_payable
         + (init.extra_discount||0)
         + (init.extra_advance||0)
-        - (init.shipping_adjustment||0);
-      const adjusted = parseFloat((baseNet - disc - adv + ship).toFixed(2));
-      setPreview({ netPayable: adjusted });
-    },[discount, shipping, extraAdv]);
+        - (init.shipping_adjustment||0)
+        + (init.penalty_waiver_amount||0);
+      const adjusted = parseFloat((baseNet - disc - adv + ship - waiver).toFixed(2));
+      setPreview({ netPayable: adjusted, waiverAmt: waiver });
+    },[discount, shipping, extraAdv, waiverPct]);
 
     const save = async () => {
       setSaving(true); setMsg(null);
@@ -5694,15 +5700,18 @@
           shipping_adjustment: parseFloat(shipping)||0,
           extra_advance:       parseFloat(extraAdv)||0,
           invoice_notes:       notes,
+          penalty_waiver_pct:  waiverPct,
         };
         if (commPct.trim()) body.custom_commission_pct = parseFloat(commPct);
+        if (ppDisc.trim())  body.prepaid_discount_pct  = parseFloat(ppDisc);
         const r = await fetch(`${API}/admin/settlements/${init.id}/edit`,{
           method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
           body: JSON.stringify(body),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
-        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}` });
+        const waiverNote = d.waiverAmount > 0 ? ` · Penalty waiver ₹${d.waiverAmount.toFixed(2)} applied` : '';
+        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}` });
         onSaved();
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSaving(false);
@@ -5712,7 +5721,7 @@
 
     return (
       <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-        <div className="modal">
+        <div className="modal" style={{maxWidth:620}}>
           <div className="modal-header">
             <div>
               <div className="modal-title">Edit Invoice — {init.invoice_no}</div>
@@ -5726,39 +5735,89 @@
 
             <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14,marginBottom:16}}>
               <div className="detail-box-title" style={{marginBottom:12}}>Current Figures</div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,textAlign:'center',fontSize:11}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,textAlign:'center',fontSize:11}}>
                 <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Orders</div><div style={{fontWeight:700}}>{init.total_orders}</div></div>
                 <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Gross Revenue</div><div style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(init.gross_revenue)}</div></div>
                 <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Commission</div><div style={{color:'var(--yellow)',fontWeight:700}}>{fmtCur(init.commission)}</div></div>
                 <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>GST (18%)</div><div style={{color:'var(--orange)',fontWeight:700}}>{fmtCur(init.gst_amount)}</div></div>
+                {penaltyAmt > 0 && <div><div style={{color:'var(--text-muted)',fontSize:9,marginBottom:3}}>Penalty</div><div style={{color:'var(--red)',fontWeight:700}}>{fmtCur(penaltyAmt)}</div></div>}
               </div>
             </div>
 
-            <div className="form-grid">
+            {/* Section: Commission recalculation */}
+            <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>Commission Settings</div>
+            <div className="form-grid" style={{marginBottom:16}}>
               <div>
                 <label className="form-label">Commission % Override</label>
-                <input className="form-input" type="number" min="0" max="50" step="0.5" placeholder={`Current: ${init.custom_commission_pct||20}% — blank = no change`} value={commPct} onChange={e=>setCommPct(e.target.value)}/>
+                <input className="form-input" type="number" min="0" max="50" step="0.5" placeholder={`Current: ${init.custom_commission_pct||20}%`} value={commPct} onChange={e=>setCommPct(e.target.value)}/>
                 <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Recalculates all order commissions</div>
               </div>
               <div>
+                <label className="form-label">Prepaid Discount % Override</label>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <input className="form-input" type="number" min="0" max="30" step="0.5" style={{width:'100%'}} value={ppDisc} onChange={e=>setPpDisc(e.target.value)}/>
+                  <span style={{fontSize:11,color:'var(--text-muted)',whiteSpace:'nowrap'}}>% off</span>
+                </div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Default 10% — customer prepaid discount absorbed by vendor</div>
+              </div>
+            </div>
+
+            {/* Section: Adjustments */}
+            <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>Adjustments</div>
+            <div className="form-grid" style={{marginBottom:16}}>
+              <div>
                 <label className="form-label">Extra Discount (₹)</label>
                 <input className="form-input" type="number" min="0" placeholder="0" value={discount} onChange={e=>setDiscount(e.target.value)}/>
-                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Reduces vendor's payable / increases CROSCROW's payout</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Reduces vendor payable</div>
               </div>
               <div>
-                <label className="form-label">Shipping Charge Adjustment (₹)</label>
-                <input className="form-input" type="number" placeholder="0 (positive adds, negative deducts)" value={shipping} onChange={e=>setShipping(e.target.value)}/>
-                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Shipping is CROSCROW's — positive = vendor owes more</div>
+                <label className="form-label">Shipping Adjustment (₹)</label>
+                <input className="form-input" type="number" placeholder="0" value={shipping} onChange={e=>setShipping(e.target.value)}/>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Positive = vendor owes more</div>
               </div>
               <div>
                 <label className="form-label">Additional Advance / Partial (₹)</label>
                 <input className="form-input" type="number" min="0" placeholder="0" value={extraAdv} onChange={e=>setExtraAdv(e.target.value)}/>
-                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Deducted from net payable (already collected)</div>
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Already collected — deducted from net</div>
               </div>
-              <div className="form-full">
-                <label className="form-label">Invoice Notes (printed on invoice)</label>
-                <input className="form-input" placeholder="e.g. Includes return deduction, special discount applied…" value={notes} onChange={e=>setNotes(e.target.value)}/>
-              </div>
+            </div>
+
+            {/* Section: Penalty Waiver */}
+            {penaltyAmt > 0 && (
+              <>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>Penalty Waiver</div>
+                <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                    <div style={{fontSize:11,color:'var(--text)'}}>
+                      Invoiced penalty: <strong style={{color:'var(--red)'}}>₹{penaltyAmt.toFixed(2)}</strong>
+                      {waiverPct > 0 && <span style={{color:'var(--green)',marginLeft:8}}>→ waiver ₹{(penaltyAmt*waiverPct/100).toFixed(2)} ({waiverPct}%)</span>}
+                    </div>
+                    {waiverPct > 0 && <button style={{fontSize:10,padding:'2px 8px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}} onClick={()=>setWaiverPct(0)}>Clear</button>}
+                  </div>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    {[25,50,75,100].map(pct=>(
+                      <button key={pct} onClick={()=>setWaiverPct(waiverPct===pct?0:pct)}
+                        style={{padding:'8px 16px',borderRadius:6,border:`2px solid ${waiverPct===pct?'var(--green)':'var(--border)'}`,
+                          background:waiverPct===pct?'rgba(16,185,129,0.12)':'var(--bg-card2)',
+                          color:waiverPct===pct?'var(--green)':'var(--text-muted)',fontWeight:700,fontSize:12,cursor:'pointer',transition:'all 0.15s'}}>
+                        {pct}% off
+                        {waiverPct===pct && <div style={{fontSize:9,color:'var(--green)',marginTop:2}}>−₹{(penaltyAmt*pct/100).toFixed(0)}</div>}
+                      </button>
+                    ))}
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>Custom:</span>
+                      <input type="number" min="0" max="100" className="form-input" style={{width:70,fontSize:11}} value={waiverPct} onChange={e=>setWaiverPct(Math.min(100,Math.max(0,parseFloat(e.target.value)||0)))}/>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>%</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Notes */}
+            <div>
+              <label className="form-label">Invoice Notes (printed on invoice)</label>
+              <input className="form-input" placeholder="e.g. Includes return deduction, penalty partially waived…" value={notes} onChange={e=>setNotes(e.target.value)}/>
             </div>
 
             {/* Live preview */}
@@ -5768,6 +5827,7 @@
                 <div style={{fontSize:24,fontWeight:800,color:isCredit?'var(--green)':'var(--red)'}}>
                   {isCredit?'↑':'↓'} ₹{Math.abs(preview.netPayable).toFixed(2)}
                 </div>
+                {preview.waiverAmt>0 && <div style={{fontSize:11,color:'var(--green)',marginTop:4}}>includes penalty waiver of ₹{preview.waiverAmt.toFixed(2)}</div>}
                 <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{isCredit?'CROSCROW pays vendor':'Vendor pays CROSCROW'}</div>
               </div>
             )}
@@ -5910,7 +5970,7 @@
       <div className="page">
         {/* Tab switcher */}
         <div style={{display:'flex',gap:0,marginBottom:20,borderBottom:'2px solid var(--border)'}}>
-          {[['delivered','📦 Delivered Orders'],['invoices','🧾 Settlement Invoices'],['gstinv','🧾 GST Invoices']].map(([id,label])=>(
+          {[['delivered','📦 Delivered Orders'],['invoices','🧾 Settlement Invoices'],['gstinv','🧾 GST Invoices'],['uninvoiced','🔴 Uninvoiced Orders']].map(([id,label])=>(
             <button key={id} onClick={()=>setActiveTab(id)}
               style={{padding:'9px 22px',fontSize:12,fontWeight:600,border:'none',background:'transparent',cursor:'pointer',
                 color:activeTab===id?'var(--indigo)':'var(--text-muted)',
@@ -6735,6 +6795,223 @@
             )}
           </div>
         )}
+
+        {/* ── TAB 4: Uninvoiced Delivered Orders ─────────────────────────────── */}
+        {activeTab==='uninvoiced' && (()=>{
+          const now = new Date();
+          const curYear = now.getFullYear();
+          const curMonth = now.getMonth(); // 0-indexed
+          const monthLabel = now.toLocaleString('default',{month:'long',year:'numeric'});
+
+          // Derive uninvoiced orders from summary (already loaded)
+          const vendorRows = (summary?.vendors||[]).map(v => {
+            const uninvoiced = (v.ordersList||[]).filter(o => !o.invoiceNo);
+            if (!uninvoiced.length) return null;
+            const thisMonth = uninvoiced.filter(o => {
+              const d = new Date(o.createdAt);
+              return d.getFullYear()===curYear && d.getMonth()===curMonth;
+            });
+            const older = uninvoiced.filter(o => {
+              const d = new Date(o.createdAt);
+              return !(d.getFullYear()===curYear && d.getMonth()===curMonth);
+            });
+            const grossTotal = uninvoiced.reduce((s,o)=>s+(o.revenue||0),0);
+            const oldestDate = uninvoiced.reduce((min,o)=> new Date(o.createdAt)<new Date(min)?o.createdAt:min, uninvoiced[0].createdAt);
+            const daysOldest = Math.floor((now - new Date(oldestDate)) / 86400000);
+            return { vendor: v.vendor, uninvoiced, thisMonth, older, grossTotal, oldestDate, daysOldest, commissionPct: v.commissionPct };
+          }).filter(Boolean).sort((a,b)=>b.daysOldest-a.daysOldest);
+
+          const totalUninvoiced = vendorRows.reduce((s,r)=>s+r.uninvoiced.length,0);
+          const totalGross      = vendorRows.reduce((s,r)=>s+r.grossTotal,0);
+          const totalOlder      = vendorRows.reduce((s,r)=>s+r.older.length,0);
+          const totalThisMonth  = vendorRows.reduce((s,r)=>s+r.thisMonth.length,0);
+
+          const urgentVendors = vendorRows.filter(r=>r.daysOldest>30).length;
+
+          return (
+            <div>
+              {sumLoading ? (
+                <div style={{textAlign:'center',padding:60,color:'var(--text-dim)'}}>Loading summary…</div>
+              ) : vendorRows.length===0 ? (
+                <div className="card" style={{padding:40,textAlign:'center'}}>
+                  <div style={{fontSize:32,marginBottom:12}}>✅</div>
+                  <div style={{fontSize:14,fontWeight:600,color:'var(--green)',marginBottom:6}}>All delivered orders are invoiced</div>
+                  <div style={{fontSize:12,color:'var(--text-dim)'}}>No uninvoiced delivered orders found across any vendor.</div>
+                </div>
+              ) : (
+                <>
+                  {/* Summary strip */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                    <div className="card" style={{padding:'14px 16px',borderLeft:'3px solid #ef4444',background:'rgba(239,68,68,0.04)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:4}}>Total Uninvoiced</div>
+                      <div style={{fontSize:22,fontWeight:800,color:'#ef4444',fontVariantNumeric:'tabular-nums'}}>{totalUninvoiced}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>orders across {vendorRows.length} vendors</div>
+                    </div>
+                    <div className="card" style={{padding:'14px 16px',borderLeft:'3px solid var(--orange)',background:'rgba(251,146,60,0.04)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:4}}>Older Months</div>
+                      <div style={{fontSize:22,fontWeight:800,color:'var(--orange)',fontVariantNumeric:'tabular-nums'}}>{totalOlder}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>
+                        {urgentVendors>0?<span style={{color:'#ef4444',fontWeight:600}}>⚠ {urgentVendors} vendor{urgentVendors>1?'s':''} &gt;30 days old</span>:'pre-{monthLabel}'}
+                      </div>
+                    </div>
+                    <div className="card" style={{padding:'14px 16px',borderLeft:'3px solid var(--indigo)',background:'rgba(139,92,246,0.04)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:4}}>This Month</div>
+                      <div style={{fontSize:22,fontWeight:800,color:'var(--indigo)',fontVariantNumeric:'tabular-nums'}}>{totalThisMonth}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{monthLabel}</div>
+                    </div>
+                    <div className="card" style={{padding:'14px 16px',borderLeft:'3px solid var(--green)'}}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1.2,marginBottom:4}}>Gross Revenue</div>
+                      <div style={{fontSize:22,fontWeight:800,color:'var(--green)',fontVariantNumeric:'tabular-nums'}}>₹{totalGross.toFixed(0)}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>pending invoicing</div>
+                    </div>
+                  </div>
+
+                  {/* Two-section breakdown: Older first (urgent), then This Month */}
+                  {['older','thisMonth'].map(section => {
+                    const sectionRows = vendorRows.filter(r=>r[section].length>0);
+                    if (!sectionRows.length) return null;
+                    const isOlder = section==='older';
+                    const sectionLabel = isOlder ? `⚠ Older Months — Needs Immediate Attention` : `📅 ${monthLabel}`;
+                    const sectionColor = isOlder ? '#ef4444' : 'var(--indigo)';
+                    return (
+                      <div key={section} style={{marginBottom:24}}>
+                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                          <div style={{fontSize:12,fontWeight:700,color:sectionColor}}>{sectionLabel}</div>
+                          <div style={{fontSize:10,color:'var(--text-dim)',background:isOlder?'rgba(239,68,68,0.1)':'rgba(139,92,246,0.1)',padding:'2px 8px',borderRadius:4,color:sectionColor}}>
+                            {sectionRows.reduce((s,r)=>s+r[section].length,0)} orders · {sectionRows.length} vendors
+                          </div>
+                        </div>
+                        <div style={{overflowX:'auto'}}>
+                          <table className="data-table" style={{fontSize:11}}>
+                            <thead><tr>
+                              <th>Vendor</th>
+                              <th style={{textAlign:'center'}}>Orders</th>
+                              <th style={{textAlign:'center'}}>Oldest</th>
+                              <th style={{textAlign:'right'}}>Gross Revenue</th>
+                              <th style={{textAlign:'right'}}>Est. Net Payable</th>
+                              <th style={{textAlign:'center'}}>Payment Mix</th>
+                              <th></th>
+                            </tr></thead>
+                            <tbody>
+                              {sectionRows.map(r => {
+                                const orders = r[section];
+                                const gross = orders.reduce((s,o)=>s+(o.revenue||0),0);
+                                const commPct = r.commissionPct||20;
+                                const estNet = gross * (1 - commPct/100) * (1 + 0.18 * commPct/100); // approx
+                                const oldestInSection = orders.reduce((min,o)=>new Date(o.createdAt)<new Date(min)?o.createdAt:min, orders[0].createdAt);
+                                const daysOld = Math.floor((now - new Date(oldestInSection))/86400000);
+                                const codCount = orders.filter(o=>o.paymentType!=='prepaid').length;
+                                const prepaidCount = orders.length - codCount;
+                                const urgentAge = daysOld > 30;
+                                return (
+                                  <React.Fragment key={r.vendor+section}>
+                                    <tr onClick={()=>setExpandedV(expandedV===r.vendor+section?null:r.vendor+section)} style={{cursor:'pointer',background:expandedV===r.vendor+section?'var(--bg-hover)':urgentAge?'rgba(239,68,68,0.04)':undefined}}>
+                                      <td>
+                                        <div style={{fontWeight:600,color:'var(--text)'}}>{r.vendor}</div>
+                                        {urgentAge && <div style={{fontSize:9,color:'#ef4444',fontWeight:600,marginTop:2}}>⚠ OVERDUE — {daysOld} days old</div>}
+                                      </td>
+                                      <td style={{textAlign:'center',fontWeight:600,fontVariantNumeric:'tabular-nums'}}>{orders.length}</td>
+                                      <td style={{textAlign:'center'}}>
+                                        <span style={{fontSize:10,color:daysOld>30?'#ef4444':daysOld>14?'var(--orange)':'var(--text-dim)',fontWeight:daysOld>14?600:400}}>
+                                          {daysOld}d ago
+                                        </span>
+                                      </td>
+                                      <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{gross.toFixed(2)}</td>
+                                      <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums',color:'var(--orange)'}}>
+                                        ~₹{Math.abs(estNet).toFixed(0)}
+                                        <div style={{fontSize:9,color:'var(--text-dim)'}}>after {commPct}% comm</div>
+                                      </td>
+                                      <td style={{textAlign:'center',fontSize:10}}>
+                                        {codCount>0&&<span style={{background:'rgba(251,146,60,0.15)',color:'var(--orange)',borderRadius:3,padding:'1px 5px',marginRight:2}}>COD {codCount}</span>}
+                                        {prepaidCount>0&&<span style={{background:'rgba(139,92,246,0.15)',color:'var(--indigo)',borderRadius:3,padding:'1px 5px'}}>PP {prepaidCount}</span>}
+                                      </td>
+                                      <td>
+                                        <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
+                                          <button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();setExpandedV(expandedV===r.vendor+section?null:r.vendor+section)}} style={{fontSize:10}}>
+                                            {expandedV===r.vendor+section?'▲ Hide':'▼ Orders'}
+                                          </button>
+                                          <button className="btn btn-indigo btn-sm" style={{fontSize:10}} onClick={e=>{
+                                            e.stopPropagation();
+                                            setGenVendor(r.vendor);
+                                            setActiveTab('invoices');
+                                          }} title="Go to invoices tab to generate">
+                                            🧾 Invoice
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                    {expandedV===r.vendor+section && (
+                                      <tr>
+                                        <td colSpan={7} style={{padding:0,background:'var(--bg-alt)'}}>
+                                          <div style={{padding:'10px 16px'}}>
+                                            <table style={{width:'100%',fontSize:10,borderCollapse:'collapse'}}>
+                                              <thead>
+                                                <tr style={{borderBottom:'1px solid var(--border)'}}>
+                                                  <th style={{padding:'4px 6px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Order</th>
+                                                  <th style={{padding:'4px 6px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Date</th>
+                                                  <th style={{padding:'4px 6px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Customer</th>
+                                                  <th style={{padding:'4px 6px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Items</th>
+                                                  <th style={{padding:'4px 6px',textAlign:'center',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Type</th>
+                                                  <th style={{padding:'4px 6px',textAlign:'right',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Revenue</th>
+                                                  <th style={{padding:'4px 6px',textAlign:'center',color:'var(--text-muted)',fontWeight:600,letterSpacing:1,fontSize:9,textTransform:'uppercase'}}>Age</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {orders.sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)).map((o,i)=>{
+                                                  const age = Math.floor((now-new Date(o.createdAt))/86400000);
+                                                  const ageColor = age>30?'#ef4444':age>14?'var(--orange)':'var(--text-dim)';
+                                                  return (
+                                                    <tr key={o.orderId} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'transparent':'rgba(0,0,0,0.02)'}}>
+                                                      <td style={{padding:'5px 6px',fontFamily:'monospace',fontWeight:600,color:'var(--indigo)'}}>{o.orderName||o.orderId}</td>
+                                                      <td style={{padding:'5px 6px',color:'var(--text-dim)'}}>{new Date(o.createdAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'})}</td>
+                                                      <td style={{padding:'5px 6px',color:'var(--text)'}}>{o.customer||'—'}</td>
+                                                      <td style={{padding:'5px 6px',color:'var(--text-dim)',maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={(o.items||[]).join(', ')}>{(o.items||[]).join(', ')||'—'}</td>
+                                                      <td style={{padding:'5px 6px',textAlign:'center'}}>
+                                                        <span style={{fontSize:9,fontWeight:600,padding:'2px 5px',borderRadius:3,background:o.paymentType==='prepaid'?'rgba(139,92,246,0.15)':'rgba(251,146,60,0.15)',color:o.paymentType==='prepaid'?'var(--indigo)':'var(--orange)'}}>
+                                                          {o.paymentType==='prepaid'?'PP':'COD'}
+                                                        </span>
+                                                      </td>
+                                                      <td style={{padding:'5px 6px',textAlign:'right',fontVariantNumeric:'tabular-nums',fontWeight:600}}>₹{(o.revenue||0).toFixed(2)}</td>
+                                                      <td style={{padding:'5px 6px',textAlign:'center',color:ageColor,fontWeight:age>14?600:400}}>{age}d</td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                              <tfoot>
+                                                <tr style={{borderTop:'2px solid var(--border)',fontWeight:700}}>
+                                                  <td colSpan={5} style={{padding:'5px 6px',fontSize:10,color:'var(--text-muted)'}}>TOTAL ({orders.length} orders)</td>
+                                                  <td style={{padding:'5px 6px',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{orders.reduce((s,o)=>s+(o.revenue||0),0).toFixed(2)}</td>
+                                                  <td></td>
+                                                </tr>
+                                              </tfoot>
+                                            </table>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot>
+                              <tr style={{fontWeight:700,borderTop:'2px solid var(--border)'}}>
+                                <td style={{padding:'7px 10px'}}>TOTAL</td>
+                                <td style={{textAlign:'center',fontVariantNumeric:'tabular-nums'}}>{sectionRows.reduce((s,r)=>s+r[section].length,0)}</td>
+                                <td></td>
+                                <td style={{textAlign:'right',fontVariantNumeric:'tabular-nums'}}>₹{sectionRows.reduce((s,r)=>s+r[section].reduce((ss,o)=>ss+(o.revenue||0),0),0).toFixed(2)}</td>
+                                <td colSpan={3}></td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Delete confirm */}
         {confirmDel && (
@@ -15402,7 +15679,13 @@
     const [saving,     setSaving]     = useState(false);
     const [msg,        setMsg]        = useState(null);
     const [filterV,    setFilterV]    = useState('all');
-    const [selectedProducts, setSelectedProducts] = useState(new Set()); // multi-select
+    const [selectedProducts, setSelectedProducts] = useState(new Set()); // multi-select for create
+    // ── Bulk select existing rules ─────────────────────────────────────────
+    const [selectedRules, setSelectedRules] = useState(new Set());
+    const [bulkMode,      setBulkMode]      = useState(null); // null | 'edit'
+    const [bulkForm,      setBulkForm]      = useState({ mode:'flat', flat_amount:'', flat_gst_inclusive:true, vendor_cost:'', margin_pct:'', margin_gst_inclusive:true });
+    const [bulkSaving,    setBulkSaving]    = useState(false);
+    const [bulkMsg,       setBulkMsg]       = useState(null);
 
     const load = () => {
       setLoading(true);
@@ -15505,6 +15788,42 @@
       loadProducts(r.vendor_name);
       setMsg(null);
       window.scrollTo({top:0,behavior:'smooth'});
+    };
+
+    const toggleRuleSelect = (id) => setSelectedRules(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+    const bulkDelete = async () => {
+      if (!window.confirm(`Delete ${selectedRules.size} rule${selectedRules.size>1?'s':''}? This cannot be undone.`)) return;
+      setBulkSaving(true);
+      const r = await fetch(`${API}/admin/commission-rules/bulk-delete`, {
+        method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+        body: JSON.stringify({ ids: [...selectedRules] }),
+      });
+      const d = await r.json();
+      setBulkSaving(false);
+      if (r.ok) { setSelectedRules(new Set()); setBulkMsg({type:'success',text:`${d.deleted} rule${d.deleted!==1?'s':''} deleted.`}); load(); }
+      else setBulkMsg({type:'error',text:d.error});
+    };
+
+    const bulkUpdate = async () => {
+      if (!bulkForm.mode) return;
+      setBulkSaving(true); setBulkMsg(null);
+      const r = await fetch(`${API}/admin/commission-rules/bulk-update`, {
+        method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+        body: JSON.stringify({ ids: [...selectedRules], ...bulkForm,
+          flat_amount: parseFloat(bulkForm.flat_amount)||0,
+          vendor_cost: parseFloat(bulkForm.vendor_cost)||0,
+          margin_pct:  parseFloat(bulkForm.margin_pct)||0,
+        }),
+      });
+      const d = await r.json();
+      setBulkSaving(false);
+      if (r.ok) { setSelectedRules(new Set()); setBulkMode(null); setBulkMsg({type:'success',text:`${d.updated} rule${d.updated!==1?'s':''} updated.`}); load(); }
+      else setBulkMsg({type:'error',text:d.error});
     };
 
     const modeColor = m => m==='flat'?'var(--indigo)':m==='margin'?'var(--teal)':'var(--purple)';
@@ -15696,44 +16015,135 @@
         </div>
 
         {/* Rules list */}
-        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
           <span style={{fontSize:12,color:'var(--text-muted)'}}>Filter by vendor:</span>
-          <select className="form-select" style={{width:200}} value={filterV} onChange={e=>setFilterV(e.target.value)}>
+          <select className="form-select" style={{width:200}} value={filterV} onChange={e=>{ setFilterV(e.target.value); setSelectedRules(new Set()); }}>
             <option value="all">All Vendors</option>
             {vendors.map(v=><option key={v} value={v}>{v}</option>)}
           </select>
           <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto'}}>{filteredRules.length} rule{filteredRules.length!==1?'s':''}</span>
+          {filteredRules.length>0 && (
+            <button style={{fontSize:11,padding:'3px 10px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-card2)',color:'var(--text-muted)',cursor:'pointer'}} onClick={()=>{
+              if (selectedRules.size===filteredRules.length) setSelectedRules(new Set());
+              else setSelectedRules(new Set(filteredRules.map(r=>r.id)));
+            }}>
+              {selectedRules.size===filteredRules.length?'Deselect All':'Select All'}
+            </button>
+          )}
         </div>
+
+        {/* Bulk message */}
+        {bulkMsg && <div style={{padding:'8px 12px',borderRadius:6,marginBottom:12,fontSize:12,background:bulkMsg.type==='success'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',color:bulkMsg.type==='success'?'var(--green)':'var(--red)',border:`1px solid ${bulkMsg.type==='success'?'rgba(16,185,129,0.3)':'rgba(239,68,68,0.3)'}`}}>{bulkMsg.text}</div>}
+
+        {/* Floating bulk action bar */}
+        {selectedRules.size > 0 && (
+          <div style={{position:'sticky',top:8,zIndex:10,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:10,padding:'12px 16px',marginBottom:14,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',boxShadow:'0 4px 20px rgba(99,102,241,0.2)'}}>
+            <div style={{fontSize:13,fontWeight:700,color:'var(--indigo)'}}>
+              ✓ {selectedRules.size} rule{selectedRules.size>1?'s':''} selected
+            </div>
+            <div style={{display:'flex',gap:8,marginLeft:'auto'}}>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{ setBulkMode(bulkMode==='edit'?null:'edit'); setBulkMsg(null); }} style={{fontSize:11}}>
+                ✏ Bulk Edit Commission
+              </button>
+              <button className="btn btn-sm" style={{background:'transparent',color:'var(--red)',border:'1px solid rgba(239,68,68,0.4)',fontSize:11}} onClick={bulkDelete} disabled={bulkSaving}>
+                {bulkSaving?'Deleting…':'🗑 Delete Selected'}
+              </button>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>{ setSelectedRules(new Set()); setBulkMode(null); }}>
+                ✕ Clear
+              </button>
+            </div>
+
+            {/* Inline bulk edit form */}
+            {bulkMode==='edit' && (
+              <div style={{width:'100%',marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,marginBottom:10}}>APPLY NEW COMMISSION TO {selectedRules.size} SELECTED RULE{selectedRules.size>1?'S':''}</div>
+                <div style={{display:'flex',gap:8,marginBottom:10}}>
+                  {[{id:'flat',label:'Flat Rate'},{id:'margin',label:'Margin + %'},{id:'mixed',label:'Mixed'}].map(m=>(
+                    <button key={m.id} onClick={()=>setBulkForm(f=>({...f,mode:m.id}))} style={{padding:'6px 14px',borderRadius:6,border:`2px solid ${bulkForm.mode===m.id?modeColor(m.id):'var(--border)'}`,background:bulkForm.mode===m.id?`${modeColor(m.id)}18`:'var(--bg-card2)',color:bulkForm.mode===m.id?modeColor(m.id):'var(--text-muted)',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+                  {(bulkForm.mode==='flat'||bulkForm.mode==='mixed') && (
+                    <>
+                      <div>
+                        <label className="form-label" style={{fontSize:10}}>Flat ₹ / unit</label>
+                        <input className="form-input" type="number" style={{width:110}} placeholder="e.g. 500" value={bulkForm.flat_amount} onChange={e=>setBulkForm(f=>({...f,flat_amount:e.target.value}))}/>
+                      </div>
+                      <div>
+                        <label className="form-label" style={{fontSize:10}}>GST</label>
+                        <select className="form-select" style={{width:110}} value={bulkForm.flat_gst_inclusive?'incl':'excl'} onChange={e=>setBulkForm(f=>({...f,flat_gst_inclusive:e.target.value==='incl'}))}>
+                          <option value="incl">Inclusive</option>
+                          <option value="excl">Exclusive</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  {(bulkForm.mode==='margin'||bulkForm.mode==='mixed') && (
+                    <>
+                      <div>
+                        <label className="form-label" style={{fontSize:10}}>Vendor Cost ₹</label>
+                        <input className="form-input" type="number" style={{width:110}} placeholder="e.g. 1000" value={bulkForm.vendor_cost} onChange={e=>setBulkForm(f=>({...f,vendor_cost:e.target.value}))}/>
+                      </div>
+                      <div>
+                        <label className="form-label" style={{fontSize:10}}>Commission %</label>
+                        <input className="form-input" type="number" style={{width:90}} placeholder="10" value={bulkForm.margin_pct} onChange={e=>setBulkForm(f=>({...f,margin_pct:e.target.value}))}/>
+                      </div>
+                      <div>
+                        <label className="form-label" style={{fontSize:10}}>GST</label>
+                        <select className="form-select" style={{width:110}} value={bulkForm.margin_gst_inclusive?'incl':'excl'} onChange={e=>setBulkForm(f=>({...f,margin_gst_inclusive:e.target.value==='incl'}))}>
+                          <option value="incl">Inclusive</option>
+                          <option value="excl">Exclusive</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  <button className="btn btn-indigo" style={{fontSize:11}} onClick={bulkUpdate} disabled={bulkSaving}>
+                    {bulkSaving?<><span className="spin">↻</span> Updating…</>:`✓ Apply to ${selectedRules.size} Rule${selectedRules.size>1?'s':''}`}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {loading ? <div style={{color:'var(--text-muted)',padding:20}}>Loading…</div>
         : filteredRules.length===0 ? <div style={{background:'var(--bg-card)',borderRadius:10,padding:40,textAlign:'center',color:'var(--text-muted)'}}>No commission rules yet. Create one above.</div>
         : <div style={{display:'flex',flexDirection:'column',gap:10}}>
-            {filteredRules.map(r=>(
-              <div key={r.id} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 18px',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
-                {r.image
-                  ? <img src={r.image} alt={r.title} style={{width:56,height:56,objectFit:'cover',borderRadius:8,flexShrink:0,border:'1px solid var(--border)'}}/>
-                  : <div style={{width:56,height:56,borderRadius:8,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>📦</div>}
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                    <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{r.title||'—'}</span>
-                    <span style={{fontSize:10,padding:'2px 8px',borderRadius:20,background:`${modeColor(r.mode)}18`,color:modeColor(r.mode),border:`1px solid ${modeColor(r.mode)}44`,fontWeight:700}}>{r.mode.toUpperCase()}</span>
+            {filteredRules.map(r=>{
+              const isChecked = selectedRules.has(r.id);
+              return (
+                <div key={r.id} style={{background:isChecked?'rgba(99,102,241,0.04)':'var(--bg-card)',border:`1px solid ${isChecked?'var(--indigo)':'var(--border)'}`,borderRadius:10,padding:'14px 18px',display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',transition:'all 0.15s'}}>
+                  {/* Checkbox */}
+                  <div onClick={()=>toggleRuleSelect(r.id)} style={{width:20,height:20,borderRadius:4,border:`2px solid ${isChecked?'var(--indigo)':'var(--border)'}`,background:isChecked?'var(--indigo)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,transition:'all 0.15s'}}>
+                    {isChecked && <span style={{color:'#fff',fontSize:13,lineHeight:1}}>✓</span>}
                   </div>
-                  <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
-                    <strong style={{color:'var(--text)'}}>{r.vendor_name}</strong>
-                    {r.product_id && <span style={{marginLeft:10,fontFamily:'monospace',color:'var(--indigo)'}}>ID: {r.product_id}</span>}
-                    {r.sku && <span style={{marginLeft:10,color:'var(--text-muted)'}}>SKU: {r.sku}</span>}
+                  {r.image
+                    ? <img src={r.image} alt={r.title} style={{width:56,height:56,objectFit:'cover',borderRadius:8,flexShrink:0,border:'1px solid var(--border)'}}/>
+                    : <div style={{width:56,height:56,borderRadius:8,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>📦</div>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                      <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{r.title||'—'}</span>
+                      <span style={{fontSize:10,padding:'2px 8px',borderRadius:20,background:`${modeColor(r.mode)}18`,color:modeColor(r.mode),border:`1px solid ${modeColor(r.mode)}44`,fontWeight:700}}>{r.mode.toUpperCase()}</span>
+                    </div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
+                      <strong style={{color:'var(--text)'}}>{r.vendor_name}</strong>
+                      {r.product_id && <span style={{marginLeft:10,fontFamily:'monospace',color:'var(--indigo)'}}>ID: {r.product_id}</span>}
+                      {r.sku && <span style={{marginLeft:10,color:'var(--text-muted)'}}>SKU: {r.sku}</span>}
+                    </div>
+                    <div style={{display:'flex',gap:12,fontSize:11,color:'var(--text-muted)',flexWrap:'wrap'}}>
+                      {(r.mode==='flat'||r.mode==='mixed') && <span>Flat: <strong style={{color:'var(--indigo)'}}>₹{r.flat_amount}</strong> {r.flat_gst_inclusive?'(GST incl.)':'(GST excl.)'}</span>}
+                      {(r.mode==='margin'||r.mode==='mixed') && <span>Cost: <strong style={{color:'var(--teal)'}}>₹{r.vendor_cost}</strong> + <strong style={{color:'var(--teal)'}}>{r.margin_pct}%</strong> {r.margin_gst_inclusive?'(GST incl.)':'(GST excl.)'}</span>}
+                    </div>
                   </div>
-                  <div style={{display:'flex',gap:12,fontSize:11,color:'var(--text-muted)',flexWrap:'wrap'}}>
-                    {(r.mode==='flat'||r.mode==='mixed') && <span>Flat: <strong style={{color:'var(--indigo)'}}>₹{r.flat_amount}</strong> {r.flat_gst_inclusive?'(GST incl.)':'(GST excl.)'}</span>}
-                    {(r.mode==='margin'||r.mode==='mixed') && <span>Cost: <strong style={{color:'var(--teal)'}}>₹{r.vendor_cost}</strong> + <strong style={{color:'var(--teal)'}}>{r.margin_pct}%</strong> {r.margin_gst_inclusive?'(GST incl.)':'(GST excl.)'}</span>}
+                  <div style={{display:'flex',gap:8,flexShrink:0}}>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>startEdit(r)}>✏ Edit</button>
+                    <button className="btn btn-sm" style={{background:'transparent',color:'var(--red)',border:'1px solid #374151'}} onClick={()=>del(r.id)}>🗑</button>
                   </div>
                 </div>
-                <div style={{display:'flex',gap:8,flexShrink:0}}>
-                  <button className="btn btn-ghost btn-sm" onClick={()=>startEdit(r)}>✏ Edit</button>
-                  <button className="btn btn-sm" style={{background:'transparent',color:'var(--red)',border:'1px solid #374151'}} onClick={()=>del(r.id)}>🗑</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>}
       </div>
     );

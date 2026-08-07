@@ -700,10 +700,10 @@ function deriveVendorStage(o, vendorName, vStageMap, metaMap) {
 // ── Commission + GST calculation ──────────────────────────────────────────
 const GST_RATE = 0.18;
 
-function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0) {
+function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0, prepaidDiscountPct = 10) {
   const rate = (commPct || 20) / 100;
   let base = myRevenue;
-  if (paymentType === "prepaid") base = myRevenue * 0.9; // vendor gives 10% discount
+  if (paymentType === "prepaid") base = myRevenue * (1 - (prepaidDiscountPct ?? 10) / 100);
 
   const commission = parseFloat((base * rate).toFixed(2));
   const gst        = parseFloat((commission * GST_RATE).toFixed(2));
@@ -8247,27 +8247,37 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
 
   const {
     custom_commission_pct,
-    extra_discount     = 0,
+    extra_discount      = 0,
     shipping_adjustment = 0,
-    extra_advance      = 0,
-    invoice_notes      = "",
+    extra_advance       = 0,
+    invoice_notes       = "",
+    prepaid_discount_pct,  // override the 10% vendor prepaid discount for this invoice
+    penalty_waiver_pct  = 0, // 0-100: % of penalty_deduction to waive
   } = req.body || {};
 
   let orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
 
-  // Recalculate per-order commission if % changed
+  // Recalculate per-order commission if % or prepaid discount % changed
+  const newCommPct  = custom_commission_pct != null ? parseFloat(custom_commission_pct) : null;
+  const newPPDisc   = prepaid_discount_pct  != null ? parseFloat(prepaid_discount_pct)  : null;
+  const needsRecalc = (newCommPct != null && newCommPct !== (s.custom_commission_pct || 0))
+                   || (newPPDisc  != null && newPPDisc  !== (s.prepaid_discount_pct  ?? 10));
+
   let newCommission = s.commission, newGst = s.gst_amount;
-  if (custom_commission_pct != null && parseFloat(custom_commission_pct) !== (s.custom_commission_pct || 0)) {
+  if (needsRecalc) {
+    const commPctToUse   = newCommPct  ?? (s.custom_commission_pct || 20);
+    const ppDiscToUse    = newPPDisc   ?? (s.prepaid_discount_pct  ?? 10);
     newCommission = 0; newGst = 0;
     for (const o of orders) {
-      // advance_paid in settlement_orders is already the split amount (set at generation time)
-      const calc = calcCommission(o.my_revenue, o.payment_type, parseFloat(custom_commission_pct), o.advance_paid);
-      // shipping_charge is COD-only and must be added back — calcCommission doesn't know about shipping
+      const calc = calcCommission(o.my_revenue, o.payment_type, commPctToUse, o.advance_paid, ppDiscToUse);
       const shippingCharge = o.payment_type !== 'prepaid' ? (o.shipping_charge || 0) : 0;
       const newNet = parseFloat((calc.net + shippingCharge).toFixed(2));
       newCommission += calc.commission;
       newGst        += calc.gst;
-      await mdb.collection('settlement_orders').updateOne({ id: o.id }, { $set: { commission_pct: parseFloat(custom_commission_pct), commission: calc.commission, gst: calc.gst, net: newNet } });
+      await mdb.collection('settlement_orders').updateOne(
+        { id: o.id },
+        { $set: { commission_pct: commPctToUse, commission: calc.commission, gst: calc.gst, net: newNet } }
+      );
     }
     orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
     newCommission = parseFloat(newCommission.toFixed(2));
@@ -8275,11 +8285,14 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   }
 
   const baseNet = orders.reduce((sum, o) => sum + (o.net || 0), 0);
-  // penalty_deduction is already baked into net_payable — re-apply it after recalculation
+  // penalty_deduction is already baked into net_payable — re-apply after recalculation then subtract waiver
   const existingPenalty = s.penalty_deduction || 0;
+  const waiverPct    = Math.min(100, Math.max(0, parseFloat(penalty_waiver_pct) || 0));
+  const waiverAmount = parseFloat((existingPenalty * waiverPct / 100).toFixed(2));
   const adjustedNet = parseFloat((
     baseNet
     + existingPenalty
+    - waiverAmount
     - parseFloat(extra_discount || 0)
     - parseFloat(extra_advance  || 0)
     + parseFloat(shipping_adjustment || 0)
@@ -8287,16 +8300,19 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
 
   await mdb.collection('settlements').updateOne({ id: sid }, { $set: {
     commission: newCommission, gst_amount: newGst,
-    extra_discount: parseFloat(extra_discount||0),
+    extra_discount:      parseFloat(extra_discount||0),
     shipping_adjustment: parseFloat(shipping_adjustment||0),
-    extra_advance: parseFloat(extra_advance||0),
-    invoice_notes: invoice_notes || "",
-    custom_commission_pct: custom_commission_pct != null ? parseFloat(custom_commission_pct) : null,
+    extra_advance:       parseFloat(extra_advance||0),
+    invoice_notes:       invoice_notes || "",
+    custom_commission_pct: newCommPct ?? s.custom_commission_pct ?? null,
+    prepaid_discount_pct:  newPPDisc  ?? s.prepaid_discount_pct  ?? null,
+    penalty_waiver_pct:  waiverPct,
+    penalty_waiver_amount: waiverAmount,
     net_payable: adjustedNet,
   }});
 
   auditLog("admin", "settlement_edited", req.params.id, req.body);
-  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst });
+  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount });
 });
 
 // ── PUT /admin/settlements/:id/mark-paid ──────────────────────────────────
@@ -9966,6 +9982,35 @@ app.put("/admin/commission-rules/:id", adminAuth, async (req, res) => {
 app.delete("/admin/commission-rules/:id", adminAuth, async (req, res) => {
   await mdb.collection('product_commission_rules').deleteOne({ id: parseInt(req.params.id) });
   res.json({ ok: true });
+});
+
+// ── Bulk delete commission rules ──────────────────────────────────────────
+app.post("/admin/commission-rules/bulk-delete", adminAuth, async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+  const numIds = ids.map(Number).filter(n => !isNaN(n));
+  const result = await mdb.collection('product_commission_rules').deleteMany({ id: { $in: numIds } });
+  res.json({ ok: true, deleted: result.deletedCount });
+});
+
+// ── Bulk update commission rules ──────────────────────────────────────────
+app.post("/admin/commission-rules/bulk-update", adminAuth, async (req, res) => {
+  const { ids, mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+  if (!mode) return res.status(400).json({ error: 'mode required' });
+  const numIds = ids.map(Number).filter(n => !isNaN(n));
+  const $set = { mode };
+  if (mode === 'flat' || mode === 'mixed') {
+    $set.flat_amount = parseFloat(flat_amount) || 0;
+    $set.flat_gst_inclusive = flat_gst_inclusive !== false;
+  }
+  if (mode === 'margin' || mode === 'mixed') {
+    $set.vendor_cost = parseFloat(vendor_cost) || 0;
+    $set.margin_pct  = parseFloat(margin_pct) || 0;
+    $set.margin_gst_inclusive = margin_gst_inclusive !== false;
+  }
+  const result = await mdb.collection('product_commission_rules').updateMany({ id: { $in: numIds } }, { $set });
+  res.json({ ok: true, updated: result.modifiedCount });
 });
 
 app.get("/admin/shipping-creds", requirePermission('orders'), async (req, res) => {
@@ -18653,7 +18698,7 @@ app.post("/track/request", async (req, res) => {
       payment_id: payment_id || null,
       razorpay_order_id: razorpay_order_id || null,
       fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
-      image_urls: Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && u.startsWith('/rr-uploads/')) : [],
+      image_urls: Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && (u.startsWith('/rr-uploads/') || u.startsWith('/uploads/'))) : [],
       ...(isFeeWaived && { fee_waived_by_admin: true }),
       ...(isForceEnabled && { force_enabled_by_admin: true }),
     };
