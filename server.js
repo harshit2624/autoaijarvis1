@@ -23670,7 +23670,8 @@ async function createSupportTicket(chat, contextNote) {
   if (existing) return existing;
   const category = scTicketCategory(chat);
   const allMsgs = await SC.messages(chat._id).catch(() => []);
-  const lastCust = allMsgs.filter(m => m.sender === 'customer').slice(-1)[0]?.text || '';
+  const custMsgs = allMsgs.filter(m => m.sender === 'customer').slice(-5);
+  const lastCust = custMsgs.map(m => (m.text || '').slice(0, 200)).join(' | ');
   const now = new Date().toISOString();
   const slaDeadline = new Date(Date.now() + 8 * 3600000).toISOString(); // 8h SLA
   const r = await mdb.collection('support_tickets').insertOne({
@@ -23680,7 +23681,7 @@ async function createSupportTicket(chat, contextNote) {
     issue_category: category,
     context_tags: chat.tags || [],
     context_note: contextNote || '',
-    last_customer_msg: lastCust.slice(0, 300),
+    last_customer_msg: lastCust.slice(0, 800),
     status: 'open',
     assigned_to: null,
     sla_deadline: slaDeadline,
@@ -23896,7 +23897,14 @@ _CROSCROW Ops_`;
 }
 setInterval(dispatchAlertCron, 2 * 60 * 60 * 1000); // every 2h
 
-async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerMsg = true, forceMsg = false } = {}) {
+function isAngryMessage(text) {
+  if (!text) return false;
+  // Detect all-caps frustration (5+ consecutive uppercase words)
+  if (/([A-Z]{3,}\s+){2,}[A-Z]{3,}/.test(text)) return true;
+  return /\b(fraud|scam|scammer|cheater|cheat|cheat|worst|pathetic|useless|ridiculous|disgusting|terrible|horrible|unacceptable|legal action|consumer court|police complaint|sue|lawsuit|immediately|money back|furious|outraged|harassment|blasting|viral|1 star|zero star|0 star|one star|social media|twitter|instagram|very angry|so angry|fed up|had enough|refund.*now|now.*refund|cancel.*immediately|this is a scam|such a scam|will.*complain|going to complain|gonna complain|review.*bad|bad.*review)\b/i.test(text);
+}
+
+async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerMsg = true, forceMsg = false, humanRequested = true } = {}) {
   const _hci = await waLookupCustomer(phone === 'unknown' ? '' : phone);
   const _hPhone = phone !== 'unknown' ? `+91${phone}` : (_hci.order_name ? `LID — Order ${_hci.order_name}` : null);
 
@@ -23907,33 +23915,51 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
     ? '\n\n💬 *Last messages:*\n' + _lastMsgs.map(m => `"${(m.text || '').slice(0, 120)}"`).join('\n')
     : '';
 
+  // Detect anger in last customer message even for bot-triggered escalations
+  const _lastCustomerText = _lastMsgs.length ? (_lastMsgs[_lastMsgs.length - 1]?.text || '') : '';
+  const _isAngry = isAngryMessage(_lastCustomerText);
+  const _shouldTicket = humanRequested || _isAngry;
+
   const _panelLink = `https://dashboard.croscrow.com/admin#supporttickets`;
   const _nameStr = _hci.name ? `Name: *${_hci.name}*\n` : '';
   const _phoneStr = _hPhone ? `Phone: ${_hPhone}\n` : '';
   const _orderStr = _hci.order_name ? `Order: *${_hci.order_name}*\n` : '';
   const _category = TICKET_CATEGORY_LABELS[scTicketCategory(chat)] || '💬 Query';
 
-  // Create ticket first so WA alert includes ticket context
-  const ticket = await createSupportTicket(chat, context).catch(() => null);
+  if (_shouldTicket) {
+    // Human explicitly requested or angry customer — create ticket + transfer
+    // Build enriched context note from last customer messages so ticket has real query reason
+    const _querySummary = _lastMsgs.length
+      ? '\nQuery: ' + _lastMsgs.map(m => `"${(m.text || '').slice(0, 150)}"`).join(' → ')
+      : '';
+    await createSupportTicket(chat, context + _querySummary).catch(() => null);
+    const _angryTag = _isAngry && !humanRequested ? ' ⚠️ *Angry customer detected*' : '';
+    await waAdminAlert(`🎫 *New Support Ticket*\n${_category}\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_angryTag}${_chatSnippet}\nSLA: 8 hours\n\n🔗 ${_panelLink}`, 'support_escalation');
 
-  await waAdminAlert(`🎫 *New Support Ticket*\n${_category}\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\nSLA: 8 hours\n\n🔗 ${_panelLink}`, 'support_escalation');
+    const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
+    const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
+    if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
+      const nowHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours();
+      const offHours = nowHour < 14 || nowHour >= 20;
+      const msg = WA_MENUS.support_queue(offHours);
+      await sock.sendMessage(sender, { text: msg });
+      await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
+    }
 
-  // Only send the customer-facing message if this is a fresh escalation (not already done recently)
-  const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
-  const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
-  if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
-    const nowHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours();
-    const offHours = nowHour < 14 || nowHour >= 20;
-    const msg = WA_MENUS.support_queue(offHours);
-    await sock.sendMessage(sender, { text: msg });
-    await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
+    const pauseUntil = Date.now() + 4 * 60 * 60 * 1000;
+    await mdb.collection('support_chats').updateOne(
+      { _id: chat._id },
+      { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, last_escalated_at: new Date().toISOString(), confused_count: 0, updated_at: new Date().toISOString() } }
+    );
+  } else {
+    // Bot-triggered escalation, customer not angry — alert admin silently, auto-resolve chat
+    await waAdminAlert(`🔔 *Bot Escalation (auto-resolved)*\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`, 'support_escalation');
+    await mdb.collection('support_chats').updateOne(
+      { _id: chat._id },
+      { $set: { status: 'resolved', confused_count: 0, updated_at: new Date().toISOString() } }
+    );
   }
 
-  const pauseUntil = Date.now() + 4 * 60 * 60 * 1000; // 4h pause (not 24h — cron re-enables after)
-  await mdb.collection('support_chats').updateOne(
-    { _id: chat._id },
-    { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, last_escalated_at: new Date().toISOString(), confused_count: 0, updated_at: new Date().toISOString() } }
-  );
   await waSessionClear(sender);
 }
 
@@ -25095,7 +25121,7 @@ async function startBaileysBot() {
             // needsAdmin only = bot already told customer it's flagged, just alert admin silently
             // botCantHelp = bot explicitly said it can't help, send handoff message too
             if (needsAdmin || botCantHelp) {
-              await waTalkToHuman(sock, sender, chat, phone, `Order ${meta.data?.order_name || ''} — bot flagged escalation: needsAdmin=${needsAdmin} botCantHelp=${botCantHelp}`, { sendCustomerMsg: botCantHelp });
+              await waTalkToHuman(sock, sender, chat, phone, `Order ${meta.data?.order_name || ''} — bot flagged escalation: needsAdmin=${needsAdmin} botCantHelp=${botCantHelp}`, { sendCustomerMsg: botCantHelp, humanRequested: false });
               waPending.delete(sender);
               continue;
             }
@@ -25118,7 +25144,7 @@ async function startBaileysBot() {
 
           if (botCantHelp) {
             await saveAndSend(reply, meta);
-            await waTalkToHuman(sock, sender, chat, phone, `Bot couldn't help — handing off`, { sendCustomerMsg: true });
+            await waTalkToHuman(sock, sender, chat, phone, `Bot couldn't help — handing off`, { sendCustomerMsg: true, humanRequested: false });
             waPending.delete(sender);
             continue;
           }
