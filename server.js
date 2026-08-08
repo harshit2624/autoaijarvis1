@@ -2539,22 +2539,26 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
 // ── Neon customer email wrapper ───────────────────────────────────────────
 function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '', imgUrl = '', bannerHeight = '' }) {
   const LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
-  const IMG  = imgUrl || 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png';
+  const IMG  = imgUrl || 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
 <div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;border:0;height:auto;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('${IMG}') top center/cover no-repeat;min-height:420px;">
+    <tr><td style="vertical-align:bottom;padding:22px 28px;min-height:420px;">
+      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:8px;">&#11044; ${stageLabel}</div>
+      <div style="font-size:28px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">${stageHeadline}</div>
+    </td></tr>
+  </table>
 
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
-      <td style="padding:14px 28px;">
-        <div style="font-size:7px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:6px;">&#11044; ${stageLabel}</div>
-        <div style="font-size:22px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">${stageHeadline}</div>
+      <td style="padding:16px 28px;">
+        <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">${orderName}</div>
       </td>
-      <td style="padding:14px 28px;text-align:right;vertical-align:top;">
-        <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">${orderName}</div>
+      <td style="padding:16px 28px;text-align:right;">
+        <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
         <div style="font-size:18px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;${orderTotal}</div>
       </td>
     </tr>
