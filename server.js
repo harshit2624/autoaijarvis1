@@ -2057,37 +2057,13 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
     </table>`;
   }).join('');
 
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;background:#fff;">
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
-    <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Order Confirmed</div>
-      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOU'RE IN.<br>WE'VE GOT YOU.</div>
-    </td></tr>
-  </table>
-
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
-    <tr>
-      <td style="padding:16px 28px;">
-        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
-      </td>
-      <td style="padding:16px 28px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">Total</div>
-        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${total.toFixed(2)}</div>
-      </td>
-    </tr>
-  </table>
-
-  <div style="background:#fff;padding:28px;">
+  const confirmedBody = `
     <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
     <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is confirmed and in the hands of our vendor. We'll update you the moment it ships.</div>
 
     ${isPrepaid
-      ? `<div style="background:#f0f3ff;border-left:3px solid #002eff;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#1a2a6e;line-height:1.7;">Payment received &#10003; — No action needed. Sit back and relax.</div>`
-      : `<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e;line-height:1.7;">COD — Please keep <strong>&#8377;${total.toFixed(2)}</strong> ready at the time of delivery. Exact change preferred.</div>`}
+      ? \`<div style="background:#f0f3ff;border-left:3px solid #002eff;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#1a2a6e;line-height:1.7;">Payment received &#10003; — No action needed. Sit back and relax.</div>\`
+      : \`<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e;line-height:1.7;">COD — Please keep <strong>&#8377;${total.toFixed(2)}</strong> ready at the time of delivery. Exact change preferred.</div>\`}
 
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
@@ -2101,24 +2077,13 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
 
     <a href="https://dashboard.croscrow.com/o/${order.name.replace('#','')}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
 
-    ${addr ? `
+    ${addr ? \`
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-bottom:4px;">
       <tr style="border-bottom:1px solid #f5f5f5;"><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:35%;vertical-align:top;">Ship to</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#111;vertical-align:top;">${addr.name}</td></tr>
       <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">Address</td><td style="padding:10px 16px;font-size:12px;color:#111;vertical-align:top;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</td></tr>
-    </table>` : ''}
-  </div>
-
-  ${adsStrip}
-
-  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
-    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
-    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
-  </div>
-
-</div>
-</body></html>`;
+    </table>\` : ''}
+  `;
+  return neonEmailBase({ stageLabel: 'ORDER CONFIRMED', stageColor: '#002eff', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip });
 }
 
 function itemsTableHtml(lineItems, showVendor = false) {
@@ -2570,6 +2535,62 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   `);
 }
 
+
+// ── Neon customer email wrapper ───────────────────────────────────────────
+function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '' }) {
+  const LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#08000f;font-family:Arial,Helvetica,sans-serif;">
+<div style="max-width:600px;margin:0 auto;background:#08000f;">
+
+  <div style="padding:9px 0;text-align:center;font-size:7px;letter-spacing:5px;color:rgba(255,255,255,0.15);text-transform:uppercase;font-family:Arial;">EST. 2024 &nbsp;&#183;&nbsp; INDIA &nbsp;&#183;&nbsp; 60+ BRANDS</div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr><td style="padding:0 20px 16px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:2px solid rgba(0,46,255,0.45);">
+        <tr><td style="padding:30px 20px;text-align:center;">
+          <div style="font-family:Impact,'Arial Black',Arial,sans-serif;font-size:80px;font-weight:900;color:#fff;letter-spacing:-2px;line-height:1;text-transform:uppercase;text-shadow:0 0 7px #fff,0 0 14px #fff,0 0 28px #002eff,0 0 56px #002eff;">CROSCROW</div>
+          <div style="height:2px;background:#002eff;margin:14px auto;width:80%;"></div>
+          <div style="font-size:9px;letter-spacing:6px;color:rgba(255,255,255,0.5);text-transform:uppercase;font-family:Arial;">60+ HOMEGROWN BRANDS</div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+
+  <div style="text-align:center;padding-bottom:18px;">
+    <div style="display:inline-block;border:1px solid \${stageColor};padding:6px 22px;font-size:8px;letter-spacing:4px;color:\${stageColor};text-transform:uppercase;font-family:Arial;">&#9679; \${stageLabel}</div>
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#04000a;border-top:2px solid \${stageColor};">
+    <tr>
+      <td style="padding:14px 28px;">
+        <div style="font-family:'Courier New',Courier,monospace;font-size:26px;font-weight:900;color:#fff;letter-spacing:1px;">\${orderName}</div>
+      </td>
+      <td style="padding:14px 28px;text-align:right;">
+        <div style="font-size:7px;letter-spacing:3px;color:#444;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
+        <div style="font-family:'Courier New',Courier,monospace;font-size:18px;font-weight:900;color:\${stageColor};">&#8377;\${orderTotal}</div>
+      </td>
+    </tr>
+  </table>
+
+  <div style="background:#fff;padding:28px;">
+    \${bodyHtml}
+  </div>
+
+  \${adsStrip}
+
+  <div style="background:#04000a;padding:20px 28px;text-align:center;border-top:1px solid #111;">
+    <img src="\${LOGO}" width="120" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;">
+    <div style="font-size:10px;color:#444;line-height:1.8;font-family:Arial;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:8px;color:#333;margin-top:10px;letter-spacing:2px;text-transform:uppercase;font-family:Arial;">&#169; CROSCROW &middot; Do Not Reply</div>
+    <div style="font-size:8px;color:#333;margin-top:5px;font-family:Arial;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
 // Resolve the best tracking URL (courier-specific or CROSCROW order page)
 function resolveTrackUrl(trackingUrl, awb, courier, orderName = '') {
   const c = (courier || '').toLowerCase();
@@ -2641,32 +2662,7 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
     </table>`;
   }).join('');
 
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;background:#fff;">
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
-    <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Shipped · In Transit</div>
-      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS MOVING.</div>
-    </td></tr>
-  </table>
-
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
-    <tr>
-      <td style="padding:16px 28px;">
-        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
-      </td>
-      <td style="padding:16px 28px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">${isPrepaid ? 'Paid' : 'COD Due'}</div>
-        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
-        ${isPrepaid ? '<div style="font-size:10px;color:#10b981;margin-top:2px;font-weight:600;">&#10003; Fully Paid</div>' : advancePaid > 0 ? `<div style="font-size:10px;color:#888;margin-top:2px;">Advance: &#8377;${advancePaid.toFixed(2)}</div>` : ''}
-      </td>
-    </tr>
-  </table>
-
-  <div style="background:#fff;padding:28px;">
+  const transitBody = `
     <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
     <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has shipped. ETA 3–7 business days.${!isPrepaid && codPending > 0 ? ` Keep <strong style="color:#111;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
 
@@ -2696,19 +2692,8 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
         <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
       </tr>
     </table>
-  </div>
-
-  ${adsStrip}
-
-  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
-    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
-    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
-  </div>
-
-</div>
-</body></html>`;
+  `;
+  return neonEmailBase({ stageLabel: 'IN TRANSIT', stageColor: '#002eff', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: transitBody, adsStrip });
 }
 
 function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStrip = '' }) {
@@ -2743,31 +2728,7 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
     </table>`;
   }).join('');
 
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;background:#fff;">
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
-    <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#fca5a5;text-transform:uppercase;margin-bottom:6px;">&#11044; Arriving Today</div>
-      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">GET READY<br>TO DRIP HARD.</div>
-    </td></tr>
-  </table>
-
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
-    <tr>
-      <td style="padding:16px 28px;">
-        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
-      </td>
-      <td style="padding:16px 28px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">${isPrepaid ? 'Paid' : 'Keep Ready'}</div>
-        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
-      </td>
-    </tr>
-  </table>
-
-  <div style="background:#fff;padding:28px;">
+  const ofdBody = `
     <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
     <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is out for delivery today. Stay reachable — the delivery agent will call before arriving.</div>
 
@@ -2787,25 +2748,15 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border-top:2px solid #002eff;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border-top:2px solid #ef4444;">
       <tr>
         <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
         <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
       </tr>
     </table>
-  </div>
-
-  ${adsStrip}
-
-  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
-    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
-    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
-  </div>
-
-</div>
-</body></html>`;
+  `;
+  const ofdAmt = isPrepaid ? total.toFixed(2) : codPending.toFixed(2);
+  return neonEmailBase({ stageLabel: 'OUT FOR DELIVERY', stageColor: '#ef4444', orderName: order.name, orderTotal: ofdAmt, bodyHtml: ofdBody, adsStrip });
 }
 
 function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl, adsStrip = '' }) {
@@ -2971,31 +2922,7 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
     </table>`;
   }).join('');
 
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;background:#fff;">
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
-    <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#86efac;text-transform:uppercase;margin-bottom:6px;">&#11044; Delivered · Thank You</div>
-      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
-    </td></tr>
-  </table>
-
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
-    <tr>
-      <td style="padding:16px 28px;">
-        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
-      </td>
-      <td style="padding:16px 28px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">Total</div>
-        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${total.toFixed(2)}</div>
-      </td>
-    </tr>
-  </table>
-
-  <div style="background:#fff;padding:28px;">
+  const deliveredBody = `
     <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
     <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has been delivered! We hope you love your new pieces. Rock it. 🖤</div>
 
@@ -3013,7 +2940,7 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #002eff;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #16a34a;">
       <tr>
         <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
         <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
@@ -3022,19 +2949,8 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
 
     <p style="font-size:12px;color:#999;margin-bottom:16px;line-height:1.7;">Any issues with your order? Reply to this email or reach us on WhatsApp.</p>
     ${awb || trackingUrl ? trackButton(trackingUrl, awb, courier, 'View Order Details →') : ''}
-  </div>
-
-  ${adsStrip}
-
-  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
-    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
-    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
-  </div>
-
-</div>
-</body></html>`;
+  `;
+  return neonEmailBase({ stageLabel: 'DELIVERED', stageColor: '#16a34a', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: deliveredBody, adsStrip });
 }
 
 function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
