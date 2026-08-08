@@ -2083,7 +2083,7 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
       <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">Address</td><td style="padding:10px 16px;font-size:12px;color:#111;vertical-align:top;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</td></tr>
     </table>` : ''}
   `;
-  return neonEmailBase({ stageLabel: 'Order Confirmed', stageColor: '#99b3ff', stageHeadline: "YOU'RE IN.<br>WE'VE GOT YOU.", orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Order Confirmed', stageColor: '#99b3ff', stageHeadline: "YOU'RE IN.<br>WE'VE GOT YOU.", orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip, trackUrl: `https://dashboard.croscrow.com/o/${order.name.replace('#','')}` });
 }
 
 function itemsTableHtml(lineItems, showVendor = false) {
@@ -2537,47 +2537,55 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
 
 
 // ── Neon customer email wrapper ───────────────────────────────────────────
-function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '', imgUrl = '', bannerHeight = '' }) {
+function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '', imgUrl = '', bannerHeight = '', trackUrl = '' }) {
   const LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
   const IMG  = imgUrl || 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
+  const TRACK = trackUrl || '';
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
-<div style="max-width:600px;margin:0 auto;background:#fff;">
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"></head>
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:#fff;" class="email-wrap">
 
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('${IMG}') top center/cover no-repeat;min-height:420px;">
-    <tr><td style="vertical-align:bottom;padding:22px 28px;min-height:420px;">
-      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:8px;">&#11044; ${stageLabel}</div>
-      <div style="font-size:28px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">${stageHeadline}</div>
+  <tr><td style="padding:0;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('${IMG}') top center/cover no-repeat;height:420px;">
+    <tr><td style="vertical-align:bottom;padding:22px 20px;height:420px;">
+      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">&#11044; ${stageLabel}</div>
+      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;margin-bottom:14px;">${stageHeadline}</div>
+      ${TRACK ? `<a href="${TRACK}" target="_blank" style="display:inline-block;background:#002eff;color:#fff;font-size:9px;font-weight:900;letter-spacing:3px;text-transform:uppercase;padding:9px 20px;text-decoration:none;font-family:Arial,sans-serif;">TRACK LIVE &#8594;</a>` : ''}
     </td></tr>
   </table>
+  </td></tr>
 
+  <tr><td style="padding:0;">
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
-      <td style="padding:16px 28px;">
-        <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">${orderName}</div>
+      <td style="padding:14px 20px;">
+        <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">${orderName}</div>
       </td>
-      <td style="padding:16px 28px;text-align:right;">
+      <td style="padding:14px 20px;text-align:right;">
         <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
-        <div style="font-size:18px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;${orderTotal}</div>
+        <div style="font-size:17px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;${orderTotal}</div>
       </td>
     </tr>
   </table>
+  </td></tr>
 
-  <div style="background:#fff;padding:28px;">
+  <tr><td style="padding:20px;">
     ${bodyHtml}
-  </div>
+  </td></tr>
 
-  ${adsStrip}
+  ${adsStrip ? `<tr><td style="padding:0;">${adsStrip}</td></tr>` : ''}
 
-  <div style="background:#111;padding:20px 28px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="120" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+  <tr><td style="background:#111;padding:20px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="110" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
     <div style="font-size:10px;color:#555;line-height:1.8;font-family:Arial;">Questions? Reach us on WhatsApp or reply to this email.</div>
     <div style="font-size:8px;color:#333;margin-top:10px;letter-spacing:2px;text-transform:uppercase;font-family:Arial;">&#169; CROSCROW &middot; Do Not Reply</div>
     <div style="font-size:8px;color:#444;margin-top:5px;font-family:Arial;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
-  </div>
+  </td></tr>
 
-</div>
+</table>
+</td></tr></table>
 </body></html>`;
 }
 
@@ -2683,7 +2691,7 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
       </tr>
     </table>
   `;
-  return neonEmailBase({ stageLabel: 'Shipped · In Transit', stageColor: '#99b3ff', stageHeadline: 'YOUR ORDER<br>IS MOVING.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: transitBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Shipped · In Transit', stageColor: '#99b3ff', stageHeadline: 'YOUR ORDER<br>IS MOVING.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: transitBody, adsStrip, trackUrl: resolveTrackUrl(trackingUrl, awb, courier, order.name) });
 }
 
 function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStrip = '' }) {
@@ -2746,7 +2754,7 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
     </table>
   `;
   const ofdAmt = isPrepaid ? total.toFixed(2) : codPending.toFixed(2);
-  return neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: order.name, orderTotal: ofdAmt, bodyHtml: ofdBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: order.name, orderTotal: ofdAmt, bodyHtml: ofdBody, adsStrip, trackUrl: resolveTrackUrl(trackingUrl, awb, courier, order.name) });
 }
 
 function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl, adsStrip = '' }) {
@@ -2940,7 +2948,7 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
     <p style="font-size:12px;color:#999;margin-bottom:16px;line-height:1.7;">Any issues with your order? Reply to this email or reach us on WhatsApp.</p>
     ${awb || trackingUrl ? trackButton(trackingUrl, awb, courier, 'View Order Details →') : ''}
   `;
-  return neonEmailBase({ stageLabel: 'Delivered · Thank You', stageColor: '#86efac', stageHeadline: 'YOUR DRIP<br>HAS ARRIVED.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: deliveredBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Delivered · Thank You', stageColor: '#86efac', stageHeadline: 'YOUR DRIP<br>HAS ARRIVED.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: deliveredBody, adsStrip, trackUrl: `https://dashboard.croscrow.com/o/${order.name.replace('#','')}` });
 }
 
 function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
