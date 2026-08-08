@@ -2545,7 +2545,7 @@ function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml
 <body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
 <div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <div style="overflow:hidden;${bannerHeight ? `max-height:${bannerHeight};` : ''}"><img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;border:0;height:auto;"></div>
+  <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;border:0;height:auto;">
 
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
@@ -8486,9 +8486,9 @@ function buildDemoTemplates(to, adsStrip = '') {
     rr_vendor_new:      { subject: `New Return/Exchange for Your Order — ${demoRR.request_id}`, html: templateRRSubmittedVendor({ req: demoRR }) },
     rr_vendor_approved: { subject: `Return/Exchange Approved — Arrange Pickup — ${demoRR.request_id}`, html: templateRRApprovedVendor({ req: demoRR }) },
     // banner comparison tests
-    test_banner_a: { subject: `[BANNER A] Portrait 600x450`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner A — portrait image 600×450</p>', adsStrip, imgUrl: 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg', bannerHeight: '450px' }) },
-    test_banner_b: { subject: `[BANNER B] Portrait natural height`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner B — portrait image, full natural height</p>', adsStrip, imgUrl: 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg' }) },
-    test_banner_c: { subject: `[BANNER C] Current landscape 300px`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner C — current landscape banner for comparison</p>', adsStrip, imgUrl: 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png' }) },
+    test_banner_a: { subject: `[BANNER A] Portrait model full height`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner A — portrait model image, full height</p>', adsStrip, imgUrl: 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg' }) },
+    test_banner_b: { subject: `[BANNER B] Single model landscape`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner B — single model landscape (current)</p>', adsStrip, imgUrl: 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png' }) },
+    test_banner_c: { subject: `[BANNER C] Old 3-model panoramic`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner C — old 3-model panoramic</p>', adsStrip, imgUrl: 'https://i.ibb.co/JwPtg3cB/Untitled-6000-x-3000-px.png' }) },
   };
 }
 
