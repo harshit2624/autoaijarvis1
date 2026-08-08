@@ -2545,33 +2545,33 @@ function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml
 <body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
 <div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('\${IMG}') top center/cover no-repeat;height:300px;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('${IMG}') top center/cover no-repeat;height:300px;">
     <tr><td style="vertical-align:bottom;padding:22px 28px;height:300px;">
-      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:\${stageColor};text-transform:uppercase;margin-bottom:8px;">&#11044; \${stageLabel}</div>
-      <div style="font-size:28px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">\${stageHeadline}</div>
+      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:8px;">&#11044; ${stageLabel}</div>
+      <div style="font-size:28px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">${stageHeadline}</div>
     </td></tr>
   </table>
 
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
       <td style="padding:16px 28px;">
-        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">\${orderName}</div>
+        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">${orderName}</div>
       </td>
       <td style="padding:16px 28px;text-align:right;">
         <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
-        <div style="font-size:18px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;\${orderTotal}</div>
+        <div style="font-size:18px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;${orderTotal}</div>
       </td>
     </tr>
   </table>
 
   <div style="background:#fff;padding:28px;">
-    \${bodyHtml}
+    ${bodyHtml}
   </div>
 
-  \${adsStrip}
+  ${adsStrip}
 
   <div style="background:#111;padding:20px 28px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="\${LOGO}" width="120" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+    <img src="${LOGO}" width="120" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
     <div style="font-size:10px;color:#555;line-height:1.8;font-family:Arial;">Questions? Reach us on WhatsApp or reply to this email.</div>
     <div style="font-size:8px;color:#333;margin-top:10px;letter-spacing:2px;text-transform:uppercase;font-family:Arial;">&#169; CROSCROW &middot; Do Not Reply</div>
     <div style="font-size:8px;color:#444;margin-top:5px;font-family:Arial;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
