@@ -2539,7 +2539,7 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
 // ── Neon customer email wrapper ───────────────────────────────────────────
 function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '' }) {
   const LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
-  const IMG  = 'https://i.ibb.co/JwPtg3cB/Untitled-6000-x-3000-px.png';
+  const IMG  = 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png';
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
