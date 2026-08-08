@@ -3464,6 +3464,17 @@ async function fireStageEmails(shopifyId, newStage) {
 
     if (newStage === 'transit') {
       if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, meta, adsStrip }), shopifyId, trigger: 'transit' });
+      // WA notification to customer on shipment
+      const _custPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (_custPhone && waSocket && waConnected) {
+        const _Ft = '```';
+        const _orderNum = String(order.name).replace(/^#/, '');
+        const _trackUrl = `${SERVER_URL}/o/${encodeURIComponent(_orderNum)}`;
+        const _awbLine = meta.awb ? `AWB    ${meta.awb}\n` : '';
+        const _viaLine = meta.courier ? `VIA    ${meta.courier}\n` : '';
+        const _waShipped = `${_Ft}\n▪ C R O S C R O W ▪\nORDER SHIPPED 🚚\n────────────────\nORDER  ${order.name}\n${_awbLine}${_viaLine}────────────────\nTRACK YOUR ORDER\n${_trackUrl}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Ft}`;
+        await waSocket.sendMessage(`91${_custPhone}@s.whatsapp.net`, { text: _waShipped }).catch(e => console.error('WA transit notify error:', e.message));
+      }
     }
 
     if (newStage === 'ofd') {
