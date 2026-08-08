@@ -21220,10 +21220,10 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
       `${F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${F}`,
 
       // 25. support queue (in hours)
-      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${F}`,
 
       // 26. support queue (off hours)
-      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${F}`,
     ];
 
     for (const t of templates) await send(t);
@@ -24059,8 +24059,8 @@ const WA_MENUS = {
     `${_F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${_F}`,
 
   support_queue: (offHours = false) => offHours
-    ? `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${_F}`
-    : `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nSEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED\n${_F}`,
+    ? `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`
+    : `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`,
 };
 
 // ── Handle numbered menu reply ─────────────────────────────────────────────
