@@ -2062,8 +2062,8 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
     <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is confirmed and in the hands of our vendor. We'll update you the moment it ships.</div>
 
     ${isPrepaid
-      ? \`<div style="background:#f0f3ff;border-left:3px solid #002eff;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#1a2a6e;line-height:1.7;">Payment received &#10003; — No action needed. Sit back and relax.</div>\`
-      : \`<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e;line-height:1.7;">COD — Please keep <strong>&#8377;${total.toFixed(2)}</strong> ready at the time of delivery. Exact change preferred.</div>\`}
+      ? `<div style="background:#f0f3ff;border-left:3px solid #002eff;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#1a2a6e;line-height:1.7;">Payment received &#10003; — No action needed. Sit back and relax.</div>`
+      : `<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e;line-height:1.7;">COD — Please keep <strong>&#8377;${total.toFixed(2)}</strong> ready at the time of delivery. Exact change preferred.</div>`}
 
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
@@ -2077,11 +2077,11 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
 
     <a href="https://dashboard.croscrow.com/o/${order.name.replace('#','')}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
 
-    ${addr ? \`
+    ${addr ? `
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-bottom:4px;">
       <tr style="border-bottom:1px solid #f5f5f5;"><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:35%;vertical-align:top;">Ship to</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#111;vertical-align:top;">${addr.name}</td></tr>
       <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">Address</td><td style="padding:10px 16px;font-size:12px;color:#111;vertical-align:top;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</td></tr>
-    </table>\` : ''}
+    </table>` : ''}
   `;
   return neonEmailBase({ stageLabel: 'ORDER CONFIRMED', stageColor: '#002eff', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip });
 }
