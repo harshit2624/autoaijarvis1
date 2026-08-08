@@ -2034,97 +2034,94 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
   const total = parseFloat(order.total_price || 0);
   const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const STORE = 'https://croscrowofficial.myshopify.com';
+
+  const itemsHtml = items.map(li => {
+    const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+    const imgEl = img
+      ? `<a href="${STORE}" target="_blank" style="display:block;"><img src="${img}" width="60" height="60" alt="${li.title}" style="width:60px;height:60px;border-radius:4px;object-fit:cover;display:block;"></a>`
+      : `<div style="width:60px;height:60px;background:#f0f0f0;border-radius:4px;"></div>`;
+    return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
+      <tr>
+        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
-<div style="max-width:620px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
-    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">60+ BRANDS &nbsp;|&nbsp; ONE STOP</div>
-      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">ORDER<br>CONFIRMED.</div>
+    <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;height:240px;object-fit:cover;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Order Confirmed</div>
+      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOU'RE IN.<br>WE'VE GOT YOU.</div>
     </div>
   </div>
 
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
     <tr>
-      <td style="padding:18px 32px;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
-        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      <td style="padding:16px 28px;">
+        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
       </td>
-      <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      <td style="padding:16px 28px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">Total</div>
+        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${total.toFixed(2)}</div>
       </td>
     </tr>
   </table>
 
-  <div style="background:#161616;padding:32px;">
-    <div style="margin-bottom:24px;">
-      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is confirmed and being prepared. We'll notify you as soon as it ships.</div>
-    </div>
+  <div style="background:#fff;padding:28px;">
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is confirmed and in the hands of our vendor. We'll update you the moment it ships.</div>
 
-    ${isPrepaid ? `
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1520;border:1px solid #1a3a6a;border-radius:8px;margin-bottom:24px;">
-      <tr><td style="padding:18px 24px;">
-        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#7eb8f7;text-transform:uppercase;margin-bottom:6px;">Prepaid — All Set</div>
-        <div style="font-size:13px;color:#aaa;">Payment received. No action needed — sit back and relax.</div>
-      </td></tr>
-    </table>` : `
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#1a1200;border:1px solid #3a2a00;border-radius:8px;margin-bottom:24px;">
-      <tr><td style="padding:18px 24px;">
-        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#c9922a;text-transform:uppercase;margin-bottom:6px;">Cash on Delivery</div>
-        <div style="font-size:13px;color:#888;">Please keep <strong style="color:#e8a818;">&#8377;${total.toFixed(2)}</strong> ready at the time of delivery.</div>
-      </td></tr>
-    </table>`}
+    ${isPrepaid
+      ? `<div style="background:#f0f3ff;border-left:3px solid #002eff;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#1a2a6e;line-height:1.7;">Payment received &#10003; — No action needed. Sit back and relax.</div>`
+      : `<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e;line-height:1.7;">COD — Please keep <strong>&#8377;${total.toFixed(2)}</strong> ready at the time of delivery. Exact change preferred.</div>`}
 
-    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;margin-top:8px;">Your Items</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
+    ${itemsHtml}
 
-    ${items.map(li => {
-      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
-      return `
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #002eff;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
-        </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
-        </td>
-      </tr>
-    </table>`;
-    }).join('')}
-
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
-      <tr>
-        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
-        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
+        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
       </tr>
     </table>
 
+    <a href="https://dashboard.croscrow.com/o/${order.name.replace('#','')}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
+
     ${addr ? `
-    <div style="margin-bottom:24px;margin-top:4px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Shipping To</div>
-      <div style="font-size:13px;color:#888;line-height:1.9;">
-        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
-        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
-        ${addr.city}, ${addr.province} ${addr.zip}<br>
-        ${addr.phone ? `<span style="color:#555;font-size:12px;">${addr.phone}</span>` : ''}
+    <div style="border:1px solid #f0f0f0;border-radius:4px;overflow:hidden;margin-bottom:4px;">
+      <div style="display:flex;padding:10px 16px;border-bottom:1px solid #f5f5f5;font-size:12px;">
+        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">Ship to</span>
+        <span style="font-size:12px;font-weight:700;color:#111;">${addr.name}</span>
+      </div>
+      <div style="display:flex;padding:10px 16px;font-size:12px;">
+        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">Address</span>
+        <span style="font-size:12px;color:#111;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</span>
       </div>
     </div>` : ''}
   </div>
 
   ${adsStrip}
-  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
-    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
+
+  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
   </div>
 
 </div>
@@ -2580,6 +2577,24 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   `);
 }
 
+// Resolve the best tracking URL (courier-specific or CROSCROW order page)
+function resolveTrackUrl(trackingUrl, awb, courier, orderName = '') {
+  const c = (courier || '').toLowerCase();
+  const fallback = awb ? (
+    c.includes('delhivery')  ? `https://www.delhivery.com/track/package/${awb}` :
+    c.includes('xpressbee')  ? `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}` :
+    c.includes('bluedart')   ? `https://www.bluedart.com/tracking?trackNo=${awb}` :
+    c.includes('dtdc')       ? `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}` :
+    c.includes('ecom')       ? `https://ecomexpress.in/tracking/?awb_field=${awb}` :
+    c.includes('shadowfax')  ? `https://track.shadowfax.in/?awb=${awb}` :
+    c.includes('shiprocket') ? `https://shiprocket.co/tracking/${awb}` :
+    c.includes('ekart')      ? `https://ekartlogistics.com/track?trackingId=${awb}` :
+    c.includes('fedex')      ? `https://www.fedex.com/fedextrack/?trknbr=${awb}` :
+    `https://dashboard.croscrow.com/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`
+  ) : `https://dashboard.croscrow.com/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`;
+  return (trackingUrl && trackingUrl.startsWith('http')) ? trackingUrl : fallback;
+}
+
 // Build a track button HTML block — uses trackingUrl or CROSCROW track page fallback
 function trackButton(trackingUrl, awb, courier, label = 'Track Your Order →') {
   const c = (courier || '').toLowerCase();
@@ -2597,7 +2612,7 @@ function trackButton(trackingUrl, awb, courier, label = 'Track Your Order →') 
   ) : `https://dashboard.croscrow.com/track`;
   const url = (trackingUrl && trackingUrl.startsWith('http')) ? trackingUrl : fallback;
   return `<div style="text-align:center;margin:28px 0;">
-    <a href="${url}" target="_blank" style="display:inline-block;background:#7eb8f7;color:#0d0d0d;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;padding:16px 40px;border-radius:3px;text-decoration:none;">${label}</a>
+    <a href="${url}" target="_blank" style="display:inline-block;background:#002eff;color:#fff;font-size:12px;font-weight:900;letter-spacing:3px;text-transform:uppercase;padding:14px 40px;text-decoration:none;">${label}</a>
   </div>`;
 }
 
@@ -2610,100 +2625,102 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
   const codPending  = isPrepaid ? 0 : Math.max(0, parseFloat((total - advancePaid).toFixed(2)));
   const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const STORE = 'https://croscrowofficial.myshopify.com';
+
+  const itemsHtml = items.map(li => {
+    const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+    const imgEl = img
+      ? `<a href="${STORE}" target="_blank" style="display:block;"><img src="${img}" width="60" height="60" alt="${li.title}" style="width:60px;height:60px;border-radius:4px;object-fit:cover;display:block;"></a>`
+      : `<div style="width:60px;height:60px;background:#f0f0f0;border-radius:4px;"></div>`;
+    return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
+      <tr>
+        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
-<div style="max-width:620px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
-    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">SHIPPED &nbsp;|&nbsp; ON THE MOVE</div>
-      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS ON ITS WAY.</div>
+    <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;height:240px;object-fit:cover;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Shipped · In Transit</div>
+      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS MOVING.</div>
     </div>
   </div>
 
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
     <tr>
-      <td style="padding:18px 32px;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
-        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      <td style="padding:16px 28px;">
+        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
       </td>
-      <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">${isPrepaid ? 'Order Total' : 'To Pay on Delivery'}</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
-        ${isPrepaid ? '<div style="font-size:10px;color:#10b981;margin-top:3px;font-weight:600">✓ Fully Paid</div>' : advancePaid > 0 ? `<div style="font-size:10px;color:#f59e0b;margin-top:3px;">Advance paid: &#8377;${advancePaid.toFixed(2)}</div>` : ''}
+      <td style="padding:16px 28px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">${isPrepaid ? 'Paid' : 'COD Due'}</div>
+        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
+        ${isPrepaid ? '<div style="font-size:10px;color:#10b981;margin-top:2px;font-weight:600;">&#10003; Fully Paid</div>' : advancePaid > 0 ? `<div style="font-size:10px;color:#888;margin-top:2px;">Advance: &#8377;${advancePaid.toFixed(2)}</div>` : ''}
       </td>
     </tr>
   </table>
 
-  <div style="background:#161616;padding:32px;">
-    <div style="margin-bottom:24px;">
-      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has left the facility and is on its way to you. Estimated delivery in 3–7 business days.${!isPrepaid && codPending > 0 ? ` Please keep <strong style="color:#f0f0f0;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
+  <div style="background:#fff;padding:28px;">
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has shipped. ETA 3–7 business days.${!isPrepaid && codPending > 0 ? ` Keep <strong style="color:#111;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
+
+    <div style="height:4px;background:#f0f0f0;margin-bottom:10px;position:relative;">
+      <div style="position:absolute;left:0;top:0;height:100%;width:60%;background:#002eff;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;">
+      <span style="color:#002eff;font-weight:700;">Confirmed</span>
+      <span style="color:#002eff;font-weight:700;">Packed</span>
+      <span style="color:#111;font-weight:700;">Shipped &#9679;</span>
+      <span style="color:#ccc;">OFD</span>
+      <span style="color:#ccc;">Delivered</span>
     </div>
 
     ${awb ? `
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:24px;">
-      <tr>
-        <td style="padding:14px 20px;">
-          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Courier</div>
-          <div style="font-size:13px;font-weight:700;color:#ccc;">${courier || 'Delivery Partner'}</div>
-        </td>
-        <td style="padding:14px 20px;text-align:right;">
-          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Tracking AWB</div>
-          <div style="font-size:13px;font-weight:700;color:#7eb8f7;font-family:monospace;">${awb}</div>
-        </td>
-      </tr>
-    </table>` : ''}
-
-    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
-
-    ${items.map(li => {
-      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
-      return `
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
-      <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
-        </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
-        </td>
-      </tr>
-    </table>`;
-    }).join('')}
-
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
-      <tr>
-        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
-        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
-      </tr>
-    </table>
-
-    ${addr ? `
-    <div style="margin-bottom:8px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Delivering To</div>
-      <div style="font-size:13px;color:#888;line-height:1.9;">
-        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
-        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
-        ${addr.city}, ${addr.province} ${addr.zip}
+    <div style="border:1px solid #f0f0f0;border-radius:4px;overflow:hidden;margin-bottom:20px;">
+      <div style="display:flex;padding:10px 16px;border-bottom:1px solid #f5f5f5;">
+        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">Courier</span>
+        <span style="font-size:12px;font-weight:700;color:#111;">${courier || 'Delivery Partner'}</span>
+      </div>
+      <div style="display:flex;padding:10px 16px;">
+        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">AWB</span>
+        <span style="font-size:12px;font-weight:700;color:#002eff;font-family:monospace;">${awb}</span>
       </div>
     </div>` : ''}
 
-    ${trackButton(trackingUrl, awb, courier, 'Track Your Order →')}
+    <a href="${resolveTrackUrl(trackingUrl, awb, courier, order.name)}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
 
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Items in This Shipment</div>
+    ${itemsHtml}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border-top:2px solid #002eff;">
+      <tr>
+        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
+        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
   </div>
 
   ${adsStrip}
-  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
-    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
+
+  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
   </div>
 
 </div>
@@ -2719,130 +2736,91 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
   const codPending  = isPrepaid ? 0 : Math.max(0, parseFloat((total - advancePaid).toFixed(2)));
   const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const STORE = 'https://croscrowofficial.myshopify.com';
+
+  const itemsHtml = items.map(li => {
+    const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+    const imgEl = img
+      ? `<a href="${STORE}" target="_blank" style="display:block;"><img src="${img}" width="60" height="60" alt="${li.title}" style="width:60px;height:60px;border-radius:4px;object-fit:cover;display:block;"></a>`
+      : `<div style="width:60px;height:60px;background:#f0f0f0;border-radius:4px;"></div>`;
+    return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
+      <tr>
+        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
-<div style="max-width:620px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;">
 
-  <!-- HERO IMAGE -->
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
-    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">OUT FOR DELIVERY &nbsp;|&nbsp; TODAY</div>
-      <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">GET READY TO<br>DRIP HARD TODAY.</div>
+    <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;height:240px;object-fit:cover;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#fca5a5;text-transform:uppercase;margin-bottom:6px;">&#11044; Arriving Today</div>
+      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">GET READY<br>TO DRIP HARD.</div>
     </div>
   </div>
 
-  <!-- ORDER ID BAR -->
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
     <tr>
-      <td style="padding:18px 32px;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
-        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      <td style="padding:16px 28px;">
+        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
       </td>
-      <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">${isPrepaid ? 'Order Total' : 'To Pay on Delivery'}</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
-        ${isPrepaid ? '<div style="font-size:10px;color:#10b981;margin-top:3px;font-weight:600">✓ Fully Paid</div>' : advancePaid > 0 ? `<div style="font-size:10px;color:#f59e0b;margin-top:3px;">Advance paid: &#8377;${advancePaid.toFixed(2)}</div>` : ''}
+      <td style="padding:16px 28px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">${isPrepaid ? 'Paid' : 'Keep Ready'}</div>
+        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${isPrepaid ? total.toFixed(2) : codPending.toFixed(2)}</div>
       </td>
     </tr>
   </table>
 
-  <!-- BODY -->
-  <div style="background:#161616;padding:32px;">
+  <div style="background:#fff;padding:28px;">
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is out for delivery today. Stay reachable — the delivery agent will call before arriving.</div>
 
-    <!-- Greeting -->
-    <div style="margin-bottom:24px;">
-      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your order is out for delivery. Our delivery partner is on the way — keep your phone nearby!${!isPrepaid && codPending > 0 ? ` Please keep <strong style="color:#f0f0f0;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
+    ${!isPrepaid && codPending > 0 ? `<div style="background:#fef2f2;border-left:3px solid #ef4444;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#7f1d1d;line-height:1.7;">&#9888;&#xFE0F; COD amount: <strong>&#8377;${codPending.toFixed(2)}</strong> — exact change preferred.</div>` : ''}
+
+    <div style="height:3px;background:#f0f0f0;margin-bottom:10px;position:relative;">
+      <div style="position:absolute;left:0;top:0;height:100%;width:85%;background:#ef4444;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;">
+      <span style="color:#002eff;font-weight:700;">Confirmed</span>
+      <span style="color:#002eff;font-weight:700;">Packed</span>
+      <span style="color:#002eff;font-weight:700;">Shipped</span>
+      <span style="color:#111;font-weight:700;">OFD &#9679;</span>
+      <span style="color:#ccc;">Delivered</span>
     </div>
 
-    <!-- Delivery banner -->
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1520;border:1px solid #1a3a6a;border-radius:8px;margin-bottom:24px;">
-      <tr><td style="padding:20px 24px;text-align:center;">
-        <div style="font-size:36px;margin-bottom:8px;">🛵</div>
-        <div style="font-size:16px;font-weight:800;color:#7eb8f7;letter-spacing:1px;margin-bottom:4px;">Your order is on the way!</div>
-        <div style="font-size:12px;color:#666;">Expected delivery: <strong style="color:#aaa;">Today</strong></div>
-      </td></tr>
-    </table>
+    <a href="${resolveTrackUrl(trackingUrl, awb, courier, order.name)}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Live</a>
 
-    <!-- AWB info -->
-    ${awb ? `
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:24px;">
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
+    ${itemsHtml}
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border-top:2px solid #002eff;">
       <tr>
-        <td style="padding:14px 20px;">
-          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Courier</div>
-          <div style="font-size:13px;font-weight:700;color:#ccc;">${courier || 'Delivery Partner'}</div>
-        </td>
-        <td style="padding:14px 20px;text-align:right;">
-          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Tracking AWB</div>
-          <div style="font-size:13px;font-weight:700;color:#7eb8f7;font-family:monospace;">${awb}</div>
-        </td>
-      </tr>
-    </table>` : ''}
-
-    <!-- Divider label -->
-    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
-
-    <!-- Items -->
-    ${items.map(li => {
-      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
-      return `
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
-      <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
-        </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
-        </td>
-      </tr>
-    </table>`;
-    }).join('')}
-
-    <!-- Total -->
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;background:#0f0f0f;border-radius:6px;">
-      <tr>
-        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
-        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
+        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
       </tr>
     </table>
-
-    <!-- Deliver to -->
-    ${addr ? `
-    <div style="margin-bottom:24px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Delivering To</div>
-      <div style="font-size:13px;color:#888;line-height:1.9;">
-        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
-        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
-        ${addr.city}, ${addr.province} ${addr.zip}<br>
-        ${addr.phone ? `<span style="color:#555;font-size:12px;">${addr.phone}</span>` : ''}
-      </div>
-    </div>` : ''}
-
-    <!-- Payment reminder -->
-    ${order.financial_status !== 'paid' ? `
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#1a1200;border:1px solid #3a2a00;border-radius:8px;margin-bottom:8px;">
-      <tr><td style="padding:16px 20px;">
-        <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#c9922a;text-transform:uppercase;margin-bottom:6px;">COD — Keep Cash Ready</div>
-        <div style="font-size:13px;color:#888;">Please keep <strong style="color:#e8a818;">&#8377;${total.toFixed(2)}</strong> ready to hand to the delivery person.</div>
-      </td></tr>
-    </table>` : ''}
-
-    ${trackButton(trackingUrl, awb, courier, 'Track My Order →')}
-
   </div>
 
-  <!-- FOOTER -->
   ${adsStrip}
-  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
-    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
+
+  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
   </div>
 
 </div>
@@ -2983,89 +2961,98 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
     return emailBase(titles[forRole], '#10b981', body);
   }
 
-  // Customer — sky dark theme
+  // Customer — Option C white theme
   const addr  = order.shipping_address;
   const items = order.line_items || [];
   const total = parseFloat(order.total_price || 0);
   const IMG   = 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg';
   const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const STORE = 'https://croscrowofficial.myshopify.com';
+
+  const itemsHtml = items.map(li => {
+    const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
+    const imgEl = img
+      ? `<a href="${STORE}" target="_blank" style="display:block;"><img src="${img}" width="60" height="60" alt="${li.title}" style="width:60px;height:60px;border-radius:4px;object-fit:cover;display:block;"></a>`
+      : `<div style="width:60px;height:60px;background:#f0f0f0;border-radius:4px;"></div>`;
+    return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
+      <tr>
+        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:14px 0;vertical-align:top;">
+          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        </td>
+        <td style="padding:14px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        </td>
+      </tr>
+    </table>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
-<div style="max-width:620px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;">
 
   <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
-    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">DELIVERED &nbsp;|&nbsp; THANK YOU</div>
-      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
+    <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;height:240px;object-fit:cover;">
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
+      <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#86efac;text-transform:uppercase;margin-bottom:6px;">&#11044; Delivered · Thank You</div>
+      <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
     </div>
   </div>
 
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;">
     <tr>
-      <td style="padding:18px 32px;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
-        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
+      <td style="padding:16px 28px;">
+        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;">${order.name}</div>
       </td>
-      <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
+      <td style="padding:16px 28px;text-align:right;">
+        <div style="font-size:9px;letter-spacing:3px;color:#555;text-transform:uppercase;margin-bottom:2px;">Total</div>
+        <div style="font-size:18px;font-weight:900;color:#002eff;">&#8377;${total.toFixed(2)}</div>
       </td>
     </tr>
   </table>
 
-  <div style="background:#161616;padding:32px;">
-    <div style="margin-bottom:24px;">
-      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your order has been delivered! We hope you love your new pieces. Rock it. 🖤</div>
+  <div style="background:#fff;padding:28px;">
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has been delivered! We hope you love your new pieces. Rock it. 🖤</div>
+
+    <div style="background:#f0fdf4;border-left:3px solid #16a34a;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#166534;line-height:1.7;">&#10003; &nbsp;Order delivered successfully${addr ? ` to ${addr.city}, ${addr.province}` : ''}.</div>
+
+    <div style="height:3px;background:#f0f0f0;margin-bottom:10px;position:relative;">
+      <div style="position:absolute;left:0;top:0;height:100%;width:100%;background:#16a34a;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;">
+      <span style="color:#16a34a;font-weight:700;">Confirmed</span>
+      <span style="color:#16a34a;font-weight:700;">Packed</span>
+      <span style="color:#16a34a;font-weight:700;">Shipped</span>
+      <span style="color:#16a34a;font-weight:700;">OFD</span>
+      <span style="color:#111;font-weight:700;">Delivered &#9679;</span>
     </div>
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a1a0a;border:1px solid #1a4a1a;border-radius:8px;margin-bottom:24px;">
-      <tr><td style="padding:20px 24px;text-align:center;">
-        <div style="font-size:32px;margin-bottom:8px;">🎉</div>
-        <div style="font-size:15px;font-weight:800;color:#34d399;letter-spacing:1px;">Order Delivered Successfully</div>
-        ${addr ? `<div style="font-size:12px;color:#555;margin-top:4px;">${addr.city}, ${addr.province}</div>` : ''}
-      </td></tr>
-    </table>
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
+    ${itemsHtml}
 
-    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Your Items</div>
-
-    ${items.map(li => {
-      const img = li.image_url || li.image?.src || (li.properties?.find(p => p.name === '_image')?.value) || '';
-      return `
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #002eff;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity}</div>
-        </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
-        </td>
-      </tr>
-    </table>`;
-    }).join('')}
-
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 8px;background:#0f0f0f;border-radius:6px;">
-      <tr>
-        <td style="padding:16px 20px;font-size:10px;font-weight:700;letter-spacing:3px;color:#555;text-transform:uppercase;">Order Total</td>
-        <td style="padding:16px 20px;text-align:right;font-size:20px;font-weight:900;color:#7eb8f7;">&#8377;${total.toFixed(2)}</td>
+        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
+        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
       </tr>
     </table>
 
-    <p style="font-size:12px;color:#555;margin-top:16px;text-align:center;line-height:1.7;">If you have any issues with your order, just reply to this email or reach us on WhatsApp.</p>
-    ${awb || trackingUrl ? trackButton(trackingUrl, awb, courier, 'View Order Tracking →') : ''}
+    <p style="font-size:12px;color:#999;margin-bottom:16px;line-height:1.7;">Any issues with your order? Reply to this email or reach us on WhatsApp.</p>
+    ${awb || trackingUrl ? trackButton(trackingUrl, awb, courier, 'View Order Details →') : ''}
   </div>
 
   ${adsStrip}
-  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
-    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
+
+  <div style="background:#111;padding:24px 28px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="${LOGO}" width="140" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+    <div style="font-size:11px;color:#555;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
+    <div style="font-size:9px;color:#333;margin-top:12px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Do Not Reply</div>
+    <div style="font-size:9px;color:#444;margin-top:6px;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
   </div>
 
 </div>
