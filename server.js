@@ -3460,25 +3460,33 @@ async function fireStageEmails(shopifyId, newStage) {
           shopifyId, trigger: 'partial_vendor'
         });
       }
+      // WA — advance collected confirmation
+      const _ppPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (_ppPhone && waSocket && waConnected) {
+        const _Fp = '```';
+        const _advAmt = vendorMeta.advance_paid ? `₹${vendorMeta.advance_paid}` : 'Advance';
+        const _trackUrl = `${SERVER_URL}/o/${encodeURIComponent(String(order.name).replace(/^#/, ''))}`;
+        const _waPartial = `${_Fp}\n▪ C R O S C R O W ▪\nADVANCE CONFIRMED ✓\n────────────────\nORDER  ${order.name}\nPAID   ${_advAmt}\n\nSTATE  Advance received.\n       Balance due at\n       delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fp}`;
+        await waSocket.sendMessage(`91${_ppPhone}@s.whatsapp.net`, { text: _waPartial }).catch(e => console.error('WA partial notify error:', e.message));
+      }
     }
 
     if (newStage === 'transit') {
       if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order is Shipped! 🚚 AWB: ${meta.awb || ''}`, html: templateInTransit({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, meta, adsStrip }), shopifyId, trigger: 'transit' });
-      // WA notification to customer on shipment
-      const _custPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-      if (_custPhone && waSocket && waConnected) {
-        const _Ft = '```';
-        const _orderNum = String(order.name).replace(/^#/, '');
-        const _trackUrl = `${SERVER_URL}/o/${encodeURIComponent(_orderNum)}`;
-        const _awbLine = meta.awb ? `AWB    ${meta.awb}\n` : '';
-        const _viaLine = meta.courier ? `VIA    ${meta.courier}\n` : '';
-        const _waShipped = `${_Ft}\n▪ C R O S C R O W ▪\nORDER SHIPPED 🚚\n────────────────\nORDER  ${order.name}\n${_awbLine}${_viaLine}────────────────\nTRACK YOUR ORDER\n${_trackUrl}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Ft}`;
-        await waSocket.sendMessage(`91${_custPhone}@s.whatsapp.net`, { text: _waShipped }).catch(e => console.error('WA transit notify error:', e.message));
-      }
+      // WA handled by sendShipmentWANotif (called from stage-change cron) — no duplicate needed here
     }
 
     if (newStage === 'ofd') {
       if (customerEmail) await sendEmail({ to: customerEmail, subject: `Get Ready to Drip Hard Today 🛵 — ${order.name} is Out for Delivery!`, html: templateOfd({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, meta, adsStrip }), shopifyId, trigger: 'ofd' });
+    }
+
+    if (newStage === 'rto') {
+      const _rtoPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (_rtoPhone && waSocket && waConnected) {
+        const _Fr = '```';
+        const _waRto = `${_Fr}\n▪ C R O S C R O W ▪\nORDER RETURNED\n────────────────\nORDER  ${order.name}\n\nSTATE  Our courier couldn't\n       deliver your order.\n       It's heading back.\n────────────────\nREPLY TO THIS MESSAGE\nFOR SUPPORT\n${_Fr}`;
+        await waSocket.sendMessage(`91${_rtoPhone}@s.whatsapp.net`, { text: _waRto }).catch(e => console.error('WA RTO notify error:', e.message));
+      }
     }
 
     if (newStage === 'delivered') {
@@ -10299,11 +10307,33 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
     if (customerEmail) await sendEmail({ to: customerEmail, subject: `Important Update: Your Order ${ord?.name || sid} is Delayed`, html: delayHtmlCustomer, shopifyId: sid, trigger: 'delay_remark_customer' });
     if (adminEmail) await sendEmail({ to: adminEmail, subject: `Vendor Delay Remark: ${ord?.name || sid} — ${vendor}`, html: delayHtmlAdmin, shopifyId: sid, trigger: 'delay_remark_admin' });
     // WA alert to admin (same as magic link path)
-    await waAdminAlert(`⏳ *Vendor Delay (Order Page)*\nOrder: *${ord?.name || sid}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaFormatted}`).catch(() => {});
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR DELAY\n────────────────\nORDER  ${ord?.name || sid}\nVENDOR ${vendor}\nREASON ${reason}\nETA    ${etaFormatted}\n────────────────\nSOURCE Order page\n\`\`\``).catch(() => {});
+    sendVendorSubmitSuccessWA(vendor, ord?.name || `#${sid}`, 'delay', { reason, eta: eta_date }).catch(() => {});
   } catch (e) { console.error("Delay remark email:", e.message); }
 
   res.json({ success: true });
 });
+
+// ── Send WA success confirmation back to vendor after delay/tracking submit ──
+async function sendVendorSubmitSuccessWA(vendorName, orderName, type, { reason, eta, awb, courier } = {}) {
+  if (!waSocket || !waConnected || !mdb) return;
+  try {
+    const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1 } });
+    const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (rawPhone.length !== 10) return;
+    const jidDoc = await mdb.collection('wa_vendor_jids').findOne({ phone: rawPhone }).catch(() => null);
+    const jid = jidDoc?.jid || `91${rawPhone}@s.whatsapp.net`;
+    const _Fs = '```';
+    let msg = '';
+    if (type === 'delay') {
+      const etaFormatted = eta ? new Date(eta + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'not specified';
+      msg = `${_Fs}\n▪ C R O S C R O W ▪\nDELAY SUBMITTED ✓\n────────────────\nORDER  ${orderName}\nREASON ${reason || 'not specified'}\nETA    ${etaFormatted}\n────────────────\nCustomer has been\nnotified. Thank you.\n${_Fs}`;
+    } else if (type === 'tracking') {
+      msg = `${_Fs}\n▪ C R O S C R O W ▪\nTRACKING SUBMITTED ✓\n────────────────\nORDER   ${orderName}\nAWB     ${awb}\nCOURIER ${courier || 'not specified'}\n────────────────\nCustomer will be\nnotified shortly.\n${_Fs}`;
+    }
+    if (msg) await waSocket.sendMessage(jid, { text: msg }).catch(e => console.error('Vendor submit success WA error:', e.message));
+  } catch (e) { console.error('sendVendorSubmitSuccessWA error:', e.message); }
+}
 
 // ── Vendor Update Token (magic link for WA nudges) ────────────────────────
 async function createVendorUpdateToken(shopify_id, order_name, vendor_name, product_names, query_context = null) {
@@ -10429,7 +10459,8 @@ app.post('/vendor/update/:token', async (req, res) => {
       await DR.insert(realShopifyId, vendor_name, reason, etaIso);
       await OVS.upsert(realShopifyId, vendor_name, { delay_reason: reason, delay_resolution_date: etaIso, updated_at: new Date().toISOString() });
       await notifyDelayToCustomer(realShopifyId, vendor_name, reason, etaIso);
-      await waAdminAlert(`⏳ *Vendor Delay (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nReason: ${reason}\nETA: ${etaIso || 'not specified'}`);
+      await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR DELAY\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor_name}\nREASON ${reason}\nETA    ${etaIso || 'not specified'}\n────────────────\nSOURCE Magic link\n\`\`\``);
+      sendVendorSubmitSuccessWA(vendor_name, order_name, 'delay', { reason, eta: etaIso }).catch(() => {});
 
     } else if (type === 'tracking' && awb) {
       const c = courier || 'Not specified';
@@ -10471,7 +10502,8 @@ app.post('/vendor/update/:token', async (req, res) => {
         }
       } catch (e) { fulfillError = e.message; console.error('Token fulfill error:', e.message); }
       await OVS.upsert(realShopifyId, vendor_name, { awb, courier: c, tracking_url: trackUrl, stage: 'transit', updated_at: new Date().toISOString() });
-      await waAdminAlert(`📦 *Vendor Tracking (Link Form)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${awb}\nCourier: ${c}${trackUrl ? '\nTrack: ' + trackUrl : ''}${fulfillError ? '\n⚠️ Shopify fulfill error: ' + fulfillError : ''}`);
+      await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR TRACKING\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor_name}\nAWB    ${awb}\nVIA    ${c}${fulfillError ? `\n⚠️ Shopify: ${fulfillError.slice(0,60)}` : ''}\n────────────────\nSOURCE Magic link\n\`\`\``);
+      sendVendorSubmitSuccessWA(vendor_name, order_name, 'tracking', { awb, courier: c }).catch(() => {});
 
     } else {
       return res.send(vendorUpdatePage(doc, 'form', null, null, null, 'Please fill in all required fields.'));
@@ -10532,7 +10564,7 @@ app.post('/vendor/update/:token/penalty', async (req, res) => {
       .sort({ sent_at: -1 }).limit(1).toArray();
     const nudgeFilter = latestNudge[0]?._id ? { _id: latestNudge[0]._id } : { shopify_id: String(doc.shopify_id), vendor: doc.vendor_name };
     await mdb.collection('wa_vendor_nudges').updateOne(nudgeFilter, { $set: { penalty_status: action, penalty_status_at: new Date().toISOString() } });
-    await waAdminAlert(`${action === 'disputed' ? '⚠️' : '✅'} *Penalty ${action}*\nOrder: *${doc.order_name}*\nVendor: ${doc.vendor_name}`).catch(() => {});
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nPENALTY ${action.toUpperCase()} ${action === 'disputed' ? '⚠️' : '✅'}\n────────────────\nORDER  ${doc.order_name}\nVENDOR ${doc.vendor_name}\n\`\`\``).catch(() => {});
     res.json({ ok: true, status: action });
   } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -12747,20 +12779,8 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
         const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : 'Manual penalty by admin';
         const penaltyToken = await createVendorUpdateToken(shopifyId, orderName || shopifyId, vendorName, '').catch(() => null);
         const penaltyLink = penaltyToken ? `\n\n*Still not shipped?* Update here (no login):\n👉 https://dashboard.croscrow.com/vendor/update/${penaltyToken}` : '';
-        const penaltyMsg =
-`🚨 *Penalty Triggered — Order ${orderName || shopifyId}*
-
-Hi ${vendorName},
-
-A penalty has been applied to your account.
-
-*Reason:* ${reasonLabel}
-
-This will be deducted from your next settlement.
-
-To dispute, contact CROSCROW ops immediately on WhatsApp.${penaltyLink}
-
-_CROSCROW Operations_`;
+        const _Fpen = '```';
+        const penaltyMsg = `${_Fpen}\n▪ C R O S C R O W ▪\nPENALTY TRIGGERED 🚨\n────────────────\nORDER  ${orderName || shopifyId}\nVENDOR ${vendorName}\n────────────────\nREASON ${reasonLabel}\nAMT    ₹100\n────────────────\nDeducted from next\nsettlement. To dispute,\nreply to this message.\n${penaltyToken ? `\nUPDATE HERE (no login)\ndashboard.croscrow.com/vendor/update/${penaltyToken}` : ''}\n${_Fpen}`;
         const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
         const actualJid = sent?.key?.remoteJid || jid;
         await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
@@ -12878,6 +12898,7 @@ app.post("/vendor/delay-remark", async (req, res) => {
     const etaFormatted = eta_date ? new Date(eta_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'not specified';
     const adminMsg = `⏳ *Vendor Delay Submitted (Form)*\n\nOrder: *${orderName}*\nVendor: ${vendor}\nReason: ${reason}\nExpected dispatch by: *${etaFormatted}*\n\nCustomer has been notified on email & WhatsApp.`;
     await waAdminAlert(adminMsg, 'dispatch_alert');
+    sendVendorSubmitSuccessWA(vendor, orderName, 'delay', { reason, eta: eta_date }).catch(() => {});
   } catch (e) { console.error('Delay admin WA error:', e.message); }
 
   res.json({ success: true });
@@ -13067,26 +13088,12 @@ async function sendVendorScoreCard(vendor, rank, totalVendors) {
   const gradeEmoji = { A: '🏆', B: '✅', C: '⚠️', D: '🔴', F: '🚨' }[vendor.grade] || '📊';
   const barOf = (n, max) => '█'.repeat(Math.round((n / max) * 10)).padEnd(10, '░');
 
-  const header =
-`${gradeEmoji} CROSCROW Vendor Report Card
-━━━━━━━━━━━━━━━━━━━━━
-${vendor.vendor}
-Score: ${vendor.score}/100  |  Grade: ${vendor.grade}  |  Rank: #${rank}/${totalVendors}
-Tier: ${vendor.tier}
-
-PILLAR BREAKDOWN
-Dispatch Speed  ${barOf(vendor.pillars.dispatch,25)} ${vendor.pillars.dispatch}/25
-RTO Performance ${barOf(vendor.pillars.rto,25)} ${vendor.pillars.rto}/25
-Compliance      ${barOf(vendor.pillars.compliance,25)} ${vendor.pillars.compliance}/25
-Escalations     ${barOf(vendor.pillars.escalation,25)} ${vendor.pillars.escalation}/25
-
-30-DAY STATS
-Orders: ${vendor.stats.total_orders}  |  RTO: ${vendor.stats.rto_rate}%  |  Penalties: ${vendor.stats.penalty_count}
-━━━━━━━━━━━━━━━━━━━━━`;
+  const _Fsc = '```';
+  const header = `${_Fsc}\n▪ C R O S C R O W ▪\nVENDOR REPORT CARD\n────────────────\n${vendor.vendor}\nSCORE  ${vendor.score}/100  [${vendor.grade}] ${gradeEmoji}\nRANK   #${rank}/${totalVendors}\nTIER   ${vendor.tier}\n────────────────\nPILLARS\nDISPATCH   ${barOf(vendor.pillars.dispatch,25)} ${vendor.pillars.dispatch}/25\nRTO        ${barOf(vendor.pillars.rto,25)} ${vendor.pillars.rto}/25\nCOMPLIANCE ${barOf(vendor.pillars.compliance,25)} ${vendor.pillars.compliance}/25\nESCALATION ${barOf(vendor.pillars.escalation,25)} ${vendor.pillars.escalation}/25\n────────────────\n30-DAY STATS\nORDERS   ${vendor.stats.total_orders}\nRTO      ${vendor.stats.rto_rate}%\nPENALTY  ${vendor.stats.penalty_count}\n────────────────\n${_Fsc}`;
 
   const body = narrative || `Your performance score this week is ${vendor.score}/100 (${vendor.grade}). Keep shipping fast and keeping your RTO rate low to improve your standing.`;
 
-  const footer = `\n━━━━━━━━━━━━━━━━━━━━━\nReply to this message if you have questions.\n_CROSCROW Operations_`;
+  const footer = `\nReply to this message if you have questions.\n_CROSCROW Operations_`;
 
   const fullMsg = `${header}\n\n${body}${footer}`;
 
@@ -13121,7 +13128,7 @@ async function vendorScoreCron() {
       const r = await sendVendorScoreCard(v, v.rank, vendors.length);
       if (r.sent) { sent++; await new Promise(res => setTimeout(res, 2000)); }
     }
-    await waAdminAlert(`📊 *Weekly Vendor Scores Sent*\nDelivered to ${sent}/${vendors.length} vendors.\nPlatform avg score: ${Math.round(vendors.reduce((s,v)=>s+v.score,0)/(vendors.length||1))}/100`);
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nWEEKLY SCORES SENT\n────────────────\nDELIVERED  ${sent}/${vendors.length} vendors\nPLATF AVG  ${Math.round(vendors.reduce((s,v)=>s+v.score,0)/(vendors.length||1))}/100\n\`\`\``);
     console.log(`✅ Vendor score cron done: ${sent}/${vendors.length} sent`);
   } catch (e) { console.error('❌ Vendor score cron failed:', e.message); }
 }
@@ -14776,18 +14783,8 @@ async function penaltyCronJob() {
               if (!recentWarn) {
                 const warnToken = await createVendorUpdateToken(sid, orderName || sid, vendor, '').catch(() => null);
                 const warnLink = warnToken ? `https://dashboard.croscrow.com/vendor/update/${warnToken}` : null;
-                const warnMsg =
-`⏰ *24hr Warning — Order ${orderName || sid}*
-
-Hi ${vendor},
-
-This order has been confirmed but not yet shipped.
-
-You have *${hoursLeft} hours left* before a penalty is applied.
-
-${warnLink ? `Tap the link below to report a delay or confirm shipment:\n👉 ${warnLink}` : 'Please dispatch immediately or reply to report a delay.'}
-
-_Ship now to avoid penalty — CROSCROW Ops_`;
+                const _Fwrn = '```';
+                const warnMsg = `${_Fwrn}\n▪ C R O S C R O W ▪\nDISPATCH WARNING ⏰\n────────────────\nORDER  ${orderName || sid}\nTIME   ${hoursLeft}h remaining\n\nShip NOW to avoid\na ₹100 penalty.\n────────────────\n${warnLink ? `SUBMIT UPDATE HERE\n${warnLink}` : 'Reply to this message\nto update your status.'}\n${_Fwrn}`;
                 const sent = await waSocket.sendMessage(jid, { text: warnMsg });
                 const actualJid = sent?.key?.remoteJid || jid;
                 await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || sid, shopify_id: String(sid), orderRef: String(sid).replace(/^#/, ''), vendor });
@@ -14891,7 +14888,7 @@ async function runAnomalyCheck() {
     if (anomalies.length === 0) return;
 
     const lines = anomalies.map(([t, c]) => `- "${t.slice(0,60)}…" → sent ${c}x`).join('\n');
-    await waAdminAlert(`🚨 *Bot Anomaly Detected*\n\nSame message sent to ${anomalies[0][1]}+ customers in last 1hr:\n${lines}\n\nCheck Support → chats for misrouted messages.`);
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nBOT ANOMALY 🚨\n────────────────\nSame message sent to\n${anomalies[0][1]}+ customers in 1hr\n\n${lines}\n────────────────\nCheck Support → Chats\n\`\`\``);
     console.log('⚠️ Anomaly alert sent:', anomalies.length, 'patterns');
   } catch (e) { console.error('Anomaly check error:', e.message); }
 }
@@ -18918,7 +18915,7 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
       `);
       await sendEmail({ to: doc.email, subject: `Application Received — Welcome to CROSCROW, ${doc.contact_name}!`, html: vendorHtml, shopifyId: '', trigger: 'vendor_onboard_confirm' });
     }
-    waAdminAlert(`🏪 *New Vendor Application*\nBrand: *${doc.brand_name}*\nContact: ${doc.contact_name}\nEmail: ${doc.email}\nPhone: ${doc.phone}${doc.gst_no ? '\nGST: ' + doc.gst_no : ''}\n\nReview in Admin → Onboarding.`).catch(() => {});
+    waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nNEW VENDOR APPLICATION\n────────────────\nBRAND    ${doc.brand_name}\nCONTACT  ${doc.contact_name}\nEMAIL    ${doc.email}\nPHONE    ${doc.phone}${doc.gst_no ? `\nGST      ${doc.gst_no}` : ''}\n────────────────\nAdmin → Onboarding\n\`\`\``).catch(() => {});
 
     res.json({ success: true });
   } catch (err) {
@@ -21447,7 +21444,7 @@ async function generateWaDailyReport() {
 
   const chatSummaries = await buildWaChatSummaryForPeriod(fromMs, toMs);
   if (!chatSummaries || !chatSummaries.length) {
-    await waAdminAlert(`🤖 *WhatsApp Bot Daily Report — ${label}*\n\nNo customer chats today so far. All quiet! ✅`);
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nDAILY BOT REPORT\n${label.toUpperCase()}\n────────────────\nSTATE  All quiet ✅\n       No chats today.\n\`\`\``);
     return;
   }
 
@@ -21474,7 +21471,17 @@ Stats: ${total} total chats, ${confused} bot confused, ${escalated} escalated to
 
 Write a WhatsApp report for the founder/admin. Keep it tight and useful. Format:
 
-📊 *Daily Bot Report — ${label}*
+\`\`\`
+▪ C R O S C R O W ▪
+DAILY BOT REPORT
+${label.toUpperCase()}
+────────────────
+CHATS     [total]
+ESCALATED [n]
+CONFUSED  [n]
+RESOLVED  [n]
+────────────────
+\`\`\`
 
 *Overview:* [1-2 sentences on volume and quality]
 
@@ -21548,7 +21555,17 @@ ${allCustomerTexts.slice(0, 2000)}
 
 Write a detailed WhatsApp weekly report for the founder. Format:
 
-📅 *Weekly Bot Report — Last 7 Days*
+\`\`\`
+▪ C R O S C R O W ▪
+WEEKLY BOT REPORT
+LAST 7 DAYS
+────────────────
+CHATS     [total]
+ESCALATED [n]
+CONFUSED  [n] ([%])
+RESOLVED  [n]
+────────────────
+\`\`\`
 
 *Performance Summary:*
 [Key numbers and overall health — 2-3 lines]
@@ -21903,7 +21920,7 @@ app.post('/admin/support/chats/:id/resolve', adminAuth, async (req, res) => {
     : { resolved: false, resolved_at: null, resolved_by: null });
   if (resolved && chat) {
     const label = chat.order_name || chat.customer_phone || req.params.id;
-    waAdminAlert(`✅ *Chat Resolved (Dashboard)*\nOrder / Customer: *${label}*\nMarked resolved manually from admin panel.`).catch(() => {});
+    waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${label}\nSOURCE Dashboard\n\`\`\``).catch(() => {});
   }
   res.json({ success: true });
 });
@@ -22383,22 +22400,8 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
 
     const testToken = mdb ? await createVendorUpdateToken(shopifyId, orderName, vendorName, productNames).catch(() => null) : null;
     const testLink = testToken ? `\n\n🔗 *Quick update (no login):*\n${SERVER_BASE}/vendor/update/${testToken}` : '';
-    const nudgeMsg =
-`⚠️ *Action Required — ${orderName}*
-
-Hi ${vendorName},
-
-Customer: ${customerName}${customerPhone ? ` (+91${customerPhone})` : ''}
-Product: ${productNames}
-Status: *Not shipped for ${days} day${days > 1 ? 's' : ''}* _(Test Warning)_
-
-Please reply with:
-*1️⃣* — Order is delayed (share reason + ETA)
-*2️⃣* — Already shipped (share AWB + courier)
-
-Or tap the link to submit instantly:${testLink}
-
-_CROSCROW Operations Team_`;
+    const _Fndg = '```';
+    const nudgeMsg = `${_Fndg}\n▪ C R O S C R O W ▪\nACTION REQUIRED\n────────────────\nORDER  ${orderName}\nITEM   ${productNames}\nSTUCK  ${days} day${days > 1 ? 's' : ''} unshipped\n────────────────\nSUBMIT UPDATE HERE\n${testToken ? `dashboard.croscrow.com/vendor/update/${testToken}` : 'Log in to vendor portal'}\n${_Fndg}`;
 
     const sent = await waSocket.sendMessage(jid, { text: nudgeMsg });
     const actualJid = sent?.key?.remoteJid || jid;
@@ -22536,7 +22539,7 @@ async function waHandleVendorReply(sock, sender, text) {
     if (trimmed === '3') {
       // Vendor says they've already handled it or it's an unrelated issue
       await waAdminAlert(
-        `ℹ️ *Vendor Self-Resolved / Other*\nOrder: *${order_name}*\nVendor: ${vendor}\nQuery: ${query_context?.label || 'general'}\nVendor says they've already handled this or it needs CROSCROW attention.${chat_id ? `\n\n🔗 https://dashboard.croscrow.com/admin#supportchats` : ''}`
+        `\`\`\`\n▪ C R O S C R O W ▪\nVENDOR SELF-RESOLVED\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor}\nQUERY  ${query_context?.label || 'general'}\n────────────────\nVendor says handled /\nneeds CROSCROW help\n\`\`\``
       );
       if (chat_id) {
         await mdb.collection('support_chats').updateOne(
@@ -22604,7 +22607,7 @@ async function waHandleVendorReply(sock, sender, text) {
     await waSessionClear(sender);
     await sendAndLog(`✅ Delay recorded for *${order_name}*\n\nReason: ${reason}\nExpected by: *${etaDisplay}*\n\nWe'll update the customer. Thank you! 🙏`, vendor);
     notifyDelayToCustomer(shopify_id, vendor, reason, etaIso).catch(() => {});
-    await waAdminAlert(`⏳ *Vendor Delay (via WA)*\nOrder: *${order_name}*\nVendor: ${vendor}\nReason: ${reason}\nETA: ${etaDisplay}\n\nCustomer notified on WA & email.`, 'dispatch_alert');
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR DELAY\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor}\nREASON ${reason}\nETA    ${etaDisplay}\n────────────────\nSOURCE Vendor WA\n\`\`\``, 'dispatch_alert');
     return;
   }
 
@@ -22637,7 +22640,7 @@ async function waHandleVendorReply(sock, sender, text) {
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
     await waSessionClear(sender);
     await sendAndLog(`✅ Tracking updated for *${order_name}*!\n\nAWB: *${awb}*\nCourier: *${courier}*\n\nThank you! 🙏`, vendorT);
-    await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${order_name}*\nAWB: ${awb}\nCourier: ${courier}`);
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR TRACKING\n────────────────\nORDER  ${order_name}\nAWB    ${awb}\nVIA    ${courier}\n────────────────\nSOURCE Vendor WA\n\`\`\``);
     return;
   }
 
@@ -22651,7 +22654,7 @@ async function waHandleVendorReply(sock, sender, text) {
         await OVS.upsert(shopify_id, vendor_name, { delay_reason: data.reason, delay_resolution_date: data.eta_display, updated_at: new Date().toISOString() });
         await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
         await notifyDelayToCustomer(shopify_id, vendor_name, data.reason, data.eta_iso);
-        await waAdminAlert(`⏳ *Vendor Delay (WA natural language)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nReason: ${data.reason}\nETA: ${data.eta_display || 'not specified'}`);
+        await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR DELAY\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor_name}\nREASON ${data.reason}\nETA    ${data.eta_display || 'not specified'}\n────────────────\nSOURCE Vendor WA (NL)\n\`\`\``);
         await sendAndLog(`✅ *Delay recorded for ${order_name}*\n\nReason: ${data.reason}\nShipping by: *${data.eta_display || 'not specified'}*\n\nCustomer has been notified. Thank you! 🙏`, vendor_name);
       } else if (action === 'tracking') {
         await mdb.collection('order_vendor_stage').updateOne(
@@ -22659,7 +22662,7 @@ async function waHandleVendorReply(sock, sender, text) {
           { $set: { awb: data.awb, courier: data.courier, stage: 'transit', updated_at: new Date().toISOString() } }
         );
         await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
-        await waAdminAlert(`📦 *Vendor Tracking (WA natural language)*\nOrder: *${order_name}*\nVendor: ${vendor_name}\nAWB: ${data.awb}\nCourier: ${data.courier}`);
+        await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR TRACKING\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor_name}\nAWB    ${data.awb}\nVIA    ${data.courier}\n────────────────\nSOURCE Vendor WA (NL)\n\`\`\``);
         await sendAndLog(`✅ *Tracking updated for ${order_name}*\n\nAWB: *${data.awb}*\nCourier: *${data.courier}*\n\nThank you! 🙏`, vendor_name);
       }
       return;
@@ -22788,13 +22791,15 @@ async function waHandleVendorReply(sock, sender, text) {
         const lr = await r.json();
         const nlParsed = JSON.parse((lr.choices?.[0]?.message?.content?.trim()||'{}').replace(/^```json\s*/i,'').replace(/```$/,'').trim());
         if (nlParsed.type === 'delay' && nlParsed.reason) {
-          const confirmMsg = `Got it! Here's what I captured:\n\n📦 Order *${oName}*\n⏳ *Delay* — ${nlParsed.reason}\n📅 Ships by: *${nlParsed.eta_display || 'date not mentioned'}*\n\nReply *1* to confirm ✓ or *2* to cancel ✗`;
+          const _Fcd = '```';
+          const confirmMsg = `${_Fcd}\n▪ C R O S C R O W ▪\nDELAY LOGGED ✓\n────────────────\nORDER  ${oName}\nREASON ${nlParsed.reason}\nETA    ${nlParsed.eta_display || 'not mentioned'}\n────────────────\nReply 1 to confirm ✓\nReply 2 to cancel ✗\n${_Fcd}`;
           await waSessionSet(sender, { type: 'vendor_confirm', action: 'delay', shopify_id: shopifyId, order_name: oName, vendor_name: vName, data: { reason: nlParsed.reason, eta_display: nlParsed.eta_display, eta_iso: nlParsed.eta_iso } });
           await sendAndLog(confirmMsg, vName);
           return;
         }
         if (nlParsed.type === 'tracking' && nlParsed.awb) {
-          const confirmMsg = `Got it! Here's what I captured:\n\n📦 Order *${oName}*\n🚚 *Shipped* — AWB: ${nlParsed.awb}\n📮 Courier: ${nlParsed.courier || 'not mentioned'}\n\nReply *1* to confirm ✓ or *2* to cancel ✗`;
+          const _Fct = '```';
+          const confirmMsg = `${_Fct}\n▪ C R O S C R O W ▪\nTRACKING LOGGED ✓\n────────────────\nORDER   ${oName}\nAWB     ${nlParsed.awb}\nCOURIER ${nlParsed.courier || 'not mentioned'}\n────────────────\nReply 1 to confirm ✓\nReply 2 to cancel ✗\n${_Fct}`;
           await waSessionSet(sender, { type: 'vendor_confirm', action: 'tracking', shopify_id: shopifyId, order_name: oName, vendor_name: vName, data: { awb: nlParsed.awb, courier: nlParsed.courier || 'Not specified' } });
           await sendAndLog(confirmMsg, vName);
           return;
@@ -22850,7 +22855,7 @@ async function waHandleVendorReply(sock, sender, text) {
     if (result.matchedCount > 0) {
       if (recentNudge) await mdb.collection('wa_vendor_nudges').updateOne({ _id: recentNudge._id }, { $set: { resolved: true } });
       await sock.sendMessage(sender, { text: `✅ Tracking updated for order *${orderName}*!\n\nAWB: *${parsed.awb}*\nCourier: *${courier}*\n\nCustomer will be able to track their order. Thank you! 🙏` });
-      await waAdminAlert(`📦 *Vendor Tracking Submitted*\nOrder: *${orderName}*\nAWB: ${parsed.awb}\nCourier: ${courier}`);
+      await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR TRACKING\n────────────────\nORDER  ${orderName}\nAWB    ${parsed.awb}\nVIA    ${courier}\n────────────────\nSOURCE Vendor WA\n\`\`\``);
     } else {
       await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number.` });
     }
@@ -22867,7 +22872,7 @@ async function waHandleVendorReply(sock, sender, text) {
     if (result.matchedCount > 0) {
       if (recentNudge) await mdb.collection('wa_vendor_nudges').updateOne({ _id: recentNudge._id }, { $set: { resolved: true } });
       await sock.sendMessage(sender, { text: `✅ Update saved for order *${orderName}*!\n\nExpected by: *${eta}*\n\nWe'll let the customer know. Thank you for the update! 🙏` });
-      await waAdminAlert(`⏳ *Vendor Delay Update*\nOrder: *${orderName}*\nReason: ${reason}\nETA: ${eta}`);
+      await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR DELAY\n────────────────\nORDER  ${orderName}\nREASON ${reason}\nETA    ${eta}\n────────────────\nSOURCE Vendor WA\n\`\`\``);
     } else {
       await sock.sendMessage(sender, { text: `⚠️ Couldn't find order *${orderName}* in our system. Please check the order number.` });
     }
@@ -22919,22 +22924,8 @@ async function waVendorNudge(meta, customerPhone) {
     // Generate magic link token for no-login form update
     const updateToken = mdb ? await createVendorUpdateToken(d.shopify_order_id, d.order_name, vs.vendor_name, productNames).catch(() => null) : null;
     const updateLink = updateToken ? `\n\n🔗 *Quick update (no login):*\n${SERVER_BASE}/vendor/update/${updateToken}` : '';
-    const nudgeMsg =
-`⚠️ *Action Required — Order ${d.order_name}*
-
-Hi ${vs.vendor_name},
-
-Customer: ${customerName}${customerMobile ? ` (${customerMobile})` : ''}
-Product: ${productNames}
-Status: *Not shipped for ${days} day${days > 1 ? 's' : ''}*
-
-Please reply with:
-*1️⃣* — Order is delayed (share reason + ETA)
-*2️⃣* — Already shipped (share AWB + courier)
-
-Or tap the link to submit instantly:${updateLink}
-
-_CROSCROW Operations Team_`;
+    const _Fndg2 = '```';
+    const nudgeMsg = `${_Fndg2}\n▪ C R O S C R O W ▪\nACTION REQUIRED\n────────────────\nORDER  ${d.order_name}\nITEM   ${productNames}\nSTUCK  ${days} day${days > 1 ? 's' : ''} unshipped\n────────────────\nSUBMIT UPDATE HERE\n${updateToken ? `dashboard.croscrow.com/vendor/update/${updateToken}` : 'Log in to vendor portal'}\n${_Fndg2}`;
 
     try {
       const jid = `91${VENDOR_WA}@s.whatsapp.net`;
@@ -23311,22 +23302,14 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
       ? `*1️⃣* — Pickup scheduled (share date/courier)\n*2️⃣* — Already picked up (share details)\n*3️⃣* — Need assistance from CROSCROW`
       : `*1️⃣* — Delayed (share reason + expected dispatch date)\n*2️⃣* — Already shipped (share AWB + courier)\n*3️⃣* — Need assistance from CROSCROW`;
 
-    const vendorMsg =
-`${urgencyLine} — Order ${orderName}
-
-Hi ${vn},
-
-CROSCROW has flagged an issue with the above order that requires your *immediate attention*.
-
-📋 *Issue:* ${issueLabel}${daysStuck !== null ? `\n⏳ *Pending since:* ${daysStuck} day${daysStuck !== 1 ? 's' : ''}` : ''}${meta?.customer_name ? `\n👤 *Customer:* ${meta.customer_name}` : ''}${contextNote}
-${itemNames ? `\n📦 *Items:*\n${itemNames}` : ''}
-
-${actionLine}
-
-Reply with:
-${replyOptions}${formLink ? `\n\n🔗 *Update via form (no login needed):*\n${formLink}` : ''}
-
-_CROSCROW Operations Team_`;
+    const _Fvp = '```';
+    const _vpDaysLine = daysStuck !== null ? `PENDING  ${daysStuck} day${daysStuck !== 1 ? 's' : ''}\n` : '';
+    const _vpCustLine = meta?.customer_name ? `CUSTOMER ${meta.customer_name}\n` : '';
+    const _vpItemsLine = itemNames ? `ITEMS    ${itemNames.replace(/\n/g, ', ')}\n` : '';
+    const _vpReplyOpts = issue_type === 'return_issue'
+      ? `1 — Pickup scheduled (date + courier)\n2 — Already picked up\n3 — Need CROSCROW help`
+      : `1 — Delayed (reason + ETA)\n2 — Shipped (AWB + courier)\n3 — Need CROSCROW help`;
+    const vendorMsg = `${_Fvp}\n▪ C R O S C R O W ▪\n${urgencyLine.toUpperCase()}\n────────────────\nORDER    ${orderName}\nISSUE    ${issueLabel}\n${_vpDaysLine}${_vpCustLine}${_vpItemsLine}────────────────\n${_vpReplyOpts}\n${formLink ? `────────────────\nUPDATE HERE (no login)\n${formLink}` : ''}\n${_Fvp}`;
     try {
       const sent = await waSocket.sendMessage(vjid, { text: vendorMsg });
       const actualJid = sent?.key?.remoteJid || vjid;
@@ -23892,14 +23875,7 @@ async function dispatchAlertCron() {
       );
     }
 
-    const msg =
-`🚨 *Dispatch Alert — Orders Stuck 4+ Days* (${deduped.length})
-
-${lines.join('\n')}
-
-Please follow up with vendors or escalate. Use *!stuck* for full list.
-
-_CROSCROW Ops_`;
+    const msg = `\`\`\`\n▪ C R O S C R O W ▪\nDISPATCH ALERT 🚨\nSTUCK 4+ DAYS (${deduped.length})\n────────────────\n${lines.map(l=>l.replace(/\*/g,'')).join('\n')}\n────────────────\nFollow up or reply !stuck\n\`\`\``;
 
     await waAdminAlert(msg, 'dispatch_alert');
   } catch (e) {
@@ -23944,8 +23920,8 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
       ? '\nQuery: ' + _lastMsgs.map(m => `"${(m.text || '').slice(0, 150)}"`).join(' → ')
       : '';
     await createSupportTicket(chat, context + _querySummary).catch(() => null);
-    const _angryTag = _isAngry && !humanRequested ? ' ⚠️ *Angry customer detected*' : '';
-    await waAdminAlert(`🎫 *New Support Ticket*\n${_category}\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_angryTag}${_chatSnippet}\nSLA: 8 hours\n\n🔗 ${_panelLink}`, 'support_escalation');
+    const _angryTag = _isAngry && !humanRequested ? '\n⚠️ ANGRY CUSTOMER' : '';
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nNEW SUPPORT TICKET 🎫\n────────────────\n${_nameStr}${_phoneStr}${_orderStr}TYPE   ${_category}\nSLA    8 hours${_angryTag}\n────────────────\n${context.slice(0, 100)}${_chatSnippet}\n────────────────\nAdmin → Support Tickets\n\`\`\``, 'support_escalation');
 
     const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
     const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
@@ -23964,7 +23940,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
     );
   } else {
     // Bot-triggered escalation, customer not angry — alert admin silently, auto-resolve chat
-    await waAdminAlert(`🔔 *Bot Escalation (auto-resolved)*\n${_nameStr}${_phoneStr}${_orderStr}Context: ${context}${_chatSnippet}\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`, 'support_escalation');
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nBOT ESCALATION\nAUTO-RESOLVED\n────────────────\n${_nameStr}${_phoneStr}${_orderStr}${context.slice(0, 80)}\n\`\`\``, 'support_escalation');
     await mdb.collection('support_chats').updateOne(
       { _id: chat._id },
       { $set: { status: 'resolved', confused_count: 0, updated_at: new Date().toISOString() } }
@@ -24433,7 +24409,7 @@ async function startBaileysBot() {
                 }
               }
               const _Fpl = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${orderName}\n\nSTATE  Confirmed and moving.\n       Dispatch update follows\n       once shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fpl}` });
-              await waAdminAlert(`✅ *Order Confirmed via Poll*\nOrder: *${orderName}*\nCustomer: ${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}`);
+              await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nORDER CONFIRMED ✅\n────────────────\nORDER  ${orderName}\nPHONE  +91${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}\nSOURCE Poll\n\`\`\``);
             } else {
               // Add "cancelled" tag on Shopify
               const orders = await shopifyREST(`/orders.json?name=${encodeURIComponent(orderName)}&status=any&limit=1`);
@@ -24442,7 +24418,7 @@ async function startBaileysBot() {
                 await shopifyREST(`/orders/${order.id}/cancel.json`, 'POST', {});
               }
               const _Fpl2 = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl2}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${orderName}\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_Fpl2}` });
-              await waAdminAlert(`❌ *Order Cancelled via Poll*\nOrder: *${orderName}*\nCustomer: ${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}`);
+              await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nORDER CANCELLED ❌\n────────────────\nORDER  ${orderName}\nPHONE  +91${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}\nSOURCE Poll\n\`\`\``);
             }
             await mdb.collection('wa_confirm_polls').deleteOne({ _id: poll._id });
           } catch (e) { console.error('Poll vote handler error:', e.message); }
@@ -24479,7 +24455,7 @@ async function startBaileysBot() {
                   );
                   await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
                   const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
-                  await waAdminAlert(`✅ *Chat Resolved (Manual)*\nOrder / Customer: *${_label}*\nYou closed it by sending: "${outText.slice(0,40)}"`);
+                  await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
                   console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
                 }
                 // Store in chat_message_analytics for bot improvement tracking
@@ -24714,7 +24690,7 @@ async function startBaileysBot() {
               const orderStr = mentionedOrder ? `\nOrder: *${mentionedOrder}*` : (chat.order_name ? `\nOrder: *${chat.order_name}*` : '');
               const phoneStr = custPhone ? `\nPhone: ${custPhone}` : '';
               await waAdminAlert(
-                `📩 *Customer Query Received*${orderStr}${phoneStr}\n\n💬 "${queryText}"\n\n🔗 https://dashboard.croscrow.com/admin#supporttickets`,
+                `\`\`\`\n▪ C R O S C R O W ▪\nCUSTOMER QUERY\n────────────────\n${chat.order_name || mentionedOrder ? `ORDER  ${mentionedOrder || chat.order_name}\n` : ''}${custPhone ? `PHONE  ${custPhone}\n` : ''}────────────────\n"${queryText.slice(0, 120)}"\n────────────────\nAdmin → Support Tickets\n\`\`\``,
                 'support_escalation'
               ).catch(() => {});
 
@@ -25026,7 +25002,7 @@ async function startBaileysBot() {
               { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
             );
             const _resolveLabel = chat.order_name || chat.customer_phone || String(chat._id);
-            waAdminAlert(`✅ *Chat Resolved (Bot)*\nOrder / Customer: *${_resolveLabel}*\nCustomer said: "${text.slice(0,60)}"`).catch(() => {});
+            waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_resolveLabel}\nSOURCE Bot auto-resolve\n\`\`\``).catch(() => {});
             // Record bot-resolved outcome for analytics
             const _allMsgsR = await SC.messages(chat._id).catch(() => []);
             const _botMsgsR = _allMsgsR.filter(m => m.sender === 'assistant');
@@ -25101,7 +25077,7 @@ async function startBaileysBot() {
               const _nameStr = ci.name ? `Name: *${ci.name}*\n` : '';
               const _phoneStr = _ph ? `Phone: ${_ph}\n` : '';
               const _orderStr = ci.order_name ? `Order: *${ci.order_name}*\n` : '';
-              waAdminAlert(`🔔 *Action Needed*\n${_nameStr}${_phoneStr}${_orderStr}Message: "${text.slice(0, 200)}"\nBot reply: "${reply.slice(0, 150)}"\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`)
+              waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nACTION NEEDED 🔔\n────────────────\n${_nameStr.replace(/\*/g,'')}${_phoneStr}${_orderStr.replace(/\*/g,'')}────────────────\n"${text.slice(0, 120)}"\n────────────────\nAdmin → Support Chats\n\`\`\``)
             }).catch(() => {});
           }
 
@@ -25124,7 +25100,7 @@ async function startBaileysBot() {
                 { projection: { _id: 1 } }
               ) : null;
               if (!ovsDispatched) {
-                waAdminAlert(`⏰ *Stuck Order Alert*\nOrder: *${meta.data.order_name}*${meta.data.customer_name ? `\nCustomer: *${meta.data.customer_name}*` : ''}\nPhone: +91${phone}\n${Math.round(hrs)}h since confirmation, still not shipped.`).catch(() => {});
+                waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nSTUCK ORDER ⏰\n────────────────\nORDER  ${meta.data.order_name}${meta.data.customer_name ? `\nCUST   ${meta.data.customer_name}` : ''}\nPHONE  +91${phone}\nSTUCK  ${Math.round(hrs)}h unshipped\n\`\`\``).catch(() => {});
               }
             }
 
