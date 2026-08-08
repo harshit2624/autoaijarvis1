@@ -8525,6 +8525,48 @@ app.post("/admin/email-settings/test-template", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /admin/resend-order-email — send real template for a real order
+app.post("/admin/resend-order-email", adminAuth, async (req, res) => {
+  const { shopifyId, template } = req.body || {};
+  if (!shopifyId || !template) return res.status(400).json({ error: "shopifyId and template required" });
+  const cfg = await getSmtpConfig();
+  if (!cfg?.host) return res.status(400).json({ error: "SMTP not configured" });
+
+  try {
+    const od = await shopifyREST(`/orders/${shopifyId}.json`);
+    const order = od?.order;
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    const to = order.email;
+    if (!to) return res.status(400).json({ error: "Order has no email" });
+
+    const adsStrip = await getEmailAdsStrip();
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(shopifyId) }) || {};
+
+    let subject, html;
+    if (template === 'confirmed_customer') {
+      subject = `Your Order ${order.name} is Confirmed ✅`;
+      html = templateOrderConfirmedCustomer({ order, adsStrip });
+    } else if (template === 'transit') {
+      const awb = meta.awb || ''; const courier = meta.courier || '';
+      subject = `Your Order ${order.name} Has Shipped 🚚`;
+      html = templateInTransit({ order, awb, courier, meta, adsStrip });
+    } else if (template === 'ofd') {
+      const awb = meta.awb || ''; const courier = meta.courier || '';
+      subject = `Your Order ${order.name} is Out for Delivery Today 🛵`;
+      html = templateOfd({ order, awb, courier, meta, adsStrip });
+    } else if (template === 'delivered_customer') {
+      subject = `Your Order ${order.name} Has Been Delivered 🎉`;
+      html = templateDelivered({ order, forRole: 'customer', adsStrip });
+    } else {
+      return res.status(400).json({ error: "Unknown template. Use: confirmed_customer, transit, ofd, delivered_customer" });
+    }
+
+    const transporter = createTransporter(cfg);
+    await transporter.sendMail({ from: `"${cfg.fromName || 'CROSCROW'}" <${cfg.fromEmail || cfg.user}>`, to, subject, html });
+    res.json({ ok: true, message: `${template} sent to ${to} for order ${order.name}` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Email Ads endpoints ───────────────────────────────────────────────────
 app.get("/admin/email-settings/ads", adminAuth, async (req, res) => {
   try { res.json(await EA.get()); } catch(e) { res.status(500).json({ error: e.message }); }
