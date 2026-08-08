@@ -2062,7 +2062,7 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
 <div style="max-width:600px;margin:0 auto;">
 
-  <div style="background:url('${IMG}') center/cover no-repeat;height:260px;position:relative;">
+  <div style="background:url('${IMG}') top center/cover no-repeat;height:260px;position:relative;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Order Confirmed</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOU'RE IN.<br>WE'VE GOT YOU.</div>
@@ -2652,7 +2652,7 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
 <div style="max-width:600px;margin:0 auto;">
 
-  <div style="background:url('${IMG}') center/cover no-repeat;height:260px;position:relative;">
+  <div style="background:url('${IMG}') top center/cover no-repeat;height:260px;position:relative;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Shipped · In Transit</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS MOVING.</div>
@@ -2762,7 +2762,7 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
 <div style="max-width:600px;margin:0 auto;">
 
-  <div style="background:url('${IMG}') center/cover no-repeat;height:260px;position:relative;">
+  <div style="background:url('${IMG}') top center/cover no-repeat;height:260px;position:relative;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#fca5a5;text-transform:uppercase;margin-bottom:6px;">&#11044; Arriving Today</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">GET READY<br>TO DRIP HARD.</div>
@@ -2992,7 +2992,7 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
 <div style="max-width:600px;margin:0 auto;">
 
-  <div style="background:url('${IMG}') center/cover no-repeat;height:260px;position:relative;">
+  <div style="background:url('${IMG}') top center/cover no-repeat;height:260px;position:relative;">
     <div style="position:absolute;bottom:0;left:0;right:0;padding:20px 28px;background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%);">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#86efac;text-transform:uppercase;margin-bottom:6px;">&#11044; Delivered · Thank You</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
