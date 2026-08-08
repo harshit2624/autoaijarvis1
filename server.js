@@ -2545,20 +2545,16 @@ function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml
 <body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
 <div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('${IMG}') top center/cover no-repeat;height:300px;">
-    <tr><td style="vertical-align:bottom;padding:22px 28px;height:300px;">
-      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:8px;">&#11044; ${stageLabel}</div>
-      <div style="font-size:28px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">${stageHeadline}</div>
-    </td></tr>
-  </table>
+  <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;border:0;height:auto;">
 
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
-      <td style="padding:16px 28px;">
-        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">${orderName}</div>
+      <td style="padding:14px 28px;">
+        <div style="font-size:7px;font-weight:700;letter-spacing:5px;color:${stageColor};text-transform:uppercase;margin-bottom:6px;">&#11044; ${stageLabel}</div>
+        <div style="font-size:22px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">${stageHeadline}</div>
       </td>
-      <td style="padding:16px 28px;text-align:right;">
-        <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
+      <td style="padding:14px 28px;text-align:right;vertical-align:top;">
+        <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">${orderName}</div>
         <div style="font-size:18px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;${orderTotal}</div>
       </td>
     </tr>
