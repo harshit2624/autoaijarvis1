@@ -2044,22 +2044,22 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
     return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
       <tr>
-        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        <td style="padding:8px 10px 8px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:8px 0;vertical-align:top;">
+          <div style="font-size:15px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:12px;color:#999;margin-top:2px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:11px;letter-spacing:2px;color:#bbb;margin-top:4px;text-transform:uppercase;">QTY ${li.quantity}</div>
         </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        <td style="padding:8px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:15px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
         </td>
       </tr>
     </table>`;
   }).join('');
 
   const confirmedBody = `
-    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is confirmed and in the hands of our vendor. We'll update you the moment it ships.</div>
+    <div style="font-size:17px;font-weight:700;color:#111;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:14px;color:#666;line-height:1.7;margin-bottom:14px;">Your order is confirmed and in the hands of our vendor. We'll update you the moment it ships.</div>
 
     ${isPrepaid
       ? `<div style="background:#f0f3ff;border-left:3px solid #002eff;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#1a2a6e;line-height:1.7;">Payment received &#10003; — No action needed. Sit back and relax.</div>`
@@ -2191,9 +2191,9 @@ function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
       return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;margin-bottom:0;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+        ${img ? `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;">
           <img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;">
-        </td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+        </td>` : `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;">
           <div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div>
         </td>`}
         <td style="padding:14px 0;vertical-align:top;">
@@ -2647,22 +2647,22 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
     return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
       <tr>
-        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        <td style="padding:8px 10px 8px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:8px 0;vertical-align:top;">
+          <div style="font-size:15px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:12px;color:#999;margin-top:2px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:11px;letter-spacing:2px;color:#bbb;margin-top:4px;text-transform:uppercase;">QTY ${li.quantity}</div>
         </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        <td style="padding:8px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:15px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
         </td>
       </tr>
     </table>`;
   }).join('');
 
   const transitBody = `
-    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has shipped. ETA 3–7 business days.${!isPrepaid && codPending > 0 ? ` Keep <strong style="color:#111;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
+    <div style="font-size:17px;font-weight:700;color:#111;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:14px;color:#666;line-height:1.7;margin-bottom:14px;">Your order has shipped. ETA 3–7 business days.${!isPrepaid && codPending > 0 ? ` Keep <strong style="color:#111;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
 
     <div style="height:4px;background:#f0f0f0;margin-bottom:10px;"><div style="height:4px;width:60%;background:#002eff;"></div></div>
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;"><tr>
@@ -2713,22 +2713,22 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
     return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
       <tr>
-        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        <td style="padding:8px 10px 8px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:8px 0;vertical-align:top;">
+          <div style="font-size:15px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:12px;color:#999;margin-top:2px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:11px;letter-spacing:2px;color:#bbb;margin-top:4px;text-transform:uppercase;">QTY ${li.quantity}</div>
         </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        <td style="padding:8px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:15px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
         </td>
       </tr>
     </table>`;
   }).join('');
 
   const ofdBody = `
-    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order is out for delivery today. Stay reachable — the delivery agent will call before arriving.</div>
+    <div style="font-size:17px;font-weight:700;color:#111;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:14px;color:#666;line-height:1.7;margin-bottom:14px;">Your order is out for delivery today. Stay reachable — the delivery agent will call before arriving.</div>
 
     ${!isPrepaid && codPending > 0 ? `<div style="background:#fef2f2;border-left:3px solid #ef4444;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#7f1d1d;line-height:1.7;">&#9888;&#xFE0F; COD amount: <strong>&#8377;${codPending.toFixed(2)}</strong> — exact change preferred.</div>` : ''}
 
@@ -2817,7 +2817,7 @@ function templateVendorShipped({ order, vendorName, items, awb, courier, trackin
       return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        ${img ? `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
         <td style="padding:14px 0;vertical-align:top;">
           <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title || li.name}</div>
           ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;">${li.variant_title}</div>` : ''}
@@ -2907,22 +2907,22 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
     return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
       <tr>
-        <td style="padding:14px 14px 14px 0;width:74px;vertical-align:top;">${imgEl}</td>
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#111;">${li.title}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#999;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#bbb;margin-top:5px;text-transform:uppercase;">QTY ${li.quantity}</div>
+        <td style="padding:8px 10px 8px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:8px 0;vertical-align:top;">
+          <div style="font-size:15px;font-weight:700;color:#111;">${li.title}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:12px;color:#999;margin-top:2px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:11px;letter-spacing:2px;color:#bbb;margin-top:4px;text-transform:uppercase;">QTY ${li.quantity}</div>
         </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
+        <td style="padding:8px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:15px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*li.quantity).toFixed(2)}</div>
         </td>
       </tr>
     </table>`;
   }).join('');
 
   const deliveredBody = `
-    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-    <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has been delivered! We hope you love your new pieces. Rock it. 🖤</div>
+    <div style="font-size:17px;font-weight:700;color:#111;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:14px;color:#666;line-height:1.7;margin-bottom:14px;">Your order has been delivered! We hope you love your new pieces. Rock it. 🖤</div>
 
     <div style="background:#f0fdf4;border-left:3px solid #16a34a;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#166534;line-height:1.7;">&#10003; &nbsp;Order delivered successfully${addr ? ` to ${addr.city}, ${addr.province}` : ''}.</div>
 
@@ -3071,7 +3071,7 @@ function templatePartialAdvanceCustomer({ order, meta = {}, adsStrip = '' }) {
       return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        ${img ? `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
         <td style="padding:14px 0;vertical-align:top;">
           <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
           ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
@@ -3168,7 +3168,7 @@ function templateConvertedToPrepaidCustomer({ order, meta = {}, adsStrip = '' })
       return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
+        ${img ? `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
         <td style="padding:14px 0;vertical-align:top;">
           <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title}</div>
           ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
@@ -14904,9 +14904,9 @@ function templateOrderOnHoldCustomer({ order, adsStrip = '' }) {
       return `
     <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
       <tr>
-        ${img ? `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+        ${img ? `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;">
           <img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;">
-        </td>` : `<td style="padding:14px 14px 14px 0;width:64px;vertical-align:top;">
+        </td>` : `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;">
           <div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div>
         </td>`}
         <td style="padding:14px 0;vertical-align:top;">
