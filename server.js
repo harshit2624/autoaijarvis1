@@ -2059,10 +2059,10 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
     <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Order Confirmed</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOU'RE IN.<br>WE'VE GOT YOU.</div>
@@ -2102,16 +2102,10 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
     <a href="https://dashboard.croscrow.com/o/${order.name.replace('#','')}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
 
     ${addr ? `
-    <div style="border:1px solid #f0f0f0;border-radius:4px;overflow:hidden;margin-bottom:4px;">
-      <div style="display:flex;padding:10px 16px;border-bottom:1px solid #f5f5f5;font-size:12px;">
-        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">Ship to</span>
-        <span style="font-size:12px;font-weight:700;color:#111;">${addr.name}</span>
-      </div>
-      <div style="display:flex;padding:10px 16px;font-size:12px;">
-        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">Address</span>
-        <span style="font-size:12px;color:#111;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</span>
-      </div>
-    </div>` : ''}
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-bottom:4px;">
+      <tr style="border-bottom:1px solid #f5f5f5;"><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:35%;vertical-align:top;">Ship to</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#111;vertical-align:top;">${addr.name}</td></tr>
+      <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">Address</td><td style="padding:10px 16px;font-size:12px;color:#111;vertical-align:top;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</td></tr>
+    </table>` : ''}
   </div>
 
   ${adsStrip}
@@ -2649,10 +2643,10 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
     <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#99b3ff;text-transform:uppercase;margin-bottom:6px;">&#11044; Shipped · In Transit</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR ORDER<br>IS MOVING.</div>
@@ -2676,28 +2670,20 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
     <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
     <div style="font-size:13px;color:#666;line-height:1.8;margin-bottom:20px;">Your order has shipped. ETA 3–7 business days.${!isPrepaid && codPending > 0 ? ` Keep <strong style="color:#111;">&#8377;${codPending.toFixed(2)}</strong> ready for cash on delivery.` : ''}</div>
 
-    <div style="height:4px;background:#f0f0f0;margin-bottom:10px;position:relative;">
-      <div style="position:absolute;left:0;top:0;height:100%;width:60%;background:#002eff;"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;">
-      <span style="color:#002eff;font-weight:700;">Confirmed</span>
-      <span style="color:#002eff;font-weight:700;">Packed</span>
-      <span style="color:#111;font-weight:700;">Shipped &#9679;</span>
-      <span style="color:#ccc;">OFD</span>
-      <span style="color:#ccc;">Delivered</span>
-    </div>
+    <div style="height:4px;background:#f0f0f0;margin-bottom:10px;"><div style="height:4px;width:60%;background:#002eff;"></div></div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;"><tr>
+      <td style="color:#002eff;font-weight:700;text-align:left;">Confirmed</td>
+      <td style="color:#002eff;font-weight:700;text-align:center;">Packed</td>
+      <td style="color:#111;font-weight:700;text-align:center;">Shipped &#9679;</td>
+      <td style="color:#ccc;text-align:center;">OFD</td>
+      <td style="color:#ccc;text-align:right;">Delivered</td>
+    </tr></table>
 
     ${awb ? `
-    <div style="border:1px solid #f0f0f0;border-radius:4px;overflow:hidden;margin-bottom:20px;">
-      <div style="display:flex;padding:10px 16px;border-bottom:1px solid #f5f5f5;">
-        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">Courier</span>
-        <span style="font-size:12px;font-weight:700;color:#111;">${courier || 'Delivery Partner'}</span>
-      </div>
-      <div style="display:flex;padding:10px 16px;">
-        <span style="font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;">AWB</span>
-        <span style="font-size:12px;font-weight:700;color:#002eff;font-family:monospace;">${awb}</span>
-      </div>
-    </div>` : ''}
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-bottom:20px;">
+      <tr style="border-bottom:1px solid #f5f5f5;"><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;vertical-align:top;">Courier</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#111;vertical-align:top;">${courier || 'Delivery Partner'}</td></tr>
+      <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">AWB</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#002eff;font-family:monospace;vertical-align:top;">${awb}</td></tr>
+    </table>` : ''}
 
     <a href="${resolveTrackUrl(trackingUrl, awb, courier, order.name)}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
 
@@ -2759,10 +2745,10 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
     <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#fca5a5;text-transform:uppercase;margin-bottom:6px;">&#11044; Arriving Today</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">GET READY<br>TO DRIP HARD.</div>
@@ -2787,16 +2773,14 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
 
     ${!isPrepaid && codPending > 0 ? `<div style="background:#fef2f2;border-left:3px solid #ef4444;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#7f1d1d;line-height:1.7;">&#9888;&#xFE0F; COD amount: <strong>&#8377;${codPending.toFixed(2)}</strong> — exact change preferred.</div>` : ''}
 
-    <div style="height:3px;background:#f0f0f0;margin-bottom:10px;position:relative;">
-      <div style="position:absolute;left:0;top:0;height:100%;width:85%;background:#ef4444;"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;">
-      <span style="color:#002eff;font-weight:700;">Confirmed</span>
-      <span style="color:#002eff;font-weight:700;">Packed</span>
-      <span style="color:#002eff;font-weight:700;">Shipped</span>
-      <span style="color:#111;font-weight:700;">OFD &#9679;</span>
-      <span style="color:#ccc;">Delivered</span>
-    </div>
+    <div style="height:3px;background:#f0f0f0;margin-bottom:10px;"><div style="height:3px;width:85%;background:#ef4444;"></div></div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;"><tr>
+      <td style="color:#002eff;font-weight:700;text-align:left;">Confirmed</td>
+      <td style="color:#002eff;font-weight:700;text-align:center;">Packed</td>
+      <td style="color:#002eff;font-weight:700;text-align:center;">Shipped</td>
+      <td style="color:#111;font-weight:700;text-align:center;">OFD &#9679;</td>
+      <td style="color:#ccc;text-align:right;">Delivered</td>
+    </tr></table>
 
     <a href="${resolveTrackUrl(trackingUrl, awb, courier, order.name)}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Live</a>
 
@@ -2989,10 +2973,10 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-<div style="max-width:600px;margin:0 auto;">
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,sans-serif;">
+<div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <table width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 60%),url('${IMG}') top center/cover no-repeat;height:260px;">
     <tr><td style="vertical-align:bottom;padding:20px 28px;height:260px;">
       <div style="font-size:9px;font-weight:700;letter-spacing:5px;color:#86efac;text-transform:uppercase;margin-bottom:6px;">&#11044; Delivered · Thank You</div>
       <div style="font-size:26px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;">YOUR DRIP<br>HAS ARRIVED.</div>
@@ -3017,16 +3001,14 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
 
     <div style="background:#f0fdf4;border-left:3px solid #16a34a;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#166534;line-height:1.7;">&#10003; &nbsp;Order delivered successfully${addr ? ` to ${addr.city}, ${addr.province}` : ''}.</div>
 
-    <div style="height:3px;background:#f0f0f0;margin-bottom:10px;position:relative;">
-      <div style="position:absolute;left:0;top:0;height:100%;width:100%;background:#16a34a;"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;">
-      <span style="color:#16a34a;font-weight:700;">Confirmed</span>
-      <span style="color:#16a34a;font-weight:700;">Packed</span>
-      <span style="color:#16a34a;font-weight:700;">Shipped</span>
-      <span style="color:#16a34a;font-weight:700;">OFD</span>
-      <span style="color:#111;font-weight:700;">Delivered &#9679;</span>
-    </div>
+    <div style="height:3px;background:#16a34a;margin-bottom:10px;"></div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;"><tr>
+      <td style="color:#16a34a;font-weight:700;text-align:left;">Confirmed</td>
+      <td style="color:#16a34a;font-weight:700;text-align:center;">Packed</td>
+      <td style="color:#16a34a;font-weight:700;text-align:center;">Shipped</td>
+      <td style="color:#16a34a;font-weight:700;text-align:center;">OFD</td>
+      <td style="color:#111;font-weight:700;text-align:right;">Delivered &#9679;</td>
+    </tr></table>
 
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
