@@ -2083,7 +2083,7 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
       <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">Address</td><td style="padding:10px 16px;font-size:12px;color:#111;vertical-align:top;">${addr.address1}${addr.address2 ? ', '+addr.address2 : ''}, ${addr.city} ${addr.zip}</td></tr>
     </table>` : ''}
   `;
-  return neonEmailBase({ stageLabel: 'ORDER CONFIRMED', stageColor: '#002eff', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Order Confirmed', stageColor: '#99b3ff', stageHeadline: "YOU'RE IN.<br>WE'VE GOT YOU.", orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip });
 }
 
 function itemsTableHtml(lineItems, showVendor = false) {
@@ -2537,39 +2537,29 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
 
 
 // ── Neon customer email wrapper ───────────────────────────────────────────
-function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '' }) {
+function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '' }) {
   const LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const IMG  = 'https://i.ibb.co/JwPtg3cB/Untitled-6000-x-3000-px.png';
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#08000f;font-family:Arial,Helvetica,sans-serif;">
-<div style="max-width:600px;margin:0 auto;background:#08000f;">
+<body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
+<div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <div style="padding:9px 0;text-align:center;font-size:7px;letter-spacing:5px;color:rgba(255,255,255,0.15);text-transform:uppercase;font-family:Arial;">EST. 2024 &nbsp;&#183;&nbsp; INDIA &nbsp;&#183;&nbsp; 60+ BRANDS</div>
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr><td style="padding:0 20px 16px;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:2px solid rgba(0,46,255,0.45);">
-        <tr><td style="padding:30px 20px;text-align:center;">
-          <div style="font-family:Impact,'Arial Black',Arial,sans-serif;font-size:80px;font-weight:900;color:#fff;letter-spacing:-2px;line-height:1;text-transform:uppercase;text-shadow:0 0 7px #fff,0 0 14px #fff,0 0 28px #002eff,0 0 56px #002eff;">CROSCROW</div>
-          <div style="height:2px;background:#002eff;margin:14px auto;width:80%;"></div>
-          <div style="font-size:9px;letter-spacing:6px;color:rgba(255,255,255,0.5);text-transform:uppercase;font-family:Arial;">60+ HOMEGROWN BRANDS</div>
-        </td></tr>
-      </table>
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background:linear-gradient(to top,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0) 55%),url('\${IMG}') top center/cover no-repeat;height:300px;">
+    <tr><td style="vertical-align:bottom;padding:22px 28px;height:300px;">
+      <div style="font-size:8px;font-weight:700;letter-spacing:5px;color:\${stageColor};text-transform:uppercase;margin-bottom:8px;">&#11044; \${stageLabel}</div>
+      <div style="font-size:28px;font-weight:900;color:#fff;text-transform:uppercase;line-height:1.1;font-family:Arial,sans-serif;">\${stageHeadline}</div>
     </td></tr>
   </table>
 
-  <div style="text-align:center;padding-bottom:18px;">
-    <div style="display:inline-block;border:1px solid \${stageColor};padding:6px 22px;font-size:8px;letter-spacing:4px;color:\${stageColor};text-transform:uppercase;font-family:Arial;">&#9679; \${stageLabel}</div>
-  </div>
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#04000a;border-top:2px solid \${stageColor};">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
-      <td style="padding:14px 28px;">
-        <div style="font-family:'Courier New',Courier,monospace;font-size:26px;font-weight:900;color:#fff;letter-spacing:1px;">\${orderName}</div>
+      <td style="padding:16px 28px;">
+        <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:2px;font-family:Arial;">\${orderName}</div>
       </td>
-      <td style="padding:14px 28px;text-align:right;">
-        <div style="font-size:7px;letter-spacing:3px;color:#444;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
-        <div style="font-family:'Courier New',Courier,monospace;font-size:18px;font-weight:900;color:\${stageColor};">&#8377;\${orderTotal}</div>
+      <td style="padding:16px 28px;text-align:right;">
+        <div style="font-size:7px;letter-spacing:3px;color:#555;text-transform:uppercase;font-family:Arial;margin-bottom:2px;">Total</div>
+        <div style="font-size:18px;font-weight:900;color:#002eff;font-family:Arial;">&#8377;\${orderTotal}</div>
       </td>
     </tr>
   </table>
@@ -2580,11 +2570,11 @@ function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml
 
   \${adsStrip}
 
-  <div style="background:#04000a;padding:20px 28px;text-align:center;border-top:1px solid #111;">
-    <img src="\${LOGO}" width="120" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;">
-    <div style="font-size:10px;color:#444;line-height:1.8;font-family:Arial;">Questions? Reach us on WhatsApp or reply to this email.</div>
+  <div style="background:#111;padding:20px 28px;text-align:center;border-top:1px solid #1a1a1a;">
+    <img src="\${LOGO}" width="120" alt="CROSCROW" style="display:inline-block;margin-bottom:10px;border-radius:4px;">
+    <div style="font-size:10px;color:#555;line-height:1.8;font-family:Arial;">Questions? Reach us on WhatsApp or reply to this email.</div>
     <div style="font-size:8px;color:#333;margin-top:10px;letter-spacing:2px;text-transform:uppercase;font-family:Arial;">&#169; CROSCROW &middot; Do Not Reply</div>
-    <div style="font-size:8px;color:#333;margin-top:5px;font-family:Arial;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
+    <div style="font-size:8px;color:#444;margin-top:5px;font-family:Arial;">Powered by <a href="https://antortiq.onrender.com/" target="_blank" style="color:#002eff;text-decoration:none;font-weight:700;">Antortiq</a></div>
   </div>
 
 </div>
@@ -2693,7 +2683,7 @@ function templateInTransit({ order, awb, courier, trackingUrl = '', meta = {}, a
       </tr>
     </table>
   `;
-  return neonEmailBase({ stageLabel: 'IN TRANSIT', stageColor: '#002eff', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: transitBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Shipped · In Transit', stageColor: '#99b3ff', stageHeadline: 'YOUR ORDER<br>IS MOVING.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: transitBody, adsStrip });
 }
 
 function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStrip = '' }) {
@@ -2756,7 +2746,7 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
     </table>
   `;
   const ofdAmt = isPrepaid ? total.toFixed(2) : codPending.toFixed(2);
-  return neonEmailBase({ stageLabel: 'OUT FOR DELIVERY', stageColor: '#ef4444', orderName: order.name, orderTotal: ofdAmt, bodyHtml: ofdBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: order.name, orderTotal: ofdAmt, bodyHtml: ofdBody, adsStrip });
 }
 
 function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl, adsStrip = '' }) {
@@ -2950,7 +2940,7 @@ function templateDelivered({ order, awb = '', courier = '', trackingUrl = '', fo
     <p style="font-size:12px;color:#999;margin-bottom:16px;line-height:1.7;">Any issues with your order? Reply to this email or reach us on WhatsApp.</p>
     ${awb || trackingUrl ? trackButton(trackingUrl, awb, courier, 'View Order Details →') : ''}
   `;
-  return neonEmailBase({ stageLabel: 'DELIVERED', stageColor: '#16a34a', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: deliveredBody, adsStrip });
+  return neonEmailBase({ stageLabel: 'Delivered · Thank You', stageColor: '#86efac', stageHeadline: 'YOUR DRIP<br>HAS ARRIVED.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: deliveredBody, adsStrip });
 }
 
 function templatePartialAdvanceVendor({ order, vendorName, meta = {} }) {
