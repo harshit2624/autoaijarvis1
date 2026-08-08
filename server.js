@@ -2537,15 +2537,15 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
 
 
 // ── Neon customer email wrapper ───────────────────────────────────────────
-function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '' }) {
+function neonEmailBase({ stageLabel, stageColor, orderName, orderTotal, bodyHtml, adsStrip = '', stageHeadline = '', imgUrl = '', bannerHeight = '' }) {
   const LOGO = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
-  const IMG  = 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png';
+  const IMG  = imgUrl || 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png';
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#e8e8e8;font-family:Arial,Helvetica,sans-serif;">
 <div style="max-width:600px;margin:0 auto;background:#fff;">
 
-  <img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;border:0;height:auto;">
+  <div style="overflow:hidden;${bannerHeight ? `max-height:${bannerHeight};` : ''}"><img src="${IMG}" width="600" alt="CROSCROW" style="width:100%;max-width:600px;display:block;border:0;height:auto;"></div>
 
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111;">
     <tr>
@@ -8485,6 +8485,10 @@ function buildDemoTemplates(to, adsStrip = '') {
     rr_admin_new:       { subject: `New Return/Exchange Request — ${demoRR.request_id}`, html: templateRRSubmittedAdmin({ req: demoRR }) },
     rr_vendor_new:      { subject: `New Return/Exchange for Your Order — ${demoRR.request_id}`, html: templateRRSubmittedVendor({ req: demoRR }) },
     rr_vendor_approved: { subject: `Return/Exchange Approved — Arrange Pickup — ${demoRR.request_id}`, html: templateRRApprovedVendor({ req: demoRR }) },
+    // banner comparison tests
+    test_banner_a: { subject: `[BANNER A] Portrait 300px`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner A — portrait image, natural height (~300px on phone)</p>', adsStrip, imgUrl: 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png' }) },
+    test_banner_b: { subject: `[BANNER B] Portrait 450px`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner B — same image, taller crop (450px)</p>', adsStrip, imgUrl: 'https://i.ibb.co/Hpb78ssW/Untitled-6000-x-3000-px-600-x-300-px.png', bannerHeight: '450px' }) },
+    test_banner_c: { subject: `[BANNER C] Old Panoramic 3-model`, html: neonEmailBase({ stageLabel: 'Arriving Today', stageColor: '#fca5a5', stageHeadline: 'GET READY<br>TO DRIP HARD.', orderName: '#TEST-001', orderTotal: '1099.00', bodyHtml: '<p style="font-size:14px;color:#333;">Banner C — old wide 3-model panoramic image</p>', adsStrip, imgUrl: 'https://i.ibb.co/JwPtg3cB/Untitled-6000-x-3000-px.png' }) },
   };
 }
 
