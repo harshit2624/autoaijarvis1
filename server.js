@@ -8562,7 +8562,10 @@ function buildDemoTemplates(to, adsStrip = '') {
     total_price: '1299.00',
     total_shipping_price_set: { shop_money: { amount: '49.00' } },
     email: to || 'test@example.com',
-    line_items: [{ title: 'Demo Product (Size: M)', variant_title: 'Size: M', quantity: 1, price: '1250.00', vendor: 'Demo Vendor', sku: 'DEMO-001' }],
+    line_items: [
+      { title: 'Oversized Drop Tee', variant_title: 'Black / L', quantity: 1, price: '899.00', vendor: 'Demo Vendor', sku: 'DEMO-001', image_url: 'https://i.ibb.co/YFCVGFxR/Concrete-is-a-construct-So-are-the-rules-The-jungle-isn-t-wild-it-s-designed.jpg' },
+      { title: 'Cargo Pants', variant_title: 'Olive / 32', quantity: 1, price: '400.00', vendor: 'Demo Vendor', sku: 'DEMO-002', image_url: 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg' },
+    ],
     shipping_address: { name: 'Test Customer', address1: '123 Test Street', address2: '', city: 'Mumbai', province: 'Maharashtra', zip: '400001', phone: '+91 9876543210' },
     shipping_lines: [{ price: '49.00' }],
   };
