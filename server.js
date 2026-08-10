@@ -3339,15 +3339,7 @@ async function fireStageEmails(shopifyId, newStage) {
           shopifyId, trigger: 'partial_vendor'
         });
       }
-      // WA — advance collected confirmation
-      const _ppPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-      if (_ppPhone && waSocket && waConnected) {
-        const _Fp = '```';
-        const _advAmt = vendorMeta.advance_paid ? `₹${vendorMeta.advance_paid}` : 'Advance';
-        const _trackUrl = `${SERVER_URL}/o/${encodeURIComponent(String(order.name).replace(/^#/, ''))}`;
-        const _waPartial = `${_Fp}\n▪ C R O S C R O W ▪\nADVANCE CONFIRMED ✓\n────────────────\nORDER  ${order.name}\nPAID   ${_advAmt}\n\nSTATE  Advance received.\n       Balance due at\n       delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fp}`;
-        await waSocket.sendMessage(`91${_ppPhone}@s.whatsapp.net`, { text: _waPartial }).catch(e => console.error('WA partial notify error:', e.message));
-      }
+      // WA partial advance — sent from payment-verify endpoint only (no duplicate here)
     }
 
     if (newStage === 'transit') {
@@ -14333,7 +14325,8 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
           } else {
             const remaining = Math.max(0, total - CONFIRM_FEE);
             const _Fp = '```';
-            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
+            const _trackUrl14 = `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`;
+            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl14}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
             await waSendToCustomer(customerPhone, waMsg);
           }
         }
