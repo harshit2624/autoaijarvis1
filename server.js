@@ -3314,7 +3314,7 @@ async function fireStageEmails(shopifyId, newStage) {
     const adsStrip = await getEmailAdsStrip();
 
     if (newStage === 'confirmed') {
-      if (customerEmail) await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmedCustomer({ order, adsStrip }), shopifyId, trigger: 'confirmed_customer' });
+      if (customerEmail && order.financial_status === 'paid') await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmedCustomer({ order, adsStrip }), shopifyId, trigger: 'confirmed_customer' });
       for (const vendor of vendors) {
         const vendorRow = await VC.get(vendor);
         const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
