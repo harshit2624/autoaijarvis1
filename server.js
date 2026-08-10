@@ -24188,18 +24188,15 @@ async function startBaileysBot() {
                   { $set: { needs_human: true, bot_paused_until: _outPause, updated_at: new Date().toISOString() } }
                 );
 
-                const HUMAN_RESOLVE = /^(👍|✅|sorted|done|resolved|handled|close|closed|complete|finished|ok done|ho gaya|theek hai|shukriya|thanks|thank you|thx|🙏|😊|bye|take care|all good|all set)[\s!.]*$/i;
-                const isResolve = HUMAN_RESOLVE.test(outText);
-                if (isResolve) {
-                  await mdb.collection('support_chats').updateOne(
-                    { _id: outChat._id },
-                    { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
-                  );
-                  await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
-                  const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
-                  await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
-                  console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
-                }
+                // Auto-resolve on any manual admin message
+                await mdb.collection('support_chats').updateOne(
+                  { _id: outChat._id },
+                  { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
+                );
+                await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
+                const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
+                await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
+                console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
                 // Store in chat_message_analytics for bot improvement tracking
                 const allMsgs = await SC.messages(outChat._id).catch(() => []);
                 const botMsgs = allMsgs.filter(m => m.sender === 'assistant');
