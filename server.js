@@ -8348,7 +8348,7 @@ function buildDemoTemplates(to, adsStrip = '') {
       { title: 'Oversized Drop Tee', variant_title: 'Black / L', quantity: 1, price: '899.00', vendor: 'Demo Vendor', sku: 'DEMO-001', image_url: 'https://i.ibb.co/Jw1bj5Lh/CROSCROW-400-x-300-px.png' },
       { title: 'Cargo Pants', variant_title: 'Olive / 32', quantity: 1, price: '400.00', vendor: 'Demo Vendor', sku: 'DEMO-002', image_url: 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg' },
     ],
-    shipping_address: { name: 'Test Customer', address1: '123 Test Street', address2: '', city: 'Mumbai', province: 'Maharashtra', zip: '400001', phone: '+91 9876543210' },
+    shipping_address: { name: 'Test Customer', first_name: 'Test', address1: '123 Test Street', address2: '', city: 'Mumbai', province: 'Maharashtra', zip: '400001', phone: '+91 9876543210' },
     shipping_lines: [{ price: '49.00' }],
   };
   const demoMeta = { advance_paid: 200, payment_type: 'cod' };
@@ -8383,7 +8383,7 @@ function buildDemoTemplates(to, adsStrip = '') {
     rr_rejected:        { subject: `Return/Exchange Update — ${demoRR.request_id}`, html: templateRRRejectedCustomer({ req: demoRR }) },
     rr_pickup:          { subject: `Pickup Scheduled — ${demoRR.request_id}`, html: templateRRPickupCustomer({ req: demoRR }) },
     rr_in_transit:      { subject: `Return In Transit — ${demoRR.request_id}`, html: templateRRInTransitCustomer({ req: demoRR }) },
-    rr_completed:       { subject: `Return/Exchange Complete — ${demoRR.request_id}`, html: templateRRCompletedCustomer({ req: demoRR }) },
+    rr_completed:       { subject: `Return/Exchange Complete — ${demoRR.request_id}`, html: templateRRDeliveredCustomer({ req: demoRR }) },
     rr_admin_new:       { subject: `New Return/Exchange Request — ${demoRR.request_id}`, html: templateRRSubmittedAdmin({ req: demoRR }) },
     rr_vendor_new:      { subject: `New Return/Exchange for Your Order — ${demoRR.request_id}`, html: templateRRSubmittedVendor({ req: demoRR }) },
     rr_vendor_approved: { subject: `Return/Exchange Approved — Arrange Pickup — ${demoRR.request_id}`, html: templateRRApprovedVendor({ req: demoRR }) },
