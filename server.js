@@ -1459,6 +1459,27 @@ app.post("/webhooks/orders", (req, res) => {
             auditLog("webhook", "payment_auto_prepaid", sid, {});
           }
         }
+
+        // WA confirmed notification — only when "✅ Order Confirmed" tag is explicitly present
+        const _incomingTags = (payload.tags || '').split(',').map(t => t.trim().toLowerCase());
+        const _hasConfirmedTag = _incomingTags.some(t => t === '✅ order confirmed' || t === 'order confirmed');
+        if (_hasConfirmedTag) {
+          const _waConfMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { wa_notif_sent: 1 } });
+          if (!_waConfMeta?.wa_notif_sent?.confirmed_tag) {
+            const _confPhone = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+            if (_confPhone && _confPhone.length === 10) {
+              const _F = '```';
+              const _trackUrl = `${SERVER_URL}/o/${String(payload.name).replace(/^#/, '')}`;
+              const _isPrepaid = payload.financial_status === 'paid';
+              const _waConfirm = _isPrepaid
+                ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${parseFloat(payload.total_price||0).toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
+                : `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
+              await waSendToCustomer(_confPhone, _waConfirm).catch(e => console.error('WA confirmed_tag error:', e.message));
+              await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
+              console.log(`✅ WA confirmed_tag sent for ${payload.name}`);
+            }
+          }
+        }
       }
 
       // ── orders/paid: mark prepaid ──────────────────────────────────────
@@ -3203,21 +3224,8 @@ async function fireStageEmails(shopifyId, newStage) {
         const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Confirmed: ${order.name} — Dispatch Now`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
       }
-      // WA — confirmed notification (deduped via wa_notif_sent.confirmed_tag)
-      const _confMeta = await mdb.collection('order_meta').findOne({ shopify_id: shopifyId }, { projection: { wa_notif_sent: 1 } });
-      if (!_confMeta?.wa_notif_sent?.confirmed_tag) {
-        const _confPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-        if (_confPhone && _confPhone.length === 10) {
-          const _F = '```';
-          const _trackUrl = `${SERVER_URL}/o/${String(order.name).replace(/^#/, '')}`;
-          const isPrepaidOrder = order.financial_status === 'paid';
-          const _waConfirm = isPrepaidOrder
-            ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${order.name}\n\nPAID   ₹${parseFloat(order.total_price||0).toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
-            : `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${order.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
-          await waSendToCustomer(_confPhone, _waConfirm).catch(e => console.error('WA confirmed_tag error:', e.message));
-          await mdb.collection('order_meta').updateOne({ shopify_id: shopifyId }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
-        }
-      }
+      // WA confirmed notification is sent from the orders/updated webhook when
+      // the "✅ Order Confirmed" Shopify tag is explicitly added — not here.
     }
 
     if (newStage === 'partial') {
