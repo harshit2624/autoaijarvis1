@@ -8046,15 +8046,50 @@
       } catch(e) { setSsSyncMsg('Error: ' + e.message); setSsSyncing(false); }
     };
 
-    const [ssRegistering, setSsRegistering] = useState(false);
+    const [ssRegistering, setSsRegistering]     = useState(false);
+    const [ssRegJob, setSsRegJob]               = useState(null); // { jobId, total, success, failed, status }
+    const [ssRegPeriod, setSsRegPeriod]         = useState('7d'); // '7d','month','all','custom'
+    const [ssRegFrom, setSsRegFrom]             = useState('');
+    const [ssRegTo, setSsRegTo]                 = useState('');
+    const [ssRegOpen, setSsRegOpen]             = useState(false);
+
+    const getRegDates = () => {
+      const now = new Date();
+      if (ssRegPeriod === '7d') {
+        const f = new Date(now); f.setDate(f.getDate() - 7);
+        return { from: f.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
+      }
+      if (ssRegPeriod === 'month') {
+        return { from: `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`, to: now.toISOString().slice(0,10) };
+      }
+      if (ssRegPeriod === 'custom') return { from: ssRegFrom, to: ssRegTo };
+      return {}; // all
+    };
+
     const registerAllAwbs = async () => {
-      setSsRegistering(true); setSsSyncMsg('Registering AWBs…');
+      const dates = getRegDates();
+      setSsRegistering(true); setSsRegJob(null);
       try {
-        const r = await fetch(`${API}/admin/shipsagar/register-all`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const r = await fetch(`${API}/admin/shipsagar/register-all`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+          body: JSON.stringify(dates)
+        });
         const d = await r.json();
-        setSsSyncMsg(`✓ ${d.message}`);
-      } catch(e) { setSsSyncMsg('Error: ' + e.message); }
-      setSsRegistering(false);
+        if (d.jobId) {
+          setSsRegJob({ jobId: d.jobId, total: d.total, success: 0, failed: 0, status: 'running' });
+          // Poll until done
+          const poll = setInterval(async () => {
+            try {
+              const pr = await fetch(`${API}/admin/shipsagar/register-job/${d.jobId}`, { headers:{ Authorization:`Bearer ${token}` }});
+              const pd = await pr.json();
+              setSsRegJob(pd);
+              if (pd.status === 'done' || pd.status === 'error') { clearInterval(poll); setSsRegistering(false); }
+            } catch(e) { clearInterval(poll); setSsRegistering(false); }
+          }, 1500);
+        } else {
+          setSsRegistering(false);
+        }
+      } catch(e) { setSsRegistering(false); }
     };
 
     return (
@@ -8140,8 +8175,8 @@
                 </div>
                 <div style={{display:'flex',gap:6,flexShrink:0}}>
                   <button className="btn btn-sm btn-ghost" onClick={fetchSsLogs}>📋 View Logs</button>
-                  <button className="btn btn-sm btn-ghost" onClick={registerAllAwbs} disabled={ssRegistering} style={{borderColor:'#6366f1',color:'#a5b4fc'}}>
-                    {ssRegistering ? <><span className="spin">↻</span> Registering…</> : '📤 Register AWBs (3 May+)'}
+                  <button className="btn btn-sm btn-ghost" onClick={()=>setSsRegOpen(o=>!o)} style={{borderColor:'#6366f1',color:'#a5b4fc'}}>
+                    📤 Register AWBs
                   </button>
                   <button className="btn btn-sm" onClick={syncShipSagar} disabled={ssSyncing}
                     style={{background:'#6366f1',color:'#fff',border:'none',fontWeight:600}}>
@@ -8149,6 +8184,70 @@
                   </button>
                 </div>
               </div>
+              {ssRegOpen && (
+                <div style={{borderTop:'1px solid rgba(99,102,241,0.25)',padding:'12px 14px'}}>
+                  <div style={{fontSize:11,fontWeight:700,color:'#a5b4fc',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>Register AWBs with ShipSagar</div>
+                  {/* Period presets */}
+                  <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+                    {[['7d','Last 7 Days'],['month','This Month'],['all','All Time'],['custom','Custom']].map(([v,l])=>(
+                      <button key={v} onClick={()=>setSsRegPeriod(v)}
+                        style={{padding:'4px 12px',borderRadius:4,border:'1px solid',fontSize:11,fontWeight:600,cursor:'pointer',
+                          background: ssRegPeriod===v ? '#6366f1' : 'transparent',
+                          color: ssRegPeriod===v ? '#fff' : '#a5b4fc',
+                          borderColor: ssRegPeriod===v ? '#6366f1' : 'rgba(99,102,241,0.4)'}}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Custom date inputs */}
+                  {ssRegPeriod === 'custom' && (
+                    <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>From</div>
+                        <input type="date" className="form-input" style={{fontSize:11,padding:'4px 8px'}}
+                          value={ssRegFrom} onChange={e=>setSsRegFrom(e.target.value)} />
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>To</div>
+                        <input type="date" className="form-input" style={{fontSize:11,padding:'4px 8px'}}
+                          value={ssRegTo} onChange={e=>setSsRegTo(e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+                  {/* Period summary */}
+                  {ssRegPeriod !== 'custom' && (
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:10}}>
+                      {ssRegPeriod==='7d' && `From ${new Date(Date.now()-7*86400000).toDateString()} to today`}
+                      {ssRegPeriod==='month' && `From 1st ${new Date().toLocaleString('en-IN',{month:'long'})} to today`}
+                      {ssRegPeriod==='all' && 'All AWBs since May 2026'}
+                    </div>
+                  )}
+                  {/* Run button + live progress */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                    <button className="btn btn-sm" onClick={registerAllAwbs} disabled={ssRegistering}
+                      style={{background:'#6366f1',color:'#fff',border:'none',fontWeight:600}}>
+                      {ssRegistering ? <><span className="spin">↻</span> Registering…</> : '📤 Run Registration'}
+                    </button>
+                    {ssRegJob && (
+                      <div style={{fontSize:11,display:'flex',gap:12,alignItems:'center'}}>
+                        <span style={{color:'var(--text-muted)'}}>Total: <strong style={{color:'var(--text)'}}>{ssRegJob.total}</strong></span>
+                        <span style={{color:'#10b981'}}>✓ Registered: <strong>{ssRegJob.success}</strong></span>
+                        {ssRegJob.failed > 0 && <span style={{color:'#f87171'}}>✗ Failed: <strong>{ssRegJob.failed}</strong></span>}
+                        {ssRegJob.status === 'running' && <span style={{color:'#818cf8'}}>⏳ Running…</span>}
+                        {ssRegJob.status === 'done' && <span style={{color:'#10b981',fontWeight:700}}>✅ Done</span>}
+                        {ssRegJob.status === 'error' && <span style={{color:'#f87171'}}>❌ {ssRegJob.error}</span>}
+                        {ssRegJob.status === 'running' && ssRegJob.total > 0 && (
+                          <div style={{width:80,height:4,background:'rgba(99,102,241,0.2)',borderRadius:2}}>
+                            <div style={{height:'100%',borderRadius:2,background:'#6366f1',
+                              width:`${Math.round(((ssRegJob.success+ssRegJob.failed)/ssRegJob.total)*100)}%`,
+                              transition:'width 0.4s'}}/>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               {ssLogsOpen && (
                 <div style={{borderTop:'1px solid rgba(99,102,241,0.25)',padding:'10px 14px 14px'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>

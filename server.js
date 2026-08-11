@@ -15659,27 +15659,52 @@ app.post("/admin/shipsagar/push", adminAuth, async (req, res) => {
 // Bulk register all AWBs from orders after 3 May 2026
 app.post("/admin/shipsagar/register-all", adminAuth, async (req, res) => {
   try {
-    const TRACK_FROM = new Date('2026-05-03T00:00:00.000Z').toISOString();
-    const rows = await mdb.collection('order_vendor_stage').find(
-      { awb: { $exists: true, $ne: '' }, updated_at: { $gte: TRACK_FROM } },
+    const { from, to } = req.body || {};
+    const dateFrom = from ? new Date(from).toISOString() : new Date('2026-05-03T00:00:00.000Z').toISOString();
+    const dateTo   = to   ? new Date(to + 'T23:59:59.999Z').toISOString() : null;
+
+    const query = { awb: { $exists: true, $ne: '' }, updated_at: { $gte: dateFrom } };
+    if (dateTo) query.updated_at.$lte = dateTo;
+
+    const rows = await mdb.collection('order_vendor_stage').find(query,
       { projection: { shopify_id: 1, awb: 1, courier: 1, _id: 0 } }
     ).toArray();
 
-    // Deduplicate by AWB
     const unique = [...new Map(rows.map(r => [r.awb, r])).values()];
-    res.json({ message: `Registering ${unique.length} AWBs with ShipSagar in background…`, count: unique.length });
+    const jobId  = Date.now().toString();
 
-    // Fire and forget — push all in background
+    // Store job state so frontend can poll
+    await mdb.collection('shipsagar_register_jobs').insertOne({
+      jobId, status: 'running', total: unique.length, success: 0, failed: 0,
+      from: dateFrom, to: dateTo, started_at: new Date().toISOString()
+    });
+
+    res.json({ jobId, total: unique.length, message: `Starting registration of ${unique.length} AWBs…` });
+
+    // Run in background, update DB as we go
     (async () => {
       let success = 0, failed = 0;
       for (const r of unique) {
         const result = await shipsagarPushShipment({ awb: r.awb, courierCode: r.courier || '', orderNo: r.shopify_id });
         if (result.ok) success++; else failed++;
-        await new Promise(resolve => setTimeout(resolve, 400)); // rate limit
+        await mdb.collection('shipsagar_register_jobs').updateOne({ jobId }, { $set: { success, failed } });
+        await new Promise(resolve => setTimeout(resolve, 400));
       }
-      console.log(`📦 ShipSagar bulk register done: ${success} registered, ${failed} failed`);
-    })().catch(e => console.error('ShipSagar bulk register error:', e.message));
+      await mdb.collection('shipsagar_register_jobs').updateOne({ jobId },
+        { $set: { status: 'done', success, failed, done_at: new Date().toISOString() } }
+      );
+      console.log(`📦 ShipSagar bulk register done: ${success} ok, ${failed} failed`);
+    })().catch(async e => {
+      await mdb.collection('shipsagar_register_jobs').updateOne({ jobId }, { $set: { status: 'error', error: e.message } });
+      console.error('ShipSagar bulk register error:', e.message);
+    });
   } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/admin/shipsagar/register-job/:jobId", adminAuth, async (req, res) => {
+  const job = await mdb.collection('shipsagar_register_jobs').findOne({ jobId: req.params.jobId }, { projection: { _id: 0 } });
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
 });
 // Get supported couriers — cached for 1 hour to avoid hammering ShipSagar API
 let _ssCourrierCache = null;
