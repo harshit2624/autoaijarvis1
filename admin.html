@@ -13123,7 +13123,8 @@
                   <thead>
                     <tr style={{borderBottom:'1px solid var(--border)',background:'var(--bg)'}}>
                       <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>#</th>
-                      <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Coupon Code</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Offer</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Code</th>
                       <th style={{padding:'8px 12px',textAlign:'right',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Copies</th>
                       <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5,minWidth:100}}>Popularity</th>
                       <th style={{padding:'8px 12px',textAlign:'center',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Last Used</th>
@@ -13135,7 +13136,8 @@
                         onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
                         onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                         <td style={{padding:'8px 12px',color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
-                        <td style={{padding:'8px 12px',fontWeight:700,color:'var(--text)',letterSpacing:'.03em'}}>{r.coupon_code}</td>
+                        <td style={{padding:'8px 12px',color:'var(--text)',fontSize:12,maxWidth:200}}>{r.offer_name || <span style={{color:'var(--text-muted)'}}>—</span>}</td>
+                        <td style={{padding:'8px 12px',fontWeight:700,color:'var(--text)',letterSpacing:'.03em',whiteSpace:'nowrap'}}>{r.coupon_code}</td>
                         <td style={{padding:'8px 12px',textAlign:'right',fontWeight:800,color:'#6366f1',fontVariantNumeric:'tabular-nums'}}>{r.copy}</td>
                         <td style={{padding:'8px 12px'}}>
                           <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',minWidth:80}}>

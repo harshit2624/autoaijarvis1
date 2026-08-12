@@ -531,7 +531,7 @@
       });
     });
 
-    function ofyTrack(coupon_code, action) {
+    function ofyTrack(coupon_code, action, offer_name) {
       try {
         fetch('https://dashboard.croscrow.com/track/offer-click', {
           method: 'POST',
@@ -539,6 +539,7 @@
           body: JSON.stringify({
             coupon_code,
             action,
+            offer_name: offer_name || null,
             product_id:     (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product && window.ShopifyAnalytics.meta.product.id) ? String(window.ShopifyAnalytics.meta.product.id) : null,
             product_handle: window.location.pathname.replace('/products/', '').split('?')[0] || null,
           }),
@@ -585,7 +586,8 @@
 
         if (!copied) return;
 
-        ofyTrack(code, 'copy');
+        const offerName = offer?.querySelector('.ofy-copy')?.textContent?.trim() || null;
+        ofyTrack(code, 'copy', offerName);
 
         label.textContent = 'Copied!';
         if (status) status.textContent = code + ' copied';

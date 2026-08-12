@@ -21831,11 +21831,12 @@ function pixelDateRange(from, to) {
 // Public — called from Shopify product page liquid block, no auth needed
 app.post('/track/offer-click', async (req, res) => {
   try {
-    const { coupon_code, action, product_id, product_handle } = req.body || {};
+    const { coupon_code, action, product_id, product_handle, offer_name } = req.body || {};
     if (!coupon_code || !['copy', 'view_more'].includes(action)) return res.status(400).json({ error: 'bad params' });
     await mdb.collection('offer_clicks').insertOne({
       coupon_code: String(coupon_code).toUpperCase().slice(0, 100),
       action,
+      offer_name:     offer_name     ? String(offer_name).slice(0, 200)     : null,
       product_id:     product_id     ? String(product_id)     : null,
       product_handle: product_handle ? String(product_handle) : null,
       created_at: new Date().toISOString(),
@@ -21859,6 +21860,7 @@ app.get('/admin/offer-analytics', adminAuth, async (req, res) => {
         _id: { coupon_code: '$coupon_code', action: '$action' },
         count: { $sum: 1 },
         last_at: { $max: '$created_at' },
+        offer_name: { $last: '$offer_name' },
       }},
       { $sort: { count: -1 } },
     ]).toArray();
@@ -21867,9 +21869,10 @@ app.get('/admin/offer-analytics', adminAuth, async (req, res) => {
     const byCode = {};
     for (const r of rows) {
       const code = r._id.coupon_code;
-      if (!byCode[code]) byCode[code] = { coupon_code: code, copy: 0, view_more: 0, last_at: r.last_at };
+      if (!byCode[code]) byCode[code] = { coupon_code: code, copy: 0, view_more: 0, last_at: r.last_at, offer_name: r.offer_name || null };
       byCode[code][r._id.action] = r.count;
       if (r.last_at > byCode[code].last_at) byCode[code].last_at = r.last_at;
+      if (!byCode[code].offer_name && r.offer_name) byCode[code].offer_name = r.offer_name;
     }
     const list = Object.values(byCode).sort((a, b) => (b.copy + b.view_more) - (a.copy + a.view_more));
     const total_copies     = list.reduce((s, r) => s + r.copy, 0);
