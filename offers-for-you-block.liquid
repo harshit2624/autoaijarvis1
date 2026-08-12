@@ -1,0 +1,616 @@
+{% comment %}
+  Offers For You — snippet rendered inside main-product.liquid blocks loop
+  Usage: {%- render 'offers-for-you-block', block: block -%}
+{% endcomment %}
+
+{% liquid
+  assign hidden_count = 0
+
+  for i in (3..5)
+    assign enabled_key = 'offer_' | append: i | append: '_enabled'
+    assign text_key = 'offer_' | append: i | append: '_text'
+
+    if block.settings[enabled_key] and block.settings[text_key] != blank
+      assign hidden_count = hidden_count | plus: 1
+    endif
+  endfor
+%}
+
+{% capture offer_icon %}
+  <span class="ofy-icon" aria-hidden="true">
+    <svg viewBox="0 0 44 44" focusable="false">
+      <path d="M6.2 22.7 21.6 7.3h9.2a3 3 0 0 1 3 3v9.2L18.4 34.9a3.25 3.25 0 0 1-4.6 0l-7.6-7.6a3.25 3.25 0 0 1 0-4.6Z" fill="#fff" stroke="#171717" stroke-width="1.35"/>
+      <circle cx="28.2" cy="12.9" r="2.15" fill="#fff" stroke="#171717" stroke-width="1.35"/>
+      <path d="M30.1 19.2c1.05-1.75 3.6-1.75 4.65 0 .55.92 1.68 1.34 2.68.99 1.94-.67 3.75 1.14 3.08 3.08-.35 1 .07 2.13.99 2.68 1.75 1.05 1.75 3.6 0 4.65-.92.55-1.34 1.68-.99 2.68.67 1.94-1.14 3.75-3.08 3.08-1-.35-2.13.07-2.68.99-1.05 1.75-3.6 1.75-4.65 0-.55-.92-1.68-1.34-2.68-.99-1.94.67-3.75-1.14-3.08-3.08.35-1-.07-2.13-.99-2.68-1.75-1.05-1.75-3.6 0-4.65.92-.55 1.34-1.68.99-2.68-.67-1.94 1.14-3.75 3.08-3.08 1 .35 2.13-.07 2.68-.99Z" fill="#111111"/>
+      <path d="m29.7 31.2 5.6-7.4M30.1 24.7h.01M34.9 30.3h.01" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </span>
+{% endcapture %}
+
+{% capture chevron_icon %}
+  <span class="ofy-chevron" aria-hidden="true">
+    <svg viewBox="0 0 20 20" focusable="false">
+      <path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </span>
+{% endcapture %}
+
+<div id="offers-for-you-{{ block.id }}" class="ofy-card" {{ block.shopify_attributes }}>
+
+  <div class="ofy-heading-row">
+    <h2 class="ofy-title">{{ block.settings.heading | escape }}</h2>
+    {% if block.settings.subheading != blank %}
+      <p class="ofy-subtitle">{{ block.settings.subheading | escape }}</p>
+    {% endif %}
+  </div>
+
+  <div class="ofy-list">
+
+    {% for i in (1..2) %}
+      {% liquid
+        assign enabled_key = 'offer_' | append: i | append: '_enabled'
+        assign text_key    = 'offer_' | append: i | append: '_text'
+        assign code_key    = 'offer_' | append: i | append: '_code'
+        assign offer_enabled = block.settings[enabled_key]
+        assign offer_text    = block.settings[text_key]
+        assign offer_code    = block.settings[code_key]
+      %}
+      {% if offer_enabled and offer_text != blank %}
+        <div class="ofy-offer" data-ofy-offer>
+          <button
+            class="ofy-item"
+            type="button"
+            aria-expanded="false"
+            aria-controls="ofy-code-{{ block.id }}-{{ i }}"
+            data-ofy-offer-toggle
+          >
+            {{ offer_icon }}
+            <span class="ofy-copy">{{ offer_text | escape }}</span>
+            {{ chevron_icon }}
+          </button>
+          <div class="ofy-code-shell" id="ofy-code-{{ block.id }}-{{ i }}">
+            <div class="ofy-code-inner">
+              <div class="ofy-code-row">
+                <code class="ofy-code-value">{{ offer_code | default: 'DEMO' | escape }}</code>
+                <button
+                  class="ofy-copy-code"
+                  type="button"
+                  data-ofy-copy
+                  aria-label="Copy coupon code {{ offer_code | default: 'DEMO' | escape }}"
+                >
+                  <span data-ofy-copy-label>Copy Code</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    {% if hidden_count > 0 %}
+      <div class="ofy-extra-shell" id="ofy-extra-{{ block.id }}">
+        <div class="ofy-extra-inner">
+          {% for i in (3..5) %}
+            {% liquid
+              assign enabled_key = 'offer_' | append: i | append: '_enabled'
+              assign text_key    = 'offer_' | append: i | append: '_text'
+              assign code_key    = 'offer_' | append: i | append: '_code'
+              assign offer_enabled = block.settings[enabled_key]
+              assign offer_text    = block.settings[text_key]
+              assign offer_code    = block.settings[code_key]
+            %}
+            {% if offer_enabled and offer_text != blank %}
+              <div class="ofy-offer" data-ofy-offer>
+                <button
+                  class="ofy-item"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="ofy-code-{{ block.id }}-{{ i }}"
+                  data-ofy-offer-toggle
+                >
+                  {{ offer_icon }}
+                  <span class="ofy-copy">{{ offer_text | escape }}</span>
+                  {{ chevron_icon }}
+                </button>
+                <div class="ofy-code-shell" id="ofy-code-{{ block.id }}-{{ i }}">
+                  <div class="ofy-code-inner">
+                    <div class="ofy-code-row">
+                      <code class="ofy-code-value">{{ offer_code | default: 'DEMO' | escape }}</code>
+                      <button
+                        class="ofy-copy-code"
+                        type="button"
+                        data-ofy-copy
+                        aria-label="Copy coupon code {{ offer_code | default: 'DEMO' | escape }}"
+                      >
+                        <span data-ofy-copy-label>Copy Code</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+
+      <button
+        class="ofy-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="ofy-extra-{{ block.id }}"
+        data-more-label="+{{ hidden_count }} more {% if hidden_count == 1 %}offer{% else %}offers{% endif %}"
+        data-close-label="{{ block.settings.close_label | escape }}"
+      >
+        <span data-ofy-toggle-text>
+          +{{ hidden_count }} more {% if hidden_count == 1 %}offer{% else %}offers{% endif %}
+        </span>
+      </button>
+    {% endif %}
+
+  </div>
+
+  <span class="ofy-sr-only" aria-live="polite" data-ofy-status></span>
+</div>
+
+<style>
+  #offers-for-you-{{ block.id }} {
+    --ofy-row-bg: #f8f8f8;
+    --ofy-row-border: #eeeeee;
+    --ofy-text: #505159;
+
+    width: 100%;
+    box-sizing: border-box;
+    margin: 12px auto 12px;
+    padding: 18px 20px 20px;
+    border-radius: 28px;
+    background: #ffffff;
+    box-shadow: 0 2px 5px rgba(22,22,22,.08), 0 14px 32px rgba(22,22,22,.06);
+    color: var(--ofy-text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  #offers-for-you-{{ block.id }} *,
+  #offers-for-you-{{ block.id }} *::before,
+  #offers-for-you-{{ block.id }} *::after {
+    box-sizing: border-box;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0,0,0,0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-heading-row {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    padding: 0 1px 9px;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-title,
+  #offers-for-you-{{ block.id }} .ofy-subtitle {
+    margin: 0;
+    font-family: inherit;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-title {
+    flex: 0 0 auto;
+    color: #111111;
+    font-size: 23px;
+    line-height: 1.12;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-subtitle {
+    color: #222329;
+    font-size: 12px;
+    line-height: 1.35;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-offer + .ofy-offer {
+    margin-top: 7px;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-item {
+    appearance: none;
+    -webkit-appearance: none;
+    display: grid;
+    grid-template-columns: 40px minmax(0,1fr) 18px;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 64px;
+    padding: 10px 12px;
+    border: 1px solid var(--ofy-row-border);
+    border-radius: 15px;
+    background: var(--ofy-row-bg);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 180ms ease, border-radius 260ms ease;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-item:hover {
+    background: #f4f4f4;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-item:focus-visible,
+  #offers-for-you-{{ block.id }} .ofy-copy-code:focus-visible,
+  #offers-for-you-{{ block.id }} .ofy-toggle:focus-visible {
+    outline: 2px solid #111111;
+    outline-offset: 2px;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-offer.is-open .ofy-item {
+    border-radius: 15px 15px 0 0;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-icon,
+  #offers-for-you-{{ block.id }} .ofy-icon svg {
+    display: block;
+    width: 40px;
+    height: 40px;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-copy {
+    min-width: 0;
+    color: var(--ofy-text);
+    font-size: 13.5px;
+    line-height: 1.32;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    overflow-wrap: anywhere;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-chevron {
+    justify-self: end;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    color: #4b4c52;
+    transition: transform 260ms cubic-bezier(0.22,1,0.36,1);
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-chevron svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-offer.is-open .ofy-chevron {
+    transform: rotate(180deg);
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-code-shell {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition: grid-template-rows 320ms cubic-bezier(0.22,1,0.36,1), opacity 180ms ease;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-code-inner {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-offer.is-open .ofy-code-shell {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-code-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    min-height: 49px;
+    padding: 9px 12px 11px 60px;
+    border: 0 solid var(--ofy-row-border);
+    border-width: 0 1px 1px;
+    border-radius: 0 0 15px 15px;
+    background: var(--ofy-row-bg);
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-code-value {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 3px 7px;
+    border: 1px solid #aaaaaa;
+    background: #ffffff;
+    color: #111111;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-copy-code {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 0 0 auto;
+    border: 0;
+    padding: 6px 2px;
+    background: transparent;
+    color: #111111;
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-copy-code:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-extra-shell {
+    display: grid;
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    opacity: 0;
+    transition: grid-template-rows 420ms cubic-bezier(0.22,1,0.36,1), margin-top 420ms cubic-bezier(0.22,1,0.36,1), opacity 250ms ease;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-extra-inner {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  #offers-for-you-{{ block.id }}.is-expanded .ofy-extra-shell {
+    grid-template-rows: 1fr;
+    margin-top: 7px;
+    opacity: 1;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-toggle {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    min-height: 44px;
+    margin: 7px 0 0;
+    padding: 10px 14px;
+    border: 1px solid var(--ofy-row-border);
+    border-radius: 15px;
+    background: var(--ofy-row-bg);
+    color: #38393e;
+    font-size: 12.5px;
+    font-weight: 500;
+    text-align: center;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    transition: background-color 180ms ease, transform 180ms ease;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-toggle:hover {
+    background: #f3f3f3;
+  }
+
+  #offers-for-you-{{ block.id }} .ofy-toggle:active {
+    transform: scale(0.995);
+  }
+
+  @media screen and (max-width: 749px) {
+    #offers-for-you-{{ block.id }} {
+      max-width: 100%;
+      padding: 17px 13px 16px;
+      border-radius: 24px;
+      box-shadow: 0 2px 4px rgba(22,22,22,.08), 0 10px 24px rgba(22,22,22,.055);
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-heading-row {
+      gap: 7px;
+      padding-bottom: 10px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-title {
+      font-size: 20px;
+      letter-spacing: -0.04em;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-subtitle {
+      font-size: 10.5px;
+      white-space: nowrap;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-item {
+      grid-template-columns: 38px minmax(0,1fr) 16px;
+      gap: 8px;
+      min-height: 64px;
+      padding: 9px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-icon,
+    #offers-for-you-{{ block.id }} .ofy-icon svg {
+      width: 38px;
+      height: 38px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-copy {
+      font-size: 12.7px;
+      line-height: 1.34;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-code-row {
+      padding: 8px 10px 10px 55px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-code-value {
+      font-size: 11.5px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-copy-code {
+      font-size: 12px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-toggle {
+      font-size: 12.2px;
+    }
+  }
+
+  @media screen and (max-width: 390px) {
+    #offers-for-you-{{ block.id }} {
+      padding-left: 11px;
+      padding-right: 11px;
+      border-radius: 22px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-heading-row {
+      flex-wrap: wrap;
+      row-gap: 2px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-title {
+      font-size: 19px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-subtitle {
+      font-size: 10px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-copy {
+      font-size: 12.25px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-code-row {
+      padding-left: 52px;
+      gap: 8px;
+    }
+
+    #offers-for-you-{{ block.id }} .ofy-copy-code {
+      font-size: 11.5px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #offers-for-you-{{ block.id }} .ofy-extra-shell,
+    #offers-for-you-{{ block.id }} .ofy-code-shell,
+    #offers-for-you-{{ block.id }} .ofy-chevron,
+    #offers-for-you-{{ block.id }} .ofy-toggle {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  (() => {
+    const root = document.getElementById('offers-for-you-{{ block.id }}');
+
+    if (!root || root.dataset.ofyInitialized === 'true') return;
+
+    root.dataset.ofyInitialized = 'true';
+
+    const moreToggle     = root.querySelector('.ofy-toggle');
+    const moreToggleText = root.querySelector('[data-ofy-toggle-text]');
+    const status         = root.querySelector('[data-ofy-status]');
+
+    root.querySelectorAll('[data-ofy-offer-toggle]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const offer = button.closest('[data-ofy-offer]');
+        if (!offer) return;
+
+        const nextExpanded = button.getAttribute('aria-expanded') !== 'true';
+        offer.classList.toggle('is-open', nextExpanded);
+        button.setAttribute('aria-expanded', String(nextExpanded));
+      });
+    });
+
+    function ofyTrack(coupon_code, action) {
+      try {
+        fetch('https://dashboard.croscrow.com/track/offer-click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            coupon_code,
+            action,
+            product_id:     (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product && window.ShopifyAnalytics.meta.product.id) ? String(window.ShopifyAnalytics.meta.product.id) : null,
+            product_handle: window.location.pathname.replace('/products/', '').split('?')[0] || null,
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch (_) {}
+    }
+
+    root.querySelectorAll('[data-ofy-copy]').forEach((copyButton) => {
+      copyButton.addEventListener('click', async () => {
+        const offer       = copyButton.closest('[data-ofy-offer]');
+        const codeElement = offer?.querySelector('.ofy-code-value');
+        const label       = copyButton.querySelector('[data-ofy-copy-label]');
+
+        if (!codeElement || !label) return;
+
+        const code = codeElement.textContent.trim();
+
+        const fallbackCopy = () => {
+          const textarea = document.createElement('textarea');
+          textarea.value = code;
+          textarea.setAttribute('readonly', '');
+          textarea.style.cssText = 'position:fixed;opacity:0;';
+          document.body.appendChild(textarea);
+          textarea.select();
+          textarea.setSelectionRange(0, textarea.value.length);
+          const ok = document.execCommand('copy');
+          textarea.remove();
+          return ok;
+        };
+
+        let copied = false;
+
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(code);
+            copied = true;
+          } else {
+            copied = fallbackCopy();
+          }
+        } catch (_) {
+          copied = fallbackCopy();
+        }
+
+        if (!copied) return;
+
+        ofyTrack(code, 'copy');
+
+        label.textContent = 'Copied!';
+        if (status) status.textContent = code + ' copied';
+
+        window.setTimeout(() => {
+          label.textContent = 'Copy Code';
+          if (status) status.textContent = '';
+        }, 1400);
+      });
+    });
+
+    if (moreToggle && moreToggleText) {
+      let ofyViewMoreTracked = false;
+      moreToggle.addEventListener('click', () => {
+        const nextExpanded = moreToggle.getAttribute('aria-expanded') !== 'true';
+        root.classList.toggle('is-expanded', nextExpanded);
+        moreToggle.setAttribute('aria-expanded', String(nextExpanded));
+        moreToggleText.textContent = nextExpanded
+          ? moreToggle.dataset.closeLabel
+          : moreToggle.dataset.moreLabel;
+        if (nextExpanded && !ofyViewMoreTracked) {
+          ofyViewMoreTracked = true;
+          ofyTrack('_view_more_', 'view_more');
+        }
+      });
+    }
+  })();
+</script>

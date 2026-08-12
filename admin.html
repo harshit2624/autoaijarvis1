@@ -13060,6 +13060,99 @@
         <ConfirmAnalytics token={token} />
         <ChatBotAnalytics token={token} />
         <TopProductsAnalytics token={token} />
+        <OfferAnalytics token={token} />
+      </div>
+    );
+  }
+
+  function OfferAnalytics({ token }) {
+    const today   = new Date().toISOString().split('T')[0];
+    const weekAgo = new Date(Date.now() - 7*24*3600*1000).toISOString().split('T')[0];
+    const [from, setFrom]     = useState(weekAgo);
+    const [to, setTo]         = useState(today);
+    const [data, setData]     = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    const load = () => {
+      setLoading(true);
+      fetch(`${API}/admin/offer-analytics?from=${from}&to=${to}`, { headers: { Authorization: 'Bearer '+token } })
+        .then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+    };
+
+    useEffect(() => { load(); }, []);
+
+    const maxCopies = data?.list?.length ? Math.max(...data.list.map(r => r.copy), 1) : 1;
+
+    return (
+      <div style={{marginTop:36}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:10}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:16,color:'var(--text)'}}>🏷️ Offer Block Analytics</div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>How many times each coupon was copied from the product page</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <input type="date" className="form-input" value={from} onChange={e=>setFrom(e.target.value)} style={{fontSize:12}}/>
+            <span style={{color:'var(--text-muted)',fontSize:12}}>→</span>
+            <input type="date" className="form-input" value={to} onChange={e=>setTo(e.target.value)} style={{fontSize:12}}/>
+            <button className="btn btn-primary" onClick={load} disabled={loading} style={{fontSize:12,padding:'6px 14px'}}>{loading?'Loading…':'Load'}</button>
+          </div>
+        </div>
+
+        {data && (
+          <>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:10,marginBottom:16}}>
+              {[
+                { label:'Total Copies', val: data.total_copies, color:'#6366f1' },
+                { label:'View More Clicks', val: data.total_view_more, color:'#f59e0b' },
+                { label:'Unique Coupons', val: data.list.length, color:'#10b981' },
+              ].map(s => (
+                <div key={s.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+                  <div style={{fontSize:22,fontWeight:800,color:s.color,fontVariantNumeric:'tabular-nums'}}>{s.val}</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {data.list.length === 0 ? (
+              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'32px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>
+                No offer clicks tracked in this period.
+              </div>
+            ) : (
+              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:'1px solid var(--border)',background:'var(--bg)'}}>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>#</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Coupon Code</th>
+                      <th style={{padding:'8px 12px',textAlign:'right',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Copies</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5,minWidth:100}}>Popularity</th>
+                      <th style={{padding:'8px 12px',textAlign:'center',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:.5}}>Last Used</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.list.filter(r => r.coupon_code !== '_VIEW_MORE_').map((r, i) => (
+                      <tr key={r.coupon_code} style={{borderBottom:'1px solid var(--border)'}}
+                        onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
+                        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                        <td style={{padding:'8px 12px',color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                        <td style={{padding:'8px 12px',fontWeight:700,color:'var(--text)',letterSpacing:'.03em'}}>{r.coupon_code}</td>
+                        <td style={{padding:'8px 12px',textAlign:'right',fontWeight:800,color:'#6366f1',fontVariantNumeric:'tabular-nums'}}>{r.copy}</td>
+                        <td style={{padding:'8px 12px'}}>
+                          <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',minWidth:80}}>
+                            <div style={{height:'100%',background:'#6366f1',borderRadius:3,width: Math.round((r.copy/maxCopies)*100)+'%',transition:'width .4s'}}/>
+                          </div>
+                        </td>
+                        <td style={{padding:'8px 12px',textAlign:'center',color:'var(--text-muted)',fontSize:11,fontVariantNumeric:'tabular-nums'}}>
+                          {r.last_at ? new Date(r.last_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
       </div>
     );
   }

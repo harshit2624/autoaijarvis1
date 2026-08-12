@@ -21827,6 +21827,57 @@ function pixelDateRange(from, to) {
   return Object.keys(match).length ? { created_at: match } : {};
 }
 
+// ── Offer-block click tracking ─────────────────────────────────────────────
+// Public — called from Shopify product page liquid block, no auth needed
+app.post('/track/offer-click', async (req, res) => {
+  try {
+    const { coupon_code, action, product_id, product_handle } = req.body || {};
+    if (!coupon_code || !['copy', 'view_more'].includes(action)) return res.status(400).json({ error: 'bad params' });
+    await mdb.collection('offer_clicks').insertOne({
+      coupon_code: String(coupon_code).toUpperCase().slice(0, 100),
+      action,
+      product_id:     product_id     ? String(product_id)     : null,
+      product_handle: product_handle ? String(product_handle) : null,
+      created_at: new Date().toISOString(),
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/admin/offer-analytics', adminAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const match = {};
+    if (from || to) {
+      match.created_at = {};
+      if (from) match.created_at.$gte = new Date(from).toISOString();
+      if (to)   match.created_at.$lte = new Date(to + 'T23:59:59.999Z').toISOString();
+    }
+    const rows = await mdb.collection('offer_clicks').aggregate([
+      { $match: match },
+      { $group: {
+        _id: { coupon_code: '$coupon_code', action: '$action' },
+        count: { $sum: 1 },
+        last_at: { $max: '$created_at' },
+      }},
+      { $sort: { count: -1 } },
+    ]).toArray();
+
+    // pivot into per-coupon rows
+    const byCode = {};
+    for (const r of rows) {
+      const code = r._id.coupon_code;
+      if (!byCode[code]) byCode[code] = { coupon_code: code, copy: 0, view_more: 0, last_at: r.last_at };
+      byCode[code][r._id.action] = r.count;
+      if (r.last_at > byCode[code].last_at) byCode[code].last_at = r.last_at;
+    }
+    const list = Object.values(byCode).sort((a, b) => (b.copy + b.view_more) - (a.copy + a.view_more));
+    const total_copies     = list.reduce((s, r) => s + r.copy, 0);
+    const total_view_more  = list.reduce((s, r) => s + r.view_more, 0);
+    res.json({ total_copies, total_view_more, list });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Public ingestion — called directly from the storefront pixel script ────
 app.post('/track-event', async (req, res) => {
   try {
