@@ -24275,10 +24275,11 @@ async function startBaileysBot() {
                   { $set: { needs_human: true, bot_paused_until: _outPause, updated_at: new Date().toISOString() } }
                 );
 
-                // Auto-resolve on any manual admin message
+                // Auto-resolve on any manual admin message — keep bot paused 6h so customer follow-ups don't trigger menu
+                const _resolve6h = Date.now() + 6 * 60 * 60 * 1000;
                 await mdb.collection('support_chats').updateOne(
                   { _id: outChat._id },
-                  { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: 0, updated_at: new Date().toISOString() } }
+                  { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: _resolve6h, updated_at: new Date().toISOString() } }
                 );
                 await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
                 const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
@@ -24443,11 +24444,21 @@ async function startBaileysBot() {
           // Find or create chat thread — one active thread per session.
           // A chat is "active" if it's unresolved AND was updated in the last 48h.
           // Resolved or old chats get a fresh thread so resolution stats stay accurate.
+          // Exception: if a chat was resolved by admin and is still within its 6h bot-pause window,
+          // reuse it so the customer's follow-up doesn't trigger the bot menu.
           const _48hAgo = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
           let chat = await mdb.collection('support_chats').findOne(
             { whatsapp_sender: sender, resolved: { $ne: true }, updated_at: { $gte: _48hAgo } },
             { sort: { updated_at: -1 } }
           );
+          if (!chat) {
+            // Check if there's a recently admin-resolved chat still within its pause window
+            const _pausedResolved = await mdb.collection('support_chats').findOne(
+              { whatsapp_sender: sender, resolved: true, bot_paused_until: { $gt: Date.now() } },
+              { sort: { updated_at: -1 } }
+            );
+            if (_pausedResolved) chat = _pausedResolved;
+          }
           if (!chat) {
             // Carry over last_order_name from the most recent previous thread (returning customer)
             const prevChat = await mdb.collection('support_chats').findOne(
