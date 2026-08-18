@@ -18867,9 +18867,10 @@ app.delete('/admin/onboards/:email/vendor-account', adminAuth, async (req, res) 
 // ── POST /admin/return-requests/:id/receive-at-cc ────────────────────────
 app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res) => {
   try {
+    const force = req.body?.force === true;
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
     if (!rr) return res.status(404).json({ error: "Request not found." });
-    if (rr.received_at_cc) return res.status(400).json({ error: "Already marked as received at CC." });
+    if (rr.received_at_cc && !force) return res.status(400).json({ error: "Already marked as received at CC." });
 
     const items = rr.items || [];
     if (!items.length) return res.status(400).json({ error: "No items found on this request." });
