@@ -18883,22 +18883,27 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
     const items = rr.items || [];
     if (!items.length) return res.status(400).json({ error: "No items found on this request." });
 
-    // Build a title→line_item map from the order snapshot so we can resolve variant_id
+    // Build a title→line_item map from order_meta so we can resolve variant_id
     // even when RR items don't carry it (older submissions)
     let snapshotLineItems = [];
     if (rr.shopify_order_id) {
-      const snap = await mdb.collection('order_snapshots').findOne(
+      const meta = await mdb.collection('order_meta').findOne(
         { shopify_id: String(rr.shopify_order_id) },
-        { projection: { 'snapshot.line_items': 1, _id: 0 } }
+        { projection: { items: 1, _id: 0 } }
       );
-      snapshotLineItems = snap?.snapshot?.line_items || [];
+      snapshotLineItems = meta?.items || [];
     }
     const liByTitle = {};
     for (const li of snapshotLineItems) {
-      const key = (li.title || '').toLowerCase().trim();
-      const keyFull = `${(li.title || '')} ${(li.variant_title && li.variant_title !== 'Default Title' ? li.variant_title : '')}`.toLowerCase().trim();
-      liByTitle[key] = li;
-      liByTitle[keyFull] = li;
+      const t = (li.title || '').toLowerCase().trim();
+      const vt = li.variant_title && li.variant_title !== 'Default Title' ? li.variant_title.toLowerCase().trim() : '';
+      liByTitle[t] = li;
+      if (vt) {
+        liByTitle[`${t} ${vt}`] = li;
+        liByTitle[`${t} · ${vt}`] = li;
+        liByTitle[`${t} - ${vt}`] = li;
+        liByTitle[`${t}/${vt}`] = li;
+      }
     }
 
     const now = new Date().toISOString();
@@ -18915,7 +18920,9 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
       if (!variantId) {
         const titleKey = productTitle.toLowerCase().trim();
         const titleFullKey = `${productTitle} ${variantTitle}`.toLowerCase().trim();
-        const matched = liByTitle[titleFullKey] || liByTitle[titleKey];
+        // Also try splitting combined "Product · Variant" or "Product - Variant" format
+        const splitTitle = productTitle.split(/\s+[·\-×]\s+/)[0]?.toLowerCase().trim() || '';
+        const matched = liByTitle[titleFullKey] || liByTitle[titleKey] || liByTitle[splitTitle];
         if (matched) {
           variantId   = String(matched.variant_id || '');
           productId   = String(matched.product_id || productId);
