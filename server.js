@@ -19867,6 +19867,53 @@ app.get("/admin/cc-inventory", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Unshipped orders that contain CC inventory items
+app.get("/admin/cc-inventory/unshipped-orders", adminAuth, async (req, res) => {
+  try {
+    const ccItems = await mdb.collection('cc_inventory').find({}, { projection: { variant_id: 1, product_title: 1, variant_title: 1, vendor_name: 1, quantity: 1, _id: 0 } }).toArray();
+    if (!ccItems.length) return res.json({ orders: [] });
+    const ccMap = Object.fromEntries(ccItems.map(i => [String(i.variant_id), i]));
+    const ccVariantIds = Object.keys(ccMap);
+
+    // Fetch unshipped/unfulfilled orders from order_meta
+    const metas = await mdb.collection('order_meta').find(
+      { stage: { $in: ['new', 'confirmed', 'ready', 'hold'] } },
+      { projection: { shopify_id: 1, shopify_order_name: 1, stage: 1, _id: 0 } }
+    ).sort({ shopify_id: -1 }).limit(500).toArray();
+
+    const shopifyIds = metas.map(m => String(m.shopify_id));
+    // Pull snapshots to get line_items
+    const snapshots = await mdb.collection('order_snapshots').find(
+      { shopify_id: { $in: shopifyIds } },
+      { projection: { shopify_id: 1, 'snapshot.name': 1, 'snapshot.line_items': 1, 'snapshot.fulfillment_status': 1, 'snapshot.shipping_address': 1, 'snapshot.created_at': 1, _id: 0 } }
+    ).toArray();
+
+    const results = [];
+    for (const snap of snapshots) {
+      const lineItems = snap.snapshot?.line_items || [];
+      const matchedLines = lineItems
+        .filter(li => ccVariantIds.includes(String(li.variant_id)))
+        .map(li => ({
+          ...ccMap[String(li.variant_id)],
+          ordered_qty: li.quantity,
+        }));
+      if (!matchedLines.length) continue;
+      const meta = metas.find(m => String(m.shopify_id) === String(snap.shopify_id));
+      results.push({
+        order_name: snap.snapshot?.name || meta?.shopify_order_name || `#${snap.shopify_id}`,
+        stage: meta?.stage || 'unknown',
+        created_at: snap.snapshot?.created_at || null,
+        customer: snap.snapshot?.shipping_address
+          ? `${snap.snapshot.shipping_address.first_name || ''} ${snap.snapshot.shipping_address.last_name || ''}`.trim()
+          : null,
+        matches: matchedLines,
+      });
+    }
+
+    res.json({ orders: results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET vendor's own CC inventory
 app.get("/vendor/cc-inventory", vendorAuth, async (req, res) => {
   try {

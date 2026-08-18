@@ -14091,19 +14091,27 @@
     const [addNotes,   setAddNotes]   = useState('');
     const [addVendor,  setAddVendor]  = useState('');
 
+    const [unshipped,    setUnshipped]    = useState([]);
+    const [unshippedLoading, setUnshippedLoading] = useState(false);
+
     const load = useCallback(async () => {
       setLoading(true);
+      setUnshippedLoading(true);
       try {
-        const [iRes, aRes] = await Promise.all([
+        const [iRes, aRes, uRes] = await Promise.all([
           fetch(`${API}/admin/cc-inventory`, { headers:{ Authorization:`Bearer ${token}` } }),
           fetch(`${API}/admin/cc-inventory/alerts`, { headers:{ Authorization:`Bearer ${token}` } }),
+          fetch(`${API}/admin/cc-inventory/unshipped-orders`, { headers:{ Authorization:`Bearer ${token}` } }),
         ]);
         const iData = await iRes.json();
         const aData = aRes.ok ? await aRes.json() : { alerts: [] };
+        const uData = uRes.ok ? await uRes.json() : { orders: [] };
         setItems(iData.items || []);
         setAlerts(aData.alerts || []);
+        setUnshipped(uData.orders || []);
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setLoading(false);
+      setUnshippedLoading(false);
     }, [token]);
 
     useEffect(() => { load(); }, [load]);
@@ -14305,6 +14313,56 @@
             </div>
           ))
         )}
+
+        {/* ── Unshipped orders matching CC inventory ── */}
+        <div style={{marginTop:28}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:14,color:'var(--text)'}}>📦 Unshipped Orders — CC Stock Match</div>
+            {unshipped.length > 0 && <span style={{background:'rgba(239,68,68,0.15)',color:'#ef4444',fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:4}}>{unshipped.length} pending</span>}
+          </div>
+          {unshippedLoading ? (
+            <div style={{textAlign:'center',padding:24,color:'var(--text-muted)',fontSize:13}}>Loading…</div>
+          ) : unshipped.length === 0 ? (
+            <div className="card"><div className="empty"><div className="empty-icon">✅</div><div className="empty-title">No unshipped orders matching CC stock</div></div></div>
+          ) : (
+            <div className="card" style={{overflow:'hidden'}}>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr>
+                    <th>Order</th><th>Customer</th><th>Stage</th><th>Matched Items</th><th>Ordered Qty</th><th>CC Stock</th><th>Placed</th>
+                  </tr></thead>
+                  <tbody>
+                    {unshipped.map((o, i) => (
+                      o.matches.map((m, mi) => (
+                        <tr key={`${o.order_name}-${mi}`} style={{borderBottom:'1px solid var(--border)'}}>
+                          {mi === 0 && (
+                            <>
+                              <td rowSpan={o.matches.length} style={{fontWeight:700,color:'var(--indigo)',verticalAlign:'top',paddingTop:10}}>{o.order_name}</td>
+                              <td rowSpan={o.matches.length} style={{fontSize:12,color:'var(--text-muted)',verticalAlign:'top',paddingTop:10}}>{o.customer||'—'}</td>
+                              <td rowSpan={o.matches.length} style={{verticalAlign:'top',paddingTop:10}}>
+                                <span style={{
+                                  background: o.stage==='confirmed'?'rgba(16,185,129,0.15)':o.stage==='ready'?'rgba(99,102,241,0.15)':'rgba(251,191,36,0.15)',
+                                  color:      o.stage==='confirmed'?'#10b981':o.stage==='ready'?'var(--indigo)':'#fbbf24',
+                                  padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:700,textTransform:'uppercase'
+                                }}>{o.stage}</span>
+                              </td>
+                            </>
+                          )}
+                          <td style={{fontSize:12,color:'var(--text)'}}>{m.product_title}{m.variant_title&&m.variant_title!=='Default Title'?` / ${m.variant_title}`:''}</td>
+                          <td style={{textAlign:'center',fontWeight:700,color:'var(--text)',fontVariantNumeric:'tabular-nums'}}>{m.ordered_qty}</td>
+                          <td style={{textAlign:'center',fontWeight:700,fontVariantNumeric:'tabular-nums',color:m.quantity===0?'#ef4444':m.quantity<=2?'#f59e0b':'#10b981'}}>{m.quantity}</td>
+                          {mi === 0 && (
+                            <td rowSpan={o.matches.length} style={{fontSize:11,color:'var(--text-muted)',verticalAlign:'top',paddingTop:10}}>{o.created_at?new Date(o.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—'}</td>
+                          )}
+                        </tr>
+                      ))
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
