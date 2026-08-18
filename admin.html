@@ -4481,6 +4481,15 @@
               <PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/>
               <PenaltyBadge triggered={Object.values(o.vendorPenalty||{}).some(p=>p.penaltyTriggered>0)} confirmedAmount={Object.values(o.confirmedPenalties||{}).reduce((s,v)=>s+v,0)}/>
               {o.ccStock&&<span style={{fontSize:9,padding:'2px 6px',borderRadius:4,background:'rgba(251,191,36,0.15)',border:'1px solid rgba(251,191,36,0.5)',color:'#fbbf24',fontWeight:700}}>🏬 CC Stock</span>}
+              {o.hasRR&&(()=>{
+                const hasReturn   = (o.rrTypes||[]).includes('return');
+                const hasExchange = (o.rrTypes||[]).includes('exchange');
+                const label = hasReturn && hasExchange ? '↩ Return + Exchange' : hasExchange ? '🔄 Exchange' : '↩ Return';
+                const bg    = hasExchange && !hasReturn ? 'rgba(139,92,246,0.15)' : 'rgba(99,102,241,0.15)';
+                const bc    = hasExchange && !hasReturn ? 'rgba(139,92,246,0.45)' : 'rgba(99,102,241,0.45)';
+                const col   = hasExchange && !hasReturn ? '#a78bfa' : '#818cf8';
+                return <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,background:bg,border:`1px solid ${bc}`,color:col,fontWeight:700}}>{label}</span>;
+              })()}
             </div>
             {o.awb && <div style={{fontSize:10,color:dsColor,marginTop:4,fontWeight:600}}>{ds||'Dispatched'} · {o.awb}</div>}
             {Object.keys(o.vendorStages||{}).length>1 && (
