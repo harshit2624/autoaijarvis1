@@ -18883,11 +18883,48 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
     const items = rr.items || [];
     if (!items.length) return res.status(400).json({ error: "No items found on this request." });
 
+    // Build a title→line_item map from the order snapshot so we can resolve variant_id
+    // even when RR items don't carry it (older submissions)
+    let snapshotLineItems = [];
+    if (rr.shopify_order_id) {
+      const snap = await mdb.collection('order_snapshots').findOne(
+        { shopify_id: String(rr.shopify_order_id) },
+        { projection: { 'snapshot.line_items': 1, _id: 0 } }
+      );
+      snapshotLineItems = snap?.snapshot?.line_items || [];
+    }
+    const liByTitle = {};
+    for (const li of snapshotLineItems) {
+      const key = (li.title || '').toLowerCase().trim();
+      const keyFull = `${(li.title || '')} ${(li.variant_title && li.variant_title !== 'Default Title' ? li.variant_title : '')}`.toLowerCase().trim();
+      liByTitle[key] = li;
+      liByTitle[keyFull] = li;
+    }
+
     const now = new Date().toISOString();
     const added = [];
 
     for (const item of items) {
-      const variantId = String(item.variant_id || '');
+      let variantId = String(item.variant_id || item.variantId || '');
+      let productId = String(item.product_id || item.productId || '');
+      let productTitle = item.title || item.product_title || '';
+      let variantTitle = item.variant_title || item.variant || '';
+      let sku = item.sku || '';
+
+      // If variant_id missing, resolve from snapshot by matching title
+      if (!variantId) {
+        const titleKey = productTitle.toLowerCase().trim();
+        const titleFullKey = `${productTitle} ${variantTitle}`.toLowerCase().trim();
+        const matched = liByTitle[titleFullKey] || liByTitle[titleKey];
+        if (matched) {
+          variantId   = String(matched.variant_id || '');
+          productId   = String(matched.product_id || productId);
+          productTitle = matched.title || productTitle;
+          variantTitle = matched.variant_title || variantTitle;
+          sku          = matched.sku || sku;
+        }
+      }
+
       if (!variantId) continue;
       const qty = parseInt(item.qty || item.quantity || 1);
 
@@ -18901,10 +18938,10 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
         const id = await nextId('cc_inventory');
         await mdb.collection('cc_inventory').insertOne({
           id, variant_id: variantId,
-          product_id: String(item.product_id || ''),
-          product_title: item.title || item.product_title || '',
-          variant_title: item.variant_title || item.variant || '',
-          sku: item.sku || '',
+          product_id: productId,
+          product_title: productTitle,
+          variant_title: variantTitle,
+          sku,
           vendor_name: rr.vendor_name || '',
           quantity: qty,
           notes: `From RR ${rr.request_id}`,
