@@ -19500,22 +19500,60 @@ app.put("/vendor/return-config", vendorAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 
 // GET product/variant search for CC inventory add form
+// Searches order_meta items first (instant, covers all ever-ordered products),
+// then falls back to Shopify API with wildcard title match.
 app.get("/admin/products/search", adminAuth, async (req, res) => {
   try {
-    const q = req.query.q || '';
-    const data = await shopifyREST(`/products.json?title=${encodeURIComponent(q)}&limit=5&fields=id,title,vendor,variants`).catch(()=>null);
-    const products = data?.products || [];
+    const q = (req.query.q || '').toLowerCase().trim();
+    if (!q) return res.json({ variants: [] });
+
+    // Local search across order_meta items (covers all products that have ever been ordered)
+    const metaDocs = await mdb.collection('order_meta').find(
+      { items: { $exists: true, $ne: [] } },
+      { projection: { items: 1, _id: 0 } }
+    ).toArray();
+
+    const seen = new Set();
     const variants = [];
-    for (const p of products) {
-      for (const v of (p.variants || [])) {
-        variants.push({
-          product_id: String(p.id), product_title: p.title,
-          variant_id: String(v.id), variant_title: v.title,
-          sku: v.sku || '', vendor: p.vendor || '',
-        });
+    for (const doc of metaDocs) {
+      for (const li of (doc.items || [])) {
+        const key = `${li.variant_id}`;
+        if (!key || seen.has(key)) continue;
+        const titleMatch = (li.title || '').toLowerCase().includes(q);
+        const skuMatch   = (li.sku || '').toLowerCase().includes(q);
+        const varMatch   = (li.variant_title || '').toLowerCase().includes(q);
+        if (titleMatch || skuMatch || varMatch) {
+          seen.add(key);
+          variants.push({
+            product_id: String(li.product_id || ''),
+            product_title: li.title || '',
+            variant_id: String(li.variant_id || ''),
+            variant_title: li.variant_title || '',
+            sku: li.sku || '',
+            vendor: li.vendor || '',
+          });
+        }
       }
     }
-    res.json({ variants });
+
+    // If not enough local results, also hit Shopify with wildcard
+    if (variants.length < 3) {
+      const data = await shopifyREST(`/products.json?title=${encodeURIComponent(q)}&limit=10&fields=id,title,vendor,variants`).catch(() => null);
+      for (const p of (data?.products || [])) {
+        for (const v of (p.variants || [])) {
+          const key = String(v.id);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          variants.push({
+            product_id: String(p.id), product_title: p.title,
+            variant_id: key, variant_title: v.title,
+            sku: v.sku || '', vendor: p.vendor || '',
+          });
+        }
+      }
+    }
+
+    res.json({ variants: variants.slice(0, 20) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -887,7 +887,7 @@
                 onMouseEnter={()=>d && onDayHover(iso)}
                 style={{
                   textAlign:'center',fontSize:12,padding:'7px 2px',borderRadius:6,cursor:d?'pointer':'default',userSelect:'none',
-                  background: (start||end) ? 'var(--indigo)' : range ? '#1e1b4b' : 'transparent',
+                  background: (start||end) ? 'var(--indigo)' : range ? 'rgba(99,102,241,0.15)' : 'transparent',
                   color: (start||end) ? '#fff' : d ? 'var(--text)' : 'transparent',
                   fontWeight: (start||end||isToday) ? 700 : 400,
                   outline: isToday && !(start||end) ? '1px solid #6366f160' : 'none',
@@ -4568,7 +4568,7 @@
                 <span style={{fontSize:9}}>{showTagDrop?'▲':'▼'}</span>
               </button>
               {showTagDrop && (
-                <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,background:'#0d1f2d',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,width:240,boxShadow:'0 12px 40px #000000aa'}}
+                <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,width:240,boxShadow:'0 8px 32px rgba(0,0,0,0.18)'}}
                   onMouseDown={e=>e.stopPropagation()}>
                   <div style={{padding:'8px 10px',borderBottom:'1px solid var(--border)'}}>
                     <input autoFocus placeholder="Search tags…" value={tagSearch} onChange={e=>setTagSearch(e.target.value)}
@@ -4587,8 +4587,8 @@
                   <div style={{maxHeight:220,overflowY:'auto'}}>
                     {allOrderTags.filter(t=>t.toLowerCase().includes(tagSearch.toLowerCase())).map(t=>(
                       <div key={t} onClick={()=>{setFilterTags(s=>{const n=new Set(s);n.has(t)?n.delete(t):n.add(t);return n;});setPage(1);}}
-                        style={{padding:'8px 12px',cursor:'pointer',fontSize:12,color:filterTags.has(t)?'var(--indigo)':'var(--text)',borderBottom:'1px solid #1a3040',display:'flex',alignItems:'center',gap:8,background:filterTags.has(t)?'rgba(99,102,241,0.08)':'transparent'}}
-                        onMouseEnter={e=>e.currentTarget.style.background=filterTags.has(t)?'rgba(99,102,241,0.12)':'#1a3a50'}
+                        style={{padding:'8px 12px',cursor:'pointer',fontSize:12,color:filterTags.has(t)?'var(--indigo)':'var(--text)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:8,background:filterTags.has(t)?'rgba(99,102,241,0.08)':'transparent'}}
+                        onMouseEnter={e=>e.currentTarget.style.background=filterTags.has(t)?'rgba(99,102,241,0.12)':'var(--bg)'}
                         onMouseLeave={e=>e.currentTarget.style.background=filterTags.has(t)?'rgba(99,102,241,0.08)':'transparent'}>
                         <span style={{width:14,height:14,borderRadius:3,border:`2px solid ${filterTags.has(t)?'var(--indigo)':'var(--border)'}`,background:filterTags.has(t)?'var(--indigo)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:9,color:'#fff'}}>
                           {filterTags.has(t)?'✓':''}
@@ -6560,7 +6560,7 @@
                       const thisMonth = () => { const now=new Date(); const last=new Date(now.getFullYear(),now.getMonth()+1,0); quickSet(`${now.getFullYear()}-${pad(now.getMonth()+1)}-01`,`${last.getFullYear()}-${pad(last.getMonth()+1)}-${pad(last.getDate())}`); };
                       const last30 = () => { const e=new Date(); const s=new Date(); s.setDate(s.getDate()-29); quickSet(`${s.getFullYear()}-${pad(s.getMonth()+1)}-${pad(s.getDate())}`,`${e.getFullYear()}-${pad(e.getMonth()+1)}-${pad(e.getDate())}`); };
                       return (
-                        <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,zIndex:9999,background:'#0d1f2d',border:'1px solid var(--border)',borderRadius:10,padding:14,boxShadow:'0 12px 40px #000a',minWidth:290}}>
+                        <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,zIndex:9999,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.18)',minWidth:290}}>
                           {/* Quick presets */}
                           <div style={{display:'flex',gap:5,marginBottom:10,flexWrap:'wrap'}}>
                             {[['This Month',thisMonth],['Last Month',lastMonth],['Last 30 Days',last30]].map(([l,fn])=>(
@@ -9619,11 +9619,11 @@
                   const filtered = shopifyTags.filter(t=>t.toLowerCase().includes(tagInput.toLowerCase()) && !mappings.find(m=>m.shopify_tag.toLowerCase()===t.toLowerCase()));
                   if (!filtered.length) return null;
                   return (
-                    <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'#0d1f2d',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,maxHeight:260,overflowY:'auto',boxShadow:'0 12px 40px #000000aa'}}>
+                    <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,maxHeight:260,overflowY:'auto',boxShadow:'0 8px 32px rgba(0,0,0,0.18)'}}>
                       {filtered.map(t=>(
                         <div key={t} onMouseDown={()=>{ setNewTag(t); setTagInput(t); setShowDrop(false); }}
-                          style={{padding:'10px 14px',cursor:'pointer',fontSize:13,color:'#e2e8f0',borderBottom:'1px solid #1a3040',transition:'background 0.1s'}}
-                          onMouseEnter={e=>e.currentTarget.style.background='#1a3a50'}
+                          style={{padding:'10px 14px',cursor:'pointer',fontSize:13,color:'var(--text)',borderBottom:'1px solid var(--border)',transition:'background 0.1s'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
                           onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                           🏷 {t}
                         </div>
@@ -14235,15 +14235,15 @@
                   <label className="form-label">Search Product / Variant</label>
                   <input className="form-input" placeholder="Type product name or SKU…" value={search} onChange={e=>setSearch(e.target.value)}/>
                   {(searchRes.length>0||searching) && (
-                    <div style={{position:'absolute',top:'calc(100% + 2px)',left:0,right:0,background:'#0d1f2d',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,maxHeight:220,overflowY:'auto',boxShadow:'0 12px 40px #000a'}}>
+                    <div style={{position:'absolute',top:'calc(100% + 2px)',left:0,right:0,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:8,zIndex:9999,maxHeight:260,overflowY:'auto',boxShadow:'0 8px 32px rgba(0,0,0,0.18)'}}>
                       {searching && <div style={{padding:'10px 14px',fontSize:11,color:'var(--text-muted)'}}>Searching…</div>}
                       {searchRes.map(v=>(
                         <div key={v.variant_id} onMouseDown={()=>{ setSelVariant(v); setSearch(`${v.product_title} / ${v.variant_title}`); setAddVendor(v.vendor||''); setSearchRes([]); }}
-                          style={{padding:'9px 14px',cursor:'pointer',fontSize:12,borderBottom:'1px solid #1a3040',color:'var(--text)'}}
-                          onMouseEnter={e=>e.currentTarget.style.background='#1a3a50'}
+                          style={{padding:'9px 14px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',color:'var(--text)',transition:'background 0.1s'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='var(--bg)'}
                           onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                          <div style={{fontWeight:600}}>{v.product_title}</div>
-                          <div style={{fontSize:10,color:'var(--text-muted)'}}>{v.variant_title} {v.sku?`· SKU: ${v.sku}`:''} · {v.vendor||'no vendor'}</div>
+                          <div style={{fontWeight:600,color:'var(--text)'}}>{v.product_title}</div>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{v.variant_title}{v.sku?` · SKU: ${v.sku}`:''}{v.vendor?` · ${v.vendor}`:''}</div>
                         </div>
                       ))}
                     </div>
