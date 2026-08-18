@@ -5281,7 +5281,7 @@
                                     {rq.status==='in_transit'&&<button className="btn btn-ghost btn-sm" style={{borderColor:'var(--teal)',color:'var(--teal)',fontSize:11}} onClick={()=>updateRequest(rq.request_id,{status:'completed'})} disabled={saving}>✓ Mark Completed</button>}
                                   </div>
                                 )}
-                                {['in_transit','completed'].includes(rq.status) && (
+                                {['in_transit','completed','received','received_at_warehouse'].includes(rq.status) && (
                                   <div style={{marginBottom:12}}>
                                     {rq.received_at_cc ? (
                                       <span style={{fontSize:11,color:'#10b981',display:'flex',alignItems:'center',gap:5}}>
