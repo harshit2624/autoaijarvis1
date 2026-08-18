@@ -6294,6 +6294,10 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
       if (!existing || status === 'paid') orderSettlementMap[String(s.shopify_order_id)] = status;
     });
 
+    // Orders that have a return/exchange request (any status)
+    const rrDocs = await mdb.collection('return_requests').find({}, { projection: { order_name: 1, _id: 0 } }).toArray();
+    const rrOrderNames = new Set(rrDocs.map(r => (r.order_name || '').replace(/^#/, '').toLowerCase()));
+
     const confirmedPenaltyDocs = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { shopify_id: 1, vendor_name: 1, penalty_amount: 1, _id: 0 } }).toArray();
     const confirmedPenaltyMap = {}; // { shopify_id: { vendor_name: amount } }
     confirmedPenaltyDocs.forEach(p => {
@@ -6446,6 +6450,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
           const matches = (o.line_items||[]).map(li => ccInvMap[String(li.variant_id)]).filter(Boolean);
           return matches.length ? matches : null;
         })(),
+        hasRR: rrOrderNames.has((o.name || '').replace(/^#/, '').toLowerCase()),
       };
     });
 

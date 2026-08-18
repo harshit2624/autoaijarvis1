@@ -1065,6 +1065,7 @@
     { id:'hold',      label:'Hold',           color:'purple', icon:'⏸' },
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
     { id:'misc',      label:'Miscellaneous',  color:'gray',   icon:'◌' },
+    { id:'rr',        label:'Return/Exchange', color:'purple', icon:'↩' },
   ];
 
   // ── Icon sets (Minimal outline + Shapes solid) for the icon-style switcher ──
@@ -4375,6 +4376,7 @@
 
     const orderMatchesStage = (o, s) => {
       if (s === 'all') return true;
+      if (s === 'rr') return !!o.hasRR;
       if (o.stage === s) return true;
       const vendorStageValues = Object.values(o.vendorStages||{});
       const isMultiVendor = vendorStageValues.length > 1;
