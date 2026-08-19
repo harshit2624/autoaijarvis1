@@ -22405,6 +22405,9 @@ app.post('/admin/vendor-nudge-test/:orderId', adminAuth, async (req, res) => {
 let waSocket = null;
 let waConnected = false;
 let waLatestQR = null;
+// Track JIDs the bot sent to programmatically — fromMe events for these are bot-generated, not admin manual
+const _waBotSentJids = new Map(); // jid → timestamp, cleaned up periodically
+setInterval(() => { const now = Date.now(); _waBotSentJids.forEach((ts, jid) => { if (now - ts > 120000) _waBotSentJids.delete(jid); }); }, 60000);
 let waStarting = false;
 let waSharedMessageHandler = null; // set by v1 bot; reused by v2
 let waReconnectTimer = null;
@@ -24251,6 +24254,9 @@ async function startBaileysBot() {
     });
 
     waSocket = sock;
+    // Wrap sendMessage so every bot-sent JID is tracked — fromMe events for these are NOT manual admin replies
+    const _origSend = sock.sendMessage.bind(sock);
+    sock.sendMessage = async (jid, ...args) => { _waBotSentJids.set(jid, Date.now()); return _origSend(jid, ...args); };
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
@@ -24405,7 +24411,9 @@ async function startBaileysBot() {
         if (msg.key.fromMe && !msg.key.remoteJid?.endsWith('@g.us')) {
           const outText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
           const outTo = msg.key.remoteJid;
-          if (outText && outTo) {
+          // Skip if this JID was just sent to by the bot programmatically (within 2 min) — not a manual reply
+          const _botSentRecently = _waBotSentJids.has(outTo) && (Date.now() - _waBotSentJids.get(outTo) < 120000);
+          if (outText && outTo && !_botSentRecently) {
             try {
               const outChat = await mdb.collection('support_chats').findOne(
                 { whatsapp_sender: outTo },
@@ -24438,7 +24446,7 @@ async function startBaileysBot() {
                   tags: outChat.tags || [],
                   source: 'admin_manual',
                   admin_text: outText,
-                  is_resolve: isResolve,
+                  is_resolve: true,
                   bot_turns_before: botMsgs.length,
                   customer_turns: custMsgs.length,
                   last_customer_msg: lastCustMsg.slice(0, 200),
