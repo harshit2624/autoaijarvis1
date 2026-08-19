@@ -24397,12 +24397,11 @@ async function startBaileysBot() {
           continue;
         }
 
-        if (type !== 'notify') continue;
-
         // ── Outgoing message sent manually from the bot's own phone ──────────
         // Detect when a human (admin/support) picks up the bot's phone and
         // manually sends a message to a customer. Log it as admin reply in the
         // chat transcript; resolve the chat if it's a closing phrase.
+        // NOTE: fromMe messages arrive as type 'append', not 'notify' — must check BEFORE the type filter
         if (msg.key.fromMe && !msg.key.remoteJid?.endsWith('@g.us')) {
           const outText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
           const outTo = msg.key.remoteJid;
@@ -24452,6 +24451,7 @@ async function startBaileysBot() {
           continue;
         }
 
+        if (type !== 'notify') continue;
         if (msg.key.remoteJid?.endsWith('@g.us')) continue;
         const sender = msg.key.remoteJid;
         const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
