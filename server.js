@@ -24408,26 +24408,26 @@ async function startBaileysBot() {
           const outTo = msg.key.remoteJid;
           if (outText && outTo) {
             try {
-              const outChat = await mdb.collection('support_chats').findOne({ whatsapp_sender: outTo });
-              if (outChat && !outChat.resolved) {
+              const outChat = await mdb.collection('support_chats').findOne(
+                { whatsapp_sender: outTo },
+                { sort: { updated_at: -1 } }
+              );
+              if (outChat) {
                 await SC.addMessage(outChat._id, { sender: 'admin', text: outText });
-                // Pause bot 15 min — give customer room to reply to admin message
-                const _outPause = Date.now() + 15 * 60 * 1000;
-                await mdb.collection('support_chats').updateOne(
-                  { _id: outChat._id },
-                  { $set: { needs_human: true, bot_paused_until: _outPause, updated_at: new Date().toISOString() } }
-                );
-
-                // Auto-resolve on any manual admin message — keep bot paused 6h so customer follow-ups don't trigger menu
+                // Always keep bot paused 6h from last admin message, resolved or not
                 const _resolve6h = Date.now() + 6 * 60 * 60 * 1000;
+                const wasAlreadyResolved = !!outChat.resolved;
                 await mdb.collection('support_chats').updateOne(
                   { _id: outChat._id },
-                  { $set: { resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: _resolve6h, updated_at: new Date().toISOString() } }
+                  { $set: { needs_human: true, resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: _resolve6h, updated_at: new Date().toISOString() } }
                 );
                 await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
-                const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
-                await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
-                console.log(`✅ Chat auto-resolved via manual admin message: ${outTo}`);
+                // Only alert admin on first resolution, not every subsequent admin message
+                if (!wasAlreadyResolved) {
+                  const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
+                  await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
+                }
+                console.log(`✅ Chat paused 6h via manual admin message: ${outTo} (wasResolved=${wasAlreadyResolved})`);
                 // Store in chat_message_analytics for bot improvement tracking
                 const allMsgs = await SC.messages(outChat._id).catch(() => []);
                 const botMsgs = allMsgs.filter(m => m.sender === 'assistant');
