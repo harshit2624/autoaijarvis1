@@ -22962,7 +22962,7 @@ async function waSessionGet(sender) {
 async function waSessionSet(sender, data) {
   await mdb.collection('whatsapp_sessions').updateOne(
     { _id: sender },
-    { $set: { data, expiresAt: Date.now() + 4 * 60 * 60 * 1000 } }, // 4 hour TTL
+    { $set: { data, expiresAt: Date.now() + 24 * 60 * 60 * 1000 } }, // 24 hour TTL
     { upsert: true }
   );
 }
@@ -24411,9 +24411,12 @@ async function startBaileysBot() {
         if (msg.key.fromMe && !msg.key.remoteJid?.endsWith('@g.us')) {
           const outText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
           const outTo = msg.key.remoteJid;
-          // Skip if this JID was just sent to by the bot programmatically (within 2 min) — not a manual reply
+          // Skip if this looks like a bot-generated message — bot messages always start with ``` (code block)
+          // or contain the CROSCROW header. Manual admin replies are plain text without this pattern.
+          const _looksLikeBot = outText.startsWith('```') || outText.includes('▪ C R O S C R O W ▪') || outText.includes('C R O S C R O W');
+          // Also skip if in-memory JID tracker says bot sent here recently (belt + suspenders)
           const _botSentRecently = _waBotSentJids.has(outTo) && (Date.now() - _waBotSentJids.get(outTo) < 120000);
-          if (outText && outTo && !_botSentRecently) {
+          if (outText && outTo && !_looksLikeBot && !_botSentRecently) {
             try {
               const outChat = await mdb.collection('support_chats').findOne(
                 { whatsapp_sender: outTo },
@@ -24967,7 +24970,11 @@ async function startBaileysBot() {
                 waPending.delete(sender);
                 continue;
               }
-              // else fall through to LLM with the order session still active
+              // No order number found — re-prompt instead of falling through to menu/LLM
+              await sock.sendMessage(sender, { text: WA_MENUS.order_lookup });
+              await waSessionSet(sender, { menu: 'awaiting_order' });
+              waPending.delete(sender);
+              continue;
             }
           }
 
