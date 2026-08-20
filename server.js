@@ -20793,6 +20793,15 @@ app.post('/admin/bot-mode', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// One-shot: clear bad bot_paused_until values set by the self-pause bug (unresolved chats that got incorrectly paused)
+app.post('/admin/wa-clear-bad-pauses', adminAuth, async (req, res) => {
+  const result = await mdb.collection('support_chats').updateMany(
+    { resolved: { $ne: true }, bot_paused_until: { $gt: Date.now() } },
+    { $unset: { bot_paused_until: '' } }
+  );
+  res.json({ cleared: result.modifiedCount });
+});
+
 app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
   let qrDataUrl = null;
   if (!waConnected && waLatestQR) {
