@@ -1774,7 +1774,7 @@ function templateRRSubmittedCustomer({ req: rr }) {
     ${rrItemsInline(rr.items)}
     <div style="font-size:13px;color:#666;line-height:1.7;">Our team will review your request and get back to you within 1–2 business days. You'll receive an email once a decision has been made.</div>
   `;
-  return neonEmailBase({ stageLabel: `${typeLabel} Requested`, stageColor: '#99b3ff', stageHeadline: 'REQUEST<br>RECEIVED.', orderName: rr.order_name || rr.shopify_order_id || '—', orderTotal: rr.request_id, bodyHtml });
+  return neonEmailBase({ stageLabel: 'Return & Exchange', stageColor: '#99b3ff', stageHeadline: `${typeLabel.toUpperCase()} REQUEST<br>RECEIVED.`, orderName: rr.order_name || rr.shopify_order_id || '—', orderTotal: rr.request_id, bodyHtml });
 }
 
 function templateRRSubmittedAdmin({ req: rr }) {
@@ -1811,7 +1811,7 @@ function templateRRApprovedCustomer({ req: rr }) {
     ${rr.admin_note ? `<div style="background:#f0fff4;border-left:3px solid #22c55e;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#15803d;"><strong>Note from our team:</strong> ${rr.admin_note}</div>` : ''}
     <div style="font-size:13px;color:#666;line-height:1.7;">We'll arrange pickup of your item(s) and keep you updated. Please ensure the items are packed and ready.</div>
   `;
-  return neonEmailBase({ stageLabel: `${typeLabel} Approved ✓`, stageColor: '#86efac', stageHeadline: 'REQUEST<br>APPROVED.', orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
+  return neonEmailBase({ stageLabel: 'Return & Exchange', stageColor: '#86efac', stageHeadline: `${typeLabel.toUpperCase()} REQUEST<br>APPROVED.`, orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
 }
 
 function templateRRApprovedVendor({ req: rr }) {
@@ -1848,7 +1848,7 @@ function templateRRRejectedCustomer({ req: rr }) {
     ${rr.admin_note ? `<div style="background:#fef2f2;border-left:3px solid #dc2626;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#991b1b;"><strong>Reason:</strong> ${rr.admin_note}</div>` : ''}
     <div style="font-size:13px;color:#666;line-height:1.7;">If you believe this is an error or have further questions, please contact our support team with your Request ID: <strong>${rr.request_id}</strong>.</div>
   `;
-  return neonEmailBase({ stageLabel: `${typeLabel} Not Approved`, stageColor: '#fca5a5', stageHeadline: 'REQUEST<br>REJECTED.', orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
+  return neonEmailBase({ stageLabel: 'Return & Exchange', stageColor: '#fca5a5', stageHeadline: `${typeLabel.toUpperCase()} REQUEST<br>REJECTED.`, orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
 }
 
 function templateRRPickupCustomer({ req: rr }) {
@@ -1861,7 +1861,7 @@ function templateRRPickupCustomer({ req: rr }) {
     ${rr.admin_note ? `<div style="background:#eef2ff;border-left:3px solid #6366f1;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#3730a3;"><strong>Pickup details:</strong> ${rr.admin_note}</div>` : ''}
     <div style="font-size:13px;color:#666;line-height:1.7;">Please ensure the items are packed securely and ready for collection. You'll receive another update once your items are in transit.</div>
   `;
-  return neonEmailBase({ stageLabel: 'Pickup Scheduled', stageColor: '#c4b5fd', stageHeadline: 'PICKUP<br>SCHEDULED.', orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
+  return neonEmailBase({ stageLabel: 'Return & Exchange', stageColor: '#c4b5fd', stageHeadline: 'PICKUP<br>SCHEDULED.', orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
 }
 
 function templateRRInTransitCustomer({ req: rr }) {
@@ -1874,7 +1874,7 @@ function templateRRInTransitCustomer({ req: rr }) {
     ${rr.admin_note ? `<div style="background:#eef2ff;border-left:3px solid #6366f1;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#3730a3;"><strong>Tracking info:</strong> ${rr.admin_note}</div>` : ''}
     <div style="font-size:13px;color:#666;line-height:1.7;">We'll notify you once your ${rr.type === 'exchange' ? 'exchange item has been delivered' : 'return has been received and processed'}.</div>
   `;
-  return neonEmailBase({ stageLabel: `${typeLabel} In Transit`, stageColor: '#99b3ff', stageHeadline: 'IN<br>TRANSIT.', orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
+  return neonEmailBase({ stageLabel: 'Return & Exchange', stageColor: '#99b3ff', stageHeadline: `${typeLabel.toUpperCase()}<br>IN TRANSIT.`, orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
 }
 
 function templateRRDeliveredCustomer({ req: rr }) {
@@ -1888,7 +1888,7 @@ function templateRRDeliveredCustomer({ req: rr }) {
     ${rr.admin_note ? `<div style="background:#f0fff4;border-left:3px solid #22c55e;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#15803d;"><strong>Note:</strong> ${rr.admin_note}</div>` : ''}
     <div style="font-size:13px;color:#666;line-height:1.7;">Thank you for shopping with CROSCROW. If you have any questions, please contact us with your Request ID: <strong>${rr.request_id}</strong>.</div>
   `;
-  return neonEmailBase({ stageLabel: `${typeLabel} Complete ✓`, stageColor: '#86efac', stageHeadline: 'ALL<br>DONE.', orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
+  return neonEmailBase({ stageLabel: 'Return & Exchange', stageColor: '#86efac', stageHeadline: `${typeLabel.toUpperCase()}<br>COMPLETE.`, orderName: rr.order_name || '—', orderTotal: rr.request_id, bodyHtml });
 }
 
 function templateRRReminder24Admin({ req: rr }) {
@@ -2754,98 +2754,71 @@ function templateOfd({ order, awb, courier, trackingUrl = '', meta = {}, adsStri
 function templateVendorShipped({ order, vendorName, items, awb, courier, trackingUrl, adsStrip = '' }) {
   const addr  = order.shipping_address;
   const total = parseFloat(order.total_price || 0);
-  const IMG   = 'https://i.ibb.co/Jw1bj5Lh/CROSCROW-400-x-300-px.png';
-  const LOGO  = 'https://i.ibb.co/DHx0VCZb/Untitled-design-1.jpg';
+  const STORE = 'https://croscrowofficial.myshopify.com';
   const lineItems = items || [];
 
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0d0d0d;font-family:Arial,sans-serif;">
-<div style="max-width:620px;margin:0 auto;">
-
-  <div style="position:relative;line-height:0;">
-    <img src="${IMG}" width="620" alt="CROSCROW" style="width:100%;max-width:620px;display:block;object-fit:cover;max-height:340px;">
-    <div style="position:absolute;bottom:0;left:0;right:0;padding:28px 32px;background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.4) 70%,transparent 100%);">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:8px;">SHIPPED &nbsp;|&nbsp; ON THE WAY</div>
-      <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:3px;text-transform:uppercase;line-height:1.1;">YOUR ITEMS<br>ARE SHIPPED.</div>
-    </div>
-  </div>
-
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111111;">
-    <tr>
-      <td style="padding:18px 32px;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Order ID</div>
-        <div style="font-size:20px;font-weight:900;color:#ffffff;letter-spacing:2px;">${order.name}</div>
-      </td>
-      <td style="padding:18px 32px;text-align:right;">
-        <div style="font-size:9px;letter-spacing:4px;color:#555;text-transform:uppercase;margin-bottom:4px;">Total</div>
-        <div style="font-size:20px;font-weight:900;color:#7eb8f7;letter-spacing:1px;">&#8377;${total.toFixed(2)}</div>
-      </td>
-    </tr>
-  </table>
-
-  <div style="background:#161616;padding:32px;">
-    <div style="margin-bottom:24px;">
-      <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;">Your items from <strong style="color:#ccc;">${vendorName}</strong> have left the facility and are on their way to you.</div>
-    </div>
-
-    ${awb ? `
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:24px;">
+  const itemsHtml = lineItems.map(li => {
+    const img = li.image_url || li.image?.src || '';
+    const imgEl = img
+      ? `<a href="${STORE}" target="_blank" style="display:block;"><img src="${img}" width="60" height="60" alt="${li.title||''}" style="width:60px;height:60px;border-radius:4px;object-fit:cover;display:block;"></a>`
+      : `<div style="width:60px;height:60px;background:#f0f0f0;border-radius:4px;"></div>`;
+    return `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #f0f0f0;">
       <tr>
-        <td style="padding:14px 20px;">
-          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Courier</div>
-          <div style="font-size:13px;font-weight:700;color:#ccc;">${courier || 'Delivery Partner'}</div>
+        <td style="padding:8px 10px 8px 0;width:74px;vertical-align:top;">${imgEl}</td>
+        <td style="padding:8px 0;vertical-align:top;">
+          <div style="font-size:15px;font-weight:700;color:#111;">${li.title||li.name||''}</div>
+          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:12px;color:#999;margin-top:2px;letter-spacing:1px;">${li.variant_title}</div>` : ''}
+          <div style="font-size:11px;letter-spacing:2px;color:#bbb;margin-top:4px;text-transform:uppercase;">QTY ${li.quantity||li.qty||1}</div>
         </td>
-        <td style="padding:14px 20px;text-align:right;">
-          <div style="font-size:9px;letter-spacing:3px;color:#444;text-transform:uppercase;margin-bottom:4px;">Tracking AWB</div>
-          <div style="font-size:13px;font-weight:700;color:#7eb8f7;font-family:monospace;">${awb}</div>
-        </td>
-      </tr>
-    </table>` : ''}
-
-    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:14px;">Items Shipped</div>
-
-    ${lineItems.map(li => {
-      const img = li.image_url || li.image?.src || '';
-      return `
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #1e1e1e;">
-      <tr>
-        ${img ? `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><img src="${img}" width="60" height="60" alt="" style="border-radius:6px;object-fit:cover;display:block;background:#222;"></td>` : `<td style="padding:8px 10px 8px 0;width:64px;vertical-align:top;"><div style="width:60px;height:60px;background:#1e1e1e;border-radius:6px;"></div></td>`}
-        <td style="padding:14px 0;vertical-align:top;">
-          <div style="font-size:13px;font-weight:700;color:#e8e8e8;">${li.title || li.name}</div>
-          ${li.variant_title && li.variant_title !== 'Default Title' ? `<div style="font-size:10px;color:#555;margin-top:3px;">${li.variant_title}</div>` : ''}
-          <div style="font-size:9px;letter-spacing:3px;color:#444;margin-top:5px;text-transform:uppercase;">Qty ${li.quantity || li.qty || 1}</div>
-        </td>
-        <td style="padding:14px 0;text-align:right;vertical-align:top;">
-          <div style="font-size:14px;font-weight:800;color:#f0f0f0;">&#8377;${(parseFloat(li.price||0)*(li.quantity||li.qty||1)).toFixed(2)}</div>
+        <td style="padding:8px 0;text-align:right;vertical-align:top;">
+          <div style="font-size:15px;font-weight:800;color:#111;">&#8377;${(parseFloat(li.price||0)*(li.quantity||li.qty||1)).toFixed(2)}</div>
         </td>
       </tr>
     </table>`;
-    }).join('')}
+  }).join('');
+
+  const trackUrl = resolveTrackUrl(trackingUrl, awb, courier, order.name);
+
+  const bodyHtml = `
+    <div style="font-size:17px;font-weight:700;color:#111;margin-bottom:6px;">Hey ${addr?.first_name || order.email?.split('@')[0] || 'there'} —</div>
+    <div style="font-size:14px;color:#666;line-height:1.7;margin-bottom:14px;">Your items from <strong style="color:#111;">${vendorName}</strong> have left the facility and are on their way to you.</div>
+
+    <div style="height:4px;background:#f0f0f0;margin-bottom:10px;"><div style="height:4px;width:60%;background:#002eff;"></div></div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;font-size:8px;letter-spacing:1px;text-transform:uppercase;"><tr>
+      <td style="color:#002eff;font-weight:700;text-align:left;">Confirmed</td>
+      <td style="color:#002eff;font-weight:700;text-align:center;">Packed</td>
+      <td style="color:#111;font-weight:700;text-align:center;">Shipped &#9679;</td>
+      <td style="color:#ccc;text-align:center;">OFD</td>
+      <td style="color:#ccc;text-align:right;">Delivered</td>
+    </tr></table>
+
+    ${awb ? `
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-bottom:20px;">
+      <tr style="border-bottom:1px solid #f5f5f5;"><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:40%;vertical-align:top;">Courier</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#111;vertical-align:top;">${courier || 'Delivery Partner'}</td></tr>
+      <tr><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;vertical-align:top;">AWB</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#002eff;font-family:monospace;vertical-align:top;">${awb}</td></tr>
+    </table>` : ''}
+
+    <a href="${trackUrl}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
+
+    <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Items Shipped</div>
+    ${itemsHtml}
 
     ${addr ? `
-    <div style="margin-top:20px;">
-      <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#444;text-transform:uppercase;margin-bottom:12px;">Delivering To</div>
-      <div style="font-size:13px;color:#888;line-height:1.9;">
-        <span style="font-weight:700;color:#ccc;">${addr.name}</span><br>
-        ${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>
-        ${addr.city}, ${addr.province} ${addr.zip}
-      </div>
-    </div>` : ''}
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-top:16px;">
+      <tr style="border-bottom:1px solid #f5f5f5;"><td style="padding:10px 16px;font-size:10px;color:#999;letter-spacing:2px;text-transform:uppercase;width:35%;vertical-align:top;">Delivering To</td><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#111;vertical-align:top;">${addr.name}<br><span style="font-weight:400;color:#999;">${addr.address1}${addr.address2?', '+addr.address2:''}, ${addr.city} ${addr.zip}</span></td></tr>
+    </table>` : ''}
 
-    <div style="margin-top:20px;font-size:12px;color:#555;line-height:1.7;">Any remaining items from your order will be shipped separately. You'll get another update when they're on the way.</div>
-  </div>
+    <div style="margin-top:16px;font-size:12px;color:#999;line-height:1.7;">Any remaining items from your order will be shipped separately — you'll get another update when they're on the way.</div>
 
-  ${adsStrip}
-  <div style="background:#0d0d0d;padding:32px;text-align:center;border-top:1px solid #1a1a1a;">
-    <img src="${LOGO}" width="160" alt="CROSCROW" style="display:inline-block;margin-bottom:14px;border-radius:6px;">
-    <div style="font-size:11px;color:#444;line-height:1.8;">Questions? Reach us on WhatsApp or reply to this email.</div>
-    <div style="font-size:9px;color:#2a2a2a;margin-top:16px;letter-spacing:2px;text-transform:uppercase;">&#169; CROSCROW &middot; Automated Notification &middot; Do Not Reply</div>
-  </div>
-
-</div>
-</body></html>`;
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border-top:2px solid #002eff;">
+      <tr>
+        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
+        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
+      </tr>
+    </table>
+  `;
+  return neonEmailBase({ stageLabel: 'Shipped · On The Way', stageColor: '#99b3ff', stageHeadline: 'YOUR ITEMS<br>ARE SHIPPED.', orderName: order.name, orderTotal: total.toFixed(2), bodyHtml, adsStrip, trackUrl });
 }
 
 function templateAdminFulfilledVendor({ order, vendorName, items, awb, courier }) {
