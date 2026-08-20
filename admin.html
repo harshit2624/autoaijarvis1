@@ -3138,11 +3138,14 @@
     },[token, aPeriod]);
 
     useEffect(()=>{
-      if (dashCache?.current?.timings) { setTimings(dashCache.current.timings); setTLoading(false); return; }
+      const tKey = `timings_${aPeriod?.label||'all'}`;
+      if (dashCache?.current?.[tKey]) { setTimings(dashCache.current[tKey]); setTLoading(false); return; }
       setTLoading(true);
-      fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>{ setTimings(d); if(dashCache?.current) dashCache.current.timings=d; }).catch(()=>{}).finally(()=>setTLoading(false));
-    },[token]);
+      const tFrom = aPeriod ? aPeriod.from : '2020-01-01';
+      const tTo   = aPeriod ? aPeriod.to   : isoToday();
+      fetch(`${API}/admin/dashboard/stage-timings?from=${tFrom}&to=${tTo}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setTimings(d); if(dashCache?.current) dashCache.current[tKey]=d; }).catch(()=>{}).finally(()=>setTLoading(false));
+    },[token, aPeriod]);
 
     useEffect(()=>{
       if (dashCache?.current?.scorecard) { setScorecard(dashCache.current.scorecard); return; }
@@ -3175,7 +3178,7 @@
             <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
           </div>
           <div style={{display:'flex',gap:6,alignItems:'center'}}>
-            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; dashCache.current.timings=null; dashCache.current.scorecard=null; } setALoading(true); setTLoading(true); setScorecard(null); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current.timings=d;}).catch(()=>{}).finally(()=>setTLoading(false)); fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setScorecard(d);if(dashCache?.current)dashCache.current.scorecard=d;}).catch(()=>{}); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
+            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; delete dashCache.current[`timings_${k}`]; dashCache.current.scorecard=null; } setALoading(true); setTLoading(true); setScorecard(null); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current[`timings_${aPeriod?.label||'all'}`]=d;}).catch(()=>{}).finally(()=>setTLoading(false)); fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setScorecard(d);if(dashCache?.current)dashCache.current.scorecard=d;}).catch(()=>{}); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
             <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
           </div>
         </div>
@@ -3218,7 +3221,7 @@
 
           {/* Stage timing averages — mined from stage_history, all-time */}
           <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
-            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>⏱ Avg Stage Timings · All Time</div>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>⏱ Avg Stage Timings · {periodLabel}</div>
             {tLoading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
             {!tLoading && timings && (
               <>

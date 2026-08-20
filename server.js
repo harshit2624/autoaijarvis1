@@ -6219,6 +6219,10 @@ app.get("/admin/vendor-scorecard", adminAuth, async (req, res) => {
 // history wasn't backfilled for orders that transitioned before this was added.
 app.get("/admin/dashboard/stage-timings", adminAuth, async (req, res) => {
   try {
+    const { from, to } = req.query;
+    const fromMs = from ? new Date(from).getTime() : null;
+    const toMs   = to   ? new Date(to).getTime() + 86400000 : null; // inclusive end-of-day
+
     const docs = await mdb.collection('order_vendor_stage').find(
       { stage_history: { $exists: true, $not: { $size: 0 } } },
       { projection: { stage_history: 1, _id: 0 } }
@@ -6232,20 +6236,33 @@ app.get("/admin/dashboard/stage-timings", adminAuth, async (req, res) => {
     docs.forEach(d => {
       const h = d.stage_history;
       if (!Array.isArray(h) || h.length < 2) return;
+
+      // Filter: at least one stage transition must fall within the period
+      const inPeriod = (ts) => (!fromMs || ts >= fromMs) && (!toMs || ts <= toMs);
+      if (!h.some(e => inPeriod(e.at))) return;
+
       for (let i = 1; i < h.length; i++) {
+        // Only count transitions where both ends are within period (or no filter)
+        if (fromMs || toMs) {
+          if (!inPeriod(h[i-1].at) && !inPeriod(h[i].at)) continue;
+        }
         const hrs = (h[i].at - h[i-1].at) / 3600000;
         if (hrs < 0) continue;
         const key = `${h[i-1].stage} → ${h[i].stage}`;
         (transitionHours[key] ||= []).push(hrs);
       }
       const delivered = h.find(e => e.stage === 'delivered');
-      if (delivered) {
-        const hrs = (delivered.at - h[0].at) / 3600000;
+      if (delivered && inPeriod(delivered.at)) {
+        const confirmed = h.find(e => e.stage === 'confirmed');
+        const startAt = confirmed ? confirmed.at : h[0].at;
+        const hrs = (delivered.at - startAt) / 3600000;
         if (hrs >= 0) totalDeliveryHours.push(hrs);
       }
       const rto = h.find(e => e.stage === 'rto');
-      if (rto) {
-        const hrs = (rto.at - h[0].at) / 3600000;
+      if (rto && inPeriod(rto.at)) {
+        const confirmed = h.find(e => e.stage === 'confirmed');
+        const startAt = confirmed ? confirmed.at : h[0].at;
+        const hrs = (rto.at - startAt) / 3600000;
         if (hrs >= 0) totalRtoHours.push(hrs);
       }
     });
