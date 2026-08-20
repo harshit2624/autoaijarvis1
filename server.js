@@ -20795,11 +20795,18 @@ app.post('/admin/bot-mode', adminAuth, async (req, res) => {
 
 // One-shot: clear bad bot_paused_until values set by the self-pause bug (unresolved chats that got incorrectly paused)
 app.post('/admin/wa-clear-bad-pauses', adminAuth, async (req, res) => {
-  const result = await mdb.collection('support_chats').updateMany(
+  // Clear bad pauses from unresolved chats (self-pause bug)
+  const r1 = await mdb.collection('support_chats').updateMany(
     { resolved: { $ne: true }, bot_paused_until: { $gt: Date.now() } },
     { $unset: { bot_paused_until: '' } }
   );
-  res.json({ cleared: result.modifiedCount });
+  // Also clear bot_paused_until on resolved chats (bot may have incorrectly resolved+paused them)
+  // Leave resolved=true so admin-handled chats stay closed; the bot creates a fresh chat for new messages
+  const r2 = await mdb.collection('support_chats').updateMany(
+    { resolved: true, bot_paused_until: { $gt: Date.now() } },
+    { $unset: { bot_paused_until: '' } }
+  );
+  res.json({ cleared_unresolved: r1.modifiedCount, cleared_resolved: r2.modifiedCount, total: r1.modifiedCount + r2.modifiedCount });
 });
 
 app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
@@ -24202,7 +24209,7 @@ async function startBaileysBot() {
   // V1 socket disabled. Only registers waSharedMessageHandler using v2 socket.
   if (waSharedMessageHandler) return;
   const sock = { // proxy to active socket so handler's sock.sendMessage works via v2
-    sendMessage: (...a) => waSocket?.sendMessage(...a),
+    sendMessage: async (jid, ...a) => { _waBotSentJids.set(jid, Date.now()); return waSocket?.sendMessage(jid, ...a); },
     readMessages: (...a) => waSocket?.readMessages(...a),
     ev: { on: () => {} }, authState: { creds: { me: { id: '' } } },
   };
@@ -24422,7 +24429,7 @@ async function startBaileysBot() {
           const outTo = msg.key.remoteJid;
           // Skip if this looks like a bot-generated message — bot messages always start with ``` (code block)
           // or contain the CROSCROW header. Manual admin replies are plain text without this pattern.
-          const _looksLikeBot = outText.startsWith('```') || outText.includes('▪ C R O S C R O W ▪') || outText.includes('C R O S C R O W');
+          const _looksLikeBot = outText.startsWith('```') || outText.includes('▪ C R O S C R O W ▪') || outText.includes('C R O S C R O W') || /^(What are you looking for|✅|⚠️|📋|🔍|👁️|📊|🎫|🛍️|track|order|return|exchange|confirm|chat|resolved|no open|fetching|watching|digest|creating ticket|on it|generating)/i.test(outText);
           // Also skip if in-memory JID tracker says bot sent here recently (belt + suspenders)
           const _botSentRecently = _waBotSentJids.has(outTo) && (Date.now() - _waBotSentJids.get(outTo) < 120000);
           if (outText && outTo && !_looksLikeBot && !_botSentRecently) {
