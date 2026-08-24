@@ -13701,6 +13701,82 @@ async function agreementExpiryCron() {
 }
 setInterval(agreementExpiryCron, 24 * 60 * 60 * 1000); // daily
 
+// ── Daily Product Health reminder ─────────────────────────────────────────────
+async function productHealthReminderCron() {
+  const now = new Date();
+  const istHour = (now.getUTCHours() + 5) % 24; // IST = UTC+5:30 approx
+  if (istHour !== 9) return; // fire around 9 AM IST
+  try {
+    const cfg      = await getSmtpConfig();
+    if (!cfg?.adminEmail) return;
+    const settings = await RS.get();
+    const staffList = (settings?.staff_emails || '').split(',').map(e => e.trim()).filter(Boolean);
+    const recipients = [cfg.adminEmail, ...staffList];
+
+    // Fetch overrides to exclude N/A products
+    const overridesDocs = await mdb.collection('product_health_overrides').find({}).toArray();
+    const overrides = {};
+    for (const doc of overridesDocs) {
+      if (!overrides[doc.productId]) overrides[doc.productId] = new Set();
+      overrides[doc.productId].add(doc.field);
+    }
+
+    // Scan Shopify products
+    const REQUIRED_KEYS = ['morefromvendor', 'return_exchange_vendor', 'sizechart'];
+    const FIELD_LABELS  = { morefromvendor: 'More From Vendor', return_exchange_vendor: 'Return & Exchange', sizechart: 'Size Chart' };
+    const GQL = (cursor) => `{
+      products(first: 250${cursor ? `, after: "${cursor}"` : ''}, query: "status:active") {
+        pageInfo { hasNextPage endCursor }
+        edges { node {
+          legacyResourceId title
+          morefromvendor:        metafield(namespace:"custom", key:"morefromvendor")        { value }
+          return_exchange_vendor: metafield(namespace:"custom", key:"return_exchange_vendor") { value }
+          sizechart:             metafield(namespace:"custom", key:"sizechart")             { value }
+        }}
+      }
+    }`;
+    const incomplete = [];
+    let cursor = null, hasNext = true;
+    while (hasNext) {
+      const data = await shopifyGQL(GQL(cursor));
+      const page = data?.data?.products;
+      if (!page) break;
+      hasNext = page.pageInfo.hasNextPage;
+      cursor  = page.pageInfo.endCursor;
+      for (const { node: p } of (page.edges || [])) {
+        const po = overrides[p.legacyResourceId] || new Set();
+        const missing = REQUIRED_KEYS.filter(k => !p[k]?.value?.trim() && !po.has(k));
+        if (missing.length > 0) incomplete.push({ title: p.title, id: p.legacyResourceId, missing });
+      }
+    }
+    if (incomplete.length === 0) return; // nothing to report
+
+    const rowsHtml = incomplete.slice(0, 50).map(p =>
+      `<tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${p.title}</td>` +
+      `<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#ef4444;">${p.missing.map(k => FIELD_LABELS[k]).join(', ')}</td></tr>`
+    ).join('');
+    const more = incomplete.length > 50 ? `<p style="color:#6b7280;font-size:13px;">…and ${incomplete.length - 50} more.</p>` : '';
+    const bodyHtml = `
+      <p style="font-size:15px;margin:0 0 16px;">There are <strong>${incomplete.length} product(s)</strong> with missing metafields in CROSCROW.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:#f3f4f6;">
+          <th style="padding:8px 12px;text-align:left;border-bottom:2px solid #e5e7eb;">Product</th>
+          <th style="padding:8px 12px;text-align:left;border-bottom:2px solid #e5e7eb;">Missing Fields</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      ${more}
+      <p style="margin:20px 0 0;"><a href="https://jarvis.croscrow.com/admin#metafield-audit" style="background:#6366f1;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">Fix in Admin →</a></p>
+    `;
+    const html = neonEmailBase({ stageLabel: 'Daily Reminder', stageColor: '#f59e0b', stageHeadline: 'PRODUCT<br>HEALTH ALERT.', orderName: `${incomplete.length} products`, orderTotal: 'missing fields', bodyHtml });
+    for (const email of recipients) {
+      await sendEmail({ to: email, subject: `⚠️ ${incomplete.length} products with missing metafields — CROSCROW`, html });
+    }
+    console.log(`📋 Product health reminder sent to ${recipients.length} recipient(s): ${incomplete.length} products`);
+  } catch(e) { console.error('Product health reminder cron error:', e.message); }
+}
+setInterval(productHealthReminderCron, 60 * 60 * 1000); // check hourly, fires once at 9 AM IST
+
 // ── Send test warning email to vendor ────────────────────────────────────
 app.post("/admin/penalties/test-warning", requirePermission('penalties'), async (req, res) => {
   const { shopify_id, vendor_name, order_name } = req.body || {};
@@ -19549,7 +19625,7 @@ app.get("/admin/products/search", adminAuth, async (req, res) => {
 
 // ── GET /admin/metafield-audit — check all products for missing required metafields ─
 // Fetches all active products via GraphQL with pagination, checks 3 required metafields.
-// Returns products that are missing at least one field.
+// Returns products that are missing at least one field, excluding N/A overrides.
 app.get("/admin/metafield-audit", adminAuth, async (req, res) => {
   const REQUIRED = [
     { key: 'morefromvendor',        label: 'More From Vendor',       type: 'text' },
@@ -19569,6 +19645,14 @@ app.get("/admin/metafield-audit", adminAuth, async (req, res) => {
     }
   }`;
   try {
+    // Load N/A overrides from DB
+    const overridesDocs = await mdb.collection('product_health_overrides').find({}).toArray();
+    const overrides = {}; // { productId: Set<field> }
+    for (const doc of overridesDocs) {
+      if (!overrides[doc.productId]) overrides[doc.productId] = new Set();
+      overrides[doc.productId].add(doc.field);
+    }
+
     const incomplete = [];
     let cursor = null, hasNext = true;
     while (hasNext) {
@@ -19578,7 +19662,8 @@ app.get("/admin/metafield-audit", adminAuth, async (req, res) => {
       hasNext = page.pageInfo.hasNextPage;
       cursor  = page.pageInfo.endCursor;
       for (const { node: p } of (page.edges || [])) {
-        const missing = REQUIRED.filter(f => !p[f.key]?.value?.trim());
+        const productOverrides = overrides[p.legacyResourceId] || new Set();
+        const missing = REQUIRED.filter(f => !p[f.key]?.value?.trim() && !productOverrides.has(f.key));
         if (missing.length > 0) {
           incomplete.push({
             id:       p.legacyResourceId,
@@ -19715,6 +19800,122 @@ app.post("/admin/metafield-audit/:productId/sizechart", adminAuth, adminSizeChar
     }
 
     res.json({ ok: true, image_url: imageUrl, file_id: fileId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/product-health/mark-not-needed — mark a field N/A for one or more products ──
+app.post("/admin/product-health/mark-not-needed", adminAuth, async (req, res) => {
+  const { productIds, field } = req.body || {};
+  const ALLOWED_FIELDS = ['sizechart', 'return_exchange_vendor', 'morefromvendor'];
+  if (!field || !ALLOWED_FIELDS.includes(field)) return res.status(400).json({ error: 'Invalid field' });
+  if (!Array.isArray(productIds) || productIds.length === 0) return res.status(400).json({ error: 'productIds required' });
+  try {
+    const ops = productIds.map(pid => ({
+      updateOne: {
+        filter: { productId: String(pid), field },
+        update: { $set: { productId: String(pid), field, markedAt: new Date() } },
+        upsert: true,
+      },
+    }));
+    await mdb.collection('product_health_overrides').bulkWrite(ops);
+    res.json({ ok: true, count: productIds.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /admin/product-health/bulk-sizechart — upload same size chart to multiple products ──
+const bulkSizeChartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+app.post("/admin/product-health/bulk-sizechart", adminAuth, bulkSizeChartUpload.single('image'), async (req, res) => {
+  try {
+    const productIds = JSON.parse(req.body?.productIds || '[]');
+    if (!req.file) return res.status(400).json({ error: 'Image file required.' });
+    if (!productIds.length) return res.status(400).json({ error: 'productIds required.' });
+    const allowedTypes = ['image/png','image/jpeg','image/jpg','image/webp'];
+    if (!allowedTypes.includes(req.file.mimetype)) return res.status(400).json({ error: 'Only PNG, JPG, or WEBP allowed.' });
+
+    let fileBuffer = req.file.buffer;
+    let fileMime   = req.file.mimetype;
+    let fileName   = req.file.originalname || 'sizechart.jpg';
+    try {
+      const sharp = require('sharp');
+      const meta  = await sharp(fileBuffer).metadata();
+      if ((meta.width * meta.height) / 1_000_000 > 20) {
+        fileBuffer = await sharp(fileBuffer).resize({ width: 4000, withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+        fileMime   = 'image/jpeg';
+        fileName   = fileName.replace(/\.[^.]+$/, '.jpg');
+      }
+    } catch {}
+
+    const token = await getAccessToken();
+    const gqlUrl = `https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`;
+    const gqlHeaders = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
+
+    // Stage & upload once
+    const stageData = await fetch(gqlUrl, { method:'POST', headers: gqlHeaders, body: JSON.stringify({
+      query:`mutation stagedUploadsCreate($input:[StagedUploadInput!]!){stagedUploadsCreate(input:$input){stagedTargets{url resourceUrl parameters{name value}}userErrors{message}}}`,
+      variables:{ input:[{ filename: fileName, mimeType: fileMime, resource:'FILE', fileSize: String(fileBuffer.length), httpMethod:'POST' }] },
+    }) }).then(r=>r.json());
+    const target = stageData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
+    if (!target) throw new Error('Staged upload failed');
+    const formData = new (require('form-data'))();
+    (target.parameters||[]).forEach(p => formData.append(p.name, p.value));
+    formData.append('file', fileBuffer, { filename: fileName, contentType: fileMime });
+    const uploadRes = await fetch(target.url, { method:'POST', body: formData, headers: formData.getHeaders() });
+    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
+
+    // Create Shopify file once
+    const fileData = await fetch(gqlUrl, { method:'POST', headers: gqlHeaders, body: JSON.stringify({
+      query:`mutation fileCreate($files:[FileCreateInput!]!){fileCreate(files:$files){files{id ...on MediaImage{image{url}}}userErrors{message}}}`,
+      variables:{ files:[{ originalSource: target.resourceUrl, contentType:'IMAGE' }] },
+    }) }).then(r=>r.json());
+    const fileId   = fileData?.data?.fileCreate?.files?.[0]?.id;
+    const imageUrl = fileData?.data?.fileCreate?.files?.[0]?.image?.url;
+    if (!fileId) throw new Error('File create failed');
+
+    // Apply metafield to each product
+    const results = [];
+    for (const pid of productIds) {
+      try {
+        const mfData   = await shopifyREST(`/products/${pid}/metafields.json`);
+        const existing = (mfData.metafields||[]).find(m => ['sizechart','size_chart'].includes((m.key||'').toLowerCase()));
+        if (existing) {
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/metafields/${existing.id}.json`, {
+            method:'PUT', headers: gqlHeaders,
+            body: JSON.stringify({ metafield:{ id: existing.id, value: fileId, type:'file_reference' } }),
+          });
+        } else {
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${pid}/metafields.json`, {
+            method:'POST', headers: gqlHeaders,
+            body: JSON.stringify({ metafield:{ namespace:'custom', key:'sizechart', value: fileId, type:'file_reference' } }),
+          });
+        }
+        results.push({ productId: pid, ok: true });
+      } catch(e) { results.push({ productId: pid, ok: false, error: e.message }); }
+    }
+    res.json({ ok: true, image_url: imageUrl, file_id: fileId, results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── GET /admin/product-health/overrides — list all N/A overrides ─────────────
+app.get("/admin/product-health/overrides", adminAuth, async (req, res) => {
+  try {
+    const docs = await mdb.collection('product_health_overrides').find({}).toArray();
+    // Return as map: { productId: [field, ...] }
+    const map = {};
+    for (const d of docs) {
+      if (!map[d.productId]) map[d.productId] = [];
+      map[d.productId].push(d.field);
+    }
+    res.json({ ok: true, overrides: map });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── DELETE /admin/product-health/mark-not-needed — un-mark N/A ───────────────
+app.delete("/admin/product-health/mark-not-needed", adminAuth, async (req, res) => {
+  const { productId, field } = req.body || {};
+  if (!productId || !field) return res.status(400).json({ error: 'productId and field required' });
+  try {
+    await mdb.collection('product_health_overrides').deleteOne({ productId: String(productId), field });
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

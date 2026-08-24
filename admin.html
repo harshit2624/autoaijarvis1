@@ -10734,15 +10734,19 @@
     const API = window.API_BASE || '';
     const [loading, setLoading]     = React.useState(false);
     const [data, setData]           = React.useState(null);
-    const [filter, setFilter]       = React.useState('all');    // 'all' | metafield key
-    const [editing, setEditing]     = React.useState({});       // { productId_key: value }
-    const [saving, setSaving]       = React.useState({});       // { productId_key: bool }
-    const [saved, setSaved]         = React.useState({});       // { productId_key: bool }
-    const [scUploading, setScUploading] = React.useState({});  // { productId: bool }
-    const [scPreview, setScPreview]     = React.useState({});  // { productId: url }
-    const [scError, setScError]         = React.useState({});  // { productId: msg }
-    const [collections, setCollections] = React.useState([]);  // [{ id, gid, title }]
-    const SHOP_DOMAIN = 'croscrow.myshopify.com';
+    const [filter, setFilter]       = React.useState('all');
+    const [editing, setEditing]     = React.useState({});
+    const [saving, setSaving]       = React.useState({});
+    const [saved, setSaved]         = React.useState({});
+    const [scUploading, setScUploading] = React.useState({});
+    const [scPreview, setScPreview]     = React.useState({});
+    const [scError, setScError]         = React.useState({});
+    const [collections, setCollections] = React.useState([]);
+    // Multi-select
+    const [selected, setSelected]       = React.useState(new Set());
+    const [bulkWorking, setBulkWorking] = React.useState(false);
+    const [bulkMsg, setBulkMsg]         = React.useState('');
+    const bulkScRef = React.useRef(null);
 
     React.useEffect(() => {
       fetch(`${API}/admin/collections-list`, { headers: { Authorization: `Bearer ${token}` } })
@@ -10750,7 +10754,7 @@
     }, []);
 
     const load = async () => {
-      setLoading(true); setData(null);
+      setLoading(true); setData(null); setSelected(new Set());
       try {
         const r = await fetch(`${API}/admin/metafield-audit`, { headers: { Authorization: `Bearer ${token}` } });
         const d = await r.json();
@@ -10760,6 +10764,17 @@
     };
 
     React.useEffect(() => { load(); }, []);
+
+    const removeFromList = (productIds, field) => {
+      setData(d => ({
+        ...d,
+        incomplete: d.incomplete.map(p => {
+          if (!productIds.includes(p.id)) return p;
+          const newMissing = field ? p.missing.filter(k => k !== field) : [];
+          return { ...p, missing: newMissing };
+        }).filter(p => p.missing.length > 0),
+      }));
+    };
 
     const saveField = async (productId, key) => {
       const ek = `${productId}_${key}`;
@@ -10774,14 +10789,12 @@
         });
         setSaved(s => ({ ...s, [ek]: true }));
         setTimeout(() => setSaved(s => ({ ...s, [ek]: false })), 2500);
-        // Update local data so row clears
         setData(d => ({
           ...d,
           incomplete: d.incomplete.map(p => {
             if (p.id !== productId) return p;
-            const newVals = { ...p.values, [key]: value };
             const newMissing = p.missing.filter(k => k !== key);
-            return { ...p, values: newVals, missing: newMissing };
+            return { ...p, values: { ...p.values, [key]: value }, missing: newMissing };
           }).filter(p => p.missing.length > 0),
         }));
       } catch {}
@@ -10796,24 +10809,52 @@
         const fd = new FormData();
         fd.append('image', file);
         const r = await fetch(`${API}/admin/metafield-audit/${productId}/sizechart`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: fd,
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Upload failed');
         setScPreview(s => ({ ...s, [productId]: d.image_url }));
-        // Remove sizechart from missing list
-        setData(dd => ({
-          ...dd,
-          incomplete: dd.incomplete.map(p => {
-            if (p.id !== productId) return p;
-            const newMissing = p.missing.filter(k => k !== 'sizechart');
-            return { ...p, missing: newMissing };
-          }).filter(p => p.missing.length > 0),
-        }));
+        removeFromList([productId], 'sizechart');
       } catch(e) { setScError(s => ({ ...s, [productId]: e.message })); }
       setScUploading(s => ({ ...s, [productId]: false }));
+    };
+
+    const markNotNeeded = async (productIds, field) => {
+      setBulkWorking(true); setBulkMsg('');
+      try {
+        const r = await fetch(`${API}/admin/product-health/mark-not-needed`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productIds, field }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed');
+        removeFromList(productIds, field);
+        setSelected(s => { const n = new Set(s); productIds.forEach(id => n.delete(id)); return n; });
+        setBulkMsg(`✓ Marked ${productIds.length} product(s) as N/A for ${FIELD_META[field]?.label || field}`);
+      } catch(e) { setBulkMsg('Error: ' + e.message); }
+      setBulkWorking(false);
+      setTimeout(() => setBulkMsg(''), 4000);
+    };
+
+    const bulkUploadSizeChart = async (file) => {
+      if (!file || selected.size === 0) return;
+      setBulkWorking(true); setBulkMsg('');
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        fd.append('productIds', JSON.stringify([...selected]));
+        const r = await fetch(`${API}/admin/product-health/bulk-sizechart`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Upload failed');
+        removeFromList([...selected], 'sizechart');
+        setBulkMsg(`✓ Size chart uploaded to ${selected.size} product(s)`);
+        setSelected(new Set());
+      } catch(e) { setBulkMsg('Error: ' + e.message); }
+      setBulkWorking(false);
+      setTimeout(() => setBulkMsg(''), 4000);
     };
 
     const FIELD_META = {
@@ -10822,10 +10863,17 @@
       sizechart:               { label: 'Size Chart',        color: '#8b5cf6', editable: false, inputType: 'image' },
     };
 
-    const items = data?.incomplete || [];
+    const items    = data?.incomplete || [];
     const filtered = filter === 'all' ? items : items.filter(p => p.missing.includes(filter));
-    const counts = {};
+    const counts   = {};
     (data?.fields || []).forEach(f => { counts[f.key] = items.filter(p => p.missing.includes(f.key)).length; });
+    const allSelected = filtered.length > 0 && filtered.every(p => selected.has(p.id));
+    const toggleAll = () => {
+      if (allSelected) { setSelected(s => { const n = new Set(s); filtered.forEach(p => n.delete(p.id)); return n; }); }
+      else { setSelected(s => { const n = new Set(s); filtered.forEach(p => n.add(p.id)); return n; }); }
+    };
+    const toggleOne = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    const selCount = [...selected].filter(id => filtered.some(p => p.id === id)).length;
 
     return React.createElement('div', { style: { maxWidth: 960, margin: '0 auto', padding: '0 0 40px' } },
       React.createElement('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, gap:12, flexWrap:'wrap' } },
@@ -10857,12 +10905,58 @@
 
       loading && React.createElement('div', { style:{ textAlign:'center', padding:40, color:'var(--text-dim)' } }, 'Scanning all products…'),
       data?.error && React.createElement('div', { style:{ padding:16, background:'#fee2e2', borderRadius:8, color:'#991b1b' } }, data.error),
-
       !loading && data && !data.error && items.length === 0 &&
         React.createElement('div', { style:{ textAlign:'center', padding:60, color:'#10b981', fontSize:16 } }, '✅ All products have required metafields filled in!'),
 
+      // Bulk action toolbar
+      !loading && filtered.length > 0 && React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap', padding:'10px 14px', background:'var(--bg-card)', borderRadius:10, border:'1px solid var(--border)' } },
+        React.createElement('label', { style:{ display:'flex', alignItems:'center', gap:6, fontSize:13, fontWeight:600, cursor:'pointer', userSelect:'none' } },
+          React.createElement('input', { type:'checkbox', checked: allSelected, onChange: toggleAll, style:{ width:15, height:15 } }),
+          selCount > 0 ? `${selCount} selected` : 'Select all',
+        ),
+        selCount > 0 && React.createElement(React.Fragment, null,
+          React.createElement('div', { style:{ width:1, height:20, background:'var(--border)' } }),
+          // Mark Size Chart N/A
+          React.createElement('button', {
+            onClick: () => markNotNeeded([...selected].filter(id => filtered.some(p => p.id === id && p.missing.includes('sizechart'))), 'sizechart'),
+            disabled: bulkWorking,
+            style:{ padding:'5px 12px', borderRadius:6, border:'1px solid #8b5cf6', background:'#8b5cf622', color:'#8b5cf6', fontSize:12, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+          }, '📏 Mark Size Chart N/A'),
+          // Upload size chart to all selected
+          React.createElement('label', { style:{ cursor:'pointer' } },
+            React.createElement('input', {
+              type:'file', accept:'image/png,image/jpeg,image/webp', style:{ display:'none' },
+              ref: bulkScRef,
+              onChange: e => { const f = e.target.files?.[0]; if (f) bulkUploadSizeChart(f); e.target.value=''; },
+            }),
+            React.createElement('span', {
+              style:{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:6,
+                border:'1.5px dashed #8b5cf6', background:'#8b5cf611', color:'#8b5cf6',
+                fontSize:12, fontWeight:600, cursor: bulkWorking ? 'not-allowed' : 'pointer', whiteSpace:'nowrap', opacity: bulkWorking ? 0.5 : 1 }
+            }, bulkWorking ? '⏳…' : '📤 Upload Size Chart to All'),
+          ),
+          // Mark Return/Exchange N/A
+          React.createElement('button', {
+            onClick: () => markNotNeeded([...selected].filter(id => filtered.some(p => p.id === id && p.missing.includes('return_exchange_vendor'))), 'return_exchange_vendor'),
+            disabled: bulkWorking,
+            style:{ padding:'5px 12px', borderRadius:6, border:'1px solid #ef4444', background:'#ef444422', color:'#ef4444', fontSize:12, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+          }, '↩️ Mark R&E N/A'),
+          // Mark More From Vendor N/A
+          React.createElement('button', {
+            onClick: () => markNotNeeded([...selected].filter(id => filtered.some(p => p.id === id && p.missing.includes('morefromvendor'))), 'morefromvendor'),
+            disabled: bulkWorking,
+            style:{ padding:'5px 12px', borderRadius:6, border:'1px solid #f59e0b', background:'#f59e0b22', color:'#f59e0b', fontSize:12, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+          }, '🗂️ Mark More From Vendor N/A'),
+        ),
+        bulkMsg && React.createElement('span', { style:{ fontSize:12, color: bulkMsg.startsWith('Error') ? '#ef4444' : '#10b981', fontWeight:600 } }, bulkMsg),
+      ),
+
       !loading && filtered.length > 0 && React.createElement('div', { style:{ display:'flex', flexDirection:'column', gap:10 } },
-        filtered.map(p => React.createElement('div', { key:p.id, style:{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:10, padding:16, display:'flex', gap:14, alignItems:'flex-start' } },
+        filtered.map(p => React.createElement('div', { key:p.id, style:{ background:'var(--bg-card)', border:`1px solid ${selected.has(p.id) ? 'var(--indigo)' : 'var(--border)'}`, borderRadius:10, padding:16, display:'flex', gap:14, alignItems:'flex-start' } },
+          // Checkbox
+          React.createElement('div', { style:{ paddingTop:4, flexShrink:0 } },
+            React.createElement('input', { type:'checkbox', checked: selected.has(p.id), onChange: () => toggleOne(p.id), style:{ width:16, height:16, cursor:'pointer' } }),
+          ),
           p.image && React.createElement('img', { src:p.image, style:{ width:56, height:56, borderRadius:7, objectFit:'cover', flexShrink:0 }, onError:e=>e.target.style.display='none' }),
           !p.image && React.createElement('div', { style:{ width:56, height:56, borderRadius:7, background:'var(--bg-hover)', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 } }, '📦'),
           React.createElement('div', { style:{ flex:1, minWidth:0 } },
@@ -10900,22 +10994,36 @@
                           disabled: saving[ek] || !editing[ek]?.trim(),
                           style:{ padding:'5px 12px', borderRadius:6, border:'none', background: saved[ek]?'#10b981':'var(--indigo)', color:'#fff', fontSize:12, cursor:'pointer', whiteSpace:'nowrap', opacity: editing[ek]?.trim() ? 1 : 0.5 }
                         }, saving[ek] ? '…' : saved[ek] ? '✓ Saved' : 'Save'),
+                        React.createElement('button', {
+                          onClick: () => markNotNeeded([p.id], key),
+                          disabled: bulkWorking,
+                          title: `Mark ${fm.label} as not needed for this product`,
+                          style:{ padding:'5px 10px', borderRadius:6, border:`1px solid ${fm.color}`, background: fm.color+'11', color: fm.color, fontSize:11, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+                        }, 'N/A'),
                       )
-                    : React.createElement('label', { style:{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', flexWrap:'wrap' } },
-                        React.createElement('input', {
-                          type: 'file', accept: 'image/png,image/jpeg,image/webp',
-                          style: { display:'none' },
-                          onChange: e => { const f = e.target.files?.[0]; if (f) uploadSizeChart(p.id, f); e.target.value=''; },
-                        }),
-                        React.createElement('span', {
-                          style:{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:6,
-                            border:`1.5px dashed ${scUploading[p.id] ? '#9ca3af' : '#8b5cf6'}`,
-                            background: scUploading[p.id] ? '#f3f4f6' : '#faf5ff',
-                            color: scUploading[p.id] ? '#9ca3af' : '#8b5cf6',
-                            fontSize:12, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
-                        }, scUploading[p.id] ? '⏳ Uploading…' : '📤 Upload Size Chart'),
-                        scPreview[p.id] && React.createElement('img', { src: scPreview[p.id], style:{ height:32, borderRadius:4, border:'1px solid #e5e7eb' } }),
-                        scError[p.id]   && React.createElement('span', { style:{ fontSize:11, color:'#ef4444' } }, scError[p.id]),
+                    : React.createElement(React.Fragment, null,
+                        React.createElement('label', { style:{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', flexWrap:'wrap' } },
+                          React.createElement('input', {
+                            type: 'file', accept: 'image/png,image/jpeg,image/webp',
+                            style: { display:'none' },
+                            onChange: e => { const f = e.target.files?.[0]; if (f) uploadSizeChart(p.id, f); e.target.value=''; },
+                          }),
+                          React.createElement('span', {
+                            style:{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:6,
+                              border:`1.5px dashed ${scUploading[p.id] ? '#9ca3af' : '#8b5cf6'}`,
+                              background: scUploading[p.id] ? '#f3f4f6' : '#faf5ff',
+                              color: scUploading[p.id] ? '#9ca3af' : '#8b5cf6',
+                              fontSize:12, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+                          }, scUploading[p.id] ? '⏳ Uploading…' : '📤 Upload Size Chart'),
+                          scPreview[p.id] && React.createElement('img', { src: scPreview[p.id], style:{ height:32, borderRadius:4, border:'1px solid #e5e7eb' } }),
+                          scError[p.id]   && React.createElement('span', { style:{ fontSize:11, color:'#ef4444' } }, scError[p.id]),
+                        ),
+                        React.createElement('button', {
+                          onClick: () => markNotNeeded([p.id], key),
+                          disabled: bulkWorking,
+                          title: 'Mark size chart as not needed for this product',
+                          style:{ padding:'5px 10px', borderRadius:6, border:'1px solid #8b5cf6', background:'#8b5cf611', color:'#8b5cf6', fontSize:11, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }
+                        }, 'N/A'),
                       ),
                 );
               }),
