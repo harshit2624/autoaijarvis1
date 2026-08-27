@@ -12079,9 +12079,8 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
   try {
     const { collection_id } = req.query;
-    const path = collection_id
-      ? `/collections/${encodeURIComponent(collection_id)}/products.json?limit=250`
-      : '/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags';
+    const collQs = collection_id ? `&collection_id=${encodeURIComponent(collection_id)}` : '';
+    const path = `/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags${collQs}`;
     const data = await vendorShopifyRESTByConn(conn, path);
     const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
