@@ -12080,14 +12080,14 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   try {
     const { collection_id } = req.query;
     const path = collection_id
-      ? `/collections/${collection_id}/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags`
+      ? `/collections/${encodeURIComponent(collection_id)}/products.json?limit=250`
       : '/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags';
     const data = await vendorShopifyRESTByConn(conn, path);
     const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
-    const products = ((collection_id ? data.products : data.products) || []).map(p => ({
+    const products = (data.products || []).map(p => ({
       ...p,
-      variants: p.variants.map(v => ({ ...v, mapped: mappedVariants.has(String(v.id)) }))
+      variants: (p.variants || []).map(v => ({ ...v, mapped: mappedVariants.has(String(v.id)) }))
     }));
     res.json({ products, mappings });
   } catch (e) { res.status(500).json({ error: e.message }); }
