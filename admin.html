@@ -8343,6 +8343,11 @@
     const [bulkImporting, setBulkImporting] = useState(false);
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
+    // Product search + collection filter
+    const [productSearch,     setProductSearch]     = useState('');
+    const [collectionFilter,  setCollectionFilter]  = useState('');  // collection_id
+    const [vendorCollections, setVendorCollections] = useState([]);
+    const [collectionsLoading, setCollectionsLoading] = useState(false);
     // Map modal
     const [mapModal,    setMapModal]    = useState(null); // {vendorProduct, vendorVariant, uploadRequestId?}
     const [ccSearch,    setCcSearch]    = useState('');
@@ -8368,10 +8373,20 @@
         .then(r=>r.json()).then(d=>{ window._vendorList = (d.vendors||[]).map(v=>typeof v==='string'?v:v.name).filter(Boolean); });
     }, []);
 
-    const loadVendorProducts = (vendor) => {
-      setSelected(vendor); setProdLoading(true); setProducts([]); setMappings([]); setMsg(''); setSelectedProds(new Set());
-      fetch(`/admin/vendor-sync/${encodeURIComponent(vendor)}/products`, { headers:{ Authorization:'Bearer '+token } })
+    const loadVendorProducts = (vendor, collId) => {
+      const resolvedVendor = vendor ?? selected;
+      const resolvedCollId = collId !== undefined ? collId : collectionFilter;
+      setSelected(resolvedVendor); setProdLoading(true); setProducts([]); setMappings([]); setMsg(''); setSelectedProds(new Set());
+      const qs = resolvedCollId ? `?collection_id=${encodeURIComponent(resolvedCollId)}` : '';
+      fetch(`/admin/vendor-sync/${encodeURIComponent(resolvedVendor)}/products${qs}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>{ setProducts(d.products||[]); setMappings(d.mappings||[]); setProdLoading(false); });
+    };
+
+    const loadVendorCollections = (vendor) => {
+      setVendorCollections([]); setCollectionsLoading(true);
+      fetch(`/admin/vendor-sync/${encodeURIComponent(vendor)}/collections`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>{ setVendorCollections(d.collections||[]); setCollectionsLoading(false); })
+        .catch(()=>setCollectionsLoading(false));
     };
 
     const loadMappings = () => {
@@ -8692,7 +8707,7 @@
                 </div>
               ) : (
                 <div style={{background:selected===c.vendor_name?'var(--indigo-dim)':'var(--bg-card)',border:`1px solid ${selected===c.vendor_name?'var(--indigo)':'var(--border)'}`,borderRadius:8,overflow:'hidden'}}>
-                  <button onClick={()=>loadVendorProducts(c.vendor_name)}
+                  <button onClick={()=>{ setProductSearch(''); setCollectionFilter(''); loadVendorProducts(c.vendor_name, ''); loadVendorCollections(c.vendor_name); }}
                     style={{width:'100%',textAlign:'left',padding:'10px 12px',cursor:'pointer',color:'var(--text)',background:'transparent',border:'none'}}>
                     <div style={{fontWeight:600,fontSize:13}}>{c.vendor_name}</div>
                     <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{c.shop_domain}</div>
@@ -8739,12 +8754,34 @@
 
               {/* PRODUCTS TAB */}
               {tab==='products' && (
-                prodLoading ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>Loading products…</div> :
-                products.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No products found in vendor store.</div> :
                 <>
+                  {/* Search + Collection filter */}
+                  <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                    <input
+                      type="text"
+                      placeholder="Search products…"
+                      value={productSearch}
+                      onChange={e=>setProductSearch(e.target.value)}
+                      style={{flex:1,minWidth:160,padding:'7px 12px',borderRadius:7,border:'1px solid var(--border)',background:'var(--bg-input,var(--bg))',color:'var(--text)',fontSize:13,outline:'none'}}
+                    />
+                    <select
+                      value={collectionFilter}
+                      onChange={e=>{ const v=e.target.value; setCollectionFilter(v); loadVendorProducts(selected, v); }}
+                      style={{minWidth:180,padding:'7px 10px',borderRadius:7,border:'1px solid var(--border)',background:'var(--bg-input,var(--bg))',color:'var(--text)',fontSize:13}}
+                    >
+                      <option value="">All Collections</option>
+                      {collectionsLoading && <option disabled>Loading…</option>}
+                      {vendorCollections.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}
+                    </select>
+                  </div>
+                  {prodLoading ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>Loading products…</div> :
+                  (() => {
+                    const visibleProducts = products.filter(p=>!productSearch.trim() || p.title.toLowerCase().includes(productSearch.trim().toLowerCase()));
+                    return visibleProducts.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>{productSearch ? 'No products match your search.' : 'No products found in vendor store.'}</div> :
+                  (<>
                   {/* Bulk action toolbar */}
                   {(() => {
-                    const importable = products.filter(p=>!p.variants.every(v=>v.mapped));
+                    const importable = visibleProducts.filter(p=>!p.variants.every(v=>v.mapped));
                     const allSelected = importable.length > 0 && importable.every(p=>selectedProds.has(String(p.id)));
                     return (
                       <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,marginBottom:4,flexWrap:'wrap'}}>
@@ -8768,7 +8805,7 @@
                     );
                   })()}
                   <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                  {products.map(p=>{
+                  {visibleProducts.map(p=>{
                     const allMapped = p.variants.every(v=>v.mapped);
                     const someMapped = p.variants.some(v=>v.mapped);
                     const img = p.images?.[0]?.src;
@@ -8829,6 +8866,7 @@
                     );
                   })}
                   </div>
+                </>); })()}
                 </>
               )}
 

@@ -12058,14 +12058,34 @@ app.get("/admin/products", adminAuth, async (req, res) => {
   }
 });
 
+app.get("/admin/vendor-sync/:vendor/collections", adminAuth, async (req, res) => {
+  const conn = await VSC.get(req.params.vendor);
+  if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
+  try {
+    const [custom, smart] = await Promise.all([
+      vendorShopifyRESTByConn(conn, '/custom_collections.json?limit=250&fields=id,title,image'),
+      vendorShopifyRESTByConn(conn, '/smart_collections.json?limit=250&fields=id,title,image'),
+    ]);
+    const all = [
+      ...(custom.custom_collections || []),
+      ...(smart.smart_collections || []),
+    ].sort((a, b) => a.title.localeCompare(b.title));
+    res.json({ collections: all });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   const conn = await VSC.get(req.params.vendor);
   if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
   try {
-    const data = await vendorShopifyRESTByConn(conn, '/products.json?limit=100&fields=id,title,variants,images,status,product_type,vendor,body_html,tags');
+    const { collection_id } = req.query;
+    const path = collection_id
+      ? `/collections/${collection_id}/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags`
+      : '/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags';
+    const data = await vendorShopifyRESTByConn(conn, path);
     const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
-    const products = (data.products || []).map(p => ({
+    const products = ((collection_id ? data.products : data.products) || []).map(p => ({
       ...p,
       variants: p.variants.map(v => ({ ...v, mapped: mappedVariants.has(String(v.id)) }))
     }));
