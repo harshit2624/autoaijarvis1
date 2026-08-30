@@ -1354,7 +1354,8 @@ app.post("/webhooks/orders", (req, res) => {
         const cfg = await getSmtpConfig();
         if (!cfg?.host) return;
 
-        const isPrepaid = payload.financial_status === 'paid';
+        const isPrepaid       = payload.financial_status === 'paid';
+        const isPartiallyPaid = payload.financial_status === 'partially_paid';
         const now = new Date().toISOString();
         const nowMs = Date.now();
 
@@ -1368,6 +1369,15 @@ app.post("/webhooks/orders", (req, res) => {
           }
           auditLog('webhook', 'prepaid_auto_confirm', sid, { order: payload.name });
           console.log(`✅ Prepaid auto-confirmed: ${payload.name}`);
+        } else if (isPartiallyPaid) {
+          // Customer already paid advance (₹99) via Shopify at checkout — auto-confirm
+          await OM.upsert(sid, { stage: 'confirmed', payment_type: 'advance', advance_paid: 99, confirmation_paid: true, updated_at: now });
+          const vendors_ = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
+          for (const vendor of vendors_) {
+            await OVS.upsert(sid, vendor, { stage: 'confirmed', updated_at: now, stage_started_at: nowMs, warning_sent: 0, penalty_triggered: 0 });
+          }
+          auditLog('webhook', 'advance_auto_confirm', sid, { order: payload.name });
+          console.log(`✅ Advance auto-confirmed: ${payload.name}`);
         } else {
           await OM.upsert(sid, { payment_type: 'cod', updated_at: now });
         }
@@ -1394,8 +1404,8 @@ app.post("/webhooks/orders", (req, res) => {
         for (const vendorName of vendors) {
           const vc = vcfgs.find(v => v.vendor_name === vendorName);
           if (vc?.email) {
-            if (isPrepaid) {
-              // Prepaid: send confirmed dispatch email directly (skip heads-up)
+            if (isPrepaid || isPartiallyPaid) {
+              // Prepaid / advance-paid: send confirmed dispatch email directly
               await sendEmail({
                 to: vc.email,
                 subject: `Order Confirmed: ${payload.name} — Dispatch Now`,
@@ -1470,9 +1480,13 @@ app.post("/webhooks/orders", (req, res) => {
             if (_confPhone && _confPhone.length === 10) {
               const _F = '```';
               const _trackUrl = `${SERVER_URL}/o/${String(payload.name).replace(/^#/, '')}`;
-              const _isPrepaid = payload.financial_status === 'paid';
+              const _isPrepaid       = payload.financial_status === 'paid';
+              const _isPartiallyPaid = payload.financial_status === 'partially_paid';
+              const _total = parseFloat(payload.total_price || 0);
               const _waConfirm = _isPrepaid
-                ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${parseFloat(payload.total_price||0).toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
+                ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
+                : _isPartiallyPaid
+                ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
                 : `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
               await waSendToCustomer(_confPhone, _waConfirm).catch(e => console.error('WA confirmed_tag error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
