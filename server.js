@@ -2482,7 +2482,9 @@ function templateVendorWelcome({ vendorName, username, password }) {
 function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
   const isPrepaid   = order.financial_status === 'paid';
   const myItems     = (order.line_items || []).filter(li => li.vendor === vendorName);
-  const subTotal    = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+  const subTotalMRP = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+  const myDiscount  = myItems.reduce((s, li) => s + (li.discount_allocations || []).reduce((a, d) => a + parseFloat(d.amount || 0), 0), 0);
+  const subTotal    = parseFloat(Math.max(0, subTotalMRP - myDiscount).toFixed(2));
   const shipping    = parseFloat(order.total_shipping_price_set?.shop_money?.amount || 0);
   const advance     = parseFloat(meta.advance_paid || 0);
   const codAmount   = isPrepaid ? 0 : Math.max(0, subTotal + shipping - advance);
@@ -2509,7 +2511,8 @@ function templateOrderConfirmedVendor({ order, vendorName, meta = {} }) {
     ${vendorInfoA(infoCells)}
     ${vendorItemsA(myItems)}
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:13px;">
-      <tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Items Subtotal</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${subTotal.toFixed(2)}</td></tr>
+      <tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Items Subtotal (MRP)</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${subTotalMRP.toFixed(2)}</td></tr>
+      ${myDiscount > 0 ? `<tr><td style="padding:7px 0;color:#f59e0b;border-bottom:1px solid #f0f0f0;">CROSCROW Discount</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;color:#f59e0b;">&#8722; &#8377;${myDiscount.toFixed(2)}</td></tr>` : ''}
       ${!isPrepaid ? `<tr><td style="padding:7px 0;color:#888;border-bottom:1px solid #f0f0f0;">Shipping</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;">&#8377;${shipping.toFixed(2)}</td></tr>` : ''}
       ${advance > 0 ? `<tr><td style="padding:7px 0;color:#16a34a;border-bottom:1px solid #f0f0f0;">Advance Collected</td><td style="text-align:right;padding:7px 0;border-bottom:1px solid #f0f0f0;font-weight:600;color:#16a34a;">&#8722; &#8377;${advance.toFixed(2)}</td></tr>` : ''}
       <tr style="background:#f7f7f7;"><td style="padding:10px;font-weight:800;font-size:14px;color:#111;">Amount to Collect on Delivery</td>
@@ -9021,7 +9024,9 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     }
 
     // Calculate this vendor's correct COD amount (based only on the items being shipped now)
-    const vendorSubtotal  = items.reduce((s, li) => s + parseFloat(li.price || 0) * li.quantity, 0);
+    const vendorSubtotalMRP = items.reduce((s, li) => s + parseFloat(li.price || 0) * li.quantity, 0);
+    const vendorItemDiscount = items.reduce((s, li) => s + (li.discount_allocations || []).reduce((a, d) => a + parseFloat(d.amount || 0), 0), 0);
+    const vendorSubtotal  = parseFloat(Math.max(0, vendorSubtotalMRP - vendorItemDiscount).toFixed(2));
     const allVendors      = [...new Set((shopifyOrder.line_items || []).map(li => li.vendor).filter(Boolean))];
     const vendorCount     = allVendors.length || 1;
     const totalShipping   = (shopifyOrder.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
