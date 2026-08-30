@@ -1685,8 +1685,36 @@
                 {order.email && <div className="detail-row"><span className="dr-label">Email</span><span className="dr-val" style={{fontSize:10}}>{order.email}</span></div>}
                 <div className="detail-row"><span className="dr-label">Vendors</span><span className="dr-val">{order.vendors?.join(', ')||'—'}</span></div>
                 <div className="detail-row"><span className="dr-label">Order Value</span><span className="dr-val" style={{color:'var(--cyan)'}}>{fmtCur(order.orderValue)}</span></div>
+                {order.totalDiscounts > 0 && (<>
+                  <div className="detail-row"><span className="dr-label" style={{color:'#f59e0b'}}>CROSCROW Discount</span><span className="dr-val" style={{color:'#f59e0b',fontWeight:700}}>− {fmtCur(order.totalDiscounts)}</span></div>
+                  {(order.discountCodes||[]).map(dc=>(
+                    <div key={dc.code} className="detail-row" style={{paddingLeft:8}}><span className="dr-label" style={{color:'var(--text-muted)',fontSize:10}}>Code: {dc.code}</span><span className="dr-val" style={{color:'var(--text-muted)',fontSize:10}}>−₹{parseFloat(dc.amount).toFixed(0)}</span></div>
+                  ))}
+                  {/* Per-vendor discount split */}
+                  {(()=>{
+                    const byVendor = {};
+                    (order.lineItems||[]).forEach(li=>{
+                      if ((li.discountAmount||0) > 0) {
+                        byVendor[li.vendor||'—'] = (byVendor[li.vendor||'—']||0) + li.discountAmount;
+                      }
+                    });
+                    return Object.entries(byVendor).map(([v,amt])=>(
+                      <div key={v} className="detail-row" style={{paddingLeft:8}}>
+                        <span className="dr-label" style={{color:'var(--text-muted)',fontSize:10}}>{v}</span>
+                        <span className="dr-val" style={{color:'var(--text-muted)',fontSize:10}}>−₹{amt.toFixed(2)}</span>
+                      </div>
+                    ));
+                  })()}
+                  <div className="detail-row"><span className="dr-label">After Discount</span><span className="dr-val" style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(order.orderValue - order.totalDiscounts)}</span></div>
+                </>)}
                 <div className="detail-row"><span className="dr-label">Shipping</span><span className="dr-val">{fmtCur(order.shippingCharge)}</span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
+                {order.financial === 'pending' && (order.totalDiscounts||0) > 0 && (
+                  <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}>
+                    <span className="dr-label" style={{fontWeight:700}}>COD to Collect</span>
+                    <span className="dr-val" style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(order.orderValue - (order.totalDiscounts||0))}</span>
+                  </div>
+                )}
               </div>
               <div className="detail-box">
                 <div className="detail-box-title">Shipping Address</div>
@@ -1768,6 +1796,9 @@
                           </div>
                           {hasOverride && (
                             <div style={{fontSize:10,color:'var(--text-muted)',textDecoration:'line-through'}}>{fmtCur(li.price)} original</div>
+                          )}
+                          {(li.discountAmount||0) > 0 && (
+                            <div style={{fontSize:10,color:'#f59e0b'}}>−₹{(li.discountAmount).toFixed(2)} disc</div>
                           )}
                         </div>
                       </div>

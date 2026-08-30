@@ -4530,6 +4530,9 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
       .map(o => {
         const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
         const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+        // Discount allocated to this vendor's line items (Shopify splits proportionally)
+        const myDiscount = myItems.reduce((s, li) => s + (li.discount_allocations || []).reduce((a, d) => a + parseFloat(d.amount || 0), 0), 0);
+        const myRevenueAfterDiscount = parseFloat(Math.max(0, myRevenue - myDiscount).toFixed(2));
         const meta = metaMap[String(o.id)] || {};
         const payType = meta.payment_type || (o.financial_status === "paid" ? "prepaid" : "cod");
         // Shipping + advance split equally by vendor count — COD only
@@ -4558,12 +4561,15 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           financial:    o.financial_status ?? "—",
           tags:         o.tags ?? "",
           currency:     o.currency ?? "INR",
-          myRevenue:    parseFloat(myRevenue.toFixed(2)),
+          myRevenueMRP: parseFloat(myRevenue.toFixed(2)),
+          myDiscount:   parseFloat(myDiscount.toFixed(2)),
+          myRevenue:    myRevenueAfterDiscount,
+          discountCodes: (o.discount_codes || []).map(dc => ({ code: dc.code, amount: dc.amount, type: dc.type })),
           shippingCharge,
           paymentType:  payType,
           advancePaid,
-          totalCollectable: parseFloat((myRevenue + shippingCharge).toFixed(2)),
-          remainingCOD:     parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2)),
+          totalCollectable: parseFloat((myRevenueAfterDiscount + shippingCharge).toFixed(2)),
+          remainingCOD:     parseFloat(Math.max(0, myRevenueAfterDiscount + shippingCharge - advancePaid).toFixed(2)),
           awb:          vStageMap[String(o.id)]?.awb || "",
           courier:      vStageMap[String(o.id)]?.courier || "",
           trackingUrl:  vStageMap[String(o.id)]?.tracking_url || "",
@@ -4664,6 +4670,8 @@ async function buildVendorReport(vendorName, from, to) {
     const sid = String(o.id);
     const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
     const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+    const myDiscount = myItems.reduce((s, li) => s + (li.discount_allocations || []).reduce((a, d) => a + parseFloat(d.amount || 0), 0), 0);
+    const myRevenueNet = parseFloat(Math.max(0, myRevenue - myDiscount).toFixed(2));
     const meta = metaMap[sid] || {};
     const paymentType = meta.payment_type || (o.financial_status === "paid" ? "prepaid" : "cod");
     const ordVendors = new Set((o.line_items || []).map(li => li.vendor).filter(Boolean));
@@ -4671,11 +4679,11 @@ async function buildVendorReport(vendorName, from, to) {
     const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
     const shippingCharge = paymentType !== "prepaid" ? parseFloat((orderShipping / vendorCount).toFixed(2)) : 0;
     const advancePaid = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
-    const remainingCOD = parseFloat(Math.max(0, myRevenue + shippingCharge - advancePaid).toFixed(2));
+    const remainingCOD = parseFloat(Math.max(0, myRevenueNet + shippingCharge - advancePaid).toFixed(2));
 
     const stage = deriveVendorStage(o, vendorName, vStageMap, metaMap);
     stageCounts[stage] = (stageCounts[stage] || 0) + 1;
-    totalRevenue += myRevenue + shippingCharge;
+    totalRevenue += myRevenueNet + shippingCharge;
     if (!['delivered', 'cancelled', 'rto'].includes(stage)) codDue += remainingCOD;
 
     const vs = vStageMap[sid] || {};
@@ -4693,7 +4701,9 @@ async function buildVendorReport(vendorName, from, to) {
       date:         (o.created_at || "").split("T")[0],
       customer:     o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "Guest",
       paymentType,
-      myRevenue:    parseFloat(myRevenue.toFixed(2)),
+      myRevenueMRP: parseFloat(myRevenue.toFixed(2)),
+      myDiscount:   parseFloat(myDiscount.toFixed(2)),
+      myRevenue:    myRevenueNet,
       shippingCharge,
       advancePaid,
       remainingCOD,
@@ -6437,10 +6447,13 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
         tags:           o.tags || "",
+        totalDiscounts:  parseFloat(o.total_discounts || 0),
+        discountCodes:   (o.discount_codes || []).map(dc => ({ code: dc.code, amount: dc.amount, type: dc.type })),
         lineItems:      (o.line_items || []).map(li => ({
           id: li.id, title: li.title, vendor: li.vendor, qty: li.quantity,
           price: parseFloat(li.price || 0), sku: li.sku || "",
           variant: li.variant_title || '', product_id: li.product_id || null,
+          discountAmount: (li.discount_allocations || []).reduce((s, d) => s + parseFloat(d.amount || 0), 0),
         })),
         shippingAddress: o.shipping_address || null,
         ccStock: (()=>{
