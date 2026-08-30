@@ -2112,12 +2112,7 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #002eff;">
-      <tr>
-        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
-        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
-      </tr>
-    </table>
+    ${orderTotalsHtml(order)}
 
     <a href="https://dashboard.croscrow.com/o/${order.name.replace('#','')}" target="_blank" style="display:block;background:#111;color:#fff;text-decoration:none;font-weight:900;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:14px;text-align:center;margin-bottom:20px;">Track Your Order</a>
 
@@ -2128,6 +2123,26 @@ function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
     </table>` : ''}
   `;
   return neonEmailBase({ stageLabel: 'Order Confirmed', stageColor: '#99b3ff', stageHeadline: "YOU'RE IN.<br>WE'VE GOT YOU.", orderName: order.name, orderTotal: total.toFixed(2), bodyHtml: confirmedBody, adsStrip, trackUrl: `https://dashboard.croscrow.com/o/${order.name.replace('#','')}` });
+}
+
+// Builds the order totals rows for customer emails: subtotal, discount (if any), shipping, grand total
+function orderTotalsHtml(order) {
+  const subtotal  = parseFloat(order.subtotal_price || 0);
+  const discount  = parseFloat(order.total_discounts || 0);
+  const shipping  = (order.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+  const total     = parseFloat(order.total_price || 0);
+  const codes     = (order.discount_codes || []).map(dc => dc.code).join(', ');
+  const rowStyle  = 'padding:7px 0;font-size:12px;color:#888;border-bottom:1px solid #f1f5f9;';
+  const valStyle  = 'text-align:right;font-weight:600;color:#374151;';
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;">
+    <tr><td style="${rowStyle}">Items Subtotal</td><td style="${rowStyle}${valStyle}">&#8377;${subtotal.toFixed(2)}</td></tr>
+    ${discount > 0 ? `<tr><td style="${rowStyle}color:#f59e0b;">Discount${codes ? ` (${codes})` : ''}</td><td style="${rowStyle}${valStyle}color:#f59e0b;">&#8722; &#8377;${discount.toFixed(2)}</td></tr>` : ''}
+    ${shipping > 0 ? `<tr><td style="${rowStyle}">Shipping</td><td style="${rowStyle}${valStyle}">&#8377;${shipping.toFixed(2)}</td></tr>` : ''}
+    <tr style="border-top:2px solid #111;">
+      <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
+      <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
+    </tr>
+  </table>`;
 }
 
 function itemsTableHtml(lineItems, showVendor = false) {
@@ -2205,12 +2220,7 @@ function templateNewOrderCustomerSky({ order, adsStrip = '' }) {
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #002eff;">
-      <tr>
-        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
-        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
-      </tr>
-    </table>
+    ${orderTotalsHtml(order)}
 
     ${addr ? `
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;margin-bottom:4px;">
@@ -2265,12 +2275,7 @@ function templateNewOrderCustomer({ order }) {
     <div style="font-size:9px;font-weight:700;letter-spacing:4px;color:#bbb;text-transform:uppercase;margin-bottom:12px;">Your Items</div>
     ${itemsHtml}
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;margin-bottom:20px;border-top:2px solid #002eff;">
-      <tr>
-        <td style="padding:14px 0;font-size:10px;font-weight:700;letter-spacing:3px;color:#999;text-transform:uppercase;">Order Total</td>
-        <td style="padding:14px 0;text-align:right;font-size:22px;font-weight:900;color:#111;">&#8377;${total.toFixed(2)}</td>
-      </tr>
-    </table>
+    ${orderTotalsHtml(order)}
 
     ${addr ? `
     <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0f0f0;">
@@ -22096,11 +22101,12 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
   // Close any open ticket for this chat
   await closeSupportTicket(chat._id, 'admin').catch(() => {});
 
-  // Pause bot for 15 min so customer can reply to admin without bot jumping in
-  const _pauseUntil15 = Date.now() + 15 * 60 * 1000;
+  // Pause bot for 6h from last admin reply — resets on every admin message so
+  // the bot stays silent as long as admin is actively handling the chat.
+  const _pauseUntil6h = Date.now() + 6 * 60 * 60 * 1000;
   await mdb.collection('support_chats').updateOne(
     { _id: chat._id },
-    { $set: { bot_paused_until: _pauseUntil15, needs_human: true, updated_at: new Date().toISOString() } }
+    { $set: { bot_paused_until: _pauseUntil6h, needs_human: true, updated_at: new Date().toISOString() } }
   );
 
 

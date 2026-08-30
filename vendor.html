@@ -1386,8 +1386,12 @@
                       }}>{refreshingStatus?'checking…':'↻ Refresh'}</button>
                   </span>
                 </div>
-                {(order.myDiscount||0) > 0 && (
-                  <div className="detail-row"><span className="dr-label" style={{color:'var(--orange)'}}>MRP</span><span className="dr-val" style={{color:'var(--text-muted)',textDecoration:'line-through'}}>{fmtCur(order.myRevenueMRP||order.myRevenue, order.currency)}</span></div>
+                <div className="detail-row"><span className="dr-label" style={{fontWeight:700}}>Your Revenue</span><span className="dr-val" style={{color:'var(--teal)',fontWeight:700}}>{fmtCur(order.myRevenueMRP||order.myRevenue, order.currency)}</span></div>
+                {order.paymentType==='prepaid' && (
+                  <div className="detail-row" style={{paddingLeft:8}}>
+                    <span className="dr-label" style={{fontSize:10,color:'var(--text-muted)'}}>Prepaid Discount (10% by vendor)</span>
+                    <span className="dr-val" style={{fontSize:10,color:'var(--orange)'}}>− {fmtCur((order.myRevenueMRP||order.myRevenue)*0.1, order.currency)}</span>
+                  </div>
                 )}
                 {(order.myDiscount||0) > 0 && (order.discountCodes||[]).map(dc=>(
                   <div key={dc.code} className="detail-row" style={{paddingLeft:8}}>
@@ -1395,13 +1399,6 @@
                     <span className="dr-val" style={{color:'var(--orange)',fontSize:10}}>− ₹{(order.myDiscount).toFixed(2)}</span>
                   </div>
                 ))}
-                <div className="detail-row"><span className="dr-label" style={{fontWeight:700}}>Your Revenue</span><span className="dr-val" style={{color:'var(--teal)',fontWeight:700}}>{fmtCur(order.myRevenue, order.currency)}</span></div>
-                {order.paymentType==='prepaid' && (
-                  <div className="detail-row" style={{paddingLeft:8}}>
-                    <span className="dr-label" style={{fontSize:10,color:'var(--text-muted)'}}>Prepaid Discount (10% by vendor)</span>
-                    <span className="dr-val" style={{fontSize:10,color:'var(--orange)'}}>− {fmtCur(order.myRevenue*0.1, order.currency)}</span>
-                  </div>
-                )}
                 {order.shippingCharge>0 && <div className="detail-row"><span className="dr-label">Shipping (→ CROSCROW)</span><span className="dr-val" style={{color:'var(--blue)'}}>{fmtCur(order.shippingCharge, order.currency)}</span></div>}
                 {order.advancePaid>0 && <div className="detail-row"><span className="dr-label">Advance / Partial Paid</span><span className="dr-val" style={{color:'var(--green)'}}>− {fmtCur(order.advancePaid, order.currency)}</span></div>}
                 {trackHistory.length > 0 && (
@@ -2021,7 +2018,7 @@
                     <td>{o.customer||'Guest'}</td>
                     <td><span style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontSize:11,color:'var(--text-dim)'}}>{o.myItems.reduce((s,i)=>s+i.quantity,0)} item{o.myItems.reduce((s,i)=>s+i.quantity,0)!==1?'s':''}</span></td>
                     <td><PayBadge type={o.paymentType}/></td>
-                    <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                    <td className="td-amt">{fmtCur(o.myRevenueMRP||o.myRevenue,o.currency)}</td>
                     <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                     <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                     <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
@@ -2151,7 +2148,7 @@
             {o.awb && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>AWB: {o.awb} {o.courier?`· ${o.courier}`:''}</div>}
           </div>
           <div style={{textAlign:'right',flexShrink:0,marginLeft:12}}>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>{fmtCur(o.myRevenue,o.currency)}</div>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>{fmtCur(o.myRevenueMRP||o.myRevenue,o.currency)}</div>
             {o.remainingCOD>0 && <div style={{fontSize:10,color:'var(--teal)',marginTop:2}}>COD {fmtCur(o.remainingCOD,o.currency)}</div>}
             <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>›</div>
           </div>
@@ -2299,7 +2296,7 @@
                             return <span style={{fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:4,background:`${color}18`,color,border:`1px solid ${color}33`,whiteSpace:'nowrap'}}>{label}</span>;
                           })()}</td>
                           <td><PayBadge type={o.paymentType}/></td>
-                          <td className="td-amt">{fmtCur(o.myRevenue,o.currency)}</td>
+                          <td className="td-amt">{fmtCur(o.myRevenueMRP||o.myRevenue,o.currency)}</td>
                           <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                           <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
                           <td className="td-amt" style={{color:o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>

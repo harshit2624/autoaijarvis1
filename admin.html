@@ -2269,7 +2269,7 @@
             {/* Commission Preview */}
             {order.myRevenue > 0 && (() => {
               const commPct = 20; // default; ideally per-vendor
-              const calc = calcCommission(order.myRevenue, payType, commPct, parseFloat(advance)||0);
+              const calc = calcCommission(order.myRevenueMRP||order.myRevenue, payType, commPct, parseFloat(advance)||0);
               return (
                 <div style={{background:'var(--indigo-dim)',border:'1px solid #3730a3',borderRadius:8,padding:14,fontSize:11}}>
                   <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--indigo)',marginBottom:10}}>Commission Preview (20%)</div>
