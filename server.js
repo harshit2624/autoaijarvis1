@@ -22245,22 +22245,24 @@ app.get('/mine-game.js', (req, res) => {
 app.post('/mine-game/claim', async (req, res) => {
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const { pct } = req.body || {};
-    const discPct = [5, 10, 15].includes(Number(pct)) ? Number(pct) : 15;
+    const { reward_inr } = req.body || {};
+    // Validate: must be one of the ladder values (or fallback to 50 consolation)
+    const VALID = [50, 100, 220, 380, 580, 850, 1200, 1700, 2400, 3300, 5000];
+    const amount = VALID.includes(Number(reward_inr)) ? Number(reward_inr) : 50;
 
     const token = await getAccessToken();
     const shopBase = `https://${SHOP}.myshopify.com/admin/api/2025-01`;
     const headers = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
 
-    // Create a price rule valid for 24h, single use
+    // Create a fixed-amount price rule valid for 24h, single use
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const pruleRes = await fetch(`${shopBase}/price_rules.json`, {
       method: 'POST', headers,
       body: JSON.stringify({ price_rule: {
-        title: `MINEGAME${discPct}`,
+        title: `MINEGAME${amount}`,
         target_type: 'line_item', target_selection: 'all',
         allocation_method: 'across',
-        value_type: 'percentage', value: `-${discPct}`,
+        value_type: 'fixed_amount', value: `-${amount}`,
         customer_selection: 'all',
         starts_at: new Date().toISOString(),
         ends_at: expires,
@@ -22271,14 +22273,14 @@ app.post('/mine-game/claim', async (req, res) => {
     const { price_rule } = await pruleRes.json();
 
     // Generate unique code
-    const code = `MINE${discPct}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+    const code = `MINE${amount}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
     const dcRes = await fetch(`${shopBase}/price_rules/${price_rule.id}/discount_codes.json`, {
       method: 'POST', headers,
       body: JSON.stringify({ discount_code: { code } }),
     });
     if (!dcRes.ok) throw new Error(`discount_code failed: ${dcRes.status}`);
 
-    res.json({ code, pct: discPct, expires });
+    res.json({ code, reward_inr: amount, expires });
   } catch (e) {
     console.error('mine-game/claim error:', e.message);
     res.status(500).json({ error: e.message });

@@ -1,365 +1,515 @@
 (function () {
   'use strict';
 
-  const API = 'https://dashboard.croscrow.com/mine-game/claim';
+  const API      = 'https://dashboard.croscrow.com/mine-game/claim';
   const SHOWN_KEY = 'cc_mine_shown';
-  const DELAY_MS  = 6000; // show after 6s on page
+  const DELAY_MS  = 6000;
 
-  // Don't show if already claimed this session
-  if (sessionStorage.getItem(SHOWN_KEY)) return;
+  // ── URL param override ──────────────────────────────────────────────────────
+  // Share croscrow.com/?mine=1 with your group to open the game immediately
+  const params     = new URLSearchParams(window.location.search);
+  const forcedOpen = params.has('mine') && params.get('mine') !== '0';
 
-  // Only show on homepage or collection pages, not checkout
+  // Don't show if already claimed this session (unless forced via param)
+  if (!forcedOpen && sessionStorage.getItem(SHOWN_KEY)) return;
+
+  // Skip checkout / account / cart pages
   const path = window.location.pathname;
   if (path.includes('/checkout') || path.includes('/account') || path.includes('/cart')) return;
 
-  /* ── Styles ─────────────────────────────────────────────────────────────── */
+  /* ── Game constants ──────────────────────────────────────────────────────── */
+  const TOTAL    = 16;
+  const MINES    = 6;
+  const SAFE_MAX = TOTAL - MINES; // 10 max safe picks
+
+  // ₹ reward ladder (safe tile 1–10)
+  const REWARDS = [100, 220, 380, 580, 850, 1200, 1700, 2400, 3300, 5000];
+
+  /* ── Styles ──────────────────────────────────────────────────────────────── */
   const css = `
-  #cc-mine-overlay {
-    position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:999999;
+  #cc-mine-ov {
+    position:fixed;inset:0;z-index:999999;
     display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.82);backdrop-filter:blur(10px);
+    padding:12px;opacity:0;transition:opacity .4s ease;
     font-family:'Helvetica Neue',Arial,sans-serif;
-    opacity:0;transition:opacity 0.4s ease;
-    backdrop-filter:blur(6px);
   }
-  #cc-mine-overlay.visible { opacity:1; }
-  #cc-mine-box {
-    background:#0a0a0a;border:1px solid #222;border-radius:16px;
-    padding:32px 28px 28px;width:min(420px,92vw);position:relative;
-    box-shadow:0 0 60px rgba(255,180,0,0.15),0 0 0 1px #1a1a1a;
-    transform:translateY(30px) scale(0.96);transition:transform 0.4s cubic-bezier(.34,1.56,.64,1);
+  #cc-mine-ov.vis { opacity:1; }
+
+  #cc-mine-card {
+    background:#0c0c0c;border:1px solid #1a1a1a;border-radius:16px;
+    width:min(400px,100%);max-height:88vh;overflow:hidden;
+    display:flex;flex-direction:column;position:relative;
+    box-shadow:0 0 0 1px #141414,0 30px 60px rgba(0,0,0,.9);
+    transform:translateY(28px) scale(.95);
+    transition:transform .45s cubic-bezier(.34,1.4,.64,1);
   }
-  #cc-mine-overlay.visible #cc-mine-box { transform:translateY(0) scale(1); }
-  #cc-mine-close {
-    position:absolute;top:14px;right:16px;background:none;border:none;
-    color:#555;font-size:20px;cursor:pointer;line-height:1;padding:4px 8px;
-    transition:color 0.2s;
+  #cc-mine-ov.vis #cc-mine-card { transform:translateY(0) scale(1); }
+
+  .cc-x {
+    position:absolute;top:12px;right:14px;
+    background:none;border:none;color:#252525;font-size:16px;
+    cursor:pointer;padding:4px 8px;border-radius:5px;line-height:1;
+    font-family:monospace;transition:color .2s;
   }
-  #cc-mine-close:hover { color:#fff; }
-  .cc-mine-eyebrow {
-    font-size:9px;letter-spacing:4px;text-transform:uppercase;color:#f59e0b;
-    margin-bottom:8px;font-weight:700;
+  .cc-x:hover { color:#666; }
+
+  .cc-head {
+    padding:18px 20px 12px;border-bottom:1px solid #141414;flex-shrink:0;
   }
-  .cc-mine-title {
-    font-size:26px;font-weight:900;color:#fff;line-height:1.15;margin-bottom:4px;
-    text-transform:uppercase;letter-spacing:1px;
+  .cc-brand {
+    font-size:8px;letter-spacing:5px;text-transform:uppercase;
+    color:#272727;margin-bottom:4px;
   }
-  .cc-mine-title span { color:#f59e0b; }
-  .cc-mine-sub {
-    font-size:12px;color:#666;margin-bottom:22px;line-height:1.6;
+  .cc-title {
+    font-size:26px;font-weight:900;text-transform:uppercase;
+    letter-spacing:.5px;color:#fff;line-height:1;
   }
-  .cc-mine-sub strong { color:#aaa; }
-  /* progress bar */
-  .cc-mine-progress {
-    display:flex;gap:6px;margin-bottom:20px;align-items:center;
+  .cc-info {
+    font-size:9px;letter-spacing:2px;color:#272727;
+    text-transform:uppercase;margin-top:4px;
   }
-  .cc-mine-step {
-    flex:1;height:4px;background:#1a1a1a;border-radius:2px;
-    transition:background 0.4s;
+
+  .cc-meter {
+    padding:9px 20px;background:#090909;
+    border-bottom:1px solid #141414;
+    display:flex;align-items:center;justify-content:space-between;
+    flex-shrink:0;
   }
-  .cc-mine-step.active { background:#f59e0b; }
-  .cc-mine-step.bust { background:#ef4444; }
-  .cc-mine-pct-label {
-    font-size:11px;color:#f59e0b;font-weight:700;min-width:36px;text-align:right;
-    letter-spacing:1px;
+  .cc-meter-lbl {
+    font-size:8px;letter-spacing:3px;text-transform:uppercase;color:#272727;
   }
-  /* grid */
-  .cc-mine-grid {
-    display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px;
+  .cc-meter-val {
+    font-size:22px;font-weight:900;color:#fff;letter-spacing:1px;
+    transition:color .3s,text-shadow .3s;
   }
-  .cc-mine-tile {
-    aspect-ratio:1;border-radius:10px;background:#111;border:1px solid #222;
-    cursor:pointer;display:flex;align-items:center;justify-content:center;
-    font-size:28px;transition:transform 0.15s,border-color 0.2s,background 0.2s;
-    user-select:none;position:relative;overflow:hidden;
+  .cc-meter-val.hot { color:#22c55e;text-shadow:0 0 16px rgba(34,197,94,.4); }
+  .cc-meter-tag {
+    font-size:8px;letter-spacing:2px;text-transform:uppercase;
+    color:#252525;padding:3px 8px;border:1px solid #1a1a1a;border-radius:3px;
+    transition:all .3s;
   }
-  .cc-mine-tile:not(.revealed):hover {
-    transform:scale(1.05);border-color:#333;background:#161616;
+  .cc-meter-tag.alive { color:#22c55e;border-color:#1a3d24;background:rgba(34,197,94,.04); }
+
+  .cc-odds {
+    padding:6px 20px 0;display:flex;gap:16px;flex-shrink:0;
   }
-  .cc-mine-tile::before {
-    content:'?';font-size:22px;font-weight:900;color:#333;
-    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  .cc-odds span {
+    font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:#222;
   }
-  .cc-mine-tile.revealed::before { display:none; }
-  .cc-mine-tile.revealed { cursor:default; }
-  .cc-mine-tile.safe {
-    background:#0d1f0d;border-color:#22c55e;
-    animation:cc-safe-pop 0.35s cubic-bezier(.34,1.56,.64,1);
+
+  .cc-grid-wrap { padding:12px 14px;flex-shrink:0; }
+
+  .cc-grid {
+    display:grid;grid-template-columns:repeat(4,1fr);gap:6px;
   }
-  .cc-mine-tile.mine {
-    background:#1f0d0d;border-color:#ef4444;
-    animation:cc-shake 0.4s ease;
+
+  .cc-tile {
+    aspect-ratio:1;border-radius:7px;
+    background-color:#0e0e0e;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M0 6h12M6 0v12' stroke='%23ffffff' stroke-width='.3' opacity='.08'/%3E%3C/svg%3E");
+    border:1px solid #1c1c1c;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    position:relative;overflow:hidden;user-select:none;
+    transition:transform .12s,border-color .2s,background-color .2s;
   }
-  .cc-mine-tile.idle { opacity:0.3;cursor:not-allowed; }
-  @keyframes cc-safe-pop {
-    0%{transform:scale(0.5);opacity:0}
+  .cc-tile::before {
+    content:'';position:absolute;top:3px;left:3px;
+    width:4px;height:4px;background:rgba(255,255,255,.07);border-radius:1px;
+  }
+  .cc-tile::after {
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(135deg,rgba(255,255,255,.04) 0%,transparent 50%);
+  }
+  .cc-tile:not(.rev):not(.idle):hover {
+    transform:scale(1.08) translateY(-2px);
+    border-color:#333;background-color:#181818;
+    box-shadow:0 6px 20px rgba(0,0,0,.7);
+  }
+  .cc-tile.idle { opacity:.15;cursor:not-allowed;transform:none!important; }
+  .cc-tile.safe {
+    background-color:#f5f5f5;background-image:none;
+    border-color:#e0e0e0;cursor:default;
+    animation:cc-sp .35s cubic-bezier(.34,1.5,.64,1) both;
+  }
+  .cc-tile.safe::before,.cc-tile.safe::after { display:none; }
+  .cc-tile.mine {
+    background-color:#180808;background-image:none;
+    border-color:#5c1a1a;cursor:default;
+    animation:cc-bl .4s ease both;
+    box-shadow:0 0 24px rgba(220,38,38,.2);
+  }
+  .cc-tile.mine::before,.cc-tile.mine::after { display:none; }
+  .cc-tile.rev { cursor:default; }
+
+  @keyframes cc-sp {
+    0%{transform:scale(.6);opacity:0}
+    70%{transform:scale(1.1)}
     100%{transform:scale(1);opacity:1}
   }
-  @keyframes cc-shake {
-    0%,100%{transform:translateX(0)}
-    20%{transform:translateX(-6px)}
-    40%{transform:translateX(6px)}
-    60%{transform:translateX(-4px)}
-    80%{transform:translateX(4px)}
+  @keyframes cc-bl {
+    0%{transform:scale(.5) rotate(-5deg);opacity:0}
+    40%{transform:scale(1.15) rotate(2deg)}
+    100%{transform:scale(1) rotate(0);opacity:1}
   }
-  /* buttons */
-  .cc-mine-btns { display:flex;gap:10px; }
-  .cc-mine-btn {
-    flex:1;padding:13px;border-radius:8px;font-size:12px;font-weight:800;
-    letter-spacing:2px;text-transform:uppercase;border:none;cursor:pointer;
-    transition:transform 0.15s,opacity 0.2s;
+
+  .cc-inner {
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:0;z-index:1;position:relative;
   }
-  .cc-mine-btn:hover { transform:translateY(-1px); }
-  .cc-mine-btn:active { transform:translateY(0); }
-  .cc-mine-btn-cashout {
-    background:#f59e0b;color:#000;
-    display:none;
+  .cc-emoji { font-size:18px;line-height:1; }
+  .cc-amt { font-size:11px;font-weight:900;color:#111;letter-spacing:.5px;margin-top:2px; }
+
+  .cc-btns { padding:0 14px 14px;display:flex;gap:8px;flex-shrink:0; }
+  .cc-btn {
+    flex:1;border:none;border-radius:7px;
+    font-size:11px;font-weight:900;letter-spacing:2.5px;
+    text-transform:uppercase;padding:12px 6px;cursor:pointer;
+    transition:transform .12s,opacity .2s,box-shadow .2s;
   }
-  .cc-mine-btn-cashout.show { display:block; }
-  .cc-mine-btn-keep {
-    background:#111;color:#666;border:1px solid #222;
+  .cc-btn:hover { transform:translateY(-1px); }
+  .cc-btn:active { transform:translateY(0); }
+  .cc-cash { background:#fff;color:#000;display:none;box-shadow:0 2px 12px rgba(255,255,255,.12); }
+  .cc-cash.show { display:block; }
+  .cc-cash:hover { box-shadow:0 4px 20px rgba(255,255,255,.22); }
+  .cc-skip { background:#111;color:#2a2a2a;border:1px solid #1c1c1c; }
+  .cc-skip:hover { color:#555;border-color:#2e2e2e; }
+
+  .cc-result {
+    padding:20px 20px 16px;text-align:center;
+    display:none;flex-direction:column;align-items:center;flex:1;
+    animation:cc-fu .4s cubic-bezier(.34,1.2,.64,1) both;
   }
-  /* result screen */
-  .cc-mine-result {
-    text-align:center;display:none;
+  .cc-result.show { display:flex; }
+  @keyframes cc-fu {
+    from{opacity:0;transform:translateY(12px)}
+    to{opacity:1;transform:translateY(0)}
   }
-  .cc-mine-result.show { display:block; }
-  .cc-mine-result-icon { font-size:52px;margin-bottom:12px;display:block; }
-  .cc-mine-result-title {
-    font-size:22px;font-weight:900;color:#fff;text-transform:uppercase;
-    letter-spacing:1px;margin-bottom:6px;
+  .cc-r-icon { font-size:44px;margin-bottom:10px; }
+  .cc-r-title {
+    font-size:26px;font-weight:900;text-transform:uppercase;
+    letter-spacing:1px;color:#fff;margin-bottom:4px;
   }
-  .cc-mine-result-sub { font-size:13px;color:#666;margin-bottom:20px;line-height:1.6; }
-  .cc-mine-code-box {
-    background:#111;border:1px solid #f59e0b;border-radius:8px;
-    padding:14px 18px;display:flex;align-items:center;justify-content:space-between;
-    margin-bottom:18px;gap:12px;
+  .cc-r-sub { font-size:10px;color:#363636;line-height:1.8;margin-bottom:16px; }
+  .cc-r-sub em { color:#888;font-style:normal; }
+  .cc-code-box {
+    width:100%;background:#090909;border:1px solid #e0e0e0;
+    border-radius:8px;padding:12px 14px;
+    display:flex;align-items:center;justify-content:space-between;
+    gap:10px;margin-bottom:10px;
+    box-shadow:0 0 24px rgba(255,255,255,.04);
   }
-  .cc-mine-code {
-    font-size:18px;font-weight:900;color:#f59e0b;letter-spacing:3px;
-    font-family:monospace;
+  .cc-code { font-size:15px;font-weight:900;color:#fff;letter-spacing:3px;font-family:monospace; }
+  .cc-copy {
+    font-size:8px;letter-spacing:2px;text-transform:uppercase;
+    background:none;border:1px solid #1e1e1e;color:#363636;
+    border-radius:4px;padding:5px 10px;cursor:pointer;
+    transition:all .2s;white-space:nowrap;font-family:monospace;
   }
-  .cc-mine-copy {
-    font-size:10px;letter-spacing:2px;text-transform:uppercase;
-    background:none;border:1px solid #333;color:#888;border-radius:5px;
-    padding:6px 12px;cursor:pointer;transition:all 0.2s;white-space:nowrap;
+  .cc-copy:hover { border-color:#555;color:#888; }
+  .cc-copy.cp { border-color:#22c55e;color:#22c55e; }
+  .cc-shop {
+    display:block;width:100%;background:#fff;color:#000;
+    border:none;border-radius:7px;padding:13px;cursor:pointer;
+    font-size:11px;font-weight:900;letter-spacing:3px;
+    text-transform:uppercase;transition:opacity .2s,transform .12s;
+    margin-bottom:10px;text-decoration:none;text-align:center;
   }
-  .cc-mine-copy:hover { border-color:#f59e0b;color:#f59e0b; }
-  .cc-mine-copy.copied { border-color:#22c55e;color:#22c55e; }
-  .cc-mine-shop-btn {
-    display:block;width:100%;padding:14px;background:#fff;color:#000;
-    border-radius:8px;text-align:center;text-decoration:none;
-    font-size:11px;font-weight:900;letter-spacing:3px;text-transform:uppercase;
-    transition:opacity 0.2s;box-sizing:border-box;
+  .cc-shop:hover { opacity:.88; }
+  .cc-exp { font-size:9px;color:#222;letter-spacing:1.5px;text-transform:uppercase; }
+  .cc-rplay {
+    margin-top:12px;font-size:8px;letter-spacing:2px;text-transform:uppercase;
+    background:none;border:none;color:#1c1c1c;cursor:pointer;
+    transition:color .2s;font-family:monospace;
   }
-  .cc-mine-shop-btn:hover { opacity:0.88; }
-  .cc-mine-expires {
-    font-size:10px;color:#444;text-align:center;margin-top:12px;letter-spacing:1px;
-  }
+  .cc-rplay:hover { color:#444; }
   `;
 
-  /* ── Game state ─────────────────────────────────────────────────────────── */
-  // 6 tiles: positions 0-5
-  // First 3 tiles the player picks are ALWAYS safe (rigged)
-  // 4th pick is ALWAYS mine
+  /* ── State ───────────────────────────────────────────────────────────────── */
+  let mineSet   = null;
   let safeCount = 0;
-  let busted    = false;
+  let pickCount = 0;
   let done      = false;
-  let tilesPicked = 0;
-  const SAFE_EMOJIS  = ['💎','💎','💎'];
-  const MINE_EMOJI   = '💣';
-  const PCT_PER_SAFE = 5;
+  let safePicks = [];
 
-  function currentPct() { return safeCount * PCT_PER_SAFE; }
+  /* ── Mine placement (deferred) ───────────────────────────────────────────── */
+  function placeMines(exclude1, exclude2) {
+    const excl = new Set([exclude1, exclude2].filter(x => x != null));
+    const pool = Array.from({ length: TOTAL }, (_, i) => i).filter(i => !excl.has(i));
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return new Set(pool.slice(0, MINES));
+  }
 
-  /* ── DOM ────────────────────────────────────────────────────────────────── */
+  /* ── DOM injection ───────────────────────────────────────────────────────── */
   function inject() {
     const style = document.createElement('style');
     style.textContent = css;
     document.head.appendChild(style);
 
-    const overlay = document.createElement('div');
-    overlay.id = 'cc-mine-overlay';
-    overlay.innerHTML = `
-      <div id="cc-mine-box">
-        <button id="cc-mine-close">✕</button>
-        <div class="cc-mine-eyebrow">▪ C R O S C R O W ▪</div>
-        <div class="cc-mine-title">Open At Your <span>Risk</span></div>
-        <div class="cc-mine-sub">
-          Each safe tile = <strong>+5% off</strong>. Hit a mine and it's all gone —
-          unless you cash out first. <strong>The 4th tile always explodes.</strong>
+    const ov = document.createElement('div');
+    ov.id = 'cc-mine-ov';
+    ov.innerHTML = `
+      <div id="cc-mine-card">
+        <button class="cc-x" id="cc-close">✕</button>
+
+        <div class="cc-head">
+          <div class="cc-brand">▪ C R O S C R O W ▪</div>
+          <div class="cc-title">₹100 Mine Risk</div>
+          <div class="cc-info">6 mines hidden · 16 tiles</div>
         </div>
-        <div class="cc-mine-progress">
-          <div class="cc-mine-step" id="cc-step-0"></div>
-          <div class="cc-mine-step" id="cc-step-1"></div>
-          <div class="cc-mine-step" id="cc-step-2"></div>
-          <div class="cc-mine-pct-label" id="cc-pct-lbl">0%</div>
+
+        <div class="cc-meter">
+          <div>
+            <div class="cc-meter-lbl">Cashout Value</div>
+            <div class="cc-meter-val" id="cc-mv">₹0</div>
+          </div>
+          <div class="cc-meter-tag" id="cc-mt">WAITING</div>
         </div>
-        <div class="cc-mine-grid" id="cc-grid"></div>
-        <div class="cc-mine-btns">
-          <button class="cc-mine-btn cc-mine-btn-cashout" id="cc-cashout">💰 Cash Out — ${currentPct()}%</button>
-          <button class="cc-mine-btn cc-mine-btn-keep" id="cc-keep">No thanks</button>
+
+        <div class="cc-odds">
+          <span id="cc-safe-lbl">10 safe tiles remain</span>
+          <span id="cc-mine-lbl">6 mines left</span>
         </div>
-        <div class="cc-mine-result" id="cc-result"></div>
+
+        <div id="cc-game">
+          <div class="cc-grid-wrap">
+            <div class="cc-grid" id="cc-grid"></div>
+          </div>
+          <div class="cc-btns" id="cc-btns">
+            <button class="cc-btn cc-cash" id="cc-cash">Cash Out</button>
+            <button class="cc-btn cc-skip" id="cc-skip">No Thanks</button>
+          </div>
+        </div>
+
+        <div class="cc-result" id="cc-result"></div>
       </div>
     `;
-    document.body.appendChild(overlay);
+    document.body.appendChild(ov);
 
-    // Build tiles
-    const grid = overlay.querySelector('#cc-grid');
-    for (let i = 0; i < 6; i++) {
-      const tile = document.createElement('div');
-      tile.className = 'cc-mine-tile';
-      tile.dataset.idx = i;
-      tile.addEventListener('click', () => onTile(tile));
-      grid.appendChild(tile);
+    // Build grid
+    const grid = ov.querySelector('#cc-grid');
+    for (let i = 0; i < TOTAL; i++) {
+      const t = document.createElement('div');
+      t.className = 'cc-tile';
+      t.dataset.i = i;
+      t.addEventListener('click', () => onPick(t));
+      grid.appendChild(t);
     }
 
-    // Buttons
-    overlay.querySelector('#cc-mine-close').addEventListener('click', dismiss);
-    overlay.querySelector('#cc-keep').addEventListener('click', dismiss);
-    overlay.querySelector('#cc-cashout').addEventListener('click', () => cashOut(overlay));
+    ov.querySelector('#cc-close').addEventListener('click', dismiss);
+    ov.querySelector('#cc-skip').addEventListener('click', dismiss);
+    ov.querySelector('#cc-cash').addEventListener('click', () => cashOut());
 
-    // Animate in
-    requestAnimationFrame(() => requestAnimationFrame(() => overlay.classList.add('visible')));
+    requestAnimationFrame(() => requestAnimationFrame(() => ov.classList.add('vis')));
   }
 
-  function onTile(tile) {
-    if (done || tile.classList.contains('revealed')) return;
-    tile.classList.add('revealed');
-    tilesPicked++;
+  function allTiles()  { return Array.from(document.querySelectorAll('.cc-tile')); }
+  function openTiles() { return allTiles().filter(t => !t.classList.contains('rev')); }
 
-    // 4th pick = always mine; first 3 = always safe
-    const isMine = tilesPicked >= 4;
+  /* ── Pick ────────────────────────────────────────────────────────────────── */
+  function onPick(tile) {
+    if (done || tile.classList.contains('rev') || tile.classList.contains('idle')) return;
+    const idx = parseInt(tile.dataset.i);
+    tile.classList.add('rev');
+    pickCount++;
+
+    // Place mines after 2nd pick (guarantees picks 1+2 are safe)
+    if (pickCount === 2 && !mineSet) {
+      mineSet = placeMines(safePicks[0] ?? idx, idx);
+    }
+
+    const isMine = mineSet && mineSet.has(idx);
 
     if (isMine) {
       tile.classList.add('mine');
-      tile.textContent = MINE_EMOJI;
-      busted = true;
+      tile.innerHTML = '<div class="cc-inner"><div class="cc-emoji">💣</div></div>';
       done = true;
-      // Disable remaining tiles
-      document.querySelectorAll('.cc-mine-tile:not(.revealed)').forEach(t => t.classList.add('idle'));
-      // Small delay then show consolation result
-      setTimeout(() => showResult(true), 600);
+      openTiles().forEach(t => t.classList.add('idle'));
+      revealAllMines();
+      setTimeout(() => showResult(true), 700);
     } else {
-      tile.classList.add('safe');
-      tile.textContent = SAFE_EMOJIS[safeCount];
+      safePicks.push(idx);
       safeCount++;
-      updateProgress();
-      // Show cash out button
-      const co = document.getElementById('cc-cashout');
-      co.textContent = `💰 Cash Out — ${currentPct()}%`;
-      co.classList.add('show');
-      // If 3 safes done, auto-trigger cashout flow
-      if (safeCount === 3) {
+      const reward = REWARDS[safeCount - 1] || REWARDS[REWARDS.length - 1];
+
+      tile.classList.add('safe');
+      tile.innerHTML = `<div class="cc-inner"><div class="cc-emoji">💎</div><div class="cc-amt">₹${reward}</div></div>`;
+
+      updateMeter(reward);
+      updateOdds();
+
+      const cashBtn = document.getElementById('cc-cash');
+      cashBtn.textContent = `Cash Out ₹${reward}`;
+      cashBtn.classList.add('show');
+
+      if (safeCount >= SAFE_MAX) {
         done = true;
-        document.querySelectorAll('.cc-mine-tile:not(.revealed)').forEach(t => t.classList.add('idle'));
-        setTimeout(() => cashOut(document.getElementById('cc-mine-overlay')), 500);
+        openTiles().forEach(t => t.classList.add('idle'));
+        setTimeout(() => showResult(false), 500);
       }
     }
   }
 
-  function updateProgress() {
-    for (let i = 0; i < 3; i++) {
-      const step = document.getElementById(`cc-step-${i}`);
-      if (i < safeCount) step.classList.add('active');
-    }
-    document.getElementById('cc-pct-lbl').textContent = currentPct() + '%';
+  function revealAllMines() {
+    if (!mineSet) return;
+    let delay = 100;
+    openTiles().forEach(t => {
+      if (mineSet.has(parseInt(t.dataset.i))) {
+        setTimeout(() => {
+          t.classList.add('rev', 'mine');
+          t.innerHTML = '<div class="cc-inner"><div class="cc-emoji">💣</div></div>';
+        }, delay);
+        delay += 80;
+      }
+    });
   }
 
-  async function cashOut(overlay) {
-    if (busted) return; // busted flow goes through showResult
+  function updateMeter(reward) {
+    const mv = document.getElementById('cc-mv');
+    const mt = document.getElementById('cc-mt');
+    mv.textContent = '₹' + reward;
+    mv.classList.add('hot');
+    mt.textContent = 'IN PROFIT';
+    mt.classList.add('alive');
+  }
+
+  function updateOdds() {
+    if (!mineSet) return;
+    const open          = openTiles();
+    const minesRemain   = open.filter(t => mineSet.has(parseInt(t.dataset.i))).length;
+    const safeRemain    = open.length - minesRemain;
+    document.getElementById('cc-safe-lbl').textContent = safeRemain + ' safe remain';
+    document.getElementById('cc-mine-lbl').textContent = minesRemain + ' mines left';
+  }
+
+  /* ── Cash out ────────────────────────────────────────────────────────────── */
+  function cashOut() {
+    if (done || safeCount === 0) return;
     done = true;
-    document.querySelectorAll('.cc-mine-tile:not(.revealed)').forEach(t => t.classList.add('idle'));
-    document.querySelector('.cc-mine-btns').style.display = 'none';
-    showResult(false, overlay);
+    openTiles().forEach(t => t.classList.add('idle'));
+    showResult(false);
   }
 
+  /* ── Result ──────────────────────────────────────────────────────────────── */
   async function showResult(isBust) {
-    const overlay = document.getElementById('cc-mine-overlay');
-    const resultEl = document.getElementById('cc-result');
-    const pct = isBust ? 15 : currentPct(); // busted = consolation 15%
+    document.getElementById('cc-btns').style.display = 'none';
+    const grid = document.getElementById('cc-grid');
+    grid.style.opacity = '.18';
+    grid.style.transition = 'opacity .4s';
+    document.querySelector('.cc-odds').style.opacity = '0';
 
-    // Hide grid + btns
-    document.getElementById('cc-grid').style.opacity = '0.3';
-    document.querySelector('.cc-mine-btns').style.display = 'none';
+    const consolation = isBust && safeCount === 0;
+    const pct         = consolation ? 5 : 0; // fallback % for consolation
+    const reward      = consolation ? 50 : (REWARDS[safeCount - 1] || 50);
 
-    resultEl.innerHTML = `<div style="font-size:13px;color:#555;letter-spacing:2px;text-transform:uppercase;">Generating your code…</div>`;
-    resultEl.classList.add('show');
+    setTimeout(async () => {
+      document.getElementById('cc-game').style.display = 'none';
+      const rs = document.getElementById('cc-result');
 
-    let code = null;
-    try {
-      const resp = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pct }),
-      });
-      const data = await resp.json();
-      code = data.code;
-    } catch (e) {
-      code = null;
-    }
+      // Show loading
+      rs.innerHTML = '<div style="font-size:10px;color:#333;letter-spacing:2px;text-transform:uppercase;">Generating your code…</div>';
+      rs.classList.add('show');
 
-    if (isBust) {
-      resultEl.innerHTML = `
-        <span class="cc-mine-result-icon">💥</span>
-        <div class="cc-mine-result-title">You hit a mine!</div>
-        <div class="cc-mine-result-sub">
-          Rough luck — but we've got you.<br>
-          You still walk away with <strong style="color:#f59e0b;">15% off</strong>.
-        </div>
-        ${codeBox(code, pct)}
-      `;
-    } else {
-      const icons = ['','🏃','💎','👑'];
-      resultEl.innerHTML = `
-        <span class="cc-mine-result-icon">${icons[safeCount] || '💎'}</span>
-        <div class="cc-mine-result-title">Smart move — ${pct}% off!</div>
-        <div class="cc-mine-result-sub">
-          You cashed out at the right time.<br>Your code is valid for <strong style="color:#f59e0b;">24 hours</strong>.
-        </div>
-        ${codeBox(code, pct)}
-      `;
-    }
-
-    // Wire up copy button
-    const copyBtn = resultEl.querySelector('.cc-mine-copy');
-    if (copyBtn && code) {
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(code).then(() => {
-          copyBtn.textContent = 'Copied!';
-          copyBtn.classList.add('copied');
+      // Fetch real code
+      let code = null;
+      try {
+        const resp = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reward_inr: reward }),
         });
-      });
+        const data = await resp.json();
+        code = data.code;
+      } catch (_) {}
+
+      const exits = ['', 'Smart exit.', 'Good read.', 'Solid nerve.', 'Ice cold.', 'You absolute monster.'];
+
+      if (isBust) {
+        const msg = consolation
+          ? 'Hit a mine before collecting. <em>₹50 consolation</em> is yours.'
+          : `Exploded with <em>₹${reward}</em> still on the table. Use it.`;
+        rs.innerHTML = `
+          <div class="cc-r-icon">💥</div>
+          <div class="cc-r-title">Blown Up.</div>
+          <div class="cc-r-sub">${msg}</div>
+          ${codeBox(code, reward)}
+          <button class="cc-rplay" id="cc-rplay">↩ Play again</button>`;
+      } else {
+        rs.innerHTML = `
+          <div class="cc-r-icon">💸</div>
+          <div class="cc-r-title">${exits[Math.min(safeCount, exits.length - 1)]}</div>
+          <div class="cc-r-sub">Cashed at <em>₹${reward}</em>. 24 hours to use it.</div>
+          ${codeBox(code, reward)}
+          <button class="cc-rplay" id="cc-rplay">↩ Play again</button>`;
+      }
+
+      const copyBtn = rs.querySelector('.cc-copy');
+      if (copyBtn && code) {
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(code).catch(() => {});
+          copyBtn.textContent = 'Copied!';
+          copyBtn.classList.add('cp');
+          setTimeout(() => { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('cp'); }, 2000);
+        });
+      }
+
+      document.getElementById('cc-rplay').addEventListener('click', resetGame);
+      sessionStorage.setItem(SHOWN_KEY, '1');
+    }, 380);
+  }
+
+  function codeBox(code, reward) {
+    if (!code) {
+      return `<div style="color:#ef4444;font-size:10px;margin-bottom:14px;">Code error — try refreshing.</div>`;
     }
-
-    sessionStorage.setItem(SHOWN_KEY, '1');
-  }
-
-  function codeBox(code, pct) {
-    if (!code) return `<div style="color:#ef4444;font-size:12px;margin-bottom:16px;">Couldn't generate code — try refreshing.</div>`;
     return `
-      <div class="cc-mine-code-box">
-        <span class="cc-mine-code">${code}</span>
-        <button class="cc-mine-copy">Copy</button>
+      <div class="cc-code-box">
+        <span class="cc-code">${code}</span>
+        <button class="cc-copy">Copy</button>
       </div>
-      <a href="/collections/all" class="cc-mine-shop-btn">Shop Now — ${pct}% Off</a>
-      <div class="cc-mine-expires">⏳ Expires in 24 hours · Single use</div>
-    `;
+      <a href="/collections/all" class="cc-shop">Shop Now — ₹${reward} Off</a>
+      <p class="cc-exp">⏳ 24h · single use · all orders</p>`;
   }
 
+  /* ── Reset ───────────────────────────────────────────────────────────────── */
+  function resetGame() {
+    mineSet = null; safeCount = 0; pickCount = 0; done = false; safePicks = [];
+
+    document.getElementById('cc-result').classList.remove('show');
+    document.getElementById('cc-result').innerHTML = '';
+    document.getElementById('cc-game').style.display = '';
+    document.getElementById('cc-grid').style.opacity = '1';
+    document.querySelector('.cc-odds').style.opacity = '1';
+    document.getElementById('cc-btns').style.display = '';
+    const cash = document.getElementById('cc-cash');
+    cash.classList.remove('show');
+    cash.textContent = 'Cash Out';
+    document.getElementById('cc-mv').textContent = '₹0';
+    document.getElementById('cc-mv').classList.remove('hot');
+    document.getElementById('cc-mt').textContent = 'WAITING';
+    document.getElementById('cc-mt').classList.remove('alive');
+    document.getElementById('cc-safe-lbl').textContent = '10 safe tiles remain';
+    document.getElementById('cc-mine-lbl').textContent = '6 mines left';
+
+    allTiles().forEach(t => { t.className = 'cc-tile'; t.innerHTML = ''; });
+  }
+
+  /* ── Dismiss ─────────────────────────────────────────────────────────────── */
   function dismiss() {
-    const overlay = document.getElementById('cc-mine-overlay');
-    if (!overlay) return;
-    overlay.classList.remove('visible');
-    setTimeout(() => overlay.remove(), 400);
+    const ov = document.getElementById('cc-mine-ov');
+    if (!ov) return;
+    ov.classList.remove('vis');
+    setTimeout(() => ov.remove(), 400);
     sessionStorage.setItem(SHOWN_KEY, '1');
   }
 
-  /* ── Boot ───────────────────────────────────────────────────────────────── */
+  /* ── Boot ────────────────────────────────────────────────────────────────── */
   function boot() {
-    setTimeout(() => {
-      inject();
-    }, DELAY_MS);
+    const delay = forcedOpen ? 0 : DELAY_MS;
+    setTimeout(inject, delay);
   }
 
   if (document.readyState === 'loading') {
