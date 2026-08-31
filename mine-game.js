@@ -216,7 +216,14 @@
     margin-bottom:10px;text-decoration:none;text-align:center;
   }
   .cc-shop:hover { opacity:.88; }
-  .cc-exp { font-size:9px;color:#555;letter-spacing:1.5px;text-transform:uppercase; }
+  .cc-exp { font-size:9px;color:#555;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px; }
+  .cc-min-order {
+    width:100%;background:#111;border:1px solid #2a2a2a;border-radius:7px;
+    padding:10px 14px;display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:10px;
+  }
+  .cc-min-order-lbl { font-size:8px;letter-spacing:2px;text-transform:uppercase;color:#444; }
+  .cc-min-order-val { font-size:16px;font-weight:900;color:#fff;letter-spacing:1px; }
   .cc-rplay {
     margin-top:12px;font-size:8px;letter-spacing:2px;text-transform:uppercase;
     background:none;border:none;color:#555;cursor:pointer;
@@ -462,7 +469,11 @@
         <button class="cc-copy">Copy</button>
       </div>
       <a href="/collections/all" class="cc-shop">Shop Now — ₹${reward} Off</a>
-      <p class="cc-exp">⏳ 24h · single use · min order ₹${reward * 2}</p>`;
+      <div class="cc-min-order">
+        <span class="cc-min-order-lbl">Min. Order Required</span>
+        <span class="cc-min-order-val">₹${reward * 2}</span>
+      </div>
+      <p class="cc-exp">⏳ 24h · single use</p>`;
   }
 
   /* ── Reset ───────────────────────────────────────────────────────────────── */
