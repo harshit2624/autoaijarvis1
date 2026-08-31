@@ -470,8 +470,8 @@
       </div>
       <a href="/collections/all" class="cc-shop">Shop Now — ₹${reward} Off</a>
       <div class="cc-min-order">
-        <span class="cc-min-order-lbl">Min. Order Required</span>
         <span class="cc-min-order-val">₹${reward * 2}</span>
+        <span class="cc-min-order-lbl">Min. Order Required</span>
       </div>
       <p class="cc-exp">⏳ 24h · single use</p>`;
   }
