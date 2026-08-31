@@ -22231,6 +22231,68 @@ app.get('/support-widget-embed.js', (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// MINE GAME — discount popup widget
+// ══════════════════════════════════════════════════════════════════════════
+
+app.get('/mine-game.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.sendFile(require('path').join(__dirname, 'mine-game.js'));
+});
+
+// Generate a real Shopify discount code for the mine game winner
+app.post('/mine-game/claim', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const { pct } = req.body || {};
+    const discPct = [5, 10, 15].includes(Number(pct)) ? Number(pct) : 15;
+
+    const token = await getAccessToken();
+    const shopBase = `https://${SHOP}.myshopify.com/admin/api/2025-01`;
+    const headers = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
+
+    // Create a price rule valid for 24h, single use
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const pruleRes = await fetch(`${shopBase}/price_rules.json`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ price_rule: {
+        title: `MINEGAME${discPct}`,
+        target_type: 'line_item', target_selection: 'all',
+        allocation_method: 'across',
+        value_type: 'percentage', value: `-${discPct}`,
+        customer_selection: 'all',
+        starts_at: new Date().toISOString(),
+        ends_at: expires,
+        usage_limit: 1,
+      }}),
+    });
+    if (!pruleRes.ok) throw new Error(`price_rule failed: ${pruleRes.status}`);
+    const { price_rule } = await pruleRes.json();
+
+    // Generate unique code
+    const code = `MINE${discPct}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+    const dcRes = await fetch(`${shopBase}/price_rules/${price_rule.id}/discount_codes.json`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ discount_code: { code } }),
+    });
+    if (!dcRes.ok) throw new Error(`discount_code failed: ${dcRes.status}`);
+
+    res.json({ code, pct: discPct, expires });
+  } catch (e) {
+    console.error('mine-game/claim error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.options('/mine-game/claim', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.sendStatus(204);
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // PIXEL TRACKER — storefront event ingestion + product performance analytics
 // ══════════════════════════════════════════════════════════════════════════
 
