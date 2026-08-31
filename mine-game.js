@@ -241,8 +241,8 @@
 
   /* ── Mine placement (deferred) ───────────────────────────────────────────── */
   // First 5 picks are ALWAYS safe (guaranteed ₹100→₹500 zone, no bust)
-  // Mines only become active from pick 6 onward (₹500→₹1000 danger zone)
-  const SAFE_GUARANTEE = 5;
+  // Mines only become active from pick 5 onward (₹400→₹1000 danger zone)
+  const SAFE_GUARANTEE = 4;
 
   function placeMines(excludedPicks) {
     // exclude all guaranteed-safe picks so far
@@ -270,7 +270,7 @@
         <div class="cc-head">
           <div class="cc-brand">▪ C R O S C R O W ▪</div>
           <div class="cc-title">₹100 Mine Risk</div>
-          <div class="cc-info">First ₹500 is safe · danger starts after</div>
+          <div class="cc-info">First ₹400 is safe · danger starts after</div>
         </div>
 
         <div class="cc-meter">
@@ -470,7 +470,7 @@
       </div>
       <a href="/collections/all" class="cc-shop">Shop Now — ₹${reward} Off</a>
       <div class="cc-min-order">
-        <span class="cc-min-order-val">₹${reward * 2}</span>
+        <span class="cc-min-order-val">₹${Math.ceil(reward / 0.35 / 100) * 100}</span>
         <span class="cc-min-order-lbl">Min. Order Required</span>
       </div>
       <p class="cc-exp">⏳ 24h · single use</p>`;

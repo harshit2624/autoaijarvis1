@@ -22249,7 +22249,7 @@ app.post('/mine-game/claim', async (req, res) => {
     // Validate: must be one of the ladder values (max ₹1000), fallback to ₹50 consolation
     const VALID = [50, 100, 200, 300, 400, 500, 600, 800, 1000];
     const amount = VALID.includes(Number(reward_inr)) ? Math.min(Number(reward_inr), 1000) : 50;
-    const minPurchase = amount * 2; // customer must spend at least 2× the discount
+    const minPurchase = Math.ceil(amount / 0.35 / 100) * 100; // discount ≤ 35% of cart
 
     const token = await getAccessToken();
     const shopBase = `https://${SHOP}.myshopify.com/admin/api/2025-01`;
@@ -22286,7 +22286,7 @@ app.post('/mine-game/claim', async (req, res) => {
 
     // Notify admin on WA
     const _adminJid = `91${WA_ADMIN_NO}@s.whatsapp.net`;
-    const _minOrder = amount * 2;
+    const _minOrder = minPurchase;
     const _waMsg = `💣 *Mine Game Claimed*\nCode: *${code}*\nDiscount: ₹${amount} off\nMin order: ₹${_minOrder}\nExpires: 24h`;
     if (waSocket) waSocket.sendMessage(_adminJid, { text: _waMsg }).catch(e => console.error('mine-game WA notify error:', e.message));
   } catch (e) {
