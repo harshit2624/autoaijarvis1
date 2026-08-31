@@ -22148,8 +22148,10 @@ app.get('/admin/support/tickets', adminAuth, async (req, res) => {
 
 app.delete('/admin/support/tickets/all', adminAuth, async (req, res) => {
   try {
-    const r = await mdb.collection('support_tickets').deleteMany({});
-    res.json({ deleted: r.deletedCount });
+    const days = parseInt(req.query.older_than_days || '3');
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const r = await mdb.collection('support_tickets').deleteMany({ created_at: { $lt: cutoff } });
+    res.json({ deleted: r.deletedCount, older_than_days: days, cutoff });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
