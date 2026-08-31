@@ -22283,6 +22283,12 @@ app.post('/mine-game/claim', async (req, res) => {
     if (!dcRes.ok) throw new Error(`discount_code failed: ${dcRes.status}`);
 
     res.json({ code, reward_inr: amount, expires });
+
+    // Notify admin on WA
+    const _adminJid = `91${WA_ADMIN_NO}@s.whatsapp.net`;
+    const _minOrder = amount * 2;
+    const _waMsg = `💣 *Mine Game Claimed*\nCode: *${code}*\nDiscount: ₹${amount} off\nMin order: ₹${_minOrder}\nExpires: 24h`;
+    if (waSocket) waSocket.sendMessage(_adminJid, { text: _waMsg }).catch(e => console.error('mine-game WA notify error:', e.message));
   } catch (e) {
     console.error('mine-game/claim error:', e.message);
     res.status(500).json({ error: e.message });
