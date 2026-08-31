@@ -22146,6 +22146,13 @@ app.get('/admin/support/tickets', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/admin/support/tickets/all', adminAuth, async (req, res) => {
+  try {
+    const r = await mdb.collection('support_tickets').deleteMany({});
+    res.json({ deleted: r.deletedCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/admin/support/tickets/:id/close', adminAuth, async (req, res) => {
   try {
     const { ObjectId } = require('mongodb');
