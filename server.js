@@ -22246,9 +22246,10 @@ app.post('/mine-game/claim', async (req, res) => {
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const { reward_inr } = req.body || {};
-    // Validate: must be one of the ladder values (or fallback to 50 consolation)
-    const VALID = [50, 100, 220, 380, 580, 850, 1200, 1700, 2400, 3300, 5000];
-    const amount = VALID.includes(Number(reward_inr)) ? Number(reward_inr) : 50;
+    // Validate: must be one of the ladder values (max ₹1000), fallback to ₹50 consolation
+    const VALID = [50, 100, 220, 380, 580, 850, 1000];
+    const amount = VALID.includes(Number(reward_inr)) ? Math.min(Number(reward_inr), 1000) : 50;
+    const minPurchase = amount * 2; // customer must spend at least 2× the discount
 
     const token = await getAccessToken();
     const shopBase = `https://${SHOP}.myshopify.com/admin/api/2025-01`;
@@ -22267,6 +22268,7 @@ app.post('/mine-game/claim', async (req, res) => {
         starts_at: new Date().toISOString(),
         ends_at: expires,
         usage_limit: 1,
+        prerequisite_subtotal_range: { greater_than_or_equal_to: String(minPurchase) },
       }}),
     });
     if (!pruleRes.ok) throw new Error(`price_rule failed: ${pruleRes.status}`);

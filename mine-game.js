@@ -22,8 +22,8 @@
   const MINES    = 6;
   const SAFE_MAX = TOTAL - MINES; // 10 max safe picks
 
-  // ₹ reward ladder (safe tile 1–10)
-  const REWARDS = [100, 220, 380, 580, 850, 1200, 1700, 2400, 3300, 5000];
+  // ₹ reward ladder (safe tile 1–10), capped at ₹1000
+  const REWARDS = [100, 220, 380, 580, 850, 1000, 1000, 1000, 1000, 1000];
 
   /* ── Styles ──────────────────────────────────────────────────────────────── */
   const css = `
@@ -190,8 +190,8 @@
     font-size:26px;font-weight:900;text-transform:uppercase;
     letter-spacing:1px;color:#fff;margin-bottom:4px;
   }
-  .cc-r-sub { font-size:10px;color:#363636;line-height:1.8;margin-bottom:16px; }
-  .cc-r-sub em { color:#888;font-style:normal; }
+  .cc-r-sub { font-size:10px;color:#888;line-height:1.8;margin-bottom:16px; }
+  .cc-r-sub em { color:#bbb;font-style:normal; }
   .cc-code-box {
     width:100%;background:#090909;border:1px solid #e0e0e0;
     border-radius:8px;padding:12px 14px;
@@ -216,13 +216,13 @@
     margin-bottom:10px;text-decoration:none;text-align:center;
   }
   .cc-shop:hover { opacity:.88; }
-  .cc-exp { font-size:9px;color:#222;letter-spacing:1.5px;text-transform:uppercase; }
+  .cc-exp { font-size:9px;color:#555;letter-spacing:1.5px;text-transform:uppercase; }
   .cc-rplay {
     margin-top:12px;font-size:8px;letter-spacing:2px;text-transform:uppercase;
-    background:none;border:none;color:#1c1c1c;cursor:pointer;
+    background:none;border:none;color:#555;cursor:pointer;
     transition:color .2s;font-family:monospace;
   }
-  .cc-rplay:hover { color:#444; }
+  .cc-rplay:hover { color:#999; }
   `;
 
   /* ── State ───────────────────────────────────────────────────────────────── */
@@ -471,7 +471,7 @@
         <button class="cc-copy">Copy</button>
       </div>
       <a href="/collections/all" class="cc-shop">Shop Now — ₹${reward} Off</a>
-      <p class="cc-exp">⏳ 24h · single use · all orders</p>`;
+      <p class="cc-exp">⏳ 24h · single use · min order ₹${reward * 2}</p>`;
   }
 
   /* ── Reset ───────────────────────────────────────────────────────────────── */
