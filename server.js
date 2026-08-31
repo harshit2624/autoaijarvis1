@@ -22247,7 +22247,7 @@ app.post('/mine-game/claim', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const { reward_inr } = req.body || {};
     // Validate: must be one of the ladder values (max ₹1000), fallback to ₹50 consolation
-    const VALID = [50, 100, 220, 380, 580, 850, 1000];
+    const VALID = [50, 100, 200, 300, 400, 500, 600, 800, 1000];
     const amount = VALID.includes(Number(reward_inr)) ? Math.min(Number(reward_inr), 1000) : 50;
     const minPurchase = amount * 2; // customer must spend at least 2× the discount
 

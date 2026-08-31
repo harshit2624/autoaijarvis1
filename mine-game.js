@@ -19,11 +19,11 @@
 
   /* ── Game constants ──────────────────────────────────────────────────────── */
   const TOTAL    = 16;
-  const MINES    = 6;
-  const SAFE_MAX = TOTAL - MINES; // 10 max safe picks
+  const MINES    = 8;
+  const SAFE_MAX = TOTAL - MINES; // 8 max safe picks
 
-  // ₹ reward ladder (safe tile 1–10), capped at ₹1000
-  const REWARDS = [100, 220, 380, 580, 850, 1000, 1000, 1000, 1000, 1000];
+  // ₹ reward ladder (safe tile 1–8) — every tile pays more, max ₹1000
+  const REWARDS = [100, 200, 300, 400, 500, 600, 800, 1000];
 
   /* ── Styles ──────────────────────────────────────────────────────────────── */
   const css = `
@@ -258,7 +258,7 @@
         <div class="cc-head">
           <div class="cc-brand">▪ C R O S C R O W ▪</div>
           <div class="cc-title">₹100 Mine Risk</div>
-          <div class="cc-info">6 mines hidden · 16 tiles</div>
+          <div class="cc-info">8 mines hidden · 16 tiles · max ₹1000</div>
         </div>
 
         <div class="cc-meter">
@@ -267,11 +267,6 @@
             <div class="cc-meter-val" id="cc-mv">₹0</div>
           </div>
           <div class="cc-meter-tag" id="cc-mt">WAITING</div>
-        </div>
-
-        <div class="cc-odds">
-          <span id="cc-safe-lbl">10 safe tiles remain</span>
-          <span id="cc-mine-lbl">6 mines left</span>
         </div>
 
         <div id="cc-game">
@@ -339,7 +334,6 @@
       tile.innerHTML = `<div class="cc-inner"><div class="cc-emoji">💎</div><div class="cc-amt">₹${reward}</div></div>`;
 
       updateMeter(reward);
-      updateOdds();
 
       const cashBtn = document.getElementById('cc-cash');
       cashBtn.textContent = `Cash Out ₹${reward}`;
@@ -376,14 +370,6 @@
     mt.classList.add('alive');
   }
 
-  function updateOdds() {
-    if (!mineSet) return;
-    const open          = openTiles();
-    const minesRemain   = open.filter(t => mineSet.has(parseInt(t.dataset.i))).length;
-    const safeRemain    = open.length - minesRemain;
-    document.getElementById('cc-safe-lbl').textContent = safeRemain + ' safe remain';
-    document.getElementById('cc-mine-lbl').textContent = minesRemain + ' mines left';
-  }
 
   /* ── Cash out ────────────────────────────────────────────────────────────── */
   function cashOut() {
@@ -399,7 +385,6 @@
     const grid = document.getElementById('cc-grid');
     grid.style.opacity = '.18';
     grid.style.transition = 'opacity .4s';
-    document.querySelector('.cc-odds').style.opacity = '0';
 
     const consolation = isBust && safeCount === 0;
     const pct         = consolation ? 5 : 0; // fallback % for consolation
@@ -482,7 +467,6 @@
     document.getElementById('cc-result').innerHTML = '';
     document.getElementById('cc-game').style.display = '';
     document.getElementById('cc-grid').style.opacity = '1';
-    document.querySelector('.cc-odds').style.opacity = '1';
     document.getElementById('cc-btns').style.display = '';
     const cash = document.getElementById('cc-cash');
     cash.classList.remove('show');
@@ -491,8 +475,6 @@
     document.getElementById('cc-mv').classList.remove('hot');
     document.getElementById('cc-mt').textContent = 'WAITING';
     document.getElementById('cc-mt').classList.remove('alive');
-    document.getElementById('cc-safe-lbl').textContent = '10 safe tiles remain';
-    document.getElementById('cc-mine-lbl').textContent = '6 mines left';
 
     allTiles().forEach(t => { t.className = 'cc-tile'; t.innerHTML = ''; });
   }
