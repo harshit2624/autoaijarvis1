@@ -24678,9 +24678,10 @@ async function startBaileysBot() {
           // Skip if this looks like a bot-generated message — bot messages always start with ``` (code block)
           // or contain the CROSCROW header. Manual admin replies are plain text without this pattern.
           const _looksLikeBot = outText.startsWith('```') || outText.includes('▪ C R O S C R O W ▪') || outText.includes('C R O S C R O W') || /^(What are you looking for|✅|⚠️|📋|🔍|👁️|📊|🎫|🛍️|track|order|return|exchange|confirm|chat|resolved|no open|fetching|watching|digest|creating ticket|on it|generating)/i.test(outText);
-          // Also skip if in-memory JID tracker says bot sent here recently (belt + suspenders)
+          // _botSentRecently is used only to skip analytics — NOT to skip pausing.
+          // The bot sending a notification to this JID shouldn't prevent admin from silencing it.
           const _botSentRecently = _waBotSentJids.has(outTo) && (Date.now() - _waBotSentJids.get(outTo) < 120000);
-          if (outText && outTo && !_looksLikeBot && !_botSentRecently) {
+          if (outText && outTo && !_looksLikeBot) {
             try {
               const outChat = await mdb.collection('support_chats').findOne(
                 { whatsapp_sender: outTo },
@@ -24701,25 +24702,27 @@ async function startBaileysBot() {
                   const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
                   await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
                 }
-                console.log(`✅ Chat paused 6h via manual admin message: ${outTo} (wasResolved=${wasAlreadyResolved})`);
-                // Store in chat_message_analytics for bot improvement tracking
-                const allMsgs = await SC.messages(outChat._id).catch(() => []);
-                const botMsgs = allMsgs.filter(m => m.sender === 'assistant');
-                const custMsgs = allMsgs.filter(m => m.sender === 'customer');
-                const lastCustMsg = custMsgs.slice(-1)[0]?.text || '';
-                await mdb.collection('chat_message_analytics').insertOne({
-                  chat_id: String(outChat._id),
-                  order_name: outChat.order_name || null,
-                  tags: outChat.tags || [],
-                  source: 'admin_manual',
-                  admin_text: outText,
-                  is_resolve: true,
-                  bot_turns_before: botMsgs.length,
-                  customer_turns: custMsgs.length,
-                  last_customer_msg: lastCustMsg.slice(0, 200),
-                  needs_human: true,
-                  recorded_at: new Date().toISOString(),
-                });
+                console.log(`✅ Chat paused 6h via manual admin message: ${outTo} (wasResolved=${wasAlreadyResolved}, botSentRecently=${_botSentRecently})`);
+                // Store in chat_message_analytics — skip if bot sent here recently (avoids double-logging bot notifications)
+                if (!_botSentRecently) {
+                  const allMsgs = await SC.messages(outChat._id).catch(() => []);
+                  const botMsgs = allMsgs.filter(m => m.sender === 'assistant');
+                  const custMsgs = allMsgs.filter(m => m.sender === 'customer');
+                  const lastCustMsg = custMsgs.slice(-1)[0]?.text || '';
+                  await mdb.collection('chat_message_analytics').insertOne({
+                    chat_id: String(outChat._id),
+                    order_name: outChat.order_name || null,
+                    tags: outChat.tags || [],
+                    source: 'admin_manual',
+                    admin_text: outText,
+                    is_resolve: true,
+                    bot_turns_before: botMsgs.length,
+                    customer_turns: custMsgs.length,
+                    last_customer_msg: lastCustMsg.slice(0, 200),
+                    needs_human: true,
+                    recorded_at: new Date().toISOString(),
+                  });
+                }
               }
             } catch (e) { console.error('fromMe handler error:', e.message); }
           }
