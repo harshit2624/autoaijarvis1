@@ -233,8 +233,13 @@
   let safePicks = [];
 
   /* ── Mine placement (deferred) ───────────────────────────────────────────── */
-  function placeMines(exclude1, exclude2) {
-    const excl = new Set([exclude1, exclude2].filter(x => x != null));
+  // First 5 picks are ALWAYS safe (guaranteed ₹100→₹500 zone, no bust)
+  // Mines only become active from pick 6 onward (₹500→₹1000 danger zone)
+  const SAFE_GUARANTEE = 5;
+
+  function placeMines(excludedPicks) {
+    // exclude all guaranteed-safe picks so far
+    const excl = new Set(excludedPicks);
     const pool = Array.from({ length: TOTAL }, (_, i) => i).filter(i => !excl.has(i));
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -258,7 +263,7 @@
         <div class="cc-head">
           <div class="cc-brand">▪ C R O S C R O W ▪</div>
           <div class="cc-title">₹100 Mine Risk</div>
-          <div class="cc-info">8 mines hidden · 16 tiles · max ₹1000</div>
+          <div class="cc-info">First ₹500 is safe · danger starts after</div>
         </div>
 
         <div class="cc-meter">
@@ -311,11 +316,12 @@
     tile.classList.add('rev');
     pickCount++;
 
-    // Place mines after 2nd pick (guarantees picks 1+2 are safe)
-    if (pickCount === 2 && !mineSet) {
-      mineSet = placeMines(safePicks[0] ?? idx, idx);
+    // Place mines only after the 5th safe pick (guarantees ₹100→₹500 zone is always safe)
+    if (pickCount === SAFE_GUARANTEE && !mineSet) {
+      mineSet = placeMines(safePicks.concat(idx));
     }
 
+    // No mine possible until after guaranteed safe zone
     const isMine = mineSet && mineSet.has(idx);
 
     if (isMine) {
