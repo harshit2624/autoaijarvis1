@@ -22242,52 +22242,32 @@ app.get('/mine-game.js', (req, res) => {
 });
 
 // Generate a real Shopify discount code for the mine game winner
+// Fixed GoKwik discount codes — create these EXACTLY on GoKwik with the min order shown
+// Suffixes are fixed but non-sequential so customers can't guess other tiers
+const MINE_CODES = {
+  50:   { code: 'CCMINE50-T4W',   minOrder: 150  },
+  100:  { code: 'CCMINE100-K7X',  minOrder: 300  },
+  200:  { code: 'CCMINE200-B2Q',  minOrder: 600  },
+  300:  { code: 'CCMINE300-R9M',  minOrder: 900  },
+  400:  { code: 'CCMINE400-J5N',  minOrder: 1200 },
+  500:  { code: 'CCMINE500-P8Z',  minOrder: 1500 },
+  600:  { code: 'CCMINE600-D3V',  minOrder: 1800 },
+  800:  { code: 'CCMINE800-H6F',  minOrder: 2300 },
+  1000: { code: 'CCMINE1000-W1Y', minOrder: 2900 },
+};
+
 app.post('/mine-game/claim', async (req, res) => {
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const { reward_inr } = req.body || {};
-    // Validate: must be one of the ladder values (max ₹1000), fallback to ₹50 consolation
-    const VALID = [50, 100, 200, 300, 400, 500, 600, 800, 1000];
-    const amount = VALID.includes(Number(reward_inr)) ? Math.min(Number(reward_inr), 1000) : 50;
-    const minPurchase = Math.ceil(amount / 0.35 / 100) * 100; // discount ≤ 35% of cart
+    const amount  = MINE_CODES[Number(reward_inr)] ? Number(reward_inr) : 50;
+    const { code, minOrder } = MINE_CODES[amount];
 
-    const token = await getAccessToken();
-    const shopBase = `https://${SHOP}.myshopify.com/admin/api/2025-01`;
-    const headers = { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' };
-
-    // Create a fixed-amount price rule valid for 24h, single use
-    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const pruleRes = await fetch(`${shopBase}/price_rules.json`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ price_rule: {
-        title: `MINEGAME${amount}`,
-        target_type: 'line_item', target_selection: 'all',
-        allocation_method: 'across',
-        value_type: 'fixed_amount', value: `-${amount}`,
-        customer_selection: 'all',
-        starts_at: new Date().toISOString(),
-        ends_at: expires,
-        usage_limit: 1,
-        prerequisite_subtotal_range: { greater_than_or_equal_to: String(minPurchase) },
-      }}),
-    });
-    if (!pruleRes.ok) throw new Error(`price_rule failed: ${pruleRes.status}`);
-    const { price_rule } = await pruleRes.json();
-
-    // Generate unique code
-    const code = `MINE${amount}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
-    const dcRes = await fetch(`${shopBase}/price_rules/${price_rule.id}/discount_codes.json`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ discount_code: { code } }),
-    });
-    if (!dcRes.ok) throw new Error(`discount_code failed: ${dcRes.status}`);
-
-    res.json({ code, reward_inr: amount, expires });
+    res.json({ code, reward_inr: amount, minOrder });
 
     // Notify admin on WA
     const _adminJid = `91${WA_ADMIN_NO}@s.whatsapp.net`;
-    const _minOrder = minPurchase;
-    const _waMsg = `💣 *Mine Game Claimed*\nCode: *${code}*\nDiscount: ₹${amount} off\nMin order: ₹${_minOrder}\nExpires: 24h`;
+    const _waMsg = `💣 *Mine Game Claimed*\nCode: *${code}*\nDiscount: ₹${amount} off\nMin order: ₹${minOrder}`;
     if (waSocket) waSocket.sendMessage(_adminJid, { text: _waMsg }).catch(e => console.error('mine-game WA notify error:', e.message));
   } catch (e) {
     console.error('mine-game/claim error:', e.message);

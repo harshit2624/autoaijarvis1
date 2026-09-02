@@ -411,8 +411,8 @@
       rs.innerHTML = '<div style="font-size:10px;color:#333;letter-spacing:2px;text-transform:uppercase;">Generating your code…</div>';
       rs.classList.add('show');
 
-      // Fetch real code
-      let code = null;
+      // Fetch fixed code from server
+      let code = null, minOrder = reward * 3;
       try {
         const resp = await fetch(API, {
           method: 'POST',
@@ -421,6 +421,7 @@
         });
         const data = await resp.json();
         code = data.code;
+        if (data.minOrder) minOrder = data.minOrder;
       } catch (_) {}
 
       const exits = ['', 'Smart exit.', 'Good read.', 'Solid nerve.', 'Ice cold.', 'You absolute monster.'];
@@ -433,14 +434,14 @@
           <div class="cc-r-icon">💥</div>
           <div class="cc-r-title">Blown Up.</div>
           <div class="cc-r-sub">${msg}</div>
-          ${codeBox(code, reward)}
+          ${codeBox(code, reward, minOrder)}
           <button class="cc-rplay" id="cc-rplay">↩ Play again</button>`;
       } else {
         rs.innerHTML = `
           <div class="cc-r-icon">💸</div>
           <div class="cc-r-title">${exits[Math.min(safeCount, exits.length - 1)]}</div>
-          <div class="cc-r-sub">Cashed at <em>₹${reward}</em>. 24 hours to use it.</div>
-          ${codeBox(code, reward)}
+          <div class="cc-r-sub">Cashed at <em>₹${reward}</em>. Use it now.</div>
+          ${codeBox(code, reward, minOrder)}
           <button class="cc-rplay" id="cc-rplay">↩ Play again</button>`;
       }
 
@@ -459,7 +460,7 @@
     }, 380);
   }
 
-  function codeBox(code, reward) {
+  function codeBox(code, reward, minOrder) {
     if (!code) {
       return `<div style="color:#ef4444;font-size:10px;margin-bottom:14px;">Code error — try refreshing.</div>`;
     }
@@ -470,10 +471,10 @@
       </div>
       <a href="/collections/all" class="cc-shop">Shop Now — ₹${reward} Off</a>
       <div class="cc-min-order">
-        <span class="cc-min-order-val">₹${Math.ceil(reward / 0.35 / 100) * 100}</span>
+        <span class="cc-min-order-val">₹${minOrder}</span>
         <span class="cc-min-order-lbl">Min. Order Required</span>
       </div>
-      <p class="cc-exp">⏳ 24h · single use</p>`;
+      <p class="cc-exp">· single use · apply at checkout</p>`;
   }
 
   /* ── Reset ───────────────────────────────────────────────────────────────── */
