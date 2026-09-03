@@ -3169,11 +3169,14 @@
     },[token, aPeriod]);
 
     useEffect(()=>{
-      if (dashCache?.current?.timings) { setTimings(dashCache.current.timings); setTLoading(false); return; }
+      const tKey = `timings_${aPeriod?.label||'all'}`;
+      if (dashCache?.current?.[tKey]) { setTimings(dashCache.current[tKey]); setTLoading(false); return; }
       setTLoading(true);
-      fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>{ setTimings(d); if(dashCache?.current) dashCache.current.timings=d; }).catch(()=>{}).finally(()=>setTLoading(false));
-    },[token]);
+      const tFrom = aPeriod ? aPeriod.from : '2020-01-01';
+      const tTo   = aPeriod ? aPeriod.to   : isoToday();
+      fetch(`${API}/admin/dashboard/stage-timings?from=${tFrom}&to=${tTo}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setTimings(d); if(dashCache?.current) dashCache.current[tKey]=d; }).catch(()=>{}).finally(()=>setTLoading(false));
+    },[token, aPeriod]);
 
     useEffect(()=>{
       if (dashCache?.current?.scorecard) { setScorecard(dashCache.current.scorecard); return; }
@@ -3198,474 +3201,537 @@
     const periodLabel = aPeriod ? aPeriod.label : 'All Time';
     const stageColor = id => { const s=STAGES.find(x=>x.id===id); return s?`var(--${s.color})`:'var(--indigo)'; };
 
-    /* ── SVG ring gauge helper ── */
-    const RingGauge = ({ pct, size=80, stroke=7, color='#10b981', bg='var(--border)', children }) => {
-      const r = (size - stroke) / 2;
-      const circ = 2 * Math.PI * r;
-      const dash = circ * Math.min(pct, 100) / 100;
-      return (
-        <svg width={size} height={size} style={{flexShrink:0}}>
-          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={bg} strokeWidth={stroke}/>
-          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
-            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
-            transform={`rotate(-90 ${size/2} ${size/2})`}
-            style={{transition:'stroke-dasharray 0.6s ease'}}/>
-          <foreignObject x={0} y={0} width={size} height={size}>
-            <div xmlns="http://www.w3.org/1999/xhtml" style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center'}}>
-              {children}
-            </div>
-          </foreignObject>
-        </svg>
-      );
-    };
-
-    /* ── Funnel step ── */
-    const FunnelStep = ({ label, count, rev, color, pct, isLast }) => (
-      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',position:'relative'}}>
-        <div style={{width:'100%',background:'var(--bg-hover)',border:`1px solid ${color}30`,borderTop:`3px solid ${color}`,borderRadius:'0 0 8px 8px',padding:'14px 10px',textAlign:'center'}}>
-          <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color,fontWeight:700,marginBottom:6}}>{label}</div>
-          <div style={{fontFamily:"'Anton',sans-serif",fontSize:28,color:'var(--text)',lineHeight:1}}>{count}</div>
-          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>{rev}</div>
-          {pct != null && <div style={{marginTop:6,fontSize:9,background:`${color}20`,color,borderRadius:99,padding:'2px 8px',display:'inline-block',fontWeight:700}}>{pct}%</div>}
-        </div>
-        {!isLast && (
-          <div style={{position:'absolute',right:-14,top:'50%',transform:'translateY(-50%)',zIndex:2,fontSize:16,color:'var(--border-hi)'}}>&#8250;</div>
-        )}
-      </div>
-    );
-
-    /* ── Horizontal segmented bar for commission ── */
-    const CommBar = ({ segments }) => {
-      const total = segments.reduce((s,x)=>s+(x.val||0),0);
-      if (!total) return null;
-      return (
-        <div style={{display:'flex',borderRadius:6,overflow:'hidden',height:10,marginBottom:14}}>
-          {segments.map((seg,i)=>{
-            const w = total>0?((seg.val||0)/total*100).toFixed(1):0;
-            return w>0 ? <div key={i} title={`${seg.label}: ₹${(seg.val||0).toLocaleString()}`} style={{width:`${w}%`,background:seg.color,transition:'width 0.4s'}}/> : null;
-          })}
-        </div>
-      );
-    };
-
     return (
-      <div className="page" style={{maxWidth:'100%'}}>
-
-        {/* ══ ROW 0: Header bar ══ */}
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,gap:8,borderBottom:'1px solid var(--border)',paddingBottom:14}}>
-          <div>
-            <div style={{fontFamily:"'Anton',sans-serif",fontSize:18,letterSpacing:2,color:'var(--text)',lineHeight:1}}>OPERATIONS DASHBOARD</div>
-            <div style={{fontSize:10,color:'var(--text-muted)',letterSpacing:2,marginTop:3,textTransform:'uppercase'}}>{periodLabel} &nbsp;·&nbsp; CREP DOG CREW</div>
+      <div className="page">
+        {/* ── Global period picker ── */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,gap:8}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span style={{color:'var(--indigo)',fontWeight:700}}>{periodLabel}</span>
           </div>
           <div style={{display:'flex',gap:6,alignItems:'center'}}>
-            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; dashCache.current.timings=null; dashCache.current.scorecard=null; } setALoading(true); setTLoading(true); setScorecard(null); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current.timings=d;}).catch(()=>{}).finally(()=>setTLoading(false)); fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setScorecard(d);if(dashCache?.current)dashCache.current.scorecard=d;}).catch(()=>{}); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-dim)',cursor:'pointer',fontSize:10,padding:'5px 10px',letterSpacing:1}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} REFRESH</button>
+            <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; delete dashCache.current[`timings_${k}`]; dashCache.current.scorecard=null; } setALoading(true); setTLoading(true); setScorecard(null); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current[`timings_${aPeriod?.label||'all'}`]=d;}).catch(()=>{}).finally(()=>setTLoading(false)); fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setScorecard(d);if(dashCache?.current)dashCache.current.scorecard=d;}).catch(()=>{}); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
             <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
           </div>
         </div>
 
-        {/* ══ ROW 1: 4 Command KPI tiles ══ */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:10}}>
-          {[
-            { label:'PERIOD REVENUE', val: aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0), sub: 'All time '+fmtCur(at.revenue||0), color:'#6366f1', accent:'rgba(99,102,241,0.15)', border:'rgba(99,102,241,0.4)' },
-            { label:'ORDERS', val: aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0'), sub: periodLabel, color:'#60a5fa', accent:'rgba(96,165,250,0.1)', border:'rgba(96,165,250,0.35)' },
-            { label:'DELIVERED', val: aLoading?'…':(sc.delivered||0), sub: 'RTO '+(sc.rto||0), color:'#10b981', accent:'rgba(16,185,129,0.1)', border:'rgba(16,185,129,0.35)' },
-            { label:'COMMISSION', val: aLoading?'…':fmtCur(at.totalCommission||0), sub: '+ GST '+fmtCur(at.totalCommissionGst||0), color:'#f59e0b', accent:'rgba(245,158,11,0.1)', border:'rgba(245,158,11,0.35)' },
-          ].map(k => (
-            <div key={k.label} style={{background:k.accent,border:`1px solid ${k.border}`,borderTop:`3px solid ${k.color}`,borderRadius:8,padding:'18px 16px'}}>
-              <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:k.color,fontWeight:700,marginBottom:10}}>{k.label}</div>
-              <div style={{fontFamily:"'Anton',sans-serif",fontSize:26,color:'var(--text)',lineHeight:1,marginBottom:6}}>{k.val}</div>
-              <div style={{fontSize:10,color:'var(--text-muted)'}}>{k.sub}</div>
-            </div>
-          ))}
-        </div>
+        {/* Summary row — small stat cards */}
+        <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))'}}>
+          <StatCard color="indigo" icon="◈" label={'Orders ('+periodLabel+')'}  value={aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
+          <StatCard color="cyan"   icon="₹" label={'Revenue ('+periodLabel+')'}  value={aLoading?'…':fmtCur(at.periodRevenue||ps.revenue||0)} sub={'all time: '+fmtCur(at.revenue||0)}/>
+          <StatCard color="green"  icon="✅" label={'Delivered ('+periodLabel+')'} value={aLoading?'…':(sc.delivered||0)} sub="orders"/>
+          <StatCard color="red"    icon="↩" label={'RTO ('+periodLabel+')'}     value={aLoading?'…':(sc.rto||0)} sub="returned"/>
 
-        {/* ══ ROW 2: Order Pipeline Funnel ══ */}
-        {!aLoading && a?.fulfillStats && (()=>{
-          const fs = a.fulfillStats;
-          const sm = fs.stageMap || {};
-          const total = fs.total || 1;
-          const confPct  = Math.round(fs.active/total*100);
-          const dispPct  = fs.dispatch_rate || 0;
-          const delPct   = fs.delivery_rate || 0;
-          const rtoPct   = fs.rto_rate || 0;
-          return (
-            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'20px 20px 18px',marginBottom:10}}>
-              <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700,marginBottom:16}}>ORDER PIPELINE &nbsp;·&nbsp; {periodLabel}</div>
-              <div style={{display:'flex',gap:12,alignItems:'stretch'}}>
-                <FunnelStep label="Total Orders" count={total} rev={fmtCur((fs.revDispatched||0)+(fs.revPending||0)+(fs.revNotConfirmed||0)+(fs.revCancelled||0))} color="#94a3b8" pct={null}/>
-                <FunnelStep label="Confirmed" count={fs.active||0} rev={fmtCur((fs.revDispatched||0)+(fs.revPending||0))} color="#6366f1" pct={confPct}/>
-                <FunnelStep label="Dispatched" count={fs.dispatched||0} rev={fmtCur(fs.revDispatched||0)} color="#60a5fa" pct={dispPct}/>
-                <FunnelStep label="Delivered" count={fs.delivered||0} rev={fmtCur(fs.revDelivered||0)} color="#10b981" pct={delPct}/>
-                <FunnelStep label="RTO" count={fs.rto||0} rev={fmtCur(fs.revRto||0)} color="#f87171" pct={rtoPct} isLast={true}/>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ══ ROW 3: Three ring-gauge metric panels ══ */}
-        {!aLoading && a?.fulfillStats && (()=>{
-          const fs = a.fulfillStats;
-          const confPct = Math.round(fs.active/(fs.total||1)*100);
-          const dispPct = fs.dispatch_rate || 0;
-          const delPct  = fs.delivery_rate || 0;
-          const sm = fs.stageMap || {};
-
-          const gColor = p => p>=80?'#10b981':p>=55?'#f59e0b':'#ef4444';
-
-          const Panel = ({ title, pct, color, num, den, denLabel, rows, extraRow }) => (
-            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'20px',flex:1,minWidth:0}}>
-              <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700,marginBottom:16}}>{title}</div>
-              <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:16}}>
-                <RingGauge pct={pct} size={76} stroke={7} color={color}>
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontFamily:"'Anton',sans-serif",fontSize:18,color,lineHeight:1}}>{pct}%</div>
-                  </div>
-                </RingGauge>
-                <div>
-                  <div style={{fontFamily:"'Anton',sans-serif",fontSize:32,color:'var(--text)',lineHeight:1}}>{num}</div>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>of {den} {denLabel}</div>
-                </div>
-              </div>
-              <div style={{display:'flex',flexDirection:'column',gap:0}}>
-                {rows.map((r,i)=>(
-                  <div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
-                    <span style={{fontSize:10,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5}}>
-                      <span style={{width:6,height:6,borderRadius:'50%',background:r.c,display:'inline-block',flexShrink:0}}/>
-                      {r.label}
-                    </span>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      <div style={{width:50,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
-                        <div style={{height:'100%',width:`${r.pct}%`,background:r.c,borderRadius:2}}/>
-                      </div>
-                      <span style={{fontSize:11,fontWeight:700,color:r.c,minWidth:22,textAlign:'right'}}>{r.n}</span>
-                    </div>
+          {/* Commission breakdown card */}
+          {!aLoading && at.totalCommission !== undefined && (
+            <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
+              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>💰 Commission Breakdown · {periodLabel}</div>
+              <div className="comm-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12}}>
+                {[
+                  { label:'Total Commission',                    comm: at.totalCommission,     gst: at.totalCommissionGst,     color:'#a5b4fc', icon:'📊' },
+                  { label:'Delivered',                           comm: at.deliveredCommission, gst: at.deliveredCommissionGst, color:'#4ade80', icon:'✅' },
+                  { label:'In Pipeline (Ready/Pickup/Transit/OFD)', comm: at.transitCommission, gst: at.transitCommissionGst, color:'#60a5fa', icon:'🚚' },
+                  { label:'Pending (Confirmed/Partial)',         comm: at.pendingCommission,   gst: at.pendingCommissionGst,   color:'#fbbf24', icon:'⏳' },
+                  { label:'Missed (RTO)',                        comm: at.missedCommission,    gst: at.missedCommissionGst,    color:'#f87171', icon:'↩' },
+                  { label:'Cancelled/Hold/Other',                comm: at.otherCommission,     gst: at.otherCommissionGst,     color:'#94a3b8', icon:'✕' },
+                ].map(({label, comm, gst, color, icon})=>(
+                  <div key={label} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:`3px solid ${color}`}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>{icon} {label}</div>
+                    <div style={{fontSize:16,fontWeight:800,color}}>{fmtCur(comm||0)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>+ GST {fmtCur(gst||0)} = <span style={{color:'var(--text)',fontWeight:600}}>{fmtCur((comm||0)+(gst||0))}</span></div>
                   </div>
                 ))}
-                {extraRow && <div style={{marginTop:10,background:'var(--bg-hover)',borderRadius:6,padding:'8px 10px',display:'flex',justifyContent:'space-between'}}>
-                  <span style={{fontSize:10,color:'var(--text-muted)'}}>{extraRow.label}</span>
-                  <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{extraRow.val}</span>
-                </div>}
+                {/* Prepaid collected — no GST breakdown */}
+                <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #34d399'}}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>💳 Prepaid Collected</div>
+                  <div style={{fontSize:16,fontWeight:800,color:'#34d399'}}>{fmtCur(at.prepaidCollected||0)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>orders paid online in period</div>
+                </div>
               </div>
             </div>
-          );
+          )}
 
-          const StageRow = ({icon,label,count,den,color,rev}) => {
-            const pct = den>0?Math.round(count/den*100):0;
-            return (
-              <div style={{padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:4,minWidth:130}}>{icon} {label}</span>
-                  <div style={{flex:1,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
-                    <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width 0.4s'}}/>
+          {/* Stage timing averages — mined from stage_history, all-time */}
+          <div style={{gridColumn:'1/-1',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px'}}>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:14}}>⏱ Avg Stage Timings · {periodLabel}</div>
+            {tLoading && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+            {!tLoading && timings && (
+              <>
+                <div className="comm-grid" style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:12,marginBottom: timings.transitions?.length ? 14 : 0}}>
+                  <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #4ade80'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>✅ Avg Confirmed → Delivered</div>
+                    <div style={{fontSize:16,fontWeight:800,color:'#4ade80'}}>{fmtHrs(timings.avgConfirmedToDeliveredHours)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{timings.deliveredSampleCount||0} delivered orders</div>
                   </div>
-                  <span style={{fontSize:11,fontWeight:700,color,minWidth:24,textAlign:'right'}}>{count}</span>
-                  <span style={{fontSize:10,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{pct}%</span>
+                  <div style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #f87171'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>↩ Avg Confirmed → RTO</div>
+                    <div style={{fontSize:16,fontWeight:800,color:'#f87171'}}>{fmtHrs(timings.avgConfirmedToRtoHours)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{timings.rtoSampleCount||0} RTO orders</div>
+                  </div>
+                  {(timings.transitions||[]).slice(0,4).map(t => (
+                    <div key={t.transition} style={{background:'var(--bg-hover)',borderRadius:8,padding:'12px 14px',borderLeft:'3px solid #60a5fa'}}>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6}}>🔄 {t.transition}</div>
+                      <div style={{fontSize:16,fontWeight:800,color:'#60a5fa'}}>{fmtHrs(t.avgHours)}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>{t.count} orders</div>
+                    </div>
+                  ))}
                 </div>
-                {rev!=null && <div style={{marginTop:3,background:`${color}15`,border:`1px solid ${color}30`,borderRadius:4,padding:'2px 8px',display:'inline-block'}}>
-                  <span style={{fontSize:11,fontWeight:700,color}}>{fmtCur(rev)}</span>
-                </div>}
+                {!timings.transitions?.length && !timings.deliveredSampleCount && (
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>No stage history captured yet — this builds up automatically as orders move through stages from now on.</div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Big breakdown cards — always 3 equal columns */}
+        {!aLoading && a && a.fulfillStats && (()=>{
+            const fs = a.fulfillStats;
+
+            const MiniCard = ({icon, label, pct, num, den, sub, revGreen, revGreenLabel, revRed, revRedLabel, revOrange, revOrangeLabel, threshHi=80, threshMid=60}) => {
+              const color = pct>=threshHi?'#10b981':pct>=threshMid?'#f59e0b':'#ef4444';
+              const bg    = pct>=threshHi?'rgba(16,185,129,0.08)':pct>=threshMid?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
+              const bdr   = pct>=threshHi?'rgba(16,185,129,0.3)':pct>=threshMid?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+              return (
+                <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:4}}>
+                  <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>{icon} {label}</div>
+                  <div style={{display:'flex',alignItems:'flex-end',gap:8}}>
+                    <span style={{fontSize:28,fontWeight:900,color,lineHeight:1}}>{pct}%</span>
+                    <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{num}/{den}</span>
+                  </div>
+                  <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}>
+                    <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
+                  </div>
+                  {(revGreen!=null || revRed!=null || revOrange!=null) && (
+                    <div style={{display:'grid',gridTemplateColumns:`repeat(${[revGreen,revRed,revOrange].filter(v=>v!=null).length},1fr)`,gap:6,marginTop:4}}>
+                      {revGreen!=null && (
+                        <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revGreenLabel||'Revenue'}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#10b981'}}>{fmtCur(revGreen)}</div>
+                        </div>
+                      )}
+                      {revRed!=null && (
+                        <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revRedLabel||'Pending'}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#ef4444'}}>{fmtCur(revRed)}</div>
+                        </div>
+                      )}
+                      {revOrange!=null && (
+                        <div style={{background:'rgba(251,146,60,0.08)',border:'1px solid rgba(251,146,60,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#fb923c',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{revOrangeLabel||'RTO'}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#fb923c'}}>{fmtCur(revOrange)}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{sub}</div>
+                  <div style={{fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>{periodLabel}</div>
+                </div>
+              );
+            };
+
+            return (
+              <div className="big-cards-grid" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
+                {/* ── Confirmed Orders Card with left/right breakdown ── */}
+                {(()=>{
+                  const sm  = fs.stageMap || {};
+                  const ctm = fs.confirmedTagMap || {};   // orders that had a confirmed tag before falling off
+                  const confirmedTotal   = fs.active || 1;
+                  const notConfirmedCount = fs.notConfirmed || 0;
+                  const notConfirmedTotal = notConfirmedCount || 1;
+                  const grandTotal   = confirmedTotal + notConfirmedCount;
+                  const confirmedPct = grandTotal > 0 ? Math.round(fs.active / grandTotal * 100) : 0;
+
+                  const confirmedStages = [
+                    { key:'delivered', label:'Delivered',      icon:'✅', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',     icon:'🚚', c:'#60a5fa' },
+                    { key:'pickup',    label:'Pickup Pending', icon:'⌛', c:'#f59e0b' },
+                    { key:'ready',     label:'Ready to Ship',  icon:'📦', c:'#a78bfa' },
+                    { key:'rto',       label:'RTO',            icon:'↩', c:'#f87171' },
+                    { key:'confirmed', label:'Confirmed',      icon:'✓',  c:'#34d399' },
+                    { key:'partial',   label:'Partial/Advance',icon:'₹', c:'#fbbf24' },
+                  ];
+                  const notConfirmedStages = [
+                    { key:'hold',      label:'On Hold',           icon:'⏸', c:'#fb923c' },
+                    { key:'cancelled', label:'Cancelled',         icon:'✕', c:'#ef4444' },
+                    { key:'new',       label:'New / Unconfirmed', icon:'◉', c:'#94a3b8' },
+                    { key:'misc',      label:'Misc',              icon:'…',  c:'#a78bfa' },
+                  ];
+
+                  const StageRow = ({ s, count, den, totalDen, wasConfirmed }) => {
+                    const pct      = den > 0 ? Math.round(count / den * 100) : 0;
+                    const totalPct = totalDen > 0 ? Math.round(count / totalDen * 100) : 0;
+                    return (
+                      <div style={{padding:'5px 0',borderBottom:'1px solid var(--border)'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:4,minWidth:130}}>{s.icon} {s.label}</span>
+                          <div style={{flex:1,height:4,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${pct}%`,display:'flex',transition:'width 0.4s'}}>
+                              {wasConfirmed > 0 && <div style={{flex:wasConfirmed,background:'#f59e0b'}}/>}
+                              {(count - wasConfirmed) > 0 && <div style={{flex:Math.max(count-wasConfirmed,0),background:s.c}}/>}
+                            </div>
+                          </div>
+                          <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:24,textAlign:'right'}}>{count}</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{pct}%</span>
+                          {totalDen != null && <span style={{fontSize:9,color:'var(--text-muted)',minWidth:36,textAlign:'right',opacity:0.6}}>{totalPct}% all</span>}
+                        </div>
+                        {wasConfirmed > 0 && (
+                          <div style={{marginTop:2,marginLeft:2,fontSize:9,color:'#f59e0b',display:'flex',alignItems:'center',gap:4}}>
+                            <span>↳</span>
+                            <span style={{background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:3,padding:'1px 5px'}}>
+                              {wasConfirmed} were confirmed (✅ tag) — {count > 0 ? Math.round(wasConfirmed/count*100) : 0}% of this bucket
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.3)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6}}>
+                      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+                        <div>
+                          <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📋 Order Confirmation Breakdown · {periodLabel}</div>
+                          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                            <span style={{fontSize:36,fontWeight:900,color:'var(--indigo)',lineHeight:1}}>{confirmedPct}%</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.active} confirmed / {grandTotal} total</span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:16}}>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Confirmed</div>
+                            <div style={{fontSize:18,fontWeight:800,color:'#34d399'}}>{fs.active}</div>
+                          </div>
+                          <div style={{textAlign:'right'}}>
+                            <div style={{fontSize:10,color:'var(--text-muted)'}}>Not Confirmed</div>
+                            <div style={{fontSize:18,fontWeight:800,color:'#94a3b8'}}>{notConfirmedCount}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:confirmedPct+'%',background:'var(--indigo)',borderRadius:3,transition:'width 0.4s'}}/>
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginTop:2,marginBottom:2}}>
+                        <div style={{background:'rgba(52,211,153,0.08)',border:'1px solid rgba(52,211,153,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#34d399',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Confirmed Revenue</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#34d399'}}>{fmtCur((fs.revDispatched||0)+(fs.revPending||0))}</div>
+                        </div>
+                        <div style={{background:'rgba(148,163,184,0.08)',border:'1px solid rgba(148,163,184,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#94a3b8',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Confirmed</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#94a3b8'}}>{fmtCur(fs.revNotConfirmed||0)}</div>
+                        </div>
+                        <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                          <div style={{fontSize:9,color:'#f87171',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Cancelled</div>
+                          <div style={{fontSize:13,fontWeight:800,color:'#f87171'}}>{fmtCur(fs.revCancelled||0)}</div>
+                        </div>
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:4}}>
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#34d399',marginBottom:6}}>✓ Confirmed ({fs.active})</div>
+                          {confirmedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
+                            <StageRow key={s.key} s={s} count={sm[s.key]||0} den={confirmedTotal} totalDen={grandTotal}/>
+                          ))}
+                          {confirmedStages.every(s=>(sm[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>No confirmed orders yet</div>}
+                        </div>
+                        <div>
+                          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:6}}>
+                            <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#94a3b8'}}>○ Not Confirmed ({notConfirmedCount})</div>
+                            {Object.values(ctm).reduce((a,b)=>a+b,0) > 0 && (
+                              <div style={{fontSize:9,color:'#f59e0b',fontWeight:600}}>
+                                ✅ {Object.values(ctm).reduce((a,b)=>a+b,0)} were confirmed
+                              </div>
+                            )}
+                          </div>
+                          {notConfirmedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
+                            <StageRow key={s.key} s={s} count={sm[s.key]||0} den={notConfirmedCount||1} totalDen={grandTotal} wasConfirmed={ctm[s.key]||0}/>
+                          ))}
+                          {notConfirmedStages.every(s=>(sm[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>All orders confirmed</div>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {/* ── Dispatch Rate Card with stage breakdown ── */}
+                {(()=>{
+                  const sm    = fs.stageMap || {};
+                  const pct   = fs.dispatch_rate;
+                  const color = pct>=80?'#10b981':pct>=50?'#f59e0b':'#ef4444';
+                  const bg    = pct>=80?'rgba(16,185,129,0.08)':pct>=50?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
+                  const bdr   = pct>=80?'rgba(16,185,129,0.3)':pct>=50?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+
+                  const dispStages = [
+                    { key:'delivered', label:'Delivered',     icon:'✅', c:'#10b981' },
+                    { key:'transit',   label:'In Transit',    icon:'🚚', c:'#60a5fa' },
+                    { key:'pickup',    label:'Pickup Pending',icon:'⌛', c:'#f59e0b' },
+                    { key:'ready',     label:'Ready to Ship', icon:'📦', c:'#a78bfa' },
+                    { key:'rto',       label:'RTO',           icon:'↩', c:'#f87171' },
+                  ];
+                  const pendStages = [
+                    { key:'confirmed', label:'Confirmed', icon:'✓', c:'#34d399' },
+                    { key:'partial',   label:'Partial',   icon:'₹', c:'#fbbf24' },
+                  ];
+
+                  return (
+                    <div style={{background:bg,border:`1px solid ${bdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6}}>
+                      <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+                        <div>
+                          <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📦 Dispatch Rate · {periodLabel}</div>
+                          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                            <span style={{fontSize:36,fontWeight:900,color,lineHeight:1}}>{pct}%</span>
+                            <span style={{fontSize:11,color:'var(--text-muted)'}}>{fs.dispatched} dispatched / {fs.active} active orders</span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 12px'}}>
+                            <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Dispatched Revenue</div>
+                            <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched)}</div>
+                          </div>
+                          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 12px'}}>
+                            <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Pending Revenue</div>
+                            <div style={{fontSize:14,fontWeight:800,color:'#ef4444'}}>{fmtCur(fs.revPending)}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:pct+'%',background:color,borderRadius:3,transition:'width 0.4s'}}/>
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color,marginBottom:5}}>✅ {pct}% Dispatched ({fs.dispatched})</div>
+                          {dispStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
+                            <div key={s.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                                  <div style={{height:'100%',width:`${fs.dispatched>0?Math.round((sm[s.key]||0)/fs.dispatched*100):0}%`,background:s.c,borderRadius:2}}/>
+                                </div>
+                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sm[s.key]||0}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'#f87171',marginBottom:5}}>⏳ {100-pct}% Pending ({fs.pending})</div>
+                          {pendStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
+                            <div key={s.key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <div style={{width:48,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                                  <div style={{height:'100%',width:`${fs.pending>0?Math.round((sm[s.key]||0)/fs.pending*100):0}%`,background:s.c,borderRadius:2}}/>
+                                </div>
+                                <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:22,textAlign:'right'}}>{sm[s.key]||0}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ── Overall Fulfillment section inside dispatch card ── */}
+                      <div style={{borderTop:'1px solid var(--border)',paddingTop:10,marginTop:4}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8,marginBottom:8}}>
+                          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                            <span style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>🚀 Overall Fulfillment</span>
+                            <span style={{fontSize:20,fontWeight:900,color,lineHeight:1,marginLeft:4}}>{fs.overall_rate}%</span>
+                            <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.dispatched}/{fs.total} total orders · {fs.cancelled} cancelled</span>
+                          </div>
+                        </div>
+                        <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
+                          <div style={{height:'100%',width:`${fs.overall_rate}%`,background:color,borderRadius:2,transition:'width 0.4s'}}/>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                          <div style={{background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                            <div style={{fontSize:9,color:'#10b981',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Dispatched Revenue</div>
+                            <div style={{fontSize:13,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched)}</div>
+                          </div>
+                          <div style={{background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,padding:'6px 10px'}}>
+                            <div style={{fontSize:9,color:'#ef4444',fontWeight:600,letterSpacing:0.5,marginBottom:2}}>Not Dispatched Revenue</div>
+                            <div style={{fontSize:13,fontWeight:800,color:'#ef4444'}}>{fmtCur(fs.revNotDispatched)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {(()=>{
+                  const sm   = fs.stageMap || {};
+                  const delRate  = fs.delivery_rate || 0;
+                  const rtoRate  = fs.rto_rate || 0;
+                  const inTransitCount = (sm.ready||0)+(sm.pickup||0)+(sm.transit||0);
+                  const inTransitPct   = fs.dispatched > 0 ? Math.round(inTransitCount/fs.dispatched*100) : 0;
+                  const delColor = delRate>=70?'#10b981':delRate>=50?'#f59e0b':'#ef4444';
+                  const delBg    = delRate>=70?'rgba(16,185,129,0.08)':delRate>=50?'rgba(245,158,11,0.08)':'rgba(239,68,68,0.08)';
+                  const delBdr   = delRate>=70?'rgba(16,185,129,0.3)':delRate>=50?'rgba(245,158,11,0.3)':'rgba(239,68,68,0.3)';
+
+                  // From-all-orders rates
+                  const allDelRate = fs.total > 0 ? Math.round((fs.delivered||0)/fs.total*100) : 0;
+                  const allRtoRate = fs.total > 0 ? Math.round((fs.rto||0)/fs.total*100) : 0;
+                  const allInTRate = fs.total > 0 ? Math.round(inTransitCount/fs.total*100) : 0;
+
+                  const DistRow = ({ icon, label, count, pct, color, rev }) => (
+                    <div style={{padding:'5px 0',borderBottom:'1px solid var(--border)'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                        <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5}}>{icon} {label}</span>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <div style={{width:44,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:2}}/>
+                          </div>
+                          <span style={{fontSize:11,fontWeight:700,color,minWidth:20,textAlign:'right'}}>{count}</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)',minWidth:26,textAlign:'right'}}>{pct}%</span>
+                        </div>
+                      </div>
+                      {rev!=null && (
+                        <div style={{marginTop:3,background:`${color}15`,border:`1px solid ${color}35`,borderRadius:5,padding:'2px 8px',display:'inline-block'}}>
+                          <span style={{fontSize:11,fontWeight:700,color}}>{fmtCur(rev)}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+
+                  return (
+                    <div style={{background:delBg,border:`1px solid ${delBdr}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:6}}>
+
+                      {/* ── Section 1: From dispatched orders ── */}
+                      <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:2}}>✅ Delivery Rate · {periodLabel}</div>
+                      <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                        <span style={{fontSize:28,fontWeight:900,color:delColor,lineHeight:1}}>{delRate}%</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.delivered}/{fs.dispatched} dispatched orders</span>
+                      </div>
+                      <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${delRate}%`,background:delColor,borderRadius:2,transition:'width 0.4s'}}/>
+                      </div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',margin:'4px 0 2px'}}>
+                        Breakdown of {fs.dispatched} dispatched
+                      </div>
+                      <DistRow icon="✅" label="Delivered"      count={fs.delivered||0}   pct={delRate}      color="#10b981" rev={fs.revDelivered}  revLabel="Delivered Rev"/>
+                      <DistRow icon="🚚" label="In Transit"     count={inTransitCount}     pct={inTransitPct} color="#60a5fa" rev={fs.revInTransit}  revLabel="In Transit Rev"/>
+                      <DistRow icon="↩"  label="RTO"            count={fs.rto||0}          pct={rtoRate}      color="#f87171" rev={fs.revRto}        revLabel="RTO Rev"/>
+
+                      {/* ── Section 2: From all orders ── */}
+                      <div style={{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:2}}>
+                        <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
+                          <span style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>📊 From All Orders</span>
+                          <span style={{fontSize:16,fontWeight:900,color:delColor,lineHeight:1}}>{allDelRate}%</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}>delivered of {fs.total} total</span>
+                        </div>
+                        <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:6}}>
+                          <div style={{height:'100%',width:`${allDelRate}%`,background:delColor,borderRadius:2,transition:'width 0.4s'}}/>
+                        </div>
+                        <DistRow icon="✅" label="Delivered"  count={fs.delivered||0} pct={allDelRate} color="#10b981" rev={null}/>
+                        <DistRow icon="🚚" label="In Transit" count={inTransitCount}   pct={allInTRate} color="#60a5fa" rev={null}/>
+                        <DistRow icon="↩"  label="RTO"        count={fs.rto||0}        pct={allRtoRate} color="#f87171" rev={null}/>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
-          };
+          })()}
 
-          const ctm = fs.confirmedTagMap || {};
-          const grandTotal = (fs.active||0)+(fs.notConfirmed||0);
-          const notConfirmedCount = fs.notConfirmed||0;
-          const confirmedStages = [
-            { key:'delivered', label:'Delivered',      icon:'✅', c:'#10b981' },
-            { key:'transit',   label:'In Transit',     icon:'🚚', c:'#60a5fa' },
-            { key:'pickup',    label:'Pickup Pending', icon:'⌛', c:'#f59e0b' },
-            { key:'ready',     label:'Ready to Ship',  icon:'📦', c:'#a78bfa' },
-            { key:'rto',       label:'RTO',            icon:'↩', c:'#f87171' },
-            { key:'confirmed', label:'Confirmed',      icon:'✓',  c:'#34d399' },
-            { key:'partial',   label:'Partial/Advance',icon:'₹', c:'#fbbf24' },
-          ];
-          const notConfirmedStages = [
-            { key:'hold',      label:'On Hold',           icon:'⏸', c:'#fb923c' },
-            { key:'cancelled', label:'Cancelled',         icon:'✕', c:'#ef4444' },
-            { key:'new',       label:'New/Unconfirmed',   icon:'◉', c:'#94a3b8' },
-            { key:'misc',      label:'Misc',              icon:'…', c:'#a78bfa' },
-          ];
-          const dispatchedStages = [
-            { key:'delivered', label:'Delivered',     icon:'✅', c:'#10b981', rev: fs.revDelivered },
-            { key:'transit',   label:'In Transit',    icon:'🚚', c:'#60a5fa', rev: fs.revInTransit },
-            { key:'pickup',    label:'Pickup Pending',icon:'⌛', c:'#f59e0b', rev: null },
-            { key:'ready',     label:'Ready to Ship', icon:'📦', c:'#a78bfa', rev: null },
-            { key:'rto',       label:'RTO',           icon:'↩', c:'#f87171', rev: fs.revRto },
-          ];
-          const pendingStages = [
-            { key:'confirmed', label:'Confirmed', icon:'✓', c:'#34d399' },
-            { key:'partial',   label:'Partial',   icon:'₹', c:'#fbbf24' },
-          ];
-          const inTransitCount = (sm.ready||0)+(sm.pickup||0)+(sm.transit||0)+(sm.ofd||0);
-          const allDelRate = fs.total>0?Math.round((fs.delivered||0)/fs.total*100):0;
-          const allRtoRate = fs.total>0?Math.round((fs.rto||0)/fs.total*100):0;
-          const allInTRate = fs.total>0?Math.round(inTransitCount/fs.total*100):0;
+          {/* ── Revenue Pipeline card ── */}
+          {!aLoading && a?.fulfillStats && (() => {
+            const fs = a.fulfillStats;
+            const sm = fs.stageMap || {};
+            const totalRev = (fs.revDispatched||0)+(fs.revPending||0)+(fs.revNotConfirmed||0)+(fs.revCancelled||0);
 
-          return (
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+            // Dead money: cancelled + RTO — entered the system, won't become payout
+            const deadRev = (fs.revCancelled||0)+(fs.revRto||0);
+            // Revenue at risk: orders in transit × RTO rate (could still return)
+            const rtoRate = fs.dispatched>0 ? (fs.rto||0)/fs.dispatched : 0;
+            const revAtRisk = Math.round((fs.revInTransit||0) * rtoRate);
+            // COD pipeline: delivered orders that haven't been settled yet (approx: revDelivered - revRto)
+            const codPipeline = Math.max(0,(fs.revDelivered||0));
+            // Effective revenue: delivered minus estimated platform share (commission ~20%)
+            const estCommission = Math.round((fs.revDelivered||0)*0.20);
+            const effectiveRev = Math.round((fs.revDelivered||0) - estCommission);
 
-              {/* ── CONFIRMATION RATE ── */}
-              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderTop:`3px solid ${gColor(confPct)}`,borderRadius:10,padding:'16px'}}>
-                <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700,marginBottom:12}}>📋 CONFIRMATION RATE · {periodLabel}</div>
-                <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
-                  <RingGauge pct={confPct} size={72} stroke={7} color={gColor(confPct)}>
-                    <div style={{textAlign:'center'}}><div style={{fontFamily:"'Anton',sans-serif",fontSize:16,color:gColor(confPct),lineHeight:1}}>{confPct}%</div></div>
-                  </RingGauge>
-                  <div>
-                    <div style={{fontFamily:"'Anton',sans-serif",fontSize:28,color:'var(--text)',lineHeight:1}}>{fs.active||0}</div>
-                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>of {grandTotal} total orders</div>
-                    <div style={{display:'flex',gap:12,marginTop:6}}>
-                      <div><div style={{fontSize:9,color:'#34d399'}}>Confirmed</div><div style={{fontSize:14,fontWeight:800,color:'#34d399'}}>{fs.active||0}</div></div>
-                      <div><div style={{fontSize:9,color:'#94a3b8'}}>Not Confirmed</div><div style={{fontSize:14,fontWeight:800,color:'#94a3b8'}}>{notConfirmedCount}</div></div>
+            const pct = v => totalRev>0 ? Math.round(v/totalRev*100) : 0;
+
+            const StageRow = ({label, rev, count, color, indent, subtotal}) => {
+              const w = pct(rev);
+              return (
+                <div style={{padding: subtotal?'6px 0 2px':'3px 0', borderBottom: subtotal?'none':'1px solid var(--border)'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    {indent && <div style={{width:10,flexShrink:0}}/>}
+                    <div style={{flex:1,fontSize: subtotal?10:11,fontWeight:subtotal?800:500,color: subtotal?color:'var(--text-dim)',letterSpacing:subtotal?0.5:0}}>{label}</div>
+                    <div style={{width:60,height:subtotal?5:3,background:'var(--border)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                      <div style={{height:'100%',width:`${w}%`,background:color,borderRadius:2}}/>
                     </div>
+                    <div style={{fontSize:subtotal?12:10,fontWeight:subtotal?800:600,color,minWidth:72,textAlign:'right'}}>{fmtCur(rev)}</div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{count!=null?count:w+'%'}</div>
                   </div>
                 </div>
-                <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:10}}>
-                  <div style={{height:'100%',width:confPct+'%',background:gColor(confPct),borderRadius:2,transition:'width 0.4s'}}/>
+              );
+            };
+
+            const InsightPill = ({label, value, color, sub}) => (
+              <div style={{background:`${color}12`,border:`1px solid ${color}30`,borderRadius:10,padding:'10px 14px',flex:1,minWidth:120}}>
+                <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color,fontWeight:700,marginBottom:3}}>{label}</div>
+                <div style={{fontSize:16,fontWeight:900,color,lineHeight:1,marginBottom:3}}>{value}</div>
+                {sub && <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.4}}>{sub}</div>}
+              </div>
+            );
+
+            return (
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-header">
+                  <span className="card-title">💰 Revenue Pipeline</span>
+                  <span className="card-sub">Full stage breakdown · {periodLabel}</span>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
-                  <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #34d399',borderRadius:6,padding:'6px 8px'}}>
-                    <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Confirmed Rev</div>
-                    <div style={{fontSize:12,fontWeight:800,color:'#34d399'}}>{fmtCur((fs.revDispatched||0)+(fs.revPending||0))}</div>
-                  </div>
-                  <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #94a3b8',borderRadius:6,padding:'6px 8px'}}>
-                    <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Not Conf Rev</div>
-                    <div style={{fontSize:12,fontWeight:800,color:'#94a3b8'}}>{fmtCur(fs.revNotConfirmed||0)}</div>
-                  </div>
-                  <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #f87171',borderRadius:6,padding:'6px 8px'}}>
-                    <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Cancelled Rev</div>
-                    <div style={{fontSize:12,fontWeight:800,color:'#f87171'}}>{fmtCur(fs.revCancelled||0)}</div>
-                  </div>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'#34d399',marginBottom:5}}>✓ Confirmed ({fs.active||0})</div>
-                    {confirmedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
-                      <StageRow key={s.key} icon={s.icon} label={s.label} count={sm[s.key]||0} den={fs.active||1} color={s.c} rev={null}/>
-                    ))}
-                  </div>
-                  <div>
-                    <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'#94a3b8',marginBottom:5}}>○ Not Confirmed ({notConfirmedCount})</div>
-                    {notConfirmedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
-                      <StageRow key={s.key} icon={s.icon} label={s.label} count={sm[s.key]||0} den={notConfirmedCount||1} color={s.c} rev={null}/>
-                    ))}
-                    {notConfirmedStages.every(s=>(sm[s.key]||0)===0) && <div style={{fontSize:10,color:'var(--text-muted)'}}>All orders confirmed</div>}
+                <div style={{padding:'12px 16px',display:'flex',flexDirection:'column',gap:0}}>
+
+                  {/* DISPATCHED group */}
+                  <StageRow label="DISPATCHED" rev={fs.revDispatched||0} count={fs.dispatched||0} color="#10b981" subtotal={true}/>
+                  <StageRow label="Delivered" rev={fs.revDelivered||0} count={sm.delivered||0} color="#10b981" indent={true}/>
+                  <StageRow label="Out for Delivery" rev={fs.revOfd||0} count={sm.ofd||0} color="#34d399" indent={true}/>
+                  <StageRow label="In Transit" rev={fs.revTransit||0} count={sm.transit||0} color="#60a5fa" indent={true}/>
+                  <StageRow label="Pickup Pending" rev={fs.revPickup||0} count={sm.pickup||0} color="#93c5fd" indent={true}/>
+                  <StageRow label="Ready / Packed" rev={fs.revReady||0} count={sm.ready||0} color="#bfdbfe" indent={true}/>
+                  <StageRow label="RTO" rev={fs.revRto||0} count={sm.rto||0} color="#f87171" indent={true}/>
+
+                  <div style={{height:1,background:'var(--border)',margin:'8px 0'}}/>
+
+                  {/* PENDING group */}
+                  <StageRow label="PENDING DISPATCH" rev={fs.revPending||0} count={(sm.confirmed||0)+(sm.partial||0)} color="#f59e0b" subtotal={true}/>
+                  <StageRow label="Confirmed" rev={fs.revConfirmedStage||0} count={sm.confirmed||0} color="#fbbf24" indent={true}/>
+                  <StageRow label="Partial Paid" rev={fs.revPartial||0} count={sm.partial||0} color="#fde68a" indent={true}/>
+
+                  <div style={{height:1,background:'var(--border)',margin:'8px 0'}}/>
+
+                  {/* NOT CONFIRMED group */}
+                  <StageRow label="NOT CONFIRMED" rev={fs.revNotConfirmed||0} count={(sm.new||0)+(sm.hold||0)+(sm.misc||0)} color="#94a3b8" subtotal={true}/>
+                  <StageRow label="New" rev={fs.revNew||0} count={sm.new||0} color="#94a3b8" indent={true}/>
+                  <StageRow label="On Hold" rev={fs.revHold||0} count={sm.hold||0} color="#cbd5e1" indent={true}/>
+                  <StageRow label="Misc" rev={fs.revMisc||0} count={sm.misc||0} color="#e2e8f0" indent={true}/>
+
+                  <div style={{height:1,background:'var(--border)',margin:'8px 0'}}/>
+
+                  {/* CANCELLED */}
+                  <StageRow label="CANCELLED" rev={fs.revCancelled||0} count={sm.cancelled||0} color="#ef4444" subtotal={true}/>
+
+                  {/* Insights row */}
+                  <div style={{marginTop:14,display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <InsightPill
+                      label="Dead Money"
+                      value={fmtCur(deadRev)}
+                      color="#ef4444"
+                      sub={`RTO ₹${Math.round((fs.revRto||0)/1000)}k + Cancelled ₹${Math.round((fs.revCancelled||0)/1000)}k — won't convert`}
+                    />
+                    <InsightPill
+                      label="Revenue at Risk"
+                      value={fmtCur(revAtRisk)}
+                      color="#f59e0b"
+                      sub={`${Math.round(rtoRate*100)}% RTO rate × ₹${Math.round((fs.revInTransit||0)/1000)}k in transit`}
+                    />
+                    <InsightPill
+                      label="Est. Net Payout"
+                      value={fmtCur(effectiveRev)}
+                      color="#10b981"
+                      sub={`Delivered ₹${Math.round((fs.revDelivered||0)/1000)}k minus ~20% platform cut`}
+                    />
                   </div>
                 </div>
               </div>
-
-              {/* ── DISPATCH RATE ── */}
-              {(()=>{
-                const pct = dispPct;
-                const color = gColor(pct);
-                return (
-                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderTop:`3px solid ${color}`,borderRadius:10,padding:'16px'}}>
-                    <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700,marginBottom:12}}>📦 DISPATCH RATE · {periodLabel}</div>
-                    <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
-                      <RingGauge pct={pct} size={72} stroke={7} color={color}>
-                        <div style={{textAlign:'center'}}><div style={{fontFamily:"'Anton',sans-serif",fontSize:16,color,lineHeight:1}}>{pct}%</div></div>
-                      </RingGauge>
-                      <div>
-                        <div style={{fontFamily:"'Anton',sans-serif",fontSize:28,color:'var(--text)',lineHeight:1}}>{fs.dispatched||0}</div>
-                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>of {fs.active||0} confirmed orders</div>
-                      </div>
-                    </div>
-                    <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
-                      <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
-                      <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #10b981',borderRadius:6,padding:'6px 8px'}}>
-                        <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Dispatched Rev</div>
-                        <div style={{fontSize:12,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched||0)}</div>
-                      </div>
-                      <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #ef4444',borderRadius:6,padding:'6px 8px'}}>
-                        <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Pending Rev</div>
-                        <div style={{fontSize:12,fontWeight:800,color:'#ef4444'}}>{fmtCur(fs.revPending||0)}</div>
-                      </div>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                      <div>
-                        <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color,marginBottom:5}}>✅ {pct}% Dispatched ({fs.dispatched||0})</div>
-                        {dispatchedStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
-                          <StageRow key={s.key} icon={s.icon} label={s.label} count={sm[s.key]||0} den={fs.dispatched||1} color={s.c} rev={s.rev}/>
-                        ))}
-                      </div>
-                      <div>
-                        <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'#f59e0b',marginBottom:5}}>⏳ {100-pct}% Pending ({fs.pending||0})</div>
-                        {pendingStages.filter(s=>(sm[s.key]||0)>0).map(s=>(
-                          <StageRow key={s.key} icon={s.icon} label={s.label} count={sm[s.key]||0} den={fs.pending||1} color={s.c} rev={null}/>
-                        ))}
-                      </div>
-                    </div>
-                    <div style={{borderTop:'1px solid var(--border)',paddingTop:10,marginTop:8}}>
-                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                        <span style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>🚀 Overall Fulfillment</span>
-                        <span style={{fontSize:18,fontWeight:900,color,lineHeight:1}}>{fs.overall_rate||0}%</span>
-                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.dispatched||0}/{fs.total||0} total · {sm.cancelled||0} cancelled</span>
-                      </div>
-                      <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
-                        <div style={{height:'100%',width:`${fs.overall_rate||0}%`,background:color,borderRadius:2,transition:'width 0.4s'}}/>
-                      </div>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-                        <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #10b981',borderRadius:6,padding:'6px 8px'}}>
-                          <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Dispatched Rev</div>
-                          <div style={{fontSize:12,fontWeight:800,color:'#10b981'}}>{fmtCur(fs.revDispatched||0)}</div>
-                        </div>
-                        <div style={{background:'var(--bg-hover)',borderLeft:'2px solid #ef4444',borderRadius:6,padding:'6px 8px'}}>
-                          <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>Not Dispatched Rev</div>
-                          <div style={{fontSize:12,fontWeight:800,color:'#ef4444'}}>{fmtCur(fs.revNotDispatched||0)}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── DELIVERY RATE ── */}
-              {(()=>{
-                const pct = delPct;
-                const color = gColor(pct);
-                return (
-                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderTop:`3px solid ${color}`,borderRadius:10,padding:'16px'}}>
-                    <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700,marginBottom:12}}>✅ DELIVERY RATE · {periodLabel}</div>
-                    <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
-                      <RingGauge pct={pct} size={72} stroke={7} color={color}>
-                        <div style={{textAlign:'center'}}><div style={{fontFamily:"'Anton',sans-serif",fontSize:16,color,lineHeight:1}}>{pct}%</div></div>
-                      </RingGauge>
-                      <div>
-                        <div style={{fontFamily:"'Anton',sans-serif",fontSize:28,color:'var(--text)',lineHeight:1}}>{fs.delivered||0}</div>
-                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>of {fs.dispatched||0} dispatched orders</div>
-                      </div>
-                    </div>
-                    <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
-                      <div style={{height:'100%',width:pct+'%',background:color,borderRadius:2,transition:'width 0.4s'}}/>
-                    </div>
-                    <div style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-muted)',margin:'4px 0 6px'}}>Breakdown of {fs.dispatched||0} dispatched</div>
-                    <StageRow icon="✅" label="Delivered"  count={fs.delivered||0}   den={fs.dispatched||1} color="#10b981" rev={fs.revDelivered}/>
-                    <StageRow icon="🚚" label="In Transit" count={inTransitCount}     den={fs.dispatched||1} color="#60a5fa" rev={fs.revInTransit}/>
-                    <StageRow icon="↩"  label="RTO"        count={fs.rto||0}          den={fs.dispatched||1} color="#f87171" rev={fs.revRto}/>
-                    <div style={{borderTop:'1px solid var(--border)',paddingTop:8,marginTop:8}}>
-                      <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
-                        <span style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)'}}>📊 From All Orders</span>
-                        <span style={{fontSize:16,fontWeight:900,color,lineHeight:1}}>{allDelRate}%</span>
-                        <span style={{fontSize:10,color:'var(--text-muted)'}}>delivered of {fs.total||0} total</span>
-                      </div>
-                      <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:6}}>
-                        <div style={{height:'100%',width:`${allDelRate}%`,background:color,borderRadius:2,transition:'width 0.4s'}}/>
-                      </div>
-                      <StageRow icon="✅" label="Delivered"  count={fs.delivered||0} den={fs.total||1} color="#10b981" rev={null}/>
-                      <StageRow icon="🚚" label="In Transit" count={inTransitCount}   den={fs.total||1} color="#60a5fa" rev={null}/>
-                      <StageRow icon="↩"  label="RTO"        count={fs.rto||0}        den={fs.total||1} color="#f87171" rev={null}/>
-                    </div>
-                  </div>
-                );
-              })()}
-
-            </div>
-          );
-        })()}
-
-        {/* ══ ROW 4: Commission waterfall ══ */}
-        {!aLoading && at.totalCommission > 0 && (
-          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'20px',marginBottom:10}}>
-            <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:14}}>
-              <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700}}>COMMISSION WATERFALL &nbsp;·&nbsp; {periodLabel}</div>
-              <div style={{fontFamily:"'Anton',sans-serif",fontSize:20,color:'#f59e0b'}}>{fmtCur((at.totalCommission||0)+(at.totalCommissionGst||0))}</div>
-            </div>
-            {/* Segmented bar */}
-            <CommBar segments={[
-              { label:'Delivered', val:at.deliveredCommission||0, color:'#10b981' },
-              { label:'In Pipeline', val:at.transitCommission||0, color:'#60a5fa' },
-              { label:'Pending', val:at.pendingCommission||0, color:'#f59e0b' },
-              { label:'Missed (RTO)', val:at.missedCommission||0, color:'#f87171' },
-              { label:'Other', val:at.otherCommission||0, color:'#475569' },
-            ]}/>
-            {/* Breakdown pills */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:8}}>
-              {[
-                { label:'Delivered', comm:at.deliveredCommission, gst:at.deliveredCommissionGst, color:'#10b981' },
-                { label:'In Pipeline', comm:at.transitCommission, gst:at.transitCommissionGst, color:'#60a5fa' },
-                { label:'Pending', comm:at.pendingCommission, gst:at.pendingCommissionGst, color:'#f59e0b' },
-                { label:'Missed (RTO)', comm:at.missedCommission, gst:at.missedCommissionGst, color:'#f87171' },
-                { label:'Other / Hold', comm:at.otherCommission, gst:at.otherCommissionGst, color:'#475569' },
-                { label:'Prepaid Collected', comm:at.prepaidCollected, gst:null, color:'#34d399' },
-              ].map(({label,comm,gst,color})=>(
-                <div key={label} style={{borderLeft:`2px solid ${color}`,paddingLeft:10,paddingTop:2,paddingBottom:2}}>
-                  <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:3,letterSpacing:0.5}}>{label}</div>
-                  <div style={{fontFamily:"'Anton',sans-serif",fontSize:17,color,lineHeight:1}}>{fmtCur(comm||0)}</div>
-                  {gst!=null && <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>+GST {fmtCur(gst)}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ══ ROW 5: Stage Timings ══ */}
-        {!tLoading && timings && (timings.deliveredSampleCount || timings.rtoSampleCount) && (
-          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'20px',marginBottom:10}}>
-            <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700,marginBottom:16}}>AVG STAGE TIMINGS &nbsp;·&nbsp; ALL TIME</div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(170px,1fr))',gap:10}}>
-              <div style={{borderLeft:'2px solid #10b981',paddingLeft:12}}>
-                <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:4}}>Confirmed → Delivered</div>
-                <div style={{fontFamily:"'Anton',sans-serif",fontSize:22,color:'#10b981',lineHeight:1}}>{fmtHrs(timings.avgConfirmedToDeliveredHours)}</div>
-                <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>{timings.deliveredSampleCount||0} orders</div>
-              </div>
-              <div style={{borderLeft:'2px solid #f87171',paddingLeft:12}}>
-                <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:4}}>Confirmed → RTO</div>
-                <div style={{fontFamily:"'Anton',sans-serif",fontSize:22,color:'#f87171',lineHeight:1}}>{fmtHrs(timings.avgConfirmedToRtoHours)}</div>
-                <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>{timings.rtoSampleCount||0} orders</div>
-              </div>
-              {(timings.transitions||[]).slice(0,4).map(t=>(
-                <div key={t.transition} style={{borderLeft:'2px solid #60a5fa',paddingLeft:12}}>
-                  <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:4}}>{t.transition}</div>
-                  <div style={{fontFamily:"'Anton',sans-serif",fontSize:22,color:'#60a5fa',lineHeight:1}}>{fmtHrs(t.avgHours)}</div>
-                  <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>{t.count} orders</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ══ ROW 6: Vendor scorecard table ══ */}
-        {scorecard && scorecard.vendorScores && scorecard.vendorScores.length > 0 && (()=>{
-          const fmtH = h => h==null?'—':h<24?`${h.toFixed(1)}h`:`${Math.floor(h/24)}d ${Math.round(h%24)}h`;
-          const hC = h => h==null?'var(--text-muted)':h>72?'#ef4444':h>48?'#f97316':h>24?'#f59e0b':'#10b981';
-          return (
-            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',marginBottom:10}}>
-              <div style={{padding:'16px 20px 12px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'baseline',justifyContent:'space-between'}}>
-                <div style={{fontSize:8,letterSpacing:3,textTransform:'uppercase',color:'var(--text-muted)',fontWeight:700}}>VENDOR PERFORMANCE</div>
-                <div style={{fontSize:9,color:'var(--text-muted)'}}>heat: green &lt;24h · red &gt;72h</div>
-              </div>
-              <div style={{overflowX:'auto'}}>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                  <thead>
-                    <tr style={{borderBottom:'1px solid var(--border)'}}>
-                      {['Vendor','Total Orders','Stuck Now','Avg Dispatch','Avg Wait (stuck)'].map(h=>(
-                        <th key={h} style={{textAlign:'left',padding:'8px 16px',color:'var(--text-muted)',fontWeight:600,fontSize:9,textTransform:'uppercase',letterSpacing:1.5,whiteSpace:'nowrap'}}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scorecard.vendorScores.map((v,i)=>(
-                      <tr key={i} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'transparent':'var(--bg-hover)'}}>
-                        <td style={{padding:'10px 16px',fontWeight:700,color:'var(--text)',letterSpacing:0.5}}>{v.vendor}</td>
-                        <td style={{padding:'10px 16px',color:'var(--text-dim)'}}>{v.totalOrders}</td>
-                        <td style={{padding:'10px 16px'}}>
-                          {v.stuckCount>0
-                            ? <span style={{color:'#f59e0b',fontWeight:700,background:'rgba(245,158,11,0.1)',borderRadius:4,padding:'2px 7px'}}>{v.stuckCount}</span>
-                            : <span style={{color:'var(--text-muted)'}}>—</span>}
-                        </td>
-                        <td style={{padding:'10px 16px',fontWeight:700,color:hC(v.avgDispatchHrs),fontFamily:"'Anton',sans-serif",fontSize:14}}>{fmtH(v.avgDispatchHrs)}</td>
-                        <td style={{padding:'10px 16px',fontWeight:700,color:hC(v.avgPendingHrs),fontFamily:"'Anton',sans-serif",fontSize:14}}>{fmtH(v.avgPendingHrs)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          );
-        })()}
+            );
+          })()}
 
           {/* ── Revenue Leakage Funnel ── */}
           {!aLoading && a?.fulfillStats && (() => {
@@ -4251,6 +4317,7 @@
             </div>
           );
         })()}
+
       </div>
     );
   }
