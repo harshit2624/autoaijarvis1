@@ -3477,6 +3477,590 @@
           );
         })()}
 
+          {/* ── Revenue Leakage Funnel ── */}
+          {!aLoading && a?.fulfillStats && (() => {
+            const fs = a.fulfillStats;
+            const sm = fs.stageMap || {};
+            const gross = (fs.revDispatched||0)+(fs.revPending||0)+(fs.revNotConfirmed||0)+(fs.revCancelled||0);
+            if (!gross) return null;
+
+            const pct = v => gross > 0 ? (v/gross*100).toFixed(1) : '0.0';
+
+            // Gate values
+            const lostNotConfirmed = (fs.revCancelled||0)+(fs.revHold||0)+(fs.revMisc||0);
+            const reachConfirmed   = gross - lostNotConfirmed;
+            const lostNotDispatched= fs.revPending||0; // confirmed but not yet dispatched
+            const reachDispatched  = fs.revDispatched||0;
+            const lostInTransit    = (fs.revTransit||0)+(fs.revPickup||0)+(fs.revReady||0)+(fs.revOfd||0); // dispatched but not settled
+            const lostRto          = fs.revRto||0;
+            const delivered        = fs.revDelivered||0;
+
+            const Gate = ({label, gross: g, lost, lostLabel, lostBreakdown, color, barColor}) => {
+              const retained = g - (lost||0);
+              const leakPct  = g > 0 ? ((lost||0)/g*100).toFixed(1) : '0.0';
+              return (
+                <div style={{marginBottom:0}}>
+                  {/* Gate header */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0 4px'}}>
+                    <div style={{width:10,height:10,borderRadius:'50%',background:color,flexShrink:0}}/>
+                    <div style={{flex:1,fontSize:11,fontWeight:800,letterSpacing:0.5,color,textTransform:'uppercase'}}>{label}</div>
+                    <div style={{fontSize:13,fontWeight:900,color}}>{fmtCur(g)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',minWidth:40,textAlign:'right'}}>{pct(g)}%</div>
+                  </div>
+                  {/* Full-width bar showing leakage */}
+                  <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',margin:'2px 0 4px'}}>
+                    <div style={{height:'100%',width:`${g>0?(retained/g*100):0}%`,background:barColor,borderRadius:3,transition:'width 0.3s'}}/>
+                  </div>
+                  {/* Leakage breakdown */}
+                  {lost > 0 && (
+                    <div style={{paddingLeft:20,marginBottom:4}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6,padding:'2px 0'}}>
+                        <span style={{fontSize:10,color:'#ef4444',fontWeight:700}}>↳ Leaked: {fmtCur(lost)} ({leakPct}% of gate)</span>
+                      </div>
+                      {lostBreakdown && lostBreakdown.map(([lbl,val,c])=> val>0 && (
+                        <div key={lbl} style={{display:'flex',gap:6,padding:'1px 0 1px 10px',fontSize:10,color:'var(--text-dim)'}}>
+                          <span style={{color:c||'#ef4444',fontWeight:600,minWidth:12}}>·</span>
+                          <span style={{flex:1}}>{lbl}</span>
+                          <span style={{fontWeight:700,color:c||'#ef4444'}}>{fmtCur(val)}</span>
+                          <span style={{color:'var(--text-muted)',minWidth:36,textAlign:'right'}}>{g>0?(val/g*100).toFixed(1):0}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            const rtoRate = fs.dispatched > 0 ? ((fs.rto||0)/fs.dispatched*100).toFixed(0) : 0;
+            const convRate= gross > 0 ? (delivered/gross*100).toFixed(1) : 0;
+
+            return (
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-header">
+                  <span className="card-title">🔻 Revenue Leakage Funnel</span>
+                  <span className="card-sub">Where gross sales bleed out · {periodLabel}</span>
+                </div>
+                <div style={{padding:'12px 16px'}}>
+
+                  {/* Gross bar */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8,padding:'6px 10px',background:'var(--bg-alt)',borderRadius:8}}>
+                    <div style={{fontSize:10,fontWeight:800,letterSpacing:1,color:'var(--text-dim)',textTransform:'uppercase',flex:1}}>Gross Sales</div>
+                    <div style={{fontSize:16,fontWeight:900,color:'var(--text)'}}>{fmtCur(gross)}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)'}}>100%</div>
+                  </div>
+
+                  {/* Connector */}
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  <Gate
+                    label="Not Confirmed Gate"
+                    g={gross}
+                    lost={lostNotConfirmed}
+                    barColor="#94a3b8"
+                    color="#64748b"
+                    lostBreakdown={[
+                      ['Cancelled', fs.revCancelled||0, '#ef4444'],
+                      ['On Hold',   fs.revHold||0,      '#f59e0b'],
+                      ['Misc',      fs.revMisc||0,      '#94a3b8'],
+                    ]}
+                  />
+
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  <Gate
+                    label="Dispatch Gate"
+                    g={reachConfirmed}
+                    lost={lostNotDispatched}
+                    barColor="#f59e0b"
+                    color="#d97706"
+                    lostBreakdown={[
+                      ['Confirmed (not shipped)', fs.revConfirmedStage||0, '#f59e0b'],
+                      ['Partial paid (pending)',  fs.revPartial||0,        '#fbbf24'],
+                    ]}
+                  />
+
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  <Gate
+                    label="Transit Gate"
+                    g={reachDispatched}
+                    lost={lostInTransit + lostRto}
+                    barColor="#60a5fa"
+                    color="#3b82f6"
+                    lostBreakdown={[
+                      ['RTO (returning)',     lostRto,          '#ef4444'],
+                      ['In Transit',         fs.revTransit||0, '#60a5fa'],
+                      ['Out for Delivery',   fs.revOfd||0,     '#34d399'],
+                      ['Pickup Pending',     fs.revPickup||0,  '#93c5fd'],
+                      ['Ready / Packed',     fs.revReady||0,   '#bfdbfe'],
+                    ]}
+                  />
+
+                  <div style={{width:2,height:8,background:'var(--border)',margin:'0 auto 0 14px'}}/>
+
+                  {/* Delivered — final */}
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'#10b98112',border:'1px solid #10b98130',borderRadius:8,marginTop:2}}>
+                    <div style={{width:10,height:10,borderRadius:'50%',background:'#10b981',flexShrink:0}}/>
+                    <div style={{flex:1,fontSize:11,fontWeight:800,letterSpacing:0.5,color:'#10b981',textTransform:'uppercase'}}>✅ Delivered</div>
+                    <div style={{fontSize:14,fontWeight:900,color:'#10b981'}}>{fmtCur(delivered)}</div>
+                    <div style={{fontSize:10,color:'#10b981',fontWeight:700}}>{pct(delivered)}% of gross</div>
+                  </div>
+
+                  {/* Summary strip */}
+                  <div style={{marginTop:12,display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <div style={{flex:1,minWidth:100,padding:'8px 12px',background:'#10b98110',borderRadius:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#10b981',fontWeight:700,marginBottom:2}}>Conversion</div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#10b981'}}>{convRate}%</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>gross → delivered</div>
+                    </div>
+                    <div style={{flex:1,minWidth:100,padding:'8px 12px',background:'#ef444410',borderRadius:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#ef4444',fontWeight:700,marginBottom:2}}>Total Leaked</div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#ef4444'}}>{fmtCur(gross-delivered)}</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>not yet delivered</div>
+                    </div>
+                    <div style={{flex:1,minWidth:100,padding:'8px 12px',background:'#f59e0b10',borderRadius:8,textAlign:'center'}}>
+                      <div style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',color:'#f59e0b',fontWeight:700,marginBottom:2}}>RTO Rate</div>
+                      <div style={{fontSize:18,fontWeight:900,color:'#f59e0b'}}>{rtoRate}%</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)'}}>of dispatched orders</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Dispatch Quality card — turnaround time from confirmed → dispatched */}
+          {!aLoading && a?.dispatchQuality && (() => {
+            const dq = a.dispatchQuality;
+            const Seg = ({label, icon, count, pct, color, sub}) => (
+              <div style={{background:`${color}12`,border:`1px solid ${color}35`,borderRadius:8,padding:'12px 14px',display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:140}}>
+                <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color,fontWeight:700}}>{icon} {label}</div>
+                <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                  <span style={{fontSize:26,fontWeight:900,color,lineHeight:1}}>{count}</span>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>orders · {pct}%</span>
+                </div>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>{sub}</div>
+              </div>
+            );
+            return (
+              <div className="card" style={{marginBottom:12}}>
+                <div className="card-header">
+                  <span className="card-title">⏱ Dispatch Quality</span>
+                  <span className="card-sub">Time from order confirmation to dispatch (ready/pickup) · {periodLabel}</span>
+                </div>
+                <div style={{padding:16}}>
+                  {dq.total === 0 ? (
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>
+                      No dispatch-timing data yet for this period. Tracking started recently — this card will populate as orders move from Confirmed/Partial to Ready/Pickup going forward.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>{dq.total} orders dispatched with timing data</span>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>·</span>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>Avg dispatch time: <strong style={{color:'var(--text)'}}>{dq.avgHours < 24 ? `${dq.avgHours}h` : `${(dq.avgHours/24).toFixed(1)}d`}</strong></span>
+                      </div>
+                      <div style={{height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',display:'flex',marginBottom:12}}>
+                        <div style={{height:'100%',width:`${dq.veryGoodPct}%`,background:'#6366f1'}}/>
+                        <div style={{height:'100%',width:`${dq.goodPct}%`,background:'#10b981'}}/>
+                        <div style={{height:'100%',width:`${dq.finePct}%`,background:'#3b82f6'}}/>
+                        <div style={{height:'100%',width:`${dq.badPct}%`,background:'#f59e0b'}}/>
+                        <div style={{height:'100%',width:`${dq.veryBadPct}%`,background:'#ef4444'}}/>
+                      </div>
+                      <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:dq.topOffenders.length?14:0}}>
+                        <Seg label="Very Good" icon="⚡" count={dq.veryGood} pct={dq.veryGoodPct} color="#6366f1" sub="Dispatched within 30 hrs"/>
+                        <Seg label="Good"      icon="✅" count={dq.good}     pct={dq.goodPct}     color="#10b981" sub="Dispatched within 48 hrs"/>
+                        <Seg label="Fine"      icon="🔵" count={dq.fine}     pct={dq.finePct}     color="#3b82f6" sub="Dispatched within 4 days"/>
+                        <Seg label="Bad"       icon="⚠️" count={dq.bad}      pct={dq.badPct}      color="#f59e0b" sub="Dispatched in 4–7 days"/>
+                        <Seg label="Very Bad"  icon="🔴" count={dq.veryBad}  pct={dq.veryBadPct}  color="#ef4444" sub="Dispatched after 7 days"/>
+                      </div>
+                      {dq.topOffenders.length > 0 && (
+                        <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
+                          <div style={{fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>Vendors with most delayed dispatches</div>
+                          {dq.topOffenders.map(v=>(
+                            <div key={v.vendor} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{fontSize:12,fontWeight:600}}>{v.vendor}</span>
+                              <div style={{display:'flex',gap:8}}>
+                                {v.bad>0 && <span style={{fontSize:11,fontWeight:700,color:'#f59e0b'}}>{v.bad} bad</span>}
+                                {v.veryBad>0 && <span style={{fontSize:11,fontWeight:700,color:'#ef4444'}}>{v.veryBad} very bad</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Prepaid vs COD stat card */}
+          {!aLoading && a?.paymentSplit && (() => {
+            const { prepaid=0, cod=0, partial=0 } = a.paymentSplit;
+            const total = prepaid + cod + partial || 1;
+            const prepaidPct = Math.round(prepaid / total * 100);
+            const codPct     = Math.round(cod     / total * 100);
+            const partialPct = Math.round(partial / total * 100);
+            return (
+              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px',minWidth:200}}>
+                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:10}}>💳 Payment Split · {periodLabel}</div>
+                {[
+                  {label:'Prepaid', pct:prepaidPct, count:prepaid, color:'#10b981', bg:'rgba(16,185,129,0.12)'},
+                  {label:'COD',     pct:codPct,     count:cod,     color:'#f59e0b', bg:'rgba(245,158,11,0.12)'},
+                  {label:'Advance', pct:partialPct, count:partial, color:'#a78bfa', bg:'rgba(167,139,250,0.12)'},
+                ].map(r=>(
+                  <div key={r.label} style={{marginBottom:8}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,alignItems:'center'}}>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>{r.label}</span>
+                      <span style={{display:'flex',alignItems:'center',gap:6}}>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>{r.count}</span>
+                        <span style={{fontSize:13,fontWeight:800,color:r.color,minWidth:34,textAlign:'right'}}>{r.pct}%</span>
+                      </span>
+                    </div>
+                    <div style={{height:5,borderRadius:3,background:'var(--border)',overflow:'hidden'}}>
+                      <div style={{height:'100%',width:r.pct+'%',background:r.color,borderRadius:3,transition:'width 0.4s'}}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+        {/* Stage breakdown — respects period */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Order Pipeline</span>
+            <span className="card-sub">{periodLabel} · click to filter orders</span>
+          </div>
+          <div style={{padding:'16px',display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
+            {aLoading ? Array.from({length:9}).map((_,i)=>(
+              <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14}}>
+                <div className="skel" style={{height:10,width:80,marginBottom:8}}/>
+                <div className="skel" style={{height:22,width:40}}/>
+              </div>
+            )) : stages.map(s=>(
+              <div key={s.id}
+                onClick={()=>onStageClick(s.id)}
+                style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14,cursor:'pointer',transition:'border-color 0.15s'}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border-hi)'}
+                onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}
+              >
+                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6,display:'flex',alignItems:'center',gap:5}}><Icon name={s.id} mode={iconStyle} fallback={s.icon}/> {s.label}</div>
+                <div style={{fontSize:24,fontWeight:700,color:stageColor(s.id)}}>
+                  {sc[s.id]||0}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── FOUNDER ANALYTICS ── */}
+        <div className="card" style={{marginTop:0}}>
+          <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:12,flexWrap:'wrap',gap:8}}>
+            <span className="card-title">📊 Founder Analytics</span>
+            <div style={{display:'flex',gap:6}}>
+              {[
+                {id:'overview', label:'Overview'},
+                {id:'vendors',  label:'🚚 Vendor Fulfillment'},
+                {id:'products', label:'Products'},
+                {id:'brands',   label:'Brands'},
+                {id:'cities',   label:'Cities'},
+              ].map(t=>(
+                <button key={t.id} onClick={()=>setATab(t.id)}
+                  style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid '+(aTab===t.id?'var(--indigo)':'var(--border)'),
+                    background:aTab===t.id?'var(--indigo)':'transparent',color:aTab===t.id?'#fff':'var(--text-muted)',cursor:'pointer',
+                    fontWeight:t.id==='vendors'&&aTab!==t.id?600:400}}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {aLoading ? (
+            <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>Loading analytics…</div>
+          ) : (!a || !a.summary || !a.summary.today || !a.summary.last7d || !a.summary.period || !a.paymentSplit || !a.fulfillStats) ? (
+            // Guards every nested key the overview tab below assumes exists —
+            // a partial /admin/analytics response (slow Mongo aggregation,
+            // transient backend error) used to throw deep in this JSX with no
+            // error boundary, white-screening the whole admin panel right
+            // after login since Dashboard is the default landing view.
+            <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>Analytics unavailable</div>
+          ) : aTab==='overview' ? (
+            <div style={{padding:16}}>
+              {/* KPI row — all respect selected period */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:16}}>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Today Orders</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#6366f1'}}>{a.summary.today.orders}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{'₹'+(a.summary.today.revenue||0).toLocaleString()}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Last 7 Days</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#06b6d4'}}>{'₹'+(a.summary.last7d.revenue||0).toLocaleString()}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{a.summary.last7d.orders} orders · AOV {'₹'+a.summary.last7d.aov}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>{'Revenue ('+periodLabel+')'}</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#10b981'}}>{'₹'+(a.summary.period.revenue||0).toLocaleString()}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',flexWrap:'wrap',gap:2}}>{'vs prior '+periodDays+'d'}<GrowthBadge val={a.summary.revenueGrowth}/></div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>{'Orders ('+periodLabel+')'}</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#f59e0b'}}>{a.summary.period.orders}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,display:'flex',alignItems:'center',flexWrap:'wrap',gap:2}}>{'vs prior '+periodDays+'d'}<GrowthBadge val={a.summary.orderGrowth}/></div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Dispatch Rate</div>
+                  <div style={{fontSize:20,fontWeight:800,color:fulfillColor}}>{fulfillPct}%</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{(a.fulfillStats?.dispatched||0)+' of '+(a.fulfillStats?.confirmed||0)+' confirmed · '+periodLabel}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>RTO Rate</div>
+                  <div style={{fontSize:20,fontWeight:800,color:(a.summary.rtoRate30||0)>10?'#ef4444':'#10b981'}}>{a.summary.rtoRate30||0}%</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{'returns · '+periodLabel}</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Repeat Buyers</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#a78bfa'}}>{a.summary.repeatRate||0}%</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{a.summary.repeatCustomers} of {a.summary.totalCustomers} customers</div>
+                </div>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:1.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Avg Order Value</div>
+                  <div style={{fontSize:20,fontWeight:800,color:'#06b6d4'}}>{'₹'+(a.summary.period.aov||0)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{periodLabel}</div>
+                </div>
+              </div>
+
+              {/* Revenue trend bar chart */}
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px',gridColumn:'1/-1'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:1}}>{'Daily Sales · '+periodLabel}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)'}}>Purple = revenue scale · numbers above = total / confirmed orders</div>
+                </div>
+                <Sparkline data={a.trend14d} color='#6366f1'/>
+              </div>
+
+              {/* Fulfillment + Payment split */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:10}}>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px'}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:1}}>{'Fulfillment · '+periodLabel}</div>
+                  {[
+                    {label:'Fulfilled',      val:a.fulfillStats.fulfilled,    color:'#10b981'},
+                    {label:'Unfulfilled',    val:a.fulfillStats.unfulfilled,  color:'#ef4444'},
+                    {label:'Partial Ship',   val:a.fulfillStats.partial_ship, color:'#f59e0b'},
+                    {label:'Cancelled',      val:a.fulfillStats.cancelled,    color:'#6b7280'},
+                    {label:'RTO',            val:a.fulfillStats.rto,          color:'#a78bfa'},
+                  ].map(r=>(
+                    <div key={r.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                      <span style={{fontSize:12,color:'var(--text-muted)'}}>{r.label}</span>
+                      <span style={{fontSize:13,fontWeight:700,color:r.color}}>{r.val}</span>
+                    </div>
+                  ))}
+                  <div style={{marginTop:8,height:4,borderRadius:2,background:'var(--border)',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${fulfillPct}%`,background:fulfillColor,borderRadius:2,transition:'width 0.4s'}}/>
+                  </div>
+                  <div style={{fontSize:10,color:fulfillColor,marginTop:4,fontWeight:700}}>{fulfillPct}% fulfillment rate</div>
+                </div>
+
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px'}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',marginBottom:10,textTransform:'uppercase',letterSpacing:1}}>{'Payment Split · '+periodLabel}</div>
+                  {[
+                    {label:'Prepaid',  val:a.paymentSplit.prepaid, color:'#10b981'},
+                    {label:'COD',      val:a.paymentSplit.cod,     color:'#f59e0b'},
+                    {label:'Advance',  val:a.paymentSplit.partial, color:'#6366f1'},
+                  ].map(r=>{
+                    const total = a.paymentSplit.prepaid + a.paymentSplit.cod + a.paymentSplit.partial || 1;
+                    const pct   = Math.round(r.val/total*100);
+                    return (
+                      <div key={r.label} style={{marginBottom:10}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                          <span style={{fontSize:12,color:'var(--text-muted)'}}>{r.label}</span>
+                          <span style={{fontSize:12,fontWeight:700,color:r.color}}>{r.val} <span style={{fontSize:10,fontWeight:400}}>({pct}%)</span></span>
+                        </div>
+                        <div style={{height:4,borderRadius:2,background:'var(--border)'}}>
+                          <div style={{height:'100%',width:`${pct}%`,background:r.color,borderRadius:2}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+          ) : aTab==='vendors' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Vendor fulfillment · {periodLabel} · sorted by most pending · min 3 orders</div>
+              {!(a.vendorLeaderboard||[]).length ? (
+                <div style={{color:'var(--text-muted)',fontSize:12}}>No vendor data yet.</div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                  {(a.vendorLeaderboard||[]).map((v,i)=>{
+                    const color = v.dispatchRate>=80?'#10b981':v.dispatchRate>=50?'#f59e0b':'#ef4444';
+                    return <VendorDispatchCard key={v.vendor} v={v} color={color} rank={i+1}/>;
+                  })}
+                </div>
+              )}
+            </div>
+
+          ) : aTab==='products' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>{'Top products by units sold · '+periodLabel}</div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    <th style={{textAlign:'left',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>#</th>
+                    <th style={{textAlign:'left',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Product</th>
+                    <th style={{textAlign:'left',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Brand</th>
+                    <th style={{textAlign:'right',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Units</th>
+                    <th style={{textAlign:'right',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Orders</th>
+                    <th style={{textAlign:'right',padding:'6px 8px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase'}}>Revenue</th>
+                  </tr></thead>
+                  <tbody>
+                    {(a.topProducts||[]).map((p,i)=>(
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'8px',color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                        <td style={{padding:'8px',color:'var(--text)',fontWeight:500,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.title}</td>
+                        <td style={{padding:'8px',color:'var(--text-muted)',fontSize:11}}>{p.vendor}</td>
+                        <td style={{padding:'8px',textAlign:'right',fontWeight:700,color:'#6366f1'}}>{p.qty}</td>
+                        <td style={{padding:'8px',textAlign:'right',color:'var(--text-muted)'}}>{p.orders}</td>
+                        <td style={{padding:'8px',textAlign:'right',fontWeight:600,color:'#10b981'}}>₹{p.revenue.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          ) : aTab==='brands' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>{'Top brands by revenue · '+periodLabel}</div>
+              {(a.topBrands||[]).map((b,i)=>{
+                const maxRev = a.topBrands[0]?.revenue || 1;
+                const pct = Math.round(b.revenue/maxRev*100);
+                const colors = ['#6366f1','#06b6d4','#10b981','#f59e0b','#a78bfa','#ec4899','#ef4444','#14b8a6'];
+                return (
+                  <div key={i} style={{marginBottom:12}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                      <span style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{b.name}</span>
+                      <span style={{fontSize:12,color:'var(--text-muted)'}}>{b.qty} units · {b.orders} orders · <span style={{color:'#10b981',fontWeight:700}}>₹{b.revenue.toLocaleString()}</span></span>
+                    </div>
+                    <div style={{height:6,borderRadius:3,background:'var(--border)'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:colors[i%colors.length],borderRadius:3,transition:'width 0.4s'}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+          ) : aTab==='cities' ? (
+            <div style={{padding:16}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>{'Top delivery cities · '+periodLabel}</div>
+              {(a.topCities||[]).map((c,i)=>{
+                const maxC = a.topCities[0]?.count || 1;
+                const pct = Math.round(c.count/maxC*100);
+                return (
+                  <div key={i} style={{marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+                      <span style={{fontSize:13,fontWeight:500,color:'var(--text)'}}>{c.city}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:'#6366f1'}}>{c.count} orders</span>
+                    </div>
+                    <div style={{height:5,borderRadius:2,background:'var(--border)'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:'#6366f1',borderRadius:2,opacity:0.5+0.5*(pct/100)}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
+        {/* ── CRITICAL STUCK ORDERS ── */}
+        {scorecard && (scorecard.stuckOrders||[]).length > 0 && (() => {
+          const fmtH = h => h==null?'—':h<1?Math.round(h*60)+'m':h<24?h.toFixed(1)+'h':Math.floor(h/24)+'d '+Math.round(h%24)+'h';
+          const heatC = h => h==null?'var(--text-muted)':h>72?'#ef4444':h>48?'#f97316':h>24?'#f59e0b':'#10b981';
+          // Sort: prepaid > partial > cod, then by hours stuck desc
+          const payWeight = o => o.payType==='prepaid'?3:o.payType==='partial'?2:1;
+          const sorted = [...(scorecard.stuckOrders||[])].sort((a,b)=>{
+            const pa = payWeight(a), pb = payWeight(b);
+            if (pa!==pb) return pb-pa;
+            return b.hrs-a.hrs;
+          });
+          return (
+            <div className="card" style={{marginTop:16}}>
+              <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
+                <span className="card-title">🚨 Critical Stuck Orders</span>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>Pickup-pending · sorted by severity (partial/confirmed first) then time stuck</span>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    {['Order','Vendor','Stage','Time Stuck'].map(h=>(
+                      <th key={h} style={{textAlign:'left',padding:'8px 12px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:1,whiteSpace:'nowrap'}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {sorted.slice(0,10).map((o,i)=>{
+                      const isPrepaid = o.payType==='prepaid';
+                      const isPartial = o.payType==='partial';
+                      const isHigh = isPrepaid||isPartial;
+                      const stageColor = isHigh?'#ef4444':'#f59e0b';
+                      return (
+                        <tr key={i} style={{borderBottom:'1px solid var(--border)',background:isPrepaid?'rgba(239,68,68,0.06)':isPartial?'rgba(99,102,241,0.05)':'transparent'}}>
+                          <td style={{padding:'10px 12px',fontWeight:700,color:'var(--indigo)'}}>{o.order_name}</td>
+                          <td style={{padding:'10px 12px',color:'var(--text)'}}>{o.vendor}
+                            {isPrepaid&&<span style={{marginLeft:6,fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(16,185,129,0.15)',color:'#10b981',border:'1px solid rgba(16,185,129,0.3)',fontWeight:700}}>PREPAID</span>}
+                            {isPartial&&<span style={{marginLeft:6,fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(99,102,241,0.15)',color:'#6366f1',border:'1px solid rgba(99,102,241,0.3)',fontWeight:700}}>ADVANCE</span>}
+                          </td>
+                          <td style={{padding:'10px 12px'}}>
+                            <span style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,textTransform:'uppercase',
+                              background:isHigh?'rgba(239,68,68,0.15)':'rgba(245,158,11,0.15)',
+                              color:stageColor,border:`1px solid ${isHigh?'rgba(239,68,68,0.3)':'rgba(245,158,11,0.3)'}`}}>{o.stage}</span>
+                          </td>
+                          <td style={{padding:'10px 12px',fontWeight:700,color:heatC(o.hrs)}}>{fmtH(o.hrs)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── VENDOR TIMING PERFORMANCE ── */}
+        {scorecard && (scorecard.vendorScores||[]).length > 0 && (() => {
+          const fmtH = h => h==null?'—':h<1?Math.round(h*60)+'m':h<24?h.toFixed(1)+'h':Math.floor(h/24)+'d '+Math.round(h%24)+'h';
+          const heatC = h => h==null?'var(--text-muted)':h>72?'#ef4444':h>48?'#f97316':h>24?'#f59e0b':'#10b981';
+          return (
+            <div className="card" style={{marginTop:16}}>
+              <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
+                <span className="card-title">📊 Vendor Dispatch Timing</span>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>Avg confirmed → dispatch · heat: green &lt;24h · red &gt;72h</span>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr style={{borderBottom:'1px solid var(--border)'}}>
+                    {['Vendor','Total','Stuck Now','Avg Dispatch Time','Avg Wait (stuck)'].map(h=>(
+                      <th key={h} style={{textAlign:'left',padding:'8px 12px',color:'var(--text-muted)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:1,whiteSpace:'nowrap'}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {(scorecard.vendorScores||[]).map((v,i)=>(
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)',background:i%2===0?'transparent':'rgba(255,255,255,0.01)'}}>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:'var(--text)'}}>{v.vendor}</td>
+                        <td style={{padding:'10px 12px',color:'var(--text-dim)'}}>{v.totalOrders}</td>
+                        <td style={{padding:'10px 12px',color:v.stuckCount>0?'#f59e0b':'var(--text-muted)',fontWeight:v.stuckCount>0?700:400}}>{v.stuckCount||'—'}</td>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:heatC(v.avgDispatchHrs)}}>{fmtH(v.avgDispatchHrs)}</td>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:heatC(v.avgPendingHrs)}}>{fmtH(v.avgPendingHrs)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
