@@ -16046,12 +16046,16 @@
                           fontSize:11,cursor:(!hasPhone||waSent[key])?'default':'pointer',fontFamily:'inherit',fontWeight:600}}>
                         {waSending[key]?'Sending…':waSent[key]?'✅ WA Sent':!hasPhone?'📵 No Phone':'📲 Send WA'}
                       </button>
-                      {c.abandoned_checkout_url && (
-                        <a href={c.abandoned_checkout_url} target="_blank" rel="noreferrer"
-                          style={{padding:'5px 14px',borderRadius:6,border:'1px solid rgba(99,102,241,0.4)',background:'rgba(99,102,241,0.08)',color:'var(--indigo)',fontSize:11,textDecoration:'none',fontWeight:600}}>
-                          🔗 Recovery Link
-                        </a>
-                      )}
+                      {(()=>{
+                        const gkUrl = typeof c.note==='string'&&c.note.includes('mrid=') ? c.note.trim() : '';
+                        const recUrl = gkUrl || c.abandoned_checkout_url || '';
+                        return recUrl ? (
+                          <a href={recUrl} target="_blank" rel="noreferrer"
+                            style={{padding:'5px 14px',borderRadius:6,border:'1px solid rgba(99,102,241,0.4)',background:'rgba(99,102,241,0.08)',color:'var(--indigo)',fontSize:11,textDecoration:'none',fontWeight:600}}>
+                            {gkUrl ? '🔗 GoKwik Link' : '🔗 Recovery Link'}
+                          </a>
+                        ) : null;
+                      })()}
                       <button onClick={()=>navigator.clipboard.writeText(JSON.stringify(c,null,2))} style={{padding:'4px 10px',borderRadius:5,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:10,cursor:'pointer',fontFamily:'inherit'}}>📋 Copy raw</button>
                     </div>
                   </div>

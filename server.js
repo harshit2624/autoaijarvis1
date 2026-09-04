@@ -22481,7 +22481,8 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     const lastName    = gkCustomer.lastname  || gkCustomer.last_name  || payload.last_name  || '';
     const name        = `${firstName} ${lastName}`.trim() || payload.name || 'there';
     const cartId      = payload.request_id   || payload.checkout_id || payload.cart_id || payload.id || '';
-    const checkoutUrl = payload.checkout_url || payload.recovery_url || payload.abandon_url || '';
+    // GoKwik recovery URL is https://croscrow.com?mrid={request_id} (confirmed from Shopify checkout notes)
+    const checkoutUrl = payload.checkout_url || payload.recovery_url || payload.abandon_url || (cartId ? `https://croscrow.com?mrid=${cartId}` : '');
     const subtotal    = parseFloat(payload.items_subtotal_price || payload.total_price || payload.total || 0);
     const codCharges  = parseFloat(payload.cod_charges || 0);
     const total       = subtotal + codCharges || parseFloat(payload.amount || payload.cart_value || 0);
@@ -22514,8 +22515,7 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     const discountCode = 'COMEBACK';
     const discountAmt  = 150;
 
-    // GoKwik recovery URL: https://croscrow.com?mrid={request_id} (stored in Shopify checkout notes)
-    const buyUrl = checkoutUrl || payload.recovery_url || (cartId ? `https://croscrow.com?mrid=${cartId}` : `https://croscrow.com`);
+    const buyUrl = checkoutUrl || `https://croscrow.com`;
     const afterDiscount = Math.max(0, total - discountAmt);
     const gkItemLines = items.slice(0,2).map(it =>
       `▸ ${it.title}${it.quantity>1?' ×'+it.quantity:''}`
@@ -22584,7 +22584,9 @@ app.post('/admin/shopify-abandoned-checkouts/send-wa', adminAuth, async (req, re
     const name      = `${firstName} ${lastName}`.trim() || cust.email || 'there';
     const phone     = String(shipping.phone || cust.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
     const total     = parseFloat(c.total_price || 0);
-    const checkoutUrl = c.abandoned_checkout_url || '';
+    // Prefer GoKwik mrid URL saved in Shopify checkout note field over Shopify's own recovery link
+    const gokwikNote = typeof c.note === 'string' && c.note.includes('mrid=') ? c.note.trim() : '';
+    const checkoutUrl = gokwikNote || c.abandoned_checkout_url || '';
 
     if (!phone || phone.length !== 10) return res.status(400).json({ error: 'No valid phone number in checkout' });
 
