@@ -22514,8 +22514,8 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     const discountCode = 'COMEBACK';
     const discountAmt  = 150;
 
-    // GoKwik doesn't send a recovery URL in webhook — construct GoKwik checkout link
-    const buyUrl = checkoutUrl || payload.recovery_url || `https://croscrow.com/a/gokwik/checkout`;
+    // GoKwik recovery URL: https://croscrow.com?mrid={request_id} (stored in Shopify checkout notes)
+    const buyUrl = checkoutUrl || payload.recovery_url || (cartId ? `https://croscrow.com?mrid=${cartId}` : `https://croscrow.com`);
     const afterDiscount = Math.max(0, total - discountAmt);
     const gkItemLines = items.slice(0,2).map(it =>
       `▸ ${it.title}${it.quantity>1?' ×'+it.quantity:''}`
