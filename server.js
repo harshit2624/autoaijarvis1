@@ -22508,22 +22508,8 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     // ── WhatsApp recovery message ─────────────────────────────────────────
     if (!phone || phone.length !== 10) return;
 
-    // Pick discount: 10% off, minimum ₹50, capped at ₹500
-    const discountAmt = Math.min(Math.max(Math.round(total * 0.10 / 10) * 10, 50), 500);
-    // Use closest GoKwik fixed code at or below discount amount
-    const GK_CODES = [
-      { min: 1000, code: 'CCMINE1000-W1Y' },
-      { min: 800,  code: 'CCMINE800-H6F'  },
-      { min: 600,  code: 'CCMINE600-D3V'  },
-      { min: 500,  code: 'CCMINE500-P8Z'  },
-      { min: 400,  code: 'CCMINE400-J5N'  },
-      { min: 300,  code: 'CCMINE300-R9M'  },
-      { min: 200,  code: 'CCMINE200-B2Q'  },
-      { min: 100,  code: 'CCMINE100-K7X'  },
-      { min: 50,   code: 'CCMINE50-T4W'   },
-    ];
-    const codeEntry = GK_CODES.find(c => discountAmt >= c.min) || GK_CODES[GK_CODES.length - 1];
-    const discountCode = codeEntry.code;
+    const discountCode = 'COMEBACK';
+    const discountAmt  = 150;
 
     // Build product summary (top 2 items)
     const topItems = items.slice(0, 2);
@@ -22541,7 +22527,7 @@ ${itemLines}${moreItems ? '\n' + moreItems : ''}
 
 *Cart Total: ₹${total.toFixed(0)}*
 
-Use code *${discountCode}* to get *₹${discountAmt} OFF* on your order 🎁
+Use code *${discountCode}* to get *₹${discountAmt} FLAT OFF* — no minimum order 🎁
 
 👉 Complete your order here:
 ${buyUrl}
