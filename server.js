@@ -22514,30 +22514,29 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     const discountCode = 'COMEBACK';
     const discountAmt  = 150;
 
-    // Build product summary (top 2 items)
-    const topItems = items.slice(0, 2);
-    const itemLines = topItems.map(it => `  • ${it.title}${it.quantity > 1 ? ` ×${it.quantity}` : ''} — ₹${it.price}`).join('\n');
-    const moreItems = items.length > 2 ? `  + ${items.length - 2} more item${items.length - 2 > 1 ? 's' : ''}` : '';
-
     const buyUrl = checkoutUrl || `https://croscrow.com`;
+    const afterDiscount = Math.max(0, total - discountAmt);
+    const gkItemLines = items.slice(0,2).map(it =>
+      `▸ ${it.title}${it.quantity>1?' ×'+it.quantity:''}`
+    ).join('\n');
+    const gkMoreTag = items.length > 2 ? `  +${items.length-2} more` : '';
+    const _D = '────────────────';
 
     const waMsg =
-`🛒 Hey ${firstName || name}!
+`▪ C R O S C R O W ▪
+${_D}
+CART RECOVERY
 
-You left something behind on *CROSCROW* ✨
+${gkItemLines}${gkMoreTag?'\n'+gkMoreTag:''}
 
-${itemLines}${moreItems ? '\n' + moreItems : ''}
-
-*Cart Total: ₹${total.toFixed(0)}*
-
-Use code *${discountCode}* to get *₹${discountAmt} FLAT OFF* — no minimum order 🎁
-
-👉 Complete your order here:
+MRP    ₹${total.toFixed(0)}
+CODE   ${discountCode}  −₹${discountAmt}
+PAY    ₹${afterDiscount.toFixed(0)}
+${_D}
+Complete your order:
 ${buyUrl}
-
-Offer valid for 24 hours only. Don't miss out!
-
-— CROSCROW Team`;
+${_D}
+Code expires in 24 hrs`;
 
     await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
     await mdb.collection('abandoned_carts').updateOne(
@@ -22586,35 +22585,54 @@ app.post('/admin/shopify-abandoned-checkouts/send-wa', adminAuth, async (req, re
     if (!phone || phone.length !== 10) return res.status(400).json({ error: 'No valid phone number in checkout' });
 
     const items = (c.line_items || []).map(it => ({
-      title:    it.title || '',
-      variant:  it.variant_title && it.variant_title !== 'Default Title' ? it.variant_title : '',
-      quantity: it.quantity || 1,
-      price:    parseFloat(it.price || 0),
+      title:     it.title || '',
+      variant:   it.variant_title && it.variant_title !== 'Default Title' ? it.variant_title : '',
+      quantity:  it.quantity || 1,
+      price:     parseFloat(it.price || 0),
+      product_id: it.product_id || null,
     }));
 
-    const topItems = items.slice(0, 2);
-    const itemLines = topItems.map(it => `  • ${it.title}${it.variant?' ('+it.variant+')':''}${it.quantity>1?' ×'+it.quantity:''} — ₹${it.price.toLocaleString('en-IN')}`).join('\n');
-    const moreItems = items.length > 2 ? `  + ${items.length - 2} more item${items.length-2>1?'s':''}` : '';
+    const discountAmt = 150;
+    const afterDiscount = Math.max(0, total - discountAmt);
+    const itemLines = items.slice(0,2).map(it =>
+      `▸ ${it.title}${it.variant?' / '+it.variant:''}${it.quantity>1?' ×'+it.quantity:''}`
+    ).join('\n');
+    const moreTag = items.length > 2 ? `  +${items.length-2} more` : '';
 
+    const _D = '────────────────';
     const waMsg =
-`🛒 Hey ${firstName || name}!
+`▪ C R O S C R O W ▪
+${_D}
+CART RECOVERY
 
-You left something behind on *CROSCROW* ✨
+${itemLines}${moreTag?'\n'+moreTag:''}
 
-${itemLines}${moreItems ? '\n' + moreItems : ''}
-
-*Cart Total: ₹${total.toLocaleString('en-IN')}*
-
-Use code *COMEBACK* to get *₹150 FLAT OFF* — no minimum order 🎁
-
-👉 Complete your order here:
+MRP    ₹${total.toLocaleString('en-IN')}
+CODE   COMEBACK  −₹${discountAmt}
+PAY    ₹${afterDiscount.toLocaleString('en-IN')}
+${_D}
+Complete your order:
 ${checkoutUrl}
+${_D}
+Code expires in 24 hrs`;
 
-Offer valid for 24 hours only. Don't miss out!
-
-— CROSCROW Team`;
-
-    await waSendToCustomer(phone, waMsg);
+    // Try to send with product image
+    const jid = `91${phone}@s.whatsapp.net`;
+    const firstProductId = items[0]?.product_id;
+    let imageSent = false;
+    if (firstProductId && waSocket && waConnected) {
+      try {
+        const shopToken = await getAccessToken();
+        const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${firstProductId}.json`, { headers: { 'X-Shopify-Access-Token': shopToken } });
+        const prodData = await prodRes.json();
+        const imgUrl = prodData?.product?.images?.[0]?.src;
+        if (imgUrl) {
+          await waSocket.sendMessage(jid, { image: { url: imgUrl }, caption: waMsg });
+          imageSent = true;
+        }
+      } catch(imgErr) { console.error('Product image fetch failed:', imgErr.message); }
+    }
+    if (!imageSent) await waSendToCustomer(phone, waMsg);
 
     // Log in DB
     await mdb.collection('abandoned_carts').insertOne({
