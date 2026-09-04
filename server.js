@@ -22548,16 +22548,24 @@ Offer valid for 24 hours only. Don't miss out!
   } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
 });
 
-// GET /admin/shopify-abandoned-checkouts — fetch last N from Shopify directly
+// GET /admin/shopify-abandoned-checkouts — fetch all abandoned checkouts from Shopify (paginated)
 app.get('/admin/shopify-abandoned-checkouts', adminAuth, async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit)||5, 50);
+    const limit = Math.min(parseInt(req.query.limit)||250, 250);
+    const page_info = req.query.page_info || null;
     const token = await getAccessToken();
-    const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/checkouts.json?limit=${limit}`, {
-      headers: { 'X-Shopify-Access-Token': token }
-    });
+    let url = `https://${SHOP}.myshopify.com/admin/api/2025-01/checkouts.json?limit=${limit}`;
+    if (page_info) url += `&page_info=${page_info}`;
+    const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+    // Extract next page cursor from Link header
+    const linkHeader = r.headers.get('link') || '';
+    const nextMatch = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    const nextPageInfo = nextMatch ? nextMatch[1] : null;
     const d = await r.json();
-    res.json({ checkouts: d.checkouts || [], error: d.error || null });
+    const checkouts = d.checkouts || [];
+    // Shopify returns oldest first; reverse so latest appear first when no pagination cursor
+    if (!page_info) checkouts.reverse();
+    res.json({ checkouts, next_page_info: nextPageInfo, error: d.error || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
