@@ -22467,30 +22467,32 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     const payload = req.body || {};
     console.log('🛒 RAW abandoned-cart payload:', JSON.stringify(payload, null, 2));
 
-    // ── GoKwik payload shape (their field names) ──────────────────────────
-    // GoKwik sends: checkout_id, customer{phone,email,first_name,last_name},
-    //   cart_items[{title,quantity,price,image_url,product_url}],
-    //   total_price, checkout_url, currency
+    // ── GoKwik payload shape ──────────────────────────────────────────────
+    // customer: { firstname, lastname, email, phone: "+91XXXXXXXXXX" }
+    // items: [{ name, price, quantity, product_id }]
+    // total: items_subtotal_price + cod_charges
+    // cart id: request_id
     const gkCustomer = payload.customer || {};
-    const gkItems    = payload.cart_items || payload.line_items || payload.items || [];
+    const gkItems    = payload.items || payload.cart_items || payload.line_items || [];
 
-    const phone       = String(gkCustomer.phone || payload.phone || payload.mobile || payload.customer_phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
-    const email       = gkCustomer.email        || payload.email        || payload.customer_email || '';
-    const firstName   = gkCustomer.first_name   || payload.first_name   || '';
-    const lastName    = gkCustomer.last_name    || payload.last_name    || '';
-    const name        = `${firstName} ${lastName}`.trim() || payload.name || payload.customer_name || 'there';
-    const cartId      = payload.checkout_id     || payload.cart_id      || payload.id || '';
-    const checkoutUrl = payload.checkout_url    || payload.recovery_url || payload.abandon_url || '';
-    const total       = parseFloat(payload.total_price || payload.total || payload.amount || payload.cart_value || 0);
+    const phone       = String(gkCustomer.phone || payload.phone || payload.mobile || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+    const email       = gkCustomer.email     || payload.email     || '';
+    const firstName   = gkCustomer.firstname || gkCustomer.first_name || payload.first_name || '';
+    const lastName    = gkCustomer.lastname  || gkCustomer.last_name  || payload.last_name  || '';
+    const name        = `${firstName} ${lastName}`.trim() || payload.name || 'there';
+    const cartId      = payload.request_id   || payload.checkout_id || payload.cart_id || payload.id || '';
+    const checkoutUrl = payload.checkout_url || payload.recovery_url || payload.abandon_url || '';
+    const subtotal    = parseFloat(payload.items_subtotal_price || payload.total_price || payload.total || 0);
+    const codCharges  = parseFloat(payload.cod_charges || 0);
+    const total       = subtotal + codCharges || parseFloat(payload.amount || payload.cart_value || 0);
     const currency    = payload.currency || 'INR';
 
-    // Normalise items
     const items = gkItems.map(it => ({
-      title:       it.title       || it.name         || it.product_title || '',
+      title:       it.name        || it.title       || it.product_title || '',
       quantity:    it.quantity    || 1,
       price:       parseFloat(it.price || it.unit_price || 0),
-      image_url:   it.image_url   || it.image        || '',
-      product_url: it.product_url || it.url          || '',
+      image_url:   it.image_url   || it.image       || '',
+      product_url: it.product_url || it.url         || '',
     }));
 
     const doc = {
