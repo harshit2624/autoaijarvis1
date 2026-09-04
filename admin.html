@@ -15854,8 +15854,6 @@
     const [expanded, setExpanded] = useState(null);
     const [updating, setUpdating] = useState({});
 
-    const WEBHOOK_URL = 'https://dashboard.croscrow.com/webhooks/abandoned-cart';
-
     const load = () => {
       setLoading(true);
       fetch(`${API}/admin/abandoned-carts?status=${status}&limit=200`, { headers:{ Authorization:`Bearer ${token}` } })
