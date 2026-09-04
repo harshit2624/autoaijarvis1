@@ -22554,16 +22554,19 @@ app.get('/admin/shopify-abandoned-checkouts', adminAuth, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit)||250, 250);
     const page_info = req.query.page_info || null;
     const token = await getAccessToken();
+    // Without page_info cursor, filter to last 60 days so we get recent carts not oldest ones
+    // (Shopify checkouts API only sorts oldest-first; updated_at_min scopes to recent data)
+    const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
     let url = `https://${SHOP}.myshopify.com/admin/api/2025-01/checkouts.json?limit=${limit}`;
     if (page_info) url += `&page_info=${page_info}`;
+    else url += `&updated_at_min=${encodeURIComponent(since)}`;
     const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-    // Extract next page cursor from Link header
     const linkHeader = r.headers.get('link') || '';
     const nextMatch = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
     const nextPageInfo = nextMatch ? nextMatch[1] : null;
     const d = await r.json();
     const checkouts = d.checkouts || [];
-    // Shopify returns oldest first; reverse so latest appear first when no pagination cursor
+    // Reverse first page so newest appear at top; pagination pages keep natural order
     if (!page_info) checkouts.reverse();
     res.json({ checkouts, next_page_info: nextPageInfo, error: d.error || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
