@@ -22462,9 +22462,17 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
 //   POST https://dashboard.croscrow.com/webhooks/abandoned-cart
 // ══════════════════════════════════════════════════════════════════════════
 
-app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' }), async (req, res) => {
+app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
-    const payload = req.body || {};
+    let payload = {};
+    const raw = req.body || '';
+    // GoKwik sends base64-encoded JSON; try to detect and decode
+    try {
+      const jsonStr = /^[\[{]/.test(raw.trim())
+        ? raw                                          // plain JSON
+        : Buffer.from(raw.trim(), 'base64').toString('utf8'); // base64
+      payload = JSON.parse(jsonStr);
+    } catch { payload = {}; }
     console.log('🛒 RAW abandoned-cart payload:', JSON.stringify(payload, null, 2));
 
     // ── GoKwik payload shape ──────────────────────────────────────────────
