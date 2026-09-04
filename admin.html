@@ -15853,6 +15853,9 @@
     const [status,   setStatus]   = useState('all');
     const [expanded, setExpanded] = useState(null);
     const [updating, setUpdating] = useState({});
+    const [rawPayload, setRawPayload] = useState(null);
+    const [showRaw,    setShowRaw]    = useState(false);
+    const [rawLoading, setRawLoading] = useState(false);
 
     const WEBHOOK_URL = 'https://dashboard.croscrow.com/webhooks/abandoned-cart';
 
@@ -15862,6 +15865,12 @@
         .then(r=>r.json()).then(d=>setCarts(d.carts||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
     useEffect(load, [status]);
+
+    const loadRaw = () => {
+      setRawLoading(true);
+      fetch(`${API}/admin/abandoned-carts/last-raw`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{ setRawPayload(d.raw); setShowRaw(true); }).catch(()=>{}).finally(()=>setRawLoading(false));
+    };
 
     const setCartStatus = async (id, newStatus) => {
       setUpdating(p=>({...p,[id]:true}));
@@ -15910,6 +15919,7 @@
             }}>{s} ({counts[s]||0})</button>
           ))}
           <button onClick={load} style={{marginLeft:'auto',padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>↻ Refresh</button>
+          <button onClick={loadRaw} disabled={rawLoading} style={{padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>{rawLoading?'…':'🔍 Last Raw Payload'}</button>
         </div>
 
         {loading && <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>Loading…</div>}
@@ -15918,6 +15928,24 @@
             <div style={{fontSize:32,marginBottom:12}}>🛒</div>
             <div style={{fontWeight:600,marginBottom:6}}>No abandoned carts yet</div>
             <div style={{fontSize:11}}>Share the webhook URL above with your checkout partner to start receiving data.</div>
+          </div>
+        )}
+
+        {/* Raw payload modal */}
+        {showRaw && (
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setShowRaw(false)}>
+            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:20,maxWidth:800,width:'100%',maxHeight:'80vh',display:'flex',flexDirection:'column'}} onClick={e=>e.stopPropagation()}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                <div style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>🔍 Last Raw GoKwik Payload</div>
+                <div style={{display:'flex',gap:8}}>
+                  <button onClick={()=>navigator.clipboard.writeText(JSON.stringify(rawPayload,null,2))} style={{padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>📋 Copy</button>
+                  <button onClick={()=>setShowRaw(false)} style={{padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>✕ Close</button>
+                </div>
+              </div>
+              <pre style={{flex:1,overflow:'auto',fontSize:11,color:'#a5f3fc',background:'var(--bg)',borderRadius:8,padding:14,margin:0,whiteSpace:'pre-wrap',wordBreak:'break-all'}}>
+                {rawPayload ? JSON.stringify(rawPayload, null, 2) : 'No payload received yet'}
+              </pre>
+            </div>
           </div>
         )}
 
