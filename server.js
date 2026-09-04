@@ -22546,6 +22546,19 @@ Offer valid for 24 hours only. Don't miss out!
   } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// GET /admin/shopify-abandoned-checkouts — fetch last N from Shopify directly
+app.get('/admin/shopify-abandoned-checkouts', adminAuth, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit)||5, 50);
+    const token = await getAccessToken();
+    const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/checkouts.json?limit=${limit}`, {
+      headers: { 'X-Shopify-Access-Token': token }
+    });
+    const d = await r.json();
+    res.json({ checkouts: d.checkouts || [], error: d.error || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /admin/abandoned-carts/last-raw — see last raw payload for debugging
 app.get('/admin/abandoned-carts/last-raw', adminAuth, async (req, res) => {
   try {
