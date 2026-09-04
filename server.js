@@ -22561,6 +22561,75 @@ app.get('/admin/shopify-abandoned-checkouts', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /admin/shopify-abandoned-checkouts/send-wa — send WA recovery to a Shopify abandoned checkout
+app.post('/admin/shopify-abandoned-checkouts/send-wa', adminAuth, async (req, res) => {
+  try {
+    const c = req.body || {};
+    const cust = c.customer || {};
+    const shipping = c.shipping_address || c.billing_address || {};
+
+    const firstName = cust.first_name || shipping.first_name || '';
+    const lastName  = cust.last_name  || shipping.last_name  || '';
+    const name      = `${firstName} ${lastName}`.trim() || cust.email || 'there';
+    const phone     = String(shipping.phone || cust.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+    const total     = parseFloat(c.total_price || 0);
+    const checkoutUrl = c.abandoned_checkout_url || '';
+
+    if (!phone || phone.length !== 10) return res.status(400).json({ error: 'No valid phone number in checkout' });
+
+    const items = (c.line_items || []).map(it => ({
+      title:    it.title || '',
+      variant:  it.variant_title && it.variant_title !== 'Default Title' ? it.variant_title : '',
+      quantity: it.quantity || 1,
+      price:    parseFloat(it.price || 0),
+    }));
+
+    const topItems = items.slice(0, 2);
+    const itemLines = topItems.map(it => `  • ${it.title}${it.variant?' ('+it.variant+')':''}${it.quantity>1?' ×'+it.quantity:''} — ₹${it.price.toLocaleString('en-IN')}`).join('\n');
+    const moreItems = items.length > 2 ? `  + ${items.length - 2} more item${items.length-2>1?'s':''}` : '';
+
+    const waMsg =
+`🛒 Hey ${firstName || name}!
+
+You left something behind on *CROSCROW* ✨
+
+${itemLines}${moreItems ? '\n' + moreItems : ''}
+
+*Cart Total: ₹${total.toLocaleString('en-IN')}*
+
+Use code *COMEBACK* to get *₹150 FLAT OFF* — no minimum order 🎁
+
+👉 Complete your order here:
+${checkoutUrl}
+
+Offer valid for 24 hours only. Don't miss out!
+
+— CROSCROW Team`;
+
+    await waSendToCustomer(phone, waMsg);
+
+    // Log in DB
+    await mdb.collection('abandoned_carts').insertOne({
+      email: cust.email || '', phone, name,
+      cart_id: String(c.id || c.cart_token || ''),
+      checkout_url: checkoutUrl,
+      currency: c.currency || 'INR',
+      total,
+      items,
+      source: 'shopify-manual',
+      raw: c,
+      received_at: new Date().toISOString(),
+      status: 'open',
+      wa_sent: true,
+      wa_sent_at: new Date().toISOString(),
+      discount_code: 'COMEBACK',
+    });
+
+    console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total}`);
+    res.json({ sent: true, phone, name });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /admin/abandoned-carts/last-raw — see last raw payload for debugging
 app.get('/admin/abandoned-carts/last-raw', adminAuth, async (req, res) => {
   try {

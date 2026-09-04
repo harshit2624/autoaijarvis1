@@ -15869,6 +15869,8 @@
     const [shopifyCheckouts, setShopifyCheckouts] = useState(null);
     const [showShopify, setShowShopify] = useState(false);
     const [shopifyLoading, setShopifyLoading] = useState(false);
+    const [waSending, setWaSending] = useState({});
+    const [waSent, setWaSent] = useState({});
 
     const loadRaw = () => {
       setRawLoading(true);
@@ -15984,7 +15986,21 @@
                           ))}
                         </div>
                       )}
-                      <div style={{marginTop:8,display:'flex',gap:8}}>
+                      <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center'}}>
+                        <button onClick={()=>{
+                          const key = c.id||i;
+                          setWaSending(p=>({...p,[key]:true}));
+                          fetch(`${API}/admin/shopify-abandoned-checkouts/send-wa`,{
+                            method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+                            body: JSON.stringify(c)
+                          }).then(r=>r.json()).then(d=>{
+                            if(d.sent) setWaSent(p=>({...p,[key]:true}));
+                            else alert(d.error||'Failed');
+                          }).catch(()=>alert('Error')).finally(()=>setWaSending(p=>({...p,[key]:false})));
+                        }} disabled={waSending[c.id||i]||waSent[c.id||i]}
+                          style={{padding:'4px 12px',borderRadius:6,border:'1px solid rgba(37,211,102,0.4)',background:waSent[c.id||i]?'rgba(37,211,102,0.15)':'rgba(37,211,102,0.08)',color:'#25d366',fontSize:11,cursor:waSent[c.id||i]?'default':'pointer',fontFamily:'inherit',fontWeight:600}}>
+                          {waSending[c.id||i]?'Sending…':waSent[c.id||i]?'✅ WA Sent':'📲 Send WA'}
+                        </button>
                         <button onClick={()=>navigator.clipboard.writeText(JSON.stringify(c,null,2))} style={{padding:'3px 8px',borderRadius:5,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontSize:10,cursor:'pointer',fontFamily:'inherit'}}>📋 Copy raw</button>
                       </div>
                     </div>
