@@ -22514,7 +22514,8 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
     const discountCode = 'COMEBACK';
     const discountAmt  = 150;
 
-    const buyUrl = checkoutUrl || `https://croscrow.com`;
+    // GoKwik doesn't send a recovery URL in webhook — construct GoKwik checkout link
+    const buyUrl = checkoutUrl || payload.recovery_url || `https://croscrow.com/a/gokwik/checkout`;
     const afterDiscount = Math.max(0, total - discountAmt);
     const gkItemLines = items.slice(0,2).map(it =>
       `▸ ${it.title}${it.quantity>1?' ×'+it.quantity:''}`
@@ -22617,7 +22618,10 @@ ${checkoutUrl}
 
     // Try to send with product image
     const jid = `91${phone}@s.whatsapp.net`;
-    const firstProductId = items[0]?.product_id;
+    // Try to get product image from line_items directly (Shopify checkout has no image_url field,
+    // but the product API does — fetch it using product_id from line_items)
+    const firstItem = c.line_items?.[0];
+    const firstProductId = firstItem?.product_id;
     let imageSent = false;
     if (firstProductId && waSocket && waConnected) {
       try {
@@ -22625,11 +22629,18 @@ ${checkoutUrl}
         const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${firstProductId}.json`, { headers: { 'X-Shopify-Access-Token': shopToken } });
         const prodData = await prodRes.json();
         const imgUrl = prodData?.product?.images?.[0]?.src;
+        console.log(`🖼 Product image for ${firstProductId}: ${imgUrl||'not found'}`);
         if (imgUrl) {
-          await waSocket.sendMessage(jid, { image: { url: imgUrl }, caption: waMsg });
+          // Download image as buffer — more reliable than URL-only on Baileys
+          const imgRes = await fetch(imgUrl);
+          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          await waSocket.sendMessage(jid, { image: imgBuf, caption: waMsg, mimetype: 'image/jpeg' });
           imageSent = true;
+          console.log(`✅ Image+caption WA sent to ${phone}`);
         }
-      } catch(imgErr) { console.error('Product image fetch failed:', imgErr.message); }
+      } catch(imgErr) { console.error('Product image WA failed:', imgErr.message); }
+    } else {
+      console.log(`ℹ Image skip — product_id:${firstProductId} waConnected:${waConnected}`);
     }
     if (!imageSent) await waSendToCustomer(phone, waMsg);
 
