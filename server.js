@@ -22465,27 +22465,97 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
 app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
     const payload = req.body || {};
-    // Normalise common field names across checkout providers
+
+    // ── GoKwik payload shape (their field names) ──────────────────────────
+    // GoKwik sends: checkout_id, customer{phone,email,first_name,last_name},
+    //   cart_items[{title,quantity,price,image_url,product_url}],
+    //   total_price, checkout_url, currency
+    const gkCustomer = payload.customer || {};
+    const gkItems    = payload.cart_items || payload.line_items || payload.items || [];
+
+    const phone       = String(gkCustomer.phone || payload.phone || payload.mobile || payload.customer_phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+    const email       = gkCustomer.email        || payload.email        || payload.customer_email || '';
+    const firstName   = gkCustomer.first_name   || payload.first_name   || '';
+    const lastName    = gkCustomer.last_name    || payload.last_name    || '';
+    const name        = `${firstName} ${lastName}`.trim() || payload.name || payload.customer_name || 'there';
+    const cartId      = payload.checkout_id     || payload.cart_id      || payload.id || '';
+    const checkoutUrl = payload.checkout_url    || payload.recovery_url || payload.abandon_url || '';
+    const total       = parseFloat(payload.total_price || payload.total || payload.amount || payload.cart_value || 0);
+    const currency    = payload.currency || 'INR';
+
+    // Normalise items
+    const items = gkItems.map(it => ({
+      title:       it.title       || it.name         || it.product_title || '',
+      quantity:    it.quantity    || 1,
+      price:       parseFloat(it.price || it.unit_price || 0),
+      image_url:   it.image_url   || it.image        || '',
+      product_url: it.product_url || it.url          || '',
+    }));
+
     const doc = {
-      // identity
-      email:          payload.email || payload.customer_email || payload.buyer_email || '',
-      phone:          payload.phone || payload.mobile || payload.customer_phone || payload.buyer_phone || '',
-      name:           payload.name  || payload.customer_name  || payload.buyer_name  || `${payload.first_name||''} ${payload.last_name||''}`.trim() || '',
-      // cart
-      cart_id:        payload.cart_id || payload.checkout_id || payload.id || '',
-      checkout_url:   payload.checkout_url || payload.recovery_url || payload.abandon_url || '',
-      currency:       payload.currency || 'INR',
-      total:          parseFloat(payload.total || payload.total_price || payload.amount || payload.cart_value || 0),
-      items:          payload.items || payload.line_items || payload.cart_items || [],
-      // meta
-      source:         req.headers['x-source'] || req.headers['x-provider'] || payload.source || 'checkout-partner',
-      raw:            payload,
-      received_at:    new Date().toISOString(),
-      status:         'open',   // open | recovered | dismissed
+      email, phone, name, cart_id: cartId, checkout_url: checkoutUrl,
+      currency, total, items,
+      source:      req.headers['x-source'] || payload.source || 'gokwik',
+      raw:         payload,
+      received_at: new Date().toISOString(),
+      status:      'open',
+      wa_sent:     false,
     };
-    await mdb.collection('abandoned_carts').insertOne(doc);
-    console.log(`🛒  Abandoned cart received — ${doc.email || doc.phone} · Rs. ${doc.total}`);
+    const inserted = await mdb.collection('abandoned_carts').insertOne(doc);
+    console.log(`🛒  Abandoned cart — ${name} ${phone} · ₹${total}`);
     res.json({ received: true });
+
+    // ── WhatsApp recovery message ─────────────────────────────────────────
+    if (!phone || phone.length !== 10) return;
+
+    // Pick discount: 10% off, minimum ₹50, capped at ₹500
+    const discountAmt = Math.min(Math.max(Math.round(total * 0.10 / 10) * 10, 50), 500);
+    // Use closest GoKwik fixed code at or below discount amount
+    const GK_CODES = [
+      { min: 1000, code: 'CCMINE1000-W1Y' },
+      { min: 800,  code: 'CCMINE800-H6F'  },
+      { min: 600,  code: 'CCMINE600-D3V'  },
+      { min: 500,  code: 'CCMINE500-P8Z'  },
+      { min: 400,  code: 'CCMINE400-J5N'  },
+      { min: 300,  code: 'CCMINE300-R9M'  },
+      { min: 200,  code: 'CCMINE200-B2Q'  },
+      { min: 100,  code: 'CCMINE100-K7X'  },
+      { min: 50,   code: 'CCMINE50-T4W'   },
+    ];
+    const codeEntry = GK_CODES.find(c => discountAmt >= c.min) || GK_CODES[GK_CODES.length - 1];
+    const discountCode = codeEntry.code;
+
+    // Build product summary (top 2 items)
+    const topItems = items.slice(0, 2);
+    const itemLines = topItems.map(it => `  • ${it.title}${it.quantity > 1 ? ` ×${it.quantity}` : ''} — ₹${it.price}`).join('\n');
+    const moreItems = items.length > 2 ? `  + ${items.length - 2} more item${items.length - 2 > 1 ? 's' : ''}` : '';
+
+    const buyUrl = checkoutUrl || `https://croscrow.com`;
+
+    const waMsg =
+`🛒 Hey ${firstName || name}!
+
+You left something behind on *CROSCROW* ✨
+
+${itemLines}${moreItems ? '\n' + moreItems : ''}
+
+*Cart Total: ₹${total.toFixed(0)}*
+
+Use code *${discountCode}* to get *₹${discountAmt} OFF* on your order 🎁
+
+👉 Complete your order here:
+${buyUrl}
+
+Offer valid for 24 hours only. Don't miss out!
+
+— CROSCROW Team`;
+
+    await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
+    await mdb.collection('abandoned_carts').updateOne(
+      { _id: inserted.insertedId },
+      { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode } }
+    );
+    console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode}`);
   } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
 });
 
