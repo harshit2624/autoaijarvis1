@@ -22520,22 +22520,22 @@ app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' })
       `▸ ${it.title}${it.quantity>1?' ×'+it.quantity:''}`
     ).join('\n');
     const gkMoreTag = items.length > 2 ? `  +${items.length-2} more` : '';
-    const _D = '────────────────';
 
     const waMsg =
-`▪ C R O S C R O W ▪
-${_D}
-CART RECOVERY
+`Bro you really added it
+and just... left? 💀
 
 ${gkItemLines}${gkMoreTag?'\n'+gkMoreTag:''}
+Still sitting in your cart.
+Still judging you.
 
-MRP    ₹${total.toFixed(0)}
-CODE   ${discountCode}  −₹${discountAmt}
-PAY    ₹${afterDiscount.toFixed(0)}
-${_D}
-Complete your order:
+${discountCode} = ₹${discountAmt} off
+Final price → ₹${afterDiscount.toFixed(0)}
+
+Go finish what you started:
 ${buyUrl}
-${_D}
+
+— CROSCROW
 Code expires in 24 hrs`;
 
     await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
@@ -22599,22 +22599,21 @@ app.post('/admin/shopify-abandoned-checkouts/send-wa', adminAuth, async (req, re
     ).join('\n');
     const moreTag = items.length > 2 ? `  +${items.length-2} more` : '';
 
-    const _D = '────────────────';
     const waMsg =
-`▪ C R O S C R O W ▪
-${_D}
-CART RECOVERY
+`Bro you really added it
+and just... left? 💀
 
 ${itemLines}${moreTag?'\n'+moreTag:''}
+Still sitting in your cart.
+Still judging you.
 
-MRP    ₹${total.toLocaleString('en-IN')}
-CODE   COMEBACK  −₹${discountAmt}
-PAY    ₹${afterDiscount.toLocaleString('en-IN')}
-${_D}
-Complete your order:
+COMEBACK = ₹${discountAmt} off
+Final price → ₹${afterDiscount.toLocaleString('en-IN')}
+
+Go finish what you started:
 ${checkoutUrl}
-${_D}
-Code expires in 24 hrs`;
+
+— CROSCROW`;
 
     // Try to send with product image
     const jid = `91${phone}@s.whatsapp.net`;
