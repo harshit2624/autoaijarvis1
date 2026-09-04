@@ -22465,6 +22465,7 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
 app.post('/webhooks/abandoned-cart', express.json({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
     const payload = req.body || {};
+    console.log('🛒 RAW abandoned-cart payload:', JSON.stringify(payload, null, 2));
 
     // ── GoKwik payload shape (their field names) ──────────────────────────
     // GoKwik sends: checkout_id, customer{phone,email,first_name,last_name},
@@ -22543,6 +22544,14 @@ Offer valid for 24 hours only. Don't miss out!
     );
     console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode}`);
   } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// GET /admin/abandoned-carts/last-raw — see last raw payload for debugging
+app.get('/admin/abandoned-carts/last-raw', adminAuth, async (req, res) => {
+  try {
+    const doc = await mdb.collection('abandoned_carts').findOne({}, { sort: { received_at: -1 } });
+    res.json({ raw: doc?.raw || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /admin/abandoned-carts — list with filters
