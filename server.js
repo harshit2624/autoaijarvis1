@@ -22695,6 +22695,94 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// WHATSAPP CLOUD API (official Meta Business Platform) — ABANDONED CART ONLY
+// This is completely separate from the Baileys WA bot elsewhere in this file
+// — do NOT wire it into vendor nudges, RR notifs, dispatch alerts, etc. It
+// exists solely to send the pre-approved "abandoned_cart_recovery" marketing
+// template with a dynamic Buy Now URL button, which Baileys cannot legally
+// do (interactive template buttons require the official API + Meta approval).
+//
+// Setup required before this does anything:
+//   1. Submit the "abandoned_cart_recovery" template in Meta WhatsApp Manager
+//      (Marketing category, body has 4 text vars: name/item/discount/code,
+//      one Visit-Website button with a Dynamic URL, base = https://croscrow.com)
+//      and wait for approval.
+//   2. Set these env vars once approved:
+//        WA_CLOUD_TOKEN            — permanent System User access token
+//        WA_CLOUD_PHONE_NUMBER_ID  — sending number's Phone Number ID
+//        WA_CLOUD_TEMPLATE_NAME    — defaults to 'abandoned_cart_recovery'
+//        WA_CLOUD_TEMPLATE_LANG    — defaults to 'en_US'
+// Until configured, waCloudConfigured() is false and callers automatically
+// fall back to the existing Baileys plain-text message — nothing breaks.
+// ══════════════════════════════════════════════════════════════════════════
+const WA_CLOUD_TOKEN    = process.env.WA_CLOUD_TOKEN || '';
+const WA_CLOUD_PHONE_ID = process.env.WA_CLOUD_PHONE_NUMBER_ID || '';
+const WA_CLOUD_TEMPLATE = process.env.WA_CLOUD_TEMPLATE_NAME || 'abandoned_cart_recovery';
+const WA_CLOUD_LANG     = process.env.WA_CLOUD_TEMPLATE_LANG || 'en_US';
+const WA_CLOUD_API      = 'https://graph.facebook.com/v21.0';
+
+function waCloudConfigured() {
+  return !!(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_ID);
+}
+
+// Splits a full checkout URL into the path+query suffix to hand to the
+// template's dynamic URL button (the button's base URL is fixed in Meta's
+// template editor — only the suffix is sent per-message).
+function waCloudUrlSuffix(fullUrl, fallbackSuffix = '') {
+  try {
+    const u = new URL(fullUrl);
+    const suffix = (u.pathname === '/' ? '' : u.pathname) + u.search;
+    return suffix || fallbackSuffix;
+  } catch { return fallbackSuffix; }
+}
+
+// Sends the abandoned_cart_recovery template with a dynamic Buy Now button.
+// Returns { sent: false, reason } (never throws) so callers can fall back to
+// Baileys — this must never block or crash the existing abandoned-cart flow.
+async function sendWACloudAbandonedCart({ phone10, name, itemLabel, discountAmt, discountCode, buyUrlSuffix }) {
+  if (!waCloudConfigured()) return { sent: false, reason: 'not_configured' };
+  if (!phone10 || phone10.length !== 10) return { sent: false, reason: 'invalid_phone' };
+  const to = `91${phone10}`;
+  try {
+    const body = {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: WA_CLOUD_TEMPLATE,
+        language: { code: WA_CLOUD_LANG },
+        components: [
+          { type: 'body', parameters: [
+            { type: 'text', text: name || 'there' },
+            { type: 'text', text: itemLabel || 'your item' },
+            { type: 'text', text: `₹${discountAmt}` },
+            { type: 'text', text: discountCode },
+          ]},
+          { type: 'button', sub_type: 'url', index: '0', parameters: [
+            { type: 'text', text: buyUrlSuffix || '' },
+          ]},
+        ],
+      },
+    };
+    const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      console.error('❌ WA Cloud API abandoned-cart send failed:', JSON.stringify(data.error || data));
+      return { sent: false, reason: data.error?.message || `http_${res.status}` };
+    }
+    console.log(`✅ WA Cloud API template sent → ${to} (${WA_CLOUD_TEMPLATE})`);
+    return { sent: true, messageId: data.messages?.[0]?.id };
+  } catch (e) {
+    console.error('❌ WA Cloud API abandoned-cart send error:', e.message);
+    return { sent: false, reason: e.message };
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // ABANDONED CART WEBHOOK
 // Checkout partners (e.g. Razorpay Magic Checkout, Shiprocket Checkout)
 // POST to this URL when a cart is abandoned. We store the payload and
@@ -22780,12 +22868,19 @@ ${buyUrl}
 
 ⏰ Offer expires in *24 HRS*`;
 
-    await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
+    const cloudResult = await sendWACloudAbandonedCart({
+      phone10: phone, name, itemLabel: items[0]?.title || 'your item',
+      discountAmt, discountCode, buyUrlSuffix: waCloudUrlSuffix(buyUrl, cartId ? `?mrid=${cartId}` : ''),
+    });
+    if (!cloudResult.sent) {
+      if (cloudResult.reason !== 'not_configured') console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
+      await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
+    }
     await mdb.collection('abandoned_carts').updateOne(
       { _id: inserted.insertedId },
-      { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode } }
+      { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : 'baileys' } }
     );
-    console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode}`);
+    console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
   } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
 });
 
@@ -22856,33 +22951,42 @@ ${checkoutUrl}
 
 ⏰ Offer expires in *24 HRS*`;
 
-    // Try to send with product image
-    const jid = `91${phone}@s.whatsapp.net`;
-    // Try to get product image from line_items directly (Shopify checkout has no image_url field,
-    // but the product API does — fetch it using product_id from line_items)
-    const firstItem = c.line_items?.[0];
-    const firstProductId = firstItem?.product_id;
+    // Prefer the official Cloud API template (Buy Now button) when configured
+    const cloudResult = await sendWACloudAbandonedCart({
+      phone10: phone, name, itemLabel: items[0]?.title || 'your item',
+      discountAmt, discountCode: 'COMEBACK', buyUrlSuffix: waCloudUrlSuffix(checkoutUrl, ''),
+    });
+
     let imageSent = false;
-    if (firstProductId && waSocket && waConnected) {
-      try {
-        const shopToken = await getAccessToken();
-        const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${firstProductId}.json`, { headers: { 'X-Shopify-Access-Token': shopToken } });
-        const prodData = await prodRes.json();
-        const imgUrl = prodData?.product?.images?.[0]?.src;
-        console.log(`🖼 Product image for ${firstProductId}: ${imgUrl||'not found'}`);
-        if (imgUrl) {
-          // Download image as buffer — more reliable than URL-only on Baileys
-          const imgRes = await fetch(imgUrl);
-          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
-          await waSocket.sendMessage(jid, { image: imgBuf, caption: waMsg, mimetype: 'image/jpeg' });
-          imageSent = true;
-          console.log(`✅ Image+caption WA sent to ${phone}`);
-        }
-      } catch(imgErr) { console.error('Product image WA failed:', imgErr.message); }
-    } else {
-      console.log(`ℹ Image skip — product_id:${firstProductId} waConnected:${waConnected}`);
+    if (!cloudResult.sent) {
+      if (cloudResult.reason !== 'not_configured') console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
+      // Try to send with product image via Baileys (fallback path, unchanged)
+      const jid = `91${phone}@s.whatsapp.net`;
+      // Try to get product image from line_items directly (Shopify checkout has no image_url field,
+      // but the product API does — fetch it using product_id from line_items)
+      const firstItem = c.line_items?.[0];
+      const firstProductId = firstItem?.product_id;
+      if (firstProductId && waSocket && waConnected) {
+        try {
+          const shopToken = await getAccessToken();
+          const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${firstProductId}.json`, { headers: { 'X-Shopify-Access-Token': shopToken } });
+          const prodData = await prodRes.json();
+          const imgUrl = prodData?.product?.images?.[0]?.src;
+          console.log(`🖼 Product image for ${firstProductId}: ${imgUrl||'not found'}`);
+          if (imgUrl) {
+            // Download image as buffer — more reliable than URL-only on Baileys
+            const imgRes = await fetch(imgUrl);
+            const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+            await waSocket.sendMessage(jid, { image: imgBuf, caption: waMsg, mimetype: 'image/jpeg' });
+            imageSent = true;
+            console.log(`✅ Image+caption WA sent to ${phone}`);
+          }
+        } catch(imgErr) { console.error('Product image WA failed:', imgErr.message); }
+      } else {
+        console.log(`ℹ Image skip — product_id:${firstProductId} waConnected:${waConnected}`);
+      }
+      if (!imageSent) await waSendToCustomer(phone, waMsg);
     }
-    if (!imageSent) await waSendToCustomer(phone, waMsg);
 
     // Log in DB
     await mdb.collection('abandoned_carts').insertOne({
@@ -22899,9 +23003,10 @@ ${checkoutUrl}
       wa_sent: true,
       wa_sent_at: new Date().toISOString(),
       discount_code: 'COMEBACK',
+      wa_via: cloudResult.sent ? 'cloud_api' : 'baileys',
     });
 
-    console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total}`);
+    console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
     res.json({ sent: true, phone, name });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
