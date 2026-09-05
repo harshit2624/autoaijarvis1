@@ -3147,6 +3147,121 @@
     );
   }
 
+  function AudienceQualityBreakdown({ token, period, periodLabel }) {
+    const STORAGE_KEY = 'croscrow_audience_tag_map';
+    const TIERS = [
+      { id:'high_risk',   label:'High Risk',   color:'#ef4444', dim:'rgba(239,68,68,0.1)',   border:'rgba(239,68,68,0.25)',   icon:'🔴', defaults:['cod','rto_customer','unverified','rto','fraud_risk','blacklisted','address_issue','cod_undelivered'] },
+      { id:'medium_risk', label:'Medium Risk',  color:'#f97316', dim:'rgba(249,115,22,0.1)',  border:'rgba(249,115,22,0.25)',  icon:'🟠', defaults:['new_customer','partial_payment','first_order','cod_confirmed','review_needed','flagged'] },
+      { id:'control',     label:'Control',      color:'#6366f1', dim:'rgba(99,102,241,0.1)',  border:'rgba(99,102,241,0.25)',  icon:'🟣', defaults:['confirmed','standard','normal','default_segment','organic'] },
+      { id:'low_risk',    label:'Low Risk',     color:'#10b981', dim:'rgba(16,185,129,0.1)',  border:'rgba(16,185,129,0.25)', icon:'🟢', defaults:['prepaid','repeat_customer','vip','verified','loyal','exchange_done','delivered','upi_paid','paid'] },
+    ];
+
+    const loadTierMap = () => {
+      try {
+        const s = localStorage.getItem(STORAGE_KEY);
+        if (s) return JSON.parse(s);
+      } catch(e) {}
+      const m = {};
+      TIERS.forEach(t => { m[t.id] = [...t.defaults]; });
+      return m;
+    };
+
+    const [tagCounts, setTagCounts] = React.useState(null);
+    const [total, setTotal]         = React.useState(0);
+    const [loading, setLoading]     = React.useState(true);
+
+    React.useEffect(() => {
+      setLoading(true);
+      const from = period ? period.from : '2020-01-01';
+      const to   = period ? period.to   : new Date().toISOString().split('T')[0];
+      fetch(`${API}/admin/audience-tag-counts?from=${from}&to=${to}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r => r.json())
+        .then(d => { setTagCounts(d.tagCounts || {}); setTotal(d.total || 0); })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }, [token, period]);
+
+    const tierMap = loadTierMap();
+
+    // Count orders per tier (one order can only be in highest-priority matching tier)
+    const tierCounts = TIERS.map(tier => {
+      const tags = tierMap[tier.id] || tier.defaults;
+      const count = tags.reduce((sum, tag) => sum + (tagCounts?.[tag] || 0), 0);
+      return { ...tier, count };
+    });
+    const tieredTotal = tierCounts.reduce((s, t) => s + t.count, 0);
+    const untagged = Math.max(0, total - tieredTotal);
+
+    if (loading) return (
+      <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:10}}>🎯 Audience Quality Breakdown · {periodLabel}</div>
+        <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>
+      </div>
+    );
+
+    return (
+      <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'16px 20px',marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>🎯 Audience Quality Breakdown</div>
+            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{periodLabel} · {total.toLocaleString()} total orders · based on Shopify tags</div>
+          </div>
+          <span style={{fontSize:10,color:'var(--text-muted)',background:'var(--bg-hover)',padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)'}}>Configure tiers in Tag Mappings →</span>
+        </div>
+
+        {/* Full-width stacked bar */}
+        {tieredTotal > 0 && (
+          <div style={{height:10,borderRadius:5,overflow:'hidden',display:'flex',marginBottom:14,gap:1}}>
+            {tierCounts.filter(t=>t.count>0).map(t => (
+              <div key={t.id} title={`${t.label}: ${t.count} orders`}
+                style={{flex:t.count,background:t.color,minWidth:2,transition:'flex 0.4s'}}/>
+            ))}
+            {untagged > 0 && <div style={{flex:untagged,background:'var(--border)',minWidth:2}} title={`Untagged: ${untagged}`}/>}
+          </div>
+        )}
+
+        {/* Tier cards */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+          {tierCounts.map(tier => {
+            const pct = total > 0 ? (tier.count / total * 100).toFixed(1) : '0.0';
+            const tags = (tierMap[tier.id] || tier.defaults).slice(0, 4);
+            return (
+              <div key={tier.id} style={{background:tier.dim,border:`1px solid ${tier.border}`,borderRadius:8,padding:'12px 14px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+                  <span style={{fontSize:13}}>{tier.icon}</span>
+                  <div style={{fontSize:10,fontWeight:700,color:tier.color,letterSpacing:0.5,textTransform:'uppercase'}}>{tier.label}</div>
+                </div>
+                <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:4}}>
+                  <span style={{fontSize:26,fontWeight:900,color:tier.color,lineHeight:1}}>{tier.count.toLocaleString()}</span>
+                  <span style={{fontSize:11,color:'var(--text-muted)'}}>orders</span>
+                </div>
+                <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
+                  <div style={{height:'100%',width:pct+'%',background:tier.color,borderRadius:2}}/>
+                </div>
+                <div style={{fontSize:12,fontWeight:800,color:tier.color,marginBottom:6}}>{pct}%</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                  {tags.map(tag => (
+                    <span key={tag} style={{fontSize:9,fontFamily:'monospace',background:'var(--bg-card)',border:`1px solid ${tier.border}`,color:tier.color,padding:'1px 5px',borderRadius:3}}>{tag}</span>
+                  ))}
+                  {(tierMap[tier.id]||tier.defaults).length > 4 && (
+                    <span style={{fontSize:9,color:'var(--text-muted)'}}>+{(tierMap[tier.id]||tier.defaults).length-4} more</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {untagged > 0 && (
+          <div style={{marginTop:8,fontSize:10,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:6}}>
+            <span style={{width:10,height:10,background:'var(--border)',borderRadius:2,display:'inline-block',flexShrink:0}}/>
+            {untagged.toLocaleString()} orders ({total > 0 ? (untagged/total*100).toFixed(1) : '0'}%) have no audience tag — configure more tags in Tag Mappings
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function Dashboard({ token, onStageClick, iconStyle, dashCache }) {
     const [data,      setData]      = useState(null);
     const [analytics, setAnalytics] = useState(()=> dashCache?.current?.analytics?.[PERIOD_PRESETS[3]?.label] || null);
@@ -3282,6 +3397,9 @@
             )}
           </div>
         </div>
+
+        {/* Audience Quality Breakdown */}
+        <AudienceQualityBreakdown token={token} period={aPeriod} periodLabel={periodLabel}/>
 
         {/* Big breakdown cards — always 3 equal columns */}
         {!aLoading && a && a.fulfillStats && (()=>{
@@ -9790,7 +9908,7 @@
         </div>
 
         {/* Sync */}
-        <div className="card">
+        <div className="card" style={{marginBottom:16}}>
           <div className="card-header">
             <span className="card-title">Sync Orders from Tags</span>
             <span className="card-sub">Scans all Shopify orders and applies priority mappings</span>
@@ -9810,6 +9928,161 @@
               </span>
             </div>
           </div>
+        </div>
+
+        {/* Audience Quality Tag Mapping */}
+        <AudienceTagMapping />
+      </div>
+    );
+  }
+
+  const AUDIENCE_TIERS = [
+    {
+      id: 'high_risk',
+      label: 'High Risk',
+      color: '#ef4444',
+      dimColor: 'rgba(239,68,68,0.1)',
+      borderColor: 'rgba(239,68,68,0.3)',
+      icon: '🔴',
+      desc: 'COD, RTO history, unverified, risky city',
+      defaults: ['cod','rto_customer','unverified','rto','fraud_risk','blacklisted','address_issue','cod_undelivered'],
+    },
+    {
+      id: 'medium_risk',
+      label: 'Medium Risk',
+      color: '#f97316',
+      dimColor: 'rgba(249,115,22,0.1)',
+      borderColor: 'rgba(249,115,22,0.3)',
+      icon: '🟠',
+      desc: 'New customer, partial payment, COD confirmed',
+      defaults: ['new_customer','partial_payment','first_order','cod_confirmed','review_needed','flagged'],
+    },
+    {
+      id: 'control',
+      label: 'Control',
+      color: '#6366f1',
+      dimColor: 'rgba(99,102,241,0.1)',
+      borderColor: 'rgba(99,102,241,0.3)',
+      icon: '🟣',
+      desc: 'Benchmark group — standard buyer',
+      defaults: ['confirmed','standard','normal','default_segment','organic'],
+    },
+    {
+      id: 'low_risk',
+      label: 'Low Risk',
+      color: '#10b981',
+      dimColor: 'rgba(16,185,129,0.1)',
+      borderColor: 'rgba(16,185,129,0.3)',
+      icon: '🟢',
+      desc: 'Prepaid, repeat buyer, VIP, verified',
+      defaults: ['prepaid','repeat_customer','vip','verified','loyal','exchange_done','delivered','upi_paid','paid'],
+    },
+  ];
+
+  function AudienceTagMapping() {
+    const STORAGE_KEY = 'croscrow_audience_tag_map';
+    const loadSaved = () => {
+      try {
+        const s = localStorage.getItem(STORAGE_KEY);
+        if (s) return JSON.parse(s);
+      } catch(e) {}
+      return null;
+    };
+
+    const [tierMap, setTierMap] = React.useState(() => {
+      const saved = loadSaved();
+      if (saved) return saved;
+      const m = {};
+      AUDIENCE_TIERS.forEach(t => { m[t.id] = [...t.defaults]; });
+      return m;
+    });
+    const [inputs, setInputs] = React.useState({});
+    const [saved, setSaved] = React.useState(false);
+
+    const save = (map) => {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(map)); } catch(e) {}
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    };
+
+    const addTag = (tierId) => {
+      const val = (inputs[tierId] || '').trim();
+      if (!val) return;
+      const next = { ...tierMap, [tierId]: [...(tierMap[tierId]||[]).filter(t=>t!==val), val] };
+      setTierMap(next); save(next);
+      setInputs(p => ({ ...p, [tierId]: '' }));
+    };
+
+    const removeTag = (tierId, tag) => {
+      const next = { ...tierMap, [tierId]: tierMap[tierId].filter(t=>t!==tag) };
+      setTierMap(next); save(next);
+    };
+
+    const reset = () => {
+      const m = {};
+      AUDIENCE_TIERS.forEach(t => { m[t.id] = [...t.defaults]; });
+      setTierMap(m); save(m);
+    };
+
+    return (
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">🎯 Tag → Audience Quality Tier</span>
+          <span className="card-sub">Map Shopify order tags to audience risk buckets for segmentation</span>
+          <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
+            {saved && <span style={{fontSize:11,color:'#10b981',fontWeight:600}}>✓ Saved</span>}
+            <button className="btn btn-sm" style={{fontSize:11,padding:'3px 10px',background:'var(--bg-card2)',color:'var(--text-muted)',border:'1px solid var(--border)'}} onClick={reset}>↺ Reset to defaults</button>
+          </div>
+        </div>
+
+        <div style={{padding:'0 16px 6px',fontSize:11,color:'var(--text-muted)',borderBottom:'1px solid var(--border)',paddingBottom:10,paddingTop:10}}>
+          Orders tagged with these Shopify tags will be classified into the corresponding audience quality tier. One tag can only belong to one tier — the last assignment wins.
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:0}}>
+          {AUDIENCE_TIERS.map((tier, idx) => (
+            <div key={tier.id} style={{
+              padding:16,
+              borderRight: idx%2===0 ? '1px solid var(--border)' : 'none',
+              borderBottom: idx<2 ? '1px solid var(--border)' : 'none',
+              background: tier.dimColor,
+            }}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+                <span style={{fontSize:16}}>{tier.icon}</span>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:tier.color}}>{tier.label}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{tier.desc}</div>
+                </div>
+                <span style={{marginLeft:'auto',fontSize:18,fontWeight:800,color:tier.color}}>{(tierMap[tier.id]||[]).length}</span>
+              </div>
+
+              {/* Tags */}
+              <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:10,minHeight:32}}>
+                {(tierMap[tier.id]||[]).map(tag => (
+                  <span key={tag} style={{
+                    display:'inline-flex',alignItems:'center',gap:4,
+                    background:'var(--bg-card)',border:`1px solid ${tier.borderColor}`,
+                    borderRadius:4,padding:'3px 8px',fontSize:11,color:tier.color,fontFamily:'monospace'
+                  }}>
+                    {tag}
+                    <span onClick={()=>removeTag(tier.id,tag)} style={{cursor:'pointer',fontSize:13,color:'var(--text-muted)',lineHeight:1,marginLeft:2}}>×</span>
+                  </span>
+                ))}
+                {!(tierMap[tier.id]||[]).length && <span style={{fontSize:11,color:'var(--text-muted)',fontStyle:'italic'}}>No tags mapped</span>}
+              </div>
+
+              {/* Add input */}
+              <div style={{display:'flex',gap:6}}>
+                <input
+                  className="form-input" placeholder="add shopify tag…" style={{flex:1,fontSize:11,padding:'5px 8px'}}
+                  value={inputs[tier.id]||''}
+                  onChange={e=>setInputs(p=>({...p,[tier.id]:e.target.value}))}
+                  onKeyDown={e=>e.key==='Enter'&&addTag(tier.id)}
+                />
+                <button className="btn btn-sm" style={{fontSize:11,padding:'4px 12px',background:tier.color,color:'#000',border:'none',fontWeight:700}} onClick={()=>addTag(tier.id)}>+</button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );

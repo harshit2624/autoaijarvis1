@@ -8184,6 +8184,29 @@ app.get("/admin/order-tags", requirePermission('orders'), async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Audience quality: return tag counts for a period so frontend can bucket into tiers
+app.get("/admin/audience-tag-counts", requirePermission('orders'), async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const q = {};
+    if (from || to) {
+      q.created_at = {};
+      if (from) q.created_at.$gte = new Date(from);
+      if (to)   q.created_at.$lte = new Date(to + 'T23:59:59Z');
+    }
+    const ovsDocs = await mdb.collection('order_vendor_stage').find(q, { projection: { tags: 1 } }).toArray();
+    const tagCounts = {};
+    const total = ovsDocs.length;
+    ovsDocs.forEach(doc => {
+      if (!doc.tags) return;
+      doc.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
+        tagCounts[t] = (tagCounts[t] || 0) + 1;
+      });
+    });
+    res.json({ tagCounts, total });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/tag-mappings", adminAuth, async (req, res) => {
   const mappings = await mdb.collection('tag_mappings').find({}, { projection: { _id: 0 } }).sort({ priority: 1, id: 1 }).toArray();
   res.json({ mappings });
