@@ -148,6 +148,7 @@ async function startServer() {
       mdb.collection("order_shipments").createIndex({ "items.vendor": 1 }),
       mdb.collection("abandoned_carts").createIndex({ received_at: -1 }),
       mdb.collection("abandoned_carts").createIndex({ email: 1 }),
+      mdb.collection("abandoned_carts").createIndex({ cart_id: 1 }, { sparse: true }),
       // Order snapshot indexes — enable DB-first track/my-orders queries
       mdb.collection("order_meta").createIndex({ customer_phone: 1 }),
       mdb.collection("order_meta").createIndex({ customer_email: 1 }),
@@ -22955,18 +22956,49 @@ app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' })
       product_url: it.product_url || it.url         || '',
     }));
 
+    // GoKwik fires this webhook for events with no identifiable customer at
+    // all (heartbeats/test pings/early-stage checkout events before any
+    // contact info exists) — these have no phone, no email, and no cart id,
+    // so there's nothing to recover and nothing to dedupe against. Storing
+    // them just filled the admin panel with blank "there" rows. Skip them.
+    if (!phone && !email && !cartId) {
+      console.log('🛒 Abandoned-cart webhook: no phone/email/cart_id in payload — skipping (likely a heartbeat/test ping)');
+      return res.json({ received: true, skipped: 'no_identifying_info' });
+    }
+
+    const now = new Date().toISOString();
     const doc = {
       email, phone, name, cart_id: cartId, checkout_url: checkoutUrl,
       currency, total, items,
       source:      req.headers['x-source'] || payload.source || 'gokwik',
       raw:         payload,
-      received_at: new Date().toISOString(),
+      received_at: now,
       status:      'open',
-      wa_sent:     false,
     };
-    const inserted = await mdb.collection('abandoned_carts').insertOne(doc);
-    console.log(`🛒  Abandoned cart — ${name} ${phone} · ₹${total}`);
+
+    // GoKwik re-fires this webhook as the same checkout progresses (e.g. once
+    // with partial info, again once the customer's details are captured) —
+    // upsert on cart_id so that's one row that fills in, not duplicate rows.
+    let inserted, isNewCart = true;
+    if (cartId) {
+      const existing = await mdb.collection('abandoned_carts').findOne({ cart_id: cartId });
+      isNewCart = !existing;
+      await mdb.collection('abandoned_carts').updateOne(
+        { cart_id: cartId },
+        { $set: doc, $setOnInsert: { wa_sent: false } },
+        { upsert: true }
+      );
+      inserted = { insertedId: existing?._id };
+    } else {
+      inserted = await mdb.collection('abandoned_carts').insertOne({ ...doc, wa_sent: false });
+    }
+    console.log(`🛒  Abandoned cart — ${name} ${phone} · ₹${total}${isNewCart ? '' : ' (update to existing cart)'}`);
     res.json({ received: true });
+
+    // Only send the WA recovery message once per cart, on the first time we
+    // see it with a usable phone number — not on every progressive update.
+    const alreadyNotified = cartId ? (await mdb.collection('abandoned_carts').findOne({ cart_id: cartId }, { projection: { wa_sent: 1 } }))?.wa_sent : false;
+    if (alreadyNotified) return;
 
     // ── WhatsApp recovery message ─────────────────────────────────────────
     if (!phone || phone.length !== 10) return;
@@ -23001,7 +23033,7 @@ ${buyUrl}
       await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
     }
     await mdb.collection('abandoned_carts').updateOne(
-      { _id: inserted.insertedId },
+      cartId ? { cart_id: cartId } : { _id: inserted.insertedId },
       { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : 'baileys' } }
     );
     console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
@@ -23166,6 +23198,20 @@ app.get('/admin/abandoned-carts', adminAuth, async (req, res) => {
       .toArray();
     const total = await mdb.collection('abandoned_carts').countDocuments(q);
     res.json({ carts: carts.map(c => ({ ...c, id: c._id.toString(), _id: undefined })), total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// One-time cleanup: remove the blank "there" rows created before the
+// no-phone/no-email/no-cart_id guard was added to the webhook above.
+app.delete('/admin/abandoned-carts/cleanup-empty', adminAuth, async (req, res) => {
+  try {
+    const q = { $and: [
+      { $or: [{ phone: '' }, { phone: { $exists: false } }] },
+      { $or: [{ email: '' }, { email: { $exists: false } }] },
+      { $or: [{ cart_id: '' }, { cart_id: { $exists: false } }] },
+    ]};
+    const result = await mdb.collection('abandoned_carts').deleteMany(q);
+    res.json({ deleted: result.deletedCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
