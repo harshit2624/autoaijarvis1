@@ -22739,7 +22739,12 @@ function waCloudUrlSuffix(fullUrl, fallbackSuffix = '') {
 // Sends the abandoned_cart_recovery template with a dynamic Buy Now button.
 // Returns { sent: false, reason } (never throws) so callers can fall back to
 // Baileys — this must never block or crash the existing abandoned-cart flow.
-async function sendWACloudAbandonedCart({ phone10, name, itemLabel, discountAmt, discountCode, buyUrlSuffix }) {
+// Matches the approved "abandoned_cart_recovery" template exactly:
+//   HEADER: IMAGE (dynamic per-send — product photo, falls back to CROSCROW logo)
+//   BODY:   "was ₹{{1}} · now ₹{{2}}  code {{3}} = ₹{{4}} OFF"
+//   BUTTON: URL "https://croscrow.com/{{1}}" — pass just the "?mrid=..." suffix
+const WA_CLOUD_FALLBACK_IMAGE = `${process.env.SERVER_URL || 'https://dashboard.croscrow.com'}/croscrow-logo.png`;
+async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscount, discountAmt, discountCode, buyUrlSuffix }) {
   if (!waCloudConfigured()) return { sent: false, reason: 'not_configured' };
   if (!phone10 || phone10.length !== 10) return { sent: false, reason: 'invalid_phone' };
   const to = `91${phone10}`;
@@ -22752,11 +22757,14 @@ async function sendWACloudAbandonedCart({ phone10, name, itemLabel, discountAmt,
         name: WA_CLOUD_TEMPLATE,
         language: { code: WA_CLOUD_LANG },
         components: [
+          { type: 'header', parameters: [
+            { type: 'image', image: { link: imageUrl || WA_CLOUD_FALLBACK_IMAGE } },
+          ]},
           { type: 'body', parameters: [
-            { type: 'text', text: name || 'there' },
-            { type: 'text', text: itemLabel || 'your item' },
-            { type: 'text', text: `₹${discountAmt}` },
+            { type: 'text', text: String(Math.round(total)) },
+            { type: 'text', text: String(Math.round(afterDiscount)) },
             { type: 'text', text: discountCode },
+            { type: 'text', text: String(Math.round(discountAmt)) },
           ]},
           { type: 'button', sub_type: 'url', index: '0', parameters: [
             { type: 'text', text: buyUrlSuffix || '' },
@@ -22869,8 +22877,9 @@ ${buyUrl}
 ⏰ Offer expires in *24 HRS*`;
 
     const cloudResult = await sendWACloudAbandonedCart({
-      phone10: phone, name, itemLabel: items[0]?.title || 'your item',
-      discountAmt, discountCode, buyUrlSuffix: waCloudUrlSuffix(buyUrl, cartId ? `?mrid=${cartId}` : ''),
+      phone10: phone, imageUrl: items[0]?.image_url || '',
+      total, afterDiscount, discountAmt, discountCode,
+      buyUrlSuffix: waCloudUrlSuffix(buyUrl, cartId ? `?mrid=${cartId}` : ''),
     });
     if (!cloudResult.sent) {
       if (cloudResult.reason !== 'not_configured') console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
@@ -22951,10 +22960,26 @@ ${checkoutUrl}
 
 ⏰ Offer expires in *24 HRS*`;
 
+    // Fetch product image up front (Shopify checkout has no image_url field on
+    // line_items, so look it up via the product API) — used by both the Cloud
+    // API image header and, on fallback, the Baileys image+caption send.
+    const firstItem = c.line_items?.[0];
+    const firstProductId = firstItem?.product_id;
+    let productImgUrl = '';
+    if (firstProductId) {
+      try {
+        const shopToken = await getAccessToken();
+        const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${firstProductId}.json`, { headers: { 'X-Shopify-Access-Token': shopToken } });
+        const prodData = await prodRes.json();
+        productImgUrl = prodData?.product?.images?.[0]?.src || '';
+      } catch(imgErr) { console.error('Product image lookup failed:', imgErr.message); }
+    }
+
     // Prefer the official Cloud API template (Buy Now button) when configured
     const cloudResult = await sendWACloudAbandonedCart({
-      phone10: phone, name, itemLabel: items[0]?.title || 'your item',
-      discountAmt, discountCode: 'COMEBACK', buyUrlSuffix: waCloudUrlSuffix(checkoutUrl, ''),
+      phone10: phone, imageUrl: productImgUrl,
+      total, afterDiscount, discountAmt, discountCode: 'COMEBACK',
+      buyUrlSuffix: waCloudUrlSuffix(checkoutUrl, ''),
     });
 
     let imageSent = false;
@@ -22962,25 +22987,14 @@ ${checkoutUrl}
       if (cloudResult.reason !== 'not_configured') console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
       // Try to send with product image via Baileys (fallback path, unchanged)
       const jid = `91${phone}@s.whatsapp.net`;
-      // Try to get product image from line_items directly (Shopify checkout has no image_url field,
-      // but the product API does — fetch it using product_id from line_items)
-      const firstItem = c.line_items?.[0];
-      const firstProductId = firstItem?.product_id;
-      if (firstProductId && waSocket && waConnected) {
+      if (productImgUrl && waSocket && waConnected) {
         try {
-          const shopToken = await getAccessToken();
-          const prodRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${firstProductId}.json`, { headers: { 'X-Shopify-Access-Token': shopToken } });
-          const prodData = await prodRes.json();
-          const imgUrl = prodData?.product?.images?.[0]?.src;
-          console.log(`🖼 Product image for ${firstProductId}: ${imgUrl||'not found'}`);
-          if (imgUrl) {
-            // Download image as buffer — more reliable than URL-only on Baileys
-            const imgRes = await fetch(imgUrl);
-            const imgBuf = Buffer.from(await imgRes.arrayBuffer());
-            await waSocket.sendMessage(jid, { image: imgBuf, caption: waMsg, mimetype: 'image/jpeg' });
-            imageSent = true;
-            console.log(`✅ Image+caption WA sent to ${phone}`);
-          }
+          // Download image as buffer — more reliable than URL-only on Baileys
+          const imgRes = await fetch(productImgUrl);
+          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          await waSocket.sendMessage(jid, { image: imgBuf, caption: waMsg, mimetype: 'image/jpeg' });
+          imageSent = true;
+          console.log(`✅ Image+caption WA sent to ${phone}`);
         } catch(imgErr) { console.error('Product image WA failed:', imgErr.message); }
       } else {
         console.log(`ℹ Image skip — product_id:${firstProductId} waConnected:${waConnected}`);
