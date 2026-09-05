@@ -8189,15 +8189,19 @@ app.get("/admin/audience-tag-counts", requirePermission('orders'), async (req, r
   try {
     const { from, to } = req.query;
     const q = {};
+    // shopify_created_at is stored as an ISO string (from the Shopify webhook payload
+    // verbatim), so range-match it as a string rather than casting to Date.
     if (from || to) {
-      q.created_at = {};
-      if (from) q.created_at.$gte = new Date(from);
-      if (to)   q.created_at.$lte = new Date(to + 'T23:59:59Z');
+      q.shopify_created_at = {};
+      if (from) q.shopify_created_at.$gte = new Date(from).toISOString();
+      if (to)   q.shopify_created_at.$lte = new Date(to + 'T23:59:59Z').toISOString();
     }
-    const ovsDocs = await mdb.collection('order_vendor_stage').find(q, { projection: { tags: 1 } }).toArray();
+    // Tags live on order_meta (populated from the Shopify order webhook payload),
+    // not order_vendor_stage (which never stores a tags field).
+    const metaDocs = await mdb.collection('order_meta').find(q, { projection: { tags: 1 } }).toArray();
     const tagCounts = {};
-    const total = ovsDocs.length;
-    ovsDocs.forEach(doc => {
+    const total = metaDocs.length;
+    metaDocs.forEach(doc => {
       if (!doc.tags) return;
       doc.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
         tagCounts[t] = (tagCounts[t] || 0) + 1;
