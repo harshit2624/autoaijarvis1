@@ -9931,7 +9931,7 @@
         </div>
 
         {/* Audience Quality Tag Mapping */}
-        <AudienceTagMapping />
+        <AudienceTagMapping token={token} />
       </div>
     );
   }
@@ -9979,7 +9979,7 @@
     },
   ];
 
-  function AudienceTagMapping() {
+  function AudienceTagMapping({ token }) {
     const STORAGE_KEY = 'croscrow_audience_tag_map';
     const loadSaved = () => {
       try {
@@ -9998,6 +9998,19 @@
     });
     const [inputs, setInputs] = React.useState({});
     const [saved, setSaved] = React.useState(false);
+    const [liveTags, setLiveTags] = React.useState([]);
+    const [tagsLoading, setTagsLoading] = React.useState(true);
+
+    React.useEffect(() => {
+      setTagsLoading(true);
+      fetch(`${API}/admin/order-tags`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(d => setLiveTags(d.tags || []))
+        .catch(() => {})
+        .finally(() => setTagsLoading(false));
+    }, [token]);
+
+    const assignedTags = new Set(Object.values(tierMap).flat());
 
     const save = (map) => {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(map)); } catch(e) {}
@@ -10005,8 +10018,8 @@
       setTimeout(() => setSaved(false), 2000);
     };
 
-    const addTag = (tierId) => {
-      const val = (inputs[tierId] || '').trim();
+    const addTag = (tierId, tagFromDropdown) => {
+      const val = (tagFromDropdown != null ? tagFromDropdown : (inputs[tierId] || '')).trim();
       if (!val) return;
       const next = { ...tierMap, [tierId]: [...(tierMap[tierId]||[]).filter(t=>t!==val), val] };
       setTierMap(next); save(next);
@@ -10071,16 +10084,18 @@
                 {!(tierMap[tier.id]||[]).length && <span style={{fontSize:11,color:'var(--text-muted)',fontStyle:'italic'}}>No tags mapped</span>}
               </div>
 
-              {/* Add input */}
-              <div style={{display:'flex',gap:6}}>
-                <input
-                  className="form-input" placeholder="add shopify tag…" style={{flex:1,fontSize:11,padding:'5px 8px'}}
-                  value={inputs[tier.id]||''}
-                  onChange={e=>setInputs(p=>({...p,[tier.id]:e.target.value}))}
-                  onKeyDown={e=>e.key==='Enter'&&addTag(tier.id)}
-                />
-                <button className="btn btn-sm" style={{fontSize:11,padding:'4px 12px',background:tier.color,color:'#000',border:'none',fontWeight:700}} onClick={()=>addTag(tier.id)}>+</button>
-              </div>
+              {/* Add from live Shopify tags */}
+              <select
+                className="form-input" style={{width:'100%',fontSize:11,padding:'5px 8px'}}
+                value=""
+                disabled={tagsLoading}
+                onChange={e=>{ if(e.target.value) addTag(tier.id, e.target.value); }}
+              >
+                <option value="">{tagsLoading?'Loading Shopify tags…':'+ add from Shopify tags…'}</option>
+                {liveTags.filter(t=>!(tierMap[tier.id]||[]).includes(t)).map(t => (
+                  <option key={t} value={t}>{t}{assignedTags.has(t)?' (in another tier)':''}</option>
+                ))}
+              </select>
             </div>
           ))}
         </div>
