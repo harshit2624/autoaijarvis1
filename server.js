@@ -1069,6 +1069,51 @@ async function shopifyRESTRaw(path) {
   return { data, link: res.headers.get("link") || "" };
 }
 
+// ── Shopify GraphQL Admin API helper (REST doesn't cover Store Credit) ─────
+async function shopifyGraphQL(query, variables = {}) {
+  const token = await getAccessToken();
+  const res = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.errors) throw new Error(`Shopify GraphQL error: ${JSON.stringify(data.errors || data)}`);
+  return data.data;
+}
+
+// ── Issue Shopify Store Credit to a customer ───────────────────────────────
+// Requires the app's Shopify scope `write_store_credit_account_transactions`
+// (see SHOPIFY_APP_SCOPES) — the store must reinstall/re-approve the custom
+// app after this scope is added before this call will succeed.
+async function issueShopifyStoreCredit(customerId, amount, currencyCode = 'INR') {
+  const mutation = `
+    mutation storeCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
+      storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
+        storeCreditAccountTransaction {
+          amount { amount currencyCode }
+          account { id balance { amount currencyCode } }
+        }
+        userErrors { message field }
+      }
+    }`;
+  const variables = {
+    id: `gid://shopify/Customer/${customerId}`,
+    creditInput: { creditAmount: { amount: String(amount), currencyCode } },
+  };
+  const data = await shopifyGraphQL(mutation, variables);
+  const result = data.storeCreditAccountCredit;
+  if (result.userErrors?.length) {
+    throw new Error(result.userErrors.map(e => e.message).join('; '));
+  }
+  return {
+    amount: result.storeCreditAccountTransaction?.amount?.amount,
+    currencyCode: result.storeCreditAccountTransaction?.amount?.currencyCode,
+    balance: result.storeCreditAccountTransaction?.account?.balance?.amount,
+    accountId: result.storeCreditAccountTransaction?.account?.id,
+  };
+}
+
 // ── Fetch ALL orders using cursor-based pagination ─────────────────────────
 // Shopify's default window is ~60 days. Pass created_at_min to go further back.
 // Note: date filters only go on the FIRST request — page_info cursors carry the
@@ -15391,9 +15436,41 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
   }
 }
 
+// ── RR status ordering + safe auto-advance ────────────────────────────────
+// Terminal negative states (rejected/cancelled) are never overwritten by
+// automated tracking signals. Forward progress only — a lower-rank status
+// (e.g. a stale webhook re-delivery) never regresses a further-along request.
+const RR_STATUS_ORDER = ['pending', 'approved', 'pickup_scheduled', 'pickup', 'picked_up', 'in_transit', 'received', 'received_at_warehouse', 'completed'];
+const RR_TERMINAL_STATUSES = ['rejected', 'cancelled'];
+function rrStatusRank(status) {
+  const i = RR_STATUS_ORDER.indexOf(status);
+  return i === -1 ? -1 : i;
+}
+// Push one entry onto a return_request's activity log (capped at last 60 entries).
+async function rrPushHistory(request_id, entry) {
+  await mdb.collection('return_requests').updateOne(
+    { request_id },
+    { $push: { history: { $each: [{ at: new Date().toISOString(), ...entry }], $slice: -60 } } }
+  ).catch(e => console.error('rrPushHistory error:', e.message));
+}
+// Advance a return_request's status forward only, logging the transition.
+// Returns true if the status actually changed.
+async function rrAdvanceStatus(rr, newStatus, note, source = 'auto') {
+  if (RR_TERMINAL_STATUSES.includes(rr.status)) return false;
+  if (rrStatusRank(newStatus) <= rrStatusRank(rr.status)) return false;
+  const now = new Date().toISOString();
+  await mdb.collection('return_requests').updateOne(
+    { request_id: rr.request_id },
+    { $set: { status: newStatus, updated_at: now },
+      $push: { history: { $each: [{ status: newStatus, at: now, note: note || '', source }], $slice: -60 } } }
+  );
+  console.log(`📦 RR ${rr.request_id} auto-advanced: ${rr.status} → ${newStatus}${note ? ` (${note})` : ''}`);
+  return true;
+}
+
 // ── WA notifications for return/exchange process ─────────────────────────
 // event: request_received | pickup_scheduled | picked_up | received_at_warehouse
-//        refund_initiated | exchange_dispatched | rejected
+//        refund_initiated | exchange_dispatched | rejected | pickup_overdue_48h
 // Deduplication via return_requests.wa_notif_sent map.
 async function sendRRWANotif(rr, event, extra = {}) {
   if (!mdb || !waSocket || !waConnected) return;
@@ -15440,6 +15517,9 @@ async function sendRRWANotif(rr, event, extra = {}) {
   } else if (event === 'rejected') {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  ${orderName}\n\nSTATE  ${reason}\n       Your item ships back\n       within 2–3 days.\n────────────────\nREPLY 4 TO REACH US NOW\nHOURS  2 PM – 8 PM\nLINE   6375668971\n${_Fr}`;
+  } else if (event === 'store_credit_issued') {
+    const amt = extra.amount != null ? `₹${Number(extra.amount).toFixed(0)}` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nSTORE CREDIT ISSUED\n────────────────\nORDER  ${orderName}\n\nAMT    ${amt}\nSTATE  Added to your\n       CROSCROW account.\n       Auto-applies at\n       checkout on your\n       next order.\n────────────────\nCHECK YOUR EMAIL TOO\n${_Fr}`;
   }
 
   if (!msg) return;
@@ -15474,6 +15554,8 @@ async function sendRRVendorWANotif(rr, event) {
     msg = `📦 *New ${typeLabel} Request — ${orderName}*\n\nHi ${rr.vendor_name},\n\nA customer (${customerName}) has raised a *${typeLabel.toLowerCase()} request* for their order.\n\n🛍️ Item: ${itemNames}\n\nPlease review and approve/reject it from your Vendor Portal at the earliest.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
   } else if (event === 'approved') {
     msg = `✅ *${typeLabel} Approved — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe *${typeLabel.toLowerCase()} request* for order *${orderName}* has been approved.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n\nPlease *arrange reverse pickup* from the customer *within 24 hours*. Once scheduled, update the AWB in your Vendor Portal.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+  } else if (event === 'pickup_overdue_48h') {
+    msg = `🔴 *OVERDUE — Reverse Pickup Not Arranged — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThis *${typeLabel.toLowerCase()} request* was approved *over 48 hours ago* and pickup still hasn't happened.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease arrange pickup *immediately* and update the AWB in your Vendor Portal — this is now attracting a delay penalty per your vendor agreement.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
   }
 
   if (!msg) return;
@@ -15695,28 +15777,31 @@ async function shipsagarTrackingCron() {
             { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, updated_at: now } }
           );
           console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
+          await rrPushHistory(rr.request_id, { event: `${direction}_tracking`, note: desc, source: 'courier' });
 
           if (direction === 'reverse') {
             const reverseStage = shipsagarStatusToStage(desc);
-            // Picked up from customer
+            // Picked up from customer — advances status regardless of current status
+            // (as long as it's not already further along or terminal), so a request
+            // that never got manually "approved" doesn't get stuck on pending forever.
             const isPickedUp = PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
             if (isPickedUp && !rr.wa_notif_sent?.picked_up) {
               await sendRRWANotif(rr, 'picked_up');
-              if (['approved', 'pickup_scheduled'].includes(rr.status)) {
-                await mdb.collection('return_requests').updateOne(
-                  { request_id: rr.request_id },
-                  { $set: { status: 'picked_up', updated_at: now } }
-                );
-              }
+              await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
+            }
+            // In transit — courier moving it back toward the warehouse
+            if (reverseStage === 'transit' && rrStatusRank(rr.status) < rrStatusRank('in_transit')) {
+              await rrAdvanceStatus(rr, 'in_transit', 'Courier scan: in transit to warehouse', 'courier');
             }
             // Delivered back to warehouse (reverse delivery = received by us)
             const isReceivedBack = DELIVERED_SELLER_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
             if (isReceivedBack && !rr.wa_notif_sent?.received_at_warehouse) {
               await sendRRWANotif(rr, 'received_at_warehouse');
-              if (['approved', 'pickup_scheduled', 'picked_up'].includes(rr.status)) {
+              const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
+              if (advanced) {
                 await mdb.collection('return_requests').updateOne(
                   { request_id: rr.request_id },
-                  { $set: { status: 'received', received_at_cc: true, received_at_cc_at: now, updated_at: now } }
+                  { $set: { received_at_cc: true, received_at_cc_at: now } }
                 );
               }
             }
@@ -17836,6 +17921,22 @@ function templateRRCompletedCustomer({ req }) {
   return rrEmailSky(headline.replace('\n','<br>'), 'RETURN &amp; EXCHANGE', body);
 }
 
+// Customer: store credit issued
+function templateRRStoreCreditCustomer({ req, amount, balance, currency }) {
+  const cur = currency === 'INR' ? '₹' : (currency || '');
+  const body = `
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Store credit added! 🎁</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Instead of a refund to your original payment method, we've added <strong style="color:#ccc;">${cur}${Number(amount).toFixed(0)}</strong> as CROSCROW store credit to your account. It applies automatically at checkout on your next order — no code needed.</div>
+    ${rrInfoBoxSky(req)}
+    <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:14px 18px;margin-bottom:20px;">
+      <div style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Credited Amount</div>
+      <div style="font-size:22px;font-weight:800;color:#7eb8f7;">${cur}${Number(amount).toFixed(0)}</div>
+      ${balance != null ? `<div style="font-size:11px;color:#888;margin-top:6px;">Available account balance: ${cur}${Number(balance).toFixed(0)}</div>` : ''}
+    </div>
+    <div style="font-size:12px;color:#555;line-height:1.7;">Thank you for shopping with CROSCROW 🙏</div>`;
+  return rrEmailSky('STORE CREDIT<br>ADDED.', 'RETURN &amp; EXCHANGE', body);
+}
+
 // Customer: reverse shipment created (pickup AWB assigned)
 function templateRRReverseShipmentCustomer({ req, awb, courier }) {
   const T = req.type === 'exchange' ? 'EXCHANGE' : 'RETURN';
@@ -17900,7 +18001,7 @@ function templateRRReminder24Vendor({ req }) {
 }
 
 // ── Helper: send RR email by type ─────────────────────────────────────────
-async function sendRREmail(type, req) {
+async function sendRREmail(type, req, extra = {}) {
   try {
     const cfg = await getSmtpConfig();
     const ADMIN = cfg?.adminEmail || 'harshitvj24@gmail.com';
@@ -17942,6 +18043,9 @@ async function sendRREmail(type, req) {
       case 'reminder_vendor':
         if (vendorEmail) await send(vendorEmail, `⏰ Action Needed: Approved ${T} Not Yet Arranged — ${req.request_id}`, templateRRReminder24Vendor({req}));
         break;
+      case 'store_credit':
+        if (req.customer_email) await send(req.customer_email, `Store Credit Added ✓ — ${req.request_id}`, templateRRStoreCreditCustomer({ req, amount: extra.amount, balance: extra.balance, currency: extra.currency }));
+        break;
     }
   } catch(e) { console.error('RR email error:', e.message); }
 }
@@ -17966,8 +18070,28 @@ async function rrReminderCron() {
       await sendRREmail('reminder_vendor', r);
       await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_approved: true } });
     }
-    if (pendingOld.length + approvedOld.length > 0)
-      console.log(`📧 RR reminders sent: ${pendingOld.length} admin, ${approvedOld.length} vendor`);
+
+    // Approved/pickup-scheduled > 48hrs with NO pickup yet — WA ping both admin + vendor.
+    // Uses approved_at (set when admin approves) so this tracks time-since-approval, not
+    // time-since-creation. Only fires once per request (wa_notif_sent.pickup_overdue_48h).
+    const ago48 = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    const overdueRRs = await mdb.collection('return_requests').find({
+      status: { $in: ['approved', 'pickup_scheduled'] },
+      approved_at: { $lt: ago48 },
+      'wa_notif_sent.pickup_overdue_48h': { $exists: false },
+    }).toArray();
+    for (const r of overdueRRs) {
+      await sendRRVendorWANotif(r, 'pickup_overdue_48h');
+      await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nRR PICKUP OVERDUE (48H+)\n────────────────\nREQ    ${r.request_id}\nORDER  ${r.order_name || ''}\nVENDOR ${r.vendor_name || '—'}\nTYPE   ${r.type}\n────────────────\nApproved 48h+ ago, no pickup yet.\n\`\`\``);
+      await mdb.collection('return_requests').updateOne(
+        { request_id: r.request_id },
+        { $set: { [`wa_notif_sent.pickup_overdue_48h`]: new Date().toISOString() } }
+      );
+      await rrPushHistory(r.request_id, { event: 'pickup_overdue_48h', note: 'Pickup overdue 48h+ since approval — WA sent to admin & vendor', source: 'auto' });
+    }
+
+    if (pendingOld.length + approvedOld.length + overdueRRs.length > 0)
+      console.log(`📧 RR reminders sent: ${pendingOld.length} admin(email), ${approvedOld.length} vendor(email), ${overdueRRs.length} 48h-overdue(WA)`);
   } catch(e) { console.error('RR reminder cron error:', e.message); }
 }
 setTimeout(rrReminderCron, 90000);
@@ -18650,6 +18774,7 @@ app.post("/track/request", async (req, res) => {
       image_urls: Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && (u.startsWith('/rr-uploads/') || u.startsWith('/uploads/'))) : [],
       ...(isFeeWaived && { fee_waived_by_admin: true }),
       ...(isForceEnabled && { force_enabled_by_admin: true }),
+      history: [{ status: 'pending', at: now.toISOString(), note: 'Request submitted by customer', source: 'customer' }],
     };
 
     await mdb.collection('return_requests').insertOne(doc);
@@ -18726,8 +18851,14 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
       const so = soData?.order || {};
       shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: so.name || rr.request_id, customerName: rr.customer_name || '', email: rr.customer_email || so.email || '', mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) }).catch(() => {});
       sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
-      if (direction === 'reverse') sendRRWANotif(rr, 'pickup_scheduled', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
-      if (direction === 'forward') sendRRWANotif(rr, 'exchange_dispatched', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
+      if (direction === 'reverse') {
+        sendRRWANotif(rr, 'pickup_scheduled', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
+        await rrAdvanceStatus(rr, 'pickup_scheduled', `AWB ${awb.trim()} (${courier || 'manual'}) assigned for reverse pickup`, 'admin');
+      }
+      if (direction === 'forward') {
+        sendRRWANotif(rr, 'exchange_dispatched', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
+        await rrPushHistory(rr.request_id, { event: 'forward_awb_set', note: `AWB ${awb.trim()} (${courier || 'manual'}) assigned for exchange dispatch`, source: 'admin' });
+      }
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -19115,6 +19246,7 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
       { $set: { received_at_cc: true, received_at_cc_at: now, updated_at: now } }
     );
 
+    await rrPushHistory(req.params.id, { event: 'received_at_cc', note: `${added.length} item(s) added to CC inventory`, source: 'admin' });
     auditLog("admin", "rr_received_at_cc", req.params.id, { added });
     res.json({ success: true, added });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -19123,17 +19255,21 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
 app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
   try {
     const { status, admin_note } = req.body;
-    const update = { updated_at: new Date().toISOString() };
+    const before = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { status: 1 } });
+    const now = new Date().toISOString();
+    const update = { updated_at: now };
     if (status) update.status = status;
+    if (status === 'approved' && before?.status !== 'approved') update.approved_at = now;
     if (admin_note !== undefined) update.admin_note = admin_note;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id }, { $set: update });
     if (status) {
+      await rrPushHistory(req.params.id, { status, note: admin_note || '', source: 'admin' });
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
       if (updated) {
         const emailType = { approved: 'approved_by_admin', rejected: 'rejected', pickup: 'pickup', in_transit: 'in_transit', completed: 'completed' }[status];
         if (emailType) sendRREmail(emailType, updated).catch(() => {});
         if (status === 'rejected') sendRRWANotif(updated, 'rejected', { reason: admin_note || updated.admin_note }).catch(() => {});
-        if (status === 'completed' && updated.type === 'return') sendRRWANotif(updated, 'refund_initiated').catch(() => {});
+        if (status === 'completed' && updated.type === 'return' && updated.resolution !== 'store_credit') sendRRWANotif(updated, 'refund_initiated').catch(() => {});
         if (status === 'completed' && updated.type === 'exchange') sendRRWANotif(updated, 'exchange_dispatched').catch(() => {});
         if (status === 'received' || status === 'received_at_warehouse') sendRRWANotif(updated, 'received_at_warehouse').catch(() => {});
         if (status === 'picked_up') sendRRWANotif(updated, 'picked_up').catch(() => {});
@@ -19150,6 +19286,61 @@ app.delete("/admin/return-requests/:id", adminAuth, async (req, res) => {
     if (result.deletedCount === 0) return res.status(404).json({ error: 'Request not found' });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Admin: issue Shopify store credit as this request's resolution ────────
+// Credits the customer's native Shopify store-credit account (auto-applies at
+// their next checkout), records a ledger entry, marks the request resolved,
+// and immediately emails + WhatsApps the customer. Requires the app's
+// `write_store_credit_account_transactions` scope to be granted in Shopify
+// Admin → Apps → Develop apps → (this app) → Configuration, then reinstalled.
+app.post("/admin/return-requests/:id/store-credit", adminAuth, async (req, res) => {
+  try {
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+    if (rr.resolution === 'store_credit') return res.status(400).json({ error: 'Store credit already issued for this request.' });
+    if (!rr.shopify_order_id) return res.status(400).json({ error: 'No linked Shopify order on this request.' });
+
+    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,currency`);
+    const customerId = order?.customer?.id;
+    if (!customerId) return res.status(400).json({ error: 'Could not find a Shopify customer on this order — store credit requires a registered customer account.' });
+
+    const defaultAmount = (rr.items || []).reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty || it.quantity) || 1), 0) || parseFloat(order.total_price || 0);
+    const amount = parseFloat(req.body?.amount) > 0 ? parseFloat(req.body.amount) : defaultAmount;
+    const currency = order.currency || 'INR';
+
+    const credit = await issueShopifyStoreCredit(customerId, amount.toFixed(2), currency);
+
+    const now = new Date().toISOString();
+    const ledgerEntry = {
+      request_id: rr.request_id,
+      shopify_order_id: rr.shopify_order_id,
+      shopify_customer_id: String(customerId),
+      customer_email: rr.customer_email,
+      customer_name: rr.customer_name,
+      amount, currency,
+      shopify_account_id: credit.accountId || null,
+      balance_after: credit.balance != null ? parseFloat(credit.balance) : null,
+      issued_by: 'admin',
+      issued_at: now,
+    };
+    await mdb.collection('store_credits').insertOne(ledgerEntry);
+
+    await mdb.collection('return_requests').updateOne(
+      { request_id: rr.request_id },
+      { $set: { resolution: 'store_credit', store_credit: { amount, currency, issued_at: now }, status: rrStatusRank(rr.status) < rrStatusRank('completed') ? 'completed' : rr.status, updated_at: now } }
+    );
+    await rrPushHistory(rr.request_id, { event: 'store_credit_issued', status: 'completed', note: `₹${amount.toFixed(0)} store credit issued`, source: 'admin' });
+
+    sendRREmail('store_credit', { ...rr, resolution: 'store_credit' }, { amount, balance: credit.balance, currency }).catch(e => console.error('RR store credit email error:', e.message));
+    sendRRWANotif(rr, 'store_credit_issued', { amount }).catch(() => {});
+    auditLog('admin', 'rr_store_credit_issued', rr.request_id, { amount, currency, customerId });
+
+    res.json({ success: true, amount, currency, balance: credit.balance });
+  } catch (err) {
+    console.error('❌ RR store-credit error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Shared: create reverse/forward shipment for a return/exchange request ─
@@ -19473,8 +19664,14 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
       { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
     sendRRShipmentEmail(rr, direction, result.awb, result.courier);
-    if (direction === 'reverse') sendRRWANotif(rr, 'pickup_scheduled', { awb: result.awb, courier: result.courier }).catch(() => {});
-    if (direction === 'forward') sendRRWANotif(rr, 'exchange_dispatched', { awb: result.awb, courier: result.courier }).catch(() => {});
+    if (direction === 'reverse') {
+      sendRRWANotif(rr, 'pickup_scheduled', { awb: result.awb, courier: result.courier }).catch(() => {});
+      await rrAdvanceStatus(rr, 'pickup_scheduled', `Shipment booked via ${partner} — AWB ${result.awb}`, 'admin');
+    }
+    if (direction === 'forward') {
+      sendRRWANotif(rr, 'exchange_dispatched', { awb: result.awb, courier: result.courier }).catch(() => {});
+      await rrPushHistory(rr.request_id, { event: 'forward_shipment_created', note: `Shipment booked via ${partner} — AWB ${result.awb}`, source: 'admin' });
+    }
     res.json({ success: true, awb: result.awb, courier: result.courier });
   } catch (err) {
     console.error('❌ admin create-shipment RR:', err.message);
@@ -19496,6 +19693,13 @@ app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
     { $set: { [field]: { awb: awb.trim(), courier: courier||'', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
   );
   sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
+  if (direction === 'reverse') {
+    sendRRWANotif(rr, 'pickup_scheduled', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
+    await rrAdvanceStatus(rr, 'pickup_scheduled', `AWB ${awb.trim()} (${courier || 'manual'}) assigned by vendor`, 'vendor');
+  } else {
+    sendRRWANotif(rr, 'exchange_dispatched', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
+    await rrPushHistory(rr.request_id, { event: 'forward_awb_set', note: `AWB ${awb.trim()} (${courier || 'manual'}) assigned by vendor`, source: 'vendor' });
+  }
   res.json({ success: true });
 });
 
@@ -19563,6 +19767,13 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
       { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
     sendRRShipmentEmail(rr, direction, result.awb, result.courier);
+    if (direction === 'reverse') {
+      sendRRWANotif(rr, 'pickup_scheduled', { awb: result.awb, courier: result.courier }).catch(() => {});
+      await rrAdvanceStatus(rr, 'pickup_scheduled', `Shipment booked via ${partner} by vendor — AWB ${result.awb}`, 'vendor');
+    } else {
+      sendRRWANotif(rr, 'exchange_dispatched', { awb: result.awb, courier: result.courier }).catch(() => {});
+      await rrPushHistory(rr.request_id, { event: 'forward_shipment_created', note: `Shipment booked via ${partner} by vendor — AWB ${result.awb}`, source: 'vendor' });
+    }
     res.json({ success: true, awb: result.awb, courier: result.courier });
   } catch (err) {
     console.error('❌ vendor create-shipment RR:', err.message);
@@ -19612,7 +19823,9 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
     if (status) update.status = status;
     const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { $set: update });
+    if (vendor_note !== undefined) await rrPushHistory(req.params.id, { note: vendor_note, source: 'vendor', event: 'vendor_note' });
     if (status === 'approved') {
+      await rrPushHistory(req.params.id, { status: 'approved', note: 'Vendor confirmed pickup arrangement', source: 'vendor' });
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
       if (updated) {
         sendRREmail('approved_by_vendor', updated).catch(() => {});
