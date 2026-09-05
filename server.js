@@ -22917,14 +22917,24 @@ app.post('/admin/wa-cloud/chats/:phone/send', adminAuth, async (req, res) => {
 app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
     let payload = {};
-    const raw = req.body || '';
-    // GoKwik sends base64-encoded JSON; try to detect and decode
-    try {
-      const jsonStr = /^[\[{]/.test(raw.trim())
-        ? raw                                          // plain JSON
-        : Buffer.from(raw.trim(), 'base64').toString('utf8'); // base64
-      payload = JSON.parse(jsonStr);
-    } catch { payload = {}; }
+    // The global express.json() middleware (registered app-wide, runs before
+    // this route) already parses the body into an OBJECT when GoKwik sends
+    // Content-Type: application/json — this route's own express.text() then
+    // no-ops (body already consumed) and req.body stays that object, not a
+    // string. Treating it as a string (raw.trim()) silently threw and
+    // swallowed every JSON-content-type payload down to {} since the base64
+    // handling was added. Handle both shapes explicitly.
+    if (req.body && typeof req.body === 'object') {
+      payload = req.body;
+    } else {
+      const raw = typeof req.body === 'string' ? req.body : '';
+      try {
+        const jsonStr = /^[\[{]/.test(raw.trim())
+          ? raw                                          // plain JSON
+          : Buffer.from(raw.trim(), 'base64').toString('utf8'); // base64
+        payload = JSON.parse(jsonStr);
+      } catch { payload = {}; }
+    }
     console.log('🛒 RAW abandoned-cart payload:', JSON.stringify(payload, null, 2));
 
     // ── GoKwik payload shape ──────────────────────────────────────────────
