@@ -22790,6 +22790,121 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
   }
 }
 
+// ── WA Cloud API inbox: webhook receiver + admin chat view ────────────────
+// Still fully separate from the Baileys bot — this only reads/writes
+// wa_cloud_chats / wa_cloud_messages, its own collections.
+//
+// Setup in Meta: App → WhatsApp → Configuration → Webhook → Callback URL
+//   https://dashboard.croscrow.com/webhooks/whatsapp-cloud
+// Verify token: set WA_CLOUD_VERIFY_TOKEN below to any string, use the same
+// string in Meta's webhook setup. Subscribe to the "messages" field.
+const WA_CLOUD_VERIFY_TOKEN = process.env.WA_CLOUD_VERIFY_TOKEN || 'croscrow_wa_cloud_verify';
+
+// GET — Meta's one-time webhook verification handshake
+app.get('/webhooks/whatsapp-cloud', (req, res) => {
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && token === WA_CLOUD_VERIFY_TOKEN) {
+    console.log('✅ WA Cloud webhook verified by Meta');
+    return res.status(200).send(challenge);
+  }
+  res.sendStatus(403);
+});
+
+// POST — inbound messages + delivery/read status updates
+app.post('/webhooks/whatsapp-cloud', async (req, res) => {
+  res.sendStatus(200); // ack immediately, Meta retries on non-200
+  try {
+    const entry = req.body?.entry?.[0];
+    const value = entry?.changes?.[0]?.value;
+    if (!value) return;
+
+    // Inbound customer messages
+    for (const msg of (value.messages || [])) {
+      const phone = String(msg.from || '').replace(/^91/, '').slice(-10);
+      const contact = (value.contacts || []).find(c => c.wa_id === msg.from);
+      const name = contact?.profile?.name || '';
+      const text = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || (msg.type ? `[${msg.type}]` : '');
+      const now = new Date().toISOString();
+
+      await mdb.collection('wa_cloud_messages').insertOne({
+        phone, direction: 'in', type: msg.type || 'text', text,
+        wamid: msg.id, raw: msg, created_at: now,
+      });
+      await mdb.collection('wa_cloud_chats').updateOne(
+        { phone },
+        { $set: { phone, name: name || undefined, last_message: text, last_at: now, updated_at: now },
+          $setOnInsert: { created_at: now, unread_count: 0 },
+          $inc: { unread_count: 1 } },
+        { upsert: true }
+      );
+      console.log(`📥 WA Cloud inbound: ${phone} → "${text.slice(0,60)}"`);
+    }
+
+    // Delivery/read status updates for messages we sent
+    for (const st of (value.statuses || [])) {
+      await mdb.collection('wa_cloud_messages').updateOne(
+        { wamid: st.id },
+        { $set: { status: st.status, status_at: new Date().toISOString() } }
+      );
+    }
+  } catch (e) { console.error('WA Cloud webhook error:', e.message); }
+});
+
+// GET — list chats, newest first
+app.get('/admin/wa-cloud/chats', adminAuth, async (req, res) => {
+  try {
+    const chats = await mdb.collection('wa_cloud_chats').find({}, { projection: { _id: 0 } }).sort({ last_at: -1 }).limit(200).toArray();
+    res.json({ chats });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET — message history for one chat
+app.get('/admin/wa-cloud/chats/:phone/messages', adminAuth, async (req, res) => {
+  try {
+    const messages = await mdb.collection('wa_cloud_messages').find({ phone: req.params.phone }, { projection: { _id: 0, raw: 0 } }).sort({ created_at: 1 }).limit(500).toArray();
+    res.json({ messages });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST — mark a chat's unread count cleared (call when admin opens it)
+app.post('/admin/wa-cloud/chats/:phone/read', adminAuth, async (req, res) => {
+  try {
+    await mdb.collection('wa_cloud_chats').updateOne({ phone: req.params.phone }, { $set: { unread_count: 0 } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST — send a free-form text reply (only works within Meta's 24h customer
+// service window since the last inbound message — outside that window Meta
+// will reject it and require a template, which is expected WhatsApp policy).
+app.post('/admin/wa-cloud/chats/:phone/send', adminAuth, async (req, res) => {
+  try {
+    if (!waCloudConfigured()) return res.status(400).json({ error: 'WA Cloud API not configured (WA_CLOUD_TOKEN / WA_CLOUD_PHONE_NUMBER_ID missing)' });
+    const { text } = req.body || {};
+    if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+    const to = `91${req.params.phone}`;
+    const r = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: text.trim() } }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) return res.status(400).json({ error: data.error?.message || `http_${r.status}` });
+    const now = new Date().toISOString();
+    await mdb.collection('wa_cloud_messages').insertOne({
+      phone: req.params.phone, direction: 'out', type: 'text', text: text.trim(),
+      wamid: data.messages?.[0]?.id, status: 'sent', created_at: now,
+    });
+    await mdb.collection('wa_cloud_chats').updateOne(
+      { phone: req.params.phone },
+      { $set: { last_message: text.trim(), last_at: now, updated_at: now } }
+    );
+    res.json({ ok: true, messageId: data.messages?.[0]?.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // ABANDONED CART WEBHOOK
 // Checkout partners (e.g. Razorpay Magic Checkout, Shiprocket Checkout)

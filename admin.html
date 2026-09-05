@@ -15507,6 +15507,7 @@
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
       { id:'abandonedcarts',   icon:'🛒', label:'Abandoned Carts',    section:'main' },
+      { id:'wacloudinbox',     icon:'💬', label:'WhatsApp Inbox',     section:'main', adminOnly:true },
       { id:'techbrain',        icon:'🧠', label:'Tech Brain',          section:'main' },
       { id:'opsmap',           icon:'🗺️', label:'Live Ops Map',         section:'main' },
       { id:'onboarding',       icon:'🆕', label:'Onboarding',         section:'main' },
@@ -15617,6 +15618,7 @@
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
           {view==='commissionrules' && <CommissionRules  token={token}/>}
           {view==='abandonedcarts' && <AbandonedCarts token={token}/>}
+          {view==='wacloudinbox'   && <WACloudInbox token={token}/>}
           {view==='techbrain'      && <TechBrain token={token}/>}
           {view==='opsmap'         && <OpsMap token={token}/>}
           {view==='onboarding'     && <VendorOnboarding token={token}/>}
@@ -16264,6 +16266,111 @@
             {loading ? '↻ Generating…' : '📥 Generate & Download Agreement (.pdf)'}
           </button>
           <span style={{marginLeft:14,fontSize:11,color:'var(--text-muted)'}}>File will download immediately — ready to send for signing.</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── WhatsApp Cloud API Inbox — chats coming in on the official WA number ──
+  function WACloudInbox({ token }) {
+    const [chats,     setChats]     = useState([]);
+    const [loading,   setLoading]   = useState(true);
+    const [selPhone,  setSelPhone]  = useState(null);
+    const [messages,  setMessages]  = useState([]);
+    const [msgLoading,setMsgLoading]= useState(false);
+    const [replyText, setReplyText] = useState('');
+    const [sending,   setSending]   = useState(false);
+    const [err,       setErr]       = useState(null);
+
+    const loadChats = () => {
+      fetch(`${API}/admin/wa-cloud/chats`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setChats(d.chats||[])).catch(()=>{}).finally(()=>setLoading(false));
+    };
+    useEffect(() => { loadChats(); const t = setInterval(loadChats, 10000); return () => clearInterval(t); }, []);
+
+    const loadMessages = (phone) => {
+      setMsgLoading(true);
+      fetch(`${API}/admin/wa-cloud/chats/${phone}/messages`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setMessages(d.messages||[])).catch(()=>{}).finally(()=>setMsgLoading(false));
+    };
+    useEffect(() => {
+      if (!selPhone) return;
+      loadMessages(selPhone);
+      fetch(`${API}/admin/wa-cloud/chats/${selPhone}/read`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } }).then(loadChats);
+      const t = setInterval(() => loadMessages(selPhone), 8000);
+      return () => clearInterval(t);
+    }, [selPhone]);
+
+    const selectChat = (phone) => { setSelPhone(phone); setErr(null); };
+
+    const sendReply = async () => {
+      if (!replyText.trim() || !selPhone) return;
+      setSending(true); setErr(null);
+      try {
+        const r = await fetch(`${API}/admin/wa-cloud/chats/${selPhone}/send`, {
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+          body: JSON.stringify({ text: replyText.trim() }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setReplyText('');
+        loadMessages(selPhone);
+      } catch(e) { setErr(e.message); }
+      setSending(false);
+    };
+
+    const selChat = chats.find(c => c.phone === selPhone);
+    const fmtTime = (iso) => iso ? new Date(iso).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+
+    return (
+      <div className="page">
+        <div className="card" style={{marginBottom:14,padding:'10px 16px',fontSize:11,color:'var(--text-muted)'}}>
+          💬 Official WhatsApp Cloud API inbox. Replies outside Meta's 24-hour customer service window will fail — that's WhatsApp policy, not a bug — use a template message from outside that window.
+        </div>
+        <div className="card" style={{display:'flex',height:560,overflow:'hidden',padding:0}}>
+          {/* Chat list */}
+          <div style={{width:280,borderRight:'1px solid var(--border)',overflowY:'auto',flexShrink:0}}>
+            <div style={{padding:'12px 14px',borderBottom:'1px solid var(--border)',fontWeight:700,fontSize:13}}>Chats</div>
+            {loading ? <div style={{padding:20,textAlign:'center',color:'var(--text-muted)',fontSize:12}}><span className="spin">↻</span></div> :
+             chats.length===0 ? <div style={{padding:20,textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No chats yet. Once a customer messages your WhatsApp number, it'll show up here.</div> :
+             chats.map(c => (
+              <div key={c.phone} onClick={()=>selectChat(c.phone)} style={{padding:'11px 14px',borderBottom:'1px solid var(--border)',cursor:'pointer',background:selPhone===c.phone?'var(--bg-hover)':'transparent'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                  <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{c.name || `+91 ${c.phone}`}</span>
+                  {c.unread_count>0 && <span style={{background:'var(--indigo)',color:'#fff',fontSize:9,fontWeight:800,borderRadius:99,padding:'1px 6px'}}>{c.unread_count}</span>}
+                </div>
+                <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.last_message}</div>
+                <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{fmtTime(c.last_at)}</div>
+              </div>
+            ))}
+          </div>
+          {/* Thread */}
+          <div style={{flex:1,display:'flex',flexDirection:'column',minWidth:0}}>
+            {!selPhone ? (
+              <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontSize:13}}>Select a chat to view messages</div>
+            ) : (
+              <>
+                <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',fontWeight:700,fontSize:13}}>
+                  {selChat?.name || `+91 ${selPhone}`} <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:11}}>+91 {selPhone}</span>
+                </div>
+                <div style={{flex:1,overflowY:'auto',padding:'14px 16px',display:'flex',flexDirection:'column',gap:8}}>
+                  {msgLoading && messages.length===0 ? <div style={{textAlign:'center',color:'var(--text-muted)',fontSize:12}}><span className="spin">↻</span></div> :
+                   messages.map((m,i) => (
+                    <div key={i} style={{alignSelf:m.direction==='out'?'flex-end':'flex-start',maxWidth:'70%'}}>
+                      <div style={{background:m.direction==='out'?'var(--indigo)':'var(--bg-card2)',color:m.direction==='out'?'#fff':'var(--text)',borderRadius:10,padding:'8px 12px',fontSize:12,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{m.text}</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2,textAlign:m.direction==='out'?'right':'left'}}>{fmtTime(m.created_at)}{m.direction==='out'&&m.status?` · ${m.status}`:''}</div>
+                    </div>
+                  ))}
+                </div>
+                {err && <div className="alert alert-error" style={{margin:'0 16px 8px',fontSize:11}}>⚠ {err}</div>}
+                <div style={{display:'flex',gap:8,padding:'12px 16px',borderTop:'1px solid var(--border)'}}>
+                  <input value={replyText} onChange={e=>setReplyText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendReply()}
+                    placeholder="Type a reply…" style={{flex:1,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 12px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:12,outline:'none'}}/>
+                  <button onClick={sendReply} disabled={sending||!replyText.trim()} style={{padding:'8px 18px',borderRadius:8,border:'none',background:'var(--indigo)',color:'#fff',fontWeight:700,cursor:'pointer',fontFamily:'var(--font-family)',fontSize:12}}>{sending?'…':'Send'}</button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
