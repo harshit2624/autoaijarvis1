@@ -22916,24 +22916,35 @@ app.post('/admin/wa-cloud/chats/:phone/send', adminAuth, async (req, res) => {
 
 app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
+    // Three middlewares can touch req.body before this handler ever runs:
+    //   1. app.use("/webhooks", express.raw({type:"application/json"})) —
+    //      applies to this ENTIRE path prefix (added for Shopify HMAC verify),
+    //      turns the body into a Buffer whenever Content-Type is application/json.
+    //   2. app.use(express.json()) — global, would parse into a plain object,
+    //      but only gets a turn if #1 didn't already claim the body.
+    //   3. This route's own express.text({type:'*/*'}) — only gets a turn if
+    //      neither #1 nor #2 claimed it (i.e. some other/no Content-Type).
+    // A Buffer is `typeof 'object'` in JS, so treating "object" as "already
+    // correctly parsed JSON" was wrong — that's what was producing {} for
+    // every real GoKwik call sent with Content-Type: application/json.
+    console.log(`🛒 abandoned-cart webhook — content-type: "${req.headers['content-type']}", body typeof: ${Buffer.isBuffer(req.body) ? 'Buffer' : typeof req.body}, length: ${req.body?.length ?? 'n/a'}`);
+
     let payload = {};
-    // The global express.json() middleware (registered app-wide, runs before
-    // this route) already parses the body into an OBJECT when GoKwik sends
-    // Content-Type: application/json — this route's own express.text() then
-    // no-ops (body already consumed) and req.body stays that object, not a
-    // string. Treating it as a string (raw.trim()) silently threw and
-    // swallowed every JSON-content-type payload down to {} since the base64
-    // handling was added. Handle both shapes explicitly.
-    if (req.body && typeof req.body === 'object') {
-      payload = req.body;
-    } else {
-      const raw = typeof req.body === 'string' ? req.body : '';
+    let bodyStr = '';
+    if (Buffer.isBuffer(req.body)) {
+      bodyStr = req.body.toString('utf8');
+    } else if (typeof req.body === 'string') {
+      bodyStr = req.body;
+    } else if (req.body && typeof req.body === 'object') {
+      payload = req.body; // genuinely already-parsed plain object
+    }
+    if (!Object.keys(payload).length && bodyStr) {
       try {
-        const jsonStr = /^[\[{]/.test(raw.trim())
-          ? raw                                          // plain JSON
-          : Buffer.from(raw.trim(), 'base64').toString('utf8'); // base64
+        const jsonStr = /^[\[{]/.test(bodyStr.trim())
+          ? bodyStr                                          // plain JSON
+          : Buffer.from(bodyStr.trim(), 'base64').toString('utf8'); // base64
         payload = JSON.parse(jsonStr);
-      } catch { payload = {}; }
+      } catch (e) { console.log(`🛒 abandoned-cart webhook — parse failed: ${e.message}. First 200 chars of body: ${bodyStr.slice(0,200)}`); payload = {}; }
     }
     console.log('🛒 RAW abandoned-cart payload:', JSON.stringify(payload, null, 2));
 
