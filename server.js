@@ -23493,6 +23493,20 @@ let waLatestQR = null;
 // Track JIDs the bot sent to programmatically — fromMe events for these are bot-generated, not admin manual
 const _waBotSentJids = new Map(); // jid → timestamp, cleaned up periodically
 setInterval(() => { const now = Date.now(); _waBotSentJids.forEach((ts, jid) => { if (now - ts > 120000) _waBotSentJids.delete(jid); }); }, 60000);
+
+// Cooldown for the welcome-menu resend — prevents WhatsApp anti-spam flags
+// from rapid-fire identical menu replies (e.g. several inbound messages from
+// the same number in quick succession each re-triggering the menu). Once
+// sent, the menu won't be resent to the same jid for this window even if
+// more unmatched messages keep arriving — the customer already has it.
+const _waMenuLastSent = new Map(); // jid → timestamp
+setInterval(() => { const now = Date.now(); _waMenuLastSent.forEach((ts, jid) => { if (now - ts > 15 * 60000) _waMenuLastSent.delete(jid); }); }, 5 * 60000);
+function waMenuOnCooldown(jid, cooldownMs = 10 * 60000) {
+  const last = _waMenuLastSent.get(jid);
+  const onCooldown = last && (Date.now() - last < cooldownMs);
+  if (!onCooldown) _waMenuLastSent.set(jid, Date.now());
+  return onCooldown;
+}
 let waStarting = false;
 let waSharedMessageHandler = null; // set by v1 bot; reused by v2
 let waReconnectTimer = null;
@@ -25871,6 +25885,7 @@ async function startBaileysBot() {
           // ── 1. Greeting → show welcome menu (mode-aware) ──────────────
           if (WA_GREETING.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
+            if (waMenuOnCooldown(sender)) { waPending.delete(sender); continue; }
             const _gMode = await getBotMode();
             if (_gMode === 'menu') {
               await saveAndSend(WA_MENUS.welcome_menu);
@@ -26083,8 +26098,10 @@ async function startBaileysBot() {
             // Only skip AI if not in ai_mode (customer explicitly opted in)
             if (_menuSession.menu !== 'ai_mode') {
               await SC.addMessage(chat._id, { sender: 'customer', text });
-              await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
-              await waSessionSet(sender, { menu: 'welcome_menu' });
+              if (!waMenuOnCooldown(sender)) {
+                await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
+                await waSessionSet(sender, { menu: 'welcome_menu' });
+              }
               waPending.delete(sender);
               continue;
             }
