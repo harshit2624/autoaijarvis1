@@ -25251,6 +25251,21 @@ async function waMenuForOrder(meta) {
 const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|hai|hola|namaste|👋|jai hind|good morning|good evening|good afternoon|gm|ge)$/i;
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
 
+// ── Natural-language intent detection for menu-mode customers ──────────────
+// Menu mode expects "1"-"4", but plenty of customers just type what they
+// want in plain English/Hinglish instead of picking a number. Map that
+// straight to the same handler a numbered reply would hit, instead of
+// making them read the menu again. Checked in order — return/exchange and
+// human requests are checked before "track" since e.g. "where is my refund"
+// or "human — my order hasn't shipped" could otherwise match track first.
+function waClassifyMenuIntent(text) {
+  const t = text.toLowerCase().trim();
+  if (/\b(human|agent|representative|real person|talk to (a |someone|somebody)|customer care|customer service|speak to (someone|a person)|need help from|manager)\b/.test(t)) return 4;
+  if (/\b(return|exchange|refund|wrong size|size issue|replace|swap|don'?t want|not satisfied|damaged|defective|quality issue)\b/.test(t)) return 2;
+  if (/\b(where.*(order|package|parcel|item)|track|order status|status of my order|when will.*(arrive|deliver|reach|ship)|order kab|kaha hai|delivery kab|not (received|delivered)|haven'?t (received|got))\b/.test(t)) return 1;
+  return null;
+}
+
 const WA_INSTANCE_ID = `${process.pid}-${Date.now()}`;
 let waBotHeartbeat = null;
 
@@ -26098,6 +26113,15 @@ async function startBaileysBot() {
             // Only skip AI if not in ai_mode (customer explicitly opted in)
             if (_menuSession.menu !== 'ai_mode') {
               await SC.addMessage(chat._id, { sender: 'customer', text });
+              // Try to understand plain-English intent before falling back to
+              // "here's the menu again" — e.g. "where is my order", "i want to
+              // exchange", "human" all route directly like pressing 1/2/4.
+              const _inferredNum = waClassifyMenuIntent(text);
+              if (_inferredNum) {
+                await waHandleMenuReply(sock, sender, chat, phone, _inferredNum, { menu: 'welcome_menu', orderData: _menuSession.orderData });
+                waPending.delete(sender);
+                continue;
+              }
               if (!waMenuOnCooldown(sender)) {
                 await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
                 await waSessionSet(sender, { menu: 'welcome_menu' });
