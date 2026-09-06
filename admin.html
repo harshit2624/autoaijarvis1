@@ -16441,6 +16441,20 @@
     };
     const [testPhones, setTestPhones] = useState({});
 
+    const sendWebhookCartWA = (id, testPhone) => {
+      const sendingKey = testPhone ? `${id}:test` : id;
+      setWaSending(p=>({...p,[sendingKey]:true}));
+      fetch(`${API}/admin/abandoned-carts/${id}/send-wa`, {
+        method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+        body: JSON.stringify(testPhone ? { test_phone: testPhone } : {}),
+      }).then(r=>r.json()).then(d=>{
+        if (d.sent) {
+          if (testPhone) alert(`✅ Test message sent to +91${testPhone} using this cart's real data.`);
+          else setWaSent(p=>({...p,[id]:true}));
+        } else alert(d.error || 'Failed — check phone number');
+      }).catch(()=>alert('Error')).finally(()=>setWaSending(p=>({...p,[sendingKey]:false})));
+    };
+
     const setCartStatus = async (id, newStatus) => {
       setUpdating(p=>({...p,[id]:true}));
       await fetch(`${API}/admin/abandoned-carts/${id}/status`, {
@@ -16661,12 +16675,35 @@
               {/* Expanded detail */}
               {expanded===cart.id && (
                 <div style={{borderTop:'1px solid var(--border)',padding:16}} onClick={e=>e.stopPropagation()}>
-                  <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+                  <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
                     {cart.checkout_url && (
                       <a href={cart.checkout_url} target="_blank" rel="noreferrer"
                         style={{padding:'6px 14px',borderRadius:6,background:'var(--indigo)',color:'#fff',fontWeight:600,fontSize:11,textDecoration:'none'}}>
                         🔗 Open Checkout URL
                       </a>
+                    )}
+                    {cart.phone && (
+                      <button onClick={()=>sendWebhookCartWA(cart.id)} disabled={waSending[cart.id]}
+                        style={{padding:'6px 14px',borderRadius:6,border:'1px solid rgba(37,211,102,0.4)',
+                          background:waSent[cart.id]?'rgba(37,211,102,0.15)':'rgba(37,211,102,0.08)',
+                          color:'#25d366',fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                        {waSending[cart.id]?'Sending…':waSent[cart.id]?'✅ WA Sent':'📲 Send WA'}
+                      </button>
+                    )}
+                    {cart.phone && (
+                      <div style={{display:'flex',gap:6,alignItems:'center',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,padding:'2px 4px 2px 10px'}}>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>🧪 Test to</span>
+                        <input type="tel" placeholder="98XXXXXXXX" value={testPhones[cart.id]||''}
+                          onChange={e=>setTestPhones(p=>({...p,[cart.id]:e.target.value.replace(/\D/g,'').slice(0,10)}))}
+                          style={{width:88,border:'none',background:'transparent',color:'var(--text)',fontSize:11,fontFamily:'inherit',outline:'none'}}/>
+                        <button onClick={()=>sendWebhookCartWA(cart.id,testPhones[cart.id])}
+                          disabled={(testPhones[cart.id]||'').length!==10||waSending[`${cart.id}:test`]}
+                          style={{padding:'4px 10px',borderRadius:5,border:'1px solid rgba(99,102,241,0.4)',
+                            background:'rgba(99,102,241,0.08)',color:'var(--indigo)',fontSize:10,fontWeight:700,
+                            cursor:(testPhones[cart.id]||'').length===10?'pointer':'default',fontFamily:'inherit'}}>
+                          {waSending[`${cart.id}:test`]?'…':'Send'}
+                        </button>
+                      </div>
                     )}
                     {cart.status !== 'recovered' && (
                       <button onClick={()=>setCartStatus(cart.id,'recovered')} disabled={updating[cart.id]}

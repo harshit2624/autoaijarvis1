@@ -23276,6 +23276,61 @@ app.delete('/admin/abandoned-carts/cleanup-empty', adminAuth, async (req, res) =
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /admin/abandoned-carts/:id/send-wa — manually (re)send the WA recovery
+// message for a webhook-received cart (GoKwik etc.), same logic as the
+// Shopify-checkouts tab's Send WA button. Supports test_phone override too.
+app.post('/admin/abandoned-carts/:id/send-wa', adminAuth, async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { test_phone } = req.body || {};
+    const cart = await mdb.collection('abandoned_carts').findOne({ _id: new ObjectId(req.params.id) });
+    if (!cart) return res.status(404).json({ error: 'Cart not found' });
+
+    const isTestSend = !!test_phone;
+    const phone = isTestSend
+      ? String(test_phone).replace(/\D/g,'').replace(/^91/,'').slice(-10)
+      : String(cart.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+    if (!phone || phone.length !== 10) return res.status(400).json({ error: 'No valid phone number on this cart' });
+
+    const total = parseFloat(cart.total || 0);
+    const discountCode = 'COMEBACK';
+    const discountAmt = 150;
+    const afterDiscount = Math.max(0, total - discountAmt);
+    const buyUrl = cart.checkout_url || 'https://croscrow.com';
+    const items = cart.items || [];
+
+    const waMsg =
+`Bro! still thinking? 👀
+
+was ₹${total.toFixed(0)} · now *₹${afterDiscount.toFixed(0)}*
+code *${discountCode}* = *₹${discountAmt} OFF*
+
+${buyUrl}
+
+⏰ Offer expires in *24 HRS*`;
+
+    const cloudResult = await sendWACloudAbandonedCart({
+      phone10: phone, imageUrl: items[0]?.image_url || '',
+      total, afterDiscount, discountAmt, discountCode,
+      buyUrlSuffix: waCloudUrlSuffix(buyUrl, cart.cart_id ? `?mrid=${cart.cart_id}` : ''),
+    });
+    if (!cloudResult.sent) {
+      if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
+      await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart manual WA error:', e.message));
+    }
+
+    if (!isTestSend) {
+      await mdb.collection('abandoned_carts').updateOne(
+        { _id: cart._id },
+        { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : 'baileys' } }
+      );
+    }
+
+    console.log(`✅ Manual WA (webhook cart) sent to ${phone} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}${isTestSend ? ' (TEST SEND)' : ''}`);
+    res.json({ sent: true, phone, test_send: isTestSend });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /admin/abandoned-carts/:id/status — mark recovered / dismissed
 app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
   try {
