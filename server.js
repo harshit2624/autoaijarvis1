@@ -22716,9 +22716,14 @@ const WA_CLOUD_PHONE_ID = process.env.WA_CLOUD_PHONE_NUMBER_ID || '';
 const WA_CLOUD_TEMPLATE = process.env.WA_CLOUD_TEMPLATE_NAME || 'abandoned_cart_recovery';
 const WA_CLOUD_LANG     = process.env.WA_CLOUD_TEMPLATE_LANG || 'en_US';
 const WA_CLOUD_API      = 'https://graph.facebook.com/v21.0';
+// Manual pause switch — set WA_CLOUD_ABANDONED_CART_PAUSED=false once the
+// Cloud API side (payment method, etc.) is sorted and ready to go live again.
+// While paused, abandoned-cart sends skip the Cloud API attempt entirely and
+// go straight to Baileys — no wasted API call, no delay.
+const WA_CLOUD_PAUSED   = (process.env.WA_CLOUD_ABANDONED_CART_PAUSED || 'true') !== 'false';
 
 function waCloudConfigured() {
-  return !!(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_ID);
+  return !WA_CLOUD_PAUSED && !!(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_ID);
 }
 
 // Splits a full checkout URL into the path+query suffix to hand to the
@@ -22741,6 +22746,7 @@ function waCloudUrlSuffix(fullUrl, fallbackSuffix = '') {
 //   BUTTON: URL "https://croscrow.com/{{1}}" — pass just the "?mrid=..." suffix
 const WA_CLOUD_FALLBACK_IMAGE = `${process.env.SERVER_URL || 'https://dashboard.croscrow.com'}/croscrow-logo.png`;
 async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscount, discountAmt, discountCode, buyUrlSuffix }) {
+  if (WA_CLOUD_PAUSED) return { sent: false, reason: 'paused' };
   if (!waCloudConfigured()) return { sent: false, reason: 'not_configured' };
   if (!phone10 || phone10.length !== 10) return { sent: false, reason: 'invalid_phone' };
   const to = `91${phone10}`;
@@ -23075,7 +23081,7 @@ ${buyUrl}
       buyUrlSuffix: waCloudUrlSuffix(buyUrl, cartId ? `?mrid=${cartId}` : ''),
     });
     if (!cloudResult.sent) {
-      if (cloudResult.reason !== 'not_configured') console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
+      if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
       await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
     }
     await mdb.collection('abandoned_carts').updateOne(
@@ -23184,7 +23190,7 @@ ${checkoutUrl}
 
     let imageSent = false;
     if (!cloudResult.sent) {
-      if (cloudResult.reason !== 'not_configured') console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
+      if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
       // Try to send with product image via Baileys (fallback path, unchanged)
       const jid = `91${phone}@s.whatsapp.net`;
       if (productImgUrl && waSocket && waConnected) {
