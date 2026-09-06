@@ -22336,14 +22336,9 @@ app.post('/admin/support/chats/:id/hide', adminAuth, async (req, res) => {
 });
 app.post('/admin/support/chats/:id/resolve', adminAuth, async (req, res) => {
   const { resolved } = req.body || {};
-  const chat = await SC.get(req.params.id).catch(() => null);
   await SC.update(req.params.id, resolved
     ? { resolved: true, resolved_at: new Date().toISOString(), resolved_by: 'admin' }
     : { resolved: false, resolved_at: null, resolved_by: null });
-  if (resolved && chat) {
-    const label = chat.order_name || chat.customer_phone || req.params.id;
-    waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${label}\nSOURCE Dashboard\n\`\`\``).catch(() => {});
-  }
   res.json({ success: true });
 });
 app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
@@ -24402,53 +24397,114 @@ async function adminStuckOrdersReport() {
   return lines.join('\n');
 }
 
-async function adminMorningDigest(sock, adminJid) {
+// Reusable: orders stuck in confirmed/processing/packed for 4+ days, deduped
+// the same way the old standalone dispatch-alert cron did (one alert-log
+// entry per order/vendor per ~20h so re-running the digest doesn't spam).
+async function getStuckDispatchLines({ dedupe = false } = {}) {
+  const now = Date.now();
+  const cutoff4d = now - 4 * 24 * 3600000;
+  const STUCK_STAGES = ['confirmed', 'processing', 'packed'];
+
+  const stuckRows = await mdb.collection('order_vendor_stage').find(
+    { stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff4d } }
+  ).sort({ stage_started_at: 1 }).limit(30).toArray();
+  if (!stuckRows.length) return [];
+
+  let rows = stuckRows;
+  if (dedupe) {
+    rows = [];
+    for (const r of stuckRows) {
+      const key = `dispatch_alert:${r.shopify_id}:${r.vendor_name}`;
+      const recent = await mdb.collection('staff_alert_log').findOne({ key, sent_at: { $gt: now - 20 * 3600000 } });
+      if (!recent) {
+        rows.push(r);
+        await mdb.collection('staff_alert_log').updateOne({ key }, { $set: { key, sent_at: now } }, { upsert: true });
+      }
+    }
+  }
+  if (!rows.length) return [];
+
+  const shopifyIds = [...new Set(rows.map(r => r.shopify_id))];
+  const metas = await mdb.collection('order_meta').find(
+    { shopify_order_id: { $in: shopifyIds } },
+    { projection: { shopify_order_id: 1, order_name: 1, payment_status: 1, partial_payment: 1, _id: 0 } }
+  ).toArray();
+  const metaMap = {};
+  for (const m of metas) metaMap[String(m.shopify_order_id)] = m;
+
+  return rows.map(r => {
+    const meta = metaMap[String(r.shopify_id)] || {};
+    const daysStuck = Math.floor((now - r.stage_started_at) / 86400000);
+    const orderRef = meta.order_name || `#${r.shopify_id}`;
+    const isPrepaid = meta.payment_status === 'paid' || (!meta.partial_payment);
+    const payTag = isPrepaid ? '💳 Prepaid' : '🔶 Partial/COD';
+    return `  • ${orderRef} (${r.vendor_name}) — ${daysStuck}d in ${r.stage} · ${payTag}`;
+  });
+}
+
+// Reusable: open support tickets grouped into severity tiers for the digest.
+// 🔴 CRITICAL = angry/refund-language tickets, 🟠 ACTION REQUIRED = explicit
+// human request without anger signals, 🟡 OPEN = everything else pending.
+async function getTicketSeverityLines() {
+  const tickets = await mdb.collection('support_tickets').find(
+    { status: { $in: ['open', 'in_progress', 'overdue'] } }
+  ).sort({ created_at: 1 }).toArray();
+  if (!tickets.length) return { total: 0, text: '' };
+
+  const now = Date.now();
+  const fmtTicket = t => {
+    const hrs = Math.round((now - new Date(t.created_at).getTime()) / 3600000);
+    const ref = t.order_name || t.customer_phone || String(t._id).slice(-6);
+    const cat = TICKET_CATEGORY_LABELS[t.issue_category] || '💬 Query';
+    return `  • ${ref} — ${cat} · ${hrs}h pending`;
+  };
+
+  const critical = tickets.filter(t => isAngryMessage(t.query_message || t.last_customer_msg || t.context_note || ''));
+  const actionRequired = tickets.filter(t => !critical.includes(t) && t.status === 'overdue');
+  const open = tickets.filter(t => !critical.includes(t) && !actionRequired.includes(t));
+
+  const parts = [];
+  if (critical.length)       parts.push(`🔴 *CRITICAL (${critical.length})*\n${critical.map(fmtTicket).join('\n')}`);
+  if (actionRequired.length) parts.push(`🟠 *ACTION REQUIRED (${actionRequired.length})*\n${actionRequired.map(fmtTicket).join('\n')}`);
+  if (open.length)           parts.push(`🟡 *OPEN (${open.length})*\n${open.map(fmtTicket).join('\n')}`);
+
+  return { total: tickets.length, text: parts.join('\n') };
+}
+
+// ── Combined afternoon ops digest: stuck orders + dispatch pending + ticket
+// list with severity tiers, all in one message instead of 4 separate pings
+// (used to be: morning digest, standalone dispatch-alert cron every 90min,
+// and two separate ticket check-ins at 9am/12pm).
+async function adminAfternoonDigest(sock, adminJid, { dedupeDispatch = false } = {}) {
   if (!mdb || !sock) return;
   try {
     const STUCK_STAGES = ['confirmed', 'processing', 'packed'];
     const cutoff24h = Date.now() - 24 * 3600000;
     const cutoff48h = Date.now() - 48 * 3600000;
 
-    const [stuck24, stuck48, openTickets, openChats] = await Promise.all([
+    const [stuck24, stuck48, openChats, dispatchLines, ticketInfo] = await Promise.all([
       mdb.collection('order_vendor_stage').countDocuments({ stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff24h } }),
       mdb.collection('order_vendor_stage').countDocuments({ stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff48h } }),
-      mdb.collection('admin_order_tickets').countDocuments({ status: { $ne: 'resolved' } }),
       mdb.collection('support_chats').countDocuments({ needs_human: true, resolved: { $ne: true } }),
+      getStuckDispatchLines({ dedupe: dedupeDispatch }),
+      getTicketSeverityLines(),
     ]);
-
-    const topStuck = await mdb.collection('order_vendor_stage').find(
-      { stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff48h } }
-    ).sort({ stage_started_at: 1 }).limit(5).toArray();
-
-    // Resolve order_name from order_meta for any urgent rows missing it
-    const urgentMissingNames = topStuck.filter(r => !r.order_name).map(r => String(r.shopify_id));
-    const urgentMetaMap = {};
-    if (urgentMissingNames.length) {
-      const ums = await mdb.collection('order_meta').find({ shopify_id: { $in: urgentMissingNames } }, { projection: { shopify_id: 1, order_name: 1, _id: 0 } }).toArray();
-      for (const m of ums) urgentMetaMap[m.shopify_id] = m.order_name;
-    }
-    const urgentLines = topStuck.map(r => {
-      const hrs = Math.round((Date.now() - r.stage_started_at) / 3600000);
-      const label = r.order_name || urgentMetaMap[String(r.shopify_id)] || r.shopify_id;
-      return `  • *${label}* (${r.vendor_name}) — ${hrs}h in ${r.stage}`;
-    });
 
     const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
     const msg =
-`🌅 *CROSCROW Morning Digest* — ${now} IST
-
-📦 Orders stuck >24h: *${stuck24}*
-🚨 Orders stuck >48h: *${stuck48}*
-🎫 Open admin tickets: *${openTickets}*
-💬 Escalated support chats: *${openChats}*
-${urgentLines.length ? `\n*Most Urgent (48h+):*\n${urgentLines.join('\n')}` : ''}
+`🌇 *CROSCROW Afternoon Digest* — ${now} IST
+────────────────
+📦 Stuck >24h: *${stuck24}*    🚨 Stuck >48h: *${stuck48}*
+💬 Escalated chats: *${openChats}*    🎫 Open tickets: *${ticketInfo.total}*
+${dispatchLines.length ? `\n🚚 *DISPATCH — 4+ Days Pending (${dispatchLines.length})*\n${dispatchLines.join('\n')}` : ''}
+${ticketInfo.text ? `\n🎫 *SUPPORT TICKETS (${ticketInfo.total} pending)*\n${ticketInfo.text}` : ''}
 
 Use *!stuck* for full list · *!tickets* for tickets · *!digest* to refresh`;
 
     await sock.sendMessage(adminJid, { text: msg });
     notifyStaff('digest', msg).catch(()=>{});
   } catch (e) {
-    console.error('adminMorningDigest error:', e.message);
+    console.error('adminAfternoonDigest error:', e.message);
   }
 }
 
@@ -24541,10 +24597,10 @@ async function waHandleAdminQuery(sock, sender, text) {
       return;
     }
 
-    // !digest — trigger manual morning digest
+    // !digest — trigger manual ops digest on demand
     if (/^!digest$/i.test(trimmed)) {
       await sock.sendMessage(sender, { text: '📊 Generating digest...' });
-      await adminMorningDigest(sock, sender);
+      await adminAfternoonDigest(sock, sender, { dedupeDispatch: false });
       return;
     }
 
@@ -24786,129 +24842,30 @@ async function ticketSLACron() {
 }
 setInterval(ticketSLACron, 30 * 60 * 1000); // every 30 min
 
-// ── Pending tickets digest (sent at 9 AM and 12 PM IST) ──────────────────
-async function sendTicketDigest(sock, adminJid, label) {
-  if (!mdb || !sock || !adminJid) return;
-  try {
-    const tickets = await mdb.collection('support_tickets').find(
-      { status: { $in: ['open', 'in_progress', 'overdue'] } }
-    ).sort({ created_at: 1 }).toArray();
-
-    if (!tickets.length) {
-      await sock.sendMessage(adminJid, { text: `✅ *${label} — No Pending Tickets*\nAll support tickets are closed. 🎉` });
-      return;
-    }
-
-    const now = Date.now();
-    const overdue = tickets.filter(t => t.status === 'overdue');
-    const urgent  = tickets.filter(t => t.status !== 'overdue' && now - new Date(t.created_at).getTime() >= 6 * 3600000);
-    const normal  = tickets.filter(t => t.status !== 'overdue' && now - new Date(t.created_at).getTime() < 6 * 3600000);
-
-    const fmtTicket = t => {
-      const hrs  = Math.round((now - new Date(t.created_at).getTime()) / 3600000);
-      const ref  = t.order_name || t.customer_phone || String(t._id).slice(-6);
-      const cat  = TICKET_CATEGORY_LABELS[t.issue_category] || '💬 Query';
-      const tags = (t.context_tags || []).filter(Boolean).slice(0, 2).join(', ');
-      return `  • *${ref}* — ${cat} · ${hrs}h open${tags ? ` · ${tags}` : ''}`;
-    };
-
-    const parts = [];
-    if (overdue.length) parts.push(`🚨 *Overdue (${overdue.length}):*\n${overdue.map(fmtTicket).join('\n')}`);
-    if (urgent.length)  parts.push(`⏰ *Aging 6h+ (${urgent.length}):*\n${urgent.map(fmtTicket).join('\n')}`);
-    if (normal.length)  parts.push(`🟡 *Open (${normal.length}):*\n${normal.map(fmtTicket).join('\n')}`);
-
-    const msg = `🎫 *${label} — Ticket Summary*\nTotal pending: *${tickets.length}*\n\n${parts.join('\n\n')}\n\n🔗 https://dashboard.croscrow.com/admin#supporttickets`;
-    await sock.sendMessage(adminJid, { text: msg });
-    notifyStaff('ticket_digest', msg).catch(() => {});
-  } catch (e) { console.error('sendTicketDigest error:', e.message); }
-}
-
-// ── Daily 9 AM IST morning digest + 12 PM ticket digest ──────────────────
+// ── Daily 1 PM IST combined ops digest ────────────────────────────────────
+// Replaces what used to be: 9am morning digest, 9am ticket check-in, 12pm
+// ticket check-in, and the standalone every-90min dispatch-alert cron — all
+// folded into one message so admin gets one clean read instead of four.
 let _digestLastSent = 0;
-let _noonDigestLastSent = 0;
 setInterval(async () => {
   const now = new Date();
   const istH = Math.floor((now.getUTCHours() * 60 + now.getUTCMinutes() + 330) / 60) % 24;
   const istM = (now.getUTCMinutes() + 30) % 60;
   const adminJid = WA_ADMIN_NO ? `91${WA_ADMIN_NO.replace(/\D/g, '').replace(/^91/, '').slice(-10)}@s.whatsapp.net` : null;
 
-  // 9 AM — morning digest + tickets
-  if (istH === 9 && istM < 30 && Date.now() - _digestLastSent > 3600000) {
+  // 1 PM — combined afternoon digest
+  if (istH === 13 && istM < 30 && Date.now() - _digestLastSent > 3600000) {
     _digestLastSent = Date.now();
     if (adminJid && waSocket) {
-      adminMorningDigest(waSocket, adminJid).catch(e => console.error('Morning digest error:', e.message));
-      setTimeout(() => sendTicketDigest(waSocket, adminJid, 'Morning Check-in').catch(() => {}), 5000);
-    }
-  }
-
-  // 12 PM — noon ticket digest
-  if (istH === 12 && istM < 30 && Date.now() - _noonDigestLastSent > 3600000) {
-    _noonDigestLastSent = Date.now();
-    if (adminJid && waSocket) {
-      sendTicketDigest(waSocket, adminJid, 'Afternoon Check-in').catch(e => console.error('Noon digest error:', e.message));
+      adminAfternoonDigest(waSocket, adminJid, { dedupeDispatch: true }).catch(e => console.error('Afternoon digest error:', e.message));
     }
   }
 }, 10 * 60 * 1000); // check every 10 min
 
-// ── Dispatch alert cron — every 2h, fires alerts for orders stuck >4 days ──
-let _dispatchAlertLastRun = 0;
-async function dispatchAlertCron() {
-  if (!mdb || !waSocket) return;
-  const now = Date.now();
-  if (now - _dispatchAlertLastRun < 90 * 60 * 1000) return; // min 90min between runs
-  _dispatchAlertLastRun = now;
-  try {
-    const cutoff4d = now - 4 * 24 * 3600000;
-    const STUCK_STAGES = ['confirmed', 'processing', 'packed'];
-
-    // Get all vendor stages stuck >4 days
-    const stuckRows = await mdb.collection('order_vendor_stage').find(
-      { stage: { $in: STUCK_STAGES }, stage_started_at: { $lt: cutoff4d } }
-    ).sort({ stage_started_at: 1 }).limit(30).toArray();
-
-    if (!stuckRows.length) return;
-
-    // Dedup — only fire once per order per day
-    const deduped = [];
-    for (const r of stuckRows) {
-      const key = `dispatch_alert:${r.shopify_id}:${r.vendor_name}`;
-      const recent = await mdb.collection('staff_alert_log').findOne({ key, sent_at: { $gt: now - 20 * 3600000 } });
-      if (!recent) deduped.push(r);
-    }
-    if (!deduped.length) return;
-
-    // Enrich with order meta
-    const shopifyIds = [...new Set(deduped.map(r => r.shopify_id))];
-    const metas = await mdb.collection('order_meta').find(
-      { shopify_order_id: { $in: shopifyIds } },
-      { projection: { shopify_order_id: 1, order_name: 1, payment_status: 1, partial_payment: 1, customer_name: 1, _id: 0 } }
-    ).toArray();
-    const metaMap = {};
-    for (const m of metas) metaMap[String(m.shopify_order_id)] = m;
-
-    const lines = [];
-    for (const r of deduped) {
-      const meta = metaMap[String(r.shopify_id)] || {};
-      const daysStuck = Math.floor((now - r.stage_started_at) / 86400000);
-      const orderRef = meta.order_name || `#${r.shopify_id}`;
-      const isPrepaid = meta.payment_status === 'paid' || (!meta.partial_payment);
-      const payTag = isPrepaid ? '💳 Prepaid' : '🔶 Partial/COD';
-      lines.push(`• *${orderRef}* (${r.vendor_name}) — ${r.stage} ${daysStuck}d | ${payTag}`);
-      await mdb.collection('staff_alert_log').updateOne(
-        { key: `dispatch_alert:${r.shopify_id}:${r.vendor_name}` },
-        { $set: { key: `dispatch_alert:${r.shopify_id}:${r.vendor_name}`, sent_at: now } },
-        { upsert: true }
-      );
-    }
-
-    const msg = `\`\`\`\n▪ C R O S C R O W ▪\nDISPATCH ALERT 🚨\nSTUCK 4+ DAYS (${deduped.length})\n────────────────\n${lines.map(l=>l.replace(/\*/g,'')).join('\n')}\n────────────────\nFollow up or reply !stuck\n\`\`\``;
-
-    await waAdminAlert(msg, 'dispatch_alert');
-  } catch (e) {
-    console.error('dispatchAlertCron error:', e.message);
-  }
-}
-setInterval(dispatchAlertCron, 2 * 60 * 60 * 1000); // every 2h
+// Note: the standalone every-90min dispatch-alert ping (previously its own
+// waAdminAlert call) was folded into the 1pm adminAfternoonDigest above via
+// getStuckDispatchLines() — same stuck->4-day detection and dedup logic,
+// now surfaced once a day inside the digest instead of as a separate ping.
 
 function isAngryMessage(text) {
   if (!text) return false;
@@ -24946,8 +24903,12 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
       ? '\nQuery: ' + _lastMsgs.map(m => `"${(m.text || '').slice(0, 150)}"`).join(' → ')
       : '';
     await createSupportTicket(chat, context + _querySummary).catch(() => null);
-    const _angryTag = _isAngry && !humanRequested ? '\n⚠️ ANGRY CUSTOMER' : '';
-    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nNEW SUPPORT TICKET 🎫\n────────────────\n${_nameStr}${_phoneStr}${_orderStr}TYPE   ${_category}\nSLA    8 hours${_angryTag}\n────────────────\n${context.slice(0, 100)}${_chatSnippet}\n────────────────\nAdmin → Support Tickets\n\`\`\``, 'support_escalation');
+    // Severity tiers: angry customer is always CRITICAL regardless of how the
+    // escalation happened; an explicit human request without anger is ACTION
+    // REQUIRED. (This branch only fires when humanRequested || _isAngry, so
+    // there's no lower "general" tier here — that's fine, both are real asks.)
+    const _severityTag = _isAngry ? '🔴 CRITICAL' : '🟠 ACTION REQUIRED';
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nNEW TICKET ${_severityTag}\n────────────────\n${_nameStr}${_phoneStr}${_orderStr}TYPE   ${_category}\nSLA    Respond within 8h\n────────────────\n${context.slice(0, 100)}${_chatSnippet}\n────────────────\nAdmin → Support Tickets\n\`\`\``, 'support_escalation');
 
     const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
     const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
@@ -25484,11 +25445,6 @@ async function startBaileysBot() {
                   { $set: { needs_human: true, resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: _resolve6h, updated_at: new Date().toISOString() } }
                 );
                 await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
-                // Only alert admin on first resolution, not every subsequent admin message
-                if (!wasAlreadyResolved) {
-                  const _label = outChat.order_name || outChat.customer_phone || String(outChat._id);
-                  await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_label}\nSOURCE Admin reply\n\`\`\``);
-                }
                 console.log(`✅ Chat paused 6h via manual admin message: ${outTo} (wasResolved=${wasAlreadyResolved}, botSentRecently=${_botSentRecently})`);
                 // Store in chat_message_analytics — skip if bot sent here recently (avoids double-logging bot notifications)
                 if (!_botSentRecently) {
@@ -25730,14 +25686,11 @@ async function startBaileysBot() {
                 ).catch(() => {});
               }
 
-              // Re-alert admin with the query
-              const custPhone = phone !== 'unknown' ? `+91${phone}` : null;
-              const orderStr = mentionedOrder ? `\nOrder: *${mentionedOrder}*` : (chat.order_name ? `\nOrder: *${chat.order_name}*` : '');
-              const phoneStr = custPhone ? `\nPhone: ${custPhone}` : '';
-              await waAdminAlert(
-                `\`\`\`\n▪ C R O S C R O W ▪\nCUSTOMER QUERY\n────────────────\n${chat.order_name || mentionedOrder ? `ORDER  ${mentionedOrder || chat.order_name}\n` : ''}${custPhone ? `PHONE  ${custPhone}\n` : ''}────────────────\n"${queryText.slice(0, 120)}"\n────────────────\nAdmin → Support Tickets\n\`\`\``,
-                'support_escalation'
-              ).catch(() => {});
+              // Note: the initial "NEW TICKET" alert already fired instantly when
+              // this escalation started — this follow-up query text is folded
+              // silently into the ticket record above (query_message field) for
+              // the dashboard/digest, not re-alerted, to avoid double-pinging
+              // admin for the same escalation.
 
               // Notify vendor if order number found
               if (mentionedOrder) {
@@ -26050,8 +26003,6 @@ async function startBaileysBot() {
               { _id: chat._id },
               { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
             );
-            const _resolveLabel = chat.order_name || chat.customer_phone || String(chat._id);
-            waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nCHAT RESOLVED ✅\n────────────────\n${_resolveLabel}\nSOURCE Bot auto-resolve\n\`\`\``).catch(() => {});
             // Record bot-resolved outcome for analytics
             const _allMsgsR = await SC.messages(chat._id).catch(() => []);
             const _botMsgsR = _allMsgsR.filter(m => m.sender === 'assistant');
