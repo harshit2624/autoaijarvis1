@@ -22812,7 +22812,19 @@ app.get('/webhooks/whatsapp-cloud', (req, res) => {
 app.post('/webhooks/whatsapp-cloud', async (req, res) => {
   res.sendStatus(200); // ack immediately, Meta retries on non-200
   try {
-    const entry = req.body?.entry?.[0];
+    // Same issue fixed on the abandoned-cart webhook applies here: the
+    // app-wide `app.use("/webhooks", express.raw({type:"application/json"}))`
+    // (registered for Shopify HMAC verification) claims the body as a Buffer
+    // for every route under /webhooks/*, including this one, before this
+    // handler ever sees it. req.body?.entry on a Buffer is always undefined,
+    // so every real Meta callback was silently no-op'ing on the `if (!value)
+    // return` line below — this endpoint has never actually processed a
+    // single event since it was written.
+    let body = req.body;
+    if (Buffer.isBuffer(body)) {
+      try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; }
+    }
+    const entry = body?.entry?.[0];
     const value = entry?.changes?.[0]?.value;
     if (!value) return;
 
