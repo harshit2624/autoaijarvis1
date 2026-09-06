@@ -22838,14 +22838,32 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       console.log(`📥 WA Cloud inbound: ${phone} → "${text.slice(0,60)}"`);
     }
 
-    // Delivery/read status updates for messages we sent
+    // Delivery/read status updates for messages we sent — logged unconditionally
+    // to wa_cloud_status_log (even for sends we didn't originate through our own
+    // /send endpoint, e.g. raw API test sends) so failures are debuggable via
+    // GET /admin/wa-cloud/status-log instead of needing direct server log access.
     for (const st of (value.statuses || [])) {
+      await mdb.collection('wa_cloud_status_log').insertOne({
+        wamid: st.id, status: st.status, recipient: st.recipient_id,
+        timestamp: st.timestamp, errors: st.errors || null,
+        conversation: st.conversation || null, pricing: st.pricing || null,
+        raw: st, logged_at: new Date().toISOString(),
+      });
       await mdb.collection('wa_cloud_messages').updateOne(
         { wamid: st.id },
         { $set: { status: st.status, status_at: new Date().toISOString() } }
       );
+      console.log(`📶 WA Cloud status: ${st.id} → ${st.status}${st.errors ? ' ERROR: ' + JSON.stringify(st.errors) : ''}`);
     }
   } catch (e) { console.error('WA Cloud webhook error:', e.message); }
+});
+
+// Debug: view recent status callbacks (delivered/read/failed + error detail)
+app.get('/admin/wa-cloud/status-log', adminAuth, async (req, res) => {
+  try {
+    const logs = await mdb.collection('wa_cloud_status_log').find({}, { projection: { raw: 0 } }).sort({ logged_at: -1 }).limit(50).toArray();
+    res.json({ logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET — list chats, newest first
