@@ -23083,14 +23083,21 @@ app.get('/admin/shopify-abandoned-checkouts', adminAuth, async (req, res) => {
 // POST /admin/shopify-abandoned-checkouts/send-wa — send WA recovery to a Shopify abandoned checkout
 app.post('/admin/shopify-abandoned-checkouts/send-wa', adminAuth, async (req, res) => {
   try {
-    const c = req.body || {};
+    const { test_phone, ...c } = req.body || {};
     const cust = c.customer || {};
     const shipping = c.shipping_address || c.billing_address || {};
 
     const firstName = cust.first_name || shipping.first_name || '';
     const lastName  = cust.last_name  || shipping.last_name  || '';
     const name      = `${firstName} ${lastName}`.trim() || cust.email || 'there';
-    const phone     = String(shipping.phone || cust.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+    // test_phone lets admin redirect this exact real cart's message to a
+    // test number instead of the actual customer — for verifying the send
+    // end-to-end (image, discount math, button link) before trusting it to
+    // go to real customers unattended.
+    const isTestSend = !!test_phone;
+    const phone     = isTestSend
+      ? String(test_phone).replace(/\D/g,'').replace(/^91/,'').slice(-10)
+      : String(shipping.phone || cust.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
     const total     = parseFloat(c.total_price || 0);
     // Prefer GoKwik mrid URL saved in Shopify checkout note field over Shopify's own recovery link
     const gokwikNote = typeof c.note === 'string' && c.note.includes('mrid=') ? c.note.trim() : '';
@@ -23165,15 +23172,17 @@ ${checkoutUrl}
       if (!imageSent) await waSendToCustomer(phone, waMsg);
     }
 
-    // Log in DB
+    // Log in DB — test sends get their own source tag and no cart_id, so they
+    // never collide with the real cart's dedupe/upsert logic in the webhook.
     await mdb.collection('abandoned_carts').insertOne({
       email: cust.email || '', phone, name,
-      cart_id: String(c.id || c.cart_token || ''),
+      cart_id: isTestSend ? '' : String(c.id || c.cart_token || ''),
       checkout_url: checkoutUrl,
       currency: c.currency || 'INR',
       total,
       items,
-      source: 'shopify-manual',
+      source: isTestSend ? 'shopify-manual-test' : 'shopify-manual',
+      test_send: isTestSend,
       raw: c,
       received_at: new Date().toISOString(),
       status: 'open',
@@ -23183,8 +23192,8 @@ ${checkoutUrl}
       wa_via: cloudResult.sent ? 'cloud_api' : 'baileys',
     });
 
-    console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
-    res.json({ sent: true, phone, name });
+    console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}${isTestSend ? ' (TEST SEND)' : ''}`);
+    res.json({ sent: true, phone, name, test_send: isTestSend });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

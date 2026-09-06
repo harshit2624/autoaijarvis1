@@ -16425,16 +16425,21 @@
         .then(r=>r.json()).then(d=>{ setRawPayload(d.raw); setShowRaw(true); }).catch(()=>{}).finally(()=>setRawLoading(false));
     };
 
-    const sendShopifyWA = (c, key) => {
-      setWaSending(p=>({...p,[key]:true}));
+    const sendShopifyWA = (c, key, testPhone) => {
+      const sendingKey = testPhone ? `${key}:test` : key;
+      setWaSending(p=>({...p,[sendingKey]:true}));
       fetch(`${API}/admin/shopify-abandoned-checkouts/send-wa`,{
         method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-        body: JSON.stringify(c)
+        body: JSON.stringify(testPhone ? { ...c, test_phone: testPhone } : c)
       }).then(r=>r.json()).then(d=>{
-        if(d.sent) setWaSent(p=>({...p,[key]:true}));
+        if(d.sent) {
+          if (testPhone) alert(`✅ Test message sent to +91${testPhone} using this cart's real data.`);
+          else setWaSent(p=>({...p,[key]:true}));
+        }
         else alert(d.error||'Failed — check phone number');
-      }).catch(()=>alert('Error')).finally(()=>setWaSending(p=>({...p,[key]:false})));
+      }).catch(()=>alert('Error')).finally(()=>setWaSending(p=>({...p,[sendingKey]:false})));
     };
+    const [testPhones, setTestPhones] = useState({});
 
     const setCartStatus = async (id, newStatus) => {
       setUpdating(p=>({...p,[id]:true}));
@@ -16576,6 +16581,19 @@
                           fontSize:11,cursor:(!hasPhone||waSent[key])?'default':'pointer',fontFamily:'inherit',fontWeight:600}}>
                         {waSending[key]?'Sending…':waSent[key]?'✅ WA Sent':!hasPhone?'📵 No Phone':'📲 Send WA'}
                       </button>
+                      <div style={{display:'flex',gap:6,alignItems:'center',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,padding:'2px 4px 2px 10px'}}>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>🧪 Test to</span>
+                        <input type="tel" placeholder="98XXXXXXXX" value={testPhones[key]||''}
+                          onChange={e=>setTestPhones(p=>({...p,[key]:e.target.value.replace(/\D/g,'').slice(0,10)}))}
+                          style={{width:88,border:'none',background:'transparent',color:'var(--text)',fontSize:11,fontFamily:'inherit',outline:'none'}}/>
+                        <button onClick={()=>sendShopifyWA(c,key,testPhones[key])}
+                          disabled={(testPhones[key]||'').length!==10||waSending[`${key}:test`]}
+                          style={{padding:'4px 10px',borderRadius:5,border:'1px solid rgba(99,102,241,0.4)',
+                            background:'rgba(99,102,241,0.08)',color:'var(--indigo)',fontSize:10,fontWeight:700,
+                            cursor:(testPhones[key]||'').length===10?'pointer':'default',fontFamily:'inherit'}}>
+                          {waSending[`${key}:test`]?'…':'Send'}
+                        </button>
+                      </div>
                       {(()=>{
                         const gkUrl = typeof c.note==='string'&&c.note.includes('mrid=') ? c.note.trim() : '';
                         const recUrl = gkUrl || c.abandoned_checkout_url || '';
