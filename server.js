@@ -23082,7 +23082,7 @@ ${buyUrl}
     });
     if (!cloudResult.sent) {
       if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
-      await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
+      await waSendImageOrText(phone, items[0]?.image_url || '', waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
     }
     await mdb.collection('abandoned_carts').updateOne(
       cartId ? { cart_id: cartId } : { _id: inserted.insertedId },
@@ -23188,24 +23188,9 @@ ${checkoutUrl}
       buyUrlSuffix: waCloudUrlSuffix(checkoutUrl, ''),
     });
 
-    let imageSent = false;
     if (!cloudResult.sent) {
       if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
-      // Try to send with product image via Baileys (fallback path, unchanged)
-      const jid = `91${phone}@s.whatsapp.net`;
-      if (productImgUrl && waSocket && waConnected) {
-        try {
-          // Download image as buffer — more reliable than URL-only on Baileys
-          const imgRes = await fetch(productImgUrl);
-          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
-          await waSocket.sendMessage(jid, { image: imgBuf, caption: waMsg, mimetype: 'image/jpeg' });
-          imageSent = true;
-          console.log(`✅ Image+caption WA sent to ${phone}`);
-        } catch(imgErr) { console.error('Product image WA failed:', imgErr.message); }
-      } else {
-        console.log(`ℹ Image skip — product_id:${firstProductId} waConnected:${waConnected}`);
-      }
-      if (!imageSent) await waSendToCustomer(phone, waMsg);
+      await waSendImageOrText(phone, productImgUrl, waMsg);
     }
 
     // Log in DB — test sends get their own source tag and no cart_id, so they
@@ -23316,7 +23301,7 @@ ${buyUrl}
     });
     if (!cloudResult.sent) {
       if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
-      await waSendToCustomer(phone, waMsg).catch(e => console.error('Abandoned cart manual WA error:', e.message));
+      await waSendImageOrText(phone, items[0]?.image_url || '', waMsg).catch(e => console.error('Abandoned cart manual WA error:', e.message));
     }
 
     if (!isTestSend) {
@@ -24233,6 +24218,31 @@ async function waSendToCustomer(phone, message) {
   if (digits.length !== 10) return;
   try { await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: message }); }
   catch (e) { console.error('❌ waSendToCustomer failed:', e.message); }
+}
+
+// Send a Baileys message with an image (downloaded as a buffer — more
+// reliable than passing a bare URL) + caption, falling back to plain text
+// if there's no image or the download/send fails. Shared by every
+// abandoned-cart Baileys fallback path so the image behavior stays
+// consistent instead of only existing on some of the send buttons.
+async function waSendImageOrText(phone, imageUrl, caption) {
+  if (!waSocket || !waConnected) return;
+  const digits = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10) return;
+  const jid = `91${digits}@s.whatsapp.net`;
+  if (imageUrl) {
+    try {
+      const imgRes = await fetch(imageUrl);
+      if (imgRes.ok) {
+        const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+        await waSocket.sendMessage(jid, { image: imgBuf, caption, mimetype: 'image/jpeg' });
+        console.log(`✅ Image+caption WA sent to ${digits}`);
+        return;
+      }
+      console.log(`ℹ Image fetch non-OK (${imgRes.status}) for ${imageUrl} — falling back to text`);
+    } catch (e) { console.error('Image WA send failed, falling back to text:', e.message); }
+  }
+  await waSocket.sendMessage(jid, { text: caption }).catch(e => console.error('waSendImageOrText text fallback failed:', e.message));
 }
 
 // ── Admin WhatsApp AI — routes admin messages to Jarvis with waMode formatting ─
