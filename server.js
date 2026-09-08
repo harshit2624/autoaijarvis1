@@ -10335,7 +10335,7 @@ app.post("/vendor/orders/:id/delay-remark", vendorAuth, async (req, res) => {
 
 // ── Send WA success confirmation back to vendor after delay/tracking submit ──
 async function sendVendorSubmitSuccessWA(vendorName, orderName, type, { reason, eta, awb, courier } = {}) {
-  if (!waSocket || !waConnected || !mdb) return;
+  if (!mdb) return;
   try {
     const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1 } });
     const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
@@ -10350,7 +10350,7 @@ async function sendVendorSubmitSuccessWA(vendorName, orderName, type, { reason, 
     } else if (type === 'tracking') {
       msg = `${_Fs}\n▪ C R O S C R O W ▪\nTRACKING SUBMITTED ✓\n────────────────\nORDER   ${orderName}\nAWB     ${awb}\nCOURIER ${courier || 'not specified'}\n────────────────\nCustomer will be\nnotified shortly.\n${_Fs}`;
     }
-    if (msg) await waSocket.sendMessage(jid, { text: msg }).catch(e => console.error('Vendor submit success WA error:', e.message));
+    if (msg) await waProxySock.sendMessage(jid, { text: msg }).catch(e => console.error('Vendor submit success WA error:', e.message));
   } catch (e) { console.error('sendVendorSubmitSuccessWA error:', e.message); }
 }
 
@@ -22904,11 +22904,11 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
 
 
   // Ping customer on WA so they know team replied
-  if (chat.whatsapp_sender && waSocket && waConnected) {
+  if (chat.whatsapp_sender) {
     const custJid = chat.whatsapp_sender;
     const _Fn = '```';
     const notif = `${_Fn}\n▪ C R O S C R O W ▪\nSUPPORT UPDATE\n────────────────\nSTATE  Team replied above.\n       Check the message.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nREPLY IF YOU NEED MORE HELP\n${_Fn}`;
-    await waSocket.sendMessage(custJid, { text: notif }).catch(() => {});
+    await waProxySock.sendMessage(custJid, { text: notif }).catch(() => {});
     await SC.addMessage(chat._id, { sender: 'assistant', text: notif });
   }
 
@@ -23045,9 +23045,8 @@ app.post('/mine-game/claim', async (req, res) => {
     res.json({ code, reward_inr: amount, minOrder });
 
     // Notify admin on WA
-    const _adminJid = `91${WA_ADMIN_NO}@s.whatsapp.net`;
     const _waMsg = `💣 *Mine Game Claimed*\nCode: *${code}*\nDiscount: ₹${amount} off\nMin order: ₹${minOrder}`;
-    if (waSocket) waSocket.sendMessage(_adminJid, { text: _waMsg }).catch(e => console.error('mine-game WA notify error:', e.message));
+    waAdminAlert(_waMsg).catch(e => console.error('mine-game WA notify error:', e.message));
   } catch (e) {
     console.error('mine-game/claim error:', e.message);
     res.status(500).json({ error: e.message });
@@ -23414,6 +23413,7 @@ const WA_TPL = {
   DELAY_REMARK_CUSTOMER: 'delay_remark_customer',
   VENDOR_SUPPORT_QUERY: 'vendor_support_query',
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
+  STAFF_ALERT: 'staff_alert',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
@@ -24955,7 +24955,7 @@ const WA_ADMIN_CODE = process.env.WHATSAPP_ADMIN_CODE || '4626';
 // ── Staff WA notification broadcast ──────────────────────────────────────────
 // Topics: 'order_ticket' | 'stuck_orders' | 'dispatch_alert' | 'support_escalation' | 'digest'
 async function notifyStaff(topic, message) {
-  if (!mdb || !waSocket) return;
+  if (!mdb) return;
   try {
     const staffList = await mdb.collection('staff_accounts').find(
       { wa_phone: { $exists: true, $ne: '' } },
@@ -24967,7 +24967,14 @@ async function notifyStaff(topic, message) {
       const raw = (s.wa_phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
       if (raw.length !== 10) continue;
       const jid = `91${raw}@s.whatsapp.net`;
-      waSocket.sendMessage(jid, { text: message }).catch(e => console.error(`Staff WA notify failed (${s.name}):`, e.message));
+      (async () => {
+        const cloudSession = await waCloudSendSession(jid, { text: message });
+        if (cloudSession.sent) return;
+        const cloudTemplate = await sendWACloudTemplate({ phone10: raw, templateName: WA_TPL.STAFF_ALERT, bodyParams: [message] });
+        if (cloudTemplate.sent) return;
+        if (waSocket) waSocket.sendMessage(jid, { text: message }).catch(e => console.error(`Staff WA notify failed (${s.name}):`, e.message));
+        else console.error(`❌ Staff WA notify failed on all paths (${s.name}): Cloud session ${cloudSession.reason}, Cloud template ${cloudTemplate.reason}, Baileys not connected`);
+      })();
     }
   } catch (e) {
     console.error('notifyStaff error:', e.message);
@@ -25313,7 +25320,7 @@ async function handleAdminOrderTicket(sock, jid, parsed) {
       : `1 — Delayed (reason + ETA)\n2 — Shipped (AWB + courier)\n3 — Need CROSCROW help`;
     const vendorMsg = `${_Fvp}\n▪ C R O S C R O W ▪\n${urgencyLine.toUpperCase()}\n────────────────\nORDER    ${orderName}\nISSUE    ${issueLabel}\n${_vpDaysLine}${_vpCustLine}${_vpItemsLine}────────────────\n${_vpReplyOpts}\n${formLink ? `────────────────\nUPDATE HERE (no login)\n${formLink}` : ''}\n${_Fvp}`;
     try {
-      const sent = await waSocket.sendMessage(vjid, { text: vendorMsg });
+      const sent = await sock.sendMessage(vjid, { text: vendorMsg });
       const actualJid = sent?.key?.remoteJid || vjid;
       await waLogVendorMessage(actualJid, vn, 'bot', vendorMsg);
       // Set session so vendor 1/2/3 reply routes correctly
