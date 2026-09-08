@@ -374,8 +374,12 @@ const OVS = {
 
     // Automated syncs must never downgrade a stage — e.g. a NOT_PICKED event after
     // a transit scan should not rewind the stage back to pickup.
+    const requestedStage = fields.stage;
+    let protectedFromDowngrade = false;
     if (fields.stage && respectStageOrder && existing?.stage) {
-      fields = { ...fields, stage: higherStage(existing.stage, fields.stage) };
+      const kept = higherStage(existing.stage, fields.stage);
+      if (kept !== requestedStage) protectedFromDowngrade = true;
+      fields = { ...fields, stage: kept };
     }
 
     // Capture dispatch timestamp the first time an order moves from a
@@ -410,7 +414,7 @@ const OVS = {
     // Callers that log stage transitions should use this, not their own
     // pre-protection value, or the log misleadingly shows a "downgrade"
     // that never actually happened to the stored record.
-    return { blocked: false, stage: fields.stage ?? existing?.stage };
+    return { blocked: false, stage: fields.stage ?? existing?.stage, protectedFromDowngrade, requestedStage };
   },
 };
 
@@ -15723,13 +15727,17 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
   // log this transition should report appliedStage, not newStage, or the log
   // shows a "downgrade" that never actually happened to the stored record.
   let appliedStage = newStage;
+  let protectedFromDowngrade = false;
+  let blockedByManualOverride = false;
   if (newStage) {
     const result = await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
     appliedStage = result?.stage ?? newStage;
-    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage, appliedStage });
+    protectedFromDowngrade = !!result?.protectedFromDowngrade;
+    blockedByManualOverride = !!result?.blocked;
+    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage, appliedStage, protectedFromDowngrade, blockedByManualOverride });
   }
 
-  return { desc, newStage: appliedStage, history: ss.history };
+  return { desc, newStage: appliedStage, requestedStage: newStage, protectedFromDowngrade, blockedByManualOverride, history: ss.history };
 }
 
 // ── Failed-delivery-attempt notification (customer + vendor) ──────────────
@@ -15878,9 +15886,22 @@ async function shipsagarTrackingCron() {
         const result = await syncShipSagarStage(rec.shopify_id, rec.vendor_name, rec.awb);
         if (!result) { runLog.skipped++; continue; }
 
-        const { desc, newStage } = result;
+        const { desc, newStage, requestedStage, protectedFromDowngrade } = result;
         const tag = shipsagarDescToTag(desc);
         if (tag) runLog.tagged++;
+
+        // Log a "protected" entry when higherStage() kept the existing stage
+        // instead of a lower-ranked one the courier signal just requested —
+        // otherwise this looks like nothing happened at all in the monitor,
+        // when in fact a downgrade attempt was correctly blocked.
+        if (protectedFromDowngrade && requestedStage && requestedStage !== newStage) {
+          runLog.updates.push({
+            shopify_id: rec.shopify_id, vendor: rec.vendor_name, awb: rec.awb,
+            from: prevStage, to: newStage, desc, tag,
+            remark: `no change — higher stage protection ("${newStage}" kept, signal said "${requestedStage}")`,
+          });
+          console.log(`  🛡️ ${rec.shopify_id} ${rec.awb}: no change — higher stage protection ("${newStage}" kept, signal said "${requestedStage}") "${desc}"`);
+        }
 
         if (newStage && prevStage !== newStage) {
           runLog.updated++;

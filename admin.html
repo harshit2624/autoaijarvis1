@@ -8838,7 +8838,7 @@
                                 <td style={{padding:'4px 6px',color:'var(--indigo)',fontWeight:600,whiteSpace:'nowrap'}}>{t.order_name||('#'+t.shopify_id)}</td>
                                 <td style={{padding:'4px 6px',color:'var(--text-dim)',whiteSpace:'nowrap'}}>{t.vendor}</td>
                                 <td style={{padding:'4px 6px',fontFamily:'monospace',color:'var(--text-muted)',fontSize:9}}>{t.awb}</td>
-                                <td style={{padding:'4px 6px',color:'var(--text)'}}>{t.desc}</td>
+                                <td style={{padding:'4px 6px',color:'var(--text)'}}>{t.desc}{t.remark && <div style={{color:'#f59e0b',fontSize:9,marginTop:2}}>🛡️ {t.remark}</div>}</td>
                                 <td style={{padding:'4px 6px',whiteSpace:'nowrap'}}><span style={{color:'var(--text-muted)'}}>{t.from}</span> → <strong style={{color:SS_STAGE_COLORS[ssStatsDrill]}}>{t.to}</strong></td>
                                 <td style={{padding:'4px 6px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{new Date(t.ran_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</td>
                               </tr>
