@@ -370,7 +370,7 @@ const OVS = {
     // cancelled). A manual correction at one point in time was never meant to
     // permanently blind the order to a real RTO discovered weeks later; that
     // silently hid confirmed RTOs from settlement/penalty logic indefinitely.
-    if (respectManualOverride && existing?.manually_overridden && !TERMINAL_STAGES.includes(fields.stage)) return;
+    if (respectManualOverride && existing?.manually_overridden && !TERMINAL_STAGES.includes(fields.stage)) return { blocked: true, stage: existing?.stage };
 
     // Automated syncs must never downgrade a stage — e.g. a NOT_PICKED event after
     // a transit scan should not rewind the stage back to pickup.
@@ -405,6 +405,12 @@ const OVS = {
       { $set: { shopify_id: sid, vendor_name, ...fields, ...stageHistoryUpdate, _updated: new Date() } },
       { upsert: true }
     );
+    // Return what was ACTUALLY applied — after higherStage() may have kept
+    // the existing (higher) stage instead of the caller's requested one.
+    // Callers that log stage transitions should use this, not their own
+    // pre-protection value, or the log misleadingly shows a "downgrade"
+    // that never actually happened to the stored record.
+    return { blocked: false, stage: fields.stage ?? existing?.stage };
   },
 };
 
@@ -15344,6 +15350,11 @@ function shipsagarStatusToStage(desc) {
   if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled') || s.includes('refus')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
+  // "Dispatched — Our executive X is on their way to deliver" is a LOCAL
+  // delivery-run dispatch (an executive is en route to the customer right
+  // now), not a warehouse dispatch — checked before the generic pickup-
+  // bucket 'dispatched' match below so it correctly lands on ofd, not pickup.
+  if (s.includes('on their way to deliver') || s.includes('on the way to deliver') || (s.includes('executive') && s.includes('deliver'))) return 'ofd';
   if (s.includes('out for delivery') || s.includes('out delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('no such consignee') || s.includes('address incomplete') || s.includes('address incorrect') || s.includes('incorrect address') || s.includes('charges pending') || s.includes('reattempt') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held') || s.includes('otp not shared') || s.includes('cancelled by consignee')) return 'ofd';
   if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed') || s.includes('delivery delayed') || s.includes('reached dest') || s.includes('reached at destination')) return 'transit';
   if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting') || s.includes('further connected') || s.includes('on its way') || s.includes('on the way')) return 'transit';
@@ -15688,13 +15699,19 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
   // of truth for delivery status now; Shopify tags lagged and went stale.
   // applyShipSagarTag() is left defined in case tagging is wanted again later.
 
-  // Write to OVS — ShipSagar wins over Shopify, but not over a manual admin override
+  // Write to OVS — ShipSagar wins over Shopify, but not over a manual admin override.
+  // appliedStage is what actually got persisted, which can differ from newStage
+  // when higherStage() keeps the existing (higher) stage instead — callers that
+  // log this transition should report appliedStage, not newStage, or the log
+  // shows a "downgrade" that never actually happened to the stored record.
+  let appliedStage = newStage;
   if (newStage) {
-    await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
-    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage });
+    const result = await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
+    appliedStage = result?.stage ?? newStage;
+    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage, appliedStage });
   }
 
-  return { desc, newStage, history: ss.history };
+  return { desc, newStage: appliedStage, history: ss.history };
 }
 
 async function shipsagarTrackingCron() {
