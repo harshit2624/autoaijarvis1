@@ -23531,7 +23531,13 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
             key: { remoteJid: `91${phone}@s.whatsapp.net`, fromMe: false, id: msg.id },
             message: { conversation: text },
           };
-          waSharedMessageHandler({ messages: [fakeMsg], type: 'notify' }).catch(e => console.error('Cloud→bot handler error:', e.message));
+          mdb.collection('wa_bot_debug_log').insertOne({ event: 'received', phone, text, at: new Date().toISOString() }).catch(()=>{});
+          waSharedMessageHandler({ messages: [fakeMsg], type: 'notify' })
+            .then(() => mdb.collection('wa_bot_debug_log').insertOne({ event: 'handler_completed', phone, text, at: new Date().toISOString() }).catch(()=>{}))
+            .catch(e => {
+              console.error('Cloud→bot handler error:', e.message);
+              mdb.collection('wa_bot_debug_log').insertOne({ event: 'handler_error', phone, text, error: e.message, stack: e.stack, at: new Date().toISOString() }).catch(()=>{});
+            });
         } else {
           console.error('⚠️ WA Cloud inbound message but waSharedMessageHandler not registered — bot brain unavailable');
         }
@@ -23589,10 +23595,12 @@ app.get('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
 });
 // Temporary diagnostic — remove once the Cloud API bot-reply path is confirmed working.
 app.get('/admin/wa-cloud/bot-diag', adminAuth, async (req, res) => {
+  const log = await mdb.collection('wa_bot_debug_log').find({}).sort({ at: -1 }).limit(20).toArray().catch(() => []);
   res.json({
     WHATSAPP_BOT_ENABLED: process.env.WHATSAPP_BOT_ENABLED,
     handlerRegistered: !!waSharedMessageHandler,
     waConnected, waBot2Connected,
+    log,
   });
 });
 app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
