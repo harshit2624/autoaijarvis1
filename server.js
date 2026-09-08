@@ -1543,12 +1543,18 @@ app.post("/webhooks/orders", (req, res) => {
               const _isPrepaid       = payload.financial_status === 'paid';
               const _isPartiallyPaid = payload.financial_status === 'partially_paid';
               const _total = parseFloat(payload.total_price || 0);
+              const _orderSlug = encodeURIComponent(String(payload.name).replace(/^#/, ''));
               const _waConfirm = _isPrepaid
                 ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
                 : _isPartiallyPaid
                 ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
                 : `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
-              await waSendToCustomer(_confPhone, _waConfirm).catch(e => console.error('WA confirmed_tag error:', e.message));
+              const _cloudTpl = _isPrepaid
+                ? { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] }
+                : _isPartiallyPaid
+                ? { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: _orderSlug }
+                : { templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [payload.name, (payload.line_items||[]).map(li=>li.title).slice(0,2).join(', ')||'—', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: _orderSlug };
+              await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
               console.log(`✅ WA confirmed_tag sent for ${payload.name}`);
             }
@@ -14506,13 +14512,14 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
             const savings = Math.round(total - discountedTotal);
             const _Fp = '```';
             const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${orderName}\n\nPAID   ₹${discountedTotal}\nSAVED  ₹${savings}\n\nSTATE  Confirmed and moving.\n       No payment at delivery.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
-            await waSendToCustomer(customerPhone, waMsg);
+            await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [orderName, String(discountedTotal)] });
           } else {
             const remaining = Math.max(0, total - CONFIRM_FEE);
             const _Fp = '```';
-            const _trackUrl14 = `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`;
+            const orderSlug14 = encodeURIComponent(String(orderName).replace(/^#/, ''));
+            const _trackUrl14 = `${SERVER_URL}/o/${orderSlug14}`;
             const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl14}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
-            await waSendToCustomer(customerPhone, waMsg);
+            await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [orderName, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: orderSlug14 });
           }
         }
       }
@@ -15250,14 +15257,22 @@ async function deliveryFollowupCron() {
         const name = order.shipping_address?.first_name || order.customer?.first_name || 'there';
         const msg = `Hey ${name}! 🎁\n\nWe decided to do something special for you.\n\nAs a thank-you for shopping with CROSCROW, we've got a surprise —\n\n*FLAT ₹500 OFF* on your next order 🛍️\n\nUse code: *FLAT500* at checkout\n👉 croscrow.com\n\nValid for 30 days. Don't let it go to waste! 😊\n\n— Team CROSCROW`;
 
-        const jid = `91${phone}@s.whatsapp.net`;
-        await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
+        // Marketing category — Cloud API template first, Baileys image+caption
+        // fallback only if the template send fails.
+        const cloudResult = await sendWACloudTemplate({ phone10: phone, templateName: WA_TPL.WIN_BACK_FLAT500, headerImageUrl: FLAT500_IMAGE, bodyParams: [name] });
+        if (!cloudResult.sent && waSocket && waConnected) {
+          const jid = `91${phone}@s.whatsapp.net`;
+          await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
+        } else if (!cloudResult.sent) {
+          console.error(`❌ FLAT500 send failed for ${meta.shopify_id} — Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+          continue;
+        }
 
         await mdb.collection('order_meta').updateOne(
           { shopify_id: meta.shopify_id },
           { $set: { wa_flat500_sent: true, wa_flat500_sent_at: new Date().toISOString() } }
         );
-        console.log(`✅ FLAT500 sent to order ${meta.shopify_id} (${phone})`);
+        console.log(`✅ FLAT500 sent to order ${meta.shopify_id} (${phone}) via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
 
         // Small delay to avoid WA rate limits
         await new Promise(r => setTimeout(r, 3000));
@@ -15492,7 +15507,7 @@ async function shipsagarTrackShipment(awb) {
 // ── WA customer shipping notifications ───────────────────────────────────
 // Sends one WA message per stage transition. Deduplication via order_meta.wa_notif_sent.
 async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, customerPhone, awb, courier, deliveryStatus, codAmount }) {
-  if (!mdb || !waSocket || !waConnected) return;
+  if (!mdb) return;
   const digits = String(customerPhone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
   if (digits.length !== 10 || !/^[6-9]/.test(digits)) return;
 
@@ -15501,10 +15516,13 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
   const sent = meta?.wa_notif_sent || {};
   if (sent[stage]) return; // already sent
 
-  const trackUrl = `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}`;
+  const orderSlug = encodeURIComponent(String(orderName).replace(/^#/, ''));
+  const trackUrl = `${SERVER_URL}/o/${orderSlug}`;
   const name = (customerName || '').split(' ')[0] || 'there';
-  let msg = '';
 
+  // Plain-text fallback for Baileys (dead path while Baileys is disconnected,
+  // kept in case it's ever reconnected) — legacy ASCII-art format.
+  let msg = '';
   const _Ft = '```';
   if (stage === 'pickup') {
     const awbLine = awb ? `AWB      ${awb}\n` : '';
@@ -15522,12 +15540,31 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
   if (!msg) return;
 
   try {
-    await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+    // Cloud API template first — matches WA_TPL.SHIPMENT_*, see the 4
+    // shipment templates. Falls back to Baileys plain text only if the
+    // Cloud API attempt fails (or Baileys is the active model).
+    let cloudResult = { sent: false };
+    if (stage === 'pickup') {
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_PICKUP, bodyParams: [orderName, courier || 'our delivery partner', awb || '—'], urlButtonParam: orderSlug });
+    } else if (stage === 'transit') {
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_TRANSIT, bodyParams: [orderName], urlButtonParam: orderSlug });
+    } else if (stage === 'ofd') {
+      const codLine = codAmount > 0 ? `Please keep ₹${codAmount} ready (COD).` : 'Please keep your phone reachable.';
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [orderName, codLine], urlButtonParam: orderSlug });
+    } else if (stage === 'delivered') {
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [orderName] });
+    }
+
+    if (!cloudResult.sent) {
+      if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+      await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+    }
+
     await mdb.collection('order_meta').updateOne(
       { shopify_id: String(shopifyId) },
       { $set: { [`wa_notif_sent.${stage}`]: new Date().toISOString() } }
     );
-    console.log(`📲 WA notif sent: ${orderName} → ${stage} → +91${digits}`);
+    console.log(`📲 WA notif sent: ${orderName} → ${stage} → +91${digits} (via ${cloudResult.sent ? 'Cloud API' : 'Baileys'})`);
 
     // Fix #5: Proactive resolution — if customer has an open support chat for this order, auto-resolve it
     if (['pickup','delivered'].includes(stage) && mdb) {
@@ -15541,10 +15578,6 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
           resolved: { $ne: true },
         });
         if (openChat) {
-          const proactiveMsg = msg; // same themed message already built above
-          if (waSocket && waConnected) {
-            await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: proactiveMsg }).catch(() => {});
-          }
           await mdb.collection('support_chats').updateOne(
             { _id: openChat._id },
             { $set: { status: 'resolved', resolved: true, resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() } }
@@ -15595,7 +15628,7 @@ async function rrAdvanceStatus(rr, newStatus, note, source = 'auto') {
 //        refund_initiated | exchange_dispatched | rejected | pickup_overdue_48h
 // Deduplication via return_requests.wa_notif_sent map.
 async function sendRRWANotif(rr, event, extra = {}) {
-  if (!mdb || !waSocket || !waConnected) return;
+  if (!mdb) return;
   const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
   if (digits.length !== 10 || !/^[6-9]/.test(digits)) return;
 
@@ -15648,13 +15681,42 @@ async function sendRRWANotif(rr, event, extra = {}) {
 
   if (!msg) return;
 
+  const orderSlug = orderName ? encodeURIComponent(String(orderName).replace(/^#/, '')) : '';
+  // Cloud API template per event — matches WA_TPL.RR_*. Falls back to Baileys
+  // plain text only if the template send fails (dead path while Baileys is
+  // disconnected, kept for if it's ever reconnected).
+  let cloudResult = { sent: false };
+  if (event === 'request_received') {
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: [typeLabel, orderName] });
+  } else if (event === 'pickup_scheduled') {
+    const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, courier], urlButtonParam: orderSlug });
+  } else if (event === 'picked_up') {
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKED_UP, bodyParams: [orderName], urlButtonParam: orderSlug });
+  } else if (event === 'received_at_warehouse') {
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName] });
+  } else if (event === 'refund_initiated') {
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REFUND_APPROVED, bodyParams: [orderName, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
+  } else if (event === 'exchange_dispatched') {
+    const courier = extra.courier || rr.forward_shipment?.courier || 'Our delivery partner';
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_EXCHANGE_SENT, bodyParams: [orderName, courier], urlButtonParam: orderSlug });
+  } else if (event === 'rejected') {
+    const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QC_NOT_CLEARED, bodyParams: [orderName, reason] });
+  } else if (event === 'store_credit_issued') {
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
+  }
+
   try {
-    await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+    if (!cloudResult.sent) {
+      if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+      await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+    }
     await mdb.collection('return_requests').updateOne(
       { request_id: rr.request_id },
       { $set: { [`wa_notif_sent.${event}`]: new Date().toISOString() } }
     );
-    console.log(`📲 RR WA notif: ${reqId} → ${event} → +91${digits}`);
+    console.log(`📲 RR WA notif: ${reqId} → ${event} → +91${digits} (via ${cloudResult.sent ? 'Cloud API' : 'Baileys'})`);
   } catch (e) {
     console.error(`❌ RR WA notif failed (${reqId} ${event}):`, e.message);
   }
@@ -15768,13 +15830,21 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
     // Mark alerted up-front so a slow/failing send doesn't cause duplicate retries on the next cron pass
     await mdb.collection('delivery_attempt_alerts').insertOne({ event_key: eventKey, shopify_id: sid, vendor_name: vendorName, awb, desc, alerted_at: new Date().toISOString() });
 
-    // ── WA to customer ──
-    if (customerPhone && customerPhone.length === 10 && waSocket && waConnected) {
-      const custMsg = `📦 *Delivery Attempt Update — ${orderName}*\n\nHi ${customerName}, we tried delivering your order today but couldn't complete it.\n\nCourier remark: *${desc}*\n\nWe'll attempt delivery again soon. Please stay reachable on this number, or reply here if you'd like to share a better time/address.\n\n— Team CROSCROW`;
-      waSocket.sendMessage(`91${customerPhone}@s.whatsapp.net`, { text: custMsg }).catch(() => {});
+    // ── WA to customer — Cloud API template (WA_TPL.DELIVERY_ATTEMPT_FAILED),
+    // Baileys plain text only as a fallback if the template send fails.
+    if (customerPhone && customerPhone.length === 10) {
+      const orderSlug = encodeURIComponent(String(orderName).replace(/^#/, ''));
+      const cloudResult = await sendWACloudTemplate({ phone10: customerPhone, templateName: WA_TPL.DELIVERY_ATTEMPT_FAILED, bodyParams: [orderName, desc], urlButtonParam: orderSlug });
+      if (!cloudResult.sent && waSocket && waConnected) {
+        const custMsg = `📦 *Delivery Attempt Update — ${orderName}*\n\nHi ${customerName}, we tried delivering your order today but couldn't complete it.\n\nCourier remark: *${desc}*\n\nWe'll attempt delivery again soon. Please stay reachable on this number, or reply here if you'd like to share a better time/address.\n\n— Team CROSCROW`;
+        waSocket.sendMessage(`91${customerPhone}@s.whatsapp.net`, { text: custMsg }).catch(() => {});
+      }
     }
 
-    // ── WA to vendor ──
+    // ── WA to vendor — internal ops alert, no Meta template drafted for this
+    // yet (vendor-facing, not customer-facing), so it stays Baileys-only for
+    // now and silently no-ops while Baileys is disconnected. Vendor also
+    // gets the same info via email below.
     try {
       const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName });
       const vendorPhone = (vp?.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
@@ -16054,28 +16124,32 @@ async function shipsagarTrackingCron() {
             if (fwdStage === 'pickup' && !rr.wa_notif_sent?.exchange_dispatched) {
               await sendRRWANotif(rr, 'exchange_dispatched');
             }
-            // Exchange OFD
+            // Exchange OFD — reuses the same shipment_out_for_delivery
+            // template as a forward order's OFD (identical customer intent:
+            // "your package arrives today"), no separate exchange template needed.
             if (fwdStage === 'ofd' && !rr.wa_notif_sent?.exchange_ofd) {
               const _Fe = '```';
-              const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${encodeURIComponent(String(rr.order_name).replace(/^#/, ''))}` : '';
+              const exOrderSlug = rr.order_name ? encodeURIComponent(String(rr.order_name).replace(/^#/, '')) : '';
+              const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${exOrderSlug}` : '';
               const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is\n       out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
               const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
               if (digits.length === 10 && /^[6-9]/.test(digits)) {
-                await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: ofdMsg }).catch(() => {});
+                const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [rr.order_name || '', 'Please keep your phone reachable.'], urlButtonParam: exOrderSlug });
+                if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: ofdMsg }).catch(() => {});
                 await mdb.collection('return_requests').updateOne(
                   { request_id: rr.request_id },
                   { $set: { 'wa_notif_sent.exchange_ofd': now, updated_at: now } }
                 );
               }
             }
-            // Exchange delivered to customer
+            // Exchange delivered to customer — reuses shipment_delivered template.
             if (fwdStage === 'delivered' && !rr.wa_notif_sent?.exchange_delivered) {
               const _Fe = '```';
-              const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${encodeURIComponent(String(rr.order_name).replace(/^#/, ''))}` : '';
               const dlvMsg = `${_Fe}\n▪ C R O S C R O W ▪\n██████████████ 100%\nEXCHANGE DELIVERED\n────────────────\nORDER  ${rr.order_name || ''}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_Fe}`;
               const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
               if (digits.length === 10 && /^[6-9]/.test(digits)) {
-                await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: dlvMsg }).catch(() => {});
+                const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [rr.order_name || ''] });
+                if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: dlvMsg }).catch(() => {});
                 await mdb.collection('return_requests').updateOne(
                   { request_id: rr.request_id },
                   { $set: { 'wa_notif_sent.exchange_delivered': now, updated_at: now } }
@@ -23234,6 +23308,67 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
   }
 }
 
+// ── Generic Cloud API template sender ──────────────────────────────────────
+// Used by every notification (shipment, RR, order confirmation, win-back)
+// once its template is approved in Meta — one function instead of hand-
+// rolling the same fetch() everywhere. Never throws; callers fall back to
+// the old Baileys plain-text builder when this returns { sent: false }
+// (harmless no-op now that Baileys is disconnected, but keeps a path open
+// if it's ever reconnected).
+//   bodyParams  — ordered array filling the template BODY's {{1}}, {{2}}...
+//   headerImageUrl — only for templates with an IMAGE header
+//   urlButtonParam — dynamic suffix for a template with a URL button (most
+//                    have at most one dynamic CTA button; index is always 0)
+async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl, bodyParams = [], urlButtonParam }) {
+  if (!(await waCloudConfigured())) return { sent: false, reason: 'not_configured' };
+  if (!phone10 || phone10.length !== 10) return { sent: false, reason: 'invalid_phone' };
+  const to = `91${phone10}`;
+  const components = [];
+  if (headerImageUrl) components.push({ type: 'header', parameters: [{ type: 'image', image: { link: headerImageUrl } }] });
+  if (bodyParams.length) components.push({ type: 'body', parameters: bodyParams.map(t => ({ type: 'text', text: String(t ?? '') })) });
+  if (urlButtonParam !== undefined) components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(urlButtonParam) }] });
+  try {
+    const body = { messaging_product: 'whatsapp', to, type: 'template', template: { name: templateName, language: { code: lang || WA_CLOUD_LANG }, components } };
+    const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      console.error(`❌ WA Cloud template "${templateName}" failed:`, JSON.stringify(data.error || data));
+      return { sent: false, reason: data.error?.message || `http_${res.status}` };
+    }
+    console.log(`✅ WA Cloud template sent → ${to} (${templateName})`);
+    return { sent: true, messageId: data.messages?.[0]?.id };
+  } catch (e) {
+    console.error(`❌ WA Cloud template "${templateName}" error:`, e.message);
+    return { sent: false, reason: e.message };
+  }
+}
+
+// Meta template names — must match exactly what's approved on the WABA.
+// Centralized here so a rename only needs one edit.
+const WA_TPL = {
+  SHIPMENT_PICKUP: 'shipment_pickup',
+  SHIPMENT_TRANSIT: 'shipment_transit',
+  SHIPMENT_OFD: 'shipment_out_for_delivery',
+  SHIPMENT_DELIVERED: 'shipment_delivered',
+  DELIVERY_ATTEMPT_FAILED: 'delivery_attempt_failed',
+  RR_REQUEST_RECEIVED: 'rr_request_received',
+  RR_PICKUP_SCHEDULED: 'rr_pickup_scheduled',
+  RR_PICKED_UP: 'rr_picked_up',
+  RR_QUALITY_CHECK: 'rr_quality_check',
+  RR_REFUND_APPROVED: 'rr_refund_approved',
+  RR_EXCHANGE_SENT: 'rr_exchange_sent',
+  RR_QC_NOT_CLEARED: 'rr_qc_not_cleared',
+  RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued',
+  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation',
+  ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid',
+  ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance',
+  WIN_BACK_FLAT500: 'win_back_flat500',
+};
+
 // ── WA Cloud API inbox: webhook receiver + admin chat view ────────────────
 // Still fully separate from the Baileys bot — this only reads/writes
 // wa_cloud_chats / wa_cloud_messages, its own collections.
@@ -24682,13 +24817,23 @@ async function waLookupCustomer(phone) {
 }
 
 // Send a WhatsApp message to a customer by their phone number (Indian, 10-digit)
-async function waSendToCustomer(phone, message) {
-  if (!waSocket || !waConnected) return;
-  if (!phone) return;
+// cloudTemplate (optional): { templateName, bodyParams, urlButtonParam } —
+// when given, tries the Cloud API template first and only falls back to the
+// Baileys plain-text `message` if that fails (or Baileys is the only path
+// still connected). Callers that don't pass it keep the old Baileys-only
+// behavior, which is now a dead path while Baileys is disconnected.
+async function waSendToCustomer(phone, message, cloudTemplate) {
+  if (!phone) return false;
   const digits = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
-  if (digits.length !== 10) return;
-  try { await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: message }); }
-  catch (e) { console.error('❌ waSendToCustomer failed:', e.message); }
+  if (digits.length !== 10) return false;
+
+  if (cloudTemplate) {
+    const cloudResult = await sendWACloudTemplate({ phone10: digits, ...cloudTemplate });
+    if (cloudResult.sent) return true;
+  }
+  if (!waSocket || !waConnected) return false;
+  try { await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: message }); return true; }
+  catch (e) { console.error('❌ waSendToCustomer failed:', e.message); return false; }
 }
 
 // Send a Baileys message with an image (downloaded as a buffer — more
