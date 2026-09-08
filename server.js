@@ -8122,6 +8122,31 @@ app.delete("/admin/settlements/:id", adminAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+// GET /admin/settlements/:id/outstanding-penalties — preview count/amount of
+// confirmed penalties for this vendor not yet tied to ANY settlement.
+// order_penalties isn't filtered by order delivery status at all (a penalty
+// can be triggered on a dispatch delay, RTO, etc. regardless of whether the
+// order ever gets delivered), so this naturally covers non-delivered orders
+// — settlement generation only pulls in penalties whose triggered_at falls
+// inside that narrow generation period, which is why penalties on orders
+// outside the delivered-order date window get silently left out otherwise.
+app.get("/admin/settlements/:id/outstanding-penalties", adminAuth, async (req, res) => {
+  try {
+    const sid = parseInt(req.params.id);
+    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, _id: 0 } });
+    if (!s) return res.status(404).json({ error: "Not found." });
+    const allSettlPenDocs = await mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray();
+    const alreadyInvoicedPenIds = new Set(allSettlPenDocs.map(p => p.penalty_id));
+    const outstanding = await mdb.collection('order_penalties').find(
+      { vendor_name: s.vendor_name, status: 'confirmed' },
+      { projection: { _id: 0 } }
+    ).toArray();
+    const newOnes = outstanding.filter(p => !alreadyInvoicedPenIds.has(p.id));
+    const amount = parseFloat(newOnes.reduce((sum, p) => sum + (p.penalty_amount || 0), 0).toFixed(2));
+    res.json({ count: newOnes.length, amount });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── PUT /admin/settlements/:id/edit ───────────────────────────────────────
 app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   const sid = parseInt(req.params.id);
@@ -8136,7 +8161,35 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     invoice_notes       = "",
     prepaid_discount_pct,  // override the 10% vendor prepaid discount for this invoice
     penalty_waiver_pct  = 0, // 0-100: % of penalty_deduction to waive
+    include_outstanding_penalties = false, // fold in confirmed penalties on non-delivered (or otherwise out-of-period) orders
   } = req.body || {};
+
+  // Pull in any confirmed penalty for this vendor not yet tied to ANY
+  // settlement — order_penalties has no delivered-order filter, so this
+  // naturally includes penalties on orders that never made it to delivered
+  // (RTO, dispatch-delay, etc.), which settlement generation misses since
+  // it only scans penalties triggered within the narrow generation period.
+  // Folded straight into the existing penalty_deduction figure/line — not
+  // broken out separately on the invoice — per how this vendor's invoices
+  // are meant to read.
+  let addedPenaltyAmount = 0;
+  let addedPenaltyIds = [];
+  if (include_outstanding_penalties) {
+    const allSettlPenDocs = await mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray();
+    const alreadyInvoicedPenIds = new Set(allSettlPenDocs.map(p => p.penalty_id));
+    const outstanding = await mdb.collection('order_penalties').find(
+      { vendor_name: s.vendor_name, status: 'confirmed' },
+      { projection: { _id: 0 } }
+    ).toArray();
+    const newOnes = outstanding.filter(p => !alreadyInvoicedPenIds.has(p.id));
+    if (newOnes.length) {
+      addedPenaltyAmount = parseFloat(newOnes.reduce((sum, p) => sum + (p.penalty_amount || 0), 0).toFixed(2));
+      addedPenaltyIds = newOnes.map(p => p.id);
+      const penDocs = await Promise.all(newOnes.map(async p => ({ id: await nextId('settlement_penalties'), settlement_id: sid, penalty_id: p.id, amount: p.penalty_amount })));
+      await mdb.collection('settlement_penalties').insertMany(penDocs);
+    }
+  }
+  const penaltyDeductionTotal = parseFloat(((s.penalty_deduction || 0) + addedPenaltyAmount).toFixed(2));
 
   let orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
 
@@ -8169,7 +8222,7 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
 
   const baseNet = orders.reduce((sum, o) => sum + (o.net || 0), 0);
   // penalty_deduction is already baked into net_payable — re-apply after recalculation then subtract waiver
-  const existingPenalty = s.penalty_deduction || 0;
+  const existingPenalty = penaltyDeductionTotal;
   const waiverPct    = Math.min(100, Math.max(0, parseFloat(penalty_waiver_pct) || 0));
   const waiverAmount = parseFloat((existingPenalty * waiverPct / 100).toFixed(2));
   const adjustedNet = parseFloat((
@@ -8191,11 +8244,15 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     prepaid_discount_pct:  newPPDisc  ?? s.prepaid_discount_pct  ?? null,
     penalty_waiver_pct:  waiverPct,
     penalty_waiver_amount: waiverAmount,
+    penalty_deduction:   penaltyDeductionTotal,
     net_payable: adjustedNet,
   }});
 
+  if (addedPenaltyIds.length) {
+    auditLog("admin", "settlement_outstanding_penalties_added", req.params.id, { vendor: s.vendor_name, addedPenaltyAmount, penaltyIds: addedPenaltyIds });
+  }
   auditLog("admin", "settlement_edited", req.params.id, req.body);
-  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount });
+  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount, addedPenaltyAmount, penaltyDeductionTotal });
 });
 
 // ── PUT /admin/settlements/:id/mark-paid ──────────────────────────────────

@@ -5987,23 +5987,33 @@
     const [saving,       setSaving]       = useState(false);
     const [msg,          setMsg]          = useState(null);
     const [preview,      setPreview]      = useState(null);
+    const [outstandingPen, setOutstandingPen] = useState(null); // { count, amount } — not-yet-invoiced penalties for this vendor
+    const [includeOutstanding, setIncludeOutstanding] = useState(false);
 
     const penaltyAmt = init.penalty_deduction || 0;
+    const outstandingAmt = includeOutstanding ? (outstandingPen?.amount || 0) : 0;
+
+    // Fetch how many outstanding (incl. non-delivered-order) penalties exist for this vendor
+    useEffect(()=>{
+      fetch(`${API}/admin/settlements/${init.id}/outstanding-penalties`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setOutstandingPen(d)).catch(()=>{});
+    },[]);
 
     // Live preview (simplified — full recalc happens server-side)
     useEffect(()=>{
       const disc  = parseFloat(discount)||0;
       const ship  = parseFloat(shipping)||0;
       const adv   = parseFloat(extraAdv)||0;
-      const waiver = penaltyAmt * waiverPct / 100;
+      const effectivePenalty = penaltyAmt + outstandingAmt;
+      const waiver = effectivePenalty * waiverPct / 100;
       const baseNet = init.net_payable
         + (init.extra_discount||0)
         + (init.extra_advance||0)
         - (init.shipping_adjustment||0)
         + (init.penalty_waiver_amount||0);
-      const adjusted = parseFloat((baseNet - disc - adv + ship - waiver).toFixed(2));
+      const adjusted = parseFloat((baseNet + outstandingAmt - disc - adv + ship - waiver).toFixed(2));
       setPreview({ netPayable: adjusted, waiverAmt: waiver });
-    },[discount, shipping, extraAdv, waiverPct]);
+    },[discount, shipping, extraAdv, waiverPct, includeOutstanding, outstandingPen]);
 
     const save = async () => {
       setSaving(true); setMsg(null);
@@ -6014,6 +6024,7 @@
           extra_advance:       parseFloat(extraAdv)||0,
           invoice_notes:       notes,
           penalty_waiver_pct:  waiverPct,
+          include_outstanding_penalties: includeOutstanding,
         };
         if (commPct.trim()) body.custom_commission_pct = parseFloat(commPct);
         if (ppDisc.trim())  body.prepaid_discount_pct  = parseFloat(ppDisc);
@@ -6024,7 +6035,8 @@
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         const waiverNote = d.waiverAmount > 0 ? ` · Penalty waiver ₹${d.waiverAmount.toFixed(2)} applied` : '';
-        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}` });
+        const addedNote  = d.addedPenaltyAmount > 0 ? ` · +₹${d.addedPenaltyAmount.toFixed(2)} outstanding penalties added` : '';
+        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}${addedNote}` });
         onSaved();
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSaving(false);
@@ -6095,15 +6107,36 @@
               </div>
             </div>
 
+            {/* Section: Outstanding penalties on non-delivered orders */}
+            {outstandingPen?.count > 0 && (
+              <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
+                <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+                  <input type="checkbox" checked={includeOutstanding} onChange={e=>setIncludeOutstanding(e.target.checked)} style={{marginTop:2}}/>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                      Include {outstandingPen.count} outstanding penalt{outstandingPen.count===1?'y':'ies'} not yet invoiced — <strong style={{color:'var(--red)'}}>₹{outstandingPen.amount.toFixed(2)}</strong>
+                    </div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                      Confirmed penalties on this vendor's orders that were never delivered (RTO, dispatch delay, etc.) or otherwise fell outside this invoice's period — folded into the same penalty line above, not shown separately on the invoice.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            )}
+
             {/* Section: Penalty Waiver */}
-            {penaltyAmt > 0 && (
+            {(penaltyAmt + outstandingAmt) > 0 && (()=>{
+              const effectivePenaltyAmt = penaltyAmt + outstandingAmt;
+              return (
               <>
                 <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:8}}>Penalty Waiver</div>
                 <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
                     <div style={{fontSize:11,color:'var(--text)'}}>
-                      Invoiced penalty: <strong style={{color:'var(--red)'}}>₹{penaltyAmt.toFixed(2)}</strong>
-                      {waiverPct > 0 && <span style={{color:'var(--green)',marginLeft:8}}>→ waiver ₹{(penaltyAmt*waiverPct/100).toFixed(2)} ({waiverPct}%)</span>}
+                      {includeOutstanding && outstandingAmt>0
+                        ? <>Total penalty (incl. outstanding): <strong style={{color:'var(--red)'}}>₹{effectivePenaltyAmt.toFixed(2)}</strong></>
+                        : <>Invoiced penalty: <strong style={{color:'var(--red)'}}>₹{effectivePenaltyAmt.toFixed(2)}</strong></>}
+                      {waiverPct > 0 && <span style={{color:'var(--green)',marginLeft:8}}>→ waiver ₹{(effectivePenaltyAmt*waiverPct/100).toFixed(2)} ({waiverPct}%)</span>}
                     </div>
                     {waiverPct > 0 && <button style={{fontSize:10,padding:'2px 8px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}} onClick={()=>setWaiverPct(0)}>Clear</button>}
                   </div>
@@ -6114,7 +6147,7 @@
                           background:waiverPct===pct?'rgba(16,185,129,0.12)':'var(--bg-card2)',
                           color:waiverPct===pct?'var(--green)':'var(--text-muted)',fontWeight:700,fontSize:12,cursor:'pointer',transition:'all 0.15s'}}>
                         {pct}% off
-                        {waiverPct===pct && <div style={{fontSize:9,color:'var(--green)',marginTop:2}}>−₹{(penaltyAmt*pct/100).toFixed(0)}</div>}
+                        {waiverPct===pct && <div style={{fontSize:9,color:'var(--green)',marginTop:2}}>−₹{(effectivePenaltyAmt*pct/100).toFixed(0)}</div>}
                       </button>
                     ))}
                     <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -6125,7 +6158,8 @@
                   </div>
                 </div>
               </>
-            )}
+              );
+            })()}
 
             {/* Notes */}
             <div>
@@ -6140,6 +6174,7 @@
                 <div style={{fontSize:24,fontWeight:800,color:isCredit?'var(--green)':'var(--red)'}}>
                   {isCredit?'↑':'↓'} ₹{Math.abs(preview.netPayable).toFixed(2)}
                 </div>
+                {includeOutstanding && outstandingAmt>0 && <div style={{fontSize:11,color:'var(--red)',marginTop:4}}>includes ₹{outstandingAmt.toFixed(2)} outstanding penalties</div>}
                 {preview.waiverAmt>0 && <div style={{fontSize:11,color:'var(--green)',marginTop:4}}>includes penalty waiver of ₹{preview.waiverAmt.toFixed(2)}</div>}
                 <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{isCredit?'CROSCROW pays vendor':'Vendor pays CROSCROW'}</div>
               </div>
