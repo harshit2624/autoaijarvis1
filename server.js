@@ -16003,12 +16003,21 @@ async function shipsagarTrackingCron() {
           const now = new Date().toISOString();
           const prevStatus = shipField.tracking_status || '';
 
+          const rrHistoryToSave = ss.history.map(h => ({
+            desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
+            date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
+            time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
+            location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
+          })).filter(h => h.desc);
+
           if (!desc || desc === prevStatus) continue; // no change
 
-          // Update tracking_status on the shipment field
+          // Update tracking_status + full scan history on the shipment field —
+          // the customer track page renders this the same way it renders the
+          // main forward-order scan log.
           await mdb.collection('return_requests').updateOne(
             { request_id: rr.request_id },
-            { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, updated_at: now } }
+            { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, [`${direction}_shipment.tracking_history`]: rrHistoryToSave, updated_at: now } }
           );
           console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
           await rrPushHistory(rr.request_id, { event: `${direction}_tracking`, note: desc, source: 'courier' });
@@ -19017,6 +19026,44 @@ app.get("/track/shipment-status", async (req, res) => {
       console.log(`📦 Track-page push AWB ${awb}: ok=${pushResult?.ok} courier=${courier}`);
     } catch(e) { console.error('Track-page push error:', e.message); }
     return res.json({ status: '', awb, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Public: refresh a return/exchange shipment's live courier scan log ────
+// Mirrors /track/shipment-status but for reverse (pickup-from-customer) or
+// forward (exchange-to-customer) RR shipments — used by the Refresh button
+// on the order track page and the returns page's own status view.
+app.get("/track/rr-shipment-status", async (req, res) => {
+  try {
+    const { request_id, direction } = req.query;
+    if (!request_id || !['reverse', 'forward'].includes(direction)) {
+      return res.status(400).json({ error: 'request_id and direction (reverse|forward) required' });
+    }
+    const field = `${direction}_shipment`;
+    const rr = await mdb.collection('return_requests').findOne({ request_id }, { projection: { [field]: 1, _id: 0 } });
+    const awb = rr?.[field]?.awb;
+    if (!awb) return res.status(400).json({ error: 'No AWB registered for this shipment yet' });
+
+    const ss = await shipsagarTrackShipment(awb);
+    if (!ss) return res.json({ status: rr[field]?.tracking_status || '', awb, message: 'ShipSagar not configured' });
+    if (!ss.found || !ss.history?.length) {
+      return res.json({ status: rr[field]?.tracking_status || '', awb, message: 'No scan updates yet — check back soon.' });
+    }
+
+    const latest = ss.history[ss.history.length - 1];
+    const desc = latest.ActionDescription || ss.currentStatus || '';
+    const historyToSave = ss.history.map(h => ({
+      desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
+      date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
+      time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
+      location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
+    })).filter(h => h.desc);
+    const now = new Date().toISOString();
+    await mdb.collection('return_requests').updateOne(
+      { request_id },
+      { $set: { [`${field}.tracking_status`]: desc, [`${field}.tracking_updated_at`]: now, [`${field}.tracking_history`]: historyToSave, updated_at: now } }
+    );
+    res.json({ status: desc, awb, source: 'shipsagar', history: historyToSave });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

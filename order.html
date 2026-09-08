@@ -1089,10 +1089,16 @@ function buildScanLogHtml(history, stage, logId, meta) {
   const SCAN_STAGES = ['transit','pickup','ofd','delivered'];
   const hasHistory = history && history.length;
   const awb = meta?.awb || '';
-  if (!hasHistory && (!SCAN_STAGES.includes(stage) || !awb)) return '';
+  const title = meta?.title || 'Shipment Updates';
+  // meta.rrRefresh: { requestId, direction } — RR shipments refresh via a
+  // different endpoint (no shopify order-vendor stage to sync into).
+  const refreshOnclick = meta?.rrRefresh
+    ? `refreshRRShipmentUpdates(this, ${JSON.stringify(meta.rrRefresh.requestId)}, ${JSON.stringify(meta.rrRefresh.direction)})`
+    : `refreshShipmentUpdates(this, ${JSON.stringify(awb)}, ${JSON.stringify(meta?.vendorName||'')})`;
+  if (!hasHistory && (!SCAN_STAGES.includes(stage) || !awb) && !meta?.rrRefresh) return '';
 
-  const refreshBtn = awb ? `<button type="button" class="scan-refresh-btn" id="${logId}-refresh"
-      onclick="event.stopPropagation(); refreshShipmentUpdates(this, ${JSON.stringify(awb)}, ${JSON.stringify(meta?.vendorName||'')})">
+  const refreshBtn = (awb || meta?.rrRefresh) ? `<button type="button" class="scan-refresh-btn" id="${logId}-refresh"
+      onclick="event.stopPropagation(); ${refreshOnclick}">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
       Refresh
     </button>` : '';
@@ -1101,7 +1107,7 @@ function buildScanLogHtml(history, stage, logId, meta) {
     return `
     <div class="scan-log" id="${logId}">
       <div class="scan-log-header">
-        <span class="scan-log-title">Shipment Updates</span>
+        <span class="scan-log-title">${esc(title)}</span>
         ${refreshBtn}
       </div>
       <div class="scan-log-body visible">
@@ -1154,7 +1160,7 @@ function buildScanLogHtml(history, stage, logId, meta) {
   return `
     <div class="scan-log" id="${logId}">
       <div class="scan-log-header">
-        <span class="scan-log-title" onclick="toggleScanLog('${logId}')" style="cursor:pointer;flex:1">Shipment Updates</span>
+        <span class="scan-log-title" onclick="toggleScanLog('${logId}')" style="cursor:pointer;flex:1">${esc(title)}</span>
         ${refreshBtn}
         <span class="scan-log-toggle" id="${logId}-toggle" onclick="toggleScanLog('${logId}')" style="cursor:pointer">${total > INITIAL_SHOW ? `See all ${total} scans ${chevron}` : chevron}</span>
       </div>
@@ -1212,6 +1218,34 @@ async function refreshShipmentUpdates(btn, awb, vendorName) {
     console.error('refreshShipmentUpdates failed:', e.message);
   } finally {
     // Only reset if the button still exists (renderOrder may have replaced it)
+    if (document.body.contains(btn)) {
+      btn.disabled = false;
+      if (svg) svg.style.animation = '';
+      btn.lastChild.textContent = origText;
+    }
+  }
+}
+
+// Refresh a return/exchange shipment's scan log — same pattern as
+// refreshShipmentUpdates but for reverse (pickup-from-customer) or forward
+// (exchange-to-customer) RR shipments, which live in return_requests not
+// order_vendor_stage.
+async function refreshRRShipmentUpdates(btn, requestId, direction) {
+  if (!requestId || !orderData) return;
+  const svg = btn.querySelector('svg');
+  btn.disabled = true;
+  if (svg) svg.style.animation = 'spin 0.8s linear infinite';
+  const origText = btn.lastChild.textContent;
+  btn.lastChild.textContent = ' Checking…';
+  try {
+    const params = new URLSearchParams({ request_id: requestId, direction });
+    await fetch(`${API}/track/rr-shipment-status?${params}`).catch(()=>{});
+    const r = await fetch(`${API}/order/lookup?q=${encodeURIComponent(orderData.order_name)}&contact=${encodeURIComponent(lastContact)}`);
+    const d = await r.json();
+    if (r.ok) { orderData = d; renderOrder(d); }
+  } catch (e) {
+    console.error('refreshRRShipmentUpdates failed:', e.message);
+  } finally {
     if (document.body.contains(btn)) {
       btn.disabled = false;
       if (svg) svg.style.animation = '';
@@ -1473,25 +1507,51 @@ function renderTrack(d) {
   }
 }
 
+// Maps the backend's granular RR_STATUS_ORDER onto the same 5-stage naming
+// already used in the WA templates (REQ APR PCK QC DONE), so the track page
+// stepper matches what the customer was messaged.
+const RR_STAGE_RANK = { pending:0, approved:1, pickup_scheduled:2, pickup:2, picked_up:2, in_transit:2, received:3, received_at_warehouse:3, completed:4 };
+
 function renderRR(d) {
   const existing = d.return_requests||[];
   if (!existing.length) return;
   const statusChip = {pending:'pending',approved:'approved',rejected:'rejected',completed:'approved',cancelled:'rejected'};
   const statusLabel = {pending:'Pending',approved:'Approved',rejected:'Rejected',completed:'Completed',cancelled:'Cancelled'};
-  const STEPS = ['Submitted','Approved',null]; // null = dynamic third label
+
   document.getElementById('rr-existing-list').innerHTML = existing.map(r => {
-    const sMap = {pending:0,approved:1,completed:2,rejected:-1,cancelled:-1};
-    const sIdx = sMap[r.status] ?? 0;
-    const thirdLabel = r.type==='exchange' ? 'Replacement sent' : 'Refund processed';
-    const steps = ['Submitted','Approved', thirdLabel];
+    const isTerminalNeg = r.status==='rejected' || r.status==='cancelled';
+    const sIdx = RR_STAGE_RANK[r.status] ?? 0;
+    const doneLabel = r.type==='exchange' ? 'Replacement Sent' : 'Refund Issued';
+    const steps = ['Submitted','Approved','Picked Up','Quality Check', doneLabel];
     const dots = steps.map((lbl,i) => {
-      const active = r.status==='rejected'||r.status==='cancelled' ? i===0 : i<=sIdx;
-      const cls = active ? (i===sIdx&&sIdx<2?'rr-dot-active':'rr-dot-done') : 'rr-dot-pending';
+      const active = isTerminalNeg ? i===0 : i<=sIdx;
+      const cls = active ? (i===sIdx&&sIdx<4?'rr-dot-active':'rr-dot-done') : 'rr-dot-pending';
       return `<div class="rr-step-wrap"><div class="rr-dot ${cls}"></div><div class="rr-step-lbl">${lbl}</div></div>`;
     }).join('<div class="rr-step-line"></div>');
-    const trackLink = r.forward_shipment?.tracking_url || r.reverse_shipment?.tracking_url || '';
-    const awb = r.forward_shipment?.awb || r.reverse_shipment?.awb || '';
+
     const date = new Date(r.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+
+    // Reverse shipment (customer → us) — always relevant once dispatched.
+    const revAwb = r.reverse_shipment?.awb || '';
+    const revTrack = r.reverse_shipment?.tracking_url || '';
+    const revLogId = `rr-scan-rev-${r.request_id}`;
+    const revScanLog = revAwb ? buildScanLogHtml(r.reverse_shipment?.tracking_history||[], null, revLogId, {
+      awb: revAwb, title: 'Pickup Shipment Updates', rrRefresh: { requestId: r.request_id, direction: 'reverse' },
+    }) : '';
+
+    // Forward shipment (us → customer) — only relevant for exchanges once dispatched.
+    const fwdAwb = r.forward_shipment?.awb || '';
+    const fwdTrack = r.forward_shipment?.tracking_url || '';
+    const fwdLogId = `rr-scan-fwd-${r.request_id}`;
+    const fwdScanLog = (r.type==='exchange' && fwdAwb) ? buildScanLogHtml(r.forward_shipment?.tracking_history||[], null, fwdLogId, {
+      awb: fwdAwb, title: 'Replacement Shipment Updates', rrRefresh: { requestId: r.request_id, direction: 'forward' },
+    }) : '';
+
+    const trackRows = [
+      revAwb ? `<div class="rr-track-row">${IC.truck}&nbsp;<span>Pickup AWB: ${revAwb}</span>${revTrack?`&nbsp;<a href="${revTrack}" target="_blank" class="rr-track-link">Track courier →</a>`:''}</div>` : '',
+      (r.type==='exchange' && fwdAwb) ? `<div class="rr-track-row">${IC.truck}&nbsp;<span>Replacement AWB: ${fwdAwb}</span>${fwdTrack?`&nbsp;<a href="${fwdTrack}" target="_blank" class="rr-track-link">Track courier →</a>`:''}</div>` : '',
+    ].join('');
+
     return `<div class="rr-card-track">
       <div class="rr-card-head2">
         <div>
@@ -1501,7 +1561,9 @@ function renderRR(d) {
         <span class="rr-req-status ${statusChip[r.status]||'pending'}">${statusLabel[r.status]||r.status}</span>
       </div>
       <div class="rr-prog-row">${dots}</div>
-      ${awb ? `<div class="rr-track-row">${IC.truck}&nbsp;<span>AWB: ${awb}</span>${trackLink?`&nbsp;<a href="${trackLink}" target="_blank" class="rr-track-link">Track shipment →</a>`:''}</div>` : ''}
+      ${trackRows}
+      ${revScanLog}
+      ${fwdScanLog}
     </div>`;
   }).join('');
 }

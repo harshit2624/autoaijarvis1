@@ -152,6 +152,40 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
 .rr-tl-dot.waiting{background:var(--border)}
 .rr-tl-text{font-size:12px;color:var(--body);line-height:1.5}
 .rr-tl-text.active{font-weight:700;color:var(--text)}
+.rr-track-row{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+  padding:0 16px 12px}
+.rr-track-link{color:var(--blue);font-weight:600;text-decoration:none}
+
+/* Real courier scan log — ported from order.html so return/exchange
+   shipments get the same live tracking detail as forward orders. */
+.scan-log{margin:0 16px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg);overflow:hidden}
+.scan-log-header{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.scan-log-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.scan-log-toggle{font-size:11px;color:var(--blue);font-weight:600;display:flex;align-items:center;gap:4px}
+.scan-log-toggle svg{transition:transform .2s}
+.scan-log-toggle.open svg{transform:rotate(180deg)}
+.scan-refresh-btn{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--blue);background:transparent;border:1px solid var(--border);border-radius:99px;padding:5px 10px;cursor:pointer;font-family:inherit;flex-shrink:0}
+.scan-refresh-btn:disabled{opacity:.6;cursor:default}
+.scan-refresh-btn svg{flex-shrink:0}
+.scan-empty-state{padding:12px 14px 4px;font-size:12px;color:var(--muted);line-height:1.5}
+.scan-log-body{padding:0 14px;transition:max-height .3s ease,opacity .2s;max-height:0;opacity:0;overflow:hidden}
+.scan-log-body.visible{max-height:2000px;opacity:1;padding-bottom:12px}
+.scan-events{display:flex;flex-direction:column;position:relative}
+.scan-events::before{content:'';position:absolute;left:6px;top:8px;bottom:8px;width:1px;background:var(--border)}
+.scan-event{display:grid;grid-template-columns:14px 1fr;gap:10px;align-items:start;padding:8px 0}
+.scan-event:first-child{padding-top:4px}
+.scan-dot{width:13px;height:13px;border-radius:50%;border:2px solid var(--border);background:var(--card);flex-shrink:0;margin-top:2px;position:relative;z-index:1}
+.scan-dot.latest{background:var(--blue);border-color:var(--blue)}
+.scan-dot.delivered{background:var(--green);border-color:var(--green)}
+.scan-content{}
+.scan-status{font-size:12px;font-weight:600;color:var(--text);line-height:1.35}
+.scan-status.latest{color:var(--blue)}
+.scan-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+.scan-time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.scan-loc{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:2px}
+.scan-loc::before{content:'·'}
+.scan-collapsed-peek{padding:9px 14px 12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.scan-peek-text{font-size:12px;color:var(--muted)}
 
 /* Action cards (start return/exchange) */
 .action-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
@@ -612,6 +646,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
 const API = '';
 const IC_INFO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
 let orderData = null;
+let lastContact = 'na';
 let flowType = null; // 'return' | 'exchange'
 let selectedItems = {}; // { itemIdx: { qty, exchange_for } }
 let selectedReason = null;
@@ -703,6 +738,7 @@ async function doLookup() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Order not found');
     orderData = d;
+    lastContact = contact;
     renderPortal(d);
   } catch(e) {
     showScreen('lookup-screen');
@@ -871,21 +907,145 @@ function renderPortal(d) {
   }
 }
 
+// Same rank mapping as the order track page — keeps the two pages' steppers
+// consistent with each other and with what the WA templates already say.
+const RR_STAGE_RANK = { pending:0, approved:1, pickup_scheduled:2, pickup:2, picked_up:2, in_transit:2, received:3, received_at_warehouse:3, completed:4 };
+
+// ── Real courier scan log (ported from order.html) ──────────────────────
+function buildScanLogHtml(history, logId, meta) {
+  const hasHistory = history && history.length;
+  const awb = meta?.awb || '';
+  const title = meta?.title || 'Shipment Updates';
+  if (!hasHistory && !awb) return '';
+
+  const refreshBtn = awb ? `<button type="button" class="scan-refresh-btn" id="${logId}-refresh"
+      onclick="event.stopPropagation(); refreshRRShipmentUpdates(this, ${JSON.stringify(meta.requestId)}, ${JSON.stringify(meta.direction)})">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+      Refresh
+    </button>` : '';
+
+  if (!hasHistory) {
+    return `<div class="scan-log" id="${logId}">
+      <div class="scan-log-header"><span class="scan-log-title">${esc(title)}</span>${refreshBtn}</div>
+      <div class="scan-log-body visible"><div class="scan-empty-state">No scan updates yet — tap refresh to check for the latest status.</div></div>
+    </div>`;
+  }
+
+  const events = [...history].reverse();
+  const total = events.length;
+  const INITIAL_SHOW = 2;
+  const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+
+  function eventHtml(ev, idx) {
+    const isLatest = idx === 0;
+    const dotCls = isLatest ? 'latest' : '';
+    const dt = [ev.date, ev.time].filter(Boolean).join(' ');
+    return `<div class="scan-event">
+      <div class="scan-dot ${dotCls}"></div>
+      <div class="scan-content">
+        <div class="scan-status ${isLatest?'latest':''}">${esc(ev.desc || '')}</div>
+        <div class="scan-meta">${dt?`<span class="scan-time">${esc(dt)}</span>`:''}${ev.location?`<span class="scan-loc">${esc(ev.location)}</span>`:''}</div>
+      </div>
+    </div>`;
+  }
+
+  const visibleEvents = events.slice(0, INITIAL_SHOW);
+  const hiddenEvents  = events.slice(INITIAL_SHOW);
+  const hasMore = hiddenEvents.length > 0;
+
+  return `<div class="scan-log" id="${logId}">
+    <div class="scan-log-header">
+      <span class="scan-log-title" onclick="toggleScanLog('${logId}')" style="cursor:pointer;flex:1">${esc(title)}</span>
+      ${refreshBtn}
+      <span class="scan-log-toggle" id="${logId}-toggle" onclick="toggleScanLog('${logId}')" style="cursor:pointer">${total > INITIAL_SHOW ? `See all ${total} scans ${chevron}` : chevron}</span>
+    </div>
+    <div class="scan-log-body visible" id="${logId}-body">
+      <div class="scan-events">${visibleEvents.map((ev,i) => eventHtml(ev, i)).join('')}</div>
+      ${hasMore ? `<div id="${logId}-more" style="display:none"><div class="scan-events">${hiddenEvents.map((ev,i) => eventHtml(ev, i+INITIAL_SHOW)).join('')}</div></div>` : ''}
+    </div>
+    ${hasMore ? `<div class="scan-collapsed-peek" id="${logId}-peek" onclick="expandScanLog('${logId}')">
+      <span class="scan-peek-text">+${hiddenEvents.length} more scan${hiddenEvents.length>1?'s':''}</span>
+      <span class="scan-log-toggle">${chevron}</span>
+    </div>` : ''}
+  </div>`;
+}
+
+function toggleScanLog(id) {
+  const body = document.getElementById(id+'-body');
+  const toggle = document.getElementById(id+'-toggle');
+  if (!body) return;
+  const isOpen = body.classList.contains('visible');
+  body.classList.toggle('visible', !isOpen);
+  if (toggle) toggle.classList.toggle('open', !isOpen);
+}
+function expandScanLog(id) {
+  const more = document.getElementById(id+'-more');
+  const peek = document.getElementById(id+'-peek');
+  if (more) more.style.display = '';
+  if (peek) peek.style.display = 'none';
+}
+
+async function refreshRRShipmentUpdates(btn, requestId, direction) {
+  if (!requestId) return;
+  const svg = btn.querySelector('svg');
+  btn.disabled = true;
+  if (svg) svg.style.animation = 'spin 0.8s linear infinite';
+  const origText = btn.lastChild.textContent;
+  btn.lastChild.textContent = ' Checking…';
+  try {
+    const params = new URLSearchParams({ request_id: requestId, direction });
+    await fetch(`${API}/track/rr-shipment-status?${params}`).catch(()=>{});
+    const r = await fetch(`${API}/order/lookup?q=${encodeURIComponent(orderData.order_name)}&contact=${encodeURIComponent(lastContact)}`);
+    const d = await r.json();
+    if (r.ok) { orderData = d; renderPortal(d); }
+  } catch (e) {
+    console.error('refreshRRShipmentUpdates failed:', e.message);
+  } finally {
+    if (document.body.contains(btn)) {
+      btn.disabled = false;
+      if (svg) svg.style.animation = '';
+      btn.lastChild.textContent = origText;
+    }
+  }
+}
+
 function renderRRCard(rr) {
   const date = new Date(rr.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
-  const statusMap = {pending:0, approved:1, completed:2, rejected:-1};
-  const sIdx = statusMap[rr.status] ?? 0;
-  const steps = ['Submitted','Approved','Completed'];
+  const isTerminalNeg = rr.status==='rejected' || rr.status==='cancelled';
+  const sIdx = RR_STAGE_RANK[rr.status] ?? 0;
+  const doneLabel = rr.type==='exchange' ? 'Replacement Sent' : 'Refund Issued';
+  const steps = ['Submitted','Approved','Picked Up','Quality Check', doneLabel];
   const progressDots = steps.map((_,i) => {
-    const cls = rr.status==='rejected'&&i>0?'pending-step':i<sIdx?'done':i===sIdx&&sIdx>=0?'active':'pending-step';
+    const cls = isTerminalNeg && i>0 ? 'pending-step' : i<sIdx ? 'done' : i===sIdx ? 'active' : 'pending-step';
     return `<div class="rr-step ${cls}"></div>`;
   }).join('');
 
   const timelineItems = [
     {text:'Request submitted', done: true},
-    {text: rr.type==='return'?'Team reviews &amp; approves':'Team processes exchange', done: sIdx >= 1},
-    {text: rr.type==='return'?'Refund processed (3–5 days)':'Replacement dispatched', done: sIdx >= 2},
+    {text: 'Team reviews &amp; approves', done: sIdx >= 1},
+    {text: 'Picked up from you', done: sIdx >= 2},
+    {text: 'Quality check at our warehouse', done: sIdx >= 3},
+    {text: rr.type==='return' ? 'Refund / store credit issued' : 'Replacement dispatched', done: sIdx >= 4},
   ];
+
+  const revAwb = rr.reverse_shipment?.awb || '';
+  const revTrack = rr.reverse_shipment?.tracking_url || '';
+  const revLogId = `rr-scan-rev-${rr.request_id}`;
+  const revScanLog = revAwb ? buildScanLogHtml(rr.reverse_shipment?.tracking_history||[], revLogId, {
+    awb: revAwb, title: 'Pickup Shipment Updates', requestId: rr.request_id, direction: 'reverse',
+  }) : '';
+
+  const fwdAwb = rr.forward_shipment?.awb || '';
+  const fwdTrack = rr.forward_shipment?.tracking_url || '';
+  const fwdLogId = `rr-scan-fwd-${rr.request_id}`;
+  const fwdScanLog = (rr.type==='exchange' && fwdAwb) ? buildScanLogHtml(rr.forward_shipment?.tracking_history||[], fwdLogId, {
+    awb: fwdAwb, title: 'Replacement Shipment Updates', requestId: rr.request_id, direction: 'forward',
+  }) : '';
+
+  const trackRows = [
+    revAwb ? `<div class="rr-track-row">🚚&nbsp;<span>Pickup AWB: ${esc(revAwb)}</span>${revTrack?`&nbsp;<a href="${revTrack}" target="_blank" rel="noopener" class="rr-track-link">Track courier →</a>`:''}</div>` : '',
+    (rr.type==='exchange' && fwdAwb) ? `<div class="rr-track-row">🚚&nbsp;<span>Replacement AWB: ${esc(fwdAwb)}</span>${fwdTrack?`&nbsp;<a href="${fwdTrack}" target="_blank" rel="noopener" class="rr-track-link">Track courier →</a>`:''}</div>` : '',
+  ].join('');
 
   return `<div class="rr-card">
     <div class="rr-card-head">
@@ -902,6 +1062,9 @@ function renderRRCard(rr) {
         <div class="rr-tl-text ${t.done?'':''}"> ${t.text}</div>
       </div>`).join('')}
     </div>
+    ${trackRows}
+    ${revScanLog}
+    ${fwdScanLog}
     ${rr.admin_note ? `<div style="padding:0 16px 14px;font-size:12px;color:var(--body);line-height:1.6;background:var(--bg);border-top:1px solid var(--border);padding-top:12px"><strong style="color:var(--text)">Note from team:</strong> ${esc(rr.admin_note)}</div>` : ''}
   </div>`;
 }
