@@ -10161,7 +10161,7 @@ app.get("/admin/orders/:shopifyId/delivery-status", requirePermission('orders'),
         const newStage = shipsagarStatusToStage(status);
         const histSave = ss.history.map(h => ({ desc: h.ActionDescription||h.Status||h.EventDescription||h.Description||'', date: h.ActionDate||h.ScanDate||h.Date||h.EventDate||'', time: h.ActionTime||h.ScanTime||h.Time||h.EventTime||'', location: h.City||h.Location||h.ScanCity||h.Hub||h.DestCity||h.ScanLocation||'', raw: h })).filter(h=>h.desc);
         if (newStage) await OM.upsert(shopifyId, { delivery_status: status, delivery_status_updated_at: new Date().toISOString(), tracking_history: histSave });
-        applyShipSagarTag(shopifyId, status).catch(() => {});
+        // Shopify tags disabled — ShipSagar/OVS.stage is the source of truth now, Shopify tags lagged and went stale.
         return res.json({ status, awb, source: 'shipsagar', history: ss.history, tag: shipsagarDescToTag(status) });
       }
       if (ss?.found) return res.json({ status: cached?.delivery_status || '', awb, message: 'No events yet.' });
@@ -15684,8 +15684,9 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
   // Also save per-vendor tracking history to OVS so multi-vendor orders show correct scan log per shipment
   await OVS.upsert(sid, vendorName, { tracking_history: historyToSave, updated_at: now }, { respectManualOverride: false, respectStageOrder: false });
 
-  // Apply ShipSagar tag to Shopify order
-  if (desc) applyShipSagarTag(sid, desc).catch(() => {});
+  // Shopify tags disabled (2026-09-08) — ShipSagar/OVS.stage is the source
+  // of truth for delivery status now; Shopify tags lagged and went stale.
+  // applyShipSagarTag() is left defined in case tagging is wanted again later.
 
   // Write to OVS — ShipSagar wins over Shopify, but not over a manual admin override
   if (newStage) {
