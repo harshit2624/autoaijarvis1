@@ -27463,17 +27463,21 @@ app.post('/admin/wa2-qr/pair', adminAuth, async (req, res) => {
 });
 
 if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
-  // Stagger startup: random 10-40s delay so not all Render instances race at once
-  const startDelay = 10000 + Math.floor(Math.random() * 30000);
-  console.log(`⏳ WA Bot v2 starting in ${Math.round(startDelay/1000)}s…`);
-  setTimeout(startWA2, startDelay);
+  // Baileys is fully retired — startWA2() (the actual Baileys connection
+  // attempt) is intentionally NOT auto-started anymore. With no valid
+  // session it just fails and retries on a backoff loop forever, flooding
+  // Render's logs with reconnect noise and drowning out everything else.
+  // Manual reconnect is still available via the /admin/wa2-qr page if ever
+  // needed — those routes still call startWA2() themselves on demand.
+  //
   // startBaileysBot() (registers waSharedMessageHandler, the whole bot brain)
   // used to only run once Baileys' own connection reached 'open' — meaning
   // with Baileys disconnected, the handler never got registered at all and
   // Cloud API inbound messages had nothing to route into. Call it directly
-  // here too: it's idempotent (no-ops if already registered) and doesn't
-  // itself require a live Baileys connection — only actually *sending*
-  // through the proxy sock needs a transport (Cloud API or Baileys) to be up.
+  // here instead: it's idempotent (no-ops if already registered) and
+  // doesn't itself require a live Baileys connection — only actually
+  // *sending* through the proxy sock needs a transport (Cloud API or
+  // Baileys) to be up.
   startBaileysBot().catch(e => console.error('startBaileysBot (handler registration) error:', e.message));
 }
 
