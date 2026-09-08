@@ -15380,6 +15380,24 @@ function shipsagarFinalStage(history, latestStage) {
   return hadEarlierRto ? 'rto' : 'delivered';
 }
 
+// A genuine failed delivery ATTEMPT — distinct from "on their way to
+// deliver" (which is progress, not a failure). Deliberately narrower than
+// the full ofd bucket in shipsagarStatusToStage: excludes the positive
+// "en route now" phrases, keeps only the ones that mean an attempt was
+// made and did NOT succeed. Order stays at 'ofd' either way (by design —
+// OFD is one-way), but each distinct failed attempt is still worth telling
+// the customer and vendor about.
+function shipsagarIsFailedAttempt(desc) {
+  if (!desc) return false;
+  const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
+  return s.includes('undelivered') || s.includes('not delivered') || s.includes('delivery failed') || s.includes('failed delivery')
+    || s.includes('customer not available') || s.includes('consignee not available') || s.includes('receiver not available')
+    || s.includes('door locked') || s.includes('ndr') || s.includes('otp not shared') || s.includes('no such consignee')
+    || s.includes('address incomplete') || s.includes('address incorrect') || s.includes('incorrect address')
+    || s.includes('charges pending') || s.includes('cancelled by consignee') || s.includes('prohibited area')
+    || s.includes('entry restricted') || s.includes('premises closed') || s.includes('held at location') || s.includes('shipment held');
+}
+
 // Map our internal courier names to ShipSagar courier codes
 function toShipSagarCourierCode(courier) {
   const c = (courier || '').toLowerCase();
@@ -15714,6 +15732,78 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
   return { desc, newStage: appliedStage, history: ss.history };
 }
 
+// ── Failed-delivery-attempt notification (customer + vendor) ──────────────
+// OFD stays one-way (never reverts to transit/pickup on a failed attempt —
+// that's handled by shipsagarStatusToStage/shipsagarFinalStage already).
+// Instead, every genuine failed-attempt event fires a WA + email alert to
+// both the customer ("we tried delivering, you were unavailable") and the
+// vendor, so both sides know without the stage itself changing.
+// Dedup key = shopify_id + vendor + desc text, so repeat cron scans of the
+// same already-alerted event don't re-send, but a genuinely new failed
+// attempt (different desc/date) sends its own alert.
+async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, courier, desc }) {
+  const sid = String(shopifyId);
+  try {
+    const eventKey = `${sid}|${vendorName}|${desc}`;
+    const already = await mdb.collection('delivery_attempt_alerts').findOne({ event_key: eventKey });
+    if (already) return;
+
+    const od = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,phone,shipping_address,billing_address`).catch(() => null);
+    const order = od?.order || {};
+    const orderName = order.name || `#${sid}`;
+    const customerName = order.shipping_address ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim() : 'Customer';
+    const customerPhone = (order.shipping_address?.phone || order.billing_address?.phone || order.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+    const customerEmail = order.email || '';
+
+    // Mark alerted up-front so a slow/failing send doesn't cause duplicate retries on the next cron pass
+    await mdb.collection('delivery_attempt_alerts').insertOne({ event_key: eventKey, shopify_id: sid, vendor_name: vendorName, awb, desc, alerted_at: new Date().toISOString() });
+
+    // ── WA to customer ──
+    if (customerPhone && customerPhone.length === 10 && waSocket && waConnected) {
+      const custMsg = `📦 *Delivery Attempt Update — ${orderName}*\n\nHi ${customerName}, we tried delivering your order today but couldn't complete it.\n\nCourier remark: *${desc}*\n\nWe'll attempt delivery again soon. Please stay reachable on this number, or reply here if you'd like to share a better time/address.\n\n— Team CROSCROW`;
+      waSocket.sendMessage(`91${customerPhone}@s.whatsapp.net`, { text: custMsg }).catch(() => {});
+    }
+
+    // ── WA to vendor ──
+    try {
+      const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName });
+      const vendorPhone = (vp?.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+      if (vendorPhone && vendorPhone.length === 10 && waSocket && waConnected) {
+        const vendorMsg = `⚠️ *Delivery Attempt Failed — ${orderName}*\n\nCustomer: ${customerName}\nAWB: ${awb}\nCourier: ${courier||'—'}\n\nRemark: *${desc}*\n\nThe courier will reattempt delivery. No action needed unless the customer reaches out.`;
+        waSocket.sendMessage(`91${vendorPhone}@s.whatsapp.net`, { text: vendorMsg }).catch(() => {});
+      }
+    } catch (e) { console.error('Vendor WA (failed-attempt) error:', e.message); }
+
+    // ── Email to customer + vendor ──
+    const vcfg = await VC.get(vendorName);
+    const remarkBlock = `<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+        <tr><td style="padding:8px 0;color:#64748b">Order</td><td style="padding:8px 0;font-weight:600">${orderName}</td></tr>
+        <tr><td style="padding:8px 0;color:#64748b">AWB</td><td style="padding:8px 0;font-family:monospace">${awb}</td></tr>
+        <tr><td style="padding:8px 0;color:#64748b">Courier</td><td style="padding:8px 0">${courier||'—'}</td></tr>
+        <tr><td style="padding:8px 0;color:#64748b">Remark</td><td style="padding:8px 0;font-weight:600;color:#dc2626">${desc}</td></tr>
+      </table>`;
+
+    if (customerEmail) {
+      const custHtml = emailBase(
+        `📦 Delivery Attempt Update — ${orderName}`,
+        '#dc2626',
+        `<div class="subtitle">Hi ${customerName}, we tried delivering your order but couldn't complete it.</div>${remarkBlock}<p style="color:#94a3b8;font-size:12px;margin-top:16px">We'll attempt delivery again soon. Please stay reachable, or contact us to arrange a better time/address.</p>`
+      );
+      await sendEmail({ to: customerEmail, subject: `📦 Delivery attempt failed for ${orderName}`, html: custHtml, shopifyId: sid, trigger: 'delivery_attempt_failed_customer' }).catch(() => {});
+    }
+    if (vcfg?.email) {
+      const vendorHtml = emailBase(
+        `⚠️ Delivery Attempt Failed — ${orderName}`,
+        '#dc2626',
+        `<div class="subtitle">Order <strong>${orderName}</strong> for <strong>${customerName}</strong> — delivery attempt failed.</div>${remarkBlock}<p style="color:#94a3b8;font-size:12px;margin-top:16px">The courier will reattempt delivery. No action needed unless the customer reaches out to you directly.</p>`
+      );
+      await sendEmail({ to: vcfg.email, subject: `⚠️ Delivery attempt failed: ${orderName}`, html: vendorHtml, shopifyId: sid, trigger: 'delivery_attempt_failed_vendor' }).catch(() => {});
+    }
+  } catch (e) {
+    console.error(`❌ Failed-attempt notif error (${sid}):`, e.message);
+  }
+}
+
 async function shipsagarTrackingCron() {
   const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [] };
   try {
@@ -15847,6 +15937,15 @@ async function shipsagarTrackingCron() {
           }
         } else {
           runLog.skipped++;
+        }
+
+        // ── Failed-delivery-attempt alert (customer + vendor) ──────────────
+        // Independent of the stage-change gate above: OFD is one-way by design,
+        // so a repeat failed attempt while already at 'ofd' never changes newStage
+        // and would otherwise never notify anyone. Dedup is per distinct event
+        // (shopify_id + vendor + desc text), not per-stage-once.
+        if (desc && shipsagarIsFailedAttempt(desc)) {
+          sendDeliveryAttemptFailedNotif(rec.shopify_id, rec.vendor_name, { awb: rec.awb, courier: rec.courier, desc }).catch(e => console.error('Failed-attempt notif error:', e.message));
         }
       } catch(e) { runLog.errors.push({ awb: rec.awb, error: e.message }); }
 
