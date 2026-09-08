@@ -23399,6 +23399,7 @@ const WA_TPL = {
   RR_QC_NOT_CLEARED: 'rr_qc_not_cleared_v2',
   RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued_v2',
   RR_APPROVED: 'rr_approved',
+  ADMIN_ALERT: 'admin_alert',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
@@ -24954,24 +24955,37 @@ async function waLogVendorSendFailure(vendor, phone, type, orderName, error) {
 }
 
 async function waAdminAlert(message, staffTopic = null) {
-  if (!waSocket) return;
   try {
-    // Prefer the resolved JID from DB (handles LID-based accounts on newer WA)
-    let adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
-    if (!adminJidDoc?.jid) {
-      // Live-resolve the JID and cache it for next time
-      const [aRes] = await waSocket.onWhatsApp(`91${WA_ADMIN_NO}`).catch(() => []) || [];
-      if (aRes?.jid) {
-        await mdb.collection('wa_admin_jids').updateOne(
-          { phone: WA_ADMIN_NO },
-          { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
-          { upsert: true }
-        ).catch(() => {});
-        adminJidDoc = { jid: aRes.jid };
+    // Cloud API session text first — works as long as the admin has
+    // messaged the bot within the last 24h (true most of the time in
+    // practice). Falls back to the admin_alert template (single free-text
+    // variable) if the session window has lapsed, then to Baileys as a
+    // last resort. Previously this whole function silently no-op'd
+    // whenever waSocket was null/disconnected — which is exactly the
+    // Baileys-disconnected state we're in now, so every human-handoff and
+    // customer-query alert to admin was being dropped with zero signal.
+    const cloudSession = await waCloudSendSession(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: message });
+    if (!cloudSession.sent) {
+      const cloudTemplate = await sendWACloudTemplate({ phone10: WA_ADMIN_NO, templateName: WA_TPL.ADMIN_ALERT, bodyParams: [message] });
+      if (!cloudTemplate.sent && waSocket) {
+        let adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
+        if (!adminJidDoc?.jid) {
+          const [aRes] = await waSocket.onWhatsApp(`91${WA_ADMIN_NO}`).catch(() => []) || [];
+          if (aRes?.jid) {
+            await mdb.collection('wa_admin_jids').updateOne(
+              { phone: WA_ADMIN_NO },
+              { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
+              { upsert: true }
+            ).catch(() => {});
+            adminJidDoc = { jid: aRes.jid };
+          }
+        }
+        const jid = adminJidDoc?.jid || `91${WA_ADMIN_NO}@s.whatsapp.net`;
+        await waSocket.sendMessage(jid, { text: message });
+      } else if (!cloudTemplate.sent) {
+        console.error(`❌ Admin alert failed on all paths (Cloud session: ${cloudSession.reason}, Cloud template: ${cloudTemplate.reason}, Baileys not connected)`);
       }
     }
-    const jid = adminJidDoc?.jid || `91${WA_ADMIN_NO}@s.whatsapp.net`;
-    await waSocket.sendMessage(jid, { text: message });
     if (staffTopic) notifyStaff(staffTopic, message).catch(()=>{});
   } catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
