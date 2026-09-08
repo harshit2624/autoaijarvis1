@@ -18599,22 +18599,25 @@ app.get("/track/shipment-status", async (req, res) => {
     if (!awb) return res.status(400).json({ error: 'awb required' });
 
     if (shopify_order_id && vendor_name) {
+      // Persists to DB (stage, tracking_history) when found — the fast path.
       const result = await syncShipSagarStage(shopify_order_id, vendor_name, awb);
-      if (!result) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
-      if (result.history?.length) {
+      if (result) {
         return res.json({ status: result.desc, awb, source: 'shipsagar', history: result.history, tag: shipsagarDescToTag(result.desc), stage: result.newStage });
       }
-    } else {
-      // No order context — just track and return, no DB writes
-      const ss = await shipsagarTrackShipment(awb);
-      if (!ss) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
-      if (ss.found && ss.history?.length) {
-        const latest = ss.history[ss.history.length - 1];
-        const status = latest.ActionDescription || '';
-        return res.json({ status, awb, source: 'shipsagar', history: ss.history, tag: shipsagarDescToTag(status), stage: shipsagarStatusToStage(status) });
-      }
+      // result is null both when ShipSagar isn't configured AND when the
+      // shipment just isn't found/has no scans yet (e.g. never registered).
+      // Fall through to the direct check below instead of assuming the
+      // former — that was silently skipping the register-if-missing logic
+      // for every request that included order context.
     }
 
+    const ss = await shipsagarTrackShipment(awb);
+    if (!ss) return res.json({ status: '', awb, message: 'ShipSagar not configured' });
+    if (ss.found && ss.history?.length) {
+      const latest = ss.history[ss.history.length - 1];
+      const status = latest.ActionDescription || '';
+      return res.json({ status, awb, source: 'shipsagar', history: ss.history, tag: shipsagarDescToTag(status), stage: shipsagarStatusToStage(status) });
+    }
     if (ss.found && !ss.history?.length) {
       return res.json({ status: '', awb, message: 'Shipment registered — no events yet. Check back soon.' });
     }
