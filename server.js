@@ -15618,12 +15618,14 @@ async function sendRRWANotif(rr, event, extra = {}) {
   } else if (event === 'pickup_scheduled') {
     const awb = extra.awb || rr.reverse_shipment?.awb || '';
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
-    const awbLine = awb ? `AWB      ${awb}\n` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${awbLine}\nPACK   Original tags and\n       packaging. Photo or\n       clip while you pack.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
+    const trackUrlRR = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
+    const trackLine = awb ? `TRACK    ${trackUrlRR}\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${trackLine}\nPACK   Original tags and\n       packaging. Photo or\n       clip while you pack.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
   } else if (event === 'picked_up') {
     const awb = rr.reverse_shipment?.awb || extra.awb || '';
-    const awbLine = awb ? `AWB    ${awb}\n\n` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKED UP\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nREQ APR PCK QC DONE\n\n${awbLine}STATE  Heading back to us.\n       QC update in 5–7 days.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+    const trackUrlRR = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
+    const trackLine = awb ? `TRACK  ${trackUrlRR}\n\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKED UP\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nREQ APR PCK QC DONE\n\n${trackLine}STATE  Heading back to us.\n       QC update in 5–7 days.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'received_at_warehouse') {
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for\n       a quick check. Takes\n       24 to 48 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'refund_initiated') {
