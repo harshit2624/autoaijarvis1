@@ -23617,6 +23617,26 @@ app.get('/admin/wa-cloud/bot-diag', adminAuth, async (req, res) => {
     recentErrors,
   });
 });
+// Look up (and optionally unlink) which vendor a phone number is registered
+// as — useful when a personal/test number was accidentally saved as a
+// vendor's WhatsApp contact and the bot keeps routing it to the vendor flow
+// instead of the customer flow.
+app.get('/admin/wa-cloud/phone-vendor-lookup', adminAuth, async (req, res) => {
+  const phone = String(req.query.phone || '').replace(/\D/g, '').slice(-10);
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+  const profiles = await mdb.collection('vendor_profiles').find({ phone: { $regex: phone } }).toArray().catch(() => []);
+  const credentials = await mdb.collection('vendor_credentials').find({ whatsapp: { $regex: phone } }).toArray().catch(() => []);
+  const jids = await mdb.collection('wa_vendor_jids').find({ phone: { $regex: phone } }).toArray().catch(() => []);
+  res.json({ profiles, credentials, jids });
+});
+app.post('/admin/wa-cloud/phone-vendor-unlink', adminAuth, async (req, res) => {
+  const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+  const r1 = await mdb.collection('vendor_profiles').updateMany({ phone: { $regex: phone } }, { $unset: { phone: '' } });
+  const r2 = await mdb.collection('vendor_credentials').updateMany({ whatsapp: { $regex: phone } }, { $unset: { whatsapp: '' } });
+  const r3 = await mdb.collection('wa_vendor_jids').deleteMany({ phone: { $regex: phone } });
+  res.json({ profilesUnset: r1.modifiedCount, credentialsUnset: r2.modifiedCount, jidsDeleted: r3.deletedCount });
+});
 app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
   try {
     const { active_model, templates_enabled } = req.body || {};
