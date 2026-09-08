@@ -23354,7 +23354,12 @@ async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl
   if (bodyParams.length) components.push({ type: 'body', parameters: bodyParams.map(t => ({ type: 'text', text: String(t ?? '') })) });
   if (urlButtonParam !== undefined) components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(urlButtonParam) }] });
   try {
-    const body = { messaging_product: 'whatsapp', to, type: 'template', template: { name: templateName, language: { code: lang || WA_CLOUD_LANG }, components } };
+    // All WA_TPL.* templates were uploaded to Meta under language "en", not
+    // WA_CLOUD_LANG ("en_US") — that env var is for abandoned_cart_recovery
+    // specifically (a different, older template), so it must never be this
+    // function's silent default or every WA_TPL send gets rejected with
+    // "Template name does not exist in the translation".
+    const body = { messaging_product: 'whatsapp', to, type: 'template', template: { name: templateName, language: { code: lang || 'en' }, components } };
     const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
