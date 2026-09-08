@@ -23373,6 +23373,61 @@ const WA_TPL = {
   WIN_BACK_FLAT500: 'win_back_flat500_v2',
 };
 
+// ── Cloud API session messages (free-form text/image, no template needed) ──
+// Only valid within 24h of the customer's last inbound message — which is
+// always true for a REPLY (the case this is for), since Cloud API session
+// messages only get sent in response to something the customer just said.
+// Images need to go through the resumable media-upload endpoint first (Cloud
+// API can't take a raw buffer inline like Baileys can) — this uploads then
+// references the returned media id.
+async function waCloudUploadMedia(buffer, mimetype = 'image/jpeg') {
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('file', new Blob([buffer], { type: mimetype }), 'image.jpg');
+  const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}` },
+    body: form,
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error?.message || `media upload http_${res.status}`);
+  return data.id;
+}
+
+// content mirrors the subset of Baileys' sendMessage content shapes actually
+// used by the bot: { text }, { image: Buffer, caption }, or { poll } (poll
+// has no Cloud API equivalent — callers must keep using Baileys for that).
+async function waCloudSendSession(jid, content) {
+  const digits = String(jid).replace(/@s\.whatsapp\.net$/, '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10) return { sent: false, reason: 'invalid_phone' };
+  const to = `91${digits}`;
+  try {
+    let body;
+    if (content?.image) {
+      const mediaId = await waCloudUploadMedia(content.image, content.mimetype || 'image/jpeg');
+      body = { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId, caption: content.caption || '' } };
+    } else {
+      const text = content?.text ?? content?.caption ?? '';
+      if (!text) return { sent: false, reason: 'empty_content' };
+      body = { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } };
+    }
+    const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      console.error('❌ WA Cloud session send failed:', JSON.stringify(data.error || data));
+      return { sent: false, reason: data.error?.message || `http_${res.status}` };
+    }
+    return { sent: true, messageId: data.messages?.[0]?.id };
+  } catch (e) {
+    console.error('❌ WA Cloud session send error:', e.message);
+    return { sent: false, reason: e.message };
+  }
+}
+
 // ── WA Cloud API inbox: webhook receiver + admin chat view ────────────────
 // Still fully separate from the Baileys bot — this only reads/writes
 // wa_cloud_chats / wa_cloud_messages, its own collections.
@@ -23435,6 +23490,25 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
         { upsert: true }
       );
       console.log(`📥 WA Cloud inbound: ${phone} → "${text.slice(0,60)}"`);
+
+      // Route into the shared bot handler (menu/smart-bot/order-lookup/human
+      // handoff — same brain the Baileys bot used) by faking a Baileys-shaped
+      // message. This is the only inbound adapter needed: the handler's text
+      // extraction only ever reads msg.key.remoteJid and msg.message.conversation,
+      // both trivial to synthesize from a Cloud API webhook payload. Replies
+      // route back out through Cloud API automatically via the sock proxy in
+      // startBaileysBot() — no other changes needed inside the handler itself.
+      if (msg.type === 'text' || msg.type === 'button' || msg.type === 'interactive') {
+        if (waSharedMessageHandler) {
+          const fakeMsg = {
+            key: { remoteJid: `91${phone}@s.whatsapp.net`, fromMe: false, id: msg.id },
+            message: { conversation: text },
+          };
+          waSharedMessageHandler({ messages: [fakeMsg], type: 'notify' }).catch(e => console.error('Cloud→bot handler error:', e.message));
+        } else {
+          console.error('⚠️ WA Cloud inbound message but waSharedMessageHandler not registered — bot brain unavailable');
+        }
+      }
     }
 
     // Delivery/read status updates for messages we sent — logged unconditionally
@@ -25974,7 +26048,23 @@ async function startBaileysBot() {
   // V1 socket disabled. Only registers waSharedMessageHandler using v2 socket.
   if (waSharedMessageHandler) return;
   const sock = { // proxy to active socket so handler's sock.sendMessage works via v2
-    sendMessage: async (jid, ...a) => { _waBotSentJids.set(jid, Date.now()); return waSocket?.sendMessage(jid, ...a); },
+    // Routes every reply the bot handler sends through Cloud API once that's
+    // the active model — a poll has no Cloud API equivalent, so those always
+    // stay on real Baileys (silently no-op if Baileys isn't connected; the
+    // order-confirmation-via-poll flow needs a button-based replacement,
+    // tracked as a known gap, not silently "handled").
+    sendMessage: async (jid, content, ...rest) => {
+      _waBotSentJids.set(jid, Date.now());
+      if (!content?.poll) {
+        const settings = await getWACloudSettings().catch(() => null);
+        if (settings?.active_model === 'cloud' && settings?.templates_enabled) {
+          const result = await waCloudSendSession(jid, content);
+          if (result.sent) return result;
+          if (!waSocket || !waConnected) { console.error(`❌ Bot reply failed — Cloud API failed (${result.reason}) and Baileys not connected`); return result; }
+        }
+      }
+      return waSocket?.sendMessage(jid, content, ...rest);
+    },
     readMessages: (...a) => waSocket?.readMessages(...a),
     ev: { on: () => {} }, authState: { creds: { me: { id: '' } } },
   };
@@ -27320,5 +27410,13 @@ if (process.env.WHATSAPP_BOT_ENABLED === 'true') {
   const startDelay = 10000 + Math.floor(Math.random() * 30000);
   console.log(`⏳ WA Bot v2 starting in ${Math.round(startDelay/1000)}s…`);
   setTimeout(startWA2, startDelay);
+  // startBaileysBot() (registers waSharedMessageHandler, the whole bot brain)
+  // used to only run once Baileys' own connection reached 'open' — meaning
+  // with Baileys disconnected, the handler never got registered at all and
+  // Cloud API inbound messages had nothing to route into. Call it directly
+  // here too: it's idempotent (no-ops if already registered) and doesn't
+  // itself require a live Baileys connection — only actually *sending*
+  // through the proxy sock needs a transport (Cloud API or Baileys) to be up.
+  startBaileysBot().catch(e => console.error('startBaileysBot (handler registration) error:', e.message));
 }
 
