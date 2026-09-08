@@ -23518,10 +23518,16 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
         phone, direction: 'in', type: msg.type || 'text', text,
         wamid: msg.id, raw: msg, created_at: now,
       });
+      // $setOnInsert and $inc can't target the same field in one MongoDB
+      // update ("Updating the path 'unread_count' would create a conflict") —
+      // this was throwing on EVERY inbound message, ever, silently killing
+      // the whole handler before it ever reached the bot routing below.
+      // $inc alone already handles both cases: creates the field at 1 on
+      // insert, increments it on update — no separate default needed.
       await mdb.collection('wa_cloud_chats').updateOne(
         { phone },
         { $set: { phone, name: name || undefined, last_message: text, last_at: now, updated_at: now },
-          $setOnInsert: { created_at: now, unread_count: 0 },
+          $setOnInsert: { created_at: now },
           $inc: { unread_count: 1 } },
         { upsert: true }
       );
