@@ -15962,6 +15962,77 @@ app.post("/admin/shipsagar/sync", adminAuth, async (req, res) => {
   shipsagarTrackingCron().catch(() => {});
   res.json({ success: true, message: 'ShipSagar sync triggered — check logs.' });
 });
+
+// ── Read-only audit: re-classify every active order's STORED tracking
+// history against the current classifier logic, without calling ShipSagar
+// or writing anything. Surfaces: (1) orders whose stored stage disagrees
+// with what their own history says it should be, (2) description strings
+// that don't match ANY classifier pattern (signals worth adding), (3)
+// active (non-terminal) orders whose tracking hasn't updated in a while,
+// which usually means the cron isn't reaching them for some reason.
+app.get("/admin/shipsagar/audit", adminAuth, async (req, res) => {
+  try {
+    const records = await mdb.collection('order_vendor_stage').find(
+      { awb: { $exists: true, $ne: '' } },
+      { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_history: 1, updated_at: 1, manually_overridden: 1, _id: 0 } }
+    ).toArray();
+
+    const unmatchedDescs = new Map();
+    const mismatches = [];
+    const staleActive = [];
+    const now = Date.now();
+
+    for (const r of records) {
+      const history = r.tracking_history || [];
+      if (!history.length) continue;
+
+      for (const h of history) {
+        const d = h.desc || '';
+        if (d && !shipsagarStatusToStage(d)) unmatchedDescs.set(d, (unmatchedDescs.get(d) || 0) + 1);
+      }
+
+      const latestDesc = history[history.length - 1]?.desc || '';
+      const latestComputed = shipsagarStatusToStage(latestDesc);
+      const finalComputed = shipsagarFinalStage(history.map(h => ({ ActionDescription: h.desc })), latestComputed);
+
+      // A manually-overridden order can only be legitimately corrected to a
+      // terminal stage automatically (matches the OVS.upsert guard) — don't
+      // flag a mismatch for a non-terminal disagreement on those, since that
+      // one is expected/intentional (admin's manual value should stand).
+      const blockedByOverride = r.manually_overridden && !['rto', 'cancelled'].includes(finalComputed);
+      if (finalComputed && finalComputed !== r.stage && !blockedByOverride) {
+        mismatches.push({
+          shopify_id: r.shopify_id, vendor: r.vendor_name, awb: r.awb, courier: r.courier,
+          storedStage: r.stage, computedStage: finalComputed, latestDesc,
+          manuallyOverridden: !!r.manually_overridden, updated_at: r.updated_at,
+        });
+      }
+
+      if (!['delivered', 'rto', 'cancelled'].includes(r.stage)) {
+        const daysSinceUpdate = r.updated_at ? (now - new Date(r.updated_at).getTime()) / 86400000 : null;
+        if (daysSinceUpdate !== null && daysSinceUpdate > 5) {
+          staleActive.push({ shopify_id: r.shopify_id, vendor: r.vendor_name, stage: r.stage, awb: r.awb, courier: r.courier, daysSinceUpdate: Math.round(daysSinceUpdate), latestDesc, manuallyOverridden: !!r.manually_overridden });
+        }
+      }
+    }
+
+    // Delivered-involving mismatches first — highest priority, since a wrong
+    // 'delivered' (either direction) directly affects settlement/penalty accuracy.
+    const deliveredPriority = m => (m.storedStage === 'delivered' || m.computedStage === 'delivered') ? 0 : 1;
+    mismatches.sort((a, b) => deliveredPriority(a) - deliveredPriority(b));
+    const unmatchedList = [...unmatchedDescs.entries()].sort((a, b) => b[1] - a[1]).map(([desc, count]) => ({ desc, count }));
+    staleActive.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
+
+    res.json({
+      totalChecked: records.length,
+      mismatchCount: mismatches.length,
+      mismatches,
+      staleActiveCount: staleActive.length,
+      staleActive,
+      unmatchedDescriptions: unmatchedList,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 // Raw debug — shows exact ShipSagar response for any AWB
 app.get("/admin/shipsagar/debug", adminAuth, async (req, res) => {
   const { awb } = req.query;
