@@ -16119,6 +16119,85 @@ app.get("/admin/shipsagar/register-job/:jobId", adminAuth, async (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
 });
+
+// ── Stage-transition monitoring — sourced entirely from already-stored
+// shipsagar_cron_log.updates[] (each cron run records every from→to move
+// with the exact desc that triggered it), so this is a fast DB read, no
+// live ShipSagar calls. Powers the dashboard cards + click-to-drill-down.
+app.get("/admin/shipsagar/stage-transitions", adminAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const q = {};
+    if (from || to) {
+      q.ran_at = {};
+      if (from) q.ran_at.$gte = from + 'T00:00:00.000Z';
+      if (to)   q.ran_at.$lte = to + 'T23:59:59.999Z';
+    }
+    const runs = await mdb.collection('shipsagar_cron_log').find(q, { projection: { updates: 1, ran_at: 1, _id: 0 } }).toArray();
+    const transitions = [];
+    for (const run of runs) {
+      for (const u of (run.updates || [])) transitions.push({ ...u, ran_at: run.ran_at });
+    }
+    // Resolve order_name for display — batch lookup instead of N queries
+    const shopifyIds = [...new Set(transitions.map(t => String(t.shopify_id)))];
+    const metas = shopifyIds.length ? await mdb.collection('order_meta').find(
+      { shopify_id: { $in: shopifyIds } }, { projection: { shopify_id: 1, order_name: 1, _id: 0 } }
+    ).toArray() : [];
+    const nameMap = Object.fromEntries(metas.map(m => [m.shopify_id, m.order_name]));
+    transitions.forEach(t => { t.order_name = nameMap[String(t.shopify_id)] || null; });
+
+    const counts = {};
+    for (const t of transitions) counts[t.to] = (counts[t.to] || 0) + 1;
+    transitions.sort((a, b) => new Date(b.ran_at) - new Date(a.ran_at));
+
+    res.json({ counts, transitions, runsChecked: runs.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Background check: which active AWB'd orders are NOT registered on
+// ShipSagar at all (found:false — distinct from "registered but no scans
+// yet"). Live-checks each one, so it runs as a background job like the
+// bulk-register feature instead of blocking the request.
+app.post("/admin/shipsagar/check-unregistered", adminAuth, async (req, res) => {
+  try {
+    const rows = await mdb.collection('order_vendor_stage').find(
+      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'new', 'misc'] }, awb: { $exists: true, $ne: '' } },
+      { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
+    ).toArray();
+    const unique = [...new Map(rows.map(r => [r.awb, r])).values()];
+    const jobId = Date.now().toString();
+    await mdb.collection('shipsagar_unregistered_jobs').insertOne({
+      jobId, status: 'running', total: unique.length, checked: 0, unregistered: [], started_at: new Date().toISOString(),
+    });
+    res.json({ jobId, total: unique.length, message: `Checking ${unique.length} AWBs against ShipSagar…` });
+
+    (async () => {
+      const unregistered = [];
+      let checked = 0;
+      for (const r of unique) {
+        try {
+          const ss = await shipsagarTrackShipment(r.awb);
+          if (!ss?.found) unregistered.push({ shopify_id: r.shopify_id, vendor: r.vendor_name, awb: r.awb, courier: r.courier, stage: r.stage });
+        } catch { /* treat as unknown, skip rather than false-flag */ }
+        checked++;
+        if (checked % 5 === 0) await mdb.collection('shipsagar_unregistered_jobs').updateOne({ jobId }, { $set: { checked, unregistered } });
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      await mdb.collection('shipsagar_unregistered_jobs').updateOne({ jobId }, { $set: { status: 'done', checked, unregistered, done_at: new Date().toISOString() } });
+      console.log(`📦 ShipSagar unregistered check done: ${unregistered.length}/${unique.length} not registered`);
+    })().catch(async e => {
+      await mdb.collection('shipsagar_unregistered_jobs').updateOne({ jobId }, { $set: { status: 'error', error: e.message } });
+      console.error('ShipSagar unregistered check error:', e.message);
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/admin/shipsagar/unregistered-job/:jobId", adminAuth, async (req, res) => {
+  const job = await mdb.collection('shipsagar_unregistered_jobs').findOne({ jobId: req.params.jobId }, { projection: { _id: 0 } });
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
+});
+
 // Get supported couriers — cached for 1 hour to avoid hammering ShipSagar API
 let _ssCourrierCache = null;
 let _ssCourierCacheAt = 0;

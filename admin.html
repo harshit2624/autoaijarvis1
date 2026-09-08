@@ -8428,6 +8428,56 @@
     const [ssLogs,    setSsLogs]    = useState([]);
     const [ssLogsOpen,setSsLogsOpen]= useState(false);
 
+    // ── Stage Activity Monitor ──────────────────────────────────────────
+    const [ssStatsPeriod, setSsStatsPeriod] = useState('today'); // 'today'|'7d'|'month'|'all'|'custom'
+    const [ssStatsFrom, setSsStatsFrom] = useState('');
+    const [ssStatsTo,   setSsStatsTo]   = useState('');
+    const [ssStats,      setSsStats]      = useState(null); // { counts, transitions, runsChecked }
+    const [ssStatsLoading, setSsStatsLoading] = useState(false);
+    const [ssStatsDrill, setSsStatsDrill] = useState(null); // stage key currently drilled into, or null
+    const [ssUnregJob,   setSsUnregJob]   = useState(null);
+    const [ssUnregChecking, setSsUnregChecking] = useState(false);
+
+    const ssStatsDates = () => {
+      const isoToday = () => new Date().toISOString().split('T')[0];
+      const daysAgo = n => new Date(Date.now()-n*86400000).toISOString().split('T')[0];
+      if (ssStatsPeriod === 'today')  return { from: isoToday(), to: isoToday() };
+      if (ssStatsPeriod === '7d')     return { from: daysAgo(6), to: isoToday() };
+      if (ssStatsPeriod === 'month')  return { from: `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-01`, to: isoToday() };
+      if (ssStatsPeriod === 'custom') return { from: ssStatsFrom, to: ssStatsTo };
+      return {}; // 'all'
+    };
+
+    const loadSsStats = () => {
+      setSsStatsLoading(true); setSsStatsDrill(null);
+      const { from, to } = ssStatsDates();
+      const qs = new URLSearchParams(); if (from) qs.set('from', from); if (to) qs.set('to', to);
+      fetch(`${API}/admin/shipsagar/stage-transitions?${qs}`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setSsStats(d)).catch(()=>{}).finally(()=>setSsStatsLoading(false));
+    };
+    useEffect(loadSsStats, [ssStatsPeriod, ssStatsFrom, ssStatsTo]);
+
+    const checkUnregistered = async () => {
+      setSsUnregChecking(true); setSsUnregJob(null);
+      try {
+        const r = await fetch(`${API}/admin/shipsagar/check-unregistered`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        if (!d.jobId) { setSsUnregChecking(false); return; }
+        setSsUnregJob({ jobId: d.jobId, total: d.total, checked: 0, unregistered: [], status: 'running' });
+        const poll = setInterval(async () => {
+          try {
+            const pr = await fetch(`${API}/admin/shipsagar/unregistered-job/${d.jobId}`, { headers:{ Authorization:`Bearer ${token}` }});
+            const pd = await pr.json();
+            setSsUnregJob(pd);
+            if (pd.status === 'done' || pd.status === 'error') { clearInterval(poll); setSsUnregChecking(false); }
+          } catch(e) { clearInterval(poll); setSsUnregChecking(false); }
+        }, 1500);
+      } catch(e) { setSsUnregChecking(false); }
+    };
+
+    const SS_STAGE_LABELS = { delivered:'✅ Delivered', rto:'🔄 RTO', transit:'🚚 In Transit', ofd:'🛵 OFD / Issue', pickup:'📦 Pickup' };
+    const SS_STAGE_COLORS = { delivered:'#10b981', rto:'#ef4444', transit:'#6366f1', ofd:'#f59e0b', pickup:'#818cf8' };
+
     const syncAll = async () => {
       setSyncing(true); setSyncResult(null);
       try {
@@ -8701,6 +8751,134 @@
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Stage Activity Monitor */}
+            <div style={{borderRadius:8,background:'var(--bg-card2)',border:'1px solid var(--border)',marginTop:12,padding:'12px 14px'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:8}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>📊 Stage Activity Monitor</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>How many orders moved to each stage, and why — click a card to see exactly which orders and which courier log triggered it.</div>
+                </div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {[['today','Today'],['7d','Last 7 Days'],['month','This Month'],['all','All Time'],['custom','Custom']].map(([v,l])=>(
+                    <button key={v} onClick={()=>setSsStatsPeriod(v)}
+                      style={{padding:'4px 10px',borderRadius:4,border:'1px solid',fontSize:11,fontWeight:600,cursor:'pointer',
+                        background: ssStatsPeriod===v ? 'var(--indigo)' : 'transparent',
+                        color: ssStatsPeriod===v ? '#fff' : 'var(--text-muted)',
+                        borderColor: ssStatsPeriod===v ? 'var(--indigo)' : 'var(--border)'}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {ssStatsPeriod === 'custom' && (
+                <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
+                  <input type="date" className="form-input" style={{fontSize:11,padding:'4px 8px'}} value={ssStatsFrom} onChange={e=>setSsStatsFrom(e.target.value)} placeholder="From"/>
+                  <input type="date" className="form-input" style={{fontSize:11,padding:'4px 8px'}} value={ssStatsTo} onChange={e=>setSsStatsTo(e.target.value)} placeholder="To"/>
+                </div>
+              )}
+
+              {ssStatsLoading ? (
+                <div style={{padding:20,textAlign:'center',color:'var(--text-muted)',fontSize:12}}><span className="spin">↻</span> Loading…</div>
+              ) : (
+                <>
+                  {/* Cards */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8,marginBottom:12}}>
+                    {Object.keys(SS_STAGE_LABELS).map(stage => {
+                      const count = ssStats?.counts?.[stage] || 0;
+                      const active = ssStatsDrill === stage;
+                      return (
+                        <div key={stage} onClick={()=>count>0 && setSsStatsDrill(active?null:stage)}
+                          style={{padding:'12px 14px',borderRadius:8,cursor:count>0?'pointer':'default',
+                            background: active ? `${SS_STAGE_COLORS[stage]}22` : 'var(--bg-card)',
+                            border:`1px solid ${active?SS_STAGE_COLORS[stage]:'var(--border)'}`,
+                            opacity: count>0?1:0.5}}>
+                          <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:4}}>{SS_STAGE_LABELS[stage]}</div>
+                          <div style={{fontSize:24,fontWeight:800,color:SS_STAGE_COLORS[stage],fontVariantNumeric:'tabular-nums'}}>{count}</div>
+                        </div>
+                      );
+                    })}
+                    {/* Not registered card */}
+                    <div onClick={()=>!ssUnregChecking && checkUnregistered()}
+                      style={{padding:'12px 14px',borderRadius:8,cursor:ssUnregChecking?'default':'pointer',
+                        background: ssUnregJob ? 'rgba(239,68,68,0.08)' : 'var(--bg-card)',
+                        border:`1px solid ${ssUnregJob?'#ef4444':'var(--border)'}`}}>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:4}}>⚠️ Not Registered</div>
+                      {ssUnregChecking && !ssUnregJob ? <div style={{fontSize:11,color:'var(--text-muted)'}}><span className="spin">↻</span> Starting…</div>
+                       : ssUnregJob && ssUnregJob.status==='running' ? <div style={{fontSize:11,color:'#818cf8'}}><span className="spin">↻</span> {ssUnregJob.checked}/{ssUnregJob.total}</div>
+                       : ssUnregJob ? <div style={{fontSize:24,fontWeight:800,color:'#ef4444',fontVariantNumeric:'tabular-nums'}}>{ssUnregJob.unregistered?.length||0}</div>
+                       : <div style={{fontSize:10,color:'var(--indigo)',fontWeight:600}}>Click to check</div>}
+                    </div>
+                  </div>
+
+                  {ssStats && <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:10}}>{ssStats.runsChecked} cron run{ssStats.runsChecked!==1?'s':''} in this period · {ssStats.transitions?.length||0} total stage changes</div>}
+
+                  {/* Drill-down: which orders moved to the selected stage, and why */}
+                  {ssStatsDrill && (
+                    <div style={{background:'var(--bg-card)',border:`1px solid ${SS_STAGE_COLORS[ssStatsDrill]}44`,borderRadius:8,padding:10,marginBottom:12}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                        <span style={{fontSize:11,fontWeight:700,color:SS_STAGE_COLORS[ssStatsDrill]}}>{SS_STAGE_LABELS[ssStatsDrill]} — {ssStats.counts[ssStatsDrill]} order{ssStats.counts[ssStatsDrill]!==1?'s':''}</span>
+                        <button onClick={()=>setSsStatsDrill(null)} style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:12}}>✕</button>
+                      </div>
+                      <div style={{maxHeight:280,overflowY:'auto'}}>
+                        <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
+                          <thead><tr style={{color:'var(--text-muted)',borderBottom:'1px solid var(--border)'}}>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Order</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Vendor</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>AWB</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Log / Status</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>From → To</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>When</th>
+                          </tr></thead>
+                          <tbody>
+                            {ssStats.transitions.filter(t=>t.to===ssStatsDrill).map((t,i)=>(
+                              <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                                <td style={{padding:'4px 6px',color:'var(--indigo)',fontWeight:600,whiteSpace:'nowrap'}}>{t.order_name||('#'+t.shopify_id)}</td>
+                                <td style={{padding:'4px 6px',color:'var(--text-dim)',whiteSpace:'nowrap'}}>{t.vendor}</td>
+                                <td style={{padding:'4px 6px',fontFamily:'monospace',color:'var(--text-muted)',fontSize:9}}>{t.awb}</td>
+                                <td style={{padding:'4px 6px',color:'var(--text)'}}>{t.desc}</td>
+                                <td style={{padding:'4px 6px',whiteSpace:'nowrap'}}><span style={{color:'var(--text-muted)'}}>{t.from}</span> → <strong style={{color:SS_STAGE_COLORS[ssStatsDrill]}}>{t.to}</strong></td>
+                                <td style={{padding:'4px 6px',color:'var(--text-muted)',whiteSpace:'nowrap'}}>{new Date(t.ran_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Not-registered drill-down */}
+                  {ssUnregJob && ssUnregJob.status==='done' && ssUnregJob.unregistered?.length > 0 && (
+                    <div style={{background:'var(--bg-card)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:8,padding:10}}>
+                      <div style={{fontSize:11,fontWeight:700,color:'#ef4444',marginBottom:8}}>⚠️ {ssUnregJob.unregistered.length} active AWBs not found on ShipSagar</div>
+                      <div style={{maxHeight:220,overflowY:'auto'}}>
+                        <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
+                          <thead><tr style={{color:'var(--text-muted)',borderBottom:'1px solid var(--border)'}}>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Order</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Vendor</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>AWB</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Courier</th>
+                            <th style={{textAlign:'left',padding:'3px 6px'}}>Stage</th>
+                          </tr></thead>
+                          <tbody>
+                            {ssUnregJob.unregistered.map((u,i)=>(
+                              <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                                <td style={{padding:'4px 6px',color:'var(--indigo)',fontWeight:600}}>#{u.shopify_id}</td>
+                                <td style={{padding:'4px 6px',color:'var(--text-dim)'}}>{u.vendor}</td>
+                                <td style={{padding:'4px 6px',fontFamily:'monospace',color:'var(--text-muted)',fontSize:9}}>{u.awb}</td>
+                                <td style={{padding:'4px 6px',color:'var(--text)'}}>{u.courier||'—'}</td>
+                                <td style={{padding:'4px 6px',color:'var(--text-muted)',textTransform:'capitalize'}}>{u.stage}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{marginTop:8,fontSize:10,color:'var(--text-muted)'}}>Use "📤 Register AWBs" above to push these to ShipSagar.</div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
