@@ -15657,6 +15657,8 @@ async function sendRRWANotif(rr, event, extra = {}) {
   const _Fr = '```';
   if (event === 'request_received') {
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  ${orderName}\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team\n       reviews it within\n       24 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+  } else if (event === 'approved') {
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 40%\nAPPROVED\n────────────────\nORDER  ${orderName}\n\n●───◉───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Approved. We'll arrange\n       pickup and keep you\n       updated.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'pickup_scheduled') {
     const awb = extra.awb || rr.reverse_shipment?.awb || '';
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
@@ -15697,6 +15699,8 @@ async function sendRRWANotif(rr, event, extra = {}) {
   let cloudResult = { sent: false };
   if (event === 'request_received') {
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: [typeLabel, orderName] });
+  } else if (event === 'approved') {
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_APPROVED, bodyParams: [TypeLabel, orderName], urlButtonParam: orderSlug });
   } else if (event === 'pickup_scheduled') {
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, courier], urlButtonParam: orderSlug });
@@ -19799,7 +19803,10 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
         if (status === 'completed' && updated.type === 'exchange') sendRRWANotif(updated, 'exchange_dispatched').catch(() => {});
         if (status === 'received' || status === 'received_at_warehouse') sendRRWANotif(updated, 'received_at_warehouse').catch(() => {});
         if (status === 'picked_up') sendRRWANotif(updated, 'picked_up').catch(() => {});
-        if (status === 'approved') sendRRVendorWANotif(updated, 'approved').catch(() => {});
+        if (status === 'approved') {
+          sendRRVendorWANotif(updated, 'approved').catch(() => {});
+          sendRRWANotif(updated, 'approved').catch(() => {});
+        }
       }
     }
     res.json({ success: true });
@@ -20356,6 +20363,7 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
       if (updated) {
         sendRREmail('approved_by_vendor', updated).catch(() => {});
         sendRRVendorWANotif(updated, 'approved').catch(() => {});
+        sendRRWANotif(updated, 'approved').catch(() => {});
       }
     }
     res.json({ success: true });
@@ -23385,6 +23393,7 @@ const WA_TPL = {
   RR_EXCHANGE_SENT: 'rr_exchange_sent_v2',
   RR_QC_NOT_CLEARED: 'rr_qc_not_cleared_v2',
   RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued_v2',
+  RR_APPROVED: 'rr_approved',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
@@ -23505,24 +23514,17 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       const text = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || (msg.type ? `[${msg.type}]` : '');
       const now = new Date().toISOString();
 
-      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_1_start', phone, text, msgType: msg.type, at: new Date().toISOString() }).catch(()=>{});
       await mdb.collection('wa_cloud_messages').insertOne({
         phone, direction: 'in', type: msg.type || 'text', text,
         wamid: msg.id, raw: msg, created_at: now,
       });
-      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_2_after_msg_insert', phone, text, at: new Date().toISOString() }).catch(()=>{});
-      try {
-        await mdb.collection('wa_cloud_chats').updateOne(
-          { phone },
-          { $set: { phone, name: name || undefined, last_message: text, last_at: now, updated_at: now },
-            $setOnInsert: { created_at: now, unread_count: 0 },
-            $inc: { unread_count: 1 } },
-          { upsert: true }
-        );
-      } catch (chatUpsertErr) {
-        await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_error_chat_upsert', phone, text, error: chatUpsertErr.message, stack: chatUpsertErr.stack, at: new Date().toISOString() }).catch(()=>{});
-      }
-      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_3_after_chat_upsert', phone, text, at: new Date().toISOString() }).catch(()=>{});
+      await mdb.collection('wa_cloud_chats').updateOne(
+        { phone },
+        { $set: { phone, name: name || undefined, last_message: text, last_at: now, updated_at: now },
+          $setOnInsert: { created_at: now, unread_count: 0 },
+          $inc: { unread_count: 1 } },
+        { upsert: true }
+      );
       console.log(`📥 WA Cloud inbound: ${phone} → "${text.slice(0,60)}"`);
 
       // Route into the shared bot handler (menu/smart-bot/order-lookup/human
@@ -23532,20 +23534,16 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       // both trivial to synthesize from a Cloud API webhook payload. Replies
       // route back out through Cloud API automatically via the sock proxy in
       // startBaileysBot() — no other changes needed inside the handler itself.
-      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_4_before_type_check', phone, text, msgType: msg.type, typeCheckPasses: (msg.type === 'text' || msg.type === 'button' || msg.type === 'interactive'), at: new Date().toISOString() }).catch(()=>{});
       if (msg.type === 'text' || msg.type === 'button' || msg.type === 'interactive') {
         if (waSharedMessageHandler) {
           const fakeMsg = {
             key: { remoteJid: `91${phone}@s.whatsapp.net`, fromMe: false, id: msg.id },
             message: { conversation: text },
           };
-          mdb.collection('wa_bot_debug_log').insertOne({ event: 'received', phone, text, at: new Date().toISOString() }).catch(()=>{});
-          waSharedMessageHandler({ messages: [fakeMsg], type: 'notify' })
-            .then(() => mdb.collection('wa_bot_debug_log').insertOne({ event: 'handler_completed', phone, text, at: new Date().toISOString() }).catch(()=>{}))
-            .catch(e => {
-              console.error('Cloud→bot handler error:', e.message);
-              mdb.collection('wa_bot_debug_log').insertOne({ event: 'handler_error', phone, text, error: e.message, stack: e.stack, at: new Date().toISOString() }).catch(()=>{});
-            });
+          waSharedMessageHandler({ messages: [fakeMsg], type: 'notify' }).catch(e => {
+            console.error('Cloud→bot handler error:', e.message);
+            mdb.collection('wa_bot_error_log').insertOne({ phone, text, error: e.message, stack: e.stack, at: new Date().toISOString() }).catch(()=>{});
+          });
         } else {
           console.error('⚠️ WA Cloud inbound message but waSharedMessageHandler not registered — bot brain unavailable');
         }
@@ -23601,16 +23599,16 @@ app.get('/admin/wa-cloud/chats/:phone/messages', adminAuth, async (req, res) => 
 app.get('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
   try { res.json(await getWACloudSettings()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-// Temporary diagnostic — remove once the Cloud API bot-reply path is confirmed working.
+// Bot health check — confirms the shared handler is registered (it must be
+// for Cloud API inbound messages to get a reply) and reports recent errors
+// the handler threw, without needing direct server log access.
 app.get('/admin/wa-cloud/bot-diag', adminAuth, async (req, res) => {
-  const log = await mdb.collection('wa_bot_debug_log').find({}).sort({ at: -1 }).limit(20).toArray().catch(() => []);
-  const lastInbound = await mdb.collection('wa_cloud_messages').findOne({ direction: 'in' }, { sort: { created_at: -1 } }).catch(() => null);
+  const recentErrors = await mdb.collection('wa_bot_error_log').find({}).sort({ at: -1 }).limit(10).toArray().catch(() => []);
   res.json({
     WHATSAPP_BOT_ENABLED: process.env.WHATSAPP_BOT_ENABLED,
     handlerRegistered: !!waSharedMessageHandler,
     waConnected, waBot2Connected,
-    log,
-    lastInboundRaw: lastInbound?.raw || null,
+    recentErrors,
   });
 });
 app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
@@ -24360,6 +24358,11 @@ async function waHandleVendorReply(sock, sender, text) {
   if (!mdb) return;
 
   const trimmed = text.trim();
+  // Used below as a fallback lookup key (wa_vendor_jids may be keyed by
+  // phone rather than JID for LID-based senders) — was previously
+  // referenced without ever being derived, throwing "phone is not defined"
+  // and crashing every vendor reply that reached this far.
+  const phone = String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10);
 
   // Helper to send + log bot reply
   const sendAndLog = async (msg, vendorNameHint) => {
