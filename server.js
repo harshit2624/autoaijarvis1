@@ -15282,7 +15282,7 @@ const SS_STATUS_TAG_MAP = [
   // ordering already used in shipsagarStatusToStage() for the same reason.
   { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery', 'prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled', 'ndr', 'held at location', 'shipment held', 'undelivered shipment held'], tag: '🛵 Out for Delivery' },
   { match: ['undelivered', 'failed delivery', 'not delivered', 'delivery failed'], tag: '❌ Delivery Attempted' },
-  { match: ['rto', 'return to origin', 'returned to origin', 'return initiated', 'returning', 'delivered seller', 'delivered to seller', 'return as per', 'pickup cancelled'], tag: '🔄 RTO' },
+  { match: ['rto', 'return to origin', 'returned to origin', 'return initiated', 'returning', 'delivered seller', 'delivered to seller', 'return as per', 'pickup cancelled', 'refused'], tag: '🔄 RTO' },
   { match: ['successfully delivered', 'shipment delivered', 'delivery successful', 'delivered successfully', 'delivered'], tag: '✅ Delivered' },
   { match: ['lost', 'damage'],                                            tag: '⚠️ Lost/Damaged' },
   { match: ['pickdone', 'pick done', 'picked up', 'pickup done', 'shipment picked'],        tag: '📦 Picked Up' },
@@ -15336,8 +15336,11 @@ async function applyShipSagarTag(shopifyId, desc) {
 function shipsagarStatusToStage(desc) {
   if (!desc) return null;
   const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
-  // RTO — check before 'delivered' to avoid DELIVERED_SELLER false positive
-  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled')) return 'rto';
+  // RTO — check before 'delivered' to avoid DELIVERED_SELLER false positive.
+  // 'refused' covers "Consignee Refused To Accept" / "Customer Refused
+  // Delivery" style events — a refusal reliably means the shipment is headed
+  // back to origin, so treat it the same as an explicit RTO/return status.
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled') || s.includes('refused')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
   if (s.includes('out for delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held') || s.includes('otp not shared') || s.includes('cancelled by consignee')) return 'ofd';
