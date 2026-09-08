@@ -23541,15 +23541,18 @@ ${buyUrl}
       total, afterDiscount, discountAmt, discountCode,
       buyUrlSuffix: waCloudUrlSuffix(buyUrl, cartId ? `?mrid=${cartId}` : ''),
     });
+    let baileysSent = false;
     if (!cloudResult.sent) {
       if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
-      await waSendImageOrText(phone, items[0]?.image_url || '', waMsg).catch(e => console.error('Abandoned cart WA error:', e.message));
+      baileysSent = await waSendImageOrText(phone, items[0]?.image_url || '', waMsg).catch(e => { console.error('Abandoned cart WA error:', e.message); return false; });
     }
+    const actuallySent = cloudResult.sent || baileysSent;
     await mdb.collection('abandoned_carts').updateOne(
       cartId ? { cart_id: cartId } : { _id: inserted.insertedId },
-      { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : 'baileys' } }
+      { $set: { wa_sent: actuallySent, wa_sent_at: actuallySent ? new Date().toISOString() : null, discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : (baileysSent ? 'baileys' : 'none') } }
     );
-    console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
+    if (actuallySent) console.log(`✅ Abandoned cart WA sent → ${phone} · code ${discountCode} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}`);
+    else console.error(`❌ Abandoned cart WA FAILED (both Cloud API and Baileys) → ${phone}`);
   } catch (e) { console.error('abandoned-cart webhook:', e.message); res.status(500).json({ error: e.message }); }
 });
 
@@ -23649,10 +23652,12 @@ ${checkoutUrl}
       buyUrlSuffix: waCloudUrlSuffix(checkoutUrl, ''),
     });
 
+    let baileysSent = false;
     if (!cloudResult.sent) {
       if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
-      await waSendImageOrText(phone, productImgUrl, waMsg);
+      baileysSent = await waSendImageOrText(phone, productImgUrl, waMsg);
     }
+    const actuallySent = cloudResult.sent || baileysSent;
 
     // Log in DB — test sends get their own source tag and no cart_id, so they
     // never collide with the real cart's dedupe/upsert logic in the webhook.
@@ -23668,14 +23673,15 @@ ${checkoutUrl}
       raw: c,
       received_at: new Date().toISOString(),
       status: 'open',
-      wa_sent: true,
-      wa_sent_at: new Date().toISOString(),
+      wa_sent: actuallySent,
+      wa_sent_at: actuallySent ? new Date().toISOString() : null,
       discount_code: 'COMEBACK',
-      wa_via: cloudResult.sent ? 'cloud_api' : 'baileys',
+      wa_via: cloudResult.sent ? 'cloud_api' : (baileysSent ? 'baileys' : 'none'),
     });
 
-    console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}${isTestSend ? ' (TEST SEND)' : ''}`);
-    res.json({ sent: true, phone, name, test_send: isTestSend });
+    if (actuallySent) console.log(`✅ Manual WA sent to ${phone} for Shopify abandoned checkout ₹${total} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}${isTestSend ? ' (TEST SEND)' : ''}`);
+    else console.error(`❌ Manual WA FAILED (both Cloud API and Baileys) → ${phone}`);
+    res.json({ sent: actuallySent, phone, name, test_send: isTestSend, via: cloudResult.sent ? 'cloud_api' : (baileysSent ? 'baileys' : 'none') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -23760,20 +23766,24 @@ ${buyUrl}
       total, afterDiscount, discountAmt, discountCode,
       buyUrlSuffix: waCloudUrlSuffix(buyUrl, cart.cart_id ? `?mrid=${cart.cart_id}` : ''),
     });
+    let baileysSent = false;
     if (!cloudResult.sent) {
       if (!['not_configured', 'paused'].includes(cloudResult.reason)) console.log(`ℹ WA Cloud API failed (${cloudResult.reason}) — falling back to Baileys`);
-      await waSendImageOrText(phone, items[0]?.image_url || '', waMsg).catch(e => console.error('Abandoned cart manual WA error:', e.message));
+      baileysSent = await waSendImageOrText(phone, items[0]?.image_url || '', waMsg).catch(e => { console.error('Abandoned cart manual WA error:', e.message); return false; });
     }
+    const actuallySent = cloudResult.sent || baileysSent;
 
     if (!isTestSend) {
       await mdb.collection('abandoned_carts').updateOne(
         { _id: cart._id },
-        { $set: { wa_sent: true, wa_sent_at: new Date().toISOString(), discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : 'baileys' } }
+        { $set: { wa_sent: actuallySent, wa_sent_at: actuallySent ? new Date().toISOString() : null, discount_code: discountCode, wa_via: cloudResult.sent ? 'cloud_api' : (baileysSent ? 'baileys' : 'none') } }
       );
     }
 
-    console.log(`✅ Manual WA (webhook cart) sent to ${phone} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}${isTestSend ? ' (TEST SEND)' : ''}`);
-    res.json({ sent: true, phone, test_send: isTestSend });
+    if (actuallySent) console.log(`✅ Manual WA (webhook cart) sent to ${phone} · via ${cloudResult.sent ? 'Cloud API' : 'Baileys'}${isTestSend ? ' (TEST SEND)' : ''}`);
+    else console.error(`❌ Manual WA (webhook cart) FAILED (both Cloud API and Baileys) → ${phone}`);
+    if (!actuallySent) return res.status(502).json({ sent: false, phone, test_send: isTestSend, error: 'Both Cloud API and Baileys failed to send — check WhatsApp bot connection status.' });
+    res.json({ sent: true, phone, test_send: isTestSend, via: cloudResult.sent ? 'cloud_api' : 'baileys' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -24686,10 +24696,14 @@ async function waSendToCustomer(phone, message) {
 // if there's no image or the download/send fails. Shared by every
 // abandoned-cart Baileys fallback path so the image behavior stays
 // consistent instead of only existing on some of the send buttons.
+// Returns true only on an actual confirmed send — callers (abandoned-cart
+// flows especially) previously assumed this always worked and marked
+// wa_sent:true even when Baileys was disconnected or the send threw, which
+// silently hid real delivery failures behind a false "sent" record.
 async function waSendImageOrText(phone, imageUrl, caption) {
-  if (!waSocket || !waConnected) return;
+  if (!waSocket || !waConnected) { console.log('ℹ waSendImageOrText: Baileys not connected — send skipped'); return false; }
   const digits = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
-  if (digits.length !== 10) return;
+  if (digits.length !== 10) return false;
   const jid = `91${digits}@s.whatsapp.net`;
   if (imageUrl) {
     try {
@@ -24698,12 +24712,18 @@ async function waSendImageOrText(phone, imageUrl, caption) {
         const imgBuf = Buffer.from(await imgRes.arrayBuffer());
         await waSocket.sendMessage(jid, { image: imgBuf, caption, mimetype: 'image/jpeg' });
         console.log(`✅ Image+caption WA sent to ${digits}`);
-        return;
+        return true;
       }
       console.log(`ℹ Image fetch non-OK (${imgRes.status}) for ${imageUrl} — falling back to text`);
     } catch (e) { console.error('Image WA send failed, falling back to text:', e.message); }
   }
-  await waSocket.sendMessage(jid, { text: caption }).catch(e => console.error('waSendImageOrText text fallback failed:', e.message));
+  try {
+    await waSocket.sendMessage(jid, { text: caption });
+    return true;
+  } catch (e) {
+    console.error('waSendImageOrText text fallback failed:', e.message);
+    return false;
+  }
 }
 
 // ── Admin WhatsApp AI — routes admin messages to Jarvis with waMode formatting ─
