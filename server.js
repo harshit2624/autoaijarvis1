@@ -12804,8 +12804,8 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
     await sendEmail({ to: vcfg.email, subject: `⚠️ Penalty Triggered: ${orderName || shopifyId}`, html, shopifyId, trigger: 'penalty_triggered' });
   }
 
-  // WA penalty notification
-  if (waSocket && waConnected) {
+  // WA penalty notification — Cloud API template first, Baileys fallback.
+  {
     try {
       const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1, _id: 0 } });
       const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
@@ -12813,14 +12813,17 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
         const jid = `91${rawPhone}@s.whatsapp.net`;
         const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : 'Manual penalty by admin';
         const penaltyToken = await createVendorUpdateToken(shopifyId, orderName || shopifyId, vendorName, '').catch(() => null);
-        const penaltyLink = penaltyToken ? `\n\n*Still not shipped?* Update here (no login):\n👉 https://dashboard.croscrow.com/vendor/update/${penaltyToken}` : '';
         const _Fpen = '```';
         const penaltyMsg = `${_Fpen}\n▪ C R O S C R O W ▪\nPENALTY TRIGGERED 🚨\n────────────────\nORDER  ${orderName || shopifyId}\nVENDOR ${vendorName}\n────────────────\nREASON ${reasonLabel}\nAMT    ₹100\n────────────────\nDeducted from next\nsettlement. To dispute,\nreply to this message.\n${penaltyToken ? `\nUPDATE HERE (no login)\ndashboard.croscrow.com/vendor/update/${penaltyToken}` : ''}\n${_Fpen}`;
-        const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
-        const actualJid = sent?.key?.remoteJid || jid;
+        const cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_PENALTY_TRIGGERED, bodyParams: [orderName || shopifyId, reasonLabel], urlButtonParam: penaltyToken || '' });
+        let actualJid = jid;
+        if (!cloudResult.sent) {
+          if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+          const sent = await waSocket.sendMessage(jid, { text: penaltyMsg });
+          actualJid = sent?.key?.remoteJid || jid;
+        }
         await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
-        await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
-        console.log(`📲 WA penalty notification sent: ${orderName} / ${vendorName}`);
+        console.log(`📲 WA penalty notification sent: ${orderName} / ${vendorName} (via ${cloudResult.sent ? 'Cloud API' : 'Baileys'})`);
       }
     } catch (e) { waLogVendorSendFailure(vendorName, rawPhone, 'penalty_triggered', orderName, e).catch(()=>{}); }
   }
@@ -14883,8 +14886,9 @@ async function penaltyCronJob() {
           const html = templateFulfilmentWarning({ order: ord, vendorName: vendor, hoursElapsed: Math.floor(elapsed / 3600000), delayLink });
           await sendEmail({ to: vcfg.email, subject: `⚠️ 24hr Warning: Fulfil ${orderName || sid} Now`, html, shopifyId: sid, trigger: 'penalty_warning' });
         }
-        // WA warning nudge
-        if (waSocket && waConnected) {
+        // WA warning nudge — Cloud API template first, Baileys fallback only
+        // if that fails (kept working even while Baileys is disconnected).
+        {
           try {
             const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendor }, { projection: { phone: 1, _id: 0 } });
             const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
@@ -14898,12 +14902,17 @@ async function penaltyCronJob() {
                 const warnLink = warnToken ? `https://dashboard.croscrow.com/vendor/update/${warnToken}` : null;
                 const _Fwrn = '```';
                 const warnMsg = `${_Fwrn}\n▪ C R O S C R O W ▪\nDISPATCH WARNING ⏰\n────────────────\nORDER  ${orderName || sid}\nTIME   ${hoursLeft}h remaining\n\nShip NOW to avoid\na ₹100 penalty.\n────────────────\n${warnLink ? `SUBMIT UPDATE HERE\n${warnLink}` : 'Reply to this message\nto update your status.'}\n${_Fwrn}`;
-                const sent = await waSocket.sendMessage(jid, { text: warnMsg });
-                const actualJid = sent?.key?.remoteJid || jid;
+                const cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_DISPATCH_WARNING, bodyParams: [orderName || sid, String(hoursLeft)], urlButtonParam: warnToken || '' });
+                let actualJid = jid;
+                if (!cloudResult.sent) {
+                  if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+                  const sent = await waSocket.sendMessage(jid, { text: warnMsg });
+                  actualJid = sent?.key?.remoteJid || jid;
+                }
                 await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: orderName || sid, shopify_id: String(sid), orderRef: String(sid).replace(/^#/, ''), vendor });
                 await mdb.collection('wa_vendor_jids').updateOne({ phone: rawPhone }, { $set: { phone: rawPhone, jid: actualJid, updated_at: new Date().toISOString() } }, { upsert: true }).catch(() => {});
                 await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: orderName || sid, shopify_id: String(sid), vendor, sent_at: now });
-                console.log(`📲 WA 24hr warning sent: ${orderName} / ${vendor}`);
+                console.log(`📲 WA 24hr warning sent: ${orderName} / ${vendor} (via ${cloudResult.sent ? 'Cloud API' : 'Baileys'})`);
               }
             }
           } catch (e) { waLogVendorSendFailure(vendor, rawPhone, '24hr_warning', orderName, e).catch(()=>{}); }
@@ -15724,7 +15733,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
 
 // ── WA ping to vendor for return/exchange events ─────────────────────────
 async function sendRRVendorWANotif(rr, event) {
-  if (!mdb || !waSocket || !waConnected) return;
+  if (!mdb) return;
   const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: rr.vendor_name }, { projection: { phone: 1 } }).catch(() => null);
   const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
   if (rawPhone.length !== 10) return;
@@ -15736,18 +15745,25 @@ async function sendRRVendorWANotif(rr, event) {
   const trackUrl = rr.request_id ? `${SERVER_URL}/vendor/return-requests` : '';
 
   let msg = '';
+  let cloudResult = { sent: false };
   if (event === 'request_received') {
     msg = `📦 *New ${typeLabel} Request — ${orderName}*\n\nHi ${rr.vendor_name},\n\nA customer (${customerName}) has raised a *${typeLabel.toLowerCase()} request* for their order.\n\n🛍️ Item: ${itemNames}\n\nPlease review and approve/reject it from your Vendor Portal at the earliest.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+    cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_REQUEST_RECEIVED, bodyParams: [typeLabel, orderName, customerName, itemNames] });
   } else if (event === 'approved') {
     msg = `✅ *${typeLabel} Approved — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe *${typeLabel.toLowerCase()} request* for order *${orderName}* has been approved.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n\nPlease *arrange reverse pickup* from the customer *within 24 hours*. Once scheduled, update the AWB in your Vendor Portal.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+    cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_APPROVED, bodyParams: [typeLabel, orderName, itemNames, customerName] });
   } else if (event === 'pickup_overdue_48h') {
     msg = `🔴 *OVERDUE — Reverse Pickup Not Arranged — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThis *${typeLabel.toLowerCase()} request* was approved *over 48 hours ago* and pickup still hasn't happened.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease arrange pickup *immediately* and update the AWB in your Vendor Portal — this is now attracting a delay penalty per your vendor agreement.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+    cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_PICKUP_OVERDUE, bodyParams: [orderName, rr.request_id || '', itemNames] });
   }
 
   if (!msg) return;
   try {
-    await waSocket.sendMessage(`91${rawPhone}@s.whatsapp.net`, { text: msg });
-    console.log(`📲 RR Vendor WA (${event}): ${rr.request_id} → ${rr.vendor_name}`);
+    if (!cloudResult.sent) {
+      if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+      await waSocket.sendMessage(`91${rawPhone}@s.whatsapp.net`, { text: msg });
+    }
+    console.log(`📲 RR Vendor WA (${event}): ${rr.request_id} → ${rr.vendor_name} (via ${cloudResult.sent ? 'Cloud API' : 'Baileys'})`);
   } catch (e) {
     console.error(`❌ RR Vendor WA notif failed (${rr.request_id} ${event}):`, e.message);
   }
@@ -15841,16 +15857,18 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
       }
     }
 
-    // ── WA to vendor — internal ops alert, no Meta template drafted for this
-    // yet (vendor-facing, not customer-facing), so it stays Baileys-only for
-    // now and silently no-ops while Baileys is disconnected. Vendor also
-    // gets the same info via email below.
+    // ── WA to vendor — Cloud API template (WA_TPL.VENDOR_DELIVERY_ATTEMPT_FAILED),
+    // Baileys plain text only as fallback. Vendor also gets the same info via
+    // email below.
     try {
       const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName });
       const vendorPhone = (vp?.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
-      if (vendorPhone && vendorPhone.length === 10 && waSocket && waConnected) {
-        const vendorMsg = `⚠️ *Delivery Attempt Failed — ${orderName}*\n\nCustomer: ${customerName}\nAWB: ${awb}\nCourier: ${courier||'—'}\n\nRemark: *${desc}*\n\nThe courier will reattempt delivery. No action needed unless the customer reaches out.`;
-        waSocket.sendMessage(`91${vendorPhone}@s.whatsapp.net`, { text: vendorMsg }).catch(() => {});
+      if (vendorPhone && vendorPhone.length === 10) {
+        const vCloudResult = await sendWACloudTemplate({ phone10: vendorPhone, templateName: WA_TPL.VENDOR_DELIVERY_ATTEMPT_FAILED, bodyParams: [orderName, customerName, courier || '—', desc] });
+        if (!vCloudResult.sent && waSocket && waConnected) {
+          const vendorMsg = `⚠️ *Delivery Attempt Failed — ${orderName}*\n\nCustomer: ${customerName}\nAWB: ${awb}\nCourier: ${courier||'—'}\n\nRemark: *${desc}*\n\nThe courier will reattempt delivery. No action needed unless the customer reaches out.`;
+          waSocket.sendMessage(`91${vendorPhone}@s.whatsapp.net`, { text: vendorMsg }).catch(() => {});
+        }
       }
     } catch (e) { console.error('Vendor WA (failed-attempt) error:', e.message); }
 
@@ -23371,6 +23389,15 @@ const WA_TPL = {
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
   WIN_BACK_FLAT500: 'win_back_flat500_v2',
+  // Vendor-facing (all UTILITY, uploaded fresh — no _v2 needed, never deleted)
+  VENDOR_RR_REQUEST_RECEIVED: 'vendor_rr_request_received',
+  VENDOR_RR_APPROVED: 'vendor_rr_approved',
+  VENDOR_RR_PICKUP_OVERDUE: 'vendor_rr_pickup_overdue',
+  VENDOR_DELIVERY_ATTEMPT_FAILED: 'vendor_delivery_attempt_failed',
+  VENDOR_STUCK_ORDER_NUDGE: 'vendor_stuck_order_nudge',
+  VENDOR_DISPATCH_WARNING: 'vendor_dispatch_warning',
+  VENDOR_PENALTY_TRIGGERED: 'vendor_penalty_triggered',
+  VENDOR_CUSTOMER_QUERY: 'vendor_customer_query',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
@@ -24689,7 +24716,7 @@ async function waHandleVendorReply(sock, sender, text) {
 }
 
 async function waVendorNudge(meta, customerPhone) {
-  if (!waSocket || !mdb) return;
+  if (!mdb) return;
   if (meta?.type !== 'tracking_card') return;
   const d = meta.data;
   if (!d.order_name) return;
@@ -24733,20 +24760,23 @@ async function waVendorNudge(meta, customerPhone) {
 
     try {
       const jid = `91${VENDOR_WA}@s.whatsapp.net`;
-      const sent = await waSocket.sendMessage(jid, { text: nudgeMsg });
-      // Capture the actual JID Baileys used — may differ from the phone JID (LID routing)
-      const actualJid = sent?.key?.remoteJid || jid;
-      if (actualJid !== jid || true) {
-        await mdb.collection('wa_vendor_jids').updateOne(
-          { phone: VENDOR_WA },
-          { $set: { phone: VENDOR_WA, jid: actualJid, updated_at: new Date().toISOString() } },
-          { upsert: true }
-        ).catch(() => {});
+      const cloudResult = await sendWACloudTemplate({ phone10: VENDOR_WA, templateName: WA_TPL.VENDOR_STUCK_ORDER_NUDGE, bodyParams: [d.order_name, productNames, `${days} day${days > 1 ? 's' : ''}`], urlButtonParam: updateToken || '' });
+      let actualJid = jid;
+      if (!cloudResult.sent) {
+        if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
+        const sent = await waSocket.sendMessage(jid, { text: nudgeMsg });
+        // Capture the actual JID Baileys used — may differ from the phone JID (LID routing)
+        actualJid = sent?.key?.remoteJid || jid;
       }
+      await mdb.collection('wa_vendor_jids').updateOne(
+        { phone: VENDOR_WA },
+        { $set: { phone: VENDOR_WA, jid: actualJid, updated_at: new Date().toISOString() } },
+        { upsert: true }
+      ).catch(() => {});
       // Store session so vendor's "1" or "2" reply maps to this order
       await waVendorSessionSet(actualJid, jid, { type: 'vendor_menu', order_name: d.order_name, shopify_id: String(d.shopify_order_id), orderRef, vendor: vs.vendor_name });
       await mdb.collection('wa_vendor_nudges').insertOne({ key: dedupKey, order_name: d.order_name, shopify_id: String(d.shopify_order_id), vendor: vs.vendor_name, customer_phone: customerPhone, sent_at: now });
-      console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck`);
+      console.log(`📲 Vendor nudge sent for ${d.order_name} (${vs.vendor_name}) — ${Math.round(hoursStuck)}h stuck (via ${cloudResult.sent ? 'Cloud API' : 'Baileys'})`);
     } catch (e) {
       waLogVendorSendFailure(vs.vendor_name, VENDOR_WA, 'stuck_order_nudge', d.order_name, e).catch(()=>{});
     }
@@ -26583,7 +26613,8 @@ async function startBaileysBot() {
                       ? `\n\n⚠️ Order not yet dispatched — if there's a delay please report it here:\n🔗 ${delayLink}`
                       : '';
                     const vMsg = `📋 *Customer Query — Order ${mentionedOrder}*\n\nA customer has raised a concern about this order:\n\n💬 _"${queryText}"_\n\nPlease check the order status and be ready to provide an update.${delayLine}\n\n— CROSCROW Team`;
-                    await waSocket.sendMessage(`91${vDigits}@s.whatsapp.net`, { text: vMsg }).catch(() => {});
+                    const vqCloudResult = await sendWACloudTemplate({ phone10: vDigits, templateName: WA_TPL.VENDOR_CUSTOMER_QUERY, bodyParams: [mentionedOrder, queryText] });
+                    if (!vqCloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${vDigits}@s.whatsapp.net`, { text: vMsg }).catch(() => {});
                   }
                 }
               }
