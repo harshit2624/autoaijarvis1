@@ -6165,6 +6165,8 @@
     const [expandedV,   setExpandedV]   = useState(null);
     const [expandedVFilter, setExpandedVFilter] = useState({}); // { vendorName: 'all'|'unsettled'|'invoiced'|'paid' }
     const [sumPeriod,   setSumPeriod]   = useState(null); // null = all time
+    const [uninvVendorFilter, setUninvVendorFilter] = useState(''); // '' = all vendors
+    const [bulkBacklogRunning, setBulkBacklogRunning] = useState(false);
     const [vendorSettleFilter, setVendorSettleFilter] = useState('all'); // 'all'|'owe_me'|'i_owe'
     // ── Tab 2: Settlement Invoices ─────────────────────────────────────────
     const [settlements, setSettlements] = useState([]);
@@ -7164,7 +7166,21 @@
             const oldestDate = uninvoiced.reduce((min,o)=> new Date(o.createdAt)<new Date(min)?o.createdAt:min, uninvoiced[0].createdAt);
             const daysOldest = Math.floor((now - new Date(oldestDate)) / 86400000);
             return { vendor: v.vendor, uninvoiced, thisMonth, older, grossTotal, oldestDate, daysOldest, commissionPct: v.commissionPct };
-          }).filter(Boolean).sort((a,b)=>b.daysOldest-a.daysOldest);
+          }).filter(Boolean).sort((a,b)=>b.daysOldest-a.daysOldest)
+            .filter(r => !uninvVendorFilter || r.vendor===uninvVendorFilter);
+
+          const allVendorNames = (summary?.vendors||[]).map(v=>v.vendor).sort();
+
+          const generateAllBacklog = async () => {
+            const targets = vendorRows.filter(r => r.uninvoiced.length>0 && backlogStatus[r.vendor]?.state!=='done');
+            if (!targets.length) return;
+            setBulkBacklogRunning(true);
+            for (const r of targets) {
+              if (backlogStatus[r.vendor]?.state==='loading') continue;
+              await generateBacklog(r.vendor, r.uninvoiced);
+            }
+            setBulkBacklogRunning(false);
+          };
 
           const totalUninvoiced = vendorRows.reduce((s,r)=>s+r.uninvoiced.length,0);
           const totalGross      = vendorRows.reduce((s,r)=>s+r.grossTotal,0);
@@ -7175,6 +7191,58 @@
 
           return (
             <div>
+              {/* Period + vendor filter toolbar */}
+              {(()=>{
+                const isoToday = () => new Date().toISOString().split('T')[0];
+                const daysAgo  = n => new Date(Date.now()-n*86400000).toISOString().split('T')[0];
+                const monthStart = (offset=0) => { const d=new Date(); d.setMonth(d.getMonth()-offset,1); return d.toISOString().split('T')[0]; };
+                const PRESETS = [
+                  { label:'All Time',     period: null },
+                  { label:'Last 30 Days', period: { from: daysAgo(29),   to: isoToday() } },
+                  { label:'This Month',   period: { from: monthStart(0), to: isoToday() } },
+                ];
+                const activeLbl = sumPeriod
+                  ? (PRESETS.find(p=>p.period&&p.period.from===sumPeriod.from&&p.period.to===sumPeriod.to)?.label || 'Custom')
+                  : 'All Time';
+                const applyPeriod = p => { setSumPeriod(p); loadSummary(p); };
+                const backlogTargets = vendorRows.filter(r => r.uninvoiced.length>0 && backlogStatus[r.vendor]?.state!=='done');
+                return (
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+                    <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,letterSpacing:1}}>PERIOD:</span>
+                    {PRESETS.map(ps=>(
+                      <button key={ps.label} onClick={()=>applyPeriod(ps.period)}
+                        className={`btn btn-sm ${activeLbl===ps.label?'btn-indigo':'btn-ghost'}`}
+                        style={{fontSize:11,padding:'4px 10px'}}>
+                        {ps.label}
+                      </button>
+                    ))}
+                    <input className="form-input" type="date" style={{fontSize:11,padding:'4px 8px',width:130}}
+                      value={sumPeriod?.from||''} onChange={e=>{ const p={from:e.target.value,to:sumPeriod?.to||isoToday()}; setSumPeriod(p); loadSummary(p); }}
+                      placeholder="From"/>
+                    <input className="form-input" type="date" style={{fontSize:11,padding:'4px 8px',width:130}}
+                      value={sumPeriod?.to||''} onChange={e=>{ const p={from:sumPeriod?.from||daysAgo(29),to:e.target.value}; setSumPeriod(p); loadSummary(p); }}
+                      placeholder="To"/>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>loadSummary(sumPeriod,true)} style={{fontSize:11,color:'var(--orange)'}} disabled={sumLoading} title="Force refresh (bypasses cache)">
+                      {sumLoading?<span className="spin">↻</span>:'⟳'} Live
+                    </button>
+
+                    <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:600,letterSpacing:1,marginLeft:8}}>VENDOR:</span>
+                    <select className="form-input" style={{fontSize:11,padding:'4px 8px'}}
+                      value={uninvVendorFilter} onChange={e=>setUninvVendorFilter(e.target.value)}>
+                      <option value="">All vendors</option>
+                      {allVendorNames.map(v=><option key={v} value={v}>{v}</option>)}
+                    </select>
+
+                    {backlogTargets.length>0 && (
+                      <button className="btn btn-sm" style={{marginLeft:'auto',fontSize:11,fontWeight:700,background:'rgba(239,68,68,0.9)',color:'#fff',border:'none',padding:'6px 14px'}}
+                        disabled={bulkBacklogRunning} onClick={generateAllBacklog}>
+                        {bulkBacklogRunning?<><span className="spin">↻</span> Generating {backlogTargets.length}…</>:`⚡ Generate ALL ${backlogTargets.length} Backlog Invoices`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
               {sumLoading ? (
                 <div style={{textAlign:'center',padding:60,color:'var(--text-dim)'}}>Loading summary…</div>
               ) : vendorRows.length===0 ? (
