@@ -23635,7 +23635,11 @@ app.post('/admin/wa-cloud/phone-vendor-unlink', adminAuth, async (req, res) => {
   const r1 = await mdb.collection('vendor_profiles').updateMany({ phone: { $regex: phone } }, { $unset: { phone: '' } });
   const r2 = await mdb.collection('vendor_credentials').updateMany({ whatsapp: { $regex: phone } }, { $unset: { whatsapp: '' } });
   const r3 = await mdb.collection('wa_vendor_jids').deleteMany({ phone: { $regex: phone } });
-  res.json({ profilesUnset: r1.modifiedCount, credentialsUnset: r2.modifiedCount, jidsDeleted: r3.deletedCount });
+  // Also clear any active session that still thinks this JID is mid-vendor-flow
+  // (e.g. type: 'vendor_menu') — otherwise it keeps routing as a vendor even
+  // after the profile/jid link above is gone.
+  const r4 = await mdb.collection('whatsapp_sessions').deleteMany({ _id: { $regex: phone } });
+  res.json({ profilesUnset: r1.modifiedCount, credentialsUnset: r2.modifiedCount, jidsDeleted: r3.deletedCount, sessionsCleared: r4.deletedCount });
 });
 app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
   try {
