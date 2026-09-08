@@ -23408,12 +23408,12 @@ const WA_TPL = {
   RR_QC_NOT_CLEARED: 'rr_qc_not_cleared_v2',
   RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued_v2',
   RR_APPROVED: 'rr_approved',
-  ADMIN_ALERT: 'admin_alert',
+  ADMIN_ALERT: 'ops_notification',
   SHIPMENT_RTO: 'shipment_rto',
   DELAY_REMARK_CUSTOMER: 'delay_remark_customer',
   VENDOR_SUPPORT_QUERY: 'vendor_support_query',
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
-  STAFF_ALERT: 'staff_alert',
+  STAFF_ALERT: 'staff_notification',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
@@ -24970,7 +24970,8 @@ async function notifyStaff(topic, message) {
       (async () => {
         const cloudSession = await waCloudSendSession(jid, { text: message });
         if (cloudSession.sent) return;
-        const cloudTemplate = await sendWACloudTemplate({ phone10: raw, templateName: WA_TPL.STAFF_ALERT, bodyParams: [message] });
+        const category = WA_STAFF_TOPIC_LABELS[topic] || 'System';
+        const cloudTemplate = await sendWACloudTemplate({ phone10: raw, templateName: WA_TPL.STAFF_ALERT, bodyParams: [category, message] });
         if (cloudTemplate.sent) return;
         if (waSocket) waSocket.sendMessage(jid, { text: message }).catch(e => console.error(`Staff WA notify failed (${s.name}):`, e.message));
         else console.error(`❌ Staff WA notify failed on all paths (${s.name}): Cloud session ${cloudSession.reason}, Cloud template ${cloudTemplate.reason}, Baileys not connected`);
@@ -25006,19 +25007,33 @@ async function waLogVendorSendFailure(vendor, phone, type, orderName, error) {
   } catch (_) {}
 }
 
+// Human-readable category label for ops_notification/staff_notification's
+// {{1}} field — a generic single free-text-variable template got Meta's
+// MARKETING classifier flagged (structurally indistinguishable from a
+// broadcast blast); giving it a fixed category field alongside the details
+// makes the template read as transactional/structured instead.
+const WA_STAFF_TOPIC_LABELS = {
+  order_ticket: 'Order Ticket',
+  stuck_orders: 'Stuck Orders',
+  dispatch_alert: 'Dispatch Update',
+  support_escalation: 'Support Escalation',
+  digest: 'Daily Digest',
+};
+
 async function waAdminAlert(message, staffTopic = null) {
   try {
     // Cloud API session text first — works as long as the admin has
     // messaged the bot within the last 24h (true most of the time in
-    // practice). Falls back to the admin_alert template (single free-text
-    // variable) if the session window has lapsed, then to Baileys as a
-    // last resort. Previously this whole function silently no-op'd
-    // whenever waSocket was null/disconnected — which is exactly the
-    // Baileys-disconnected state we're in now, so every human-handoff and
-    // customer-query alert to admin was being dropped with zero signal.
+    // practice). Falls back to the ops_notification template if the
+    // session window has lapsed, then to Baileys as a last resort.
+    // Previously this whole function silently no-op'd whenever waSocket
+    // was null/disconnected — which is exactly the Baileys-disconnected
+    // state we're in now, so every human-handoff and customer-query alert
+    // to admin was being dropped with zero signal.
     const cloudSession = await waCloudSendSession(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: message });
     if (!cloudSession.sent) {
-      const cloudTemplate = await sendWACloudTemplate({ phone10: WA_ADMIN_NO, templateName: WA_TPL.ADMIN_ALERT, bodyParams: [message] });
+      const category = WA_STAFF_TOPIC_LABELS[staffTopic] || 'System';
+      const cloudTemplate = await sendWACloudTemplate({ phone10: WA_ADMIN_NO, templateName: WA_TPL.ADMIN_ALERT, bodyParams: [category, message] });
       if (!cloudTemplate.sent && waSocket) {
         let adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
         if (!adminJidDoc?.jid) {
