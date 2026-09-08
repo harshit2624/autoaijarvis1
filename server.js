@@ -365,8 +365,12 @@ const OVS = {
       { projection: { stage: 1, dispatched_at: 1, stage_history: 1, manually_overridden: 1, _id: 0 } }
     );
 
-    // If admin has manually locked this vendor's stage, automated systems must not overwrite it
-    if (respectManualOverride && existing?.manually_overridden) return;
+    // If admin has manually locked this vendor's stage, automated systems must
+    // not overwrite it — EXCEPT a genuine terminal-state detection (rto/
+    // cancelled). A manual correction at one point in time was never meant to
+    // permanently blind the order to a real RTO discovered weeks later; that
+    // silently hid confirmed RTOs from settlement/penalty logic indefinitely.
+    if (respectManualOverride && existing?.manually_overridden && !TERMINAL_STAGES.includes(fields.stage)) return;
 
     // Automated syncs must never downgrade a stage — e.g. a NOT_PICKED event after
     // a transit scan should not rewind the stage back to pickup.
@@ -15270,11 +15274,16 @@ async function getShipSagarCreds() {
 
 // Emoji tag for each ShipSagar tracking status
 const SS_STATUS_TAG_MAP = [
-  // OFD must be before delivered — "out for delivery" contains "delivery"
+  // OFD must be before delivered — "out for delivery" contains "delivery".
+  // RTO must be before delivered too — "delivered_seller"/"delivered to
+  // seller" (return-to-origin couriers report it as a delivery, just to the
+  // seller/hub, not the customer) contains "delivered" as a substring and
+  // would otherwise tag a real RTO as "✅ Delivered". Mirrors the same
+  // ordering already used in shipsagarStatusToStage() for the same reason.
   { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery', 'prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled', 'ndr', 'held at location', 'shipment held', 'undelivered shipment held'], tag: '🛵 Out for Delivery' },
   { match: ['undelivered', 'failed delivery', 'not delivered', 'delivery failed'], tag: '❌ Delivery Attempted' },
+  { match: ['rto', 'return to origin', 'returned to origin', 'return initiated', 'returning', 'delivered seller', 'delivered to seller', 'return as per', 'pickup cancelled'], tag: '🔄 RTO' },
   { match: ['successfully delivered', 'shipment delivered', 'delivery successful', 'delivered successfully', 'delivered'], tag: '✅ Delivered' },
-  { match: ['rto', 'return to origin', 'return initiated', 'returning'],  tag: '🔄 RTO' },
   { match: ['lost', 'damage'],                                            tag: '⚠️ Lost/Damaged' },
   { match: ['pickdone', 'pick done', 'picked up', 'pickup done', 'shipment picked'],        tag: '📦 Picked Up' },
   { match: ['manifested', 'shipment booked', 'dispatched', 'ready to dispatch'],            tag: '📋 Manifested' },
@@ -15674,8 +15683,13 @@ async function shipsagarTrackingCron() {
     // All OVS records with an AWB that aren't in a terminal stage — no date gate,
     // catches all historical orders that may have been missed by earlier cron runs.
     // misc is excluded: it's a manual override that ShipSagar must never touch.
+    // manually_overridden IS included here (unlike before) — OVS.upsert's own
+    // guard already restricts what a manually-overridden order can be updated
+    // to (terminal rto/cancelled only), so excluding them from the check
+    // entirely just meant a real RTO on a manually-corrected order silently
+    // never got detected, ever. Non-terminal detections still get gated out.
     const activeStages = await mdb.collection('order_vendor_stage').find(
-      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'new', 'misc'] }, awb: { $exists: true, $ne: '' }, manually_overridden: { $ne: true } },
+      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'new', 'misc'] }, awb: { $exists: true, $ne: '' } },
       { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, stage: 1, _id: 0 } }
     ).toArray();
 
