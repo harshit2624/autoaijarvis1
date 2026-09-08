@@ -23587,6 +23587,14 @@ app.get('/admin/wa-cloud/chats/:phone/messages', adminAuth, async (req, res) => 
 app.get('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
   try { res.json(await getWACloudSettings()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Temporary diagnostic — remove once the Cloud API bot-reply path is confirmed working.
+app.get('/admin/wa-cloud/bot-diag', adminAuth, async (req, res) => {
+  res.json({
+    WHATSAPP_BOT_ENABLED: process.env.WHATSAPP_BOT_ENABLED,
+    handlerRegistered: !!waSharedMessageHandler,
+    waConnected, waBot2Connected,
+  });
+});
 app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
   try {
     const { active_model, templates_enabled } = req.body || {};
