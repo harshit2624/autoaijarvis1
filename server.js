@@ -23596,11 +23596,13 @@ app.get('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
 // Temporary diagnostic — remove once the Cloud API bot-reply path is confirmed working.
 app.get('/admin/wa-cloud/bot-diag', adminAuth, async (req, res) => {
   const log = await mdb.collection('wa_bot_debug_log').find({}).sort({ at: -1 }).limit(20).toArray().catch(() => []);
+  const lastInbound = await mdb.collection('wa_cloud_messages').findOne({ direction: 'in' }, { sort: { created_at: -1 } }).catch(() => null);
   res.json({
     WHATSAPP_BOT_ENABLED: process.env.WHATSAPP_BOT_ENABLED,
     handlerRegistered: !!waSharedMessageHandler,
     waConnected, waBot2Connected,
     log,
+    lastInboundRaw: lastInbound?.raw || null,
   });
 });
 app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
