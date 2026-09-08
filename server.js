@@ -23349,24 +23349,28 @@ async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl
 
 // Meta template names — must match exactly what's approved on the WABA.
 // Centralized here so a rename only needs one edit.
+// _v2 suffix: the original names got deleted+immediately resubmitted during
+// template design iteration, which triggered Meta's name-reuse cooldown
+// (weeks, not minutes) — resubmitted under _v2 names instead of waiting.
+// abandoned_cart_recovery is untouched (already approved, never deleted).
 const WA_TPL = {
-  SHIPMENT_PICKUP: 'shipment_pickup',
-  SHIPMENT_TRANSIT: 'shipment_transit',
-  SHIPMENT_OFD: 'shipment_out_for_delivery',
-  SHIPMENT_DELIVERED: 'shipment_delivered',
-  DELIVERY_ATTEMPT_FAILED: 'delivery_attempt_failed',
-  RR_REQUEST_RECEIVED: 'rr_request_received',
-  RR_PICKUP_SCHEDULED: 'rr_pickup_scheduled',
-  RR_PICKED_UP: 'rr_picked_up',
-  RR_QUALITY_CHECK: 'rr_quality_check',
-  RR_REFUND_APPROVED: 'rr_refund_approved',
-  RR_EXCHANGE_SENT: 'rr_exchange_sent',
-  RR_QC_NOT_CLEARED: 'rr_qc_not_cleared',
-  RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued',
-  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation',
-  ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid',
-  ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance',
-  WIN_BACK_FLAT500: 'win_back_flat500',
+  SHIPMENT_PICKUP: 'shipment_pickup_v2',
+  SHIPMENT_TRANSIT: 'shipment_transit_v2',
+  SHIPMENT_OFD: 'shipment_out_for_delivery_v2',
+  SHIPMENT_DELIVERED: 'shipment_delivered_v2',
+  DELIVERY_ATTEMPT_FAILED: 'delivery_attempt_failed_v2',
+  RR_REQUEST_RECEIVED: 'rr_request_received_v2',
+  RR_PICKUP_SCHEDULED: 'rr_pickup_scheduled_v2',
+  RR_PICKED_UP: 'rr_picked_up_v2',
+  RR_QUALITY_CHECK: 'rr_quality_check_v2',
+  RR_REFUND_APPROVED: 'rr_refund_approved_v2',
+  RR_EXCHANGE_SENT: 'rr_exchange_sent_v2',
+  RR_QC_NOT_CLEARED: 'rr_qc_not_cleared_v2',
+  RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued_v2',
+  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
+  ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
+  ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
+  WIN_BACK_FLAT500: 'win_back_flat500_v2',
 };
 
 // ── WA Cloud API inbox: webhook receiver + admin chat view ────────────────
