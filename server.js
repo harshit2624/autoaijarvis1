@@ -23505,17 +23505,24 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       const text = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || (msg.type ? `[${msg.type}]` : '');
       const now = new Date().toISOString();
 
+      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_1_start', phone, text, msgType: msg.type, at: new Date().toISOString() }).catch(()=>{});
       await mdb.collection('wa_cloud_messages').insertOne({
         phone, direction: 'in', type: msg.type || 'text', text,
         wamid: msg.id, raw: msg, created_at: now,
       });
-      await mdb.collection('wa_cloud_chats').updateOne(
-        { phone },
-        { $set: { phone, name: name || undefined, last_message: text, last_at: now, updated_at: now },
-          $setOnInsert: { created_at: now, unread_count: 0 },
-          $inc: { unread_count: 1 } },
-        { upsert: true }
-      );
+      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_2_after_msg_insert', phone, text, at: new Date().toISOString() }).catch(()=>{});
+      try {
+        await mdb.collection('wa_cloud_chats').updateOne(
+          { phone },
+          { $set: { phone, name: name || undefined, last_message: text, last_at: now, updated_at: now },
+            $setOnInsert: { created_at: now, unread_count: 0 },
+            $inc: { unread_count: 1 } },
+          { upsert: true }
+        );
+      } catch (chatUpsertErr) {
+        await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_error_chat_upsert', phone, text, error: chatUpsertErr.message, stack: chatUpsertErr.stack, at: new Date().toISOString() }).catch(()=>{});
+      }
+      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_3_after_chat_upsert', phone, text, at: new Date().toISOString() }).catch(()=>{});
       console.log(`📥 WA Cloud inbound: ${phone} → "${text.slice(0,60)}"`);
 
       // Route into the shared bot handler (menu/smart-bot/order-lookup/human
@@ -23525,6 +23532,7 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       // both trivial to synthesize from a Cloud API webhook payload. Replies
       // route back out through Cloud API automatically via the sock proxy in
       // startBaileysBot() — no other changes needed inside the handler itself.
+      await mdb.collection('wa_bot_debug_log').insertOne({ event: 'checkpoint_4_before_type_check', phone, text, msgType: msg.type, typeCheckPasses: (msg.type === 'text' || msg.type === 'button' || msg.type === 'interactive'), at: new Date().toISOString() }).catch(()=>{});
       if (msg.type === 'text' || msg.type === 'button' || msg.type === 'interactive') {
         if (waSharedMessageHandler) {
           const fakeMsg = {
