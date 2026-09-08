@@ -15350,6 +15350,24 @@ function shipsagarStatusToStage(desc) {
   return null;
 }
 
+// Some couriers (observed on BlueDart) close out a return-to-origin shipment
+// with a final scan that just says generic "Shipment Delivered" — because it
+// WAS delivered, just back to the seller/warehouse, not the customer. Taken
+// alone, that last event misclassifies as a normal 'delivered'. If an
+// earlier event in the SAME shipment's history already showed a clear RTO
+// signal (return initiated, refused, returned to origin, etc.), trust that
+// over a later ambiguous "delivered" and keep it as 'rto'. A shipment with
+// no RTO event anywhere in its history is completely unaffected — normal
+// deliveries classify exactly as before.
+function shipsagarFinalStage(history, latestStage) {
+  if (latestStage !== 'delivered') return latestStage;
+  const hadEarlierRto = (history || []).some(h => {
+    const d = h.ActionDescription || h.Status || h.EventDescription || h.Description || '';
+    return shipsagarStatusToStage(d) === 'rto';
+  });
+  return hadEarlierRto ? 'rto' : 'delivered';
+}
+
 // Map our internal courier names to ShipSagar courier codes
 function toShipSagarCourierCode(courier) {
   const c = (courier || '').toLowerCase();
@@ -15649,7 +15667,7 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
 
   const latest = ss.history[ss.history.length - 1];
   const desc = latest.ActionDescription || ss.currentStatus || '';
-  const newStage = shipsagarStatusToStage(desc);
+  const newStage = shipsagarFinalStage(ss.history, shipsagarStatusToStage(desc));
   const now = new Date().toISOString();
 
   // Always update delivery_status on order_meta — no lock needed here, it's just display
@@ -15707,7 +15725,7 @@ async function shipsagarTrackingCron() {
         if (!ss?.found || !ss.history?.length) continue;
         const latest = ss.history[ss.history.length - 1];
         const desc = latest.ActionDescription || ss.currentStatus || '';
-        const detectedStage = shipsagarStatusToStage(desc);
+        const detectedStage = shipsagarFinalStage(ss.history, shipsagarStatusToStage(desc));
         if (detectedStage === 'delivered') {
           // Update tracking history/display only — do NOT change stage
           const now2 = new Date().toISOString();
