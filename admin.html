@@ -13334,18 +13334,38 @@
     const [pairCode, setPairCode] = useState(null);
     const [botMode, setBotModeState] = useState('smart');
     const [modeLoading, setModeLoading] = useState(false);
+    const [cloudSettings, setCloudSettings] = useState(null); // { active_model, templates_enabled }
+    const [cloudLoading, setCloudLoading] = useState(false);
 
     const load = async () => {
       try {
-        const [r, mr] = await Promise.all([
+        const [r, mr, cr] = await Promise.all([
           fetch(`${API}/admin/whatsapp-status`, { headers: { Authorization: 'Bearer '+token } }),
           fetch(`${API}/admin/bot-mode`, { headers: { Authorization: 'Bearer '+token } }),
+          fetch(`${API}/admin/wa-cloud/settings`, { headers: { Authorization: 'Bearer '+token } }),
         ]);
         const d = await r.json();
         setStatus(d);
         const md = await mr.json();
         if (md.mode) setBotModeState(md.mode);
+        const cd = await cr.json();
+        if (cd && !cd.error) setCloudSettings(cd);
       } catch { setStatus({ connected: false, qrDataUrl: null }); }
+    };
+
+    const updateCloudSettings = async (patch) => {
+      setCloudLoading(true); setMsg('');
+      try {
+        const r = await fetch(`${API}/admin/wa-cloud/settings`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer '+token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        const d = await r.json();
+        if (!d.error) setCloudSettings(d);
+        else setMsg('❌ ' + d.error);
+      } catch(e) { setMsg('❌ ' + e.message); }
+      setCloudLoading(false);
     };
 
     useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
@@ -13523,6 +13543,54 @@
           <strong style={{color:'var(--text)'}}>How it works</strong><br/>
           The bot uses Baileys (no phone required on server). Scan the QR once with any WhatsApp account — that number becomes the bot's sender number. The session is saved in MongoDB so it survives server restarts.<br/><br/>
           <strong style={{color:'var(--text)'}}>To switch to a different number:</strong> click "Log Out & Generate New QR", then scan with the new number.
+        </div>
+
+        <div style={{marginTop:20,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:'20px 24px'}}>
+          <div style={{fontSize:14,fontWeight:700,color:'var(--text)',marginBottom:2}}>🛒 Abandoned-Cart Messaging</div>
+          <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:14}}>Separate from the support bot above — only used for abandoned-cart recovery messages. Cloud API always falls back to Baileys automatically if the send fails.</div>
+
+          {!cloudSettings && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+
+          {cloudSettings && (
+            <>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12,marginBottom:14}}>
+                <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>Active Model</div>
+                <div style={{display:'flex',gap:8}}>
+                  {['baileys','cloud'].map(m => (
+                    <button key={m}
+                      onClick={() => !cloudLoading && cloudSettings.active_model !== m && updateCloudSettings({ active_model: m })}
+                      disabled={cloudLoading}
+                      style={{
+                        padding:'7px 16px', borderRadius:8, fontSize:12, fontWeight:600, cursor: cloudLoading?'default':'pointer',
+                        border: cloudSettings.active_model === m ? '2px solid #10b981' : '1px solid var(--border)',
+                        background: cloudSettings.active_model === m ? 'rgba(16,185,129,0.08)' : 'var(--bg)',
+                        color: cloudSettings.active_model === m ? '#10b981' : 'var(--text)',
+                      }}>
+                      {m === 'baileys' ? '💬 Baileys' : '☁️ Cloud API'}{cloudSettings.active_model === m ? ' (active)' : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>Message Templates</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Master switch for Cloud API template sends — off means straight to Baileys even if Cloud is the active model.</div>
+                </div>
+                <button
+                  onClick={() => !cloudLoading && updateCloudSettings({ templates_enabled: !cloudSettings.templates_enabled })}
+                  disabled={cloudLoading}
+                  style={{
+                    padding:'7px 16px', borderRadius:8, fontSize:12, fontWeight:600, cursor: cloudLoading?'default':'pointer',
+                    border: cloudSettings.templates_enabled ? '1px solid #10b981' : '1px solid var(--border)',
+                    background: cloudSettings.templates_enabled ? 'rgba(16,185,129,0.1)' : 'var(--bg)',
+                    color: cloudSettings.templates_enabled ? '#10b981' : 'var(--text-muted)',
+                  }}>
+                  {cloudLoading ? 'Updating…' : cloudSettings.templates_enabled ? '✅ Templates ON' : '⛔ Templates OFF'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

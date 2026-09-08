@@ -23100,14 +23100,24 @@ const WA_CLOUD_PHONE_ID = process.env.WA_CLOUD_PHONE_NUMBER_ID || '';
 const WA_CLOUD_TEMPLATE = process.env.WA_CLOUD_TEMPLATE_NAME || 'abandoned_cart_recovery';
 const WA_CLOUD_LANG     = process.env.WA_CLOUD_TEMPLATE_LANG || 'en_US';
 const WA_CLOUD_API      = 'https://graph.facebook.com/v21.0';
-// Manual pause switch — set WA_CLOUD_ABANDONED_CART_PAUSED=false once the
-// Cloud API side (payment method, etc.) is sorted and ready to go live again.
-// While paused, abandoned-cart sends skip the Cloud API attempt entirely and
-// go straight to Baileys — no wasted API call, no delay.
-const WA_CLOUD_PAUSED   = (process.env.WA_CLOUD_ABANDONED_CART_PAUSED || 'true') !== 'false';
 
-function waCloudConfigured() {
-  return !WA_CLOUD_PAUSED && !!(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_ID);
+// Live-switchable via the WhatsApp bot admin page (no env var, no redeploy):
+//   active_model     — 'baileys' (default) or 'cloud': which one abandoned-cart
+//                       sends try first. Cloud always falls back to Baileys on
+//                       failure regardless of this setting.
+//   templates_enabled — master kill-switch for Cloud API template sends. When
+//                       false, the Cloud API attempt is skipped entirely even
+//                       if active_model is 'cloud' — straight to Baileys.
+async function getWACloudSettings() {
+  try {
+    const row = await mdb.collection('wa_cloud_settings').findOne({ _id: 'main' });
+    return { active_model: row?.active_model || 'baileys', templates_enabled: !!row?.templates_enabled };
+  } catch { return { active_model: 'baileys', templates_enabled: false }; }
+}
+
+async function waCloudConfigured() {
+  const s = await getWACloudSettings();
+  return s.active_model === 'cloud' && s.templates_enabled && !!(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_ID);
 }
 
 // Splits a full checkout URL into the path+query suffix to hand to the
@@ -23130,8 +23140,7 @@ function waCloudUrlSuffix(fullUrl, fallbackSuffix = '') {
 //   BUTTON: URL "https://croscrow.com/{{1}}" — pass just the "?mrid=..." suffix
 const WA_CLOUD_FALLBACK_IMAGE = `${process.env.SERVER_URL || 'https://dashboard.croscrow.com'}/croscrow-logo.png`;
 async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscount, discountAmt, discountCode, buyUrlSuffix }) {
-  if (WA_CLOUD_PAUSED) return { sent: false, reason: 'paused' };
-  if (!waCloudConfigured()) return { sent: false, reason: 'not_configured' };
+  if (!(await waCloudConfigured())) return { sent: false, reason: 'paused' };
   if (!phone10 || phone10.length !== 10) return { sent: false, reason: 'invalid_phone' };
   const to = `91${phone10}`;
   try {
@@ -23284,6 +23293,25 @@ app.get('/admin/wa-cloud/chats/:phone/messages', adminAuth, async (req, res) => 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET/POST — abandoned-cart model switch + template kill-switch, controlled
+// from the WhatsApp bot admin page (no env var, takes effect immediately).
+app.get('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
+  try { res.json(await getWACloudSettings()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/admin/wa-cloud/settings', adminAuth, async (req, res) => {
+  try {
+    const { active_model, templates_enabled } = req.body || {};
+    const set = { updated_at: new Date().toISOString() };
+    if (active_model !== undefined) {
+      if (!['baileys', 'cloud'].includes(active_model)) return res.status(400).json({ error: 'active_model must be baileys or cloud' });
+      set.active_model = active_model;
+    }
+    if (templates_enabled !== undefined) set.templates_enabled = !!templates_enabled;
+    await mdb.collection('wa_cloud_settings').updateOne({ _id: 'main' }, { $set: set }, { upsert: true });
+    res.json(await getWACloudSettings());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST — mark a chat's unread count cleared (call when admin opens it)
 app.post('/admin/wa-cloud/chats/:phone/read', adminAuth, async (req, res) => {
   try {
@@ -23297,7 +23325,7 @@ app.post('/admin/wa-cloud/chats/:phone/read', adminAuth, async (req, res) => {
 // will reject it and require a template, which is expected WhatsApp policy).
 app.post('/admin/wa-cloud/chats/:phone/send', adminAuth, async (req, res) => {
   try {
-    if (!waCloudConfigured()) return res.status(400).json({ error: 'WA Cloud API not configured (WA_CLOUD_TOKEN / WA_CLOUD_PHONE_NUMBER_ID missing)' });
+    if (!(await waCloudConfigured())) return res.status(400).json({ error: 'WA Cloud API not active — switch model to Cloud and enable templates on the WhatsApp bot page' });
     const { text } = req.body || {};
     if (!text?.trim()) return res.status(400).json({ error: 'text required' });
     const to = `91${req.params.phone}`;
