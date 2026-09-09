@@ -177,6 +177,15 @@
     .ann-counter { font-size: 9px; color: var(--text-muted); letter-spacing: 1px; min-width: 26px; text-align: center; }
     .page { padding: 20px 24px 40px; }
 
+    /* ── Audience Quality bar chart ── */
+    .audience-tier-chart { display:flex; align-items:flex-end; gap:14px; height:170px; margin-bottom:14px; width:100%; }
+    .audience-tier-bar-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; height:100%; }
+    .audience-tier-bar-track { flex:1; width:100%; max-width:72px; display:flex; align-items:flex-end; justify-content:center; }
+    .audience-tier-bar-fill { width:100%; border-radius:6px 6px 2px 2px; min-height:6px; display:flex; align-items:flex-start; justify-content:center; padding-top:5px; box-sizing:border-box; transition:height 0.5s ease; }
+    .audience-tier-bar-count { font-size:13px; font-weight:800; color:#fff; line-height:1; }
+    .audience-tier-bar-label { font-size:10px; font-weight:700; margin-top:7px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+    .audience-tier-bar-pct { font-size:11px; font-weight:600; margin-top:2px; }
+
     /* ── Mobile ── */
     @media(max-width:768px){
       .app-shell { flex-direction: column; }
@@ -196,8 +205,13 @@
       .vendor-list-col { width:100% !important; }
       .vendor-back-btn { display:block !important; }
       .hamburger { display:none !important; }
-      .page { padding:12px 10px 20px; }
+      .page { padding:12px 10px 20px; overflow-x:hidden; }
       .stats-grid { grid-template-columns:repeat(2,1fr) !important; gap:8px; }
+      /* Audience quality bar chart — shrink so it never forces the page wider than the viewport */
+      .audience-tier-chart { height:110px !important; gap:6px !important; }
+      .audience-tier-bar-label { font-size:8px !important; }
+      .audience-tier-bar-pct { font-size:9px !important; }
+      .audience-tier-bar-count { font-size:10px !important; }
       .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
       /* Commission tiles — 2 col on mobile */
       .comm-grid { grid-template-columns:repeat(2,1fr) !important; }
@@ -3220,33 +3234,44 @@
           </div>
         )}
 
-        {/* Tier cards */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+        {/* Tier bar chart — bar height reflects each tier's share of orders,
+            so the biggest contributor is visually obvious at a glance
+            instead of needing to read 4 separate number cards. */}
+        {(() => {
+          const maxCount = Math.max(...tierCounts.map(t => t.count), 1);
+          return (
+            <div className="audience-tier-chart">
+              {tierCounts.map(tier => {
+                const pct = total > 0 ? (tier.count / total * 100).toFixed(1) : '0.0';
+                const barPct = Math.max((tier.count / maxCount) * 100, tier.count > 0 ? 6 : 0);
+                return (
+                  <div key={tier.id} className="audience-tier-bar-col" title={`${tier.label}: ${tier.count} orders (${pct}%)`}>
+                    <div className="audience-tier-bar-track">
+                      <div className="audience-tier-bar-fill" style={{height:`${barPct}%`, background:tier.color}}>
+                        {tier.count > 0 && <span className="audience-tier-bar-count">{tier.count}</span>}
+                      </div>
+                    </div>
+                    <div className="audience-tier-bar-label" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
+                    <div className="audience-tier-bar-pct" style={{color:tier.color}}>{pct}%</div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* Tag chips per tier — compact, wraps safely instead of forcing width */}
+        <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:2}}>
           {tierCounts.map(tier => {
-            const pct = total > 0 ? (tier.count / total * 100).toFixed(1) : '0.0';
             const tags = (tierMap[tier.id] || tier.defaults).slice(0, 4);
+            const extra = (tierMap[tier.id]||tier.defaults).length - 4;
             return (
-              <div key={tier.id} style={{background:tier.dim,border:`1px solid ${tier.border}`,borderRadius:8,padding:'12px 14px'}}>
-                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
-                  <span style={{fontSize:13}}>{tier.icon}</span>
-                  <div style={{fontSize:10,fontWeight:700,color:tier.color,letterSpacing:0.5,textTransform:'uppercase'}}>{tier.label}</div>
-                </div>
-                <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:4}}>
-                  <span style={{fontSize:26,fontWeight:900,color:tier.color,lineHeight:1}}>{tier.count.toLocaleString()}</span>
-                  <span style={{fontSize:11,color:'var(--text-muted)'}}>orders</span>
-                </div>
-                <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginBottom:8}}>
-                  <div style={{height:'100%',width:pct+'%',background:tier.color,borderRadius:2}}/>
-                </div>
-                <div style={{fontSize:12,fontWeight:800,color:tier.color,marginBottom:6}}>{pct}%</div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                  {tags.map(tag => (
-                    <span key={tag} style={{fontSize:9,fontFamily:'monospace',background:'var(--bg-card)',border:`1px solid ${tier.border}`,color:tier.color,padding:'1px 5px',borderRadius:3}}>{tag}</span>
-                  ))}
-                  {(tierMap[tier.id]||tier.defaults).length > 4 && (
-                    <span style={{fontSize:9,color:'var(--text-muted)'}}>+{(tierMap[tier.id]||tier.defaults).length-4} more</span>
-                  )}
-                </div>
+              <div key={tier.id} style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
+                <span style={{fontSize:9,fontWeight:700,color:tier.color,flexShrink:0}}>{tier.icon}</span>
+                {tags.map(tag => (
+                  <span key={tag} style={{fontSize:9,fontFamily:'monospace',background:tier.dim,border:`1px solid ${tier.border}`,color:tier.color,padding:'1px 5px',borderRadius:3,wordBreak:'break-word'}}>{tag}</span>
+                ))}
+                {extra > 0 && <span style={{fontSize:9,color:'var(--text-muted)'}}>+{extra}</span>}
               </div>
             );
           })}
