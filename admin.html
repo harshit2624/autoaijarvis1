@@ -3675,52 +3675,134 @@
                 </div>
               </div>
 
-              {/* Card 2 — Dispatch Rate */}
-              <div style={{background:cBg(dispPct),border:`1px solid ${cBdr(dispPct)}`,borderRadius:8,padding:'14px 16px'}}>
-                <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📦 Dispatch Rate</div>
-                <div style={{display:'flex',alignItems:'flex-end',gap:8,marginBottom:6}}>
-                  <span style={{fontSize:32,fontWeight:900,color:cPct(dispPct),lineHeight:1}}>{dispPct}%</span>
-                  <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:4}}>{fs.dispatched||0}/{fs.active||0}</span>
-                </div>
-                <div className="prog" style={{marginBottom:10}}><div className="prog-fill" style={{width:dispPct+'%',background:cPct(dispPct)}}/></div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
-                  {miniBox('#10b981','Dispatched Rev',fs.revDispatched||0,false)}
-                  {miniBox('#ef4444','Pending Rev',fs.revPending||0,false)}
-                </div>
-                <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.3,marginBottom:4}}>Dispatched Stage Breakdown</div>
-                <StageRows rows={[{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready',c:'#a78bfa',icon:'📦'}]} den={fs.dispatched||1} totalDen={fs.total||1}/>
-              </div>
+              {/* Card 2 — Dispatch Rate — Dispatched vs Pending split, plus
+                  a nested Overall Fulfillment sub-section. Full parity with
+                  the pre-rebuild dashboard (which this dropped): the Pending
+                  column and the Overall Fulfillment block were both missing
+                  here before. */}
+              {(() => {
+                const dispStages = [{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'}];
+                const pendStages = [{key:'confirmed',label:'Confirmed',c:'#34d399',icon:'✓'},{key:'partial',label:'Partial',c:'#fbbf24',icon:'₹'}];
+                const MiniRow = ({s, den}) => {
+                  const cnt = sm[s.key]||0, p = den>0?Math.round(cnt/den*100):0;
+                  if (!cnt) return null;
+                  return (
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{fontSize:11,color:'var(--text-dim)'}}>{s.icon} {s.label}</span>
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <div style={{width:44,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',width:p+'%',background:s.c,borderRadius:2}}/></div>
+                        <span style={{fontSize:11,fontWeight:700,color:s.c,minWidth:20,textAlign:'right'}}>{cnt}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',minWidth:26,textAlign:'right'}}>{p}%</span>
+                      </div>
+                    </div>
+                  );
+                };
+                return (
+                  <div style={{background:cBg(dispPct),border:`1px solid ${cBdr(dispPct)}`,borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:10}}>
+                    <div>
+                      <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>📦 Dispatch Rate</div>
+                      <div style={{display:'flex',alignItems:'flex-end',gap:8,marginBottom:6,flexWrap:'wrap'}}>
+                        <span style={{fontSize:32,fontWeight:900,color:cPct(dispPct),lineHeight:1}}>{dispPct}%</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:4}}>{fs.dispatched||0} dispatched / {fs.active||0} active</span>
+                      </div>
+                      <div className="prog"><div className="prog-fill" style={{width:dispPct+'%',background:cPct(dispPct)}}/></div>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      {miniBox('#10b981','Dispatched Rev',fs.revDispatched||0,false)}
+                      {miniBox('#ef4444','Pending Rev',fs.revPending||0,false)}
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,letterSpacing:0.6,textTransform:'uppercase',color:cPct(dispPct),marginBottom:4}}>✅ {dispPct}% Dispatched ({fs.dispatched||0})</div>
+                        {dispStages.map(s=><MiniRow key={s.key} s={s} den={fs.dispatched||1}/>)}
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,letterSpacing:0.6,textTransform:'uppercase',color:'#f87171',marginBottom:4}}>⏳ {100-dispPct}% Pending ({fs.pending||0})</div>
+                        {pendStages.map(s=><MiniRow key={s.key} s={s} den={fs.pending||1}/>)}
+                      </div>
+                    </div>
+                    <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
+                      <div style={{display:'flex',alignItems:'baseline',gap:8,flexWrap:'wrap',marginBottom:6}}>
+                        <span style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)'}}>🚀 Overall Fulfillment</span>
+                        <span style={{fontSize:18,fontWeight:900,color:cPct(fs.overall_rate||0),lineHeight:1}}>{fs.overall_rate||0}%</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.dispatched||0}/{fs.total||0} total · {fs.cancelled||0} cancelled</span>
+                      </div>
+                      <div className="prog" style={{marginBottom:8}}><div className="prog-fill" style={{width:(fs.overall_rate||0)+'%',background:cPct(fs.overall_rate||0)}}/></div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                        {miniBox('#10b981','Dispatched Rev',fs.revDispatched||0,false)}
+                        {miniBox('#ef4444','Not Dispatched Rev',fs.revNotDispatched||0,false)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
-              {/* Card 3 — Delivery + RTO */}
-              <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:12}}>
-                <div style={{background:cBg(delivPct),border:`1px solid ${cBdr(delivPct)}`,borderRadius:6,padding:'12px 14px'}}>
-                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>✅ Delivery Rate</div>
-                  <div style={{display:'flex',alignItems:'flex-end',gap:8,marginBottom:5}}>
-                    <span style={{fontSize:26,fontWeight:900,color:cPct(delivPct),lineHeight:1}}>{delivPct}%</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{fs.delivered||0}/{fs.dispatched||0} dispatched</span>
+              {/* Card 3 — Delivery + RTO — dispatched-relative breakdown
+                  (with per-stage revenue) plus a normalized "from all
+                  orders" second view. Full parity restored: revenue chips
+                  per stage and the whole "From All Orders" section were
+                  both missing here before. */}
+              {(() => {
+                const inTransitCount = (fs.stageMap?.ready||0)+(fs.stageMap?.pickup||0)+(fs.stageMap?.transit||0);
+                const inTransitPct = fs.dispatched>0 ? Math.round(inTransitCount/fs.dispatched*100) : 0;
+                const allDelRate = fs.total>0 ? Math.round((fs.delivered||0)/fs.total*100) : 0;
+                const allRtoRate = fs.total>0 ? Math.round((fs.rto||0)/fs.total*100) : 0;
+                const allInTRate = fs.total>0 ? Math.round(inTransitCount/fs.total*100) : 0;
+                const DistRow = ({icon,label,count,pct,color,rev}) => (
+                  <div style={{padding:'5px 0',borderBottom:'1px solid var(--border)'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                      <span style={{fontSize:11,color:'var(--text-dim)',display:'flex',alignItems:'center',gap:5}}>{icon} {label}</span>
+                      <div style={{display:'flex',alignItems:'center',gap:6}}>
+                        <div style={{width:44,height:3,background:'var(--border)',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',width:pct+'%',background:color,borderRadius:2}}/></div>
+                        <span style={{fontSize:11,fontWeight:700,color,minWidth:20,textAlign:'right'}}>{count}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',minWidth:26,textAlign:'right'}}>{pct}%</span>
+                      </div>
+                    </div>
+                    {rev != null && (
+                      <div style={{marginTop:3,background:color+'15',border:`1px solid ${color}35`,borderRadius:5,padding:'2px 8px',display:'inline-block'}}>
+                        <span style={{fontSize:11,fontWeight:700,color}}>{fmtCur(rev)}</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="prog" style={{marginBottom:6}}><div className="prog-fill" style={{width:delivPct+'%',background:cPct(delivPct)}}/></div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:5}}>
-                    {miniBox('#10b981','Delivered',fs.delivered||0,true)}
-                    {miniBox('#94a3b8','Still Moving',Math.max(0,(fs.dispatched||0)-(fs.delivered||0)-(fs.rto||0)),true)}
+                );
+                return (
+                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 16px',display:'flex',flexDirection:'column',gap:10}}>
+                    <div style={{background:cBg(delivPct),border:`1px solid ${cBdr(delivPct)}`,borderRadius:6,padding:'12px 14px'}}>
+                      <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>✅ Delivery Rate</div>
+                      <div style={{display:'flex',alignItems:'flex-end',gap:8,marginBottom:5,flexWrap:'wrap'}}>
+                        <span style={{fontSize:26,fontWeight:900,color:cPct(delivPct),lineHeight:1}}>{delivPct}%</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{fs.delivered||0}/{fs.dispatched||0} dispatched</span>
+                      </div>
+                      <div className="prog" style={{marginBottom:8}}><div className="prog-fill" style={{width:delivPct+'%',background:cPct(delivPct)}}/></div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:0.6,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Breakdown of {fs.dispatched||0} dispatched</div>
+                      <DistRow icon="✅" label="Delivered" count={fs.delivered||0} pct={delivPct} color="#10b981" rev={fs.revDelivered}/>
+                      <DistRow icon="🚚" label="In Transit" count={inTransitCount} pct={inTransitPct} color="#60a5fa" rev={fs.revInTransit}/>
+                      <DistRow icon="↩" label="RTO" count={fs.rto||0} pct={rtoPct} color="#f87171" rev={fs.revRto}/>
+                    </div>
+                    <div style={{borderTop:'1px solid var(--border)',paddingTop:10}}>
+                      <div style={{display:'flex',alignItems:'baseline',gap:8,flexWrap:'wrap',marginBottom:6}}>
+                        <span style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)'}}>📊 From All Orders</span>
+                        <span style={{fontSize:16,fontWeight:900,color:cPct(allDelRate),lineHeight:1}}>{allDelRate}%</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>delivered of {fs.total||0} total</span>
+                      </div>
+                      <div className="prog" style={{marginBottom:8}}><div className="prog-fill" style={{width:allDelRate+'%',background:cPct(allDelRate)}}/></div>
+                      <DistRow icon="✅" label="Delivered" count={fs.delivered||0} pct={allDelRate} color="#10b981" rev={null}/>
+                      <DistRow icon="🚚" label="In Transit" count={inTransitCount} pct={allInTRate} color="#60a5fa" rev={null}/>
+                      <DistRow icon="↩" label="RTO" count={fs.rto||0} pct={allRtoRate} color="#f87171" rev={null}/>
+                    </div>
+                    <div style={{background:rtoCBg,border:`1px solid ${rtoCBdr}`,borderRadius:6,padding:'10px 12px'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>↩ RTO rate {rtoPct<15?'✓ on target':'⚠ above 15% target'}</span>
+                        <span style={{fontSize:14,fontWeight:900,color:rtoC}}>{rtoPct}%</span>
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:6}}>
+                        {miniBox('#f87171','Rev at Risk',revAtRisk,false)}
+                        {miniBox('#10b981','Safe Rev',revSafe,false)}
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div style={{background:rtoCBg,border:`1px solid ${rtoCBdr}`,borderRadius:6,padding:'12px 14px'}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-                    <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)'}}>↩ RTO Rate</div>
-                    <div style={{fontSize:9,color:rtoC,fontWeight:700}}>{rtoPct<15?'✓ On Target':'⚠ Above Target'}</div>
-                  </div>
-                  <div style={{display:'flex',alignItems:'flex-end',gap:8,marginBottom:5}}>
-                    <span style={{fontSize:26,fontWeight:900,color:rtoC,lineHeight:1}}>{rtoPct}%</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)',marginBottom:3}}>{fs.rto||0}/{fs.dispatched||0} · target &lt;15%</span>
-                  </div>
-                  <div className="prog" style={{marginBottom:8}}><div className="prog-fill" style={{width:Math.min(rtoPct,100)+'%',background:rtoC}}/></div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:5}}>
-                    {miniBox('#f87171','Rev at Risk',revAtRisk,false)}
-                    {miniBox('#10b981','Safe Rev',revSafe,false)}
-                  </div>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           );
         })()}
