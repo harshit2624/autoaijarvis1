@@ -6056,32 +6056,41 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const stage = getEffectiveStage(String(o.id));
       const isDelivered = stage === 'delivered';
       const isRto = stage === 'rto';
+      const isDead = stage === 'cancelled' || stage === 'hold';
       const city = (o.shipping_address?.city || '').trim();
       if (city) {
         const key = city.toLowerCase();
-        if (!cityMap[key]) cityMap[key] = { count: 0, delivered: 0, rto: 0, names: {} };
+        if (!cityMap[key]) cityMap[key] = { count: 0, delivered: 0, rto: 0, dead: 0, names: {} };
         cityMap[key].count++;
         cityMap[key].names[city] = (cityMap[key].names[city] || 0) + 1;
         if (isDelivered) cityMap[key].delivered++;
         else if (isRto) cityMap[key].rto++;
+        else if (isDead) cityMap[key].dead++;
       }
       const state = (o.shipping_address?.province || '').trim();
       if (state) {
         const key = state.toLowerCase();
-        if (!stateMap[key]) stateMap[key] = { count: 0, delivered: 0, rto: 0, names: {} };
+        if (!stateMap[key]) stateMap[key] = { count: 0, delivered: 0, rto: 0, dead: 0, names: {} };
         stateMap[key].count++;
         stateMap[key].names[state] = (stateMap[key].names[state] || 0) + 1;
         if (isDelivered) stateMap[key].delivered++;
         else if (isRto) stateMap[key].rto++;
+        else if (isDead) stateMap[key].dead++;
       }
     });
+    // dead = cancelled/hold (genuinely dropped, not "still moving"); the
+    // remainder after delivered/rto/dead is orders actually in motion
+    // (confirmed/partial/ready/pickup/transit/ofd) — kept as two separate
+    // buckets on the frontend instead of lumping cancelled/hold in with
+    // orders that are still progressing toward delivery.
     const bucketToRows = (map) => Object.values(map).sort((a,b)=>b.count-a.count).slice(0,8)
       .map(d => {
         const bestRawName = Object.entries(d.names).sort((a,b)=>b[1]-a[1])[0][0];
         return {
-          city: titleCase(bestRawName), count: d.count, delivered: d.delivered, rto: d.rto,
+          city: titleCase(bestRawName), count: d.count, delivered: d.delivered, rto: d.rto, dead: d.dead,
           deliveredPct: d.count>0 ? Math.round(d.delivered/d.count*100) : 0,
           rtoPct: d.count>0 ? Math.round(d.rto/d.count*100) : 0,
+          deadPct: d.count>0 ? Math.round(d.dead/d.count*100) : 0,
         };
       });
     const topCities = bucketToRows(cityMap);
