@@ -341,7 +341,7 @@
     .top-prod-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
     .top-prod-row::-webkit-scrollbar { display: none; }
     .tp-card { flex-shrink: 0; width: 130px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--bg-hover); }
-    .tp-bar-wrap { height: 50px; display: flex; align-items: flex-end; padding: 0 12px 6px; background: var(--bg-card2); }
+    .tp-bar-wrap { height: 92px; display: flex; align-items: flex-end; padding: 0 12px 6px; background: var(--bg-card2); }
     .tp-bar { width: 100%; border-radius: 3px 3px 0 0; transition: height 0.4s; }
     .tp-info { padding: 8px 9px; }
     .tp-name { font-size: 10px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3431,6 +3431,41 @@
         .then(r=>r.json()).then(d=>{ const t=d.tickets||d||[]; setCriticalTickets(t); if(dashCache?.current) dashCache.current.criticalTickets=t; }).catch(()=>setCriticalTickets([]));
     },[token]);
 
+    // Vendor scorecard — order-level stuck-order detail (customer/phone/
+    // amount/city) + per-vendor pending-48h+ counts, feeds both the
+    // "Vendors With Orders Stuck" summary and the "View all" detail modal.
+    const [scorecard, setScorecard] = useState(()=> dashCache?.current?.scorecard || null);
+    useEffect(()=>{
+      if (dashCache?.current?.scorecard) { setScorecard(dashCache.current.scorecard); return; }
+      fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setScorecard(d); if(dashCache?.current) dashCache.current.scorecard=d; }).catch(()=>{});
+    },[token]);
+    const [stuckModalOpen, setStuckModalOpen] = useState(false);
+
+    // Product photos for Top Selling Products — batch-fetched from the
+    // existing product-images endpoint once topProducts is known.
+    const [productImages, setProductImages] = useState({});
+    useEffect(()=>{
+      const ids = (analytics?.topProducts||[]).map(p=>p.product_id).filter(Boolean);
+      if (!ids.length) return;
+      fetch(`${API}/admin/product-images?ids=${ids.join(',')}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setProductImages(d.images||{})).catch(()=>{});
+    },[token, analytics?.topProducts]);
+
+    // Ticket actions — resolve (closes it, removes from the list) and a
+    // direct WhatsApp link using the phone already stored on the ticket.
+    const resolveTicket = (id) => {
+      fetch(`${API}/admin/support/tickets/${id}/close`,{method:'POST',headers:{Authorization:`Bearer ${token}`}})
+        .then(()=>{
+          setCriticalTickets(prev=>(prev||[]).filter(t=>t._id!==id));
+          if (dashCache?.current) dashCache.current.criticalTickets = (dashCache.current.criticalTickets||[]).filter(t=>t._id!==id);
+        }).catch(()=>{});
+    };
+    const waLink = (phone) => {
+      const digits = String(phone||'').replace(/\D/g,'').replace(/^91/,'').slice(-10);
+      return digits.length===10 ? `https://wa.me/91${digits}` : null;
+    };
+
     // ── Audience/Risk tiers — same tag-mapping logic + localStorage config
     // the old standalone AudienceQualityBreakdown component used, folded in
     // here so "Configure tiers in Tag Mappings" still points at the same
@@ -3476,6 +3511,8 @@
         .then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false));
       fetch(`${API}/admin/support/tickets`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{ const t=d.tickets||d||[]; setCriticalTickets(t); if(dashCache?.current) dashCache.current.criticalTickets=t; }).catch(()=>{});
+      fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setScorecard(d); if(dashCache?.current) dashCache.current.scorecard=d; }).catch(()=>{});
     };
 
     return (
@@ -3569,8 +3606,18 @@
           const notConfirmedStages = [
             {key:'new',label:'New/Unconfirmed',c:'#94a3b8',icon:'◉'},{key:'hold',label:'On Hold',c:'#fb923c',icon:'⏸'},{key:'cancelled',label:'Cancelled',c:'#ef4444',icon:'✕'},
           ];
-          const StageRows = ({rows, den}) => rows.filter(r=>(sm[r.key]||0)>0).map(r => {
+          // totalDen (optional): shows a 3rd faint "X% of all orders" column
+          // alongside the bucket-relative %, restored from the old dashboard.
+          // wasConfirmedMap (optional): for not-confirmed buckets, annotates
+          // how many of that stage's orders actually carried the "✅ Order
+          // Confirmed" tag before falling off-pipeline (fs.confirmedTagMap) —
+          // a real signal that something broke the confirmed→dispatch chain,
+          // not just an unconfirmed order sitting idle. Also restored from
+          // the old dashboard, dropped in the first rebuild.
+          const StageRows = ({rows, den, totalDen, wasConfirmedMap}) => rows.filter(r=>(sm[r.key]||0)>0).map(r => {
             const cnt = sm[r.key]||0, p = den>0?Math.round(cnt/den*100):0;
+            const totalPct = totalDen>0 ? Math.round(cnt/totalDen*100) : null;
+            const wasConfirmed = wasConfirmedMap ? (wasConfirmedMap[r.key]||0) : 0;
             return (
               <div key={r.key} style={{padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
                 <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -3578,7 +3625,16 @@
                   <div style={{flex:1,height:4,background:'var(--border)',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',width:p+'%',background:r.c,borderRadius:2}}/></div>
                   <span style={{fontSize:11,fontWeight:700,color:r.c,minWidth:22,textAlign:'right'}}>{cnt}</span>
                   <span style={{fontSize:10,color:'var(--text-muted)',minWidth:28,textAlign:'right'}}>{p}%</span>
+                  {totalPct != null && <span style={{fontSize:9,color:'var(--text-muted)',minWidth:36,textAlign:'right',opacity:0.6}}>{totalPct}% all</span>}
                 </div>
+                {wasConfirmed > 0 && (
+                  <div style={{marginTop:2,marginLeft:2,fontSize:9,color:'#f59e0b',display:'flex',alignItems:'center',gap:4}}>
+                    <span>↳</span>
+                    <span style={{background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:3,padding:'1px 5px'}}>
+                      {wasConfirmed} were confirmed (✅ tag) — {cnt>0?Math.round(wasConfirmed/cnt*100):0}% of this bucket
+                    </span>
+                  </div>
+                )}
               </div>
             );
           });
@@ -3602,14 +3658,19 @@
                   <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.active||0} confirmed / {fs.total||0} total</span>
                 </div>
                 <div className="prog" style={{marginBottom:10}}><div className="prog-fill" style={{width:confPct+'%',background:'#6366f1'}}/></div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
+                  {miniBox('#34d399','Confirmed Rev',(fs.revDispatched||0)+(fs.revPending||0),false)}
+                  {miniBox('#94a3b8','Not Confirmed',fs.revNotConfirmed||0,false)}
+                  {miniBox('#ef4444','Cancelled Rev',fs.revCancelled||0,false)}
+                </div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
                   <div>
                     <div style={{fontSize:9,fontWeight:700,color:'#34d399',textTransform:'uppercase',letterSpacing:0.3,marginBottom:4}}>✓ Confirmed ({fs.active||0})</div>
-                    <StageRows rows={confirmedStages} den={fs.active||1}/>
+                    <StageRows rows={confirmedStages} den={fs.active||1} totalDen={fs.total||1}/>
                   </div>
                   <div>
                     <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:0.3,marginBottom:4}}>○ Not Confirmed ({fs.notConfirmed||0})</div>
-                    <StageRows rows={notConfirmedStages} den={fs.notConfirmed||1}/>
+                    <StageRows rows={notConfirmedStages} den={fs.notConfirmed||1} totalDen={fs.total||1} wasConfirmedMap={fs.confirmedTagMap}/>
                   </div>
                 </div>
               </div>
@@ -3627,7 +3688,7 @@
                   {miniBox('#ef4444','Pending Rev',fs.revPending||0,false)}
                 </div>
                 <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.3,marginBottom:4}}>Dispatched Stage Breakdown</div>
-                <StageRows rows={[{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready',c:'#a78bfa',icon:'📦'}]} den={fs.dispatched||1}/>
+                <StageRows rows={[{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready',c:'#a78bfa',icon:'📦'}]} den={fs.dispatched||1} totalDen={fs.total||1}/>
               </div>
 
               {/* Card 3 — Delivery + RTO */}
@@ -3757,6 +3818,7 @@
                 { type:'PREPAID', count:a.paymentSplit.prepaid||0, c:'#34d399', bg:'rgba(16,185,129,.07)',bdr:'rgba(16,185,129,.2)', tip:'Best cash flow — instant settlement' },
                 { type:'PARTIAL', count:a.paymentSplit.partial||0, c:'#fbbf24', bg:'rgba(245,158,11,.07)',bdr:'rgba(245,158,11,.2)', tip:'Advance paid — follow up for COD balance' },
               ];
+              const withPct = cards.map(c => ({ ...c, pct: Math.round(c.count/totalPay*100) }));
               return (
                 <div className="dash-section" style={{marginBottom:0}}>
                   <div className="dash-section-hdr">
@@ -3765,17 +3827,24 @@
                       <div className="dash-section-meta">Prepaid vs COD vs Partial — affects RTO &amp; cash flow</div>
                     </div>
                   </div>
-                  <div className="pay-grid">
-                    {cards.map(c=>{
-                      const pct = Math.round(c.count/totalPay*100);
+                  {/* Segmented share bar — each block's width IS its share of orders */}
+                  <div style={{display:'flex',height:22,borderRadius:6,overflow:'hidden',marginBottom:12,gap:1}}>
+                    {withPct.filter(c=>c.count>0).map(c=>(
+                      <div key={c.type} title={`${c.type}: ${c.pct}%`} style={{flex:c.count,minWidth:2,background:c.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        {c.pct>=8 && <span style={{fontSize:9,fontWeight:800,color:'#06281f'}}>{c.pct}%</span>}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{display:'flex',gap:10}}>
+                    {withPct.map(c=>{
                       const rev = Math.round(revBase * (c.count/totalPay));
                       return (
-                        <div key={c.type} className="pay-card" style={{background:c.bg,borderColor:c.bdr}}>
+                        <div key={c.type} className="pay-card" style={{background:c.bg,borderColor:c.bdr,flex:`${Math.max(c.pct,10)} 1 0`,minWidth:0}}>
                           <div className="pay-type" style={{color:c.c}}>{c.type}</div>
                           <div className="pay-count" style={{color:c.c}}>{c.count}</div>
                           <div className="pay-rev" style={{color:c.c}}>{fmtCur(rev)}</div>
-                          <div className="pay-pct" style={{color:c.c}}>{pct}% of orders</div>
-                          <div className="pay-bar" style={{background:c.c,width:pct+'%'}}/>
+                          <div className="pay-pct" style={{color:c.c}}>{c.pct}% of orders</div>
+                          <div className="pay-bar" style={{background:c.c,width:c.pct+'%'}}/>
                           <div style={{fontSize:9,color:'var(--text-muted)',marginTop:6,lineHeight:1.3}}>{c.tip}</div>
                         </div>
                       );
@@ -3800,7 +3869,12 @@
                       <div className="dash-section-title">🚨 Vendors With Orders Stuck 48h+</div>
                       <div className="dash-section-meta">Confirmed but not dispatched for 48+ hours</div>
                     </div>
-                    <div className="dash-section-tag" style={{background:'rgba(239,68,68,.1)',color:'#f87171',border:'1px solid rgba(239,68,68,.25)'}}>NEEDS ACTION</div>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      {(scorecard?.stuckOrders||[]).length > 0 && (
+                        <button onClick={()=>setStuckModalOpen(true)} style={{fontSize:9,fontWeight:700,color:'#f87171',background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.25)',borderRadius:99,padding:'4px 10px',cursor:'pointer'}}>View all {(scorecard?.stuckOrders||[]).length} orders →</button>
+                      )}
+                      <div className="dash-section-tag" style={{background:'rgba(239,68,68,.1)',color:'#f87171',border:'1px solid rgba(239,68,68,.25)'}}>NEEDS ACTION</div>
+                    </div>
                   </div>
                   <div className="stuck-list">
                     {stuck.map(v=>{
@@ -3837,12 +3911,17 @@
                   {criticalTickets.slice(0,10).map((t,i)=>{
                     const overdue = t.sla_deadline && new Date(t.sla_deadline) < new Date();
                     const sev = overdue ? {label:'OVERDUE',c:'#ef4444',bg:'rgba(239,68,68,.07)',bdr:'rgba(239,68,68,.2)'} : {label:(t.issue_category||'OPEN').toUpperCase(),c:'#f59e0b',bg:'rgba(245,158,11,.07)',bdr:'rgba(245,158,11,.2)'};
+                    const wa = waLink(t.customer_phone);
                     return (
                       <div key={t._id||i} className="ticket-row" style={{background:sev.bg,borderColor:sev.bdr}}>
                         <span className="ticket-badge" style={{background:sev.c+'22',color:sev.c}}>{sev.label}</span>
                         <div className="ticket-body">
                           <div className="ticket-title">{t.order_name||'No order'} — {t.last_customer_msg ? t.last_customer_msg.slice(0,70) : (t.context_note||'—').slice(0,70)}</div>
                           <div className="ticket-meta">{t.issue_category||'general'} · {t.created_at ? new Date(t.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'}) : ''}</div>
+                        </div>
+                        <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0}}>
+                          {wa && <a href={wa} target="_blank" rel="noreferrer" className="ticket-action" style={{color:'#25D366',borderColor:'#25D36655',textDecoration:'none',textAlign:'center'}}>💬 WhatsApp</a>}
+                          <button onClick={()=>resolveTicket(t._id)} className="ticket-action" style={{color:'#10b981',borderColor:'rgba(16,185,129,.4)'}}>✓ Resolve</button>
                         </div>
                       </div>
                     );
@@ -3862,22 +3941,29 @@
               <div className="dash-section-hdr">
                 <div>
                   <div className="dash-section-title">🔥 Top Selling Products</div>
-                  <div className="dash-section-meta">Ranked by units sold — all time</div>
+                  <div className="dash-section-meta">Ranked by units sold · {periodLabel}</div>
                 </div>
                 <div style={{fontSize:10,color:'var(--text-muted)'}}>→ scroll to see all</div>
               </div>
               <div className="top-prod-row">
                 {a.topProducts.map((p,i)=>{
                   const c = COLORS[i%COLORS.length];
+                  const img = p.product_id ? productImages[p.product_id] : null;
                   return (
                     <div key={i} className="tp-card">
-                      <div className="tp-bar-wrap">
-                        <div className="tp-bar" style={{height:`${Math.max(8,Math.round(p.qty/maxQty*100))}%`,background:c}}/>
+                      <div className="tp-bar-wrap" style={{padding:0,position:'relative',overflow:'hidden'}}>
+                        {img ? (
+                          <img src={img} alt={p.title} style={{width:'100%',height:'100%',objectFit:'cover'}} onError={e=>{e.target.style.display='none';}}/>
+                        ) : (
+                          <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26,background:c+'15'}}>👕</div>
+                        )}
+                        <div style={{position:'absolute',top:5,left:5,fontSize:9,fontWeight:800,background:c,color:'#fff',padding:'2px 7px',borderRadius:99}}>#{i+1}</div>
                       </div>
                       <div className="tp-info">
                         <div className="tp-name" title={p.title}>{p.title}</div>
                         <div className="tp-cnt" style={{color:c}}>{p.qty} <span style={{fontSize:9,fontWeight:500,color:'var(--text-muted)'}}>units</span></div>
                         <div className="tp-rev">{fmtCur(p.revenue)} · {p.vendor}</div>
+                        <div className="prog" style={{marginTop:4}}><div className="prog-fill" style={{width:`${Math.max(4,Math.round(p.qty/maxQty*100))}%`,background:c}}/></div>
                       </div>
                     </div>
                   );
@@ -3887,28 +3973,34 @@
           );
         })()}
 
-        {/* ── Top Cities + Audience/Risk Breakdown ── */}
+        {/* ── Top Cities (with delivered/RTO breakdown) + Order Risk Breakdown ── */}
         {!aLoading && a && (a.topCities?.length > 0 || audTierCounts.some(t=>t.count>0)) && (
           <div className="dash-2col">
             {a.topCities?.length > 0 && (() => {
               const maxC = Math.max(...a.topCities.map(c=>c.count), 1);
-              const cCol = i => ['#10b981','#60a5fa','#f59e0b','#a78bfa','#34d399','#fb923c','#f87171','#22d3ee'][i%8];
+              const dCol = p => p>=70?'#10b981':p>=50?'#60a5fa':'#f59e0b';
+              const rCol = p => p<15?'#10b981':p<25?'#f59e0b':'#ef4444';
               return (
                 <div className="dash-section" style={{marginBottom:0}}>
                   <div className="dash-section-hdr">
                     <div>
-                      <div className="dash-section-title">📍 Top Cities</div>
-                      <div className="dash-section-meta">{periodLabel} · where your orders come from</div>
+                      <div className="dash-section-title">📍 Top Cities — Delivery vs RTO</div>
+                      <div className="dash-section-meta">{periodLabel} · where your orders convert best</div>
                     </div>
                   </div>
                   <div className="state-grid">
-                    {a.topCities.map((c,i)=>(
+                    {a.topCities.map((c)=>(
                       <div key={c.city} className="state-card">
-                        <div className="state-name">{c.city}</div>
+                        <div className="state-name">{c.city} <span style={{fontWeight:500,color:'var(--text-muted)',fontSize:10}}>· {c.count} orders</span></div>
                         <div className="state-bar-row">
-                          <div className="state-bar-lbl" style={{color:cCol(i)}}>Orders</div>
-                          <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${Math.round(c.count/maxC*100)}%`,background:cCol(i)}}/></div>
-                          <div className="state-bar-val" style={{color:cCol(i)}}>{c.count}</div>
+                          <div className="state-bar-lbl" style={{color:dCol(c.deliveredPct)}}>Delivered</div>
+                          <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${c.deliveredPct}%`,background:dCol(c.deliveredPct)}}/></div>
+                          <div className="state-bar-val" style={{color:dCol(c.deliveredPct)}}>{c.delivered} · {c.deliveredPct}%</div>
+                        </div>
+                        <div className="state-bar-row">
+                          <div className="state-bar-lbl" style={{color:rCol(c.rtoPct)}}>RTO</div>
+                          <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${c.rtoPct}%`,background:rCol(c.rtoPct)}}/></div>
+                          <div className="state-bar-val" style={{color:rCol(c.rtoPct)}}>{c.rto} · {c.rtoPct}%</div>
                         </div>
                       </div>
                     ))}
@@ -3916,34 +4008,93 @@
                 </div>
               );
             })()}
-            {audTierCounts.some(t=>t.count>0) && (
-              <div className="dash-section" style={{marginBottom:0}}>
-                <div className="dash-section-hdr">
-                  <div>
-                    <div className="dash-section-title">🛡️ Order Risk Breakdown</div>
-                    <div className="dash-section-meta">Shopify tags mapped to risk tiers</div>
+            {audTierCounts.some(t=>t.count>0) && (() => {
+              const maxT = Math.max(...audTierCounts.map(t=>t.count), 1);
+              return (
+                <div className="dash-section" style={{marginBottom:0}}>
+                  <div className="dash-section-hdr">
+                    <div>
+                      <div className="dash-section-title">🛡️ Order Risk Breakdown</div>
+                      <div className="dash-section-meta">Shopify tags mapped to risk tiers · {periodLabel}</div>
+                    </div>
+                    <span style={{fontSize:10,color:'var(--text-muted)',background:'var(--bg-hover)',padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)'}}>Configure tiers in Tag Mappings →</span>
                   </div>
-                  <span style={{fontSize:10,color:'var(--text-muted)',background:'var(--bg-hover)',padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)'}}>Configure tiers in Tag Mappings →</span>
-                </div>
-                <div className="aud-grid">
-                  {audTierCounts.map(tier=>{
-                    const pct = tagTotal>0 ? Math.round(tier.count/tagTotal*100) : 0;
-                    const tags = (audTierMap[tier.id]||tier.defaults).slice(0,4);
-                    return (
-                      <div key={tier.id} className="aud-card" style={{background:tier.dim,borderColor:tier.border}}>
-                        <div className="aud-tier" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
-                        <div className="aud-pct" style={{color:tier.color}}>{pct}%</div>
-                        <div className="prog" style={{margin:'6px 0'}}><div className="prog-fill" style={{width:pct+'%',background:tier.color}}/></div>
-                        <div className="aud-desc" style={{color:'var(--text-muted)'}}>{tier.count.toLocaleString()} orders</div>
-                        <div className="aud-examples">
-                          {tags.map(tag=><span key={tag} className="aud-pill">{tag}</span>)}
+                  <div className="mini-bar-chart">
+                    {audTierCounts.map(tier=>{
+                      const pct = tagTotal>0 ? Math.round(tier.count/tagTotal*100) : 0;
+                      const barPct = Math.max((tier.count/maxT)*100, tier.count>0?6:0);
+                      return (
+                        <div key={tier.id} className="mini-bar-col" title={`${tier.label}: ${tier.count} orders (${pct}%)`}>
+                          <div className="mini-bar-track">
+                            <div className="mini-bar-fill" style={{height:`${barPct}%`,background:tier.color}}>
+                              {tier.count>0 && <span className="mini-bar-count">{tier.count}</span>}
+                            </div>
+                          </div>
+                          <div className="mini-bar-label" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
+                          <div className="mini-bar-pct" style={{color:tier.color}}>{pct}%</div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)'}}>
+                    {audTierCounts.map(tier=>{
+                      const tags = (audTierMap[tier.id]||tier.defaults).slice(0,4);
+                      return (
+                        <div key={tier.id} style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
+                          <span style={{fontSize:9,fontWeight:700,color:tier.color,flexShrink:0}}>{tier.icon}</span>
+                          {tags.map(tag=><span key={tag} className="aud-pill" style={{background:tier.dim,color:tier.color}}>{tag}</span>)}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── Critical Stuck Orders — full detail modal ── */}
+        {stuckModalOpen && (
+          <div onClick={()=>setStuckModalOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:500,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,maxWidth:820,width:'100%',maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>🚨 Critical Stuck Orders</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{(scorecard?.stuckOrders||[]).length} orders confirmed but not dispatched, sorted by longest wait</div>
+                </div>
+                <button onClick={()=>setStuckModalOpen(false)} style={{background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:16,width:30,height:30}}>✕</button>
               </div>
-            )}
+              <div style={{overflowY:'auto',padding:'8px 12px'}}>
+                {(scorecard?.stuckOrders||[]).map((o,i)=>{
+                  const hrs = Math.round(o.hrs);
+                  const sevC = hrs>=120?'#ef4444':hrs>=72?'#f59e0b':'#60a5fa';
+                  const wa = waLink(o.customer_phone);
+                  return (
+                    <div key={i} style={{display:'flex',alignItems:'flex-start',gap:12,padding:'12px 10px',borderBottom:i<((scorecard?.stuckOrders||[]).length-1)?'1px solid var(--border)':'none'}}>
+                      <div style={{width:6,alignSelf:'stretch',borderRadius:3,background:sevC,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{o.order_name}</span>
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:sevC+'22',color:sevC,textTransform:'uppercase'}}>{o.stage}</span>
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'var(--bg-hover)',color:'var(--text-muted)'}}>{o.payType}</span>
+                        </div>
+                        <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>{o.customer_name||'Unknown customer'}{o.customer_phone?` · +91 ${o.customer_phone}`:''}{o.city?` · ${o.city}`:''}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{o.items||'—'}</div>
+                        <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginTop:4}}>{o.vendor} · {fmtCur(o.total_price)}</div>
+                      </div>
+                      <div style={{textAlign:'right',flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
+                        <div>
+                          <div style={{fontSize:18,fontWeight:900,color:sevC,lineHeight:1}}>{hrs}h</div>
+                          <div style={{fontSize:8,fontWeight:600,color:sevC,opacity:0.8}}>waiting</div>
+                        </div>
+                        {wa && <a href={wa} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:600,color:'#25D366',border:'1px solid #25D36655',borderRadius:6,padding:'3px 8px',textDecoration:'none'}}>💬 WhatsApp</a>}
+                      </div>
+                    </div>
+                  );
+                })}
+                {!(scorecard?.stuckOrders||[]).length && <div style={{padding:20,fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+              </div>
+            </div>
           </div>
         )}
 

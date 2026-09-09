@@ -5953,12 +5953,13 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       cod:     orders30d.filter(o => !isPrepaid(o) && !isPartial(o) && !((metaMap[String(o.id)]?.advance_paid || 0) > 0)).length,
     };
 
-    // ── Top products by quantity sold (all time)
+    // ── Top products by quantity sold — scoped to the SELECTED period (was
+    // wrongly all-time before, ignoring the period picker entirely).
     const productMap = {};
-    raw.forEach(o => {
+    ordersMain.forEach(o => {
       (o.line_items || []).forEach(li => {
         const key = li.product_id || li.title;
-        if (!productMap[key]) productMap[key] = { title: li.title, vendor: li.vendor || '—', qty: 0, revenue: 0, orders: new Set() };
+        if (!productMap[key]) productMap[key] = { product_id: li.product_id || null, title: li.title, vendor: li.vendor || '—', qty: 0, revenue: 0, orders: new Set() };
         productMap[key].qty     += li.quantity || 1;
         productMap[key].revenue += parseFloat(li.price || 0) * (li.quantity || 1);
         productMap[key].orders.add(String(o.id));
@@ -5969,9 +5970,9 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       .sort((a,b) => b.qty - a.qty)
       .slice(0, 10);
 
-    // ── Top brands/vendors by revenue (all time)
+    // ── Top brands/vendors by revenue — scoped to the SELECTED period.
     const brandMap = {};
-    raw.forEach(o => {
+    ordersMain.forEach(o => {
       (o.line_items || []).forEach(li => {
         const vn = li.vendor || 'Unknown';
         if (!brandMap[vn]) brandMap[vn] = { name: vn, qty: 0, revenue: 0, orders: new Set() };
@@ -6033,13 +6034,25 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const repeatCustomers = Object.values(custMap).filter(c=>c>1).length;
     const repeatRate      = totalCustomers ? parseFloat((repeatCustomers/totalCustomers*100).toFixed(1)) : 0;
 
-    // ── Top cities (30d)
+    // ── Top cities (selected period) — now with delivered/RTO breakdown per
+    // city, not just raw order count, so the dashboard can show delivery
+    // and RTO performance by city (previously only total order count).
     const cityMap = {};
     orders30d.forEach(o => {
       const city = o.shipping_address?.city;
-      if (city) { cityMap[city] = (cityMap[city]||0) + 1; }
+      if (!city) return;
+      if (!cityMap[city]) cityMap[city] = { count: 0, delivered: 0, rto: 0 };
+      cityMap[city].count++;
+      const stage = getEffectiveStage(String(o.id));
+      if (stage === 'delivered') cityMap[city].delivered++;
+      else if (stage === 'rto') cityMap[city].rto++;
     });
-    const topCities = Object.entries(cityMap).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([city,count])=>({city,count}));
+    const topCities = Object.entries(cityMap).sort((a,b)=>b[1].count-a[1].count).slice(0,8)
+      .map(([city,d])=>({
+        city, count: d.count, delivered: d.delivered, rto: d.rto,
+        deliveredPct: d.count>0 ? Math.round(d.delivered/d.count*100) : 0,
+        rtoPct: d.count>0 ? Math.round(d.rto/d.count*100) : 0,
+      }));
 
     // ── Stage counts for selected period
     const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","penalty"];
@@ -6288,25 +6301,36 @@ app.get("/admin/vendor-scorecard", adminAuth, async (req, res) => {
       { projection: { shopify_id:1, vendor_name:1, stage:1, stage_started_at:1, dispatched_at:1, awb:1, _id:0 } }
     ).toArray();
 
-    // ── 1. Top 10 orders stuck longest in pickup-pending stages
+    // ── 1. Orders stuck longest in pickup-pending stages — capped at 60 so
+    // the "view all critical stuck orders" dashboard modal has real depth,
+    // not just the top handful.
     const stuckRows = allVS
       .filter(r => PENDING_STAGES.has(r.stage) && r.stage_started_at > 0)
       .map(r => ({ shopify_id: r.shopify_id, vendor: r.vendor_name, stage: r.stage, hrs: (now - r.stage_started_at) / 3600000 }))
       .sort((a, b) => b.hrs - a.hrs)
-      .slice(0, 15);
+      .slice(0, 60);
 
-    // Attach order names + payment type from order_meta
+    // Attach order names + payment type + customer/amount details from
+    // order_meta — enough for a "critical stuck orders" detail view
+    // (customer name/phone for a WhatsApp follow-up, city, amount) without
+    // a second round-trip per order.
     const stuckIds = [...new Set(stuckRows.map(r => r.shopify_id))];
     const metaDocs = await mdb.collection('order_meta').find(
       { shopify_id: { $in: stuckIds } },
-      { projection: { shopify_id:1, order_name:1, payment_type:1, financial_status:1, _id:0 } }
+      { projection: { shopify_id:1, order_name:1, payment_type:1, financial_status:1, customer_name:1, customer_phone:1, total_price:1, shipping_address:1, items:1, shopify_created_at:1, _id:0 } }
     ).toArray();
     const metaByid = Object.fromEntries(metaDocs.map(m => [m.shopify_id, m]));
     const stuckOrders = stuckRows.map(r => {
       const m = metaByid[r.shopify_id] || {};
       const isPrepaid = m.financial_status === 'paid' || m.payment_type === 'prepaid';
       const isPartial = m.financial_status === 'partially_paid' || m.payment_type === 'advance';
-      return { ...r, order_name: m.order_name || r.shopify_id, payType: isPrepaid ? 'prepaid' : isPartial ? 'partial' : 'cod' };
+      return {
+        ...r, order_name: m.order_name || r.shopify_id, payType: isPrepaid ? 'prepaid' : isPartial ? 'partial' : 'cod',
+        customer_name: m.customer_name || '', customer_phone: m.customer_phone || '',
+        total_price: parseFloat(m.total_price || 0), city: m.shipping_address?.city || '',
+        items: (m.items || []).map(i => `${i.title}${i.variant_title && i.variant_title !== 'Default Title' ? ` (${i.variant_title})` : ''}`).join(', '),
+        created_at: m.shopify_created_at || null,
+      };
     });
 
     // ── 2. Per-vendor metrics
