@@ -1247,15 +1247,25 @@
               {!activeForm && (() => {
                 const rrs = order.return_requests || [];
                 if (rrs.length > 0) {
-                  const RR_STEPS = ['submitted','approved','pickup_scheduled','in_transit','completed'];
-                  const RR_LABELS = { submitted:'Submitted', approved:'Approved', pickup_scheduled:'Pickup Scheduled', in_transit:'In Transit', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
-                  const RR_ICONS  = { submitted:'📋', approved:'✅', pickup_scheduled:'🚚', in_transit:'📦', completed:'🎉', rejected:'❌', cancelled:'✕' };
+                  // Matches backend RR_STATUS_ORDER (server.js) — 'pending' is
+                  // the real status a fresh request starts in (not 'submitted',
+                  // which was never actually set anywhere), and 'pickup'/
+                  // 'picked_up' and 'received'/'received_at_warehouse' are
+                  // aliased onto one visual step each below. Previously this
+                  // list was missing pending/pickup/picked_up/received/
+                  // received_at_warehouse entirely, so indexOf() returned -1
+                  // for most real statuses and the bar showed nothing filled
+                  // in even for a request that had already progressed.
+                  const RR_STEPS = ['pending','approved','pickup_scheduled','picked_up','in_transit','received','completed'];
+                  const RR_LABELS = { pending:'Requested', approved:'Approved', pickup_scheduled:'Pickup Scheduled', pickup:'Picked Up', picked_up:'Picked Up', in_transit:'In Transit', received:'Received', received_at_warehouse:'Received', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
+                  const RR_ICONS  = { pending:'📋', approved:'✅', pickup_scheduled:'🚚', pickup:'📦', picked_up:'📦', in_transit:'🛫', received:'📥', received_at_warehouse:'📥', completed:'🎉', rejected:'❌', cancelled:'✕' };
+                  const RR_STEP_ALIAS = { pickup:'picked_up', received_at_warehouse:'received' };
                   const statusColor = s => s==='completed'?'#10b981':s==='rejected'||s==='cancelled'?'#ef4444':'#6366f1';
                   return (
                     <div style={{marginTop:12}}>
                       {rrs.map((rr, idx) => {
                         const isTerminal = ['rejected','cancelled'].includes(rr.status);
-                        const currentStep = isTerminal ? -1 : RR_STEPS.indexOf(rr.status);
+                        const currentStep = isTerminal ? -1 : RR_STEPS.indexOf(RR_STEP_ALIAS[rr.status] || rr.status);
                         return (
                           <RRProgressCard key={rr.request_id} rr={rr} idx={idx} total={rrs.length}
                             RR_STEPS={RR_STEPS} RR_LABELS={RR_LABELS} RR_ICONS={RR_ICONS} statusColor={statusColor} isTerminal={isTerminal} currentStep={currentStep}/>
