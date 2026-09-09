@@ -4093,6 +4093,190 @@
           </div>
         )}
 
+        {/* ── Top Selling Products ── */}
+        {!aLoading && a?.topProducts?.length > 0 && (() => {
+          const COLORS = ['#6366f1','#10b981','#f59e0b','#60a5fa','#a78bfa','#34d399','#fb923c','#f87171','#22d3ee','#ec4899'];
+          const maxQty = Math.max(...a.topProducts.map(p=>p.qty), 1);
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">🔥 Top Selling Products</div>
+                  <div className="dash-section-meta">Ranked by units sold · {periodLabel}</div>
+                </div>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>→ scroll to see all</div>
+              </div>
+              <div className="top-prod-row">
+                {a.topProducts.map((p,i)=>{
+                  const c = COLORS[i%COLORS.length];
+                  const img = p.product_id ? productImages[p.product_id] : null;
+                  return (
+                    <div key={i} className="tp-card">
+                      <div className="tp-bar-wrap" style={{padding:0,position:'relative',overflow:'hidden'}}>
+                        {img ? (
+                          <img src={img} alt={p.title} style={{width:'100%',height:'100%',objectFit:'cover'}} onError={e=>{e.target.style.display='none';}}/>
+                        ) : (
+                          <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26,background:c+'15'}}>👕</div>
+                        )}
+                        <div style={{position:'absolute',top:5,left:5,fontSize:9,fontWeight:800,background:c,color:'#fff',padding:'2px 7px',borderRadius:99}}>#{i+1}</div>
+                      </div>
+                      <div className="tp-info">
+                        <div className="tp-name" title={p.title}>{p.title}</div>
+                        <div className="tp-cnt" style={{color:c}}>{p.qty} <span style={{fontSize:9,fontWeight:500,color:'var(--text-muted)'}}>units</span></div>
+                        <div className="tp-rev">{fmtCur(p.revenue)} · {p.vendor}</div>
+                        <div className="prog" style={{marginTop:4}}><div className="prog-fill" style={{width:`${Math.max(4,Math.round(p.qty/maxQty*100))}%`,background:c}}/></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── Top Cities/States (with delivered/RTO breakdown) + Order Risk Breakdown ── */}
+        {!aLoading && a && ((a.topCities?.length > 0 || a.topStates?.length > 0) || audTierCounts.some(t=>t.count>0)) && (
+          <div className="dash-2col">
+            {(() => {
+              const geoRows = geoMode === 'city' ? (a.topCities||[]) : (a.topStates||[]);
+              if (!geoRows.length) return null;
+              const maxC = Math.max(...geoRows.map(c=>c.count), 1);
+              const dCol = p => p>=70?'#10b981':p>=50?'#60a5fa':'#f59e0b';
+              const rCol = p => p<15?'#10b981':p<25?'#f59e0b':'#ef4444';
+              return (
+                <div className="dash-section" style={{marginBottom:0}}>
+                  <div className="dash-section-hdr">
+                    <div>
+                      <div className="dash-section-title">📍 Top {geoMode==='city'?'Cities':'States'} — Delivery vs RTO</div>
+                      <div className="dash-section-meta">{periodLabel} · where your orders convert best</div>
+                    </div>
+                    <div style={{display:'flex',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:99,padding:2}}>
+                      {['city','state'].map(m=>(
+                        <button key={m} onClick={()=>setGeoMode(m)} style={{fontSize:10,fontWeight:700,padding:'4px 12px',borderRadius:99,border:'none',cursor:'pointer',background:geoMode===m?'var(--indigo)':'transparent',color:geoMode===m?'#fff':'var(--text-muted)'}}>{m==='city'?'City':'State'}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="state-grid">
+                    {geoRows.map((c)=>{
+                      const other = Math.max(0, c.count - c.delivered - c.rto);
+                      const otherPct = c.count>0 ? Math.round(other/c.count*100) : 0;
+                      return (
+                        <div key={c.city} className="state-card">
+                          <div className="state-name">{c.city} <span style={{fontWeight:500,color:'var(--text-muted)',fontSize:10}}>· {c.count} orders</span></div>
+                          <div className="state-bar-row">
+                            <div className="state-bar-lbl" style={{color:dCol(c.deliveredPct)}}>Delivered</div>
+                            <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${c.deliveredPct}%`,background:dCol(c.deliveredPct)}}/></div>
+                            <div className="state-bar-val" style={{color:dCol(c.deliveredPct)}}>{c.delivered} · {c.deliveredPct}%</div>
+                          </div>
+                          <div className="state-bar-row">
+                            <div className="state-bar-lbl" style={{color:rCol(c.rtoPct)}}>RTO</div>
+                            <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${c.rtoPct}%`,background:rCol(c.rtoPct)}}/></div>
+                            <div className="state-bar-val" style={{color:rCol(c.rtoPct)}}>{c.rto} · {c.rtoPct}%</div>
+                          </div>
+                          {other > 0 && (
+                            <div className="state-bar-row" title="Still in transit, pending, or cancelled — hasn't reached delivered or RTO yet">
+                              <div className="state-bar-lbl" style={{color:'var(--text-muted)'}}>In Motion</div>
+                              <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${otherPct}%`,background:'var(--text-muted)',opacity:0.6}}/></div>
+                              <div className="state-bar-val" style={{color:'var(--text-muted)'}}>{other} · {otherPct}%</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+            {audTierCounts.some(t=>t.count>0) && (() => {
+              const maxT = Math.max(...audTierCounts.map(t=>t.count), 1);
+              return (
+                <div className="dash-section" style={{marginBottom:0}}>
+                  <div className="dash-section-hdr">
+                    <div>
+                      <div className="dash-section-title">🛡️ Order Risk Breakdown</div>
+                      <div className="dash-section-meta">Shopify tags mapped to risk tiers · {periodLabel}</div>
+                    </div>
+                    <span style={{fontSize:10,color:'var(--text-muted)',background:'var(--bg-hover)',padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)'}}>Configure tiers in Tag Mappings →</span>
+                  </div>
+                  <div className="mini-bar-chart">
+                    {audTierCounts.map(tier=>{
+                      const pct = tagTotal>0 ? Math.round(tier.count/tagTotal*100) : 0;
+                      const barPct = Math.max((tier.count/maxT)*100, tier.count>0?6:0);
+                      return (
+                        <div key={tier.id} className="mini-bar-col" title={`${tier.label}: ${tier.count} orders (${pct}%)`}>
+                          <div className="mini-bar-track">
+                            <div className="mini-bar-fill" style={{height:`${barPct}%`,background:tier.color}}>
+                              {tier.count>0 && <span className="mini-bar-count">{tier.count}</span>}
+                            </div>
+                          </div>
+                          <div className="mini-bar-label" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
+                          <div className="mini-bar-pct" style={{color:tier.color}}>{pct}%</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)'}}>
+                    {audTierCounts.map(tier=>{
+                      const tags = (audTierMap[tier.id]||tier.defaults).slice(0,4);
+                      return (
+                        <div key={tier.id} style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
+                          <span style={{fontSize:9,fontWeight:700,color:tier.color,flexShrink:0}}>{tier.icon}</span>
+                          {tags.map(tag=><span key={tag} className="aud-pill" style={{background:tier.dim,color:tier.color}}>{tag}</span>)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── Critical Stuck Orders — full detail modal ── */}
+        {stuckModalOpen && (
+          <div onClick={()=>setStuckModalOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:500,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,maxWidth:820,width:'100%',maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>🚨 Critical Stuck Orders</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{(scorecard?.stuckOrders||[]).length} orders confirmed but not dispatched, sorted by longest wait</div>
+                </div>
+                <button onClick={()=>setStuckModalOpen(false)} style={{background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:16,width:30,height:30}}>✕</button>
+              </div>
+              <div style={{overflowY:'auto',padding:'8px 12px'}}>
+                {(scorecard?.stuckOrders||[]).map((o,i)=>{
+                  const hrs = Math.round(o.hrs);
+                  const sevC = hrs>=120?'#ef4444':hrs>=72?'#f59e0b':'#60a5fa';
+                  const wa = waLink(o.customer_phone);
+                  return (
+                    <div key={i} style={{display:'flex',alignItems:'flex-start',gap:12,padding:'12px 10px',borderBottom:i<((scorecard?.stuckOrders||[]).length-1)?'1px solid var(--border)':'none'}}>
+                      <div style={{width:6,alignSelf:'stretch',borderRadius:3,background:sevC,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{o.order_name}</span>
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:sevC+'22',color:sevC,textTransform:'uppercase'}}>{o.stage}</span>
+                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'var(--bg-hover)',color:'var(--text-muted)'}}>{o.payType}</span>
+                        </div>
+                        <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>{o.customer_name||'Unknown customer'}{o.customer_phone?` · +91 ${o.customer_phone}`:''}{o.city?` · ${o.city}`:''}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{o.items||'—'}</div>
+                        <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginTop:4}}>{o.vendor} · {fmtCur(o.total_price)}</div>
+                      </div>
+                      <div style={{textAlign:'right',flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
+                        <div>
+                          <div style={{fontSize:18,fontWeight:900,color:sevC,lineHeight:1}}>{hrs}h</div>
+                          <div style={{fontSize:8,fontWeight:600,color:sevC,opacity:0.8}}>waiting</div>
+                        </div>
+                        {wa && <a href={wa} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:600,color:'#25D366',border:'1px solid #25D36655',borderRadius:6,padding:'3px 8px',textDecoration:'none'}}>💬 WhatsApp</a>}
+                      </div>
+                    </div>
+                  );
+                })}
+                {!(scorecard?.stuckOrders||[]).length && <div style={{padding:20,fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Vendor Performance Arena — composite Health Score from
             dispatch rate, delivery rate, RTO rate and avg dispatch time,
             all real + period-scoped (a.vendorLeaderboard). Crowns the best
@@ -4194,179 +4378,6 @@
             </div>
           );
         })()}
-
-        {/* ── Top Selling Products ── */}
-        {!aLoading && a?.topProducts?.length > 0 && (() => {
-          const COLORS = ['#6366f1','#10b981','#f59e0b','#60a5fa','#a78bfa','#34d399','#fb923c','#f87171','#22d3ee','#ec4899'];
-          const maxQty = Math.max(...a.topProducts.map(p=>p.qty), 1);
-          return (
-            <div className="dash-section">
-              <div className="dash-section-hdr">
-                <div>
-                  <div className="dash-section-title">🔥 Top Selling Products</div>
-                  <div className="dash-section-meta">Ranked by units sold · {periodLabel}</div>
-                </div>
-                <div style={{fontSize:10,color:'var(--text-muted)'}}>→ scroll to see all</div>
-              </div>
-              <div className="top-prod-row">
-                {a.topProducts.map((p,i)=>{
-                  const c = COLORS[i%COLORS.length];
-                  const img = p.product_id ? productImages[p.product_id] : null;
-                  return (
-                    <div key={i} className="tp-card">
-                      <div className="tp-bar-wrap" style={{padding:0,position:'relative',overflow:'hidden'}}>
-                        {img ? (
-                          <img src={img} alt={p.title} style={{width:'100%',height:'100%',objectFit:'cover'}} onError={e=>{e.target.style.display='none';}}/>
-                        ) : (
-                          <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26,background:c+'15'}}>👕</div>
-                        )}
-                        <div style={{position:'absolute',top:5,left:5,fontSize:9,fontWeight:800,background:c,color:'#fff',padding:'2px 7px',borderRadius:99}}>#{i+1}</div>
-                      </div>
-                      <div className="tp-info">
-                        <div className="tp-name" title={p.title}>{p.title}</div>
-                        <div className="tp-cnt" style={{color:c}}>{p.qty} <span style={{fontSize:9,fontWeight:500,color:'var(--text-muted)'}}>units</span></div>
-                        <div className="tp-rev">{fmtCur(p.revenue)} · {p.vendor}</div>
-                        <div className="prog" style={{marginTop:4}}><div className="prog-fill" style={{width:`${Math.max(4,Math.round(p.qty/maxQty*100))}%`,background:c}}/></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ── Top Cities/States (with delivered/RTO breakdown) + Order Risk Breakdown ── */}
-        {!aLoading && a && ((a.topCities?.length > 0 || a.topStates?.length > 0) || audTierCounts.some(t=>t.count>0)) && (
-          <div className="dash-2col">
-            {(() => {
-              const geoRows = geoMode === 'city' ? (a.topCities||[]) : (a.topStates||[]);
-              if (!geoRows.length) return null;
-              const maxC = Math.max(...geoRows.map(c=>c.count), 1);
-              const dCol = p => p>=70?'#10b981':p>=50?'#60a5fa':'#f59e0b';
-              const rCol = p => p<15?'#10b981':p<25?'#f59e0b':'#ef4444';
-              return (
-                <div className="dash-section" style={{marginBottom:0}}>
-                  <div className="dash-section-hdr">
-                    <div>
-                      <div className="dash-section-title">📍 Top {geoMode==='city'?'Cities':'States'} — Delivery vs RTO</div>
-                      <div className="dash-section-meta">{periodLabel} · where your orders convert best</div>
-                    </div>
-                    <div style={{display:'flex',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:99,padding:2}}>
-                      {['city','state'].map(m=>(
-                        <button key={m} onClick={()=>setGeoMode(m)} style={{fontSize:10,fontWeight:700,padding:'4px 12px',borderRadius:99,border:'none',cursor:'pointer',background:geoMode===m?'var(--indigo)':'transparent',color:geoMode===m?'#fff':'var(--text-muted)'}}>{m==='city'?'City':'State'}</button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="state-grid">
-                    {geoRows.map((c)=>(
-                      <div key={c.city} className="state-card">
-                        <div className="state-name">{c.city} <span style={{fontWeight:500,color:'var(--text-muted)',fontSize:10}}>· {c.count} orders</span></div>
-                        <div className="state-bar-row">
-                          <div className="state-bar-lbl" style={{color:dCol(c.deliveredPct)}}>Delivered</div>
-                          <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${c.deliveredPct}%`,background:dCol(c.deliveredPct)}}/></div>
-                          <div className="state-bar-val" style={{color:dCol(c.deliveredPct)}}>{c.delivered} · {c.deliveredPct}%</div>
-                        </div>
-                        <div className="state-bar-row">
-                          <div className="state-bar-lbl" style={{color:rCol(c.rtoPct)}}>RTO</div>
-                          <div className="state-bar-bg"><div className="state-bar-fill" style={{width:`${c.rtoPct}%`,background:rCol(c.rtoPct)}}/></div>
-                          <div className="state-bar-val" style={{color:rCol(c.rtoPct)}}>{c.rto} · {c.rtoPct}%</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-            {audTierCounts.some(t=>t.count>0) && (() => {
-              const maxT = Math.max(...audTierCounts.map(t=>t.count), 1);
-              return (
-                <div className="dash-section" style={{marginBottom:0}}>
-                  <div className="dash-section-hdr">
-                    <div>
-                      <div className="dash-section-title">🛡️ Order Risk Breakdown</div>
-                      <div className="dash-section-meta">Shopify tags mapped to risk tiers · {periodLabel}</div>
-                    </div>
-                    <span style={{fontSize:10,color:'var(--text-muted)',background:'var(--bg-hover)',padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)'}}>Configure tiers in Tag Mappings →</span>
-                  </div>
-                  <div className="mini-bar-chart">
-                    {audTierCounts.map(tier=>{
-                      const pct = tagTotal>0 ? Math.round(tier.count/tagTotal*100) : 0;
-                      const barPct = Math.max((tier.count/maxT)*100, tier.count>0?6:0);
-                      return (
-                        <div key={tier.id} className="mini-bar-col" title={`${tier.label}: ${tier.count} orders (${pct}%)`}>
-                          <div className="mini-bar-track">
-                            <div className="mini-bar-fill" style={{height:`${barPct}%`,background:tier.color}}>
-                              {tier.count>0 && <span className="mini-bar-count">{tier.count}</span>}
-                            </div>
-                          </div>
-                          <div className="mini-bar-label" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
-                          <div className="mini-bar-pct" style={{color:tier.color}}>{pct}%</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)'}}>
-                    {audTierCounts.map(tier=>{
-                      const tags = (audTierMap[tier.id]||tier.defaults).slice(0,4);
-                      return (
-                        <div key={tier.id} style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
-                          <span style={{fontSize:9,fontWeight:700,color:tier.color,flexShrink:0}}>{tier.icon}</span>
-                          {tags.map(tag=><span key={tag} className="aud-pill" style={{background:tier.dim,color:tier.color}}>{tag}</span>)}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* ── Critical Stuck Orders — full detail modal ── */}
-        {stuckModalOpen && (
-          <div onClick={()=>setStuckModalOpen(false)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:500,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'40px 16px',overflowY:'auto'}}>
-            <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,maxWidth:820,width:'100%',maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
-                <div>
-                  <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>🚨 Critical Stuck Orders</div>
-                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{(scorecard?.stuckOrders||[]).length} orders confirmed but not dispatched, sorted by longest wait</div>
-                </div>
-                <button onClick={()=>setStuckModalOpen(false)} style={{background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:16,width:30,height:30}}>✕</button>
-              </div>
-              <div style={{overflowY:'auto',padding:'8px 12px'}}>
-                {(scorecard?.stuckOrders||[]).map((o,i)=>{
-                  const hrs = Math.round(o.hrs);
-                  const sevC = hrs>=120?'#ef4444':hrs>=72?'#f59e0b':'#60a5fa';
-                  const wa = waLink(o.customer_phone);
-                  return (
-                    <div key={i} style={{display:'flex',alignItems:'flex-start',gap:12,padding:'12px 10px',borderBottom:i<((scorecard?.stuckOrders||[]).length-1)?'1px solid var(--border)':'none'}}>
-                      <div style={{width:6,alignSelf:'stretch',borderRadius:3,background:sevC,flexShrink:0}}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{o.order_name}</span>
-                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:sevC+'22',color:sevC,textTransform:'uppercase'}}>{o.stage}</span>
-                          <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'var(--bg-hover)',color:'var(--text-muted)'}}>{o.payType}</span>
-                        </div>
-                        <div style={{fontSize:11,color:'var(--text-dim)',marginTop:4}}>{o.customer_name||'Unknown customer'}{o.customer_phone?` · +91 ${o.customer_phone}`:''}{o.city?` · ${o.city}`:''}</div>
-                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{o.items||'—'}</div>
-                        <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginTop:4}}>{o.vendor} · {fmtCur(o.total_price)}</div>
-                      </div>
-                      <div style={{textAlign:'right',flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
-                        <div>
-                          <div style={{fontSize:18,fontWeight:900,color:sevC,lineHeight:1}}>{hrs}h</div>
-                          <div style={{fontSize:8,fontWeight:600,color:sevC,opacity:0.8}}>waiting</div>
-                        </div>
-                        {wa && <a href={wa} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:600,color:'#25D366',border:'1px solid #25D36655',borderRadius:6,padding:'3px 8px',textDecoration:'none'}}>💬 WhatsApp</a>}
-                      </div>
-                    </div>
-                  );
-                })}
-                {!(scorecard?.stuckOrders||[]).length && <div style={{padding:20,fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
-              </div>
-            </div>
-          </div>
-        )}
 
       </div>
     );
