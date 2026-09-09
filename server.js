@@ -1584,17 +1584,24 @@ app.post("/webhooks/orders", (req, res) => {
               const _trackUrl = `${SERVER_URL}/o/${String(payload.name).replace(/^#/, '')}`;
               const _total = parseFloat(payload.total_price || 0);
               const _orderSlug = encodeURIComponent(String(payload.name).replace(/^#/, ''));
+              const _itemsList2 = (payload.line_items || []).map(li =>
+                `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
+              ).join('\n') || '—';
+              const _addr2 = payload.shipping_address || {};
+              const _addressLine2 = [_addr2.address1, _addr2.city, _addr2.zip].filter(Boolean).join(', ') || 'address on file';
+              const _enrichedForConf = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
+              const _confImage = _enrichedForConf?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE;
               let _cloudTpl, _waConfirm, _dedupKey;
               if (_isPrepaid) {
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed. No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
-                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] };
+                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, _total.toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'confirmed_tag';
               } else if (_isPartiallyPaid) {
                 // The real "your order is confirmed, packing now" — fires
                 // once the ₹99 advance actually lands, independent of
                 // whether the pay-ask already went out.
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
-                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'confirmed_tag';
               } else {
                 // Tag present but no ₹99 yet, and our own WA Confirm handler
@@ -14565,21 +14572,29 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
         const orderName = order2.name;
         const total = parseFloat(order2.total_price);
         const items = (order2.line_items || []).map(li => `• ${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} × ${li.quantity}`).join('\n');
+        const itemsList14 = (order2.line_items || []).map(li =>
+          `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
+        ).join('\n') || '—';
+        const addr14 = order2.shipping_address || {};
+        const addressLine14 = [addr14.address1, addr14.city, addr14.zip].filter(Boolean).join(', ') || 'address on file';
+        const enriched14 = await enrichOrderImages({ line_items: order2.line_items }).catch(() => null);
+        const confImage14 = enriched14?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE;
 
         if (customerPhone) {
           if (isPrepaidConvert) {
             const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
             const savings = Math.round(total - discountedTotal);
             const _Fp = '```';
+            const orderSlug14p = encodeURIComponent(String(orderName).replace(/^#/, ''));
             const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${orderName}\n\nPAID   ₹${discountedTotal}\nSAVED  ₹${savings}\n\nSTATE  Confirmed and moving. No payment at delivery.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
-            await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [orderName, String(discountedTotal)] });
+            await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: confImage14, bodyParams: [orderName, itemsList14, addressLine14, String(discountedTotal)], urlButtonParam: `${orderSlug14p}&contact=na` });
           } else {
             const remaining = Math.max(0, total - CONFIRM_FEE);
             const _Fp = '```';
             const orderSlug14 = encodeURIComponent(String(orderName).replace(/^#/, ''));
             const _trackUrl14 = `${SERVER_URL}/o/${orderSlug14}`;
             const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl14}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
-            await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [orderName, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: `${orderSlug14}&contact=na` });
+            await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: confImage14, bodyParams: [orderName, itemsList14, addressLine14, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: `${orderSlug14}&contact=na` });
           }
         }
       }
@@ -23549,7 +23564,7 @@ const WA_TPL = {
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v3', // currently unused — superseded by ORDER_CONFIRM_CANCEL, kept mapped in case it's ever needed again
   ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
-  ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
+  ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v3',
   WIN_BACK_FLAT500: 'win_back_flat500_v2',
   // Vendor-facing (all UTILITY, uploaded fresh — no _v2 needed, never deleted)
   VENDOR_RR_REQUEST_RECEIVED: 'vendor_rr_request_received',
