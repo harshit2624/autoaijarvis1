@@ -3441,6 +3441,7 @@
         .then(r=>r.json()).then(d=>{ setScorecard(d); if(dashCache?.current) dashCache.current.scorecard=d; }).catch(()=>{});
     },[token]);
     const [stuckModalOpen, setStuckModalOpen] = useState(false);
+    const [geoMode, setGeoMode] = useState('city'); // 'city' | 'state'
 
     // Product photos for Top Selling Products — batch-fetched from the
     // existing product-images endpoint once topProducts is known.
@@ -4159,23 +4160,30 @@
           );
         })()}
 
-        {/* ── Top Cities (with delivered/RTO breakdown) + Order Risk Breakdown ── */}
-        {!aLoading && a && (a.topCities?.length > 0 || audTierCounts.some(t=>t.count>0)) && (
+        {/* ── Top Cities/States (with delivered/RTO breakdown) + Order Risk Breakdown ── */}
+        {!aLoading && a && ((a.topCities?.length > 0 || a.topStates?.length > 0) || audTierCounts.some(t=>t.count>0)) && (
           <div className="dash-2col">
-            {a.topCities?.length > 0 && (() => {
-              const maxC = Math.max(...a.topCities.map(c=>c.count), 1);
+            {(() => {
+              const geoRows = geoMode === 'city' ? (a.topCities||[]) : (a.topStates||[]);
+              if (!geoRows.length) return null;
+              const maxC = Math.max(...geoRows.map(c=>c.count), 1);
               const dCol = p => p>=70?'#10b981':p>=50?'#60a5fa':'#f59e0b';
               const rCol = p => p<15?'#10b981':p<25?'#f59e0b':'#ef4444';
               return (
                 <div className="dash-section" style={{marginBottom:0}}>
                   <div className="dash-section-hdr">
                     <div>
-                      <div className="dash-section-title">📍 Top Cities — Delivery vs RTO</div>
+                      <div className="dash-section-title">📍 Top {geoMode==='city'?'Cities':'States'} — Delivery vs RTO</div>
                       <div className="dash-section-meta">{periodLabel} · where your orders convert best</div>
+                    </div>
+                    <div style={{display:'flex',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:99,padding:2}}>
+                      {['city','state'].map(m=>(
+                        <button key={m} onClick={()=>setGeoMode(m)} style={{fontSize:10,fontWeight:700,padding:'4px 12px',borderRadius:99,border:'none',cursor:'pointer',background:geoMode===m?'var(--indigo)':'transparent',color:geoMode===m?'#fff':'var(--text-muted)'}}>{m==='city'?'City':'State'}</button>
+                      ))}
                     </div>
                   </div>
                   <div className="state-grid">
-                    {a.topCities.map((c)=>(
+                    {geoRows.map((c)=>(
                       <div key={c.city} className="state-card">
                         <div className="state-name">{c.city} <span style={{fontWeight:500,color:'var(--text-muted)',fontSize:10}}>· {c.count} orders</span></div>
                         <div className="state-bar-row">

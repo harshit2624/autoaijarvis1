@@ -6042,25 +6042,50 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const repeatCustomers = Object.values(custMap).filter(c=>c>1).length;
     const repeatRate      = totalCustomers ? parseFloat((repeatCustomers/totalCustomers*100).toFixed(1)) : 0;
 
-    // ── Top cities (selected period) — now with delivered/RTO breakdown per
-    // city, not just raw order count, so the dashboard can show delivery
-    // and RTO performance by city (previously only total order count).
+    // ── Top cities + top states (selected period) — with delivered/RTO
+    // breakdown per bucket, not just raw order count, so the dashboard can
+    // show delivery and RTO performance geographically (previously only
+    // total order count). City/state names are grouped case-insensitively
+    // (Shopify addresses aren't consistently cased — "Mumbai" vs "MUMBAI"
+    // were previously showing up as two separate rows) but displayed in a
+    // clean Title Case using whichever raw spelling appeared most often.
+    const titleCase = s => s.replace(/\w\S*/g, t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase());
     const cityMap = {};
+    const stateMap = {};
     orders30d.forEach(o => {
-      const city = o.shipping_address?.city;
-      if (!city) return;
-      if (!cityMap[city]) cityMap[city] = { count: 0, delivered: 0, rto: 0 };
-      cityMap[city].count++;
       const stage = getEffectiveStage(String(o.id));
-      if (stage === 'delivered') cityMap[city].delivered++;
-      else if (stage === 'rto') cityMap[city].rto++;
+      const isDelivered = stage === 'delivered';
+      const isRto = stage === 'rto';
+      const city = (o.shipping_address?.city || '').trim();
+      if (city) {
+        const key = city.toLowerCase();
+        if (!cityMap[key]) cityMap[key] = { count: 0, delivered: 0, rto: 0, names: {} };
+        cityMap[key].count++;
+        cityMap[key].names[city] = (cityMap[key].names[city] || 0) + 1;
+        if (isDelivered) cityMap[key].delivered++;
+        else if (isRto) cityMap[key].rto++;
+      }
+      const state = (o.shipping_address?.province || '').trim();
+      if (state) {
+        const key = state.toLowerCase();
+        if (!stateMap[key]) stateMap[key] = { count: 0, delivered: 0, rto: 0, names: {} };
+        stateMap[key].count++;
+        stateMap[key].names[state] = (stateMap[key].names[state] || 0) + 1;
+        if (isDelivered) stateMap[key].delivered++;
+        else if (isRto) stateMap[key].rto++;
+      }
     });
-    const topCities = Object.entries(cityMap).sort((a,b)=>b[1].count-a[1].count).slice(0,8)
-      .map(([city,d])=>({
-        city, count: d.count, delivered: d.delivered, rto: d.rto,
-        deliveredPct: d.count>0 ? Math.round(d.delivered/d.count*100) : 0,
-        rtoPct: d.count>0 ? Math.round(d.rto/d.count*100) : 0,
-      }));
+    const bucketToRows = (map) => Object.values(map).sort((a,b)=>b.count-a.count).slice(0,8)
+      .map(d => {
+        const bestRawName = Object.entries(d.names).sort((a,b)=>b[1]-a[1])[0][0];
+        return {
+          city: titleCase(bestRawName), count: d.count, delivered: d.delivered, rto: d.rto,
+          deliveredPct: d.count>0 ? Math.round(d.delivered/d.count*100) : 0,
+          rtoPct: d.count>0 ? Math.round(d.rto/d.count*100) : 0,
+        };
+      });
+    const topCities = bucketToRows(cityMap);
+    const topStates = bucketToRows(stateMap);
 
     // ── Stage counts for selected period
     const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","penalty"];
@@ -6302,6 +6327,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       topProducts,
       topBrands,
       topCities,
+      topStates,
       trend14d,
       vendorLeaderboard,
       dispatchQuality,
