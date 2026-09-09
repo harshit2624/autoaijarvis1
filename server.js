@@ -22945,9 +22945,9 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
   // Close any open ticket for this chat
   await closeSupportTicket(chat._id, 'admin').catch(() => {});
 
-  // Pause bot for 6h from last admin reply — resets on every admin message so
+  // Pause bot for 1h from last admin reply — resets on every admin message so
   // the bot stays silent as long as admin is actively handling the chat.
-  const _pauseUntil6h = Date.now() + 6 * 60 * 60 * 1000;
+  const _pauseUntil6h = Date.now() + 1 * 60 * 60 * 1000;
   await mdb.collection('support_chats').updateOne(
     { _id: chat._id },
     { $set: { bot_paused_until: _pauseUntil6h, needs_human: true, updated_at: new Date().toISOString() } }
@@ -26019,7 +26019,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
     await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nNEW TICKET ${_severityTag}\n────────────────\n${_nameStr}${_phoneStr}${_orderStr}TYPE   ${_category}\nSLA    Respond within 8h\n────────────────\n${context.slice(0, 100)}${_chatSnippet}\n────────────────\nAdmin → Support Tickets\n\`\`\``, 'support_escalation');
 
     const lastEscalated = chat.last_escalated_at ? new Date(chat.last_escalated_at).getTime() : 0;
-    const escalatedRecently = (Date.now() - lastEscalated) < 6 * 3600000;
+    const escalatedRecently = (Date.now() - lastEscalated) < 1 * 3600000;
     if (sendCustomerMsg && (!escalatedRecently || forceMsg)) {
       const nowHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours();
       const offHours = nowHour < 14 || nowHour >= 20;
@@ -26028,7 +26028,7 @@ async function waTalkToHuman(sock, sender, chat, phone, context, { sendCustomerM
       await SC.addMessage(chat._id, { sender: 'assistant', text: msg });
     }
 
-    const pauseUntil = Date.now() + 4 * 60 * 60 * 1000;
+    const pauseUntil = Date.now() + 1 * 60 * 60 * 1000;
     await mdb.collection('support_chats').updateOne(
       { _id: chat._id },
       { $set: { needs_human: true, status: 'transferred', bot_paused_until: pauseUntil, last_escalated_at: new Date().toISOString(), confused_count: 0, updated_at: new Date().toISOString() } }
@@ -26613,8 +26613,8 @@ async function startBaileysBot() {
               );
               if (outChat) {
                 await SC.addMessage(outChat._id, { sender: 'admin', text: outText });
-                // Always keep bot paused 6h from last admin message, resolved or not
-                const _resolve6h = Date.now() + 6 * 60 * 60 * 1000;
+                // Always keep bot paused 1h from last admin message, resolved or not
+                const _resolve6h = Date.now() + 1 * 60 * 60 * 1000;
                 const wasAlreadyResolved = !!outChat.resolved;
                 await mdb.collection('support_chats').updateOne(
                   { _id: outChat._id },
