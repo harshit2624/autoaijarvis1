@@ -1740,9 +1740,11 @@ app.post("/webhooks/fulfillments", (req, res) => {
             const custPhone = custRaw.replace(/\D/g, '').replace(/^91/, '').slice(-10);
             if (custPhone && custPhone.length === 10) {
               const custName = ((order.shipping_address?.first_name || '') + ' ' + (order.shipping_address?.last_name || '')).trim() || 'Customer';
+              const _pickupItemName = vendorItems.map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ');
               await sendShipmentWANotif(shopifyId, 'pickup', {
                 orderName: order.name, customerName: custName, customerPhone: custPhone,
-                awb, courier, deliveryStatus: null, codAmount: null,
+                awb, courier, deliveryStatus: null, codAmount: null, itemName: _pickupItemName,
+                itemImageUrl: vendorItems[0]?.image_url,
               }).catch(e => console.error('WA notif on fulfillment failed:', e.message));
             }
           }
@@ -3379,7 +3381,8 @@ async function fireStageEmails(shopifyId, newStage) {
     if (newStage === 'rto') {
       const _rtoPhone = (order.shipping_address?.phone || order.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
       if (_rtoPhone) {
-        const cloudResult = await sendWACloudTemplate({ phone10: _rtoPhone, templateName: WA_TPL.SHIPMENT_RTO, bodyParams: [order.name] });
+        const _rtoItemName = (order.line_items || []).map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ') || 'Your item';
+        const cloudResult = await sendWACloudTemplate({ phone10: _rtoPhone, templateName: WA_TPL.SHIPMENT_RTO, bodyParams: [order.name, _rtoItemName] });
         if (!cloudResult.sent && waSocket && waConnected) {
           const _Fr = '```';
           const _waRto = `${_Fr}\n▪ C R O S C R O W ▪\nORDER RETURNED\n────────────────\nORDER  ${order.name}\n\nSTATE  Our courier couldn't deliver your order. It's heading back.\n────────────────\nREPLY TO THIS MESSAGE\nFOR SUPPORT\n${_Fr}`;
@@ -15587,7 +15590,7 @@ async function shipsagarTrackShipment(awb) {
 
 // ── WA customer shipping notifications ───────────────────────────────────
 // Sends one WA message per stage transition. Deduplication via order_meta.wa_notif_sent.
-async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, customerPhone, awb, courier, deliveryStatus, codAmount }) {
+async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, customerPhone, awb, courier, deliveryStatus, codAmount, itemName, itemImageUrl }) {
   if (!mdb) return;
   const digits = String(customerPhone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
   if (digits.length !== 10 || !/^[6-9]/.test(digits)) return;
@@ -15625,15 +15628,16 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
     // shipment templates. Falls back to Baileys plain text only if the
     // Cloud API attempt fails (or Baileys is the active model).
     let cloudResult = { sent: false };
+    const itemLine = itemName || 'Your item';
     if (stage === 'pickup') {
-      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_PICKUP, bodyParams: [orderName, courier || 'our delivery partner', awb || '—'], urlButtonParam: `${orderSlug}&contact=na` });
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_PICKUP, bodyParams: [orderName, itemLine, courier || 'our delivery partner', awb || '—'], urlButtonParam: `${orderSlug}&contact=na` });
     } else if (stage === 'transit') {
-      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_TRANSIT, bodyParams: [orderName], urlButtonParam: `${orderSlug}&contact=na` });
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_TRANSIT, bodyParams: [orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` });
     } else if (stage === 'ofd') {
       const codLine = codAmount > 0 ? `Please keep ₹${codAmount} ready (COD).` : 'Please keep your phone reachable.';
-      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [orderName, codLine], urlButtonParam: `${orderSlug}&contact=na` });
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl: itemImageUrl, bodyParams: [orderName, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
     } else if (stage === 'delivered') {
-      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [orderName] });
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [orderName, itemLine] });
     }
 
     if (!cloudResult.sent) {
@@ -15769,27 +15773,35 @@ async function sendRRWANotif(rr, event, extra = {}) {
   // plain text only if the template send fails (dead path while Baileys is
   // disconnected, kept for if it's ever reconnected).
   let cloudResult = { sent: false };
+  const _itemLine = itemNames || 'Your item';
   if (event === 'request_received') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: [TypeLabel, orderName] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: [TypeLabel, orderName, _itemLine] });
   } else if (event === 'approved') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_APPROVED, bodyParams: [TypeLabel, orderName], urlButtonParam: `${orderSlug}&contact=na` });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_APPROVED, bodyParams: [TypeLabel, orderName, _itemLine], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'pickup_scheduled') {
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
+    // NOTE: rr_pickup_scheduled_v2 is still on its OLD 2-param body — the
+    // item-name edit hit Meta's "one edit per 24h" limit (2026-09-09) and is
+    // pending retry. Keep 2 params until that edit lands, or Cloud API
+    // rejects the send outright (param count mismatch). See
+    // project_wa_template_pending_approvals memory.
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, courier], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'picked_up') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKED_UP, bodyParams: [orderName], urlButtonParam: `${orderSlug}&contact=na` });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKED_UP, bodyParams: [orderName, _itemLine], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'received_at_warehouse') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, itemNames || 'Your item'] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, _itemLine] });
   } else if (event === 'refund_initiated') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REFUND_APPROVED, bodyParams: [orderName, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REFUND_APPROVED, bodyParams: [orderName, _itemLine, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
   } else if (event === 'exchange_dispatched') {
     const courier = extra.courier || rr.forward_shipment?.courier || 'Our delivery partner';
+    // NOTE: rr_exchange_sent_v2 still on OLD 2-param body — pending 24h-limit
+    // retry, see project_wa_template_pending_approvals memory.
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_EXCHANGE_SENT, bodyParams: [orderName, courier], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'rejected') {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QC_NOT_CLEARED, bodyParams: [orderName, reason] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QC_NOT_CLEARED, bodyParams: [orderName, _itemLine, reason] });
   } else if (event === 'store_credit_issued') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, _itemLine, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
   }
 
   try {
@@ -15912,12 +15924,13 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
     const already = await mdb.collection('delivery_attempt_alerts').findOne({ event_key: eventKey });
     if (already) return;
 
-    const od = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,phone,shipping_address,billing_address`).catch(() => null);
+    const od = await shopifyREST(`/orders/${sid}.json?fields=id,name,email,phone,shipping_address,billing_address,line_items`).catch(() => null);
     const order = od?.order || {};
     const orderName = order.name || `#${sid}`;
     const customerName = order.shipping_address ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim() : 'Customer';
     const customerPhone = (order.shipping_address?.phone || order.billing_address?.phone || order.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
     const customerEmail = order.email || '';
+    const itemName = (order.line_items || []).filter(li => li.vendor === vendorName).map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ') || 'Your item';
 
     // Mark alerted up-front so a slow/failing send doesn't cause duplicate retries on the next cron pass
     await mdb.collection('delivery_attempt_alerts').insertOne({ event_key: eventKey, shopify_id: sid, vendor_name: vendorName, awb, desc, alerted_at: new Date().toISOString() });
@@ -15926,6 +15939,8 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
     // Baileys plain text only as a fallback if the template send fails.
     if (customerPhone && customerPhone.length === 10) {
       const orderSlug = encodeURIComponent(String(orderName).replace(/^#/, ''));
+      // NOTE: delivery_attempt_failed_v2 still on OLD 2-param body — pending
+      // 24h-limit retry, see project_wa_template_pending_approvals memory.
       const cloudResult = await sendWACloudTemplate({ phone10: customerPhone, templateName: WA_TPL.DELIVERY_ATTEMPT_FAILED, bodyParams: [orderName, desc], urlButtonParam: `${orderSlug}&contact=na` });
       if (!cloudResult.sent && waSocket && waConnected) {
         const custMsg = `📦 *Delivery Attempt Update — ${orderName}*\n\nHi ${customerName}, we tried delivering your order today but couldn't complete it.\n\nCourier remark: *${desc}*\n\nWe'll attempt delivery again soon. Please stay reachable on this number, or reply here if you'd like to share a better time/address.\n\n— Team CROSCROW`;
@@ -16057,7 +16072,8 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
       const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
       const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
       if (digits.length === 10 && /^[6-9]/.test(digits)) {
-        const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [rr.order_name || '', 'Please keep your phone reachable.'], urlButtonParam: `${exOrderSlug}&contact=na` });
+        const _exItemName = (rr.items || []).map(i => i.title || i.product_title || 'item').join(', ') || 'Your item';
+        const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [rr.order_name || '', _exItemName, 'Please keep your phone reachable.'], urlButtonParam: `${exOrderSlug}&contact=na` });
         if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: ofdMsg }).catch(() => {});
         await mdb.collection('return_requests').updateOne(
           { request_id: rr.request_id },
@@ -16072,7 +16088,8 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
       const dlvMsg = `${_Fe}\n▪ C R O S C R O W ▪\n██████████████ 100%\nEXCHANGE DELIVERED\n────────────────\nORDER  ${rr.order_name || ''}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_Fe}`;
       const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
       if (digits.length === 10 && /^[6-9]/.test(digits)) {
-        const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [rr.order_name || ''] });
+        const _dlvItemName = (rr.items || []).map(i => i.title || i.product_title || 'item').join(', ') || 'Your item';
+        const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [rr.order_name || '', _dlvItemName] });
         if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: dlvMsg }).catch(() => {});
         await mdb.collection('return_requests').updateOne(
           { request_id: rr.request_id },
@@ -16193,16 +16210,19 @@ async function shipsagarTrackingCron() {
           if (['pickup','transit','ofd','delivered'].includes(newStage)) {
             (async () => {
               try {
-                const od = await shopifyREST(`/orders/${rec.shopify_id}.json?fields=id,name,shipping_address,billing_address,phone,financial_status,total_price,total_outstanding`).catch(() => null);
+                const od = await shopifyREST(`/orders/${rec.shopify_id}.json?fields=id,name,shipping_address,billing_address,phone,financial_status,total_price,total_outstanding,line_items`).catch(() => null);
                 const order = od?.order || {};
                 const customerName = order.shipping_address ? `${order.shipping_address.first_name||''} ${order.shipping_address.last_name||''}`.trim() : '';
                 const customerPhone = (order.shipping_address?.phone || order.billing_address?.phone || order.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
                 const codAmount = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_outstanding || order.total_price || 0)) : 0;
+                const _stageVendorItems = (order.line_items || []).filter(li => li.vendor === rec.vendor_name);
+                const _stageItemName = _stageVendorItems.map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ');
                 await sendShipmentWANotif(rec.shopify_id, newStage, {
                   orderName: order.name || `#${rec.shopify_id}`,
                   customerName, customerPhone,
                   awb: rec.awb, courier: rec.courier,
-                  deliveryStatus: desc, codAmount,
+                  deliveryStatus: desc, codAmount, itemName: _stageItemName,
+                  itemImageUrl: _stageVendorItems[0]?.image_url,
                 });
               } catch (e) { console.error('WA shipment notif error:', e.message); }
             })();
