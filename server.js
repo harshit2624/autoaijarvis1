@@ -1566,46 +1566,48 @@ app.post("/webhooks/orders", (req, res) => {
         const _hasConfirmedTag = _incomingTags.some(t => t === '✅ order confirmed' || t === 'order confirmed');
         if (_hasConfirmedTag) {
           const _waConfMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { wa_notif_sent: 1 } });
-          if (!_waConfMeta?.wa_notif_sent?.confirmed_tag) {
+          const _isPrepaid       = payload.financial_status === 'paid';
+          const _isPartiallyPaid = payload.financial_status === 'partially_paid';
+          // Real flow: WA Confirm tap → tag added → pay99_ask_sent fires the
+          // "pay ₹99" ask directly (see the bot handler). Once that ₹99
+          // actually lands, financial_status flips to partially_paid and
+          // THIS block sends the real "confirmed, packing now" message —
+          // gated on its own confirmed_tag key so it's independent of
+          // whether the ₹99 ask already fired.
+          const _alreadySentFinal = !!_waConfMeta?.wa_notif_sent?.confirmed_tag;
+          const _alreadySentAsk   = !!_waConfMeta?.wa_notif_sent?.pay99_ask_sent;
+          const _shouldSend = (_isPrepaid || _isPartiallyPaid) ? !_alreadySentFinal : !_alreadySentAsk;
+          if (_shouldSend) {
             const _confPhone = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
             if (_confPhone && _confPhone.length === 10) {
               const _F = '```';
               const _trackUrl = `${SERVER_URL}/o/${String(payload.name).replace(/^#/, '')}`;
-              const _isPrepaid       = payload.financial_status === 'paid';
-              const _isPartiallyPaid = payload.financial_status === 'partially_paid';
               const _total = parseFloat(payload.total_price || 0);
               const _orderSlug = encodeURIComponent(String(payload.name).replace(/^#/, ''));
-              const _waConfirm = _isPrepaid
-                ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
-                : _isPartiallyPaid
-                ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
-                // This branch only reaches here when '✅ Order Confirmed' is
-                // ALREADY on the order — i.e. confirmation already happened
-                // (via our own WA Confirm button, or an admin/Flow adding the
-                // tag directly). Sending the Confirm/Cancel ask again here
-                // would be backwards — it must be a plain acknowledgment.
-                : `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED\n────────────────\nORDER  ${payload.name}\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
-              let _cloudTpl;
+              let _cloudTpl, _waConfirm, _dedupKey;
               if (_isPrepaid) {
+                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] };
+                _dedupKey = 'confirmed_tag';
               } else if (_isPartiallyPaid) {
+                // The real "your order is confirmed, packing now" — fires
+                // once the ₹99 advance actually lands, independent of
+                // whether the pay-ask already went out.
+                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+                _dedupKey = 'confirmed_tag';
               } else {
-                // Plain COD-confirmed acknowledgment — no template exists for
-                // this yet (rare path: tag added outside our own WA Confirm
-                // flow, e.g. admin dashboard or a Shopify Flow), so this only
-                // sends as a Cloud API session message if the customer has
-                // messaged within 24h; silently no-ops otherwise rather than
-                // asking them to confirm something that's already confirmed.
-                _cloudTpl = null;
+                // Tag present but no ₹99 yet, and our own WA Confirm handler
+                // hasn't already sent the ask (fallback path: tag added via
+                // admin dashboard / a Shopify Flow, not our button) — send
+                // the pay-₹99 ask here instead.
+                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
+                _cloudTpl = { templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [payload.name, (payload.line_items||[]).map(li=>li.title).slice(0,2).join(', ')||'—', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+                _dedupKey = 'pay99_ask_sent';
               }
-              if (_cloudTpl) {
-                await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
-              } else {
-                await waCloudSendSession(`91${_confPhone}@s.whatsapp.net`, { text: _waConfirm }).catch(() => {});
-              }
-              await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
-              console.log(`✅ WA confirmed_tag sent for ${payload.name}`);
+              await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
+              await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { [`wa_notif_sent.${_dedupKey}`]: new Date().toISOString() } });
+              console.log(`✅ WA confirmed_tag sent for ${payload.name} (${_dedupKey})`);
             }
           }
         }
@@ -26922,26 +26924,36 @@ async function startBaileysBot() {
             const isCancel = _ct.includes('cancel');
             if (isConfirm || isCancel) {
               try {
-                const orderRes = await shopifyREST(`/orders/${_confirmSession.shopify_id}.json?fields=id,name,tags`);
+                const orderRes = await shopifyREST(`/orders/${_confirmSession.shopify_id}.json?fields=id,name,tags,line_items,total_price`);
                 const ord = orderRes?.order;
                 if (ord) {
                   const existingTags = (ord.tags || '').split(',').map(t => t.trim()).filter(Boolean);
                   if (isConfirm) {
-                    // Mark the SAME dedup key the orders/updated webhook's
-                    // _hasConfirmedTag block checks (wa_notif_sent.confirmed_tag)
-                    // before adding the tag — otherwise Shopify's webhook for
-                    // this exact tag change fires moments later, sees the tag,
-                    // and re-sends the whole order_confirm_cancel card again
-                    // right after the customer just tapped Confirm.
+                    // Real flow: tapping Confirm tags the order, then sends
+                    // the "pay ₹99" ask (order_awaiting_confirmation_v3) —
+                    // this is a checkpoint, not the final confirmation. The
+                    // dedup key here (pay99_ask_sent) is deliberately NOT
+                    // the same one the orders/updated webhook's isPartiallyPaid
+                    // branch uses (confirmed_tag) — that one fires the real
+                    // "your order is confirmed, packing now" once the ₹99
+                    // actually lands, and must not be pre-blocked by this step.
                     await mdb.collection('order_meta').updateOne(
                       { shopify_id: _confirmSession.shopify_id },
-                      { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } }
+                      { $set: { 'wa_notif_sent.pay99_ask_sent': new Date().toISOString() } }
                     );
                     if (!existingTags.some(t => t.toLowerCase() === '✅ order confirmed')) {
                       existingTags.push('✅ Order Confirmed');
                       await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
                     }
-                    await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Thank you — we're packing it now.` });
+                    const _oSlug = encodeURIComponent(String(ord.name).replace(/^#/, ''));
+                    const _total3 = parseFloat(ord.total_price || 0);
+                    const askResult = await sendWACloudTemplate({
+                      phone10: String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10),
+                      templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION,
+                      bodyParams: [ord.name, (ord.line_items || []).map(li => li.title).slice(0, 2).join(', ') || '—', Math.max(0, _total3 - 99).toFixed(0)],
+                      urlButtonParam: `${_oSlug}&contact=na`,
+                    });
+                    if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
                     waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
                   } else {
                     if (!existingTags.some(t => t.toLowerCase() === '❌ order canceled')) {
