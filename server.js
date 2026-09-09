@@ -27011,7 +27011,7 @@ async function startBaileysBot() {
                 const oName = `#${oNum}`;
                 const rneUrl = `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`;
                 await sock.sendMessage(sender, {
-                  text: `📋 *CROSCROW* — Order ${oName}\n\nReady to start your return or exchange!\n\n${rneUrl}\n\nReply 4 anytime for a human.`,
+                  text: `📋 *CROSCROW* — Order ${oName}\n\nReady to start your return or exchange!\n\n${rneUrl}\n\nTakes less than 2 minutes.`,
                 });
                 await waSessionClear(sender);
               } else {
