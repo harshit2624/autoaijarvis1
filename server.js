@@ -27289,7 +27289,7 @@ async function startBaileysBot() {
               if (/^0$/.test(text.trim())) {
                 await waSessionClear(sender);
                 await SC.addMessage(chat._id, { sender: 'customer', text });
-                await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
+                await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
                 await waSessionSet(sender, { menu: 'welcome_menu' });
                 waPending.delete(sender);
                 continue;
@@ -27457,8 +27457,14 @@ async function startBaileysBot() {
                 waPending.delete(sender);
                 continue;
               }
-              if (!waMenuOnCooldown(sender)) {
-                await sock.sendMessage(sender, { text: WA_MENUS.welcome_menu });
+              // 90-min cooldown (was 10min) — no reliable signal yet for
+              // "admin already replied manually via the WhatsApp app" on
+              // Coexistence numbers (message_echoes webhook unavailable),
+              // so this is the practical stopgap against re-blasting the
+              // menu into an unrelated conversation (e.g. a business
+              // inquiry) every 10 minutes while a human is mid-conversation.
+              if (!waMenuOnCooldown(sender, 90 * 60000)) {
+                await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
                 await waSessionSet(sender, { menu: 'welcome_menu' });
               }
               waPending.delete(sender);
