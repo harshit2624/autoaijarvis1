@@ -187,6 +187,13 @@
     .mini-bar-pct { font-size:11px; font-weight:600; margin-top:2px; }
     .dash-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-width:0; }
     .dash-2col > * { min-width:0; }
+    /* Internal 2/3-col splits inside the Confirmation/Dispatch/Delivery
+       cards — these stayed 2-3 columns even on mobile (where the outer
+       .big-grid already stacks to 1 column), squeezing stage-row labels
+       and numbers into unreadably narrow strips. */
+    .founder-grid-2 { display:grid; grid-template-columns:1fr 1fr; min-width:0; }
+    .founder-grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; min-width:0; }
+    .founder-grid-2 > *, .founder-grid-3 > * { min-width:0; }
 
     /* ── Mobile ── */
     @media(max-width:768px){
@@ -221,6 +228,7 @@
       .big-cards-grid { grid-template-columns:1fr !important; }
       .big-grid { grid-template-columns:1fr !important; }
       .dash-2col { grid-template-columns:1fr !important; }
+      .founder-grid-2, .founder-grid-3 { grid-template-columns:1fr !important; }
       .dq-grid { grid-template-columns:repeat(3,1fr) !important; }
       .pay-grid { grid-template-columns:1fr !important; }
       .aud-grid { grid-template-columns:1fr !important; }
@@ -3642,12 +3650,12 @@
                   <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.active||0} confirmed / {fs.total||0} total</span>
                 </div>
                 <div className="prog" style={{marginBottom:10}}><div className="prog-fill" style={{width:confPct+'%',background:'#6366f1'}}/></div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
+                <div className="founder-grid-3" style={{gap:6,marginBottom:10}}>
                   {miniBox('#34d399','Confirmed Rev',(fs.revDispatched||0)+(fs.revPending||0),false)}
                   {miniBox('#94a3b8','Not Confirmed',fs.revNotConfirmed||0,false)}
                   {miniBox('#ef4444','Cancelled Rev',fs.revCancelled||0,false)}
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div className="founder-grid-2" style={{gap:10}}>
                   <div>
                     <div style={{fontSize:9,fontWeight:700,color:'#34d399',textTransform:'uppercase',letterSpacing:0.3,marginBottom:4}}>✓ Confirmed ({fs.active||0})</div>
                     <StageRows rows={confirmedStages} den={fs.active||1} totalDen={fs.total||1}/>
@@ -3691,11 +3699,11 @@
                       </div>
                       <div className="prog"><div className="prog-fill" style={{width:dispPct+'%',background:cPct(dispPct)}}/></div>
                     </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                    <div className="founder-grid-2" style={{gap:6}}>
                       {miniBox('#10b981','Dispatched Rev',fs.revDispatched||0,false)}
                       {miniBox('#ef4444','Pending Rev',fs.revPending||0,false)}
                     </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                    <div className="founder-grid-2" style={{gap:10}}>
                       <div>
                         <div style={{fontSize:9,fontWeight:700,letterSpacing:0.6,textTransform:'uppercase',color:cPct(dispPct),marginBottom:4}}>✅ {dispPct}% Dispatched ({fs.dispatched||0})</div>
                         {dispStages.map(s=><MiniRow key={s.key} s={s} den={fs.dispatched||1}/>)}
@@ -3712,7 +3720,7 @@
                         <span style={{fontSize:10,color:'var(--text-muted)'}}>{fs.dispatched||0}/{fs.total||0} total · {fs.cancelled||0} cancelled</span>
                       </div>
                       <div className="prog" style={{marginBottom:8}}><div className="prog-fill" style={{width:(fs.overall_rate||0)+'%',background:cPct(fs.overall_rate||0)}}/></div>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      <div className="founder-grid-2" style={{gap:6}}>
                         {miniBox('#10b981','Dispatched Rev',fs.revDispatched||0,false)}
                         {miniBox('#ef4444','Not Dispatched Rev',fs.revNotDispatched||0,false)}
                       </div>
