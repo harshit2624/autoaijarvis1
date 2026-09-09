@@ -1549,12 +1549,33 @@ app.post("/webhooks/orders", (req, res) => {
                 : _isPartiallyPaid
                 ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
                 : `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
-              const _cloudTpl = _isPrepaid
-                ? { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] }
-                : _isPartiallyPaid
-                ? { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` }
-                : { templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [payload.name, (payload.line_items||[]).map(li=>li.title).slice(0,2).join(', ')||'—', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+              let _cloudTpl;
+              if (_isPrepaid) {
+                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] };
+              } else if (_isPartiallyPaid) {
+                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+              } else {
+                // New Confirm/Cancel card — replaces the old ₹99-advance ask
+                // with a straight tap. Real product photo (first line item),
+                // every item+size stacked on its own line, real address.
+                const _enrichedForWA = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
+                const _itemsList = (payload.line_items || []).map(li =>
+                  `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
+                ).join('\n') || '—';
+                const _addr = payload.shipping_address || {};
+                const _addressLine = [_addr.address1, _addr.city, _addr.zip].filter(Boolean).join(', ') || 'address on file';
+                _cloudTpl = {
+                  templateName: WA_TPL.ORDER_CONFIRM_CANCEL,
+                  headerImageUrl: _enrichedForWA?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
+                  bodyParams: [payload.name, _itemsList, _addressLine, _total.toFixed(0)],
+                };
+              }
               await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
+              // Only the COD "awaiting confirmation" send needs a Confirm/Cancel
+              // reply session — prepaid/advance orders are already confirmed.
+              if (!_isPrepaid && !_isPartiallyPaid) {
+                await waSetPendingConfirmSession(_confPhone, sid, payload.name).catch(() => {});
+              }
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
               console.log(`✅ WA confirmed_tag sent for ${payload.name}`);
             }
@@ -23415,6 +23436,7 @@ const WA_TPL = {
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
   STAFF_ALERT: 'staff_notification',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
+  ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
   WIN_BACK_FLAT500: 'win_back_flat500_v2',
@@ -24935,6 +24957,16 @@ async function waSessionSet(sender, data) {
     { upsert: true }
   );
 }
+// Order-confirmation quick-reply session — set right after sending the
+// order_confirm_cancel template (Confirm/Cancel buttons). The customer's
+// tap comes back as plain text ("✅ Confirm" / "❌ Cancel"), matched against
+// this session in the shared handler, same pattern as the old poll-vote
+// handler but working over Cloud API instead of a native WhatsApp poll.
+async function waSetPendingConfirmSession(phone10, shopifyId, orderName) {
+  const jid = `91${phone10}@s.whatsapp.net`;
+  await waSessionSet(jid, { type: 'order_confirm_pending', shopify_id: String(shopifyId), order_name: orderName });
+}
+
 // Store vendor session under both the actual JID and the plain phone JID so LID replies match
 async function waVendorSessionSet(actualJid, phoneJid, data) {
   await waSessionSet(actualJid, data);
@@ -26844,6 +26876,48 @@ async function startBaileysBot() {
               } catch (e) {
                 console.error(`❌ [WA Fallback] Confirm order handler error:`, e.message);
               }
+              waPending.delete(sender);
+              continue;
+            }
+          }
+
+          // ── 0. Pending order-confirmation quick-reply (Confirm/Cancel) ──
+          // Set by waSetPendingConfirmSession right after the
+          // order_confirm_cancel template goes out. Replaces the old
+          // Baileys native-poll confirmation flow — Cloud API has no poll
+          // equivalent, so this uses the template's quick-reply buttons
+          // instead, whose tap comes back as this exact label text.
+          const _confirmSession = await waSessionGet(sender);
+          if (_confirmSession?.type === 'order_confirm_pending') {
+            const _ct = text.trim().toLowerCase();
+            const isConfirm = _ct.includes('confirm');
+            const isCancel = _ct.includes('cancel');
+            if (isConfirm || isCancel) {
+              try {
+                const orderRes = await shopifyREST(`/orders/${_confirmSession.shopify_id}.json?fields=id,name,tags`);
+                const ord = orderRes?.order;
+                if (ord) {
+                  const existingTags = (ord.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+                  if (isConfirm) {
+                    if (!existingTags.some(t => t.toLowerCase() === '✅ order confirmed')) {
+                      existingTags.push('✅ Order Confirmed');
+                      await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
+                    }
+                    await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Thank you — we're packing it now.` });
+                    waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
+                  } else {
+                    if (!existingTags.some(t => t.toLowerCase() === '❌ order canceled')) {
+                      existingTags.push('❌ Order Canceled');
+                      await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
+                    }
+                    await shopifyREST(`/orders/${ord.id}/cancel.json`, 'POST', {}).catch(() => {});
+                    await OM.upsert(_confirmSession.shopify_id, { stage: 'cancelled', updated_at: new Date().toISOString() });
+                    await sock.sendMessage(sender, { text: `❌ Order ${ord.name} cancelled. Let us know if you'd like to reorder anytime!` });
+                    waAdminAlert(`Order cancelled via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
+                  }
+                }
+              } catch (e) { console.error('Order confirm/cancel reply error:', e.message); }
+              await waSessionClear(sender);
               waPending.delete(sender);
               continue;
             }
