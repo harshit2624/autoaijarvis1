@@ -15979,7 +15979,7 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
 }
 
 async function shipsagarTrackingCron() {
-  const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [] };
+  const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [], rrUpdates: [] };
   try {
     const creds = await getShipSagarCreds();
     if (!creds?.api_key) { runLog.message = 'ShipSagar not configured.'; await mdb.collection('shipsagar_cron_log').insertOne(runLog); return; }
@@ -16150,7 +16150,17 @@ async function shipsagarTrackingCron() {
     ).toArray();
 
     const PROD_REPLACED_CODES = ['prod_replaced','pickup done','picked up','pickdone','pick done'];
-    const DELIVERED_SELLER_CODES = ['delivered_seller','delivered to seller','delivered seller','return delivered','reached origin'];
+    // Reverse-shipment-only "arrived back at our warehouse" signals. Deliberately
+    // separate from shipsagarStatusToStage's forward-direction classifier: on a
+    // REVERSE leg, "returned"/"DTO" (Delivered To Origin) mean success (it made
+    // it back to us), whereas the same words on a FORWARD shipment mean RTO
+    // (failure) — so these two directions can never share one matcher.
+    // 'dto' and 'package returned' cover Delhivery's reverse-pickup terminal
+    // codes (e.g. "DTO - Package returned") which don't contain the word
+    // "delivered" at all, so the generic delivered+seller/origin/return
+    // fallback below misses them entirely — found via a real stuck RR
+    // (2026-09-09) whose reverse AWB sat on "DTO - Package returned" forever.
+    const RR_REVERSE_RECEIVED_CODES = ['delivered_seller','delivered to seller','delivered seller','return delivered','reached origin','dto','delivered to origin','package returned'];
 
     for (const rr of activeRRs) {
       for (const direction of ['reverse', 'forward']) {
@@ -16166,25 +16176,37 @@ async function shipsagarTrackingCron() {
           const descLow = desc.toLowerCase().replace(/[_\s]+/g, ' ');
           const now = new Date().toISOString();
           const prevStatus = shipField.tracking_status || '';
+          const descChanged = !!desc && desc !== prevStatus;
 
-          const rrHistoryToSave = ss.history.map(h => ({
-            desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
-            date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
-            time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
-            location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
-          })).filter(h => h.desc);
+          if (descChanged) {
+            const rrHistoryToSave = ss.history.map(h => ({
+              desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
+              date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
+              time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
+              location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
+            })).filter(h => h.desc);
 
-          if (!desc || desc === prevStatus) continue; // no change
+            // Update tracking_status + full scan history on the shipment field —
+            // the customer track page renders this the same way it renders the
+            // main forward-order scan log.
+            await mdb.collection('return_requests').updateOne(
+              { request_id: rr.request_id },
+              { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, [`${direction}_shipment.tracking_history`]: rrHistoryToSave, updated_at: now } }
+            );
+            console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
+            await rrPushHistory(rr.request_id, { event: `${direction}_tracking`, note: desc, source: 'courier' });
+          }
 
-          // Update tracking_status + full scan history on the shipment field —
-          // the customer track page renders this the same way it renders the
-          // main forward-order scan log.
-          await mdb.collection('return_requests').updateOne(
-            { request_id: rr.request_id },
-            { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, [`${direction}_shipment.tracking_history`]: rrHistoryToSave, updated_at: now } }
-          );
-          console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
-          await rrPushHistory(rr.request_id, { event: `${direction}_tracking`, note: desc, source: 'courier' });
+          // Stage-advance checks run on every cron pass using the LATEST known
+          // scan text — not gated on descChanged. Each check below is itself
+          // idempotent (rank-based rrAdvanceStatus, wa_notif_sent dedup), so
+          // re-running them on an unchanged status is safe and is exactly what
+          // recovers an RR that got its tracking_status saved on one run but
+          // failed (transient error, unmatched pattern at the time) to actually
+          // advance its stage — previously that RR would be stuck forever,
+          // since the old code skipped this whole block once desc stopped
+          // changing.
+          if (!desc) continue;
 
           if (direction === 'reverse') {
             const reverseStage = shipsagarStatusToStage(desc);
@@ -16194,17 +16216,26 @@ async function shipsagarTrackingCron() {
             const isPickedUp = PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
             if (isPickedUp && !rr.wa_notif_sent?.picked_up) {
               await sendRRWANotif(rr, 'picked_up');
-              await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
+              const adv = await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
+              runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: 'picked_up', advanced: adv });
             }
             // In transit — courier moving it back toward the warehouse
             if (reverseStage === 'transit' && rrStatusRank(rr.status) < rrStatusRank('in_transit')) {
-              await rrAdvanceStatus(rr, 'in_transit', 'Courier scan: in transit to warehouse', 'courier');
+              const adv = await rrAdvanceStatus(rr, 'in_transit', 'Courier scan: in transit to warehouse', 'courier');
+              if (adv) runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: 'in_transit', advanced: adv });
             }
-            // Delivered back to warehouse (reverse delivery = received by us)
-            const isReceivedBack = DELIVERED_SELLER_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
+            // Delivered back to warehouse (reverse delivery = received by us).
+            // Reverse-specific: on the RETURN leg, "returned"/"DTO" signals mean
+            // the package successfully arrived back at origin — the opposite
+            // of what those words mean on a FORWARD shipment (there they mean
+            // RTO/failure, handled separately by shipsagarStatusToStage). Do
+            // not reuse the forward classifier's rto bucket here — that's why
+            // this match list is independent and reverse-only.
+            const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
             if (isReceivedBack && !rr.wa_notif_sent?.received_at_warehouse) {
               await sendRRWANotif(rr, 'received_at_warehouse');
               const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
+              runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: 'received_at_warehouse', advanced });
               if (advanced) {
                 await mdb.collection('return_requests').updateOne(
                   { request_id: rr.request_id },
