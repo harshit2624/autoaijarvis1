@@ -3495,14 +3495,11 @@
       return { ...tier, count };
     });
 
-    const stages = STAGES.filter(s=>s.id!=='all');
     const a  = analytics;
-    const sc = a?.stageCounts || {};
     const fs = a?.fulfillStats || {};
     const ps = a?.summary?.period || {};
     const at = a?.allTimeTotals || {};
     const periodLabel = aPeriod ? aPeriod.label : 'All Time';
-    const stageColor = id => { const s=STAGES.find(x=>x.id===id); return s?`var(--${s.color})`:'var(--indigo)'; };
 
     const doRefresh = () => {
       if (dashCache?.current) { const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; dashCache.current.criticalTickets=null; }
@@ -3559,30 +3556,6 @@
           </div>
           <div style={{padding:'10px 18px 16px'}}>
             {aLoading ? <div style={{fontSize:12,color:'var(--text-muted)',padding:'20px 0'}}>Loading…</div> : <RevenueChart daily={a?.trend14d || []}/>}
-          </div>
-        </div>
-
-        {/* ── Order Pipeline — click a stage to jump to filtered Orders ── */}
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">Order Pipeline</span>
-            <span className="card-sub">{periodLabel} · click to filter orders</span>
-          </div>
-          <div style={{padding:16,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:10}}>
-            {aLoading ? Array.from({length:9}).map((_,i)=>(
-              <div key={i} style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14}}>
-                <div className="skel" style={{height:10,width:80,marginBottom:8}}/>
-                <div className="skel" style={{height:22,width:40}}/>
-              </div>
-            )) : stages.map(s=>(
-              <div key={s.id} onClick={()=>onStageClick(s.id)}
-                style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:14,cursor:'pointer',transition:'border-color 0.15s'}}
-                onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border-hi)'}
-                onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
-                <div style={{fontSize:9,letterSpacing:2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:6,display:'flex',alignItems:'center',gap:5}}><Icon name={s.id} mode={iconStyle} fallback={s.icon}/> {s.label}</div>
-                <div style={{fontSize:24,fontWeight:700,color:stageColor(s.id)}}>{sc[s.id]||0}</div>
-              </div>
-            ))}
           </div>
         </div>
 
@@ -3806,6 +3779,109 @@
                   </div>
                 );
               })()}
+            </div>
+          );
+        })()}
+
+        {/* ── Founder's Money Center — consolidates every commission/cash
+            number that used to live in a flat "Commission Breakdown" grid
+            of plain boxes into one story: how much money is earned, how
+            much is still moving, how much is at risk, and how much cash
+            is already in hand — all real, all period-scoped (allTimeTotals
+            is a slightly misleading name from the backend; these commission
+            fields are actually computed from the selected period). ── */}
+        {!aLoading && a && at.totalCommission !== undefined && (() => {
+          const buckets = [
+            { id:'delivered', label:'Delivered', icon:'✅', c:'#10b981', comm:at.deliveredCommission||0, gst:at.deliveredCommissionGst||0, desc:'Earned — collectible now' },
+            { id:'transit',   label:'In Pipeline', icon:'🚚', c:'#60a5fa', comm:at.transitCommission||0, gst:at.transitCommissionGst||0, desc:'Ready/Pickup/Transit/OFD' },
+            { id:'pending',   label:'Pending', icon:'⏳', c:'#fbbf24', comm:at.pendingCommission||0, gst:at.pendingCommissionGst||0, desc:'Confirmed/Partial — not dispatched yet' },
+            { id:'missed',    label:'Missed', icon:'↩', c:'#ef4444', comm:at.missedCommission||0, gst:at.missedCommissionGst||0, desc:'RTO — lost payout' },
+            { id:'other',     label:'Other', icon:'✕', c:'#94a3b8', comm:at.otherCommission||0, gst:at.otherCommissionGst||0, desc:'Cancelled/Hold' },
+          ];
+          const totalComm = at.totalCommission||0, totalGst = at.totalCommissionGst||0, grandTotal = totalComm+totalGst;
+          const realizedNow = at.deliveredCommission||0;
+          const stillMoving = (at.transitCommission||0)+(at.pendingCommission||0);
+          const atRisk = at.missedCommission||0;
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">💰 Founder's Money Center</div>
+                  <div className="dash-section-meta">{periodLabel} · commission earned across every order stage, plus cash already collected</div>
+                </div>
+                <div className="dash-section-tag" style={{background:'rgba(16,185,129,.12)',color:'#34d399',border:'1px solid rgba(16,185,129,.25)'}}>{fmtCur(grandTotal)} TOTAL</div>
+              </div>
+
+              {/* Hero row */}
+              <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:16}}>
+                <div style={{flex:'2 1 240px',background:'rgba(16,185,129,.07)',border:'1px solid rgba(16,185,129,.25)',borderRadius:10,padding:'14px 16px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Total Commission (incl. GST)</div>
+                  <div style={{fontSize:28,fontWeight:900,color:'#34d399',lineHeight:1}}>{fmtCur(grandTotal)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>{fmtCur(totalComm)} commission + {fmtCur(totalGst)} GST</div>
+                </div>
+                <div style={{flex:'1 1 160px',background:'rgba(52,211,153,.07)',border:'1px solid rgba(52,211,153,.2)',borderRadius:10,padding:'14px 16px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>💳 Prepaid Collected</div>
+                  <div style={{fontSize:22,fontWeight:900,color:'#34d399',lineHeight:1}}>{fmtCur(at.prepaidCollected||0)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>cash already in hand this period</div>
+                </div>
+                <div style={{flex:'1 1 160px',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Revenue</div>
+                  <div style={{fontSize:22,fontWeight:900,color:'var(--text)',lineHeight:1}}>{fmtCur(ps.revenue||0)}</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>all time: {fmtCur(at.revenue||0)}</div>
+                </div>
+              </div>
+
+              {/* Realized / Moving / At Risk pills */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:16}}>
+                <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.25)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'#10b981',letterSpacing:0.5,textTransform:'uppercase'}}>✓ Realized Now</div>
+                  <div style={{fontSize:16,fontWeight:900,color:'#10b981',marginTop:3}}>{fmtCur(realizedNow)}</div>
+                  <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>delivered — yours to collect</div>
+                </div>
+                <div style={{background:'rgba(96,165,250,.08)',border:'1px solid rgba(96,165,250,.25)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>🚚 Still In Motion</div>
+                  <div style={{fontSize:16,fontWeight:900,color:'#60a5fa',marginTop:3}}>{fmtCur(stillMoving)}</div>
+                  <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>in pipeline + pending — not lost yet</div>
+                </div>
+                <div style={{background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.25)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'#ef4444',letterSpacing:0.5,textTransform:'uppercase'}}>⚠ At Risk</div>
+                  <div style={{fontSize:16,fontWeight:900,color:'#ef4444',marginTop:3}}>{fmtCur(atRisk)}</div>
+                  <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>lost to RTO this period</div>
+                </div>
+              </div>
+
+              {/* Segmented share bar */}
+              <div style={{display:'flex',height:22,borderRadius:6,overflow:'hidden',marginBottom:12,gap:1}}>
+                {buckets.filter(b=>b.comm>0).map(b=>{
+                  const pct = totalComm>0 ? Math.round(b.comm/totalComm*100) : 0;
+                  return (
+                    <div key={b.id} title={`${b.label}: ${pct}%`} style={{flex:b.comm,minWidth:2,background:b.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      {pct>=8 && <span style={{fontSize:9,fontWeight:800,color:'#06281f'}}>{pct}%</span>}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Bucket rows */}
+              <div style={{display:'flex',flexDirection:'column',gap:0,overflowX:'auto'}}>
+                {buckets.map(b=>{
+                  const pct = totalComm>0 ? Math.round(b.comm/totalComm*100) : 0;
+                  return (
+                    <div key={b.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:'1px solid var(--border)',minWidth:520}}>
+                      <span style={{fontSize:14,flexShrink:0}}>{b.icon}</span>
+                      <div style={{width:110,flexShrink:0}}>
+                        <div style={{fontSize:11,fontWeight:700,color:b.c}}>{b.label}</div>
+                        <div style={{fontSize:8,color:'var(--text-muted)'}}>{b.desc}</div>
+                      </div>
+                      <div style={{flex:1,height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:pct+'%',background:b.c,borderRadius:3}}/></div>
+                      <span style={{fontSize:10,color:'var(--text-muted)',width:30,textAlign:'right',flexShrink:0}}>{pct}%</span>
+                      <span style={{fontSize:12,fontWeight:800,color:b.c,width:90,textAlign:'right',flexShrink:0}}>{fmtCur(b.comm)}</span>
+                      <span style={{fontSize:9,color:'var(--text-muted)',width:80,textAlign:'right',flexShrink:0}}>+{fmtCur(b.gst)} GST</span>
+                      <span style={{fontSize:12,fontWeight:800,color:'var(--text)',width:100,textAlign:'right',flexShrink:0}}>{fmtCur(b.comm+b.gst)}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}
