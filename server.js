@@ -23511,7 +23511,21 @@ async function waCloudSendSession(jid, content) {
   const to = `91${digits}`;
   try {
     let body;
-    if (content?.image) {
+    if (content?.ctaUrl) {
+      // Interactive session message — a real tappable button, free (not
+      // billed like a template send) as long as we're within the 24h
+      // window, which is always true here since this replies to an inbound
+      // message. Use this instead of an actual template whenever the
+      // content doesn't need Meta approval to send.
+      body = {
+        messaging_product: 'whatsapp', to, type: 'interactive',
+        interactive: {
+          type: 'cta_url',
+          body: { text: content.text || '' },
+          action: { name: 'cta_url', parameters: { display_text: content.ctaUrl.displayText, url: content.ctaUrl.url } },
+        },
+      };
+    } else if (content?.image) {
       const mediaId = await waCloudUploadMedia(content.image, content.mimetype || 'image/jpeg');
       body = { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId, caption: content.caption || '' } };
     } else {
@@ -27011,7 +27025,8 @@ async function startBaileysBot() {
                 const oName = `#${oNum}`;
                 const rneUrl = `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`;
                 await sock.sendMessage(sender, {
-                  text: `📋 *CROSCROW* — Order ${oName}\n\nReady to start your return or exchange!\n\n${rneUrl}\n\nTakes less than 2 minutes.`,
+                  text: `📋 *CROSCROW* — Order ${oName}\n\nReady to start your return or exchange!\n\nTakes less than 2 minutes.`,
+                  ctaUrl: { displayText: 'Start Return/Exchange', url: rneUrl },
                 });
                 await waSessionClear(sender);
               } else {
