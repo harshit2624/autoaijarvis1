@@ -23306,6 +23306,7 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 const WA_CLOUD_TOKEN    = process.env.WA_CLOUD_TOKEN || '';
 const WA_CLOUD_PHONE_ID = process.env.WA_CLOUD_PHONE_NUMBER_ID || '';
+const WA_CLOUD_WABA_ID  = process.env.WA_CLOUD_WABA_ID || '';
 const WA_CLOUD_TEMPLATE = process.env.WA_CLOUD_TEMPLATE_NAME || 'abandoned_cart_recovery';
 const WA_CLOUD_LANG     = process.env.WA_CLOUD_TEMPLATE_LANG || 'en_US';
 const WA_CLOUD_API      = 'https://graph.facebook.com/v21.0';
@@ -23367,11 +23368,36 @@ async function waClassifyRecipient(phone10) {
   _waRecipientTypeCache.set(phone10, type);
   return type;
 }
+// Template name -> Meta category (lowercased), refreshed periodically from
+// Meta's own template list. The async status-callback webhook is NOT a
+// reliable source for this on its own — Meta doesn't consistently include
+// the `pricing` object on every status event — so this cache is the primary
+// source and the webhook is just a same-day correction if a template gets
+// reclassified after being cached.
+let _waTemplateCategoryCache = new Map();
+async function refreshWATemplateCategories() {
+  try {
+    if (!WA_CLOUD_TOKEN || !WA_CLOUD_WABA_ID) return;
+    const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_WABA_ID}/message_templates?fields=name,category&limit=200`, {
+      headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}` },
+    });
+    const data = await res.json();
+    if (Array.isArray(data.data)) {
+      const next = new Map();
+      for (const t of data.data) next.set(t.name, String(t.category || '').toLowerCase());
+      _waTemplateCategoryCache = next;
+      console.log(`📋 WA template category cache refreshed (${next.size} templates)`);
+    }
+  } catch (e) { console.error('refreshWATemplateCategories error:', e.message); }
+}
+refreshWATemplateCategories();
+setInterval(refreshWATemplateCategories, 30 * 60 * 1000);
+
 // kind: 'template' | 'session'. name: template name, or session content type
-// ('text'/'image'/'list'/'cta_url'). category is filled in later by the
-// status-callback webhook once Meta reports what it actually billed this
-// as (utility/marketing/service/authentication) — unknown at send time for
-// templates, and session sends are always free 'service' conversations.
+// ('text'/'image'/'list'/'cta_url'). category is filled in at send time for
+// templates (from the cache above) and hardcoded 'service' for sessions —
+// the status-callback webhook can still correct it later if Meta reports a
+// different billed category for a specific message.
 async function logWASend({ phone10, wamid, kind, name, sent, reason, category = null }) {
   try {
     const recipient_type = await waClassifyRecipient(phone10);
@@ -23430,16 +23456,16 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
     if (!res.ok || data.error) {
       console.error('❌ WA Cloud API abandoned-cart send failed:', JSON.stringify(data.error || data));
       const reason = data.error?.message || `http_${res.status}`;
-      logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason }).catch(() => {});
+      logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason, category: _waTemplateCategoryCache.get(WA_CLOUD_TEMPLATE) || null }).catch(() => {});
       return { sent: false, reason };
     }
     console.log(`✅ WA Cloud API template sent → ${to} (${WA_CLOUD_TEMPLATE})`);
     const wamid = data.messages?.[0]?.id;
-    logWASend({ phone10, wamid, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: true }).catch(() => {});
+    logWASend({ phone10, wamid, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: true, category: _waTemplateCategoryCache.get(WA_CLOUD_TEMPLATE) || null }).catch(() => {});
     return { sent: true, messageId: wamid };
   } catch (e) {
     console.error('❌ WA Cloud API abandoned-cart send error:', e.message);
-    logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason: e.message }).catch(() => {});
+    logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason: e.message, category: _waTemplateCategoryCache.get(WA_CLOUD_TEMPLATE) || null }).catch(() => {});
     return { sent: false, reason: e.message };
   }
 }
@@ -23479,16 +23505,16 @@ async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl
     if (!res.ok || data.error) {
       console.error(`❌ WA Cloud template "${templateName}" failed:`, JSON.stringify(data.error || data));
       const reason = data.error?.message || `http_${res.status}`;
-      logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason }).catch(() => {});
+      logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason, category: _waTemplateCategoryCache.get(templateName) || null }).catch(() => {});
       return { sent: false, reason };
     }
     console.log(`✅ WA Cloud template sent → ${to} (${templateName})`);
     const wamid = data.messages?.[0]?.id;
-    logWASend({ phone10, wamid, kind: 'template', name: templateName, sent: true }).catch(() => {});
+    logWASend({ phone10, wamid, kind: 'template', name: templateName, sent: true, category: _waTemplateCategoryCache.get(templateName) || null }).catch(() => {});
     return { sent: true, messageId: wamid };
   } catch (e) {
     console.error(`❌ WA Cloud template "${templateName}" error:`, e.message);
-    logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason: e.message }).catch(() => {});
+    logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason: e.message, category: _waTemplateCategoryCache.get(templateName) || null }).catch(() => {});
     return { sent: false, reason: e.message };
   }
 }
