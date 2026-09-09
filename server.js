@@ -15978,6 +15978,121 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
   }
 }
 
+const RR_PROD_REPLACED_CODES = ['prod_replaced','pickup done','picked up','pickdone','pick done'];
+// Reverse-shipment-only "arrived back at our warehouse" signals. Deliberately
+// separate from shipsagarStatusToStage's forward-direction classifier: on a
+// REVERSE leg, "returned"/"DTO" (Delivered To Origin) mean success (it made
+// it back to us), whereas the same words on a FORWARD shipment mean RTO
+// (failure) — so these two directions can never share one matcher.
+// 'dto' and 'package returned' cover Delhivery's reverse-pickup terminal
+// codes (e.g. "DTO - Package returned") which don't contain the word
+// "delivered" at all, so the generic delivered+seller/origin/return
+// fallback below misses them entirely — found via a real stuck RR
+// (2026-09-09) whose reverse AWB sat on "DTO - Package returned" forever.
+const RR_REVERSE_RECEIVED_CODES = ['delivered_seller','delivered to seller','delivered seller','return delivered','reached origin','dto','delivered to origin','package returned'];
+
+// Applies the same reverse/forward stage-advance rules to one courier scan,
+// regardless of who's asking — the 2-hourly cron loop and the on-demand
+// per-shipment "Refresh" button (GET /track/rr-shipment-status) both call
+// this, so a manual refresh behaves identically to what the cron would have
+// done, instead of just saving the raw scan text with no stage change (the
+// bug behind an RR staying stuck at "In Transit" no matter how many times
+// it was refreshed — the refresh endpoint used to only $set tracking_status/
+// tracking_history, never actually re-running the classification+advance
+// logic). Returns the list of {event, advanced} transitions that fired, so
+// callers can report back what happened.
+async function rrApplyStageLogic(rr, direction, desc, descLow) {
+  const events = [];
+  const now = new Date().toISOString();
+
+  if (direction === 'reverse') {
+    const reverseStage = shipsagarStatusToStage(desc);
+    // Picked up from customer — advances status regardless of current status
+    // (as long as it's not already further along or terminal), so a request
+    // that never got manually "approved" doesn't get stuck on pending forever.
+    const isPickedUp = RR_PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
+    if (isPickedUp && !rr.wa_notif_sent?.picked_up) {
+      await sendRRWANotif(rr, 'picked_up');
+      const adv = await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
+      events.push({ event: 'picked_up', advanced: adv });
+    }
+    // In transit — courier moving it back toward the warehouse
+    if (reverseStage === 'transit' && rrStatusRank(rr.status) < rrStatusRank('in_transit')) {
+      const adv = await rrAdvanceStatus(rr, 'in_transit', 'Courier scan: in transit to warehouse', 'courier');
+      if (adv) events.push({ event: 'in_transit', advanced: adv });
+    }
+    // Delivered back to warehouse (reverse delivery = received by us).
+    // Reverse-specific: on the RETURN leg, "returned"/"DTO" signals mean
+    // the package successfully arrived back at origin — the opposite
+    // of what those words mean on a FORWARD shipment (there they mean
+    // RTO/failure, handled separately by shipsagarStatusToStage). Do
+    // not reuse the forward classifier's rto bucket here — that's why
+    // this match list is independent and reverse-only.
+    const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
+    if (isReceivedBack && !rr.wa_notif_sent?.received_at_warehouse) {
+      await sendRRWANotif(rr, 'received_at_warehouse');
+      const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
+      events.push({ event: 'received_at_warehouse', advanced });
+      if (advanced) {
+        await mdb.collection('return_requests').updateOne(
+          { request_id: rr.request_id },
+          { $set: { received_at_cc: true, received_at_cc_at: now } }
+        );
+      }
+    }
+  } else if (direction === 'forward') {
+    const fwdStage = shipsagarStatusToStage(desc);
+    // Exchange picked up by courier = dispatched
+    if (fwdStage === 'pickup' && !rr.wa_notif_sent?.exchange_dispatched) {
+      await sendRRWANotif(rr, 'exchange_dispatched');
+      events.push({ event: 'exchange_dispatched', advanced: true });
+    }
+    // Exchange OFD — reuses the same shipment_out_for_delivery
+    // template as a forward order's OFD (identical customer intent:
+    // "your package arrives today"), no separate exchange template needed.
+    if (fwdStage === 'ofd' && !rr.wa_notif_sent?.exchange_ofd) {
+      const _Fe = '```';
+      const exOrderSlug = rr.order_name ? encodeURIComponent(String(rr.order_name).replace(/^#/, '')) : '';
+      const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${exOrderSlug}` : '';
+      const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
+      const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (digits.length === 10 && /^[6-9]/.test(digits)) {
+        const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [rr.order_name || '', 'Please keep your phone reachable.'], urlButtonParam: `${exOrderSlug}&contact=na` });
+        if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: ofdMsg }).catch(() => {});
+        await mdb.collection('return_requests').updateOne(
+          { request_id: rr.request_id },
+          { $set: { 'wa_notif_sent.exchange_ofd': now, updated_at: now } }
+        );
+        events.push({ event: 'exchange_ofd', advanced: true });
+      }
+    }
+    // Exchange delivered to customer — reuses shipment_delivered template.
+    if (fwdStage === 'delivered' && !rr.wa_notif_sent?.exchange_delivered) {
+      const _Fe = '```';
+      const dlvMsg = `${_Fe}\n▪ C R O S C R O W ▪\n██████████████ 100%\nEXCHANGE DELIVERED\n────────────────\nORDER  ${rr.order_name || ''}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_Fe}`;
+      const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (digits.length === 10 && /^[6-9]/.test(digits)) {
+        const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [rr.order_name || ''] });
+        if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: dlvMsg }).catch(() => {});
+        await mdb.collection('return_requests').updateOne(
+          { request_id: rr.request_id },
+          { $set: { 'wa_notif_sent.exchange_delivered': now, updated_at: now } }
+        );
+      }
+      // Auto-complete the RR if exchange delivered
+      if (!['completed', 'cancelled', 'rejected'].includes(rr.status)) {
+        await mdb.collection('return_requests').updateOne(
+          { request_id: rr.request_id },
+          { $set: { status: 'completed', completed_at: now, updated_at: now } }
+        );
+        events.push({ event: 'exchange_delivered', advanced: true });
+      }
+    }
+  }
+
+  return events;
+}
+
 async function shipsagarTrackingCron() {
   const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [], rrUpdates: [] };
   try {
@@ -16149,19 +16264,6 @@ async function shipsagarTrackingCron() {
       { projection: { request_id:1, type:1, status:1, order_name:1, shopify_order_id:1, customer_name:1, customer_phone:1, items:1, admin_note:1, reverse_shipment:1, forward_shipment:1, wa_notif_sent:1, _id:0 } }
     ).toArray();
 
-    const PROD_REPLACED_CODES = ['prod_replaced','pickup done','picked up','pickdone','pick done'];
-    // Reverse-shipment-only "arrived back at our warehouse" signals. Deliberately
-    // separate from shipsagarStatusToStage's forward-direction classifier: on a
-    // REVERSE leg, "returned"/"DTO" (Delivered To Origin) mean success (it made
-    // it back to us), whereas the same words on a FORWARD shipment mean RTO
-    // (failure) — so these two directions can never share one matcher.
-    // 'dto' and 'package returned' cover Delhivery's reverse-pickup terminal
-    // codes (e.g. "DTO - Package returned") which don't contain the word
-    // "delivered" at all, so the generic delivered+seller/origin/return
-    // fallback below misses them entirely — found via a real stuck RR
-    // (2026-09-09) whose reverse AWB sat on "DTO - Package returned" forever.
-    const RR_REVERSE_RECEIVED_CODES = ['delivered_seller','delivered to seller','delivered seller','return delivered','reached origin','dto','delivered to origin','package returned'];
-
     for (const rr of activeRRs) {
       for (const direction of ['reverse', 'forward']) {
         const shipField = direction === 'reverse' ? rr.reverse_shipment : rr.forward_shipment;
@@ -16198,96 +16300,19 @@ async function shipsagarTrackingCron() {
           }
 
           // Stage-advance checks run on every cron pass using the LATEST known
-          // scan text — not gated on descChanged. Each check below is itself
-          // idempotent (rank-based rrAdvanceStatus, wa_notif_sent dedup), so
-          // re-running them on an unchanged status is safe and is exactly what
-          // recovers an RR that got its tracking_status saved on one run but
-          // failed (transient error, unmatched pattern at the time) to actually
-          // advance its stage — previously that RR would be stuck forever,
-          // since the old code skipped this whole block once desc stopped
-          // changing.
+          // scan text — not gated on descChanged. rrApplyStageLogic's checks
+          // are each idempotent (rank-based rrAdvanceStatus, wa_notif_sent
+          // dedup), so re-running them on an unchanged status is safe and is
+          // exactly what recovers an RR that got its tracking_status saved on
+          // one run but failed (transient error, unmatched pattern at the
+          // time) to actually advance its stage — previously that RR would be
+          // stuck forever, since the old code skipped this whole block once
+          // desc stopped changing.
           if (!desc) continue;
 
-          if (direction === 'reverse') {
-            const reverseStage = shipsagarStatusToStage(desc);
-            // Picked up from customer — advances status regardless of current status
-            // (as long as it's not already further along or terminal), so a request
-            // that never got manually "approved" doesn't get stuck on pending forever.
-            const isPickedUp = PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
-            if (isPickedUp && !rr.wa_notif_sent?.picked_up) {
-              await sendRRWANotif(rr, 'picked_up');
-              const adv = await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
-              runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: 'picked_up', advanced: adv });
-            }
-            // In transit — courier moving it back toward the warehouse
-            if (reverseStage === 'transit' && rrStatusRank(rr.status) < rrStatusRank('in_transit')) {
-              const adv = await rrAdvanceStatus(rr, 'in_transit', 'Courier scan: in transit to warehouse', 'courier');
-              if (adv) runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: 'in_transit', advanced: adv });
-            }
-            // Delivered back to warehouse (reverse delivery = received by us).
-            // Reverse-specific: on the RETURN leg, "returned"/"DTO" signals mean
-            // the package successfully arrived back at origin — the opposite
-            // of what those words mean on a FORWARD shipment (there they mean
-            // RTO/failure, handled separately by shipsagarStatusToStage). Do
-            // not reuse the forward classifier's rto bucket here — that's why
-            // this match list is independent and reverse-only.
-            const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
-            if (isReceivedBack && !rr.wa_notif_sent?.received_at_warehouse) {
-              await sendRRWANotif(rr, 'received_at_warehouse');
-              const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
-              runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: 'received_at_warehouse', advanced });
-              if (advanced) {
-                await mdb.collection('return_requests').updateOne(
-                  { request_id: rr.request_id },
-                  { $set: { received_at_cc: true, received_at_cc_at: now } }
-                );
-              }
-            }
-          } else if (direction === 'forward') {
-            const fwdStage = shipsagarStatusToStage(desc);
-            // Exchange picked up by courier = dispatched
-            if (fwdStage === 'pickup' && !rr.wa_notif_sent?.exchange_dispatched) {
-              await sendRRWANotif(rr, 'exchange_dispatched');
-            }
-            // Exchange OFD — reuses the same shipment_out_for_delivery
-            // template as a forward order's OFD (identical customer intent:
-            // "your package arrives today"), no separate exchange template needed.
-            if (fwdStage === 'ofd' && !rr.wa_notif_sent?.exchange_ofd) {
-              const _Fe = '```';
-              const exOrderSlug = rr.order_name ? encodeURIComponent(String(rr.order_name).replace(/^#/, '')) : '';
-              const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${exOrderSlug}` : '';
-              const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
-              const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-              if (digits.length === 10 && /^[6-9]/.test(digits)) {
-                const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [rr.order_name || '', 'Please keep your phone reachable.'], urlButtonParam: `${exOrderSlug}&contact=na` });
-                if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: ofdMsg }).catch(() => {});
-                await mdb.collection('return_requests').updateOne(
-                  { request_id: rr.request_id },
-                  { $set: { 'wa_notif_sent.exchange_ofd': now, updated_at: now } }
-                );
-              }
-            }
-            // Exchange delivered to customer — reuses shipment_delivered template.
-            if (fwdStage === 'delivered' && !rr.wa_notif_sent?.exchange_delivered) {
-              const _Fe = '```';
-              const dlvMsg = `${_Fe}\n▪ C R O S C R O W ▪\n██████████████ 100%\nEXCHANGE DELIVERED\n────────────────\nORDER  ${rr.order_name || ''}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_Fe}`;
-              const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-              if (digits.length === 10 && /^[6-9]/.test(digits)) {
-                const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [rr.order_name || ''] });
-                if (!cloudResult.sent && waSocket && waConnected) await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: dlvMsg }).catch(() => {});
-                await mdb.collection('return_requests').updateOne(
-                  { request_id: rr.request_id },
-                  { $set: { 'wa_notif_sent.exchange_delivered': now, updated_at: now } }
-                );
-              }
-              // Auto-complete the RR if exchange delivered
-              if (!['completed', 'cancelled', 'rejected'].includes(rr.status)) {
-                await mdb.collection('return_requests').updateOne(
-                  { request_id: rr.request_id },
-                  { $set: { status: 'completed', completed_at: now, updated_at: now } }
-                );
-              }
-            }
+          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow);
+          for (const ev of rrEvents) {
+            runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: ev.event, advanced: ev.advanced });
           }
 
           await new Promise(r => setTimeout(r, 300));
@@ -19231,7 +19256,17 @@ app.get("/track/shipment-status", async (req, res) => {
 // ── Public: refresh a return/exchange shipment's live courier scan log ────
 // Mirrors /track/shipment-status but for reverse (pickup-from-customer) or
 // forward (exchange-to-customer) RR shipments — used by the Refresh button
-// on the order track page and the returns page's own status view.
+// on the order track page, the returns page's own status view, and the
+// admin RR panel. Previously this only saved the raw scan text/history and
+// never re-ran the classification+stage-advance logic (rrApplyStageLogic,
+// shared with the 2-hourly cron) — so clicking Refresh could update the
+// visible courier log line but leave the RR's actual status (and the
+// stepper built from it) stuck, e.g. sitting on "In Transit" forever even
+// once the courier scan clearly showed the return was delivered back to us.
+// Now runs the exact same stage logic the cron does, so a manual refresh
+// gets identical results on demand instead of waiting up to the cron's
+// interval. Also falls back to registering the AWB with ShipSagar if it
+// isn't tracked yet, instead of just reporting "no updates".
 app.get("/track/rr-shipment-status", async (req, res) => {
   try {
     const { request_id, direction } = req.query;
@@ -19239,18 +19274,32 @@ app.get("/track/rr-shipment-status", async (req, res) => {
       return res.status(400).json({ error: 'request_id and direction (reverse|forward) required' });
     }
     const field = `${direction}_shipment`;
-    const rr = await mdb.collection('return_requests').findOne({ request_id }, { projection: { [field]: 1, _id: 0 } });
+    const rr = await mdb.collection('return_requests').findOne({ request_id }, { projection: { _id: 0 } });
     const awb = rr?.[field]?.awb;
     if (!awb) return res.status(400).json({ error: 'No AWB registered for this shipment yet' });
 
     const ss = await shipsagarTrackShipment(awb);
     if (!ss) return res.json({ status: rr[field]?.tracking_status || '', awb, message: 'ShipSagar not configured' });
+
     if (!ss.found || !ss.history?.length) {
+      // Not on ShipSagar yet — push it for tracking registration so a
+      // future refresh (or the cron) can pick up scans once they start.
+      try {
+        const soData = rr.shopify_order_id ? await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null) : null;
+        const so = soData?.order || {};
+        await shipsagarPushShipment({
+          awb, courierCode: rr[field]?.courier || '',
+          orderNo: so.name || rr.order_name || request_id,
+          customerName: rr.customer_name || '', email: rr.customer_email || so.email || '',
+          mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10),
+        });
+      } catch (e) { console.error('RR ShipSagar push error:', e.message); }
       return res.json({ status: rr[field]?.tracking_status || '', awb, message: 'No scan updates yet — check back soon.' });
     }
 
     const latest = ss.history[ss.history.length - 1];
-    const desc = latest.ActionDescription || ss.currentStatus || '';
+    const desc = (latest.ActionDescription || ss.currentStatus || '').trim();
+    const descLow = desc.toLowerCase().replace(/[_\s]+/g, ' ');
     const historyToSave = ss.history.map(h => ({
       desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
       date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
@@ -19262,7 +19311,14 @@ app.get("/track/rr-shipment-status", async (req, res) => {
       { request_id },
       { $set: { [`${field}.tracking_status`]: desc, [`${field}.tracking_updated_at`]: now, [`${field}.tracking_history`]: historyToSave, updated_at: now } }
     );
-    res.json({ status: desc, awb, source: 'shipsagar', history: historyToSave });
+
+    const events = desc ? await rrApplyStageLogic(rr, direction, desc, descLow) : [];
+    const advanced = events.some(e => e.advanced);
+    const freshStatus = advanced
+      ? (await mdb.collection('return_requests').findOne({ request_id }, { projection: { status: 1, _id: 0 } }))?.status
+      : rr.status;
+
+    res.json({ status: desc, awb, source: 'shipsagar', history: historyToSave, rrStatus: freshStatus, advanced, events });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -19494,52 +19550,6 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
       }
     }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── Public: track RR shipment AWB via ShipSagar ───────────────────────────
-app.get("/track/rr-shipment-status", async (req, res) => {
-  try {
-    const { awb, request_id, direction } = req.query;
-    if (!awb) return res.status(400).json({ error: 'awb required' });
-    const ss = await shipsagarTrackShipment(awb);
-    if (!ss) return res.json({ status: '', awb, message: 'Tracking not configured' });
-    if (ss.found && ss.history?.length) {
-      const latest = ss.history[ss.history.length - 1];
-      const status = latest.ActionDescription || '';
-      if (request_id && direction) {
-        const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
-        await mdb.collection('return_requests').updateOne(
-          { request_id },
-          { $set: { [`${field}.tracking_status`]: status, [`${field}.tracking_updated_at`]: new Date().toISOString() } }
-        ).catch(() => {});
-      }
-      return res.json({ status, awb, history: ss.history, tag: shipsagarDescToTag(status) });
-    }
-    if (ss.found) return res.json({ status: '', awb, message: 'No events yet — check back soon.' });
-    // Not on ShipSagar — fetch full RR doc to get courier + customer data, then push
-    try {
-      const rr = request_id
-        ? await mdb.collection('return_requests').findOne({ request_id }, { projection: { _id: 0 } }).catch(() => null)
-        : null;
-      // Get courier from the correct shipment field
-      const shipField = direction === 'forward' ? rr?.forward_shipment : rr?.reverse_shipment;
-      const courierCode = shipField?.courier || '';
-      const [soData] = await Promise.all([
-        rr?.shopify_order_id ? shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null) : Promise.resolve(null),
-      ]);
-      const so = soData?.order || {};
-      const pushResult = await shipsagarPushShipment({
-        awb,
-        courierCode,
-        orderNo: so.name || rr?.order_name || request_id || awb,
-        customerName: rr?.customer_name || '',
-        email: rr?.customer_email || so.email || '',
-        mobileNo: (rr?.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10),
-      });
-      console.log(`📦 RR ShipSagar push AWB ${awb} (${direction}): ok=${pushResult?.ok} courier=${courierCode}`);
-    } catch(e) { console.error('RR ShipSagar push error:', e.message); }
-    return res.json({ status: '', awb, message: 'Tracking requested from CROSCROW channels — refresh in a moment.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

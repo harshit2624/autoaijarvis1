@@ -4948,15 +4948,16 @@
   /* ══════════════════════════════════
      RETURN REQUESTS VIEW
   ══════════════════════════════════ */
-  function RRShipmentStatus({ awb, courier, direction, requestId, trackingStatus }) {
+  function RRShipmentStatus({ awb, courier, direction, requestId, trackingStatus, onUpdated }) {
     const [status,     setStatus]     = useState(trackingStatus || '');
     const [history,    setHistory]    = useState([]);
     const [refreshing, setRefreshing] = useState(false);
     const [msg,        setMsg]        = useState('');
+    const [advancedMsg, setAdvancedMsg] = useState('');
     const color = direction === 'reverse' ? 'var(--cyan)' : 'var(--green)';
 
     const doRefresh = async () => {
-      setRefreshing(true); setMsg('');
+      setRefreshing(true); setMsg(''); setAdvancedMsg('');
       try {
         const params = new URLSearchParams({ awb, request_id: requestId||'', direction: direction||'' });
         const r = await fetch(`${API}/track/rr-shipment-status?${params}`);
@@ -4964,6 +4965,14 @@
         if (d.status) setStatus(d.status);
         if (d.history?.length) setHistory(d.history);
         if (d.message) setMsg(d.message);
+        // Refresh now runs the same stage-advance logic the cron does (not
+        // just saving the raw scan text) — if it moved the RR forward, tell
+        // the admin and reload the whole card so the stepper/status pill
+        // above reflect it immediately instead of only this mini widget.
+        if (d.advanced) {
+          setAdvancedMsg(`✓ Advanced to "${(d.rrStatus||'').replace(/_/g,' ')}"`);
+          onUpdated && onUpdated();
+        }
       } catch { setMsg('Could not fetch.'); }
       setRefreshing(false);
     };
@@ -4980,10 +4989,11 @@
           </div>
           <button onClick={doRefresh} disabled={refreshing}
             style={{background:'transparent',border:`1px solid ${color}44`,borderRadius:5,color,cursor:'pointer',fontSize:10,padding:'2px 8px'}}>
-            {refreshing?'…':'↻'}
+            {refreshing?'… Refreshing':'↻ Refresh'}
           </button>
         </div>
         {status && <div style={{fontSize:12,color,fontWeight:600,marginBottom:4}}>{status}</div>}
+        {advancedMsg && <div style={{fontSize:11,color:'#10b981',fontWeight:700,marginBottom:4}}>{advancedMsg}</div>}
         {msg && <div style={{fontSize:10,color:'var(--text-muted)'}}>{msg}</div>}
         {history.length > 0 && (
           <div style={{marginTop:6,borderTop:`1px solid ${color}22`,paddingTop:6,display:'flex',flexDirection:'column',gap:3}}>
@@ -5132,7 +5142,7 @@
                     </button>
                   </div>
                 </div>
-                <RRShipmentStatus awb={ship.awb} courier={ship.courier} direction={dir} requestId={rr.request_id} trackingStatus={ship.tracking_status}/>
+                <RRShipmentStatus awb={ship.awb} courier={ship.courier} direction={dir} requestId={rr.request_id} trackingStatus={ship.tracking_status} onUpdated={onUpdated}/>
               </div>
             ))}
           </div>
