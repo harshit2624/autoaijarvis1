@@ -5849,7 +5849,15 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
     // ── Fulfillment stats — single stageMap, one entry per unique order
     const fulfillStats = (() => {
-      const DISPATCHED_STAGES = ['ready','pickup','transit','delivered','rto'];
+      // NOTE: 'ofd' (out for delivery) must be here — every other copy of
+      // this list in the codebase includes it. Without it, orders currently
+      // in OFD were invisible to both `active` and `notConfirmed` (while
+      // still counted in `total`), silently vanishing from the confirmation
+      // breakdown — e.g. 294 confirmed + 73 not-confirmed summing to less
+      // than the 386 total shown, with the gap being exactly the OFD count.
+      // Revenue accounting below already treated 'ofd' as dispatched; only
+      // this count list didn't, so revenue and order counts disagreed too.
+      const DISPATCHED_STAGES = ['ready','pickup','transit','ofd','delivered','rto'];
       const PENDING_STAGES    = ['confirmed','partial'];
       const DISPATCHED_SET    = new Set(DISPATCHED_STAGES);
       const PENDING_SET       = new Set(PENDING_STAGES);

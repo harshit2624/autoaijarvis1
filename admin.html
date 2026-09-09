@@ -3599,7 +3599,8 @@
           );
           const confirmedStages = [
             {key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'},
-            {key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},
+            {key:'ofd',label:'Out for Delivery',c:'#22d3ee',icon:'🛵'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},
+            {key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},
             {key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'confirmed',label:'Confirmed',c:'#34d399',icon:'✓'},
             {key:'partial',label:'Partial',c:'#fbbf24',icon:'₹'},
           ];
@@ -3681,7 +3682,7 @@
                   column and the Overall Fulfillment block were both missing
                   here before. */}
               {(() => {
-                const dispStages = [{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'}];
+                const dispStages = [{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'ofd',label:'Out for Delivery',c:'#22d3ee',icon:'🛵'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'}];
                 const pendStages = [{key:'confirmed',label:'Confirmed',c:'#34d399',icon:'✓'},{key:'partial',label:'Partial',c:'#fbbf24',icon:'₹'}];
                 const MiniRow = ({s, den}) => {
                   const cnt = sm[s.key]||0, p = den>0?Math.round(cnt/den*100):0;
@@ -3743,7 +3744,7 @@
                   per stage and the whole "From All Orders" section were
                   both missing here before. */}
               {(() => {
-                const inTransitCount = (fs.stageMap?.ready||0)+(fs.stageMap?.pickup||0)+(fs.stageMap?.transit||0);
+                const inTransitCount = (fs.stageMap?.ready||0)+(fs.stageMap?.pickup||0)+(fs.stageMap?.transit||0)+(fs.stageMap?.ofd||0);
                 const inTransitPct = fs.dispatched>0 ? Math.round(inTransitCount/fs.dispatched*100) : 0;
                 const allDelRate = fs.total>0 ? Math.round((fs.delivered||0)/fs.total*100) : 0;
                 const allRtoRate = fs.total>0 ? Math.round((fs.rto||0)/fs.total*100) : 0;
