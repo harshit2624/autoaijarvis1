@@ -23340,6 +23340,51 @@ function waCloudUrlSuffix(fullUrl, fallbackSuffix = '') {
   } catch { return fallbackSuffix; }
 }
 
+// ── WA send log — unified record of every outbound Cloud API send, for the
+// WhatsApp Bot performance dashboard (cards + log table, broken down by
+// recipient type and Meta's billing category). Classification is cached in
+// memory per phone for the process lifetime since vendor/staff/admin lists
+// change rarely and this runs on every single send.
+const _waRecipientTypeCache = new Map(); // phone10 -> type, TTL via periodic clear
+setInterval(() => _waRecipientTypeCache.clear(), 30 * 60 * 1000);
+async function waClassifyRecipient(phone10) {
+  if (_waRecipientTypeCache.has(phone10)) return _waRecipientTypeCache.get(phone10);
+  let type = 'customer';
+  try {
+    if (phone10 === WA_ADMIN_NO) {
+      type = 'admin';
+    } else {
+      const staff = await mdb.collection('staff_accounts').findOne({ wa_phone: { $regex: phone10 } }, { projection: { _id: 1 } }).catch(() => null);
+      if (staff) {
+        type = 'staff';
+      } else {
+        const vendor = await mdb.collection('vendor_profiles').findOne({ phone: { $regex: phone10 } }, { projection: { _id: 1 } }).catch(() => null)
+          || await mdb.collection('vendor_credentials').findOne({ whatsapp: { $regex: phone10 } }, { projection: { _id: 1 } }).catch(() => null);
+        if (vendor) type = 'vendor';
+      }
+    }
+  } catch {}
+  _waRecipientTypeCache.set(phone10, type);
+  return type;
+}
+// kind: 'template' | 'session'. name: template name, or session content type
+// ('text'/'image'/'list'/'cta_url'). category is filled in later by the
+// status-callback webhook once Meta reports what it actually billed this
+// as (utility/marketing/service/authentication) — unknown at send time for
+// templates, and session sends are always free 'service' conversations.
+async function logWASend({ phone10, wamid, kind, name, sent, reason, category = null }) {
+  try {
+    const recipient_type = await waClassifyRecipient(phone10);
+    await mdb.collection('wa_send_log').insertOne({
+      phone: phone10, recipient_type, wamid: wamid || null,
+      kind, name, category,
+      status: sent ? 'sent' : 'failed', reason: reason || null,
+      billable: null, pricing_category: null,
+      sent_at: new Date().toISOString(),
+    });
+  } catch (e) { console.error('logWASend error:', e.message); }
+}
+
 // Sends the abandoned_cart_recovery template with a dynamic Buy Now button.
 // Returns { sent: false, reason } (never throws) so callers can fall back to
 // Baileys — this must never block or crash the existing abandoned-cart flow.
@@ -23384,12 +23429,17 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
     const data = await res.json();
     if (!res.ok || data.error) {
       console.error('❌ WA Cloud API abandoned-cart send failed:', JSON.stringify(data.error || data));
-      return { sent: false, reason: data.error?.message || `http_${res.status}` };
+      const reason = data.error?.message || `http_${res.status}`;
+      logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason }).catch(() => {});
+      return { sent: false, reason };
     }
     console.log(`✅ WA Cloud API template sent → ${to} (${WA_CLOUD_TEMPLATE})`);
-    return { sent: true, messageId: data.messages?.[0]?.id };
+    const wamid = data.messages?.[0]?.id;
+    logWASend({ phone10, wamid, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: true }).catch(() => {});
+    return { sent: true, messageId: wamid };
   } catch (e) {
     console.error('❌ WA Cloud API abandoned-cart send error:', e.message);
+    logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason: e.message }).catch(() => {});
     return { sent: false, reason: e.message };
   }
 }
@@ -23428,12 +23478,17 @@ async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl
     const data = await res.json();
     if (!res.ok || data.error) {
       console.error(`❌ WA Cloud template "${templateName}" failed:`, JSON.stringify(data.error || data));
-      return { sent: false, reason: data.error?.message || `http_${res.status}` };
+      const reason = data.error?.message || `http_${res.status}`;
+      logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason }).catch(() => {});
+      return { sent: false, reason };
     }
     console.log(`✅ WA Cloud template sent → ${to} (${templateName})`);
-    return { sent: true, messageId: data.messages?.[0]?.id };
+    const wamid = data.messages?.[0]?.id;
+    logWASend({ phone10, wamid, kind: 'template', name: templateName, sent: true }).catch(() => {});
+    return { sent: true, messageId: wamid };
   } catch (e) {
     console.error(`❌ WA Cloud template "${templateName}" error:`, e.message);
+    logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason: e.message }).catch(() => {});
     return { sent: false, reason: e.message };
   }
 }
@@ -23551,14 +23606,20 @@ async function waCloudSendSession(jid, content) {
       headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    const sessionKind = content?.list ? 'list' : content?.ctaUrl ? 'cta_url' : content?.image ? 'image' : 'text';
     const data = await res.json();
     if (!res.ok || data.error) {
       console.error('❌ WA Cloud session send failed:', JSON.stringify(data.error || data));
-      return { sent: false, reason: data.error?.message || `http_${res.status}` };
+      const reason = data.error?.message || `http_${res.status}`;
+      logWASend({ phone10: digits, kind: 'session', name: sessionKind, sent: false, reason, category: 'service' }).catch(() => {});
+      return { sent: false, reason };
     }
-    return { sent: true, messageId: data.messages?.[0]?.id };
+    const wamid = data.messages?.[0]?.id;
+    logWASend({ phone10: digits, wamid, kind: 'session', name: sessionKind, sent: true, category: 'service' }).catch(() => {});
+    return { sent: true, messageId: wamid };
   } catch (e) {
     console.error('❌ WA Cloud session send error:', e.message);
+    logWASend({ phone10: digits, kind: 'session', name: 'text', sent: false, reason: e.message, category: 'service' }).catch(() => {});
     return { sent: false, reason: e.message };
   }
 }
@@ -23674,6 +23735,14 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
         { wamid: st.id },
         { $set: { status: st.status, status_at: new Date().toISOString() } }
       );
+      // Reconcile the WA Bot dashboard log: Meta's status callback carries
+      // the REAL billing category (utility/marketing/service/authentication)
+      // and billable flag — more reliable than guessing from template name,
+      // since Meta can reclassify a template's category after submission.
+      const _wsUpdate = { delivery_status: st.status, delivery_status_at: new Date().toISOString() };
+      if (st.pricing) { _wsUpdate.pricing_category = st.pricing.category || null; _wsUpdate.billable = !!st.pricing.billable; }
+      if (st.status === 'failed' && st.errors?.length) { _wsUpdate.status = 'failed'; _wsUpdate.reason = st.errors[0]?.title || st.errors[0]?.message || 'delivery_failed'; }
+      await mdb.collection('wa_send_log').updateOne({ wamid: st.id }, { $set: _wsUpdate });
       console.log(`📶 WA Cloud status: ${st.id} → ${st.status}${st.errors ? ' ERROR: ' + JSON.stringify(st.errors) : ''}`);
     }
   } catch (e) { console.error('WA Cloud webhook error:', e.message); }
@@ -23684,6 +23753,76 @@ app.get('/admin/wa-cloud/status-log', adminAuth, async (req, res) => {
   try {
     const logs = await mdb.collection('wa_cloud_status_log').find({}, { projection: { raw: 0 } }).sort({ logged_at: -1 }).limit(50).toArray();
     res.json({ logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── WhatsApp Bot performance dashboard ─────────────────────────────────────
+// Cards: sends broken down by recipient_type (customer/vendor/admin/staff) x
+// category (utility/marketing/service/authentication) x status (sent/failed),
+// plus an estimated cost using admin-set per-category rates (Meta's status
+// callback gives billable + category, not an INR amount — there's no
+// authoritative per-message price available via API, so this is a
+// deliberately-labeled estimate, not a real invoice figure).
+app.get('/admin/wa-bot/rates', adminAuth, async (req, res) => {
+  try {
+    const doc = await mdb.collection('wa_bot_settings').findOne({ _id: 'rates' });
+    res.json({ rates: doc?.rates || { utility: 0.35, marketing: 0.88, service: 0, authentication: 0.35 } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/admin/wa-bot/rates', adminAuth, async (req, res) => {
+  try {
+    const { rates } = req.body || {};
+    if (!rates || typeof rates !== 'object') return res.status(400).json({ error: 'rates object required' });
+    await mdb.collection('wa_bot_settings').updateOne({ _id: 'rates' }, { $set: { rates, updated_at: new Date().toISOString() } }, { upsert: true });
+    res.json({ ok: true, rates });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/admin/wa-bot/analytics', adminAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const q = {};
+    if (from || to) {
+      q.sent_at = {};
+      if (from) q.sent_at.$gte = from + 'T00:00:00.000Z';
+      if (to)   q.sent_at.$lte = to + 'T23:59:59.999Z';
+    }
+    const rows = await mdb.collection('wa_send_log').find(q, {
+      projection: { phone: 1, recipient_type: 1, kind: 1, name: 1, status: 1, reason: 1, pricing_category: 1, category: 1, billable: 1, sent_at: 1, delivery_status: 1, wamid: 1, _id: 0 }
+    }).sort({ sent_at: -1 }).toArray();
+
+    const ratesDoc = await mdb.collection('wa_bot_settings').findOne({ _id: 'rates' });
+    const rates = ratesDoc?.rates || { utility: 0.35, marketing: 0.88, service: 0, authentication: 0.35 };
+
+    // cards[recipient_type][category] = { sent, failed, cost }
+    const cards = {};
+    const RECIPIENTS = ['customer', 'vendor', 'admin', 'staff'];
+    const CATEGORIES = ['utility', 'marketing', 'service', 'authentication', 'unknown'];
+    for (const r of RECIPIENTS) {
+      cards[r] = {};
+      for (const c of CATEGORIES) cards[r][c] = { sent: 0, failed: 0, cost: 0 };
+    }
+    const totals = { sent: 0, failed: 0, cost: 0 };
+    for (const row of rows) {
+      const r = RECIPIENTS.includes(row.recipient_type) ? row.recipient_type : 'customer';
+      const c = row.pricing_category || row.category || 'unknown';
+      const cat = CATEGORIES.includes(c) ? c : 'unknown';
+      if (!cards[r]) cards[r] = Object.fromEntries(CATEGORIES.map(x => [x, { sent: 0, failed: 0, cost: 0 }]));
+      const bucket = cards[r][cat];
+      if (row.status === 'failed' || row.delivery_status === 'failed') {
+        bucket.failed++; totals.failed++;
+      } else {
+        bucket.sent++; totals.sent++;
+        // Only count cost for billable sends (Meta explicitly marks
+        // whether a message was billable; session/service is always free).
+        if (row.billable !== false && cat !== 'service') {
+          const cost = rates[cat] || 0;
+          bucket.cost += cost; totals.cost += cost;
+        }
+      }
+    }
+
+    res.json({ cards, totals, rates, logs: rows.slice(0, 500), totalRows: rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
