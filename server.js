@@ -23693,14 +23693,40 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
     const value = change?.value;
     if (!value) return;
 
-    // TEMPORARY — capture the raw shape of anything that isn't the standard
-    // 'messages' field (i.e. smb_message_echoes once Meta starts sending
-    // them) so the exact payload structure can be inspected and a real
-    // parser built, instead of guessing at Meta's docs. Remove once that
-    // parser is written and wired in.
     if (change?.field && change.field !== 'messages') {
       await mdb.collection('wa_webhook_debug_log').insertOne({ field: change.field, raw: change, logged_at: new Date().toISOString() }).catch(() => {});
-      console.log(`🔍 WA webhook field captured: ${change.field}`);
+    }
+
+    // ── smb_message_echoes: admin replied manually from the linked WhatsApp
+    // Business App (Coexistence) instead of our dashboard. This is the Cloud
+    // API/Coexistence equivalent of Baileys' fromMe detection (see the
+    // near-identical block inside waSharedMessageHandler) — same pause
+    // behavior, different transport. Payload shape confirmed via a live
+    // capture: value.message_echoes[] = [{ from: ourNumber, to: customer,
+    // text: {body}, type, id, timestamp }].
+    for (const echo of (value.message_echoes || [])) {
+      try {
+        if (echo.type !== 'text' || !echo.text?.body) continue; // only handle plain text replies for now
+        const outText = echo.text.body.trim();
+        const outPhone = String(echo.to || '').replace(/^91/, '').slice(-10);
+        if (!outText || outPhone.length !== 10) continue;
+        // Same bot-message fingerprint check as the Baileys fromMe handler —
+        // skip if this echo is actually the BOT's own Cloud API session send
+        // (echoed back to us), not a genuine manual admin reply.
+        const _looksLikeBot = outText.startsWith('```') || outText.includes('▪ C R O S C R O W ▪') || outText.includes('C R O S C R O W') || /^(What are you looking for|✅|⚠️|📋|🔍|👁️|📊|🎫|🛍️|track|order|return|exchange|confirm|chat|resolved|no open|fetching|watching|digest|creating ticket|on it|generating)/i.test(outText);
+        if (_looksLikeBot) continue;
+        const outSender = `91${outPhone}@s.whatsapp.net`;
+        const outChat = await mdb.collection('support_chats').findOne({ whatsapp_sender: outSender }, { sort: { updated_at: -1 } });
+        if (!outChat) continue;
+        await SC.addMessage(outChat._id, { sender: 'admin', text: outText });
+        const _pauseUntil1h = Date.now() + 1 * 60 * 60 * 1000;
+        await mdb.collection('support_chats').updateOne(
+          { _id: outChat._id },
+          { $set: { needs_human: true, resolved: true, status: 'resolved', resolved_at: new Date().toISOString(), bot_paused_until: _pauseUntil1h, updated_at: new Date().toISOString() } }
+        );
+        await closeSupportTicket(outChat._id, 'manual_phone').catch(() => {});
+        console.log(`✅ Chat paused 1h via manual admin reply (smb_message_echoes): ${outPhone}`);
+      } catch (e) { console.error('smb_message_echoes handler error:', e.message); }
     }
 
     // Inbound customer messages
