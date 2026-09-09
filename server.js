@@ -6192,6 +6192,20 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         }
       });
     });
+    // Per-vendor avg confirm→dispatch time, scoped to the SELECTED period
+    // (not all-time like vendor-scorecard) — feeds the Vendor Health Score
+    // on the dashboard so "avg dispatch timing" reflects the same period
+    // the rest of the card is looking at.
+    const vendorDispatchHrs = {};
+    allVS.forEach(r => {
+      if (!r.dispatched_at || !r.stage_started_at || r.dispatched_at <= r.stage_started_at) return;
+      const d = new Date(r.dispatched_at);
+      if (d < periodFrom || d > periodTo) return;
+      if (!vendorDispatchHrs[r.vendor_name]) vendorDispatchHrs[r.vendor_name] = [];
+      vendorDispatchHrs[r.vendor_name].push((r.dispatched_at - r.stage_started_at) / 3600000);
+    });
+    const avgOf = arr => arr.length ? parseFloat((arr.reduce((s,v)=>s+v,0)/arr.length).toFixed(1)) : null;
+
     const vendorLeaderboard = Object.entries(vfMap)
       .filter(([, d]) => d.confirmed >= 3)
       .map(([vendor, d]) => ({
@@ -6209,6 +6223,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         rtoRate:          d.dispatched > 0 ? Math.round(d.rto        / d.dispatched * 100) : 0,
         deliveryRateAll:  d.confirmed  > 0 ? Math.round(d.delivered  / d.confirmed  * 100) : 0,
         rtoRateAll:       d.confirmed  > 0 ? Math.round(d.rto        / d.confirmed  * 100) : 0,
+        avgDispatchHrs:   avgOf(vendorDispatchHrs[vendor]||[]),
       }))
       .sort((a, b) => b.pending - a.pending || a.dispatchRate - b.dispatchRate)
       .slice(0, 15);

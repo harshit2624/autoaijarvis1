@@ -4016,6 +4016,108 @@
           </div>
         )}
 
+        {/* ── Vendor Performance Arena — composite Health Score from
+            dispatch rate, delivery rate, RTO rate and avg dispatch time,
+            all real + period-scoped (a.vendorLeaderboard). Crowns the best
+            and flags the worst, then ranks everyone else below. ── */}
+        {!aLoading && (a?.vendorLeaderboard||[]).length > 0 && (() => {
+          const scoreOf = v => {
+            const parts = [
+              { w:0.25, v:v.dispatchRate },
+              { w:0.25, v:v.deliveryRate },
+              { w:0.30, v:Math.max(0,100-v.rtoRate) },
+            ];
+            if (v.avgDispatchHrs != null) parts.push({ w:0.20, v:Math.max(0,Math.min(100,100-v.avgDispatchHrs)) });
+            const totalW = parts.reduce((s,p)=>s+p.w,0);
+            return Math.round(parts.reduce((s,p)=>s+p.w*p.v,0)/totalW);
+          };
+          const ranked = a.vendorLeaderboard.map(v=>({...v, score:scoreOf(v)})).sort((x,y)=>y.score-x.score);
+          const best = ranked[0], worst = ranked[ranked.length-1];
+          const scoreColor = s => s>=75?'#10b981':s>=50?'#f59e0b':'#ef4444';
+          const fmtHrs = h => h==null?'—':h<24?`${h.toFixed(1)}h`:`${Math.floor(h/24)}d ${Math.round(h%24)}h`;
+          const HeroCard = ({v, badge, badgeC, bg, bdr}) => (
+            <div style={{flex:1,minWidth:0,background:bg,border:`1px solid ${bdr}`,borderRadius:10,padding:'16px 18px'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <span style={{fontSize:9,fontWeight:800,letterSpacing:0.5,padding:'3px 9px',borderRadius:99,background:badgeC+'22',color:badgeC,textTransform:'uppercase'}}>{badge}</span>
+                <span style={{fontSize:28,fontWeight:900,color:scoreColor(v.score),lineHeight:1}}>{v.score}</span>
+              </div>
+              <div style={{fontSize:15,fontWeight:800,color:'var(--text)',marginBottom:10,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{v.vendor}</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                <div>
+                  <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>Dispatch Rate</div>
+                  <div style={{fontSize:13,fontWeight:800,color:'var(--text)'}}>{v.dispatchRate}%</div>
+                </div>
+                <div>
+                  <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>Delivery Rate</div>
+                  <div style={{fontSize:13,fontWeight:800,color:'var(--text)'}}>{v.deliveryRate}%</div>
+                </div>
+                <div>
+                  <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>RTO Rate</div>
+                  <div style={{fontSize:13,fontWeight:800,color:v.rtoRate<15?'#10b981':v.rtoRate<25?'#f59e0b':'#ef4444'}}>{v.rtoRate}%</div>
+                </div>
+                <div>
+                  <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>Avg Dispatch</div>
+                  <div style={{fontSize:13,fontWeight:800,color:'var(--text)'}}>{fmtHrs(v.avgDispatchHrs)}</div>
+                </div>
+              </div>
+              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${bdr}`,display:'flex',justifyContent:'space-between',fontSize:10}}>
+                <span style={{color:'var(--text-muted)'}}>Dispatched revenue</span>
+                <span style={{fontWeight:700,color:'var(--text)'}}>{fmtCur(v.dispatchedRev)}</span>
+              </div>
+            </div>
+          );
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">🏆 Vendor Performance Arena</div>
+                  <div className="dash-section-meta">{periodLabel} · Health Score = dispatch rate + delivery rate + RTO rate + avg dispatch speed, weighted</div>
+                </div>
+                <div className="dash-section-tag" style={{background:'rgba(99,102,241,.12)',color:'#818cf8',border:'1px solid rgba(99,102,241,.25)'}}>{ranked.length} VENDORS</div>
+              </div>
+
+              {ranked.length > 1 && (
+                <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
+                  <HeroCard v={best} badge="👑 Top Performer" badgeC="#10b981" bg="rgba(16,185,129,.07)" bdr="rgba(16,185,129,.25)"/>
+                  <HeroCard v={worst} badge="🚩 Needs Attention" badgeC="#ef4444" bg="rgba(239,68,68,.07)" bdr="rgba(239,68,68,.25)"/>
+                </div>
+              )}
+
+              <div style={{display:'flex',flexDirection:'column',gap:6,overflowX:'auto'}}>
+                {ranked.map((v,i)=>(
+                  <div key={v.vendor} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:8,background:'var(--bg-hover)',border:'1px solid var(--border)',minWidth:500}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',width:20,flexShrink:0,textAlign:'center'}}>{i+1}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:'var(--text)',width:130,flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={v.vendor}>{v.vendor}</span>
+                    <div style={{width:36,height:36,borderRadius:'50%',border:`3px solid ${scoreColor(v.score)}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:900,color:scoreColor(v.score),flexShrink:0}}>{v.score}</div>
+                    <div style={{flex:1,minWidth:0,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                      <div>
+                        <div style={{fontSize:8,color:'var(--text-muted)'}}>Dispatch</div>
+                        <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:v.dispatchRate+'%',background:'#818cf8'}}/></div>
+                        <div style={{fontSize:10,fontWeight:700,color:'#818cf8',marginTop:1}}>{v.dispatchRate}%</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:8,color:'var(--text-muted)'}}>Delivery</div>
+                        <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:v.deliveryRate+'%',background:'#10b981'}}/></div>
+                        <div style={{fontSize:10,fontWeight:700,color:'#10b981',marginTop:1}}>{v.deliveryRate}%</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:8,color:'var(--text-muted)'}}>RTO</div>
+                        <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:Math.min(v.rtoRate,100)+'%',background:'#ef4444'}}/></div>
+                        <div style={{fontSize:10,fontWeight:700,color:'#ef4444',marginTop:1}}>{v.rtoRate}%</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:8,color:'var(--text-muted)'}}>Avg Dispatch</div>
+                        <div style={{fontSize:11,fontWeight:700,color:'var(--text)',marginTop:3}}>{fmtHrs(v.avgDispatchHrs)}</div>
+                      </div>
+                    </div>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--text)',width:80,flexShrink:0,textAlign:'right'}}>{fmtCur(v.dispatchedRev)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── Top Selling Products ── */}
         {!aLoading && a?.topProducts?.length > 0 && (() => {
           const COLORS = ['#6366f1','#10b981','#f59e0b','#60a5fa','#a78bfa','#34d399','#fb923c','#f87171','#22d3ee','#ec4899'];
