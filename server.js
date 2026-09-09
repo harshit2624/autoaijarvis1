@@ -1586,14 +1586,14 @@ app.post("/webhooks/orders", (req, res) => {
               const _orderSlug = encodeURIComponent(String(payload.name).replace(/^#/, ''));
               let _cloudTpl, _waConfirm, _dedupKey;
               if (_isPrepaid) {
-                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
+                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed. No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] };
                 _dedupKey = 'confirmed_tag';
               } else if (_isPartiallyPaid) {
                 // The real "your order is confirmed, packing now" — fires
                 // once the ₹99 advance actually lands, independent of
                 // whether the pay-ask already went out.
-                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
+                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'confirmed_tag';
               } else {
@@ -3375,7 +3375,7 @@ async function fireStageEmails(shopifyId, newStage) {
         const cloudResult = await sendWACloudTemplate({ phone10: _rtoPhone, templateName: WA_TPL.SHIPMENT_RTO, bodyParams: [order.name] });
         if (!cloudResult.sent && waSocket && waConnected) {
           const _Fr = '```';
-          const _waRto = `${_Fr}\n▪ C R O S C R O W ▪\nORDER RETURNED\n────────────────\nORDER  ${order.name}\n\nSTATE  Our courier couldn't\n       deliver your order.\n       It's heading back.\n────────────────\nREPLY TO THIS MESSAGE\nFOR SUPPORT\n${_Fr}`;
+          const _waRto = `${_Fr}\n▪ C R O S C R O W ▪\nORDER RETURNED\n────────────────\nORDER  ${order.name}\n\nSTATE  Our courier couldn't deliver your order. It's heading back.\n────────────────\nREPLY TO THIS MESSAGE\nFOR SUPPORT\n${_Fr}`;
           await waSocket.sendMessage(`91${_rtoPhone}@s.whatsapp.net`, { text: _waRto }).catch(e => console.error('WA RTO notify error:', e.message));
         }
       }
@@ -10458,7 +10458,7 @@ async function notifyDelayToCustomer(shopify_id, vendor, reason, eta_date) {
       const cloudResult = await sendWACloudTemplate({ phone10: customerPhone, templateName: WA_TPL.DELAY_REMARK_CUSTOMER, bodyParams: [ord?.name || '#'+shopify_id, etaFormatted] });
       if (!cloudResult.sent && waSocket && waConnected) {
         const _Fd = '```';
-        const waMsg = `${_Fd}\n▪ C R O S C R O W ▪\nORDER UPDATE\n────────────────\nORDER  ${ord?.name || '#'+shopify_id}\n\nSTATE  Running slightly late.\n       Vendor dispatching by\n       ${etaFormatted}.\n\nTracking link follows\nonce shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fd}`;
+        const waMsg = `${_Fd}\n▪ C R O S C R O W ▪\nORDER UPDATE\n────────────────\nORDER  ${ord?.name || '#'+shopify_id}\n\nSTATE  Running slightly late. Vendor dispatching by ${etaFormatted}.\n\nTracking link follows\nonce shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fd}`;
         await waSocket.sendMessage(`91${customerPhone}@s.whatsapp.net`, { text: waMsg }).catch(() => {});
       }
     }
@@ -14571,14 +14571,14 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
             const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
             const savings = Math.round(total - discountedTotal);
             const _Fp = '```';
-            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${orderName}\n\nPAID   ₹${discountedTotal}\nSAVED  ₹${savings}\n\nSTATE  Confirmed and moving.\n       No payment at delivery.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
+            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${orderName}\n\nPAID   ₹${discountedTotal}\nSAVED  ₹${savings}\n\nSTATE  Confirmed and moving. No payment at delivery.\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
             await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [orderName, String(discountedTotal)] });
           } else {
             const remaining = Math.max(0, total - CONFIRM_FEE);
             const _Fp = '```';
             const orderSlug14 = encodeURIComponent(String(orderName).replace(/^#/, ''));
             const _trackUrl14 = `${SERVER_URL}/o/${orderSlug14}`;
-            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl14}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
+            const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl14}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
             await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [orderName, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: `${orderSlug14}&contact=na` });
           }
         }
@@ -15595,7 +15595,7 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
     const courierLine = `COURIER  ${courier || 'Our delivery partner'}\n`;
     msg = `${_Ft}\n▪ C R O S C R O W ▪\n█████████░░░░░ 60%\nSHIPPED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nCNF PCK SHP OFD DLV\n\n${courierLine}${awbLine}\nTRACK  ${trackUrl}\n────────────────\nNOTHING NEEDED FROM YOU\n${_Ft}`;
   } else if (stage === 'transit') {
-    msg = `${_Ft}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${trackUrl}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Ft}`;
+    msg = `${_Ft}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving your way.\n\nTRACK  ${trackUrl}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Ft}`;
   } else if (stage === 'ofd') {
     const codLine = codAmount > 0 ? `KEEP   ₹${codAmount} READY` : 'KEEP PHONE ON';
     msg = `${_Ft}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${trackUrl}\n────────────────\n${codLine}\n${_Ft}`;
@@ -15713,25 +15713,25 @@ async function sendRRWANotif(rr, event, extra = {}) {
 
   const _Fr = '```';
   if (event === 'request_received') {
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  ${orderName}\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team\n       reviews it within\n       24 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  ${orderName}\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team reviews it within 24 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'approved') {
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 40%\nAPPROVED\n────────────────\nORDER  ${orderName}\n\n●───◉───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Approved. We'll arrange\n       pickup and keep you\n       updated.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 40%\nAPPROVED\n────────────────\nORDER  ${orderName}\n\n●───◉───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Approved. We'll arrange pickup and keep you updated.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'pickup_scheduled') {
     const awb = extra.awb || rr.reverse_shipment?.awb || '';
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
     const trackUrlRR = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
     const trackLine = awb ? `TRACK    ${trackUrlRR}\n` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${trackLine}\nPACK   Original tags and\n       packaging. Photo or\n       clip while you pack.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${trackLine}\nPACK   Original tags and packaging. Photo or clip while you pack.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
   } else if (event === 'picked_up') {
     const awb = rr.reverse_shipment?.awb || extra.awb || '';
     const trackUrlRR = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
     const trackLine = awb ? `TRACK  ${trackUrlRR}\n\n` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKED UP\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nREQ APR PCK QC DONE\n\n${trackLine}STATE  Heading back to us.\n       QC update in 5–7 days.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKED UP\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nREQ APR PCK QC DONE\n\n${trackLine}STATE  Heading back to us. QC update in 5–7 days.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'received_at_warehouse') {
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for\n       a quick check. Takes\n       24 to 48 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for a quick check. Takes 24 to 48 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'refund_initiated') {
     const amt = extra.amount ? `AMT    ₹${extra.amount}\n\n` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\n${amt}STATE  Expected in your\n       account in 3–5 days.\n────────────────\nREPLY 4 FOR STORE CREDIT\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\n${amt}STATE  Expected in your account in 3–5 days.\n────────────────\nREPLY 4 FOR STORE CREDIT\n${_Fr}`;
   } else if (event === 'exchange_dispatched') {
     const awb = extra.awb || rr.forward_shipment?.awb || '';
     const courier = extra.courier || rr.forward_shipment?.courier || 'Our delivery partner';
@@ -15741,10 +15741,10 @@ async function sendRRWANotif(rr, event, extra = {}) {
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nEXCHANGE SENT\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${awbLine}${trackLine}────────────────\nNEW PACK ─ SAME ORDER\n${_Fr}`;
   } else if (event === 'rejected') {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  ${orderName}\n\nSTATE  ${reason}\n       Your item ships back\n       within 2–3 days.\n────────────────\nREPLY 4 TO REACH US NOW\nHOURS  2 PM – 8 PM\nLINE   6375668971\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  ${orderName}\n\nSTATE  ${reason} Your item ships back within 2–3 days.\n────────────────\nREPLY 4 TO REACH US NOW\nHOURS  2 PM – 8 PM\nLINE   6375668971\n${_Fr}`;
   } else if (event === 'store_credit_issued') {
     const amt = extra.amount != null ? `₹${Number(extra.amount).toFixed(0)}` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nSTORE CREDIT ISSUED\n────────────────\nORDER  ${orderName}\n\nAMT    ${amt}\nSTATE  Added to your\n       CROSCROW account.\n       Auto-applies at\n       checkout on your\n       next order.\n────────────────\nCHECK YOUR EMAIL TOO\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nSTORE CREDIT ISSUED\n────────────────\nORDER  ${orderName}\n\nAMT    ${amt}\nSTATE  Added to your CROSCROW account. Auto-applies at checkout on your next order.\n────────────────\nCHECK YOUR EMAIL TOO\n${_Fr}`;
   }
 
   if (!msg) return;
@@ -16210,7 +16210,7 @@ async function shipsagarTrackingCron() {
               const _Fe = '```';
               const exOrderSlug = rr.order_name ? encodeURIComponent(String(rr.order_name).replace(/^#/, '')) : '';
               const exTrackUrl = rr.order_name ? `${SERVER_URL}/o/${exOrderSlug}` : '';
-              const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is\n       out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
+              const ofdMsg = `${_Fe}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nEXCHANGE — OUT FOR DELIVERY\n────────────────\nORDER  ${rr.order_name || ''}\n\nSTATE  Your replacement is out for delivery today.\n\nTRACK  ${exTrackUrl}\n────────────────\nKEEP PHONE ON\n${_Fe}`;
               const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
               if (digits.length === 10 && /^[6-9]/.test(digits)) {
                 const cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, bodyParams: [rr.order_name || '', 'Please keep your phone reachable.'], urlButtonParam: `${exOrderSlug}&contact=na` });
@@ -22181,19 +22181,19 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
       `${F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  #1234\n\nPay ₹99 to confirm your COD\norder — helps us block fake\nand mistaken orders.\n\nCONFIRM\n${DEMO_CONFIRM}\n────────────────\nGOES ON HOLD AFTER 48 HRS\n${F}`,
 
       // 4. packing (<24h)
-      `${F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  #1234\n\nSTATE  Confirmed and moving.\n       Next update lands the\n       moment it ships.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nDISPATCH EXPECTED\nWITHIN 24 HRS\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  #1234\n\nSTATE  Confirmed and moving. Next update lands the moment it ships.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nDISPATCH EXPECTED\nWITHIN 24 HRS\n${F}`,
 
       // 5. packing late (>24h)
-      `${F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ RUNNING LATE\n────────────────\nORDER  #1234\n\nSTATE  Running slightly late.\n       Flagged on our side and\n       pushing it on priority.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ RUNNING LATE\n────────────────\nORDER  #1234\n\nSTATE  Running slightly late. Flagged on our side and pushing it on priority.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
       // 6. on hold
-      `${F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  #1234\n\nSTATE  Your order is paused,\n       most likely waiting on\n       confirmation. Open it\n       and clear it here:\n\nOPEN   ${DEMO_CONFIRM}\n────────────────\nREPLY 4 FOR A HUMAN\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  #1234\n\nSTATE  Your order is paused, most likely waiting on confirmation. Open it and clear it here:\n\nOPEN   ${DEMO_CONFIRM}\n────────────────\nREPLY 4 FOR A HUMAN\n${F}`,
 
       // 7. shipped
       `${F}\n▪ C R O S C R O W ▪\n█████████░░░░░ 60%\nSHIPPED\n────────────────\nORDER  #1234\n\n●───●───◉───○───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
       // 8. in transit
-      `${F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  #1234\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  #1234\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving your way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
       // 9. out for delivery (COD)
       `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  #1234\n\n●───●───●───◉───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${DEMO_TRACK}\n────────────────\nKEEP PHONE ON\nKEEP BALANCE READY\n${F}`,
@@ -22208,46 +22208,46 @@ app.post('/admin/wa-template-preview', adminAuth, async (req, res) => {
       `${F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
       // 13. delivery attempted
-      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nDELIVERY ATTEMPTED\n────────────────\nORDER  #1234\n\nSTATE  The rider could not\n       reach you. One more\n       attempt is scheduled.\n\nFIX    ${DEMO_TRACK}\n────────────────\nKEEP PHONE REACHABLE\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nDELIVERY ATTEMPTED\n────────────────\nORDER  #1234\n\nSTATE  The rider could not reach you. One more attempt is scheduled.\n\nFIX    ${DEMO_TRACK}\n────────────────\nKEEP PHONE REACHABLE\n${F}`,
 
       // 14. rto
-      `${F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  #1234\n\nSTATE  Back with us after a\n       failed delivery. Our\n       team will call to set\n       up re-delivery or a\n       refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  #1234\n\nSTATE  Back with us after a failed delivery. Our team will call to set up re-delivery or a refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${F}`,
 
       // 15. cancelled
-      `${F}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  #1234\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  #1234\n\nSTATE  This order is void. Nothing is pending from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${F}`,
 
       // 16. return window open
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n░░░░░░░░░░░░░░ 0%\nWINDOW OPEN\n────────────────\nORDER  #1234\n\nSTATE  Your return window is\n       open. Start it here:\n\nSTART  ${DEMO_RNE}\n────────────────\nGO ON PAGE TO PROCEED\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n░░░░░░░░░░░░░░ 0%\nWINDOW OPEN\n────────────────\nORDER  #1234\n\nSTATE  Your return window is open. Start it here:\n\nSTART  ${DEMO_RNE}\n────────────────\nGO ON PAGE TO PROCEED\n${F}`,
 
       // 17. return received
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  #1234\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team\n       reviews it within\n       24 hours.\n\nTRACK  ${DEMO_RNE}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███░░░░░░░░░░░ 20%\nREQUEST RECEIVED\n────────────────\nORDER  #1234\n\n◉───○───○───○───○\nREQ APR PCK QC DONE\n\nSTATE  Received. Our team reviews it within 24 hours.\n\nTRACK  ${DEMO_RNE}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
       // 18. return pickup scheduled
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  #1234\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nPACK   Original tags and\n       packaging. Photo or\n       clip while you pack.\n\nTRACK  ${DEMO_RNE}\n────────────────\nKEEP THE PACK READY\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  #1234\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nPACK   Original tags and packaging. Photo or clip while you pack.\n\nTRACK  ${DEMO_RNE}\n────────────────\nKEEP THE PACK READY\n${F}`,
 
       // 19. return qc
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  #1234\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for\n       a quick check. Takes\n       24 to 48 hours.\n\nTRACK  ${DEMO_RNE}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  #1234\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for a quick check. Takes 24 to 48 hours.\n\nTRACK  ${DEMO_RNE}\n────────────────\nNOTHING NEEDED FROM YOU\n${F}`,
 
       // 20. refund approved
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nSTATE  Reply 4 to claim\n       store credit or a\n       refund.\n────────────────\nSUPPORT WILL SET IT UP\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nSTATE  Reply 4 to claim store credit or a refund.\n────────────────\nSUPPORT WILL SET IT UP\n${F}`,
 
       // 21. exchange sent
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nEXCHANGE SENT\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nSTATE  Replacement is on\n       its way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNEW PACK ─ SAME ORDER\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nEXCHANGE SENT\n────────────────\nORDER  #1234\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\nSTATE  Replacement is on its way.\n\nTRACK  ${DEMO_TRACK}\n────────────────\nNEW PACK ─ SAME ORDER\n${F}`,
 
       // 22. qc failed
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  #1234\n\nSTATE  The piece did not\n       clear the label's\n       check. Our team will\n       call you today and\n       explain why.\n────────────────\nREPLY 4 TO REACH US NOW\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  #1234\n\nSTATE  The piece did not clear the label's check. Our team will call you today and explain why.\n────────────────\nREPLY 4 TO REACH US NOW\n${F}`,
 
       // 23. window expired
-      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\nWINDOW CLOSED\n────────────────\nORDER  #1234\n\nSTATE  The return window on\n       this order has closed.\n       If something is\n       genuinely wrong with\n       the piece, tell us.\n────────────────\nREPLY 4 ─ CASE BY CASE\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\nWINDOW CLOSED\n────────────────\nORDER  #1234\n\nSTATE  The return window on this order has closed. If something is genuinely wrong with the piece, tell us.\n────────────────\nREPLY 4 ─ CASE BY CASE\n${F}`,
 
       // 24. ai assistant
-      `${F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS SIZING SHIPPING LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${F}`,
 
       // 25. support queue (in hours)
-      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${F}`,
 
       // 26. support queue (off hours)
-      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${F}`,
+      `${F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right now. Your query is queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${F}`,
     ];
 
     for (const t of templates) await send(t);
@@ -22460,7 +22460,7 @@ async function generateWaDailyReport() {
 
   const chatSummaries = await buildWaChatSummaryForPeriod(fromMs, toMs);
   if (!chatSummaries || !chatSummaries.length) {
-    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nDAILY BOT REPORT\n${label.toUpperCase()}\n────────────────\nSTATE  All quiet ✅\n       No chats today.\n\`\`\``);
+    await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nDAILY BOT REPORT\n${label.toUpperCase()}\n────────────────\nSTATE  All quiet ✅ No chats today.\n\`\`\``);
     return;
   }
 
@@ -22958,7 +22958,7 @@ app.post('/admin/support/chats/:id/reply', adminAuth, async (req, res) => {
   if (chat.whatsapp_sender) {
     const custJid = chat.whatsapp_sender;
     const _Fn = '```';
-    const notif = `${_Fn}\n▪ C R O S C R O W ▪\nSUPPORT UPDATE\n────────────────\nSTATE  Team replied above.\n       Check the message.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nREPLY IF YOU NEED MORE HELP\n${_Fn}`;
+    const notif = `${_Fn}\n▪ C R O S C R O W ▪\nSUPPORT UPDATE\n────────────────\nSTATE  Team replied above. Check the message.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\nREPLY IF YOU NEED MORE HELP\n${_Fn}`;
     await waProxySock.sendMessage(custJid, { text: notif }).catch(() => {});
     await SC.addMessage(chat._id, { sender: 'assistant', text: notif });
   }
@@ -26131,31 +26131,31 @@ const WA_MENUS = {
     `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${name}\n\nPay ₹99 to confirm your COD\norder — helps us block fake\nand mistaken orders.\n\nCONFIRM\n${url}\n────────────────\nGOES ON HOLD AFTER 48 HRS\n${_F}`,
 
   order_confirmed_short: (name, url) =>
-    `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${name}\n\nSTATE  Confirmed and moving.\n       Next update lands the\n       moment it ships.\n\nTRACK  ${url}\n────────────────\nDISPATCH EXPECTED\nWITHIN 24 HRS\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${name}\n\nSTATE  Confirmed and moving. Next update lands the moment it ships.\n\nTRACK  ${url}\n────────────────\nDISPATCH EXPECTED\nWITHIN 24 HRS\n${_F}`,
 
   order_confirmed_long: (name, url) =>
-    `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ RUNNING LATE\n────────────────\nORDER  ${name}\n\nSTATE  Running slightly late.\n       Flagged on our side and\n       pushing it on priority.\n\nTRACK  ${url}\n────────────────\nNOTHING NEEDED FROM YOU\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ RUNNING LATE\n────────────────\nORDER  ${name}\n\nSTATE  Running slightly late. Flagged on our side and pushing it on priority.\n\nTRACK  ${url}\n────────────────\nNOTHING NEEDED FROM YOU\n${_F}`,
 
   order_hold: (name, url) =>
-    `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  ${name}\n\nSTATE  Your order is paused,\n       most likely waiting on\n       confirmation. Open it\n       and clear it here:\n\nOPEN   ${url}\n────────────────\nREPLY 4 FOR A HUMAN\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nON HOLD\n────────────────\nORDER  ${name}\n\nSTATE  Your order is paused, most likely waiting on confirmation. Open it and clear it here:\n\nOPEN   ${url}\n────────────────\nREPLY 4 FOR A HUMAN\n${_F}`,
 
   order_transit: (name, url) =>
-    `${_F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  ${name}\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving\n       your way.\n\nTRACK  ${url}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n██████████░░░░ 70%\nIN TRANSIT\n────────────────\nORDER  ${name}\n\n●───●───●───○───○\nCNF PCK SHP OFD DLV\n\nSTATE  On the road and moving your way.\n\nTRACK  ${url}\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_F}`,
 
   order_ofd: (name, url) =>
     `${_F}\n▪ C R O S C R O W ▪\n█████████████░ 90%\nOUT FOR DELIVERY\n────────────────\nORDER  ${name}\n\n●───●───●───◉───○\nCNF PCK SHP OFD DLV\n\nTRACK  ${url}\n────────────────\nKEEP PHONE ON\nKEEP BALANCE READY\n${_F}`,
 
   order_cancelled: (name) =>
-    `${_F}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${name}\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${name}\n\nSTATE  This order is void. Nothing is pending from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_F}`,
 
   order_partial_shipped: (name, url) =>
-    `${_F}\n▪ C R O S C R O W ▪\n████████░░░░░░ 55%\nSPLIT DISPATCH\n────────────────\nORDER  ${name}\n\nSTATE  Some items are on\n       their way, rest are\n       being packed.\n\nTRACK  ${url}\n────────────────\nARRIVES IN SEPARATE PACKS\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n████████░░░░░░ 55%\nSPLIT DISPATCH\n────────────────\nORDER  ${name}\n\nSTATE  Some items are on their way, rest are being packed.\n\nTRACK  ${url}\n────────────────\nARRIVES IN SEPARATE PACKS\n${_F}`,
 
   order_delivered: (name, url) =>
     `${_F}\n▪ C R O S C R O W ▪\n██████████████ 100%\nDELIVERED\n────────────────\nORDER  ${name}\n\n●───●───●───●───●\nCNF PCK SHP OFD DLV\n\nRNE    ${url}\n────────────────\nPOST YOUR FIT ─ TAG US\n@croscrow.official\nBEST FITS WIN FREE MERCH\n60+ BRANDS | CROSCROW.COM\n${_F}`,
 
   order_rto: (name) =>
-    `${_F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  ${name}\n\nSTATE  Back with us after a\n       failed delivery. Our\n       team will call to set\n       up re-delivery or a\n       refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\nRETURNED TO HUB\n────────────────\nORDER  ${name}\n\nSTATE  Back with us after a failed delivery. Our team will call to set up re-delivery or a refund.\n────────────────\nREPLY 4 TO REACH US NOW\n${_F}`,
 
   order_split_terminal: (name, url, shipments) => {
     const STAGE_LABELS_SHORT = { delivered:'DELIVERED', rto:'RETURNED TO HUB', cancelled:'CANCELLED', transit:'IN TRANSIT', ofd:'OUT FOR DELIVERY', pickup:'DISPATCHED', confirmed:'PACKING', new:'PROCESSING' };
@@ -26168,11 +26168,11 @@ const WA_MENUS = {
   },
 
   ai_assistant:
-    `${_F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS\n       SIZING\n       SHIPPING\n       LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\nASSISTANT ONLINE\n────────────────\nSCOPE  ORDERS SIZING SHIPPING LABELS\n────────────────\nASK AWAY\nTYPE 0 TO EXIT\n${_F}`,
 
   support_queue: (offHours = false) => offHours
-    ? `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right\n       now. Your query is\n       queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`
-    : `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`,
+    ? `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  Desk is closed right now. Your query is queued for 2 PM.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`
+    : `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`,
 };
 
 // Button label per WA_MENUS key that has an embedded link line — used to
@@ -26574,7 +26574,7 @@ async function startBaileysBot() {
                   await shopifyREST(`/orders/${order.id}.json`, 'PUT', { order: { id: order.id, tags: existingTags.join(', ') } });
                 }
               }
-              const _Fpl = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${orderName}\n\nSTATE  Confirmed and moving.\n       Dispatch update follows\n       once shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fpl}` });
+              const _Fpl = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PACKING\n────────────────\nORDER  ${orderName}\n\nSTATE  Confirmed and moving. Dispatch update follows once shipped.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fpl}` });
               await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nORDER CONFIRMED ✅\n────────────────\nORDER  ${orderName}\nPHONE  +91${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}\nSOURCE Poll\n\`\`\``);
             } else {
               // Add "cancelled" tag on Shopify
@@ -26583,7 +26583,7 @@ async function startBaileysBot() {
               if (order) {
                 await shopifyREST(`/orders/${order.id}/cancel.json`, 'POST', {});
               }
-              const _Fpl2 = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl2}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${orderName}\n\nSTATE  This order is void.\n       Nothing is pending\n       from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_Fpl2}` });
+              const _Fpl2 = '```'; await sock.sendMessage(poll.jid, { text: `${_Fpl2}\n▪ C R O S C R O W ▪\nCANCELLED\n────────────────\nORDER  ${orderName}\n\nSTATE  This order is void. Nothing is pending from your side.\n────────────────\nREPLY 4 TO RE-ORDER\n60+ BRANDS | CROSCROW.COM\n${_Fpl2}` });
               await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nORDER CANCELLED ❌\n────────────────\nORDER  ${orderName}\nPHONE  +91${poll.jid.replace('@s.whatsapp.net', '').replace(/^91/, '')}\nSOURCE Poll\n\`\`\``);
             }
             await mdb.collection('wa_confirm_polls').deleteOne({ _id: poll._id });
@@ -26977,7 +26977,7 @@ async function startBaileysBot() {
                   if (alreadyTagged || isDispatched || alreadyPaid || isPrepaid) {
                     // Already handled — if prepaid just acknowledge
                     if (isPrepaid) {
-                      const _Fpp = '```'; await sock.sendMessage(sender, { text: `${_Fpp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${shopifyOrder.name}\n\nSTATE  Prepaid — already sorted.\n       Nothing due at delivery.\n\nTrack link follows once shipped.\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Fpp}` });
+                      const _Fpp = '```'; await sock.sendMessage(sender, { text: `${_Fpp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${shopifyOrder.name}\n\nSTATE  Prepaid — already sorted. Nothing due at delivery.\n\nTrack link follows once shipped.\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Fpp}` });
                     }
                     console.log(`ℹ️ [WA Fallback] Skipping — alreadyTagged:${alreadyTagged} isPrepaid:${isPrepaid} isDispatched:${isDispatched} alreadyPaid:${alreadyPaid}`);
                   } else {
