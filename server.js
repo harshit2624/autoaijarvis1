@@ -15725,7 +15725,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
   // disconnected, kept for if it's ever reconnected).
   let cloudResult = { sent: false };
   if (event === 'request_received') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: [typeLabel, orderName] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: [TypeLabel, orderName] });
   } else if (event === 'approved') {
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_APPROVED, bodyParams: [TypeLabel, orderName], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'pickup_scheduled') {
@@ -23415,27 +23415,27 @@ async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl
 // (weeks, not minutes) — resubmitted under _v2 names instead of waiting.
 // abandoned_cart_recovery is untouched (already approved, never deleted).
 const WA_TPL = {
-  SHIPMENT_PICKUP: 'shipment_pickup_v2',
-  SHIPMENT_TRANSIT: 'shipment_transit_v2',
-  SHIPMENT_OFD: 'shipment_out_for_delivery_v2',
+  SHIPMENT_PICKUP: 'shipment_pickup_v3',
+  SHIPMENT_TRANSIT: 'shipment_transit_v3',
+  SHIPMENT_OFD: 'shipment_out_for_delivery_v3',
   SHIPMENT_DELIVERED: 'shipment_delivered_v2',
   DELIVERY_ATTEMPT_FAILED: 'delivery_attempt_failed_v2',
-  RR_REQUEST_RECEIVED: 'rr_request_received_v2',
+  RR_REQUEST_RECEIVED: 'rr_request_received_v3',
   RR_PICKUP_SCHEDULED: 'rr_pickup_scheduled_v2',
-  RR_PICKED_UP: 'rr_picked_up_v2',
+  RR_PICKED_UP: 'rr_picked_up_v3',
   RR_QUALITY_CHECK: 'rr_quality_check_v2',
   RR_REFUND_APPROVED: 'rr_refund_approved_v2',
   RR_EXCHANGE_SENT: 'rr_exchange_sent_v2',
   RR_QC_NOT_CLEARED: 'rr_qc_not_cleared_v2',
   RR_STORE_CREDIT_ISSUED: 'rr_store_credit_issued_v2',
-  RR_APPROVED: 'rr_approved',
+  RR_APPROVED: 'rr_approved_v2',
   ADMIN_ALERT: 'ops_notification',
   SHIPMENT_RTO: 'shipment_rto',
   DELAY_REMARK_CUSTOMER: 'delay_remark_customer',
   VENDOR_SUPPORT_QUERY: 'vendor_support_query',
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
   STAFF_ALERT: 'staff_notification',
-  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v2',
+  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v3', // currently unused — superseded by ORDER_CONFIRM_CANCEL, kept mapped in case it's ever needed again
   ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v2',
