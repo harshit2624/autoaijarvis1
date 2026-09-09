@@ -3479,11 +3479,12 @@
     ];
     const [tagCounts, setTagCounts] = useState(null);
     const [tagTotal,  setTagTotal]  = useState(0);
+    const [tagOutcomes, setTagOutcomes] = useState(null);
     useEffect(()=>{
       const from = aPeriod ? aPeriod.from : '2020-01-01';
       const to   = aPeriod ? aPeriod.to   : isoToday();
       fetch(`${API}/admin/audience-tag-counts?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>{ setTagCounts(d.tagCounts||{}); setTagTotal(d.total||0); }).catch(()=>{});
+        .then(r=>r.json()).then(d=>{ setTagCounts(d.tagCounts||{}); setTagTotal(d.total||0); setTagOutcomes(d.tagOutcomes||{}); }).catch(()=>{});
     },[token, aPeriod]);
     const audTierMap = (() => {
       try { const s = localStorage.getItem('croscrow_audience_tag_map'); if (s) return JSON.parse(s); } catch(e) {}
@@ -3492,7 +3493,15 @@
     const audTierCounts = AUD_TIERS.map(tier => {
       const tags = audTierMap[tier.id] || tier.defaults;
       const count = tags.reduce((s,tag)=>s+(tagCounts?.[tag]||0),0);
-      return { ...tier, count };
+      // Where do this tier's orders actually end up — delivered, RTO,
+      // cancelled/hold, or still in motion. Summed the same way count is
+      // (across the tier's tags), so an order tagged with 2 tags in the
+      // same tier isn't double-subtracted.
+      const delivered = tags.reduce((s,tag)=>s+(tagOutcomes?.[tag]?.delivered||0),0);
+      const rto       = tags.reduce((s,tag)=>s+(tagOutcomes?.[tag]?.rto||0),0);
+      const dead       = tags.reduce((s,tag)=>s+(tagOutcomes?.[tag]?.dead||0),0);
+      const inMotion   = Math.max(0, count - delivered - rto - dead);
+      return { ...tier, count, delivered, rto, dead, inMotion };
     });
 
     const a  = analytics;
@@ -4291,16 +4300,43 @@
                       );
                     })}
                   </div>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)'}}>
-                    {audTierCounts.map(tier=>{
-                      const tags = (audTierMap[tier.id]||tier.defaults).slice(0,4);
-                      return (
-                        <div key={tier.id} style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
-                          <span style={{fontSize:9,fontWeight:700,color:tier.color,flexShrink:0}}>{tier.icon}</span>
-                          {tags.map(tag=><span key={tag} className="aud-pill" style={{background:tier.dim,color:tier.color}}>{tag}</span>)}
-                        </div>
-                      );
-                    })}
+                  {/* Where each tier's orders actually end up — one stacked
+                      bar per tier instead of a repeated 4-line legend, so
+                      "High Risk: 30% delivered, 40% RTO, 20% cancelled/hold,
+                      10% still moving" reads in one glance per row. */}
+                  <div style={{marginTop:14,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:10,flexWrap:'wrap'}}>
+                      <span style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5}}>Outcome by tier</span>
+                      {[['#10b981','Delivered'],['#ef4444','RTO'],['#94a3b8','Cancelled/Hold'],['#818cf8','In Motion']].map(([c,l])=>(
+                        <span key={l} style={{fontSize:9,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:4}}><span style={{width:7,height:7,borderRadius:2,background:c,display:'inline-block'}}/>{l}</span>
+                      ))}
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                      {audTierCounts.filter(t=>t.count>0).map(tier=>{
+                        const segs = [
+                          { v:tier.delivered, c:'#10b981', l:'Delivered' },
+                          { v:tier.rto,       c:'#ef4444', l:'RTO' },
+                          { v:tier.dead,      c:'#94a3b8', l:'Cancelled/Hold' },
+                          { v:tier.inMotion,  c:'#818cf8', l:'In Motion' },
+                        ];
+                        return (
+                          <div key={tier.id} style={{display:'flex',alignItems:'center',gap:10}}>
+                            <span style={{fontSize:11,fontWeight:700,color:tier.color,width:100,flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{tier.icon} {tier.label}</span>
+                            <div style={{flex:1,height:16,borderRadius:5,overflow:'hidden',display:'flex',gap:1,background:'var(--border)'}}>
+                              {segs.filter(s=>s.v>0).map(s=>{
+                                const pct = Math.round(s.v/tier.count*100);
+                                return (
+                                  <div key={s.l} title={`${s.l}: ${s.v} · ${pct}%`} style={{flex:s.v,minWidth:2,background:s.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                    {pct>=14 && <span style={{fontSize:8,fontWeight:800,color:'#fff'}}>{pct}%</span>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <span style={{fontSize:10,color:'var(--text-muted)',width:34,textAlign:'right',flexShrink:0}}>{tier.count}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               );

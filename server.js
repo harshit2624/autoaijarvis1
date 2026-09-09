@@ -8495,16 +8495,44 @@ app.get("/admin/audience-tag-counts", requirePermission('orders'), async (req, r
     }
     // Tags live on order_meta (populated from the Shopify order webhook payload),
     // not order_vendor_stage (which never stores a tags field).
-    const metaDocs = await mdb.collection('order_meta').find(q, { projection: { tags: 1 } }).toArray();
+    const metaDocs = await mdb.collection('order_meta').find(q, { projection: { tags: 1, shopify_id: 1, stage: 1 } }).toArray();
     const tagCounts = {};
     const total = metaDocs.length;
+
+    // ── Outcome breakdown per tag — feeds "where do High/Medium/Low Risk
+    // orders actually end up" on the Order Risk Breakdown dashboard card.
+    // Effective stage = highest stage across meta + all vendor stages,
+    // same pattern used in /admin/analytics.
+    const ids = metaDocs.map(d => d.shopify_id).filter(Boolean);
+    const ovsRows = ids.length ? await mdb.collection('order_vendor_stage').find(
+      { shopify_id: { $in: ids } }, { projection: { shopify_id: 1, stage: 1, _id: 0 } }
+    ).toArray() : [];
+    const ovsBySid = {};
+    ovsRows.forEach(r => { if (!ovsBySid[r.shopify_id]) ovsBySid[r.shopify_id] = []; ovsBySid[r.shopify_id].push(r.stage); });
+    const SO_TAG = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+    const effStage = (sid, metaStage) => {
+      let best = SO_TAG.indexOf(metaStage || 'new'); if (best < 0) best = 0;
+      (ovsBySid[sid] || []).forEach(s => { const vi = SO_TAG.indexOf(s); if (vi > best) best = vi; });
+      return SO_TAG[best] || metaStage || 'new';
+    };
+
+    const tagOutcomes = {}; // tag -> { count, delivered, rto, dead }
     metaDocs.forEach(doc => {
       if (!doc.tags) return;
+      const stage = effStage(doc.shopify_id, doc.stage);
+      const isDelivered = stage === 'delivered';
+      const isRto = stage === 'rto';
+      const isDead = stage === 'cancelled' || stage === 'hold';
       doc.tags.split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
         tagCounts[t] = (tagCounts[t] || 0) + 1;
+        if (!tagOutcomes[t]) tagOutcomes[t] = { count: 0, delivered: 0, rto: 0, dead: 0 };
+        tagOutcomes[t].count++;
+        if (isDelivered) tagOutcomes[t].delivered++;
+        else if (isRto) tagOutcomes[t].rto++;
+        else if (isDead) tagOutcomes[t].dead++;
       });
     });
-    res.json({ tagCounts, total });
+    res.json({ tagCounts, total, tagOutcomes });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
