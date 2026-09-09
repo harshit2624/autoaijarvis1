@@ -3976,22 +3976,20 @@
             {a.dispatchQuality?.total > 0 && (() => {
               const dq = a.dispatchQuality;
               const buckets = [
-                { id:'veryGood', grade:'Very Good', label:'≤30h',  cnt:dq.veryGood, pct:dq.veryGoodPct, c:'#10b981' },
-                { id:'good',     grade:'Good',      label:'≤48h',  cnt:dq.good,     pct:dq.goodPct,     c:'#6366f1' },
-                { id:'fine',     grade:'Fine',      label:'≤4d',   cnt:dq.fine,     pct:dq.finePct,     c:'#60a5fa' },
-                { id:'bad',      grade:'Bad',       label:'4-7d',  cnt:dq.bad,      pct:dq.badPct,      c:'#f59e0b' },
-                { id:'veryBad',  grade:'Very Bad',  label:'7d+',   cnt:dq.veryBad,  pct:dq.veryBadPct,  c:'#ef4444' },
+                { id:'veryGood', grade:'Very Good', range:'≤30h', cnt:dq.veryGood, pct:dq.veryGoodPct, c:'#10b981' },
+                { id:'good',     grade:'Good',      range:'≤48h', cnt:dq.good,     pct:dq.goodPct,     c:'#6366f1' },
+                { id:'fine',     grade:'Fine',      range:'≤4d',  cnt:dq.fine,     pct:dq.finePct,     c:'#60a5fa' },
+                { id:'bad',      grade:'Bad',       range:'4-7d', cnt:dq.bad,      pct:dq.badPct,      c:'#f59e0b' },
+                { id:'veryBad',  grade:'Very Bad',  range:'7d+',  cnt:dq.veryBad,  pct:dq.veryBadPct,  c:'#ef4444' },
               ];
-              const maxC = Math.max(...buckets.map(b=>b.cnt||0), 1);
-              // Fastest vendors = lowest avgDispatchHrs this period, from the
-              // same vendorLeaderboard the "slowest" list already uses (which
-              // only surfaced offenders before — nothing showed who's doing
-              // it right).
-              const fastest = (a.vendorLeaderboard||[])
-                .filter(v=>v.avgDispatchHrs!=null)
-                .sort((x,y)=>x.avgDispatchHrs-y.avgDispatchHrs)
-                .slice(0,5);
               const fmtHrsSm = h => h<24?`${h.toFixed(1)}h`:`${Math.floor(h/24)}d ${Math.round(h%24)}h`;
+              // Fastest AND slowest now use the SAME metric (avg dispatch
+              // hours this period, from vendorLeaderboard) sorted opposite
+              // ways — previously "fastest" showed avg time but "slowest"
+              // showed a raw count of bad orders, which weren't comparable.
+              const withHrs = (a.vendorLeaderboard||[]).filter(v=>v.avgDispatchHrs!=null);
+              const fastest = [...withHrs].sort((x,y)=>x.avgDispatchHrs-y.avgDispatchHrs).slice(0,5);
+              const slowest = [...withHrs].sort((x,y)=>y.avgDispatchHrs-x.avgDispatchHrs).slice(0,5).filter(v=>!fastest.includes(v));
               return (
                 <div className="dash-section" style={{marginBottom:0}}>
                   <div className="dash-section-hdr">
@@ -4001,33 +3999,21 @@
                     </div>
                     <div style={{fontSize:11,color:'var(--text-muted)'}}>Avg: <strong style={{color:'var(--text)'}}>{dq.avgHours}h</strong></div>
                   </div>
-                  {/* Segmented health strip — one glance at the overall mix */}
-                  <div style={{display:'flex',height:20,borderRadius:6,overflow:'hidden',marginBottom:14,gap:1}}>
-                    {buckets.filter(b=>b.cnt>0).map(b=>(
-                      <div key={b.id} title={`${b.grade}: ${b.pct}%`} style={{flex:b.cnt,minWidth:2,background:b.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                        {b.pct>=10 && <span style={{fontSize:9,fontWeight:800,color:'#06281f'}}>{b.pct}%</span>}
+                  {/* One clean row per speed bucket — icon, range, thin bar, count, % */}
+                  <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                    {buckets.map(b=>(
+                      <div key={b.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
+                        <span style={{width:8,height:8,borderRadius:'50%',background:b.c,flexShrink:0}}/>
+                        <span style={{fontSize:11,fontWeight:700,color:b.c,width:72,flexShrink:0}}>{b.grade}</span>
+                        <span style={{fontSize:9,color:'var(--text-muted)',width:34,flexShrink:0}}>{b.range}</span>
+                        <div style={{flex:1,height:5,background:'var(--border)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${b.pct||0}%`,background:b.c,borderRadius:3}}/></div>
+                        <span style={{fontSize:11,fontWeight:800,color:b.c,width:26,textAlign:'right',flexShrink:0}}>{b.cnt||0}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',width:32,textAlign:'right',flexShrink:0}}>{b.pct||0}%</span>
                       </div>
                     ))}
                   </div>
-                  {/* Bar chart — same visual language as Order Risk Breakdown */}
-                  <div className="mini-bar-chart">
-                    {buckets.map(b=>{
-                      const barPct = Math.max((b.cnt||0)/maxC*100, b.cnt>0?6:0);
-                      return (
-                        <div key={b.id} className="mini-bar-col" title={`${b.grade} (${b.label}): ${b.cnt||0} orders`}>
-                          <div className="mini-bar-track">
-                            <div className="mini-bar-fill" style={{height:`${barPct}%`,background:b.c}}>
-                              {b.cnt>0 && <span className="mini-bar-count">{b.cnt}</span>}
-                            </div>
-                          </div>
-                          <div className="mini-bar-label" style={{color:b.c}}>{b.grade}</div>
-                          <div className="mini-bar-pct" style={{color:b.c}}>{b.label} · {b.pct||0}%</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {(fastest.length > 0 || dq.topOffenders?.length > 0) && (
-                    <div style={{marginTop:14,paddingTop:12,borderTop:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:10}}>
+                  {(fastest.length > 0 || slowest.length > 0) && (
+                    <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:10}}>
                       {fastest.length > 0 && (
                         <div>
                           <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>⚡ Fastest vendors</div>
@@ -4038,12 +4024,12 @@
                           </div>
                         </div>
                       )}
-                      {dq.topOffenders?.length > 0 && (
+                      {slowest.length > 0 && (
                         <div>
                           <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>🐌 Slowest vendors</div>
                           <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                            {dq.topOffenders.map(v=>(
-                              <span key={v.vendor} style={{fontSize:10,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.25)',color:'#f87171',padding:'2px 8px',borderRadius:4,fontWeight:600}}>{v.vendor} · {v.total}</span>
+                            {slowest.map(v=>(
+                              <span key={v.vendor} style={{fontSize:10,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.25)',color:'#f87171',padding:'2px 8px',borderRadius:4,fontWeight:600}}>{v.vendor} · {fmtHrsSm(v.avgDispatchHrs)}</span>
                             ))}
                           </div>
                         </div>
