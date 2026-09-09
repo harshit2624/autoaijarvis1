@@ -1440,6 +1440,37 @@ app.post("/webhooks/orders", (req, res) => {
           console.log(`✅ Advance auto-confirmed: ${payload.name}`);
         } else {
           await OM.upsert(sid, { payment_type: 'cod', updated_at: now });
+          // The real "please Confirm or Cancel" ask — new COD order, nothing
+          // confirmed yet. This used to not exist at all: the only WA send
+          // for this was gated behind the '✅ Order Confirmed' tag already
+          // being present (see _hasConfirmedTag below), which is backwards
+          // for an ask-to-confirm card and meant new COD orders never got
+          // one proactively at all.
+          (async () => {
+            try {
+              const _codPhone = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (_codPhone.length !== 10) return;
+              const _enrichedForWA = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
+              const _itemsList = (payload.line_items || []).map(li =>
+                `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
+              ).join('\n') || '—';
+              const _addr = payload.shipping_address || {};
+              const _addressLine = [_addr.address1, _addr.city, _addr.zip].filter(Boolean).join(', ') || 'address on file';
+              const _total2 = parseFloat(payload.total_price || 0);
+              const cloudResult = await sendWACloudTemplate({
+                phone10: _codPhone, templateName: WA_TPL.ORDER_CONFIRM_CANCEL,
+                headerImageUrl: _enrichedForWA?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
+                bodyParams: [payload.name, _itemsList, _addressLine, _total2.toFixed(0)],
+              });
+              if (cloudResult.sent) {
+                await waSetPendingConfirmSession(_codPhone, sid, payload.name);
+                await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirm_cancel_sent': new Date().toISOString() } });
+                console.log(`📲 Confirm/Cancel card sent for new COD order ${payload.name}`);
+              } else {
+                console.error(`❌ Confirm/Cancel card failed for ${payload.name}: ${cloudResult.reason}`);
+              }
+            } catch (e) { console.error('COD confirm-card send error:', e.message); }
+          })();
         }
 
         if (payload.email) {
@@ -1548,33 +1579,30 @@ app.post("/webhooks/orders", (req, res) => {
                 ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed.\n       No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
                 : _isPartiallyPaid
                 ? `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`
-                : `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
+                // This branch only reaches here when '✅ Order Confirmed' is
+                // ALREADY on the order — i.e. confirmation already happened
+                // (via our own WA Confirm button, or an admin/Flow adding the
+                // tag directly). Sending the Confirm/Cancel ask again here
+                // would be backwards — it must be a plain acknowledgment.
+                : `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED\n────────────────\nORDER  ${payload.name}\n\nSTATE  Confirmed and moving.\n       Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
               let _cloudTpl;
               if (_isPrepaid) {
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, bodyParams: [payload.name, _total.toFixed(0)] };
               } else if (_isPartiallyPaid) {
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, bodyParams: [payload.name, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
               } else {
-                // New Confirm/Cancel card — replaces the old ₹99-advance ask
-                // with a straight tap. Real product photo (first line item),
-                // every item+size stacked on its own line, real address.
-                const _enrichedForWA = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
-                const _itemsList = (payload.line_items || []).map(li =>
-                  `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
-                ).join('\n') || '—';
-                const _addr = payload.shipping_address || {};
-                const _addressLine = [_addr.address1, _addr.city, _addr.zip].filter(Boolean).join(', ') || 'address on file';
-                _cloudTpl = {
-                  templateName: WA_TPL.ORDER_CONFIRM_CANCEL,
-                  headerImageUrl: _enrichedForWA?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
-                  bodyParams: [payload.name, _itemsList, _addressLine, _total.toFixed(0)],
-                };
+                // Plain COD-confirmed acknowledgment — no template exists for
+                // this yet (rare path: tag added outside our own WA Confirm
+                // flow, e.g. admin dashboard or a Shopify Flow), so this only
+                // sends as a Cloud API session message if the customer has
+                // messaged within 24h; silently no-ops otherwise rather than
+                // asking them to confirm something that's already confirmed.
+                _cloudTpl = null;
               }
-              await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
-              // Only the COD "awaiting confirmation" send needs a Confirm/Cancel
-              // reply session — prepaid/advance orders are already confirmed.
-              if (!_isPrepaid && !_isPartiallyPaid) {
-                await waSetPendingConfirmSession(_confPhone, sid, payload.name).catch(() => {});
+              if (_cloudTpl) {
+                await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
+              } else {
+                await waCloudSendSession(`91${_confPhone}@s.whatsapp.net`, { text: _waConfirm }).catch(() => {});
               }
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
               console.log(`✅ WA confirmed_tag sent for ${payload.name}`);
@@ -26899,6 +26927,16 @@ async function startBaileysBot() {
                 if (ord) {
                   const existingTags = (ord.tags || '').split(',').map(t => t.trim()).filter(Boolean);
                   if (isConfirm) {
+                    // Mark the SAME dedup key the orders/updated webhook's
+                    // _hasConfirmedTag block checks (wa_notif_sent.confirmed_tag)
+                    // before adding the tag — otherwise Shopify's webhook for
+                    // this exact tag change fires moments later, sees the tag,
+                    // and re-sends the whole order_confirm_cancel card again
+                    // right after the customer just tapped Confirm.
+                    await mdb.collection('order_meta').updateOne(
+                      { shopify_id: _confirmSession.shopify_id },
+                      { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } }
+                    );
                     if (!existingTags.some(t => t.toLowerCase() === '✅ order confirmed')) {
                       existingTags.push('✅ Order Confirmed');
                       await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
