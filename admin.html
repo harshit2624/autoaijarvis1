@@ -3882,6 +3882,50 @@
                   );
                 })}
               </div>
+
+              {/* Rate brackets + top vendors — real per-vendor commission,
+                  not a flat 20% assumption. Shows exactly which rate tiers
+                  and which vendors are actually driving commission. */}
+              {(a.commissionByBracket?.length > 0 || a.topVendorsByCommission?.length > 0) && (
+                <div className="dash-2col" style={{marginTop:16,marginBottom:0}}>
+                  {a.commissionByBracket?.length > 0 && (() => {
+                    const maxB = Math.max(...a.commissionByBracket.map(b=>b.commission), 1);
+                    const bCol = i => ['#818cf8','#60a5fa','#34d399','#fbbf24','#fb923c','#f87171'][i%6];
+                    return (
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>By Commission Rate</div>
+                        <div style={{display:'flex',flexDirection:'column',gap:7}}>
+                          {a.commissionByBracket.map((b,i)=>(
+                            <div key={b.ratePct} style={{display:'flex',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,fontWeight:800,color:bCol(i),width:34,flexShrink:0}}>{b.ratePct}%</span>
+                              <div style={{flex:1,height:14,background:'var(--border)',borderRadius:4,overflow:'hidden'}}>
+                                <div style={{height:'100%',width:`${Math.max(4,Math.round(b.commission/maxB*100))}%`,background:bCol(i),borderRadius:4}}/>
+                              </div>
+                              <span style={{fontSize:11,fontWeight:700,color:'var(--text)',width:78,textAlign:'right',flexShrink:0}}>{fmtCur(b.commission)}</span>
+                              <span style={{fontSize:9,color:'var(--text-muted)',width:56,textAlign:'right',flexShrink:0}}>{b.vendorCount} vendor{b.vendorCount===1?'':'s'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {a.topVendorsByCommission?.length > 0 && (
+                    <div>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:8}}>Top Vendors by Commission</div>
+                      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                        {a.topVendorsByCommission.slice(0,6).map((v,i)=>(
+                          <div key={v.vendor} style={{display:'flex',alignItems:'center',gap:8}}>
+                            <span style={{fontSize:10,color:'var(--text-muted)',width:14,flexShrink:0}}>{i+1}</span>
+                            <span style={{fontSize:11,fontWeight:600,color:'var(--text)',flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{v.vendor}</span>
+                            <span style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',background:'var(--bg-hover)',padding:'1px 6px',borderRadius:4,flexShrink:0}}>{v.ratePct}%</span>
+                            <span style={{fontSize:11,fontWeight:800,color:'#34d399',width:80,textAlign:'right',flexShrink:0}}>{fmtCur(v.total)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })()}

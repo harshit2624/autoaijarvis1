@@ -6133,6 +6133,14 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       }, vendorStages[0]);
     };
 
+    // Per-vendor and per-rate-bracket commission — same underlying
+    // calculation as calcOrderComm below, just also attributed to the
+    // vendor + their configured rate so the dashboard can show "this much
+    // commission comes from 20% vendors, this much from 25%..." and a
+    // top-vendors-by-commission ranking.
+    const commByVendor = {};   // vendor -> { c, g, rate }
+    const commByBracket = {};  // ratePct (e.g. 20) -> { c, g, vendors:Set }
+
     const calcOrderComm = (o) => {
       const payType = (o.financial_status === 'paid') ? 'prepaid' : 'cod';
       const PREPAID_DISC = payType === 'prepaid' ? 0.10 : 0;
@@ -6140,9 +6148,16 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       for (const li of (o.line_items || [])) {
         if (!li.vendor) continue;
         const rate = getRate(li.vendor);
+        const ratePct = Math.round(rate * 100);
         const base = parseFloat((parseFloat(li.price||0) * (li.quantity||1) * (1 - PREPAID_DISC)).toFixed(2));
-        c += parseFloat((base * rate).toFixed(2));
-        g += parseFloat((base * rate * GST).toFixed(2));
+        const lc = parseFloat((base * rate).toFixed(2));
+        const lg = parseFloat((base * rate * GST).toFixed(2));
+        c += lc; g += lg;
+        const vn = canonicalVendor(li.vendor);
+        if (!commByVendor[vn]) commByVendor[vn] = { c: 0, g: 0, ratePct };
+        commByVendor[vn].c += lc; commByVendor[vn].g += lg;
+        if (!commByBracket[ratePct]) commByBracket[ratePct] = { c: 0, g: 0, vendors: new Set() };
+        commByBracket[ratePct].c += lc; commByBracket[ratePct].g += lg; commByBracket[ratePct].vendors.add(vn);
       }
       return { c: r2c(c), g: r2c(g) };
     };
@@ -6183,6 +6198,17 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       otherCommissionGst:     r2c(commBuckets.other.g),
       prepaidCollected:       r2c(commBuckets.prepaid.amt),
     };
+
+    // Commission by rate bracket (20%, 25%, 30%...) and top vendors by
+    // commission earned — both period-scoped, straight from the same
+    // per-line-item calculation above.
+    const commissionByBracket = Object.entries(commByBracket)
+      .map(([ratePct, d]) => ({ ratePct: Number(ratePct), commission: r2c(d.c), gst: r2c(d.g), vendorCount: d.vendors.size }))
+      .sort((a, b) => a.ratePct - b.ratePct);
+    const topVendorsByCommission = Object.entries(commByVendor)
+      .map(([vendor, d]) => ({ vendor, ratePct: d.ratePct, commission: r2c(d.c), gst: r2c(d.g), total: r2c(d.c + d.g) }))
+      .sort((a, b) => b.commission - a.commission)
+      .slice(0, 10);
 
     // ── Vendor fulfillment leaderboard (period-filtered, sorted by most pending)
     // allVS has full records (stage + awb); build a proper nested map for leaderboard lookups
@@ -6322,6 +6348,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       },
       stageCounts,
       allTimeTotals,
+      commissionByBracket,
+      topVendorsByCommission,
       fulfillStats,
       paymentSplit,
       topProducts,
