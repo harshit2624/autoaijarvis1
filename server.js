@@ -15743,7 +15743,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
     const trackLine = awb ? `TRACK  ${trackUrlRR}\n\n` : '';
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKED UP\n────────────────\nORDER  ${orderName}\n\n●───●───●───○───○\nREQ APR PCK QC DONE\n\n${trackLine}STATE  Heading back to us. QC update in 5–7 days.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'received_at_warehouse') {
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  ${orderName}\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for a quick check. Takes 24 to 48 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ 75%\nQUALITY CHECK\n────────────────\nORDER  ${orderName}\nITEM   ${itemNames || '—'}\n\n●───●───●───◉───○\nREQ APR PCK QC DONE\n\nSTATE  With the label for a quick check. Takes 24 to 48 hours.\n────────────────\nNOTHING NEEDED FROM YOU\n${_Fr}`;
   } else if (event === 'refund_initiated') {
     const amt = extra.amount ? `AMT    ₹${extra.amount}\n\n` : '';
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nREFUND APPROVED\n────────────────\nORDER  ${orderName}\n\n●───●───●───●───●\nREQ APR PCK QC DONE\n\n${amt}STATE  Expected in your account in 3–5 days.\n────────────────\nREPLY 4 FOR STORE CREDIT\n${_Fr}`;
@@ -15779,7 +15779,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
   } else if (event === 'picked_up') {
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKED_UP, bodyParams: [orderName], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'received_at_warehouse') {
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName] });
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, itemNames || 'Your item'] });
   } else if (event === 'refund_initiated') {
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_REFUND_APPROVED, bodyParams: [orderName, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
   } else if (event === 'exchange_dispatched') {
