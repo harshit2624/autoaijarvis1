@@ -26188,7 +26188,7 @@ const WA_MENU_BUTTON_LABELS = {
   order_transit: 'Track Order',
   order_ofd: 'Track Order',
   order_partial_shipped: 'Track Order',
-  order_delivered: 'Start Return/Exchange',
+  order_delivered: 'Start Return',
   order_split_terminal: 'Track Order',
 };
 // Matches the "LABEL   <url>" line each of those templates embeds (CONFIRM/
@@ -27106,7 +27106,7 @@ async function startBaileysBot() {
                 const rneUrl = `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`;
                 await sock.sendMessage(sender, {
                   text: `${_F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nORDER  ${oName}\n\nReady when you are — takes\nless than 2 minutes.\n${_F}`,
-                  ctaUrl: { displayText: 'Start Return/Exchange', url: rneUrl },
+                  ctaUrl: { displayText: 'Start Return', url: rneUrl },
                 });
                 await waSessionClear(sender);
               } else {
