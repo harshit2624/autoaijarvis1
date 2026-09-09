@@ -178,15 +178,13 @@
     .page { padding: 20px 24px 40px; }
 
     /* ── Audience Quality bar chart ── */
-    .mini-bar-chart { display:flex; align-items:flex-end; gap:14px; height:170px; margin-bottom:14px; width:100%; }
-    .mini-bar-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; height:100%; }
-    .mini-bar-track { flex:1; width:100%; max-width:72px; display:flex; align-items:flex-end; justify-content:center; }
-    .mini-bar-fill { width:100%; border-radius:6px 6px 2px 2px; min-height:6px; display:flex; align-items:flex-start; justify-content:center; padding-top:5px; box-sizing:border-box; transition:height 0.5s ease; }
-    .mini-bar-count { font-size:13px; font-weight:800; color:#fff; line-height:1; }
-    .mini-bar-label { font-size:10px; font-weight:700; margin-top:7px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
-    .mini-bar-pct { font-size:11px; font-weight:600; margin-top:2px; }
-    .dash-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-width:0; }
-    .dash-2col > * { min-width:0; }
+    .audience-tier-chart { display:flex; align-items:flex-end; gap:14px; height:170px; margin-bottom:14px; width:100%; }
+    .audience-tier-bar-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; height:100%; }
+    .audience-tier-bar-track { flex:1; width:100%; max-width:72px; display:flex; align-items:flex-end; justify-content:center; }
+    .audience-tier-bar-fill { width:100%; border-radius:6px 6px 2px 2px; min-height:6px; display:flex; align-items:flex-start; justify-content:center; padding-top:5px; box-sizing:border-box; transition:height 0.5s ease; }
+    .audience-tier-bar-count { font-size:13px; font-weight:800; color:#fff; line-height:1; }
+    .audience-tier-bar-label { font-size:10px; font-weight:700; margin-top:7px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+    .audience-tier-bar-pct { font-size:11px; font-weight:600; margin-top:2px; }
 
     /* ── Mobile ── */
     @media(max-width:768px){
@@ -210,16 +208,15 @@
       .page { padding:12px 10px 20px; overflow-x:hidden; }
       .stats-grid { grid-template-columns:repeat(2,1fr) !important; gap:8px; }
       /* Audience quality bar chart — shrink so it never forces the page wider than the viewport */
-      .mini-bar-chart { height:110px !important; gap:6px !important; }
-      .mini-bar-label { font-size:8px !important; }
-      .mini-bar-pct { font-size:9px !important; }
-      .mini-bar-count { font-size:10px !important; }
+      .audience-tier-chart { height:110px !important; gap:6px !important; }
+      .audience-tier-bar-label { font-size:8px !important; }
+      .audience-tier-bar-pct { font-size:9px !important; }
+      .audience-tier-bar-count { font-size:10px !important; }
       .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
       /* Commission tiles — 2 col on mobile */
       .comm-grid { grid-template-columns:repeat(2,1fr) !important; }
       /* Big 3-col cards — stack on mobile */
       .big-cards-grid { grid-template-columns:1fr !important; }
-      .dash-2col { grid-template-columns:1fr !important; }
       /* Calendar — single month on mobile */
       .cal-two-months .cal-month-2 { display:none; }
       /* Bottom nav */
@@ -3243,19 +3240,19 @@
         {(() => {
           const maxCount = Math.max(...tierCounts.map(t => t.count), 1);
           return (
-            <div className="mini-bar-chart">
+            <div className="audience-tier-chart">
               {tierCounts.map(tier => {
                 const pct = total > 0 ? (tier.count / total * 100).toFixed(1) : '0.0';
                 const barPct = Math.max((tier.count / maxCount) * 100, tier.count > 0 ? 6 : 0);
                 return (
-                  <div key={tier.id} className="mini-bar-col" title={`${tier.label}: ${tier.count} orders (${pct}%)`}>
-                    <div className="mini-bar-track">
-                      <div className="mini-bar-fill" style={{height:`${barPct}%`, background:tier.color}}>
-                        {tier.count > 0 && <span className="mini-bar-count">{tier.count}</span>}
+                  <div key={tier.id} className="audience-tier-bar-col" title={`${tier.label}: ${tier.count} orders (${pct}%)`}>
+                    <div className="audience-tier-bar-track">
+                      <div className="audience-tier-bar-fill" style={{height:`${barPct}%`, background:tier.color}}>
+                        {tier.count > 0 && <span className="audience-tier-bar-count">{tier.count}</span>}
                       </div>
                     </div>
-                    <div className="mini-bar-label" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
-                    <div className="mini-bar-pct" style={{color:tier.color}}>{pct}%</div>
+                    <div className="audience-tier-bar-label" style={{color:tier.color}}>{tier.icon} {tier.label}</div>
+                    <div className="audience-tier-bar-pct" style={{color:tier.color}}>{pct}%</div>
                   </div>
                 );
               })}
@@ -3286,156 +3283,6 @@
             {untagged.toLocaleString()} orders ({total > 0 ? (untagged/total*100).toFixed(1) : '0'}%) have no audience tag — configure more tags in Tag Mappings
           </div>
         )}
-      </div>
-    );
-  }
-
-  // ── Daily Revenue Chart — canvas bars (revenue) + line (orders), 7-day
-  // moving average, peak-day marker. Draws from analytics.trend14d, which
-  // already exists (no new endpoint needed) — /admin/analytics returns real
-  // per-day {date, orders, revenue} for the selected period.
-  function RevenueChart({ daily }) {
-    const canvasRef = React.useRef(null);
-    const wrapRef   = React.useRef(null);
-    const [tooltip, setTooltip] = React.useState(null);
-
-    const draw = React.useCallback(() => {
-      const canvas = canvasRef.current;
-      if (!canvas || !daily || !daily.length) return;
-      const W = canvas.parentElement.clientWidth || 900;
-      const H = 200;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = W * dpr; canvas.height = H * dpr;
-      canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-      const ctx = canvas.getContext('2d');
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, W, H);
-
-      const maxRev = Math.max(...daily.map(d => d.revenue), 1);
-      const maxOrd = Math.max(...daily.map(d => d.orders), 1);
-      const avgRev = daily.reduce((s, d) => s + d.revenue, 0) / daily.length;
-      const ma7 = daily.map((_, i) => {
-        const slice = daily.slice(Math.max(0, i - 3), Math.min(daily.length, i + 4));
-        return slice.reduce((s, d) => s + d.revenue, 0) / slice.length;
-      });
-      const peakIdx = daily.reduce((pi, d, i) => d.revenue > daily[pi].revenue ? i : pi, 0);
-
-      const PAD = { top: 18, right: 44, bottom: 26, left: 54 };
-      const plotW = W - PAD.left - PAD.right;
-      const plotH = H - PAD.top - PAD.bottom;
-      const n = daily.length;
-      const step = plotW / n;
-      const bw = Math.max(3, Math.floor(step) - 2);
-      const xOf = i => PAD.left + i * step + step / 2;
-
-      const gridCol = 'rgba(255,255,255,.06)';
-      const labelCol = 'rgba(255,255,255,.4)';
-
-      ctx.font = '600 9px -apple-system,sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillStyle = labelCol;
-      for (let t = 0; t <= 4; t++) {
-        const y = PAD.top + plotH - (t / 4) * plotH;
-        const val = (t / 4) * maxRev;
-        ctx.strokeStyle = gridCol; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + plotW, y); ctx.stroke();
-        ctx.fillText('₹' + (val >= 1000 ? (val / 1000).toFixed(0) + 'k' : Math.round(val)), PAD.left - 6, y + 3);
-      }
-      ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(96,165,250,.6)';
-      for (let t = 0; t <= 4; t++) {
-        const y = PAD.top + plotH - (t / 4) * plotH;
-        ctx.fillText(Math.round((t / 4) * maxOrd), PAD.left + plotW + 6, y + 3);
-      }
-
-      daily.forEach((d, i) => {
-        const x = xOf(i) - bw / 2;
-        const bh = Math.max(2, (d.revenue / maxRev) * plotH);
-        const y = PAD.top + plotH - bh;
-        let c1 = '#6366f1';
-        if (d.revenue >= avgRev * 1.3) c1 = '#10b981';
-        else if (d.revenue < avgRev * 0.6) c1 = '#ef4444';
-        const grad = ctx.createLinearGradient(0, y, 0, PAD.top + plotH);
-        grad.addColorStop(0, c1 + 'cc'); grad.addColorStop(1, c1 + '11');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(x, y, bw, bh, [3, 3, 0, 0]); else ctx.rect(x, y, bw, bh);
-        ctx.fill();
-      });
-
-      // Peak marker
-      {
-        const px = xOf(peakIdx);
-        const py = PAD.top + plotH - (daily[peakIdx].revenue / maxRev) * plotH - 6;
-        ctx.fillStyle = '#f59e0b';
-        ctx.beginPath(); ctx.arc(px, py, 3.5, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // 7-day moving average line
-      ctx.strokeStyle = 'rgba(251,191,36,.7)'; ctx.lineWidth = 1.8; ctx.setLineDash([4, 3]);
-      ctx.beginPath();
-      ma7.forEach((v, i) => { const x = xOf(i), y = PAD.top + plotH - (v / maxRev) * plotH; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
-      ctx.stroke(); ctx.setLineDash([]);
-
-      // Orders line
-      ctx.strokeStyle = 'rgba(96,165,250,.85)'; ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      daily.forEach((d, i) => {
-        const x = xOf(i), y = PAD.top + plotH - (d.orders / maxOrd) * plotH;
-        if (i === 0) { ctx.moveTo(x, y); return; }
-        const px = xOf(i - 1), py = PAD.top + plotH - (daily[i - 1].orders / maxOrd) * plotH;
-        const cpx = (px + x) / 2;
-        ctx.bezierCurveTo(cpx, py, cpx, y, x, y);
-      });
-      ctx.stroke();
-
-      // X labels — thin out to avoid crowding
-      ctx.textAlign = 'center'; ctx.fillStyle = labelCol; ctx.font = '600 8px -apple-system,sans-serif';
-      const labelStep = Math.max(1, Math.ceil(n / (W < 500 ? 5 : 10)));
-      daily.forEach((d, i) => {
-        if (i % labelStep !== 0 && i !== n - 1) return;
-        const dt = new Date(d.date + 'T00:00:00');
-        ctx.fillText(`${dt.getDate()}/${dt.getMonth() + 1}`, xOf(i), H - 8);
-      });
-    }, [daily]);
-
-    React.useEffect(() => {
-      draw();
-      const onResize = () => draw();
-      window.addEventListener('resize', onResize);
-      return () => window.removeEventListener('resize', onResize);
-    }, [draw]);
-
-    const onMove = (e) => {
-      if (!daily || !daily.length || !wrapRef.current) return;
-      const rect = wrapRef.current.getBoundingClientRect();
-      const W = rect.width;
-      const PAD = { left: 54, right: 44 };
-      const plotW = W - PAD.left - PAD.right;
-      const relX = e.clientX - rect.left - PAD.left;
-      const idx = Math.min(daily.length - 1, Math.max(0, Math.round((relX / plotW) * daily.length - 0.5)));
-      const d = daily[idx];
-      if (!d) { setTooltip(null); return; }
-      setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, d });
-    };
-
-    if (!daily || !daily.length) return <div style={{fontSize:12,color:'var(--text-muted)',padding:'20px 0'}}>No revenue data for this period yet.</div>;
-
-    return (
-      <div ref={wrapRef} style={{position:'relative'}} onMouseMove={onMove} onMouseLeave={()=>setTooltip(null)}>
-        <canvas ref={canvasRef} style={{width:'100%',display:'block',cursor:'crosshair'}}/>
-        {tooltip && (
-          <div style={{position:'absolute',left:(wrapRef.current && tooltip.x > wrapRef.current.clientWidth-150) ? tooltip.x-150 : tooltip.x+10,top:Math.max(tooltip.y-60,0),background:'var(--bg-card2)',border:'1px solid var(--border-hi,var(--border))',borderRadius:8,padding:'8px 11px',pointerEvents:'none',zIndex:20,minWidth:130,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:11}}>
-            <div style={{color:'var(--text-muted)',marginBottom:4,fontSize:10}}>{new Date(tooltip.d.date+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
-            <div style={{color:'#10b981',fontWeight:700}}>{fmtCur(tooltip.d.revenue)}</div>
-            <div style={{color:'#60a5fa',marginTop:2}}>{tooltip.d.orders} orders</div>
-          </div>
-        )}
-        <div style={{display:'flex',gap:14,marginTop:8,fontSize:10,color:'var(--text-muted)'}}>
-          <span><span style={{display:'inline-block',width:8,height:8,borderRadius:2,background:'#6366f1',marginRight:4}}/>Revenue</span>
-          <span><span style={{display:'inline-block',width:14,height:2,background:'rgba(96,165,250,.85)',marginRight:4,verticalAlign:'middle'}}/>Orders</span>
-          <span><span style={{display:'inline-block',width:14,height:2,background:'rgba(251,191,36,.7)',marginRight:4,verticalAlign:'middle'}}/>7-day avg</span>
-          <span>⭐ Peak day</span>
-        </div>
       </div>
     );
   }
@@ -3477,13 +3324,6 @@
         .then(r=>r.json()).then(d=>{ setScorecard(d); if(dashCache?.current) dashCache.current.scorecard=d; }).catch(()=>{});
     },[token]);
 
-    const [criticalTickets, setCriticalTickets] = useState(()=> dashCache?.current?.criticalTickets || null);
-    useEffect(()=>{
-      if (dashCache?.current?.criticalTickets) { setCriticalTickets(dashCache.current.criticalTickets); return; }
-      fetch(`${API}/admin/support/tickets`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>{ const t=d.tickets||d||[]; setCriticalTickets(t); if(dashCache?.current) dashCache.current.criticalTickets=t; }).catch(()=>setCriticalTickets([]));
-    },[token]);
-
     const fmtHrs = (h) => {
       if (h == null) return '—';
       if (h < 24) return `${h.toFixed(1)}h`;
@@ -3511,35 +3351,6 @@
           <div style={{display:'flex',gap:6,alignItems:'center'}}>
             <button onClick={()=>{ if(dashCache?.current){ const k=aPeriod?.label||'all'; delete dashCache.current.analytics[k]; delete dashCache.current[`timings_${k}`]; dashCache.current.scorecard=null; } setALoading(true); setTLoading(true); setScorecard(null); const from=aPeriod?aPeriod.from:'2020-01-01'; const to=aPeriod?aPeriod.to:isoToday(); fetch(`${API}/admin/analytics?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setAnalytics(d);if(dashCache?.current)dashCache.current.analytics[aPeriod?.label||'all']=d;}).catch(()=>{}).finally(()=>setALoading(false)); fetch(`${API}/admin/dashboard/stage-timings?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setTimings(d);if(dashCache?.current)dashCache.current[`timings_${aPeriod?.label||'all'}`]=d;}).catch(()=>{}).finally(()=>setTLoading(false)); fetch(`${API}/admin/vendor-scorecard`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{setScorecard(d);if(dashCache?.current)dashCache.current.scorecard=d;}).catch(()=>{}); }} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'3px 8px'}} disabled={aLoading}>{aLoading?<span className="spin">↻</span>:'↻'} Refresh</button>
             <PeriodPicker period={aPeriod} onChange={p=>{setAPeriod(p);setATab('overview');}} align="right"/>
-          </div>
-        </div>
-
-        {/* Daily Revenue Chart — real per-day data from analytics.trend14d */}
-        <div className="card" style={{marginBottom:16,padding:0}}>
-          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',padding:'14px 18px 0',flexWrap:'wrap',gap:8}}>
-            <div>
-              <div className="card-title" style={{marginBottom:2}}>📊 Revenue Intelligence · Daily Breakdown</div>
-              <div className="card-sub">{periodLabel}{!aLoading && a?.trend14d?.length ? ` · ${a.trend14d.length} days` : ''}</div>
-            </div>
-            {!aLoading && a?.summary && (
-              <div style={{display:'flex',gap:16,fontSize:11}}>
-                {a.summary.revenueGrowth != null && (
-                  <div>
-                    <span style={{color:'var(--text-muted)'}}>Revenue vs prior period </span>
-                    <span style={{fontWeight:800,color:a.summary.revenueGrowth>=0?'#10b981':'#ef4444'}}>{a.summary.revenueGrowth>=0?'▲':'▼'} {Math.abs(a.summary.revenueGrowth)}%</span>
-                  </div>
-                )}
-                {a.summary.orderGrowth != null && (
-                  <div>
-                    <span style={{color:'var(--text-muted)'}}>Orders </span>
-                    <span style={{fontWeight:800,color:a.summary.orderGrowth>=0?'#10b981':'#ef4444'}}>{a.summary.orderGrowth>=0?'▲':'▼'} {Math.abs(a.summary.orderGrowth)}%</span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          <div style={{padding:'10px 18px 16px'}}>
-            {aLoading ? <div style={{fontSize:12,color:'var(--text-muted)',padding:'20px 0'}}>Loading…</div> : <RevenueChart daily={a?.trend14d || []}/>}
           </div>
         </div>
 
@@ -4649,235 +4460,6 @@
             </div>
           );
         })()}
-
-        {/* ── KEY INSIGHTS — real computed one-liners, not fabricated copy ── */}
-        {!aLoading && a && (() => {
-          const s = a.summary || {};
-          const insights = [];
-          if (s.revenueGrowth != null) insights.push({ icon: s.revenueGrowth>=0?'📈':'📉', text: `Revenue is ${s.revenueGrowth>=0?'up':'down'} ${Math.abs(s.revenueGrowth)}% vs the prior period.`, c: s.revenueGrowth>=0?'#10b981':'#ef4444' });
-          if (s.rtoRate30 != null) insights.push({ icon: s.rtoRate30>15?'⚠️':'✅', text: `RTO rate this period: ${s.rtoRate30}%.`, c: s.rtoRate30>15?'#ef4444':'#10b981' });
-          if (s.repeatRate != null) insights.push({ icon: '🔁', text: `${s.repeatRate}% of customers (${s.repeatCustomers}/${s.totalCustomers}) are repeat buyers.`, c: '#818cf8' });
-          if (a.dispatchQuality?.avgHours != null && a.dispatchQuality.total > 0) insights.push({ icon: '⚡', text: `Avg confirm → dispatch time: ${a.dispatchQuality.avgHours}h across ${a.dispatchQuality.total} shipments.`, c: '#60a5fa' });
-          if (a.topBrands?.[0]) insights.push({ icon: '🏆', text: `Top vendor by revenue: ${a.topBrands[0].name} (${fmtCur(a.topBrands[0].revenue)}).`, c: '#fbbf24' });
-          if (a.topProducts?.[0]) insights.push({ icon: '🔥', text: `Best seller: ${a.topProducts[0].title} — ${a.topProducts[0].qty} units sold.`, c: '#f472b6' });
-          if (!insights.length) return null;
-          return (
-            <div className="card" style={{marginTop:16}}>
-              <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                <span className="card-title">💡 Key Insights</span>
-                <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel} · computed from your live order data</span>
-              </div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:12}}>
-                {insights.map((ins,i)=>(
-                  <div key={i} style={{flex:'1 1 260px',minWidth:0,display:'flex',alignItems:'flex-start',gap:8,background:'var(--bg-hover)',border:`1px solid ${ins.c}33`,borderRadius:8,padding:'10px 12px'}}>
-                    <span style={{fontSize:15,flexShrink:0}}>{ins.icon}</span>
-                    <span style={{fontSize:12,color:'var(--text)',lineHeight:1.4}}>{ins.text}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ── PAYMENT SPLIT + DISPATCH QUALITY ── */}
-        {!aLoading && a && (a.paymentSplit || a.dispatchQuality) && (
-          <div className="dash-2col" style={{marginTop:16}}>
-            {a.paymentSplit && (() => {
-              const ps2 = a.paymentSplit;
-              const total = (ps2.prepaid||0)+(ps2.partial||0)+(ps2.cod||0);
-              const rows = [
-                { id:'prepaid', label:'Prepaid', icon:'💳', count:ps2.prepaid||0, color:'#10b981' },
-                { id:'partial', label:'Partial/Advance', icon:'₹', count:ps2.partial||0, color:'#fbbf24' },
-                { id:'cod', label:'COD', icon:'📦', count:ps2.cod||0, color:'#ef4444' },
-              ];
-              const maxC = Math.max(...rows.map(r=>r.count), 1);
-              return (
-                <div className="card">
-                  <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                    <span className="card-title">💳 Payment Type Split</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel}</span>
-                  </div>
-                  <div className="mini-bar-chart" style={{marginTop:14}}>
-                    {rows.map(r=>{
-                      const pct = total>0 ? (r.count/total*100).toFixed(1) : '0.0';
-                      const barPct = Math.max((r.count/maxC)*100, r.count>0?6:0);
-                      return (
-                        <div key={r.id} className="mini-bar-col" title={`${r.label}: ${r.count} orders (${pct}%)`}>
-                          <div className="mini-bar-track">
-                            <div className="mini-bar-fill" style={{height:`${barPct}%`,background:r.color}}>
-                              {r.count>0 && <span className="mini-bar-count">{r.count}</span>}
-                            </div>
-                          </div>
-                          <div className="mini-bar-label" style={{color:r.color}}>{r.icon} {r.label}</div>
-                          <div className="mini-bar-pct" style={{color:r.color}}>{pct}%</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-            {a.dispatchQuality && a.dispatchQuality.total > 0 && (() => {
-              const dq = a.dispatchQuality;
-              const rows = [
-                { id:'veryGood', label:'<30h', icon:'🟢', count:dq.veryGood||0, color:'#10b981' },
-                { id:'good', label:'<48h', icon:'🟡', count:dq.good||0, color:'#84cc16' },
-                { id:'fine', label:'<4d', icon:'🟠', count:dq.fine||0, color:'#f59e0b' },
-                { id:'bad', label:'<7d', icon:'🔴', count:dq.bad||0, color:'#f97316' },
-                { id:'veryBad', label:'7d+', icon:'⛔', count:dq.veryBad||0, color:'#ef4444' },
-              ];
-              const maxC = Math.max(...rows.map(r=>r.count), 1);
-              return (
-                <div className="card">
-                  <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                    <span className="card-title">⚡ Dispatch Quality</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)'}}>Confirm → dispatch · avg {dq.avgHours}h</span>
-                  </div>
-                  <div className="mini-bar-chart" style={{marginTop:14,height:150}}>
-                    {rows.map(r=>{
-                      const pct = dq.total>0 ? (r.count/dq.total*100).toFixed(1) : '0.0';
-                      const barPct = Math.max((r.count/maxC)*100, r.count>0?6:0);
-                      return (
-                        <div key={r.id} className="mini-bar-col" title={`${r.label}: ${r.count} shipments (${pct}%)`}>
-                          <div className="mini-bar-track">
-                            <div className="mini-bar-fill" style={{height:`${barPct}%`,background:r.color}}>
-                              {r.count>0 && <span className="mini-bar-count">{r.count}</span>}
-                            </div>
-                          </div>
-                          <div className="mini-bar-label" style={{color:r.color}}>{r.icon} {r.label}</div>
-                          <div className="mini-bar-pct" style={{color:r.color}}>{pct}%</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {dq.topOffenders?.length > 0 && (
-                    <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)'}}>
-                      <div style={{fontSize:10,color:'var(--text-muted)',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Slowest vendors</div>
-                      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                        {dq.topOffenders.map(v=>(
-                          <span key={v.vendor} style={{fontSize:10,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.25)',color:'#f87171',padding:'2px 8px',borderRadius:4,fontWeight:600}}>{v.vendor} · {v.total}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* ── TOP PRODUCTS + TOP VENDORS ── */}
-        {!aLoading && a && (a.topProducts?.length > 0 || a.topBrands?.length > 0) && (
-          <div className="dash-2col" style={{marginTop:16}}>
-            {a.topProducts?.length > 0 && (() => {
-              const maxQty = Math.max(...a.topProducts.map(p=>p.qty), 1);
-              return (
-                <div className="card">
-                  <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                    <span className="card-title">🔥 Top Selling Products</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)'}}>By units sold · all time</span>
-                  </div>
-                  <div style={{display:'flex',flexDirection:'column',gap:9,marginTop:12}}>
-                    {a.topProducts.slice(0,8).map((p,i)=>(
-                      <div key={i} style={{display:'flex',alignItems:'center',gap:10}}>
-                        <span style={{fontSize:10,color:'var(--text-muted)',width:16,flexShrink:0,fontWeight:700}}>{i+1}</span>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:12,color:'var(--text)',fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{p.title}</div>
-                          <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:4}}>
-                            <div style={{height:'100%',width:`${(p.qty/maxQty*100).toFixed(0)}%`,background:'#818cf8',borderRadius:2}}/>
-                          </div>
-                        </div>
-                        <div style={{textAlign:'right',flexShrink:0}}>
-                          <div style={{fontSize:12,fontWeight:800,color:'var(--text)'}}>{p.qty}</div>
-                          <div style={{fontSize:9,color:'var(--text-muted)'}}>{fmtCur(p.revenue)}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-            {a.topBrands?.length > 0 && (() => {
-              const maxRev = Math.max(...a.topBrands.map(b=>b.revenue), 1);
-              return (
-                <div className="card">
-                  <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                    <span className="card-title">🏆 Top Vendors by Revenue</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)'}}>All time</span>
-                  </div>
-                  <div style={{display:'flex',flexDirection:'column',gap:9,marginTop:12}}>
-                    {a.topBrands.slice(0,8).map((b,i)=>(
-                      <div key={i} style={{display:'flex',alignItems:'center',gap:10}}>
-                        <span style={{fontSize:10,color:'var(--text-muted)',width:16,flexShrink:0,fontWeight:700}}>{i+1}</span>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:12,color:'var(--text)',fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{b.name}</div>
-                          <div style={{height:4,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:4}}>
-                            <div style={{height:'100%',width:`${(b.revenue/maxRev*100).toFixed(0)}%`,background:'#10b981',borderRadius:2}}/>
-                          </div>
-                        </div>
-                        <div style={{textAlign:'right',flexShrink:0}}>
-                          <div style={{fontSize:12,fontWeight:800,color:'var(--text)'}}>{fmtCur(b.revenue)}</div>
-                          <div style={{fontSize:9,color:'var(--text-muted)'}}>{b.orders} orders</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* ── TOP CITIES + CRITICAL SUPPORT TICKETS ── */}
-        {!aLoading && a && (a.topCities?.length > 0 || criticalTickets?.length > 0) && (
-          <div className="dash-2col" style={{marginTop:16}}>
-            {a.topCities?.length > 0 && (() => {
-              const maxC = Math.max(...a.topCities.map(c=>c.count), 1);
-              return (
-                <div className="card">
-                  <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                    <span className="card-title">📍 Top Cities</span>
-                    <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel} · where orders come from</span>
-                  </div>
-                  <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:12}}>
-                    {a.topCities.slice(0,8).map((c,i)=>(
-                      <div key={i} style={{display:'flex',alignItems:'center',gap:10}}>
-                        <span style={{fontSize:12,color:'var(--text)',flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c.city}</span>
-                        <div style={{width:100,height:6,background:'var(--border)',borderRadius:3,overflow:'hidden',flexShrink:0}}>
-                          <div style={{height:'100%',width:`${(c.count/maxC*100).toFixed(0)}%`,background:'#60a5fa',borderRadius:3}}/>
-                        </div>
-                        <span style={{fontSize:11,fontWeight:700,color:'#60a5fa',width:26,textAlign:'right',flexShrink:0}}>{c.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-            {criticalTickets?.length > 0 && (
-              <div className="card">
-                <div className="card-header" style={{borderBottom:'1px solid var(--border)',paddingBottom:10}}>
-                  <span className="card-title">🎫 Critical Support Tickets</span>
-                  <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(251,191,36,0.12)',color:'#fbbf24',fontWeight:700}}>{criticalTickets.length} OPEN</span>
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:12,maxHeight:280,overflowY:'auto'}}>
-                  {criticalTickets.slice(0,10).map((t,i)=>{
-                    const overdue = t.sla_deadline && new Date(t.sla_deadline) < new Date();
-                    return (
-                      <div key={t._id||i} style={{display:'flex',alignItems:'flex-start',gap:8,padding:'8px 10px',background:'var(--bg-hover)',borderRadius:7,border:`1px solid ${overdue?'rgba(239,68,68,0.3)':'var(--border)'}`}}>
-                        <span style={{fontSize:13,flexShrink:0}}>{overdue?'🔴':'🟠'}</span>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{t.order_name||'No order'} <span style={{color:'var(--text-muted)',fontWeight:400}}>· {t.issue_category||'general'}</span></div>
-                          <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.last_customer_msg||t.context_note||'—'}</div>
-                        </div>
-                        {overdue && <span style={{fontSize:9,fontWeight:700,color:'#ef4444',flexShrink:0}}>OVERDUE</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
       </div>
     );
