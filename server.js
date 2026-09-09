@@ -23511,7 +23511,20 @@ async function waCloudSendSession(jid, content) {
   const to = `91${digits}`;
   try {
     let body;
-    if (content?.ctaUrl) {
+    if (content?.list) {
+      // Interactive list message — the native tappable "View Options" menu.
+      // content.list = { header, body, footer, buttonText, sections: [{title, rows:[{id,title,description}]}] }
+      body = {
+        messaging_product: 'whatsapp', to, type: 'interactive',
+        interactive: {
+          type: 'list',
+          ...(content.list.header ? { header: { type: 'text', text: content.list.header } } : {}),
+          body: { text: content.list.body },
+          ...(content.list.footer ? { footer: { text: content.list.footer } } : {}),
+          action: { button: content.list.buttonText || 'View Options', sections: content.list.sections },
+        },
+      };
+    } else if (content?.ctaUrl) {
       // Interactive session message — a real tappable button, free (not
       // billed like a template send) as long as we're within the 24h
       // window, which is always true here since this replies to an inbound
@@ -23597,7 +23610,11 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       const phone = String(msg.from || '').replace(/^91/, '').slice(-10);
       const contact = (value.contacts || []).find(c => c.wa_id === msg.from);
       const name = contact?.profile?.name || '';
-      const text = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || (msg.type ? `[${msg.type}]` : '');
+      // List taps use their row `id` (we set these to '1'-'4' to match the
+      // existing numbered-menu logic directly, no separate routing needed);
+      // quick-reply button taps use the visible label text instead, since
+      // those handlers match against label strings like "Confirm"/"Cancel".
+      const text = msg.text?.body || msg.button?.text || msg.interactive?.list_reply?.id || msg.interactive?.button_reply?.title || (msg.type ? `[${msg.type}]` : '');
       const now = new Date().toISOString();
 
       await mdb.collection('wa_cloud_messages').insertOne({
@@ -24407,6 +24424,13 @@ const waProxySock = {
         if (result.sent) return result;
         if (!waSocket || !waConnected) { console.error(`❌ WA send failed — Cloud API failed (${result.reason}) and Baileys not connected`); return result; }
       }
+    }
+    // Baileys doesn't understand the {list} / {ctaUrl} Cloud-only shapes —
+    // fall back to plain text (content.text, e.g. the old WA_MENUS string)
+    // if one was supplied alongside, since this path only runs when Cloud
+    // API failed or isn't the active model.
+    if ((content?.list || content?.ctaUrl) && content?.text) {
+      return waSocket?.sendMessage(jid, { text: content.text }, ...rest);
     }
     return waSocket?.sendMessage(jid, content, ...rest);
   },
@@ -26059,6 +26083,36 @@ async function setBotMode(mode) {
   );
 }
 
+// Native tappable list version of the welcome menu (replaces the old
+// "reply with 1-4" text) — id maps straight to the same digit the rest of
+// the menu-reply logic already expects, so nothing downstream needs to
+// change. 'menu' mode option 3 is Return/Exchange; 'smart' mode option 2 is
+// Browse Products and option 3 is AI Assistant, matching the old text menus.
+function waWelcomeListContent(mode) {
+  const rows = mode === 'menu'
+    ? [
+        { id: '1', title: 'Track Order', description: 'Check your order status' },
+        { id: '2', title: 'Return / Exchange', description: 'Start a return or exchange' },
+        { id: '3', title: 'AI Assistant', description: 'Ask me anything' },
+        { id: '4', title: 'Talk to a Human', description: 'Connect with our support team' },
+      ]
+    : [
+        { id: '1', title: 'Track Order', description: 'Check your order status' },
+        { id: '2', title: 'Browse Products', description: 'See our latest drops' },
+        { id: '3', title: 'Return / Exchange', description: 'Start a return or exchange' },
+        { id: '4', title: 'Talk to a Human', description: 'Connect with our support team' },
+      ];
+  return {
+    list: {
+      header: 'CROSCROW',
+      body: '60+ Homegrown Labels — how can we help?',
+      footer: 'Tap below to select',
+      buttonText: 'View Options',
+      sections: [{ title: 'Menu', rows }],
+    },
+  };
+}
+
 const _F = '```';
 const WA_MENUS = {
   welcome:
@@ -26992,13 +27046,12 @@ async function startBaileysBot() {
             await SC.addMessage(chat._id, { sender: 'customer', text });
             if (waMenuOnCooldown(sender)) { waPending.delete(sender); continue; }
             const _gMode = await getBotMode();
-            if (_gMode === 'menu') {
-              await saveAndSend(WA_MENUS.welcome_menu);
-              await waSessionSet(sender, { menu: 'welcome_menu' });
-            } else {
-              await saveAndSend(WA_MENUS.welcome);
-              await waSessionSet(sender, { menu: 'welcome' });
-            }
+            const _menuKey = _gMode === 'menu' ? 'welcome_menu' : 'welcome';
+            const _listContent = waWelcomeListContent(_gMode);
+            await SC.addMessage(chat._id, { sender: 'assistant', text: WA_MENUS[_menuKey] });
+            await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $set: { updated_at: new Date().toISOString() } });
+            await sock.sendMessage(sender, { ..._listContent, text: WA_MENUS[_menuKey] });
+            await waSessionSet(sender, { menu: _menuKey });
             waPending.delete(sender);
             continue;
           }
