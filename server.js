@@ -26175,6 +26175,33 @@ const WA_MENUS = {
     : `${_F}\n▪ C R O S C R O W ▪\nSUPPORT QUEUE\n────────────────\nSTATE  We'll connect with\n       you soon.\n\nHOURS  2 PM – 8 PM\nLINE   6375668971\n────────────────\n⚠️ SEND YOUR QUERY BELOW\nADD ORDER ID FOR SPEED ⚠️\n${_F}`,
 };
 
+// Button label per WA_MENUS key that has an embedded link line — used to
+// strip that line out of the old ASCII-box body and replace it with a real
+// free tappable button (interactive session message) instead. Keys not
+// listed here have no link (order_cancelled, order_rto, ai_assistant, etc.)
+// and are sent as plain text unchanged.
+const WA_MENU_BUTTON_LABELS = {
+  order_not_confirmed: 'Confirm Order',
+  order_confirmed_short: 'Track Order',
+  order_confirmed_long: 'Track Order',
+  order_hold: 'Confirm Order',
+  order_transit: 'Track Order',
+  order_ofd: 'Track Order',
+  order_partial_shipped: 'Track Order',
+  order_delivered: 'Start Return/Exchange',
+  order_split_terminal: 'Track Order',
+};
+// Matches the "LABEL   <url>" line each of those templates embeds (CONFIRM/
+// TRACK/OPEN/RNE), so it can be removed from the body once that url moves
+// to a real button instead.
+const WA_MENU_LINK_LINE = /^[A-Z]+\s+https?:\/\/\S+\n?/m;
+
+function waMenuTextToContent(menuKey, text, url) {
+  const label = WA_MENU_BUTTON_LABELS[menuKey];
+  if (!label || !url) return { text };
+  return { text: text.replace(WA_MENU_LINK_LINE, ''), ctaUrl: { displayText: label, url } };
+}
+
 // ── Handle numbered menu reply ─────────────────────────────────────────────
 async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
   const { menu, orderData: d } = session;
@@ -27078,7 +27105,7 @@ async function startBaileysBot() {
                 const oName = `#${oNum}`;
                 const rneUrl = `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`;
                 await sock.sendMessage(sender, {
-                  text: `📋 *CROSCROW* — Order ${oName}\n\nReady to start your return or exchange!\n\nTakes less than 2 minutes.`,
+                  text: `${_F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nORDER  ${oName}\n\nReady when you are — takes\nless than 2 minutes.\n${_F}`,
                   ctaUrl: { displayText: 'Start Return/Exchange', url: rneUrl },
                 });
                 await waSessionClear(sender);
@@ -27132,7 +27159,7 @@ async function startBaileysBot() {
                         ? `${SERVER_URL}/returns?o=${encodeURIComponent(oNum)}&contact=na`
                         : (oStatus.confirm_url || oStatus.track_url || '');
                       const menuText = typeof menuFn === 'function' ? menuFn(oStatus.order_name, menuUrl, oStatus.vendor_shipments || []) : menuFn;
-                      await sock.sendMessage(sender, { text: menuText });
+                      await sock.sendMessage(sender, waMenuTextToContent(menuInfo.menu, menuText, menuUrl));
                       await waSessionSet(sender, menuInfo);
                       // Mark chat as menu-served — prevents false escalation/unresolved flags
                       await mdb.collection('support_chats').updateOne(
@@ -27345,7 +27372,7 @@ async function startBaileysBot() {
                 ? `${SERVER_URL}/returns?o=${encodeURIComponent(_oNum2)}&contact=na`
                 : (menuInfo.orderData?.confirm_url || menuInfo.orderData?.track_url || '');
               const menuText = typeof menuFn === 'function' ? menuFn(meta.data.order_name, menuUrl, meta.data.vendor_shipments || []) : menuFn;
-              await sock.sendMessage(sender, { text: menuText });
+              await sock.sendMessage(sender, waMenuTextToContent(menuInfo.menu, menuText, menuUrl));
               await waSessionSet(sender, menuInfo);
             }
             waPending.delete(sender);
