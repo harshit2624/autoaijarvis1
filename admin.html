@@ -3810,7 +3810,9 @@
           const totalComm = at.totalCommission||0, totalGst = at.totalCommissionGst||0, grandTotal = totalComm+totalGst;
           const realizedNow = at.deliveredCommission||0;
           const stillMoving = (at.transitCommission||0)+(at.pendingCommission||0);
-          const atRisk = at.missedCommission||0;
+          const lostRto = at.missedCommission||0;
+          const lostOther = at.otherCommission||0;
+          const lostTotal = lostRto + lostOther;
           return (
             <div className="dash-section">
               <div className="dash-section-hdr">
@@ -3840,22 +3842,37 @@
                 </div>
               </div>
 
-              {/* Realized / Moving / At Risk pills */}
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:16}}>
-                <div style={{background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.25)',borderRadius:8,padding:'10px 12px'}}>
+              {/* Realized / Moving / Lost pills — Lost gets more width since
+                  it now breaks down into RTO + Cancelled/Hold + their sum,
+                  instead of just showing the RTO figure alone. */}
+              <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+                <div style={{flex:'1 1 180px',background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.25)',borderRadius:8,padding:'10px 12px'}}>
                   <div style={{fontSize:9,fontWeight:700,color:'#10b981',letterSpacing:0.5,textTransform:'uppercase'}}>✓ Realized Now</div>
                   <div style={{fontSize:16,fontWeight:900,color:'#10b981',marginTop:3}}>{fmtCur(realizedNow)}</div>
                   <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>delivered — yours to collect</div>
                 </div>
-                <div style={{background:'rgba(96,165,250,.08)',border:'1px solid rgba(96,165,250,.25)',borderRadius:8,padding:'10px 12px'}}>
+                <div style={{flex:'1 1 180px',background:'rgba(96,165,250,.08)',border:'1px solid rgba(96,165,250,.25)',borderRadius:8,padding:'10px 12px'}}>
                   <div style={{fontSize:9,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>🚚 Still In Motion</div>
                   <div style={{fontSize:16,fontWeight:900,color:'#60a5fa',marginTop:3}}>{fmtCur(stillMoving)}</div>
                   <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>in pipeline + pending — not lost yet</div>
                 </div>
-                <div style={{background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.25)',borderRadius:8,padding:'10px 12px'}}>
-                  <div style={{fontSize:9,fontWeight:700,color:'#ef4444',letterSpacing:0.5,textTransform:'uppercase'}}>⚠ At Risk</div>
-                  <div style={{fontSize:16,fontWeight:900,color:'#ef4444',marginTop:3}}>{fmtCur(atRisk)}</div>
-                  <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>lost to RTO this period</div>
+                <div style={{flex:'2 1 320px',background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.25)',borderRadius:8,padding:'10px 12px'}}>
+                  <div style={{fontSize:9,fontWeight:700,color:'#ef4444',letterSpacing:0.5,textTransform:'uppercase',marginBottom:3}}>✕ Lost</div>
+                  <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+                    <div>
+                      <div style={{fontSize:16,fontWeight:900,color:'#ef4444'}}>{fmtCur(lostTotal)}</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>total lost this period</div>
+                    </div>
+                    <div style={{width:1,alignSelf:'stretch',background:'rgba(239,68,68,.25)'}}/>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:800,color:'#f87171'}}>{fmtCur(lostRto)}</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>↩ RTO</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:800,color:'#fca5a5'}}>{fmtCur(lostOther)}</div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>✕ Cancelled/Hold</div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
