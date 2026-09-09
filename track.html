@@ -838,6 +838,25 @@
   }
 
 
+  // Builds a public courier tracking URL from courier name + AWB when no
+  // tracking_url was stored on the shipment (RR reverse/forward shipments
+  // never get one saved server-side, unlike the forward order's own
+  // shipment) — used as a fallback so a "Track courier" link still appears.
+  function trackingUrlFromCourier(courier='', awb='') {
+    if (!awb) return '';
+    const c = (courier||'').toLowerCase();
+    if (c.includes('delhivery'))  return `https://www.delhivery.com/track/package/${awb}`;
+    if (c.includes('shiprocket')) return `https://shiprocket.co/tracking/${awb}`;
+    if (c.includes('bluedart'))   return `https://www.bluedart.com/tracking?trackNo=${awb}`;
+    if (c.includes('dtdc'))       return `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}`;
+    if (c.includes('ecom'))       return `https://ecomexpress.in/tracking/?awb_field=${awb}`;
+    if (c.includes('xpressbee'))  return `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}`;
+    if (c.includes('shadowfax'))  return `https://track.shadowfax.in/?awb=${awb}`;
+    if (c.includes('ekart'))      return `https://ekartlogistics.com/track?trackingId=${awb}`;
+    if (c.includes('fedex'))      return `https://www.fedex.com/fedextrack/?trknbr=${awb}`;
+    return '';
+  }
+
   function RRShipmentTracker({ awb, courier, direction, requestId, trackingStatus }) {
     const [status, setStatus] = React.useState(trackingStatus || '');
     const [history, setHistory] = React.useState([]);
@@ -865,6 +884,9 @@
             <span style={{fontSize:11,fontWeight:700,color:'#4433cc'}}>{direction==='reverse'?'↩ Return Pickup':'→ Exchange Dispatch'}</span>
             <span style={{fontSize:10,color:'#888',fontFamily:'monospace'}}>{awb}</span>
             {courier && <span style={{fontSize:10,color:'#aaa'}}>{courier}</span>}
+            {trackingUrlFromCourier(courier, awb) && (
+              <a href={trackingUrlFromCourier(courier, awb)} target="_blank" rel="noreferrer" style={{fontSize:10,color:'#4433cc',fontWeight:600,textDecoration:'none'}}>Track courier →</a>
+            )}
           </div>
           <button onClick={refresh} disabled={refreshing}
             style={{background:'none',border:'1px solid #d8d4ff',borderRadius:6,color:'#4433cc',cursor:'pointer',fontSize:10,padding:'2px 8px',display:'flex',alignItems:'center',gap:3}}>

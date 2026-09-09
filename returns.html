@@ -912,6 +912,26 @@ function renderPortal(d) {
 const RR_STAGE_RANK = { pending:0, approved:1, pickup_scheduled:2, pickup:2, picked_up:2, in_transit:2, received:3, received_at_warehouse:3, completed:4 };
 
 // ── Real courier scan log (ported from order.html) ──────────────────────
+// Builds a public courier tracking URL from courier name + AWB when no
+// tracking_url was stored on the shipment (RR reverse/forward shipments
+// never get one saved server-side — only the forward order's own shipment
+// does — so this fallback is what makes the "Track courier" button appear
+// for returns/exchanges at all instead of silently showing nothing).
+function trackingUrlFromCourier(courier='', awb='') {
+  if (!awb) return '';
+  const c = (courier||'').toLowerCase();
+  if (c.includes('delhivery'))  return `https://www.delhivery.com/track/package/${awb}`;
+  if (c.includes('shiprocket')) return `https://shiprocket.co/tracking/${awb}`;
+  if (c.includes('bluedart'))   return `https://www.bluedart.com/tracking?trackNo=${awb}`;
+  if (c.includes('dtdc'))       return `https://www.dtdc.in/tracking.asp?txtrknumber=${awb}`;
+  if (c.includes('ecom'))       return `https://ecomexpress.in/tracking/?awb_field=${awb}`;
+  if (c.includes('xpressbee'))  return `https://www.xpressbees.com/shipment/tracking?awbNumber=${awb}`;
+  if (c.includes('shadowfax'))  return `https://track.shadowfax.in/?awb=${awb}`;
+  if (c.includes('ekart'))      return `https://ekartlogistics.com/track?trackingId=${awb}`;
+  if (c.includes('fedex'))      return `https://www.fedex.com/fedextrack/?trknbr=${awb}`;
+  return '';
+}
+
 function buildScanLogHtml(history, logId, meta) {
   const hasHistory = history && history.length;
   const awb = meta?.awb || '';
@@ -1029,14 +1049,14 @@ function renderRRCard(rr) {
   ];
 
   const revAwb = rr.reverse_shipment?.awb || '';
-  const revTrack = rr.reverse_shipment?.tracking_url || '';
+  const revTrack = rr.reverse_shipment?.tracking_url || trackingUrlFromCourier(rr.reverse_shipment?.courier, revAwb);
   const revLogId = `rr-scan-rev-${rr.request_id}`;
   const revScanLog = revAwb ? buildScanLogHtml(rr.reverse_shipment?.tracking_history||[], revLogId, {
     awb: revAwb, title: 'Pickup Shipment Updates', requestId: rr.request_id, direction: 'reverse',
   }) : '';
 
   const fwdAwb = rr.forward_shipment?.awb || '';
-  const fwdTrack = rr.forward_shipment?.tracking_url || '';
+  const fwdTrack = rr.forward_shipment?.tracking_url || trackingUrlFromCourier(rr.forward_shipment?.courier, fwdAwb);
   const fwdLogId = `rr-scan-fwd-${rr.request_id}`;
   const fwdScanLog = (rr.type==='exchange' && fwdAwb) ? buildScanLogHtml(rr.forward_shipment?.tracking_history||[], fwdLogId, {
     awb: fwdAwb, title: 'Replacement Shipment Updates', requestId: rr.request_id, direction: 'forward',
