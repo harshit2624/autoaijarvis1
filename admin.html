@@ -13337,6 +13337,55 @@
     const [cloudSettings, setCloudSettings] = useState(null); // { active_model, templates_enabled }
     const [cloudLoading, setCloudLoading] = useState(false);
 
+    // ── Bot performance dashboard ──
+    const [waAnalytics, setWaAnalytics] = useState(null);
+    const [waPeriod, setWaPeriod] = useState('7d');
+    const [waFrom, setWaFrom] = useState('');
+    const [waTo, setWaTo] = useState('');
+    const [waAnalyticsLoading, setWaAnalyticsLoading] = useState(false);
+    const [waLogRecipientFilter, setWaLogRecipientFilter] = useState('all');
+    const [waLogStatusFilter, setWaLogStatusFilter] = useState('all');
+    const [waLogExpanded, setWaLogExpanded] = useState(false);
+    const [waRatesOpen, setWaRatesOpen] = useState(false);
+    const [waRatesDraft, setWaRatesDraft] = useState(null);
+    const [waRatesSaving, setWaRatesSaving] = useState(false);
+
+    const waPeriodRange = (period) => {
+      const today = new Date().toISOString().slice(0, 10);
+      if (period === 'today') return { from: today, to: today };
+      if (period === '7d') return { from: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10), to: today };
+      if (period === '30d') return { from: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), to: today };
+      if (period === 'custom') return { from: waFrom, to: waTo };
+      return null; // 'all'
+    };
+
+    const loadWaAnalytics = async (period) => {
+      setWaAnalyticsLoading(true);
+      try {
+        const range = waPeriodRange(period);
+        const qs = range && range.from && range.to ? `?from=${range.from}&to=${range.to}` : '';
+        const r = await fetch(`${API}/admin/wa-bot/analytics${qs}`, { headers: { Authorization: 'Bearer '+token } });
+        const d = await r.json();
+        if (!d.error) { setWaAnalytics(d); setWaRatesDraft(d.rates); }
+      } catch {}
+      setWaAnalyticsLoading(false);
+    };
+
+    useEffect(() => { loadWaAnalytics(waPeriod); }, [waPeriod]);
+
+    const saveWaRates = async () => {
+      setWaRatesSaving(true);
+      try {
+        const r = await fetch(`${API}/admin/wa-bot/rates`, {
+          method: 'POST', headers: { Authorization: 'Bearer '+token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rates: waRatesDraft }),
+        });
+        const d = await r.json();
+        if (!d.error) { setWaRatesOpen(false); loadWaAnalytics(waPeriod); }
+      } catch {}
+      setWaRatesSaving(false);
+    };
+
     const load = async () => {
       try {
         const [r, mr, cr] = await Promise.all([
@@ -13591,6 +13640,187 @@
               </div>
             </>
           )}
+        </div>
+
+        {/* ══════════════════ Bot Performance Dashboard ══════════════════ */}
+        <div style={{marginTop:24}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:12}}>
+            <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>📊 Bot Performance</div>
+            <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+              {['today','7d','30d','all','custom'].map(p => (
+                <button key={p} onClick={() => setWaPeriod(p)}
+                  style={{
+                    padding:'5px 12px', borderRadius:99, fontSize:11, fontWeight:600, cursor:'pointer',
+                    border: waPeriod===p ? '1px solid #6366f1' : '1px solid var(--border)',
+                    background: waPeriod===p ? 'rgba(99,102,241,0.1)' : 'var(--bg)',
+                    color: waPeriod===p ? '#6366f1' : 'var(--text-muted)',
+                  }}>
+                  {p==='today'?'Today':p==='7d'?'7 Days':p==='30d'?'30 Days':p==='all'?'All Time':'Custom'}
+                </button>
+              ))}
+              {waPeriod === 'custom' && (
+                <>
+                  <input type="date" value={waFrom} onChange={e=>setWaFrom(e.target.value)} style={{fontSize:11,padding:'4px 6px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg)',color:'var(--text)'}} />
+                  <input type="date" value={waTo} onChange={e=>setWaTo(e.target.value)} style={{fontSize:11,padding:'4px 6px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg)',color:'var(--text)'}} />
+                  <button onClick={()=>loadWaAnalytics('custom')} className="btn btn-ghost btn-sm" style={{fontSize:11}}>Apply</button>
+                </>
+              )}
+              <button onClick={()=>setWaRatesOpen(!waRatesOpen)} className="btn btn-ghost btn-sm" style={{fontSize:11}}>⚙️ Rates</button>
+              <button onClick={()=>loadWaAnalytics(waPeriod)} className="btn btn-ghost btn-sm" style={{fontSize:11}}>{waAnalyticsLoading?'↻':'🔄'}</button>
+            </div>
+          </div>
+
+          {waRatesOpen && waRatesDraft && (
+            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:8}}>
+                Estimated cost only — Meta's API returns billing category + billable flag, not an exact ₹ amount. Set your per-conversation rate for each category below.
+              </div>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                {['utility','marketing','service','authentication'].map(cat => (
+                  <label key={cat} style={{display:'flex',flexDirection:'column',gap:3,fontSize:11,color:'var(--text-muted)'}}>
+                    {cat.charAt(0).toUpperCase()+cat.slice(1)} (₹)
+                    <input type="number" step="0.01" value={waRatesDraft[cat] ?? 0}
+                      onChange={e => setWaRatesDraft({...waRatesDraft, [cat]: parseFloat(e.target.value)||0})}
+                      style={{width:80,fontSize:12,padding:'4px 6px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg)',color:'var(--text)'}} />
+                  </label>
+                ))}
+              </div>
+              <button onClick={saveWaRates} disabled={waRatesSaving} className="btn btn-indigo btn-sm" style={{marginTop:10,fontSize:11}}>
+                {waRatesSaving?'Saving…':'Save Rates'}
+              </button>
+            </div>
+          )}
+
+          {!waAnalytics && <div style={{fontSize:12,color:'var(--text-muted)'}}>Loading…</div>}
+
+          {waAnalytics && (() => {
+            const RECIPIENTS = [
+              { key:'customer', label:'👤 Customer', color:'#6366f1' },
+              { key:'vendor', label:'🏪 Vendor', color:'#f59e0b' },
+              { key:'admin', label:'🛡️ Admin', color:'#10b981' },
+              { key:'staff', label:'👥 Staff', color:'#8b5cf6' },
+            ];
+            const CATS = ['utility','marketing','service','authentication','unknown'];
+            const CAT_LABELS = { utility:'Utility', marketing:'Marketing', service:'Conversation', authentication:'Auth', unknown:'Unclassified' };
+            return (
+              <>
+                {/* Totals row */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10,marginBottom:14}}>
+                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Total Sent</div>
+                    <div style={{fontSize:22,fontWeight:700,color:'var(--text)'}}>{waAnalytics.totals.sent}</div>
+                  </div>
+                  <div style={{background:'var(--bg-card)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:10,padding:'12px 14px'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Total Failed</div>
+                    <div style={{fontSize:22,fontWeight:700,color:'#ef4444'}}>{waAnalytics.totals.failed}</div>
+                  </div>
+                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Est. Cost</div>
+                    <div style={{fontSize:22,fontWeight:700,color:'var(--text)'}}>₹{waAnalytics.totals.cost.toFixed(2)}</div>
+                  </div>
+                  <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                    <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Success Rate</div>
+                    <div style={{fontSize:22,fontWeight:700,color:'#10b981'}}>
+                      {waAnalytics.totals.sent+waAnalytics.totals.failed > 0 ? Math.round(waAnalytics.totals.sent/(waAnalytics.totals.sent+waAnalytics.totals.failed)*100) : 0}%
+                    </div>
+                  </div>
+                </div>
+
+                {/* Recipient cards */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(230px,1fr))',gap:10,marginBottom:14}}>
+                  {RECIPIENTS.map(rec => {
+                    const data = waAnalytics.cards[rec.key] || {};
+                    const recSent = CATS.reduce((s,c)=>s+(data[c]?.sent||0),0);
+                    const recFailed = CATS.reduce((s,c)=>s+(data[c]?.failed||0),0);
+                    const recCost = CATS.reduce((s,c)=>s+(data[c]?.cost||0),0);
+                    return (
+                      <div key={rec.key} onClick={()=>{setWaLogRecipientFilter(rec.key); setWaLogExpanded(true);}}
+                        style={{background:'var(--bg-card)',border:`1px solid ${rec.color}33`,borderRadius:10,padding:'12px 14px',cursor:'pointer'}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                          <span style={{fontSize:12,fontWeight:700,color:rec.color}}>{rec.label}</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}>₹{recCost.toFixed(2)}</span>
+                        </div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:6}}>
+                          <span style={{color:'var(--text)',fontWeight:600}}>{recSent}</span> sent
+                          {recFailed > 0 && <span style={{color:'#ef4444',fontWeight:600}}> · {recFailed} failed</span>}
+                        </div>
+                        <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                          {CATS.filter(c => (data[c]?.sent||0) + (data[c]?.failed||0) > 0).map(c => (
+                            <div key={c} style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)'}}>
+                              <span>{CAT_LABELS[c]}</span>
+                              <span>{data[c].sent} sent{data[c].failed?` · ${data[c].failed} failed`:''}</span>
+                            </div>
+                          ))}
+                          {CATS.every(c => (data[c]?.sent||0) + (data[c]?.failed||0) === 0) && (
+                            <span style={{fontSize:10,color:'var(--text-dim)'}}>No activity in this period</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Log table */}
+                <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,overflow:'hidden'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',cursor:'pointer',borderBottom: waLogExpanded ? '1px solid var(--border)' : 'none'}}
+                    onClick={()=>setWaLogExpanded(!waLogExpanded)}>
+                    <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>📋 Message Log ({waAnalytics.totalRows})</span>
+                    <span style={{fontSize:11,color:'var(--indigo)'}}>{waLogExpanded ? 'Collapse ▲' : 'Expand ▼'}</span>
+                  </div>
+                  {waLogExpanded && (
+                    <div>
+                      <div style={{display:'flex',gap:8,padding:'8px 14px',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
+                        <select value={waLogRecipientFilter} onChange={e=>setWaLogRecipientFilter(e.target.value)} style={{fontSize:11,padding:'4px 6px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg)',color:'var(--text)'}}>
+                          <option value="all">All Recipients</option>
+                          {RECIPIENTS.map(r=><option key={r.key} value={r.key}>{r.label}</option>)}
+                        </select>
+                        <select value={waLogStatusFilter} onChange={e=>setWaLogStatusFilter(e.target.value)} style={{fontSize:11,padding:'4px 6px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg)',color:'var(--text)'}}>
+                          <option value="all">All Status</option>
+                          <option value="sent">Sent</option>
+                          <option value="failed">Failed</option>
+                        </select>
+                      </div>
+                      <div style={{maxHeight:340,overflowY:'auto'}}>
+                        <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
+                          <thead><tr style={{color:'var(--text-muted)',borderBottom:'1px solid var(--border)',position:'sticky',top:0,background:'var(--bg-card)'}}>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>When</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Recipient</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Phone</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Kind</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Name</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Category</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Status</th>
+                            <th style={{textAlign:'left',padding:'6px 10px'}}>Reason</th>
+                          </tr></thead>
+                          <tbody>
+                            {waAnalytics.logs
+                              .filter(l => waLogRecipientFilter==='all' || l.recipient_type===waLogRecipientFilter)
+                              .filter(l => waLogStatusFilter==='all' || (waLogStatusFilter==='failed' ? (l.status==='failed'||l.delivery_status==='failed') : (l.status!=='failed'&&l.delivery_status!=='failed')))
+                              .slice(0,200)
+                              .map((l,i) => {
+                                const failed = l.status==='failed' || l.delivery_status==='failed';
+                                return (
+                                  <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                                    <td style={{padding:'4px 10px',whiteSpace:'nowrap',color:'var(--text-muted)'}}>{new Date(l.sent_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</td>
+                                    <td style={{padding:'4px 10px',textTransform:'capitalize'}}>{l.recipient_type}</td>
+                                    <td style={{padding:'4px 10px',fontFamily:'monospace',color:'var(--text-muted)'}}>{l.phone}</td>
+                                    <td style={{padding:'4px 10px'}}>{l.kind}</td>
+                                    <td style={{padding:'4px 10px',color:'var(--text)'}}>{l.name}</td>
+                                    <td style={{padding:'4px 10px',textTransform:'capitalize'}}>{l.pricing_category || l.category || '—'}</td>
+                                    <td style={{padding:'4px 10px',color: failed?'#ef4444':'#10b981',fontWeight:600}}>{failed?'Failed':(l.delivery_status||'Sent')}</td>
+                                    <td style={{padding:'4px 10px',color:'var(--text-dim)',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.reason||''}</td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
     );
