@@ -23689,8 +23689,19 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; }
     }
     const entry = body?.entry?.[0];
-    const value = entry?.changes?.[0]?.value;
+    const change = entry?.changes?.[0];
+    const value = change?.value;
     if (!value) return;
+
+    // TEMPORARY — capture the raw shape of anything that isn't the standard
+    // 'messages' field (i.e. smb_message_echoes once Meta starts sending
+    // them) so the exact payload structure can be inspected and a real
+    // parser built, instead of guessing at Meta's docs. Remove once that
+    // parser is written and wired in.
+    if (change?.field && change.field !== 'messages') {
+      await mdb.collection('wa_webhook_debug_log').insertOne({ field: change.field, raw: change, logged_at: new Date().toISOString() }).catch(() => {});
+      console.log(`🔍 WA webhook field captured: ${change.field}`);
+    }
 
     // Inbound customer messages
     for (const msg of (value.messages || [])) {
@@ -23789,6 +23800,16 @@ app.get('/admin/wa-cloud/status-log', adminAuth, async (req, res) => {
 // callback gives billable + category, not an INR amount — there's no
 // authoritative per-message price available via API, so this is a
 // deliberately-labeled estimate, not a real invoice figure).
+// TEMPORARY — view captured non-'messages' webhook payloads (see the
+// wa_webhook_debug_log insert in the /webhooks/whatsapp-cloud handler).
+// Remove once smb_message_echoes parsing is built and wired in.
+app.get('/admin/wa-bot/webhook-debug-log', adminAuth, async (req, res) => {
+  try {
+    const logs = await mdb.collection('wa_webhook_debug_log').find({}).sort({ logged_at: -1 }).limit(20).toArray();
+    res.json({ logs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/wa-bot/rates', adminAuth, async (req, res) => {
   try {
     const doc = await mdb.collection('wa_bot_settings').findOne({ _id: 'rates' });
