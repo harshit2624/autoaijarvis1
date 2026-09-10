@@ -5718,6 +5718,27 @@ app.post("/admin/logout", adminAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+// TEMPORARY — investigating Meta campaign attribution on Shopify orders
+// (landing_site/referring_site/note_attributes/source_name/client_details)
+// for the Meta campaign performance dashboard feature. Remove once decided.
+app.get("/admin/debug/order-attribution", adminAuth, async (req, res) => {
+  try {
+    const { data } = await shopifyRESTRaw('/orders.json?status=any&limit=5&order=created_at+desc');
+    const rows = (data.orders || []).map(o => ({
+      id: o.id, name: o.name, created_at: o.created_at,
+      source_name: o.source_name,
+      landing_site: o.landing_site,
+      landing_site_ref: o.landing_site_ref,
+      referring_site: o.referring_site,
+      note_attributes: o.note_attributes,
+      tags: o.tags,
+      client_details: o.client_details,
+      customer_journey_summary: o.customer_journey_summary || null,
+    }));
+    res.json({ orders: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── GET /admin/dashboard ──────────────────────────────────────────────────
 app.get("/admin/dashboard", adminAuth, async (req, res) => {
   try {
