@@ -5758,37 +5758,6 @@ app.post("/admin/logout", adminAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// TEMPORARY — one-time backfill for the Meta Campaign Performance dashboard.
-// snapshotOrder now captures ad_campaign/ad_source/ad_medium/ad_id on every
-// new order/update webhook going forward, but orders already snapshotted
-// before this change don't have it. Paginates recent Shopify orders and
-// fills in just the attribution fields for order_meta docs missing them.
-// Remove this route once it's been run for the window the dashboard needs.
-app.post("/admin/debug/backfill-campaign-attribution", adminAuth, async (req, res) => {
-  try {
-    const days = Math.min(parseInt(req.query.days) || 45, 120);
-    const sinceIso = new Date(Date.now() - days * 86400000).toISOString();
-    let url = `/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(sinceIso)}&order=created_at+desc`;
-    let updated = 0, checked = 0, withCampaign = 0;
-    while (url) {
-      const { data, link } = await shopifyRESTRaw(url);
-      for (const o of (data.orders || [])) {
-        checked++;
-        const attribution = extractCampaignAttribution(o);
-        if (attribution.campaign) withCampaign++;
-        await mdb.collection('order_meta').updateOne(
-          { shopify_id: String(o.id) },
-          { $set: { ad_source: attribution.source, ad_campaign: attribution.campaign, ad_medium: attribution.medium, ad_id: attribution.adId } },
-        );
-        updated++;
-      }
-      const nextMatch = /<([^>]+)>;\s*rel="next"/.exec(link || '');
-      url = nextMatch ? nextMatch[1].replace(/^https:\/\/[^/]+\/admin\/api\/2025-01/, '') : null;
-    }
-    res.json({ ok: true, days, checked, updated, withCampaign });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // ── GET /admin/dashboard ──────────────────────────────────────────────────
 app.get("/admin/dashboard", adminAuth, async (req, res) => {
   try {
