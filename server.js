@@ -260,6 +260,40 @@ const OM = {
 // ── Order snapshot — saves full Shopify order data to order_meta ──────────────
 // Called on every orders/create + orders/updated webhook so DB is always current.
 // Callers that need customer/address/items data read from here instead of hitting Shopify live.
+// ── Meta campaign attribution — extracted from Shopify order payload ──────
+// CROSCROW checkout runs through GoKwik, which puts UTM params into
+// note_attributes (utm_source/utm_campaign/utm_medium/utm_content/utm_term)
+// rather than Shopify's native landing_site/referring_site fields (those
+// are only populated for the "web" source_name path — a minority of
+// orders). utm_term carries the Meta ad_id (confirmed via live order data,
+// e.g. "120249608458200410"), and utm_campaign matches Meta's campaign_name
+// verbatim when the ad's UTM campaign parameter is set to the campaign name
+// (standard practice) — that's the join key back to /admin/meta-ads/insights.
+function extractCampaignAttribution(payload) {
+  const attrs = {};
+  (payload.note_attributes || []).forEach(a => { if (a?.name) attrs[a.name] = a.value; });
+  let source = attrs.utm_source, campaign = attrs.utm_campaign, medium = attrs.utm_medium, adId = attrs.utm_term;
+  if (!campaign && payload.landing_site) {
+    try {
+      const qIdx = payload.landing_site.indexOf('?');
+      if (qIdx >= 0) {
+        const params = new URLSearchParams(payload.landing_site.slice(qIdx + 1));
+        source = source || params.get('utm_source');
+        campaign = campaign || params.get('utm_campaign');
+        medium = medium || params.get('utm_medium');
+        adId = adId || params.get('utm_term') || params.get('TERM');
+      }
+    } catch (e) { /* ignore malformed landing_site */ }
+  }
+  if (!campaign || !String(source||'').toLowerCase().includes('meta')) {
+    // Not Meta-attributed (or no campaign at all) — still worth keeping
+    // source/medium for non-Meta channels, but campaign matching only
+    // applies to Meta traffic.
+    return { source: source || null, campaign: null, medium: medium || null, adId: null };
+  }
+  return { source, campaign, medium: medium || null, adId: adId || null };
+}
+
 async function snapshotOrder(payload) {
   if (!mdb || !payload?.id) return;
   const sid = String(payload.id);
@@ -300,6 +334,8 @@ async function snapshotOrder(payload) {
     if (advance > 0) snapFields.advance_paid = advance;
   }
 
+  const attribution = extractCampaignAttribution(payload);
+
   await OM.upsert(sid, {
     order_name: payload.name || '',
     customer_name: customerName,
@@ -316,6 +352,10 @@ async function snapshotOrder(payload) {
     vendors,
     fulfillments,
     shipping_charge,
+    ad_source: attribution.source,
+    ad_campaign: attribution.campaign,
+    ad_medium: attribution.medium,
+    ad_id: attribution.adId,
     shopify_created_at: payload.created_at || null,
     shopify_updated_at: payload.updated_at || null,
     snapshot_at: new Date().toISOString(),
@@ -5718,24 +5758,34 @@ app.post("/admin/logout", adminAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// TEMPORARY — investigating Meta campaign attribution on Shopify orders
-// (landing_site/referring_site/note_attributes/source_name/client_details)
-// for the Meta campaign performance dashboard feature. Remove once decided.
-app.get("/admin/debug/order-attribution", adminAuth, async (req, res) => {
+// TEMPORARY — one-time backfill for the Meta Campaign Performance dashboard.
+// snapshotOrder now captures ad_campaign/ad_source/ad_medium/ad_id on every
+// new order/update webhook going forward, but orders already snapshotted
+// before this change don't have it. Paginates recent Shopify orders and
+// fills in just the attribution fields for order_meta docs missing them.
+// Remove this route once it's been run for the window the dashboard needs.
+app.post("/admin/debug/backfill-campaign-attribution", adminAuth, async (req, res) => {
   try {
-    const { data } = await shopifyRESTRaw('/orders.json?status=any&limit=5&order=created_at+desc');
-    const rows = (data.orders || []).map(o => ({
-      id: o.id, name: o.name, created_at: o.created_at,
-      source_name: o.source_name,
-      landing_site: o.landing_site,
-      landing_site_ref: o.landing_site_ref,
-      referring_site: o.referring_site,
-      note_attributes: o.note_attributes,
-      tags: o.tags,
-      client_details: o.client_details,
-      customer_journey_summary: o.customer_journey_summary || null,
-    }));
-    res.json({ orders: rows });
+    const days = Math.min(parseInt(req.query.days) || 45, 120);
+    const sinceIso = new Date(Date.now() - days * 86400000).toISOString();
+    let url = `/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(sinceIso)}&order=created_at+desc`;
+    let updated = 0, checked = 0, withCampaign = 0;
+    while (url) {
+      const { data, link } = await shopifyRESTRaw(url);
+      for (const o of (data.orders || [])) {
+        checked++;
+        const attribution = extractCampaignAttribution(o);
+        if (attribution.campaign) withCampaign++;
+        await mdb.collection('order_meta').updateOne(
+          { shopify_id: String(o.id) },
+          { $set: { ad_source: attribution.source, ad_campaign: attribution.campaign, ad_medium: attribution.medium, ad_id: attribution.adId } },
+        );
+        updated++;
+      }
+      const nextMatch = /<([^>]+)>;\s*rel="next"/.exec(link || '');
+      url = nextMatch ? nextMatch[1].replace(/^https:\/\/[^/]+\/admin\/api\/2025-01/, '') : null;
+    }
+    res.json({ ok: true, days, checked, updated, withCampaign });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -21140,6 +21190,126 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
       byPublisher: (byPublisher.data||[]).map(r=>({ publisher:r.publisher_platform, ...formatRow(r) })),
       byHour:      (byHour.data||[]).map(r=>({ hour:r.hourly_stats_aggregated_by_advertiser_time_zone, ...formatRow(r) })),
     });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── GET /admin/meta-ads/campaign-performance ─────────────────────────────────
+// Joins real Shopify order outcomes to Meta campaigns/ads via UTM attribution
+// captured at snapshot time (order_meta.ad_campaign/ad_id — see
+// extractCampaignAttribution). For each Meta campaign with spend in the
+// period: real sales/net-sales/cancelled+RTO, order-stage breakdown, audience
+// risk-tier breakdown, top products, top states, and the same per-ad
+// breakdown nested inside each campaign.
+app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
+  if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
+  try {
+    const { from, to } = req.query;
+    const periodFrom = from ? new Date(from) : new Date(Date.now() - 29*86400000);
+    const periodTo   = to   ? new Date(to + 'T23:59:59')   : new Date();
+    const timeParams = { time_range: JSON.stringify({ since: periodFrom.toISOString().slice(0,10), until: periodTo.toISOString().slice(0,10) }) };
+    const insightFields = 'spend,impressions,clicks,actions,action_values,purchase_roas';
+    const extract = (item) => {
+      const purchases = parseFloat((item.actions||[]).find(a=>a.action_type==='purchase')?.value||0);
+      const revenue   = parseFloat((item.action_values||[]).find(a=>a.action_type==='purchase')?.value||0);
+      const spend     = parseFloat(item.spend||0);
+      const roas      = item.purchase_roas?.[0]?.value ? parseFloat(item.purchase_roas[0].value) : (revenue && spend ? parseFloat((revenue/spend).toFixed(2)) : 0);
+      return { spend, impressions: parseInt(item.impressions||0), clicks: parseInt(item.clicks||0), purchases, metaRevenue: revenue, roas };
+    };
+
+    const [campRes, adRes] = await Promise.all([
+      metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_id,campaign_name,${insightFields}`, ...timeParams, level:'campaign', limit:50 }).catch(()=>({data:[]})),
+      metaGet(`/${META_ACCOUNT}/insights`, { fields:`ad_id,ad_name,campaign_name,${insightFields}`, ...timeParams, level:'ad', limit:200 }).catch(()=>({data:[]})),
+    ]);
+
+    // Real order data for the same period, only orders with Meta attribution
+    const metaDocs = await mdb.collection('order_meta').find(
+      { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() }, ad_campaign: { $ne: null } },
+      { projection: { shopify_id:1, ad_campaign:1, ad_id:1, total_price:1, stage:1, items:1, shipping_address:1, tags:1 } }
+    ).toArray();
+    const ids = metaDocs.map(d => d.shopify_id);
+    const ovsRows = ids.length ? await mdb.collection('order_vendor_stage').find({ shopify_id: { $in: ids } }, { projection: { shopify_id:1, stage:1, _id:0 } }).toArray() : [];
+    const ovsBySid = {};
+    ovsRows.forEach(r => { if (!ovsBySid[r.shopify_id]) ovsBySid[r.shopify_id] = []; ovsBySid[r.shopify_id].push(r.stage); });
+    const SO_C = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc'];
+    const effStage = (sid, metaStage) => {
+      let best = SO_C.indexOf(metaStage || 'new'); if (best < 0) best = 0;
+      (ovsBySid[sid] || []).forEach(s => { const vi = SO_C.indexOf(s); if (vi > best) best = vi; });
+      return SO_C[best] || metaStage || 'new';
+    };
+
+    // Audience risk tiers — same defaults as the dashboard's Order Risk
+    // Breakdown, so a campaign's audience mix is directly comparable.
+    const AUD_TIERS = [
+      { id:'high_risk', label:'High Risk', tags:['cod','rto_customer','unverified','rto','fraud_risk','blacklisted','address_issue','cod_undelivered'] },
+      { id:'medium_risk', label:'Medium Risk', tags:['new_customer','partial_payment','first_order','cod_confirmed','review_needed','flagged'] },
+      { id:'control', label:'Control', tags:['confirmed','standard','normal','default_segment','organic'] },
+      { id:'low_risk', label:'Low Risk', tags:['prepaid','repeat_customer','vip','verified','loyal','exchange_done','delivered','upi_paid','paid'] },
+    ];
+    const tierOfTags = (tagStr) => {
+      const tagList = (tagStr||'').split(',').map(t=>t.trim().toLowerCase()).filter(Boolean);
+      for (const tier of AUD_TIERS) if (tagList.some(t => tier.tags.includes(t))) return tier.id;
+      return null;
+    };
+
+    // Group orders by campaign, then by ad within campaign
+    const byCampaign = {};
+    for (const doc of metaDocs) {
+      const camp = doc.ad_campaign;
+      if (!byCampaign[camp]) byCampaign[camp] = { orders: [], ads: {} };
+      byCampaign[camp].orders.push(doc);
+      const adKey = doc.ad_id || 'unknown';
+      if (!byCampaign[camp].ads[adKey]) byCampaign[camp].ads[adKey] = [];
+      byCampaign[camp].ads[adKey].push(doc);
+    }
+
+    const summarizeOrders = (orders) => {
+      let sales = 0, delivered = 0, rto = 0, dead = 0, inMotion = 0;
+      const productMap = {}, stateMap = {}, tierCounts = { high_risk:0, medium_risk:0, control:0, low_risk:0, untagged:0 };
+      for (const o of orders) {
+        const price = parseFloat(o.total_price || 0);
+        sales += price;
+        const stage = effStage(o.shopify_id, o.stage);
+        if (stage === 'delivered') delivered++;
+        else if (stage === 'rto') rto++;
+        else if (stage === 'cancelled' || stage === 'hold') dead++;
+        else inMotion++;
+        const tier = tierOfTags(o.tags);
+        if (tier) tierCounts[tier]++; else tierCounts.untagged++;
+        (o.items||[]).forEach(li => {
+          const key = li.product_id || li.title;
+          if (!productMap[key]) productMap[key] = { title: li.title, qty: 0, revenue: 0 };
+          productMap[key].qty += li.qty || 1;
+          productMap[key].revenue += parseFloat(li.price||0) * (li.qty||1);
+        });
+        const state = o.shipping_address?.province;
+        if (state) stateMap[state] = (stateMap[state]||0) + 1;
+      }
+      const deadRevShare = orders.length ? (dead+rto)/orders.length : 0;
+      const netSales = parseFloat((sales * (1 - deadRevShare)).toFixed(2));
+      return {
+        orderCount: orders.length, sales: parseFloat(sales.toFixed(2)), netSales,
+        delivered, rto, dead, inMotion,
+        tierCounts,
+        topProducts: Object.values(productMap).sort((a,b)=>b.qty-a.qty).slice(0,6).map(p=>({...p, revenue: parseFloat(p.revenue.toFixed(2))})),
+        topStates: Object.entries(stateMap).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([state,count])=>({state,count})),
+      };
+    };
+
+    const adInsightByAdId = {};
+    (adRes.data||[]).forEach(r => { adInsightByAdId[r.ad_id] = { adName: r.ad_name, ...extract(r) }; });
+
+    const campaigns = (campRes.data||[]).map(c => {
+      const meta = extract(c);
+      const bucket = byCampaign[c.campaign_name];
+      const orderSummary = bucket ? summarizeOrders(bucket.orders) : { orderCount:0, sales:0, netSales:0, delivered:0, rto:0, dead:0, inMotion:0, tierCounts:{high_risk:0,medium_risk:0,control:0,low_risk:0,untagged:0}, topProducts:[], topStates:[] };
+      const ads = bucket ? Object.entries(bucket.ads).map(([adId, orders]) => {
+        const adInsight = adInsightByAdId[adId] || {};
+        return { adId, adName: adInsight.adName || (adId==='unknown'?'Unattributed':adId), spend: adInsight.spend||0, roas: adInsight.roas||0, purchases: adInsight.purchases||0, ...summarizeOrders(orders) };
+      }).sort((a,b)=>b.sales-a.sales) : [];
+      return { campaignId: c.campaign_id, campaign: c.campaign_name, ...meta, ...orderSummary, ads };
+    }).filter(c => c.spend > 0 || c.orderCount > 0).sort((a,b) => b.spend - a.spend);
+
+    res.json({ campaigns, from: periodFrom.toISOString().slice(0,10), to: periodTo.toISOString().slice(0,10) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
