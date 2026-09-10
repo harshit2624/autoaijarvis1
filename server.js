@@ -27734,6 +27734,35 @@ async function startBaileysBot() {
             }
           }
 
+          // ── 2a. Universal intent escape — works from ANY locked state ──
+          // awaiting_order / awaiting_order_rne only know how to consume an
+          // order ID; anything else used to fall straight through to that
+          // state's own catch-all, which just re-prompted "enter order ID"
+          // again — so a customer who typed "human" mid-lookup got the same
+          // order-ID prompt back instead of an escalation. This runs BEFORE
+          // those state handlers get a chance to swallow the message, so
+          // "human"/"return"/etc always routes correctly no matter what the
+          // bot was last waiting on.
+          {
+            const _escSession = await waSessionGet(sender);
+            if (_escSession.menu === 'awaiting_order' || _escSession.menu === 'awaiting_order_rne') {
+              const _intentNum = waClassifyMenuIntent(text);
+              if (_intentNum === 4) {
+                await SC.addMessage(chat._id, { sender: 'customer', text });
+                await waTalkToHuman(sock, sender, chat, phone, `Customer asked for a human while bot was waiting on an order ID (${_escSession.menu})`);
+                waPending.delete(sender);
+                continue;
+              }
+              if (_intentNum === 2 && _escSession.menu !== 'awaiting_order_rne') {
+                await SC.addMessage(chat._id, { sender: 'customer', text });
+                await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
+                await waSessionSet(sender, { menu: 'awaiting_order_rne' });
+                waPending.delete(sender);
+                continue;
+              }
+            }
+          }
+
           // ── 2b-rne. awaiting_order_rne: Return/Exchange — look up order then send link ──
           {
             const rneSession = await waSessionGet(sender);
