@@ -458,6 +458,26 @@ const OVS = {
   },
 };
 
+// order_meta.stage alone can lag reality on multi-vendor orders (or just go
+// stale — seen directly on real orders whose stage sat at "confirmed" while
+// their vendor(s) had already progressed to delivered). The real answer is
+// the highest stage across order_meta.stage AND every vendor's
+// order_vendor_stage row, in pipeline order — same pattern already used ad
+// hoc in a couple of places (e.g. the Meta campaign-performance endpoint),
+// pulled out here as one shared helper instead of copy-pasted per caller.
+const ORDER_STAGE_PIPELINE = ['new', 'confirmed', 'partial', 'hold', 'ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'cancelled', 'misc'];
+async function getEffectiveOrderStage(shopifyId, metaStage) {
+  const sid = String(shopifyId);
+  let best = ORDER_STAGE_PIPELINE.indexOf(metaStage || 'new');
+  if (best < 0) best = 0;
+  const vendorRows = await mdb.collection('order_vendor_stage').find({ shopify_id: sid }, { projection: { stage: 1, _id: 0 } }).toArray();
+  vendorRows.forEach(r => {
+    const idx = ORDER_STAGE_PIPELINE.indexOf(r.stage);
+    if (idx > best) best = idx;
+  });
+  return ORDER_STAGE_PIPELINE[best] || metaStage || 'new';
+}
+
 const VSC = {
   async get(vendor_name) {
     return mdb.collection('vendor_shopify_connections').findOne({ vendor_name }, { projection: { _id: 0 } });
@@ -1669,23 +1689,40 @@ app.post("/webhooks/orders", (req, res) => {
               if (_confPhone2 && _confPhone2.length === 10) {
                 const _orderSlug2 = encodeURIComponent(String(payload.name).replace(/^#/, ''));
                 const _itemLine2 = (payload.line_items || []).map(li => li.title).slice(0, 2).join(', ') || 'Your item';
-                const _isDelivered = _incomingTags.some(t => t.includes('delivered'));
-                const _tplName = _isDelivered ? WA_TPL.SHIPMENT_DELIVERED : WA_TPL.SHIPMENT_TRANSIT;
+                // Real stage, not a tag guess — order_meta.stage alone can be
+                // stale on its own (confirmed a customer already had it
+                // stuck at "confirmed" while genuinely delivered), so this
+                // takes the highest stage across order_meta AND every
+                // vendor's order_vendor_stage row, same pipeline order used
+                // everywhere else stage math happens in this codebase.
+                const _effStage = await getEffectiveOrderStage(sid, 'confirmed');
+                const _stageTplMap = {
+                  pickup: WA_TPL.SHIPMENT_PICKUP, transit: WA_TPL.SHIPMENT_TRANSIT,
+                  ofd: WA_TPL.SHIPMENT_OFD, delivered: WA_TPL.SHIPMENT_DELIVERED,
+                  rto: WA_TPL.SHIPMENT_DELIVERED, // no dedicated RTO template here — closest available, body copy below still says the true thing
+                };
+                const _tplName = _stageTplMap[_effStage] || WA_TPL.SHIPMENT_TRANSIT;
                 const _bodyParams = [payload.name, _itemLine2];
                 const _Falt = '```';
                 const _trackUrlAlt = `${SERVER_URL}/o/${String(payload.name).replace(/^#/, '')}`;
-                const _altMsg = _isDelivered
-                  ? `${_Falt}\n▪ C R O S C R O W ▪\nALREADY DELIVERED\n────────────────\nORDER  ${payload.name}\n\nSTATE  This order's already been delivered — no payment needed here.\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Falt}`
-                  : `${_Falt}\n▪ C R O S C R O W ▪\nALREADY ON ITS WAY\n────────────────\nORDER  ${payload.name}\n\nSTATE  This order's already confirmed and shipped — no payment needed here.\n\nTRACK  ${_trackUrlAlt}\n────────────────\nNOTHING NEEDED FROM YOU\n${_Falt}`;
-                const _cloudTplAlt = _isDelivered
-                  ? { templateName: _tplName, bodyParams: _bodyParams }
-                  : { templateName: _tplName, bodyParams: _bodyParams, urlButtonParam: `${_orderSlug2}&contact=na` };
+                const _stageCopy = {
+                  pickup:    { title: 'ALREADY SHIPPED',      state: "This order's already confirmed and shipped — no payment needed here." },
+                  transit:   { title: 'ALREADY ON ITS WAY',   state: "This order's already confirmed and on its way — no payment needed here." },
+                  ofd:       { title: 'OUT FOR DELIVERY',     state: "This order's already out for delivery — no payment needed here." },
+                  delivered: { title: 'ALREADY DELIVERED',    state: "This order's already been delivered — no payment needed here." },
+                  rto:       { title: 'RETURNED TO HUB',      state: "This order came back to us after a failed delivery — our team will reach out. No payment needed here." },
+                }[_effStage] || { title: 'ALREADY IN PROGRESS', state: "This order's already moving — no payment needed here." };
+                const _needsTrackLine = !['delivered', 'rto'].includes(_effStage);
+                const _altMsg = `${_Falt}\n▪ C R O S C R O W ▪\n${_stageCopy.title}\n────────────────\nORDER  ${payload.name}\n\nSTATE  ${_stageCopy.state}${_needsTrackLine ? `\n\nTRACK  ${_trackUrlAlt}` : ''}\n────────────────\n${_needsTrackLine ? 'NOTHING NEEDED FROM YOU' : '60+ BRANDS | CROSCROW.COM'}\n${_Falt}`;
+                const _cloudTplAlt = _needsTrackLine
+                  ? { templateName: _tplName, bodyParams: _bodyParams, urlButtonParam: `${_orderSlug2}&contact=na` }
+                  : { templateName: _tplName, bodyParams: _bodyParams };
                 await waSendToCustomer(_confPhone2, _altMsg, _cloudTplAlt).catch(e => console.error('WA already-dispatched notice error:', e.message));
                 await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.already_dispatched_notice': new Date().toISOString() } });
                 waLogNotifTrigger({
                   shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: 'already_dispatched_notice',
-                  outcome: 'sent', reason: `pay99 ask blocked (fulfillment_status=${payload.fulfillment_status}) — sent already-shipped notice instead (${_isDelivered ? 'delivered' : 'transit'} template)`,
-                  fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+                  outcome: 'sent', reason: `pay99 ask blocked (fulfillment_status=${payload.fulfillment_status}) — sent already-shipped notice instead (effective stage: ${_effStage})`,
+                  fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, stage: _effStage, incoming_tags: payload.tags,
                 });
               }
             } else {
