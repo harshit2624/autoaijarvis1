@@ -21172,7 +21172,7 @@ app.get('/admin/meta-ads/insights', adminAuth, async (req, res) => {
 app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
   if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
   try {
-    const { from, to } = req.query;
+    const { from, to, tierMap: tierMapRaw } = req.query;
     const periodFrom = from ? new Date(from) : new Date(Date.now() - 29*86400000);
     const periodTo   = to   ? new Date(to + 'T23:59:59')   : new Date();
     const timeParams = { time_range: JSON.stringify({ since: periodFrom.toISOString().slice(0,10), until: periodTo.toISOString().slice(0,10) }) };
@@ -21209,14 +21209,25 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       return SO_C[best] || metaStage || 'new';
     };
 
-    // Audience risk tiers — same defaults as the dashboard's Order Risk
-    // Breakdown, so a campaign's audience mix is directly comparable.
-    const AUD_TIERS = [
+    // Audience risk tiers — the user's own tag→tier mapping (saved in the
+    // Tag Mappings settings UI, persisted client-side in localStorage under
+    // croscrow_audience_tag_map) is passed through as a query param so this
+    // endpoint classifies orders using the SAME real config as the rest of
+    // the dashboard, instead of a disconnected hardcoded guess. Falls back
+    // to generic defaults only if the client didn't send one.
+    const DEFAULT_AUD_TIERS = [
       { id:'high_risk', label:'High Risk', tags:['cod','rto_customer','unverified','rto','fraud_risk','blacklisted','address_issue','cod_undelivered'] },
       { id:'medium_risk', label:'Medium Risk', tags:['new_customer','partial_payment','first_order','cod_confirmed','review_needed','flagged'] },
       { id:'control', label:'Control', tags:['confirmed','standard','normal','default_segment','organic'] },
       { id:'low_risk', label:'Low Risk', tags:['prepaid','repeat_customer','vip','verified','loyal','exchange_done','delivered','upi_paid','paid'] },
     ];
+    let AUD_TIERS = DEFAULT_AUD_TIERS;
+    if (tierMapRaw) {
+      try {
+        const parsed = JSON.parse(tierMapRaw);
+        AUD_TIERS = DEFAULT_AUD_TIERS.map(t => ({ ...t, tags: (parsed[t.id]||t.tags).map(x=>String(x).toLowerCase()) }));
+      } catch (e) { /* fall back to defaults on malformed param */ }
+    }
     const tierOfTags = (tagStr) => {
       const tagList = (tagStr||'').split(',').map(t=>t.trim().toLowerCase()).filter(Boolean);
       for (const tier of AUD_TIERS) if (tagList.some(t => tier.tags.includes(t))) return tier.id;
@@ -21281,9 +21292,19 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       const orderSummary = bucket ? summarizeOrders(bucket.orders) : { orderCount:0, sales:0, netSales:0, delivered:0, rto:0, dead:0, inMotion:0, tierCounts:{high_risk:0,medium_risk:0,control:0,low_risk:0,untagged:0}, topProducts:[], topStates:[] };
       const ads = bucket ? Object.entries(bucket.ads).map(([adId, orders]) => {
         const adInsight = adInsightByAdId[adId] || {};
-        return { adId, adName: adInsight.adName || (adId==='unknown'?'Unattributed':adId), spend: adInsight.spend||0, roas: adInsight.roas||0, purchases: adInsight.purchases||0, ...summarizeOrders(orders) };
+        const adSpend = adInsight.spend||0;
+        const adSummary = summarizeOrders(orders);
+        return {
+          adId, adName: adInsight.adName || (adId==='unknown'?'Unattributed':adId),
+          spend: adSpend, roas: adInsight.roas||0, purchases: adInsight.purchases||0,
+          grossRoas: adSpend>0 ? parseFloat((adSummary.sales/adSpend).toFixed(2)) : 0,
+          netRoas: adSpend>0 ? parseFloat((adSummary.netSales/adSpend).toFixed(2)) : 0,
+          ...adSummary,
+        };
       }).sort((a,b)=>b.sales-a.sales) : [];
-      return { campaignId: c.campaign_id, campaign: c.campaign_name, ...meta, ...orderSummary, ads };
+      const grossRoas = meta.spend>0 ? parseFloat((orderSummary.sales/meta.spend).toFixed(2)) : 0;
+      const netRoas = meta.spend>0 ? parseFloat((orderSummary.netSales/meta.spend).toFixed(2)) : 0;
+      return { campaignId: c.campaign_id, campaign: c.campaign_name, ...meta, grossRoas, netRoas, ...orderSummary, ads };
     }).filter(c => c.spend > 0 || c.orderCount > 0).sort((a,b) => b.spend - a.spend);
 
     // Organic/Other — every order in the period with no Meta campaign

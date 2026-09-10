@@ -3462,7 +3462,9 @@
       setCampLoading(true);
       const from = aPeriod ? aPeriod.from : '2020-01-01';
       const to   = aPeriod ? aPeriod.to   : isoToday();
-      fetch(`${API}/admin/meta-ads/campaign-performance?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}})
+      let tierMapQS = '';
+      try { const s = localStorage.getItem('croscrow_audience_tag_map'); if (s) tierMapQS = `&tierMap=${encodeURIComponent(s)}`; } catch(e) {}
+      fetch(`${API}/admin/meta-ads/campaign-performance?from=${from}&to=${to}${tierMapQS}`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{ setCampPerf(d.campaigns||[]); setCampOrganic(d.organic||null); }).catch(()=>{setCampPerf([]);setCampOrganic(null);}).finally(()=>setCampLoading(false));
     },[token, aPeriod]);
 
@@ -4469,12 +4471,23 @@
                 </div>
                 {/* Order stage breakdown */}
                 <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:4}}>Order Progress ({s.orderCount})</div>
-                <div style={{display:'flex',height:16,borderRadius:5,overflow:'hidden',gap:1,marginBottom:12}}>
+                <div style={{display:'flex',height:16,borderRadius:5,overflow:'hidden',gap:1}}>
                   {stageSegs.filter(x=>x.v>0).map(x=>{
                     const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
                     return (
                       <div key={x.l} title={`${x.l}: ${x.v} (${pct}%)`} style={{flex:x.v,minWidth:2,background:x.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
                         {pct>=14 && <span style={{fontSize:8,fontWeight:800,color:'#fff'}}>{pct}%</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display:'flex',gap:1,marginBottom:12,marginTop:3}}>
+                  {stageSegs.filter(x=>x.v>0).map(x=>{
+                    const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
+                    const abbr = x.l==='Cancelled/Hold' ? 'Can/Hold' : x.l==='In Motion' ? 'Motion' : x.l;
+                    return (
+                      <div key={x.l} style={{flex:x.v,minWidth:2,textAlign:'center',overflow:'hidden'}}>
+                        <span style={{fontSize:8,fontWeight:700,color:x.c,whiteSpace:'nowrap'}}>{abbr} {pct}%</span>
                       </div>
                     );
                   })}
@@ -4541,25 +4554,39 @@
                 </div>
                 <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
               </div>
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:10}}>
                 {allCards.map(c=>{
                   const isOrganic = c.campaignId === 'organic';
                   const isOpen = expandedCamp === c.campaignId;
-                  const roasC = c.roas>=4?'#10b981':c.roas>=2?'#f59e0b':'#ef4444';
+                  const roasC = v => v>=4?'#10b981':v>=2?'#f59e0b':'#ef4444';
+                  const roasBox = (label, val) => (
+                    <div style={{textAlign:'center',flex:1}}>
+                      <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:.3}}>{label}</div>
+                      <div style={{fontSize:14,fontWeight:800,color:roasC(val)}}>{val.toFixed(1)}x</div>
+                    </div>
+                  );
                   return (
-                    <div key={c.campaignId} style={{border:`1px solid ${isOrganic?'rgba(16,185,129,.3)':'var(--border)'}`,borderRadius:8,overflow:'hidden',background:isOrganic?'rgba(16,185,129,.03)':'transparent'}}>
-                      <div onClick={()=>setExpandedCamp(isOpen?null:c.campaignId)} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',cursor:'pointer',background:isOpen?'var(--bg-hover)':'transparent'}}>
-                        <span style={{fontSize:11,color:'var(--text-muted)',transition:'transform 0.15s',transform:isOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
-                        <span style={{fontSize:12,fontWeight:700,color:isOrganic?'#34d399':'var(--text)',flex:'2 1 200px',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={c.campaign}>{isOrganic?'🌱 ':''}{c.campaign}</span>
+                    <div key={c.campaignId} style={{border:`1px solid ${isOrganic?'rgba(16,185,129,.3)':'var(--border)'}`,borderRadius:10,overflow:'hidden',background:isOrganic?'rgba(16,185,129,.03)':'var(--bg-card2)',gridColumn:isOpen?'1 / -1':'auto'}}>
+                      <div onClick={()=>setExpandedCamp(isOpen?null:c.campaignId)} style={{padding:'12px 14px',cursor:'pointer',background:isOpen?'var(--bg-hover)':'transparent'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:isOrganic?4:10}}>
+                          <span style={{fontSize:10,color:'var(--text-muted)',transition:'transform 0.15s',transform:isOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
+                          <span style={{fontSize:12,fontWeight:700,color:isOrganic?'#34d399':'var(--text)',flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={c.campaign}>{isOrganic?'🌱 ':''}{c.campaign}</span>
+                        </div>
                         {isOrganic ? (
-                          <span style={{fontSize:10,color:'var(--text-muted)',flexShrink:0}}>direct / organic / no UTM match — no Meta spend to attribute</span>
+                          <div style={{fontSize:10,color:'var(--text-muted)'}}>direct / organic / no UTM match — no Meta spend to attribute · {c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no orders'}</div>
                         ) : (
                           <>
-                            <span style={{fontSize:11,color:'var(--text-muted)',flexShrink:0}}>Spend <strong style={{color:'var(--text)'}}>{fmtCur(c.spend)}</strong></span>
-                            <span style={{fontSize:11,color:roasC,fontWeight:700,flexShrink:0}}>{c.roas.toFixed(1)}x ROAS</span>
+                            <div style={{display:'flex',gap:6,marginBottom:8}}>
+                              {roasBox('Meta ROAS', c.roas)}
+                              {roasBox('Gross ROAS', c.grossRoas||0)}
+                              {roasBox('Net ROAS', c.netRoas||0)}
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',borderTop:'1px solid var(--border)',paddingTop:7}}>
+                              <span>Spend <strong style={{color:'var(--text)'}}>{fmtCur(c.spend)}</strong></span>
+                              <span>{c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no attributed orders'}</span>
+                            </div>
                           </>
                         )}
-                        <span style={{fontSize:11,color:'var(--text-muted)',flexShrink:0}}>{c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no attributed orders'}</span>
                       </div>
                       {isOpen && (
                         <div style={{padding:'0 14px 14px'}}>
