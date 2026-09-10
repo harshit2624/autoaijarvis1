@@ -1831,7 +1831,7 @@ app.post("/webhooks/orders", (req, res) => {
                 // admin dashboard / a Shopify Flow, not our button) — send
                 // the pay-₹99 ask here instead.
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${payload.name}\n\nPay ₹99 to confirm your COD\norder — helps block fake and\nmistaken orders.\n\nCONFIRM\n${_trackUrl}\n────────────────\nCONFIRM TO GET TRACKING\n${_F}`;
-                _cloudTpl = { templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [payload.name, (payload.line_items||[]).map(li=>li.title).slice(0,2).join(', ')||'—', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+                _cloudTpl = { templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [payload.name, Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'pay99_ask_sent';
               }
               await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
@@ -24191,7 +24191,7 @@ const WA_TPL = {
   VENDOR_SUPPORT_QUERY: 'vendor_support_query',
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
   STAFF_ALERT: 'staff_notification',
-  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v3', // currently unused — superseded by ORDER_CONFIRM_CANCEL, kept mapped in case it's ever needed again
+  ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v3', // the "pay ₹99" ask after Confirm is tapped — 2 body params (order name, COD amount due)
   ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v3',
@@ -27846,7 +27846,7 @@ async function startBaileysBot() {
                     const askResult = await sendWACloudTemplate({
                       phone10: String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10),
                       templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION,
-                      bodyParams: [ord.name, (ord.line_items || []).map(li => li.title).slice(0, 2).join(', ') || '—', Math.max(0, _total3 - 99).toFixed(0)],
+                      bodyParams: [ord.name, Math.max(0, _total3 - 99).toFixed(0)],
                       urlButtonParam: `${_oSlug}&contact=na`,
                     });
                     if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
