@@ -25064,19 +25064,6 @@ const waProxySock = {
   ev: { on: () => {} }, authState: { creds: { me: { id: '' } } },
 };
 
-// Cooldown for the welcome-menu resend — prevents WhatsApp anti-spam flags
-// from rapid-fire identical menu replies (e.g. several inbound messages from
-// the same number in quick succession each re-triggering the menu). Once
-// sent, the menu won't be resent to the same jid for this window even if
-// more unmatched messages keep arriving — the customer already has it.
-const _waMenuLastSent = new Map(); // jid → timestamp
-setInterval(() => { const now = Date.now(); _waMenuLastSent.forEach((ts, jid) => { if (now - ts > 15 * 60000) _waMenuLastSent.delete(jid); }); }, 5 * 60000);
-function waMenuOnCooldown(jid, cooldownMs = 10 * 60000) {
-  const last = _waMenuLastSent.get(jid);
-  const onCooldown = last && (Date.now() - last < cooldownMs);
-  if (!onCooldown) _waMenuLastSent.set(jid, Date.now());
-  return onCooldown;
-}
 let waStarting = false;
 let waSharedMessageHandler = null; // set by v1 bot; reused by v2
 let waReconnectTimer = null;
@@ -27709,9 +27696,13 @@ async function startBaileysBot() {
           }
 
           // ── 1. Greeting → show welcome menu (mode-aware) ──────────────
+          // No resend cooldown here — sends go through the Cloud API, which
+          // doesn't carry WhatsApp's old per-device spam-flag risk, and
+          // going silent isn't acceptable until a human has actually taken
+          // over (that's the bot_paused_until check above, a separate and
+          // deliberate silence, not this).
           if (WA_GREETING.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
-            if (waMenuOnCooldown(sender)) { waPending.delete(sender); continue; }
             const _gMode = await getBotMode();
             const _menuKey = _gMode === 'menu' ? 'welcome_menu' : 'welcome';
             const _listContent = waWelcomeListContent(_gMode);
@@ -27961,25 +27952,21 @@ async function startBaileysBot() {
                 waPending.delete(sender);
                 continue;
               }
-              // 90-min cooldown (was 10min) — no reliable signal yet for
-              // "admin already replied manually via the WhatsApp app" on
-              // Coexistence numbers (message_echoes webhook unavailable),
-              // so this is the practical stopgap against re-blasting the
-              // menu into an unrelated conversation (e.g. a business
-              // inquiry) every 10 minutes while a human is mid-conversation.
-              if (!waMenuOnCooldown(sender, 90 * 60000)) {
-                // Silently re-showing the exact same menu reads as the bot
-                // ignoring what was just typed. A one-line "didn't catch
-                // that" acknowledgment first makes it feel heard — and the
-                // menu itself already carries BOTH self-serve options and
-                // Talk to a Human side by side, so this isn't pushing
-                // customers toward human support, just re-surfacing every
-                // option (self-serve included) when free text wasn't
-                // understood.
-                await sock.sendMessage(sender, { text: `${_F}\n▪ C R O S C R O W ▪\nDIDN'T CATCH THAT\n────────────────\nNot sure I follow — pick an\noption below, or type it out\nagain a little differently.\n${_F}` });
-                await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
-                await waSessionSet(sender, { menu: 'welcome_menu' });
-              }
+              // No cooldown — sends go through the Cloud API (no per-device
+              // spam-flag risk the old cooldown was guarding against), and
+              // staying silent isn't acceptable here; the bot only ever
+              // goes quiet once a human has actually taken over
+              // (bot_paused_until, checked earlier). Silently re-showing
+              // the exact same menu also used to read as the bot ignoring
+              // what was just typed — a one-line "didn't catch that"
+              // acknowledgment first makes it feel heard. The menu itself
+              // still carries BOTH self-serve options and Talk to a Human
+              // side by side, so this isn't pushing customers toward human
+              // support, just re-surfacing every option (self-serve
+              // included) when free text wasn't understood.
+              await sock.sendMessage(sender, { text: `${_F}\n▪ C R O S C R O W ▪\nDIDN'T CATCH THAT\n────────────────\nNot sure I follow — pick an\noption below, or type it out\nagain a little differently.\n${_F}` });
+              await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
+              await waSessionSet(sender, { menu: 'welcome_menu' });
               waPending.delete(sender);
               continue;
             }
