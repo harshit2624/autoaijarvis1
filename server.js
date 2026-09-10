@@ -27024,8 +27024,7 @@ function waWelcomeListContent(mode) {
     ? [
         { id: '1', title: 'Track Order', description: 'Check your order status' },
         { id: '2', title: 'Return / Exchange', description: 'Start a return or exchange' },
-        { id: '3', title: 'AI Assistant', description: 'Ask me anything' },
-        { id: '4', title: 'Talk to a Human', description: 'Connect with our support team' },
+        { id: '3', title: 'Talk to a Human', description: 'Connect with our support team' },
       ]
     : [
         { id: '1', title: 'Track Order', description: 'Check your order status' },
@@ -27157,16 +27156,17 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       return true;
 
     case 'welcome_menu':
+      // AI Assistant option removed — LLM disabled in the support flow.
+      // Everything here now routes through templates/menu logic only
+      // (track order, return/exchange, or a real human), nothing the bot
+      // has to "figure out" freeform.
       if (num === 1) {
         await sock.sendMessage(sender, { text: WA_MENUS.order_lookup });
         await waSessionSet(sender, { menu: 'awaiting_order', returnTo: 'welcome_menu' });
       } else if (num === 2) {
         await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
         await waSessionSet(sender, { menu: 'awaiting_order_rne', returnTo: 'welcome_menu' });
-      } else if (num === 3) {
-        await sock.sendMessage(sender, { text: WA_MENUS.ai_assistant });
-        await waSessionSet(sender, { menu: 'ai_mode' });
-      } else if (num === 4) {
+      } else if (num === 3 || num === 4) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from menu bot');
       }
       return true;
@@ -27295,7 +27295,7 @@ async function waMenuForOrder(meta) {
 // falling back to "didn't catch that" + menu resend. Flip to false to
 // instantly revert to the old menu-only fallback if this doesn't work
 // well in practice — no other code changes needed either way.
-const WA_MENU_LLM_FALLBACK = true;
+const WA_MENU_LLM_FALLBACK = false;
 
 const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|hai|hola|namaste|👋|jai hind|good morning|good evening|good afternoon|gm|ge)$/i;
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
@@ -28132,19 +28132,20 @@ async function startBaileysBot() {
             }
           }
 
-          // ── 2c-ai. ai_mode: customer opted into AI — run LLM, allow exit ──
+          // ── 2c-ai. ai_mode: LLM disabled — any customer still sitting in a
+          // leftover ai_mode session (from before this was removed) gets
+          // bounced straight back to the menu instead of ever reaching the
+          // LLM. No new session can enter ai_mode anymore since the menu
+          // option itself was removed above.
           {
             const aiModeSession = await waSessionGet(sender);
             if (aiModeSession.menu === 'ai_mode') {
-              if (/^0$/.test(text.trim())) {
-                await waSessionClear(sender);
-                await SC.addMessage(chat._id, { sender: 'customer', text });
-                await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
-                await waSessionSet(sender, { menu: 'welcome_menu' });
-                waPending.delete(sender);
-                continue;
-              }
-              // Fall through to LLM — no continue here, let step 4 handle it
+              await waSessionClear(sender);
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
+              await waSessionSet(sender, { menu: 'welcome_menu' });
+              waPending.delete(sender);
+              continue;
             }
           }
 
