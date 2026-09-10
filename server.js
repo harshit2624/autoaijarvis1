@@ -21221,9 +21221,12 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       metaGet(`/${META_ACCOUNT}/insights`, { fields:`ad_id,ad_name,campaign_name,${insightFields}`, ...timeParams, level:'ad', limit:200 }).catch(()=>({data:[]})),
     ]);
 
-    // Real order data for the same period, only orders with Meta attribution
+    // Real order data for the period — ALL orders, not just Meta-attributed
+    // ones, so orders with no campaign match (direct/organic/other channels,
+    // or GoKwik checkouts where UTM didn't carry through) can be rolled up
+    // into a separate "Organic / Other" card instead of silently vanishing.
     const metaDocs = await mdb.collection('order_meta').find(
-      { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() }, ad_campaign: { $ne: null } },
+      { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() } },
       { projection: { shopify_id:1, ad_campaign:1, ad_id:1, total_price:1, stage:1, items:1, shipping_address:1, tags:1 } }
     ).toArray();
     const ids = metaDocs.map(d => d.shopify_id);
@@ -21251,10 +21254,15 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       return null;
     };
 
-    // Group orders by campaign, then by ad within campaign
+    // Group orders by campaign, then by ad within campaign. Orders with no
+    // campaign match go into their own "organic" bucket, kept separate from
+    // byCampaign so it renders as a distinct Organic/Other card instead of
+    // an oddly-named campaign entry.
     const byCampaign = {};
+    const organicOrders = [];
     for (const doc of metaDocs) {
       const camp = doc.ad_campaign;
+      if (!camp) { organicOrders.push(doc); continue; }
       if (!byCampaign[camp]) byCampaign[camp] = { orders: [], ads: {} };
       byCampaign[camp].orders.push(doc);
       const adKey = doc.ad_id || 'unknown';
@@ -21309,7 +21317,14 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       return { campaignId: c.campaign_id, campaign: c.campaign_name, ...meta, ...orderSummary, ads };
     }).filter(c => c.spend > 0 || c.orderCount > 0).sort((a,b) => b.spend - a.spend);
 
-    res.json({ campaigns, from: periodFrom.toISOString().slice(0,10), to: periodTo.toISOString().slice(0,10) });
+    // Organic/Other — every order in the period with no Meta campaign
+    // match (direct traffic, organic reach, other channels, or GoKwik
+    // checkouts where the UTM didn't carry through). No Meta spend/ROAS
+    // since it's not attributable to an ad, but the order-outcome data is
+    // just as real, so it's worth its own card instead of disappearing.
+    const organic = organicOrders.length ? { campaignId: 'organic', campaign: 'Organic / Other', spend: 0, roas: 0, purchases: 0, ...summarizeOrders(organicOrders), ads: [] } : null;
+
+    res.json({ campaigns, organic, from: periodFrom.toISOString().slice(0,10), to: periodTo.toISOString().slice(0,10) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

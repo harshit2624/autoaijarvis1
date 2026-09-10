@@ -3451,6 +3451,21 @@
     const [stuckModalOpen, setStuckModalOpen] = useState(false);
     const [geoMode, setGeoMode] = useState('city'); // 'city' | 'state'
 
+    // Meta Campaign Performance — real order outcomes joined to Meta
+    // campaigns via UTM attribution captured on order_meta at snapshot time.
+    const [campPerf, setCampPerf] = useState(null);
+    const [campOrganic, setCampOrganic] = useState(null);
+    const [campLoading, setCampLoading] = useState(true);
+    const [expandedCamp, setExpandedCamp] = useState(null);
+    const [expandedAd, setExpandedAd] = useState(null);
+    useEffect(()=>{
+      setCampLoading(true);
+      const from = aPeriod ? aPeriod.from : '2020-01-01';
+      const to   = aPeriod ? aPeriod.to   : isoToday();
+      fetch(`${API}/admin/meta-ads/campaign-performance?from=${from}&to=${to}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ setCampPerf(d.campaigns||[]); setCampOrganic(d.organic||null); }).catch(()=>{setCampPerf([]);setCampOrganic(null);}).finally(()=>setCampLoading(false));
+    },[token, aPeriod]);
+
     // Product photos for Top Selling Products — batch-fetched from the
     // existing product-images endpoint once topProducts is known.
     const [productImages, setProductImages] = useState({});
@@ -4413,6 +4428,176 @@
             </div>
           </div>
         )}
+
+        {/* ── Meta Campaign Performance — real order outcomes joined to Meta
+            campaigns via UTM attribution (order_meta.ad_campaign, captured
+            from GoKwik's note_attributes at order-snapshot time — see
+            extractCampaignAttribution in server.js). Each campaign expands
+            to show real sales/order-stage/audience/product/state breakdowns,
+            and each ad inside the campaign expands the same way. ── */}
+        {!campLoading && (campPerf?.length > 0 || campOrganic) && (() => {
+          const allCards = [...(campPerf||[]), ...(campOrganic ? [campOrganic] : [])];
+          const OutcomeBreakdown = ({ s }) => {
+            const stageSegs = [
+              { v:s.delivered, c:'#10b981', l:'Delivered' },
+              { v:s.rto,       c:'#ef4444', l:'RTO' },
+              { v:s.dead,      c:'#94a3b8', l:'Cancelled/Hold' },
+              { v:s.inMotion,  c:'#818cf8', l:'In Motion' },
+            ];
+            const tierList = [
+              { id:'high_risk', label:'High', c:'#ef4444' },
+              { id:'medium_risk', label:'Medium', c:'#f59e0b' },
+              { id:'control', label:'Control', c:'#a78bfa' },
+              { id:'low_risk', label:'Low', c:'#10b981' },
+            ];
+            const maxTier = Math.max(...tierList.map(t=>s.tierCounts?.[t.id]||0), 1);
+            return (
+              <div style={{padding:'12px 14px',background:'var(--bg-hover)',borderRadius:8,marginTop:8}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Sales</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'var(--text)'}}>{fmtCur(s.sales)}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Net Sales</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>{fmtCur(s.netSales)}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Cancelled/Hold</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#94a3b8'}}>{s.dead}</div>
+                  </div>
+                </div>
+                {/* Order stage breakdown */}
+                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:4}}>Order Progress ({s.orderCount})</div>
+                <div style={{display:'flex',height:16,borderRadius:5,overflow:'hidden',gap:1,marginBottom:12}}>
+                  {stageSegs.filter(x=>x.v>0).map(x=>{
+                    const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
+                    return (
+                      <div key={x.l} title={`${x.l}: ${x.v} (${pct}%)`} style={{flex:x.v,minWidth:2,background:x.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        {pct>=14 && <span style={{fontSize:8,fontWeight:800,color:'#fff'}}>{pct}%</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Audience tier mini bars */}
+                {(s.tierCounts?.high_risk+s.tierCounts?.medium_risk+s.tierCounts?.control+s.tierCounts?.low_risk) > 0 && (
+                  <>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:6}}>Audience Risk Mix</div>
+                    <div style={{display:'flex',gap:10,marginBottom:12}}>
+                      {tierList.map(t=>{
+                        const v = s.tierCounts?.[t.id]||0;
+                        return (
+                          <div key={t.id} style={{flex:1,textAlign:'center'}}>
+                            <div style={{height:36,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+                              <div style={{width:'70%',height:`${Math.max(v/maxTier*100,v>0?10:0)}%`,background:t.c,borderRadius:'3px 3px 0 0'}}/>
+                            </div>
+                            <div style={{fontSize:9,fontWeight:700,color:t.c,marginTop:3}}>{v}</div>
+                            <div style={{fontSize:8,color:'var(--text-muted)'}}>{t.label}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+                {/* Top products / states */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+                  {s.topProducts?.length > 0 && (
+                    <div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:5}}>Top Products</div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        {s.topProducts.slice(0,5).map((p,i)=>(
+                          <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10}}>
+                            <span style={{color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{p.title}</span>
+                            <span style={{color:'var(--text-muted)',flexShrink:0}}>{p.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {s.topStates?.length > 0 && (
+                    <div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:5}}>Top States</div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        {s.topStates.slice(0,5).map((st,i)=>(
+                          <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10}}>
+                            <span style={{color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{st.state}</span>
+                            <span style={{color:'var(--text-muted)',flexShrink:0}}>{st.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">📣 Meta Campaign Performance</div>
+                  <div className="dash-section-meta">{periodLabel} · real order outcomes matched to each campaign by UTM attribution</div>
+                </div>
+                <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {allCards.map(c=>{
+                  const isOrganic = c.campaignId === 'organic';
+                  const isOpen = expandedCamp === c.campaignId;
+                  const roasC = c.roas>=4?'#10b981':c.roas>=2?'#f59e0b':'#ef4444';
+                  return (
+                    <div key={c.campaignId} style={{border:`1px solid ${isOrganic?'rgba(16,185,129,.3)':'var(--border)'}`,borderRadius:8,overflow:'hidden',background:isOrganic?'rgba(16,185,129,.03)':'transparent'}}>
+                      <div onClick={()=>setExpandedCamp(isOpen?null:c.campaignId)} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',cursor:'pointer',background:isOpen?'var(--bg-hover)':'transparent'}}>
+                        <span style={{fontSize:11,color:'var(--text-muted)',transition:'transform 0.15s',transform:isOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
+                        <span style={{fontSize:12,fontWeight:700,color:isOrganic?'#34d399':'var(--text)',flex:'2 1 200px',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={c.campaign}>{isOrganic?'🌱 ':''}{c.campaign}</span>
+                        {isOrganic ? (
+                          <span style={{fontSize:10,color:'var(--text-muted)',flexShrink:0}}>direct / organic / no UTM match — no Meta spend to attribute</span>
+                        ) : (
+                          <>
+                            <span style={{fontSize:11,color:'var(--text-muted)',flexShrink:0}}>Spend <strong style={{color:'var(--text)'}}>{fmtCur(c.spend)}</strong></span>
+                            <span style={{fontSize:11,color:roasC,fontWeight:700,flexShrink:0}}>{c.roas.toFixed(1)}x ROAS</span>
+                          </>
+                        )}
+                        <span style={{fontSize:11,color:'var(--text-muted)',flexShrink:0}}>{c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no attributed orders'}</span>
+                      </div>
+                      {isOpen && (
+                        <div style={{padding:'0 14px 14px'}}>
+                          {c.orderCount > 0 ? <OutcomeBreakdown s={c}/> : (
+                            <div style={{fontSize:11,color:'var(--text-muted)',padding:'10px 0'}}>No orders in this period carry a UTM campaign tag matching "{c.campaign}" exactly — spend/ROAS above is still real Meta data, just not attributable to specific orders yet.</div>
+                          )}
+                          {c.ads?.length > 0 && (
+                            <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                              <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:8}}>Ads in this campaign</div>
+                              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                                {c.ads.map(ad=>{
+                                  const adOpen = expandedAd === ad.adId;
+                                  return (
+                                    <div key={ad.adId} style={{border:'1px solid var(--border)',borderRadius:6,overflow:'hidden'}}>
+                                      <div onClick={()=>setExpandedAd(adOpen?null:ad.adId)} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',cursor:'pointer',fontSize:11,background:adOpen?'var(--bg-hover)':'transparent'}}>
+                                        <span style={{color:'var(--text-muted)',transition:'transform 0.15s',transform:adOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
+                                        <span style={{color:'var(--text)',fontWeight:600,flex:'2 1 160px',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={ad.adName}>{ad.adName}</span>
+                                        <span style={{color:'var(--text-muted)',flexShrink:0}}>{fmtCur(ad.spend)}</span>
+                                        <span style={{color:'var(--text-muted)',flexShrink:0}}>{ad.orderCount} orders</span>
+                                      </div>
+                                      {adOpen && ad.orderCount > 0 && (
+                                        <div style={{padding:'0 10px 10px'}}><OutcomeBreakdown s={ad}/></div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Vendor Performance Arena — composite Health Score from
             dispatch rate, delivery rate, RTO rate and avg dispatch time,
