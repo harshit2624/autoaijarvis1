@@ -1070,6 +1070,31 @@ function auditLog(actor, action, targetId, details) {
   }).catch(() => {});
 }
 
+// ── Structured trigger log for automated WA order-notification sends ──────
+// audit_log covers admin/manual actions; this covers webhook-driven
+// automated sends specifically — order id, WHICH webhook/condition fired
+// it, the dedup key involved, and whether it actually sent or was skipped
+// and why. Built after a real incident where a batch of already-dispatched/
+// delivered orders got a stray "pay ₹99 to confirm" blast with zero trace
+// of why — this makes that kind of incident diagnosable from the DB
+// directly instead of manually reconstructing it from order_meta history.
+function waLogNotifTrigger({ shopify_id, order_name, webhook_topic, dedup_key, outcome, reason, fulfillment_status, financial_status, stage, incoming_tags }) {
+  if (!mdb) return;
+  mdb.collection('wa_notif_trigger_log').insertOne({
+    shopify_id: shopify_id ? String(shopify_id) : null,
+    order_name: order_name || null,
+    webhook_topic: webhook_topic || null,
+    dedup_key: dedup_key || null,
+    outcome, // 'sent' | 'skipped' | 'dedup_blocked'
+    reason: reason || null,
+    fulfillment_status: fulfillment_status || null,
+    financial_status: financial_status || null,
+    stage: stage || null,
+    incoming_tags: incoming_tags || null,
+    logged_at: new Date().toISOString(),
+  }).catch(() => {});
+}
+
 // ── Token Cache (Shopify tokens expire every 24 hrs) ──────────────────────
 let tokenCache = { token: null, expiresAt: 0 };
 
@@ -1617,7 +1642,34 @@ app.post("/webhooks/orders", (req, res) => {
           const _alreadySentFinal = !!_waConfMeta?.wa_notif_sent?.confirmed_tag;
           const _alreadySentAsk   = !!_waConfMeta?.wa_notif_sent?.pay99_ask_sent;
           const _shouldSend = (_isPrepaid || _isPartiallyPaid) ? !_alreadySentFinal : !_alreadySentAsk;
-          if (_shouldSend) {
+          // Never ask for ₹99 confirmation on an order that's already been
+          // fulfilled or cancelled. This used to fire purely off "tag
+          // present + dedup key missing" with zero check on real order
+          // state — old orders confirmed before pay99_ask_sent existed as
+          // a dedup key had no way to be excluded, so ANY later
+          // orders/updated webhook (even one unrelated to confirmation —
+          // a routine Shopify sync, inventory touch, anything) would
+          // re-fire this and blast "please pay to confirm" at customers
+          // whose orders had already shipped or been delivered.
+          const _alreadyFulfilled = !!(payload.fulfillment_status || payload.cancelled_at);
+          const _pay99AskBlocked = !_isPrepaid && !_isPartiallyPaid && _alreadyFulfilled;
+          if (!_hasConfirmedTag) {
+            // no-op — outer if already gates on this, kept here only so
+            // the log call below has one shared exit path to reason from
+          } else if (_pay99AskBlocked) {
+            waLogNotifTrigger({
+              shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: 'pay99_ask_sent',
+              outcome: 'skipped', reason: `already fulfilled/cancelled (fulfillment_status=${payload.fulfillment_status || 'none'}, cancelled_at=${payload.cancelled_at || 'none'})`,
+              fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+            });
+          } else if (!_shouldSend) {
+            waLogNotifTrigger({
+              shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: (_isPrepaid || _isPartiallyPaid) ? 'confirmed_tag' : 'pay99_ask_sent',
+              outcome: 'dedup_blocked', reason: 'already sent for this dedup key',
+              fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+            });
+          }
+          if (_shouldSend && !_pay99AskBlocked) {
             const _confPhone = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
             if (_confPhone && _confPhone.length === 10) {
               const _F = '```';
@@ -1655,6 +1707,17 @@ app.post("/webhooks/orders", (req, res) => {
               await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { [`wa_notif_sent.${_dedupKey}`]: new Date().toISOString() } });
               console.log(`✅ WA confirmed_tag sent for ${payload.name} (${_dedupKey})`);
+              waLogNotifTrigger({
+                shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: _dedupKey,
+                outcome: 'sent', reason: `financial_status=${payload.financial_status}`,
+                fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+              });
+            } else {
+              waLogNotifTrigger({
+                shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: null,
+                outcome: 'skipped', reason: 'no valid 10-digit phone on order',
+                fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+              });
             }
           }
         }
