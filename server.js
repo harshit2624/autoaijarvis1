@@ -21185,10 +21185,13 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       return { spend, impressions: parseInt(item.impressions||0), clicks: parseInt(item.clicks||0), purchases, metaRevenue: revenue, roas };
     };
 
-    const [campRes, adRes] = await Promise.all([
+    const [campRes, adRes, statusRes] = await Promise.all([
       metaGet(`/${META_ACCOUNT}/insights`, { fields:`campaign_id,campaign_name,${insightFields}`, ...timeParams, level:'campaign', limit:50 }).catch(()=>({data:[]})),
       metaGet(`/${META_ACCOUNT}/insights`, { fields:`ad_id,ad_name,campaign_name,${insightFields}`, ...timeParams, level:'ad', limit:200 }).catch(()=>({data:[]})),
+      metaGet(`/${META_ACCOUNT}/campaigns`, { fields:'id,status,effective_status', limit:500 }).catch(()=>({data:[]})),
     ]);
+    const statusByCampId = {};
+    (statusRes.data||[]).forEach(c => { statusByCampId[c.id] = c.effective_status || c.status; });
 
     // Real order data for the period — ALL orders, not just Meta-attributed
     // ones, so orders with no campaign match (direct/organic/other channels,
@@ -21304,7 +21307,8 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
       }).sort((a,b)=>b.sales-a.sales) : [];
       const grossRoas = meta.spend>0 ? parseFloat((orderSummary.sales/meta.spend).toFixed(2)) : 0;
       const netRoas = meta.spend>0 ? parseFloat((orderSummary.netSales/meta.spend).toFixed(2)) : 0;
-      return { campaignId: c.campaign_id, campaign: c.campaign_name, ...meta, grossRoas, netRoas, ...orderSummary, ads };
+      const status = statusByCampId[c.campaign_id] || 'UNKNOWN';
+      return { campaignId: c.campaign_id, campaign: c.campaign_name, status, ...meta, grossRoas, netRoas, ...orderSummary, ads };
     }).filter(c => c.spend > 0 || c.orderCount > 0).sort((a,b) => b.spend - a.spend);
 
     // Organic/Other — every order in the period with no Meta campaign

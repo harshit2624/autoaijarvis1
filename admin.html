@@ -3458,6 +3458,7 @@
     const [campLoading, setCampLoading] = useState(true);
     const [expandedCamp, setExpandedCamp] = useState(null);
     const [expandedAd, setExpandedAd] = useState(null);
+    const [showAllCamps, setShowAllCamps] = useState(false);
     useEffect(()=>{
       setCampLoading(true);
       const from = aPeriod ? aPeriod.from : '2020-01-01';
@@ -4438,7 +4439,9 @@
             to show real sales/order-stage/audience/product/state breakdowns,
             and each ad inside the campaign expands the same way. ── */}
         {!campLoading && (campPerf?.length > 0 || campOrganic) && (() => {
-          const allCards = [...(campPerf||[]), ...(campOrganic ? [campOrganic] : [])];
+          const visibleCamps = showAllCamps ? (campPerf||[]) : (campPerf||[]).filter(c => c.status === 'ACTIVE');
+          const allCards = [...visibleCamps, ...(campOrganic ? [campOrganic] : [])];
+          const hiddenCount = (campPerf||[]).length - visibleCamps.length;
           const OutcomeBreakdown = ({ s }) => {
             const stageSegs = [
               { v:s.delivered, c:'#10b981', l:'Delivered' },
@@ -4552,7 +4555,12 @@
                   <div className="dash-section-title">📣 Meta Campaign Performance</div>
                   <div className="dash-section-meta">{periodLabel} · real order outcomes matched to each campaign by UTM attribution</div>
                 </div>
-                <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <button onClick={()=>setShowAllCamps(v=>!v)} style={{fontSize:10,fontWeight:700,padding:'5px 10px',borderRadius:6,border:'1px solid var(--border)',background:showAllCamps?'var(--accent)':'var(--bg-card2)',color:showAllCamps?'#fff':'var(--text-muted)',cursor:'pointer'}}>
+                    {showAllCamps ? `Showing all ${(campPerf||[]).length}` : `Active only${hiddenCount>0?` (+${hiddenCount} hidden)`:''}`}
+                  </button>
+                  <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
+                </div>
               </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:10}}>
                 {allCards.map(c=>{
