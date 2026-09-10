@@ -27968,6 +27968,15 @@ async function startBaileysBot() {
               // menu into an unrelated conversation (e.g. a business
               // inquiry) every 10 minutes while a human is mid-conversation.
               if (!waMenuOnCooldown(sender, 90 * 60000)) {
+                // Silently re-showing the exact same menu reads as the bot
+                // ignoring what was just typed. A one-line "didn't catch
+                // that" acknowledgment first makes it feel heard — and the
+                // menu itself already carries BOTH self-serve options and
+                // Talk to a Human side by side, so this isn't pushing
+                // customers toward human support, just re-surfacing every
+                // option (self-serve included) when free text wasn't
+                // understood.
+                await sock.sendMessage(sender, { text: `${_F}\n▪ C R O S C R O W ▪\nDIDN'T CATCH THAT\n────────────────\nNot sure I follow — pick an\noption below, or type it out\nagain a little differently.\n${_F}` });
                 await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
                 await waSessionSet(sender, { menu: 'welcome_menu' });
               }
