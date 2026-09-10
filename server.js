@@ -1653,13 +1653,52 @@ app.post("/webhooks/orders", (req, res) => {
           // whose orders had already shipped or been delivered.
           const _alreadyFulfilled = !!(payload.fulfillment_status || payload.cancelled_at);
           const _pay99AskBlocked = !_isPrepaid && !_isPartiallyPaid && _alreadyFulfilled;
-          if (!_hasConfirmedTag) {
-            // no-op — outer if already gates on this, kept here only so
-            // the log call below has one shared exit path to reason from
+          if (_pay99AskBlocked && !payload.cancelled_at) {
+            // Order already shipped by the time this fired — asking for ₹99
+            // now makes no sense and confuses/alarms a customer who's
+            // already received or is about to receive their order. Instead
+            // of just going silent, tell them the actually-true thing: it's
+            // already on its way (or delivered), using the SAME approved
+            // shipment templates the real dispatch flow uses — not a new
+            // one-off — so nothing needs fresh Meta approval. Own dedup key
+            // (already_dispatched_notice) so this can only ever fire once,
+            // independent of the proper sendShipmentWANotif stage keys.
+            const _alreadyNotified = !!_waConfMeta?.wa_notif_sent?.already_dispatched_notice;
+            if (!_alreadyNotified) {
+              const _confPhone2 = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (_confPhone2 && _confPhone2.length === 10) {
+                const _orderSlug2 = encodeURIComponent(String(payload.name).replace(/^#/, ''));
+                const _itemLine2 = (payload.line_items || []).map(li => li.title).slice(0, 2).join(', ') || 'Your item';
+                const _isDelivered = _incomingTags.some(t => t.includes('delivered'));
+                const _tplName = _isDelivered ? WA_TPL.SHIPMENT_DELIVERED : WA_TPL.SHIPMENT_TRANSIT;
+                const _bodyParams = [payload.name, _itemLine2];
+                const _Falt = '```';
+                const _trackUrlAlt = `${SERVER_URL}/o/${String(payload.name).replace(/^#/, '')}`;
+                const _altMsg = _isDelivered
+                  ? `${_Falt}\n▪ C R O S C R O W ▪\nALREADY DELIVERED\n────────────────\nORDER  ${payload.name}\n\nSTATE  This order's already been delivered — no payment needed here.\n────────────────\n60+ BRANDS | CROSCROW.COM\n${_Falt}`
+                  : `${_Falt}\n▪ C R O S C R O W ▪\nALREADY ON ITS WAY\n────────────────\nORDER  ${payload.name}\n\nSTATE  This order's already confirmed and shipped — no payment needed here.\n\nTRACK  ${_trackUrlAlt}\n────────────────\nNOTHING NEEDED FROM YOU\n${_Falt}`;
+                const _cloudTplAlt = _isDelivered
+                  ? { templateName: _tplName, bodyParams: _bodyParams }
+                  : { templateName: _tplName, bodyParams: _bodyParams, urlButtonParam: `${_orderSlug2}&contact=na` };
+                await waSendToCustomer(_confPhone2, _altMsg, _cloudTplAlt).catch(e => console.error('WA already-dispatched notice error:', e.message));
+                await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.already_dispatched_notice': new Date().toISOString() } });
+                waLogNotifTrigger({
+                  shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: 'already_dispatched_notice',
+                  outcome: 'sent', reason: `pay99 ask blocked (fulfillment_status=${payload.fulfillment_status}) — sent already-shipped notice instead (${_isDelivered ? 'delivered' : 'transit'} template)`,
+                  fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+                });
+              }
+            } else {
+              waLogNotifTrigger({
+                shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: 'already_dispatched_notice',
+                outcome: 'dedup_blocked', reason: 'already sent the already-shipped notice for this order',
+                fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
+              });
+            }
           } else if (_pay99AskBlocked) {
             waLogNotifTrigger({
               shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: 'pay99_ask_sent',
-              outcome: 'skipped', reason: `already fulfilled/cancelled (fulfillment_status=${payload.fulfillment_status || 'none'}, cancelled_at=${payload.cancelled_at || 'none'})`,
+              outcome: 'skipped', reason: `order cancelled (cancelled_at=${payload.cancelled_at}) — no notice needed`,
               fulfillment_status: payload.fulfillment_status, financial_status: payload.financial_status, incoming_tags: payload.tags,
             });
           } else if (!_shouldSend) {
