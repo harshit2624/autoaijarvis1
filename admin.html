@@ -5804,7 +5804,16 @@
                             <td style={{padding:'8px 10px',color:'var(--cyan)',fontWeight:700,whiteSpace:'nowrap'}}>{rq.request_id}</td>
                             <td style={{padding:'8px 10px',color:'var(--text)',whiteSpace:'nowrap'}}>{rq.order_name}</td>
                             <td style={{padding:'8px 10px',color:'var(--text-dim)',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{rq.customer_name||rq.customer_email}</td>
-                            <td style={{padding:'8px 10px'}}><span style={{background:'var(--bg-card2)',border:`1px solid ${TYPE_COLOR[rq.type]||'var(--border)'}`,color:TYPE_COLOR[rq.type]||'var(--text)',borderRadius:99,padding:'2px 9px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.type}</span></td>
+                            <td style={{padding:'8px 10px'}}>
+                              <div style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap'}}>
+                                <span style={{background:'var(--bg-card2)',border:`1px solid ${TYPE_COLOR[rq.type]||'var(--border)'}`,color:TYPE_COLOR[rq.type]||'var(--text)',borderRadius:99,padding:'2px 9px',fontSize:10,textTransform:'capitalize',fontWeight:700}}>{rq.type}</span>
+                                {rq.payment_method==='prepaid'
+                                  ? <span title="Paid online — refund goes back to original payment method" style={{background:'rgba(16,185,129,0.1)',border:'1px solid rgba(16,185,129,0.35)',color:'#10b981',borderRadius:99,padding:'2px 8px',fontSize:9,fontWeight:800}}>💳 PREPAID</span>
+                                  : rq.payment_method==='advance'
+                                    ? <span title="Only the ₹99 advance was paid online — rest was COD" style={{background:'rgba(245,158,11,0.1)',border:'1px solid rgba(245,158,11,0.35)',color:'#f59e0b',borderRadius:99,padding:'2px 8px',fontSize:9,fontWeight:800}}>🔸 ADVANCE</span>
+                                    : <span title="Cash on delivery — no online payment to refund, needs bank details or store credit" style={{background:'rgba(148,163,184,0.12)',border:'1px solid rgba(148,163,184,0.35)',color:'#94a3b8',borderRadius:99,padding:'2px 8px',fontSize:9,fontWeight:800}}>💵 COD</span>}
+                              </div>
+                            </td>
                             <td style={{padding:'8px 10px',color:'var(--text-dim)'}}>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</td>
                             <td style={{padding:'8px 10px',color:'var(--text-dim)',whiteSpace:'nowrap'}}>{rq.vendor_name||'—'}</td>
                             <td style={{padding:'8px 10px'}}>

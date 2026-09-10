@@ -19688,6 +19688,22 @@ app.get("/admin/return-requests", adminAuth, async (req, res) => {
     const { status } = req.query;
     const q = status && status !== 'all' ? { status } : {};
     const requests = await mdb.collection('return_requests').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+    // Join payment method (COD/Prepaid/Advance) from order_meta — needed on
+    // this row so admin knows how the customer actually paid before
+    // processing a refund (COD orders never had card/UPI money to refund
+    // back the same way a prepaid order does).
+    const sids = [...new Set(requests.map(r => r.shopify_order_id).filter(Boolean))];
+    const metaRows = sids.length
+      ? await mdb.collection('order_meta').find({ shopify_id: { $in: sids } }, { projection: { shopify_id: 1, payment_type: 1, financial_status: 1, advance_paid: 1, _id: 0 } }).toArray()
+      : [];
+    const metaBySid = {};
+    metaRows.forEach(m => { metaBySid[m.shopify_id] = m; });
+    requests.forEach(r => {
+      const m = metaBySid[r.shopify_order_id];
+      const isPrepaid = m?.financial_status === 'paid' || m?.payment_type === 'prepaid';
+      const isAdvance = m?.financial_status === 'partially_paid' || m?.payment_type === 'advance' || (parseFloat(m?.advance_paid || 0) > 0 && !isPrepaid);
+      r.payment_method = isPrepaid ? 'prepaid' : isAdvance ? 'advance' : 'cod';
+    });
     res.json({ requests });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
