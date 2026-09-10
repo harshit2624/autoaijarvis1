@@ -1514,6 +1514,36 @@ app.post("/webhooks/orders", (req, res) => {
           }
           auditLog('webhook', 'prepaid_auto_confirm', sid, { order: payload.name });
           console.log(`✅ Prepaid auto-confirmed: ${payload.name}`);
+          // A prepaid order needs no confirmation step — it's already
+          // confirmed the instant it's placed. Previously nothing went to
+          // the customer over WhatsApp until (if ever) the "✅ Order
+          // Confirmed" tag got added later and orders/updated fired — so a
+          // customer who paid in full at checkout could go silent for
+          // hours or never get the confirmed card at all. Send it right
+          // here instead, immediately, and mark the SAME dedup key
+          // (confirmed_tag) the orders/updated tag-based path uses, so
+          // that path correctly skips re-sending it later.
+          (async () => {
+            try {
+              const _ppPhone = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (_ppPhone.length !== 10) return;
+              const _enrichedPP = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
+              const _itemsListPP = (payload.line_items || []).map(li =>
+                `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
+              ).join('\n') || '—';
+              const _addrPP = payload.shipping_address || {};
+              const _addressLinePP = [_addrPP.address1, _addrPP.city, _addrPP.zip].filter(Boolean).join(', ') || 'address on file';
+              const _totalPP = parseFloat(payload.total_price || 0);
+              const _orderSlugPP = encodeURIComponent(String(payload.name).replace(/^#/, ''));
+              const _Fpp2 = '```';
+              const _trackUrlPP = `${SERVER_URL}/o/${_orderSlugPP}`;
+              const _msgPP = `${_Fpp2}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_totalPP.toFixed(0)}\n\nSTATE  Order confirmed. No payment at delivery.\n\nTRACK  ${_trackUrlPP}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fpp2}`;
+              const _cloudTplPP = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: _enrichedPP?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE, bodyParams: [payload.name, _itemsListPP, _addressLinePP, _totalPP.toFixed(0)], urlButtonParam: `${_orderSlugPP}&contact=na` };
+              await waSendToCustomer(_ppPhone, _msgPP, _cloudTplPP).catch(e => console.error('WA prepaid-confirmed (create) error:', e.message));
+              await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
+              console.log(`📲 Prepaid confirmed card sent immediately for ${payload.name}`);
+            } catch (e) { console.error('Prepaid confirmed-card send error:', e.message); }
+          })();
         } else if (isPartiallyPaid) {
           // Customer already paid advance (₹99) via Shopify at checkout — auto-confirm
           await OM.upsert(sid, { stage: 'confirmed', payment_type: 'advance', advance_paid: 99, confirmation_paid: true, updated_at: now });
@@ -1523,6 +1553,30 @@ app.post("/webhooks/orders", (req, res) => {
           }
           auditLog('webhook', 'advance_auto_confirm', sid, { order: payload.name });
           console.log(`✅ Advance auto-confirmed: ${payload.name}`);
+          // Same gap, same fix, for the ₹99-advance-at-checkout case — this
+          // order is also already confirmed the instant it's placed, no
+          // reason to wait on a later tag/webhook to tell the customer.
+          (async () => {
+            try {
+              const _advPhone = (payload.shipping_address?.phone || payload.phone || payload.billing_address?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+              if (_advPhone.length !== 10) return;
+              const _enrichedAdv = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
+              const _itemsListAdv = (payload.line_items || []).map(li =>
+                `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
+              ).join('\n') || '—';
+              const _addrAdv = payload.shipping_address || {};
+              const _addressLineAdv = [_addrAdv.address1, _addrAdv.city, _addrAdv.zip].filter(Boolean).join(', ') || 'address on file';
+              const _totalAdv = parseFloat(payload.total_price || 0);
+              const _orderSlugAdv = encodeURIComponent(String(payload.name).replace(/^#/, ''));
+              const _Fadv2 = '```';
+              const _trackUrlAdv = `${SERVER_URL}/o/${_orderSlugAdv}`;
+              const _msgAdv = `${_Fadv2}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _totalAdv - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrlAdv}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fadv2}`;
+              const _cloudTplAdv = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _enrichedAdv?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE, bodyParams: [payload.name, _itemsListAdv, _addressLineAdv, '99', Math.max(0, _totalAdv - 99).toFixed(0)], urlButtonParam: `${_orderSlugAdv}&contact=na` };
+              await waSendToCustomer(_advPhone, _msgAdv, _cloudTplAdv).catch(e => console.error('WA advance-confirmed (create) error:', e.message));
+              await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
+              console.log(`📲 Advance confirmed card sent immediately for ${payload.name}`);
+            } catch (e) { console.error('Advance confirmed-card send error:', e.message); }
+          })();
         } else {
           await OM.upsert(sid, { payment_type: 'cod', updated_at: now });
           // The real "please Confirm or Cancel" ask — new COD order, nothing
