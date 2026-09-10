@@ -26973,6 +26973,12 @@ async function waMenuForOrder(meta) {
   return null;
 }
 
+// Trial toggle: in menu bot mode, try the LLM on unclassified text before
+// falling back to "didn't catch that" + menu resend. Flip to false to
+// instantly revert to the old menu-only fallback if this doesn't work
+// well in practice — no other code changes needed either way.
+const WA_MENU_LLM_FALLBACK = true;
+
 const WA_GREETING = /^(hi+|hello|hey|helo|hii+|yo|sup|start|help|menu|support|hai|hola|namaste|👋|jai hind|good morning|good evening|good afternoon|gm|ge)$/i;
 const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|chargeback|scam|fraud|terrible|pathetic|disgusting/i;
 
@@ -26985,11 +26991,29 @@ const WA_ESCALATION = /frustrat|angry|worst|useless|refund|legal|consumer forum|
 // or "human — my order hasn't shipped" could otherwise match track first.
 function waClassifyMenuIntent(text) {
   const t = text.toLowerCase().trim();
-  if (/\b(human|agent|representative|real person|talk to (a |someone|somebody)|customer care|customer service|speak to (someone|a person)|need help from|manager)\b/.test(t)) return 4;
+  // Human/urgency intent — widened past exact "talk to a human" phrasing,
+  // since real customers write things like "call me", "no one is
+  // helping", "this is urgent" and expect the same escalation. Also folds
+  // in isAngryMessage as a second signal so genuinely upset messages
+  // always route to 4 here too, not just via the separate WA_ESCALATION
+  // keyword check elsewhere.
+  if (
+    /\b(human|agent|representative|real person|talk to (a |someone|somebody)|customer care|customer service|speak to (someone|a person)|need help from|manager|call me|call back|ring me|someone call|no ?one.?s? (helping|responding|replying)|not (helping|working|resolved)|no response|isn'?t helping|still (not|no) (help|response|reply)|urgent|asap|escalate|not able to (get|reach)|kisi se baat|baat karni hai)\b/.test(t)
+    || isAngryMessage(text)
+  ) return 4;
   if (/\b(return|exchange|refund|wrong size|size issue|replace|swap|don'?t want|not satisfied|damaged|defective|quality issue)\b/.test(t)) return 2;
   if (/\b(where.*(order|package|parcel|item)|track|order status|status of my order|when will.*(arrive|deliver|reach|ship)|order kab|kaha hai|delivery kab|not (received|delivered)|haven'?t (received|got))\b/.test(t)) return 1;
   return null;
 }
+
+// Business/collab/partnership inquiries — not a support issue, so this
+// deliberately does NOT auto-ticket the way an escalation does. Just
+// flags it looks like a business query and offers one tap to reach the
+// team; tapping routes through the existing 'offer_human' menu case,
+// which DOES create the ticket + send "someone will join shortly" —
+// same reused flow as every other human handoff, just not forced on the
+// customer before they've asked for it.
+const WA_BUSINESS_INQUIRY = /\b(collab(oration)?s?|partnership|sponsor(ship)?|affiliate|brand deal|business inquiry|wholesale|bulk order|distributor|reseller|pr package|influencer|paid promotion|work together|tie[- ]?up|barter)\b/i;
 
 const WA_INSTANCE_ID = `${process.pid}-${Date.now()}`;
 let waBotHeartbeat = null;
@@ -27924,15 +27948,42 @@ async function startBaileysBot() {
             continue;
           }
 
-          // ── 3. Escalation keywords → admin alert + human ──────────────
+          // ── 3. Escalation keywords (refund/legal/scam/etc) → real ticket
+          // + "someone will join shortly" to the customer, not just a
+          // silent admin ping. Reuses waTalkToHuman so ticket creation,
+          // admin alert, and bot pause all happen exactly the way an
+          // explicit human request does — previously the keyword matched
+          // but nothing visible happened for the customer and the flow
+          // just kept going into whatever came next.
           if (WA_ESCALATION.test(text)) {
             await SC.addMessage(chat._id, { sender: 'customer', text });
-            const _ac = await waLookupCustomer(phone === 'unknown' ? '' : phone);
-            const _acPhone = phone !== 'unknown' ? `+91${phone}` : (_ac.order_name ? `LID — Order ${_ac.order_name}` : null);
-            const _acNameStr = _ac.name ? `Name: *${_ac.name}*\n` : '';
-            const _acPhoneStr = _acPhone ? `Phone: ${_acPhone}\n` : '';
-            const _acOrderStr = _ac.order_name ? `Order: *${_ac.order_name}*\n` : '';
-            await waAdminAlert(`🚨 *Angry Customer*\n${_acNameStr}${_acPhoneStr}${_acOrderStr}Message: "${text.slice(0, 200)}"\n\n🔗 https://dashboard.croscrow.com/admin#supportchats`);
+            await waTalkToHuman(sock, sender, chat, phone, `Escalation keyword matched: "${text.slice(0, 150)}"`);
+            waPending.delete(sender);
+            continue;
+          }
+
+          // ── 3b. Business / collab / partnership inquiries → offer a
+          // human without auto-ticketing (not a support issue). Skipped
+          // if the customer is already mid-flow (has an active session
+          // menu) so it doesn't hijack e.g. someone typing an order note.
+          if (WA_BUSINESS_INQUIRY.test(text)) {
+            const _bizSession = await waSessionGet(sender);
+            if (!_bizSession.menu) {
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              const _bizList = {
+                list: {
+                  header: 'CROSCROW',
+                  body: 'Looks like a business or collab query — tap below and drop your message, our team will pick it up.',
+                  footer: 'Tap to continue',
+                  buttonText: 'View Options',
+                  sections: [{ title: 'Options', rows: [{ id: '1', title: 'Talk to a Human', description: 'Connect with our team' }] }],
+                },
+              };
+              await sock.sendMessage(sender, { ..._bizList, text: `${_F}\n▪ C R O S C R O W ▪\nBUSINESS / COLLAB\n────────────────\nLooks like a business or\ncollab query.\n────────────────\nTAP BELOW TO CONTINUE\n${_F}` });
+              await waSessionSet(sender, { menu: 'offer_human' });
+              waPending.delete(sender);
+              continue;
+            }
           }
 
           // ── 4. LLM handles everything else (smart mode only) ─────────
@@ -27951,6 +28002,25 @@ async function startBaileysBot() {
                 await waHandleMenuReply(sock, sender, chat, phone, _inferredNum, { menu: 'welcome_menu', orderData: _menuSession.orderData });
                 waPending.delete(sender);
                 continue;
+              }
+              // Trial: let the LLM actually attempt an answer before
+              // falling back to a bare menu resend — a real answer beats
+              // "didn't catch that" every time it works. Guarded by
+              // WA_MENU_LLM_FALLBACK (flip to false to fully revert) and
+              // wrapped so any LLM/tool error falls straight through to
+              // the old menu-only behavior below instead of ever leaving
+              // the customer with no reply.
+              if (WA_MENU_LLM_FALLBACK) {
+                try {
+                  const _llmHistory = await SC.messages(chat._id);
+                  const { reply: _llmReply } = await scRunChatTurn(chat, _llmHistory, text, { systemPrompt: SC_WHATSAPP_SYSTEM_PROMPT, forceContact: 'na' });
+                  if (_llmReply) {
+                    await sock.sendMessage(sender, { text: _llmReply });
+                    await SC.addMessage(chat._id, { sender: 'assistant', text: _llmReply });
+                    waPending.delete(sender);
+                    continue;
+                  }
+                } catch (e) { console.error('Menu-mode LLM fallback error:', e.message); }
               }
               // No cooldown — sends go through the Cloud API (no per-device
               // spam-flag risk the old cooldown was guarding against), and
