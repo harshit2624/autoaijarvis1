@@ -27277,7 +27277,21 @@ async function startBaileysBot() {
         if (type !== 'notify') continue;
         if (msg.key.remoteJid?.endsWith('@g.us')) continue;
         const sender = msg.key.remoteJid;
-        const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+        // Tapping a list row or a button sends listResponseMessage /
+        // buttonsResponseMessage, NOT conversation/extendedTextMessage — a
+        // tap that isn't captured here silently vanishes (text becomes ''
+        // and the whole message gets dropped below), leaving the customer's
+        // session stuck on whatever menu it was last on. This was causing
+        // "Talk to a Human" taps to go nowhere and stale awaiting_order
+        // sessions to keep re-prompting for an order ID.
+        const text = (
+          msg.message?.conversation
+          || msg.message?.extendedTextMessage?.text
+          || msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId
+          || msg.message?.buttonsResponseMessage?.selectedButtonId
+          || msg.message?.templateButtonReplyMessage?.selectedId
+          || ''
+        ).trim();
         if (!text || waPending.has(sender)) continue;
         // Ignore WA Business auto-replies — prevent infinite loops when recipient has an auto-responder
         if (/thank you for contacting|thanks for (reaching|contacting|messaging)|we.?ll get back|out of (office|hours)|auto.?reply|this is an automated|we have received your (message|query)|our team will (get back|respond|reach)/i.test(text)) continue;
