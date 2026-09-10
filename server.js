@@ -23907,8 +23907,19 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
 //   urlButtonParam — dynamic suffix for a template with a URL button (most
 //                    have at most one dynamic CTA button; index is always 0)
 async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl, bodyParams = [], urlButtonParam }) {
-  if (!(await waCloudConfigured())) return { sent: false, reason: 'not_configured' };
-  if (!phone10 || phone10.length !== 10) return { sent: false, reason: 'invalid_phone' };
+  // These two early exits used to return silently with no log entry at
+  // all — a misconfigured send and a genuine API failure looked
+  // identical (nothing in wa_send_log), which made a real incident
+  // (admin alert never reaching anyone) impossible to diagnose after
+  // the fact. Now logged the same as every other outcome.
+  if (!(await waCloudConfigured())) {
+    logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason: 'not_configured' }).catch(() => {});
+    return { sent: false, reason: 'not_configured' };
+  }
+  if (!phone10 || phone10.length !== 10) {
+    logWASend({ phone10, kind: 'template', name: templateName, sent: false, reason: 'invalid_phone' }).catch(() => {});
+    return { sent: false, reason: 'invalid_phone' };
+  }
   const to = `91${phone10}`;
   const components = [];
   if (headerImageUrl) components.push({ type: 'header', parameters: [{ type: 'image', image: { link: headerImageUrl } }] });
@@ -25690,16 +25701,12 @@ async function notifyStaff(topic, message) {
       if (!topics.includes(topic)) continue;
       const raw = (s.wa_phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
       if (raw.length !== 10) continue;
-      const jid = `91${raw}@s.whatsapp.net`;
-      (async () => {
-        const cloudSession = await waCloudSendSession(jid, { text: message });
-        if (cloudSession.sent) return;
-        const category = WA_STAFF_TOPIC_LABELS[topic] || 'System';
-        const cloudTemplate = await sendWACloudTemplate({ phone10: raw, templateName: WA_TPL.STAFF_ALERT, bodyParams: [category, message] });
-        if (cloudTemplate.sent) return;
-        if (waSocket) waSocket.sendMessage(jid, { text: message }).catch(e => console.error(`Staff WA notify failed (${s.name}):`, e.message));
-        else console.error(`❌ Staff WA notify failed on all paths (${s.name}): Cloud session ${cloudSession.reason}, Cloud template ${cloudTemplate.reason}, Baileys not connected`);
-      })();
+      // Same persisted/retryable delivery as waAdminAlert — a staff
+      // notification used to be pure fire-and-forget with no record if it
+      // got dropped mid-flight; now it's queued first, so it survives a
+      // mid-request process restart and gets retried automatically.
+      waQueueAndSendAlert({ phone10: raw, message, templateName: WA_TPL.STAFF_ALERT, categoryLabel: WA_STAFF_TOPIC_LABELS[topic] || 'System' })
+        .catch(e => console.error(`Staff WA notify failed (${s.name}):`, e.message));
     }
   } catch (e) {
     console.error('notifyStaff error:', e.message);
@@ -25744,42 +25751,133 @@ const WA_STAFF_TOPIC_LABELS = {
   digest: 'Daily Digest',
 };
 
+// ── Persisted, retryable alert delivery ────────────────────────────────────
+// waAdminAlert used to attempt delivery live during the request and forget
+// about it — if the process got killed mid-flight (a Render redeploy
+// landing at the wrong moment, say), the alert vanished with zero trace,
+// no error, nothing. Now every alert is written to wa_alert_queue FIRST
+// (a fast, synchronous DB insert that survives even if the process dies a
+// moment later), attempted immediately, and — if that immediate attempt
+// doesn't succeed — picked up and retried by waAlertQueueSweep on an
+// interval, so a dropped mid-deploy request just gets retried a few
+// minutes later instead of disappearing.
+async function waAlertAttemptDelivery({ phone10, message, templateName, categoryLabel }) {
+  const cloudSession = await waCloudSendSession(`91${phone10}@s.whatsapp.net`, { text: message });
+  if (cloudSession.sent) return { sent: true, via: 'session' };
+  const cloudTemplate = await sendWACloudTemplate({ phone10, templateName, bodyParams: [categoryLabel, message] });
+  if (cloudTemplate.sent) return { sent: true, via: 'template' };
+  if (waSocket) {
+    try {
+      let adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: phone10 }).catch(() => null);
+      if (!adminJidDoc?.jid) {
+        const [aRes] = await waSocket.onWhatsApp(`91${phone10}`).catch(() => []) || [];
+        if (aRes?.jid) {
+          await mdb.collection('wa_admin_jids').updateOne(
+            { phone: phone10 },
+            { $set: { phone: phone10, jid: aRes.jid, updated_at: new Date().toISOString() } },
+            { upsert: true }
+          ).catch(() => {});
+          adminJidDoc = { jid: aRes.jid };
+        }
+      }
+      const jid = adminJidDoc?.jid || `91${phone10}@s.whatsapp.net`;
+      await waSocket.sendMessage(jid, { text: message });
+      return { sent: true, via: 'baileys' };
+    } catch (e) { return { sent: false, reason: `baileys: ${e.message}` }; }
+  }
+  return { sent: false, reason: `session: ${cloudSession.reason}, template: ${cloudTemplate.reason}` };
+}
+
+async function waQueueAndSendAlert({ phone10, message, templateName, categoryLabel }) {
+  if (!mdb) return;
+  const doc = {
+    phone: phone10, message, template_name: templateName, category_label: categoryLabel,
+    status: 'pending', attempts: 1,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+  const { insertedId } = await mdb.collection('wa_alert_queue').insertOne(doc).catch(() => ({ insertedId: null }));
+  try {
+    const result = await waAlertAttemptDelivery({ phone10, message, templateName, categoryLabel });
+    if (insertedId) {
+      await mdb.collection('wa_alert_queue').updateOne(
+        { _id: insertedId },
+        { $set: { status: result.sent ? 'sent' : 'pending', last_reason: result.reason || null, updated_at: new Date().toISOString() } }
+      ).catch(() => {});
+    }
+    if (!result.sent) console.error(`❌ Alert to ${phone10} not delivered on first attempt, queued for retry: ${result.reason}`);
+  } catch (e) {
+    console.error('❌ Alert delivery attempt error:', e.message);
+  }
+}
+
+// Retries anything still 'pending' in the queue — covers the case where
+// the immediate attempt above failed OR never got to update its own
+// queue doc because the process died mid-request. Caps retries at 6
+// attempts (~spread over the sweep interval) then marks 'dead' so it
+// stops retrying forever but stays visible in the DB for manual review.
+async function waAlertQueueSweep() {
+  if (!mdb) return;
+  try {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString();
+    const pending = await mdb.collection('wa_alert_queue').find(
+      { status: 'pending', attempts: { $lt: 6 }, created_at: { $gte: twoHoursAgo } }
+    ).sort({ created_at: 1 }).limit(20).toArray();
+    for (const item of pending) {
+      const result = await waAlertAttemptDelivery({ phone10: item.phone, message: item.message, templateName: item.template_name, categoryLabel: item.category_label });
+      const attempts = (item.attempts || 1) + 1;
+      await mdb.collection('wa_alert_queue').updateOne(
+        { _id: item._id },
+        { $set: { status: result.sent ? 'sent' : (attempts >= 6 ? 'dead' : 'pending'), attempts, last_reason: result.reason || null, updated_at: new Date().toISOString() } }
+      ).catch(() => {});
+      if (!result.sent && attempts >= 6) console.error(`❌ Alert to ${item.phone} permanently failed after 6 attempts: ${result.reason}`);
+    }
+  } catch (e) { console.error('waAlertQueueSweep error:', e.message); }
+}
+setInterval(waAlertQueueSweep, 3 * 60000); // retry sweep every 3 min
+
 async function waAdminAlert(message, staffTopic = null) {
   try {
-    // Cloud API session text first — works as long as the admin has
-    // messaged the bot within the last 24h (true most of the time in
-    // practice). Falls back to the ops_notification template if the
-    // session window has lapsed, then to Baileys as a last resort.
-    // Previously this whole function silently no-op'd whenever waSocket
-    // was null/disconnected — which is exactly the Baileys-disconnected
-    // state we're in now, so every human-handoff and customer-query alert
-    // to admin was being dropped with zero signal.
-    const cloudSession = await waCloudSendSession(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: message });
-    if (!cloudSession.sent) {
-      const category = WA_STAFF_TOPIC_LABELS[staffTopic] || 'System';
-      const cloudTemplate = await sendWACloudTemplate({ phone10: WA_ADMIN_NO, templateName: WA_TPL.ADMIN_ALERT, bodyParams: [category, message] });
-      if (!cloudTemplate.sent && waSocket) {
-        let adminJidDoc = await mdb.collection('wa_admin_jids').findOne({ phone: WA_ADMIN_NO }).catch(() => null);
-        if (!adminJidDoc?.jid) {
-          const [aRes] = await waSocket.onWhatsApp(`91${WA_ADMIN_NO}`).catch(() => []) || [];
-          if (aRes?.jid) {
-            await mdb.collection('wa_admin_jids').updateOne(
-              { phone: WA_ADMIN_NO },
-              { $set: { phone: WA_ADMIN_NO, jid: aRes.jid, updated_at: new Date().toISOString() } },
-              { upsert: true }
-            ).catch(() => {});
-            adminJidDoc = { jid: aRes.jid };
-          }
-        }
-        const jid = adminJidDoc?.jid || `91${WA_ADMIN_NO}@s.whatsapp.net`;
-        await waSocket.sendMessage(jid, { text: message });
-      } else if (!cloudTemplate.sent) {
-        console.error(`❌ Admin alert failed on all paths (Cloud session: ${cloudSession.reason}, Cloud template: ${cloudTemplate.reason}, Baileys not connected)`);
-      }
-    }
+    await waQueueAndSendAlert({ phone10: WA_ADMIN_NO, message, templateName: WA_TPL.ADMIN_ALERT, categoryLabel: WA_STAFF_TOPIC_LABELS[staffTopic] || 'System' });
     if (staffTopic) notifyStaff(staffTopic, message).catch(()=>{});
   } catch (e) { console.error('❌ Admin alert failed:', e.message); }
 }
+
+// ── Admin WhatsApp session-window reminder ─────────────────────────────────
+// WhatsApp's free-form "session" messages (what waAdminAlert prefers — instant,
+// unrestricted text) only work for 24h after the LAST message the admin sent
+// TO the bot. Once that lapses, alerts fall back to a template, which is
+// slower and less flexible. This checks how long it's been since the admin's
+// last inbound message and, once it's about to lapse (22-24h in), sends one
+// reminder — "text me anything to keep the window open" — so this doesn't
+// have to be remembered manually. Only fires once per 24h cycle (tracked by
+// last_reminder_for = the inbound message timestamp it was sent for).
+async function waCheckAdminSessionWindow() {
+  if (!mdb) return;
+  try {
+    const lastInbound = await mdb.collection('wa_cloud_messages').findOne(
+      { phone: WA_ADMIN_NO, direction: 'in' },
+      { sort: { created_at: -1 }, projection: { created_at: 1 } }
+    );
+    if (!lastInbound?.created_at) return; // admin has never messaged the bot — nothing to time from
+    const lastTs = new Date(lastInbound.created_at).getTime();
+    const hoursElapsed = (Date.now() - lastTs) / 3600000;
+    if (hoursElapsed < 22 || hoursElapsed >= 24) return; // only the 2h warning window
+    const reminderDoc = await mdb.collection('wa_bot_settings').findOne({ _id: 'admin_session_reminder' });
+    if (reminderDoc?.last_reminder_for === lastInbound.created_at) return; // already reminded this cycle
+    const lastTimeStr = new Date(lastTs).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+    const msg = `\`\`\`\n▪ C R O S C R O W ▪\nSESSION CLOSING SOON\n────────────────\nYour free-form WhatsApp window with the bot closes in ~2h (last text from you: ${lastTimeStr}).\n\nSend anything here — even "hi" — to keep it open. Otherwise admin alerts fall back to a template, which is slower.\n────────────────\n\`\`\``;
+    const result = await waCloudSendSession(`91${WA_ADMIN_NO}@s.whatsapp.net`, { text: msg });
+    if (result.sent) {
+      await mdb.collection('wa_bot_settings').updateOne(
+        { _id: 'admin_session_reminder' },
+        { $set: { last_reminder_for: lastInbound.created_at, sent_at: new Date().toISOString() } },
+        { upsert: true }
+      );
+    }
+  } catch (e) { console.error('waCheckAdminSessionWindow error:', e.message); }
+}
+setInterval(waCheckAdminSessionWindow, 30 * 60000); // check every 30 min
+setTimeout(waCheckAdminSessionWindow, 60000); // also check shortly after boot
 
 // Look up customer name + most recent order name from order_meta by phone
 async function waLookupCustomer(phone) {
