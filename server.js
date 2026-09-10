@@ -27794,6 +27794,81 @@ async function startBaileysBot() {
             }
           }
 
+          // ── 0. Pending order-confirmation quick-reply (Confirm/Cancel) ──
+          // Set by waSetPendingConfirmSession right after the
+          // order_confirm_cancel template goes out. Replaces the old
+          // Baileys native-poll confirmation flow — Cloud API has no poll
+          // equivalent, so this uses the template's quick-reply buttons
+          // instead, whose tap comes back as this exact label text.
+          //
+          // MUST run before the bot-pause check below: if this customer has
+          // ANY older chat thread still inside its post-escalation
+          // bot_paused_until window (e.g. a past, unrelated support query
+          // that got resolved an hour ago), the chat-lookup logic reuses
+          // that paused thread for this brand-new message — and the pause
+          // check unconditionally swallows everything with `continue`,
+          // regardless of text. A customer tapping Confirm/Cancel on a
+          // FRESH order would silently vanish into that old pause window,
+          // never reach this handler, and the Shopify tag would never get
+          // added — this is why. An explicit Confirm/Cancel tap is
+          // unambiguous and time-sensitive; it must never be swallowed by
+          // an unrelated pause state.
+          const _confirmSession = await waSessionGet(sender);
+          if (_confirmSession?.type === 'order_confirm_pending') {
+            const _ct = text.trim().toLowerCase();
+            const isConfirm = _ct.includes('confirm');
+            const isCancel = _ct.includes('cancel');
+            if (isConfirm || isCancel) {
+              try {
+                const orderRes = await shopifyREST(`/orders/${_confirmSession.shopify_id}.json?fields=id,name,tags,line_items,total_price`);
+                const ord = orderRes?.order;
+                if (ord) {
+                  const existingTags = (ord.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+                  if (isConfirm) {
+                    // Real flow: tapping Confirm tags the order, then sends
+                    // the "pay ₹99" ask (order_awaiting_confirmation_v3) —
+                    // this is a checkpoint, not the final confirmation. The
+                    // dedup key here (pay99_ask_sent) is deliberately NOT
+                    // the same one the orders/updated webhook's isPartiallyPaid
+                    // branch uses (confirmed_tag) — that one fires the real
+                    // "your order is confirmed, packing now" once the ₹99
+                    // actually lands, and must not be pre-blocked by this step.
+                    await mdb.collection('order_meta').updateOne(
+                      { shopify_id: _confirmSession.shopify_id },
+                      { $set: { 'wa_notif_sent.pay99_ask_sent': new Date().toISOString() } }
+                    );
+                    if (!existingTags.some(t => t.toLowerCase() === '✅ order confirmed')) {
+                      existingTags.push('✅ Order Confirmed');
+                      await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
+                    }
+                    const _oSlug = encodeURIComponent(String(ord.name).replace(/^#/, ''));
+                    const _total3 = parseFloat(ord.total_price || 0);
+                    const askResult = await sendWACloudTemplate({
+                      phone10: String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10),
+                      templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION,
+                      bodyParams: [ord.name, (ord.line_items || []).map(li => li.title).slice(0, 2).join(', ') || '—', Math.max(0, _total3 - 99).toFixed(0)],
+                      urlButtonParam: `${_oSlug}&contact=na`,
+                    });
+                    if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
+                    waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
+                  } else {
+                    if (!existingTags.some(t => t.toLowerCase() === '❌ order canceled')) {
+                      existingTags.push('❌ Order Canceled');
+                      await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
+                    }
+                    await shopifyREST(`/orders/${ord.id}/cancel.json`, 'POST', {}).catch(() => {});
+                    await OM.upsert(_confirmSession.shopify_id, { stage: 'cancelled', updated_at: new Date().toISOString() });
+                    await sock.sendMessage(sender, { text: `❌ Order ${ord.name} cancelled. Let us know if you'd like to reorder anytime!` });
+                    waAdminAlert(`Order cancelled via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
+                  }
+                }
+              } catch (e) { console.error('Order confirm/cancel reply error:', e.message); }
+              await waSessionClear(sender);
+              waPending.delete(sender);
+              continue;
+            }
+          }
+
           // ── Bot pause check (after human handoff — stays silent until admin unpauses) ──
           const pauseUntil = chat.bot_paused_until || 0;
           if (pauseUntil > Date.now()) {
@@ -27970,68 +28045,6 @@ async function startBaileysBot() {
               } catch (e) {
                 console.error(`❌ [WA Fallback] Confirm order handler error:`, e.message);
               }
-              waPending.delete(sender);
-              continue;
-            }
-          }
-
-          // ── 0. Pending order-confirmation quick-reply (Confirm/Cancel) ──
-          // Set by waSetPendingConfirmSession right after the
-          // order_confirm_cancel template goes out. Replaces the old
-          // Baileys native-poll confirmation flow — Cloud API has no poll
-          // equivalent, so this uses the template's quick-reply buttons
-          // instead, whose tap comes back as this exact label text.
-          const _confirmSession = await waSessionGet(sender);
-          if (_confirmSession?.type === 'order_confirm_pending') {
-            const _ct = text.trim().toLowerCase();
-            const isConfirm = _ct.includes('confirm');
-            const isCancel = _ct.includes('cancel');
-            if (isConfirm || isCancel) {
-              try {
-                const orderRes = await shopifyREST(`/orders/${_confirmSession.shopify_id}.json?fields=id,name,tags,line_items,total_price`);
-                const ord = orderRes?.order;
-                if (ord) {
-                  const existingTags = (ord.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-                  if (isConfirm) {
-                    // Real flow: tapping Confirm tags the order, then sends
-                    // the "pay ₹99" ask (order_awaiting_confirmation_v3) —
-                    // this is a checkpoint, not the final confirmation. The
-                    // dedup key here (pay99_ask_sent) is deliberately NOT
-                    // the same one the orders/updated webhook's isPartiallyPaid
-                    // branch uses (confirmed_tag) — that one fires the real
-                    // "your order is confirmed, packing now" once the ₹99
-                    // actually lands, and must not be pre-blocked by this step.
-                    await mdb.collection('order_meta').updateOne(
-                      { shopify_id: _confirmSession.shopify_id },
-                      { $set: { 'wa_notif_sent.pay99_ask_sent': new Date().toISOString() } }
-                    );
-                    if (!existingTags.some(t => t.toLowerCase() === '✅ order confirmed')) {
-                      existingTags.push('✅ Order Confirmed');
-                      await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
-                    }
-                    const _oSlug = encodeURIComponent(String(ord.name).replace(/^#/, ''));
-                    const _total3 = parseFloat(ord.total_price || 0);
-                    const askResult = await sendWACloudTemplate({
-                      phone10: String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10),
-                      templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION,
-                      bodyParams: [ord.name, (ord.line_items || []).map(li => li.title).slice(0, 2).join(', ') || '—', Math.max(0, _total3 - 99).toFixed(0)],
-                      urlButtonParam: `${_oSlug}&contact=na`,
-                    });
-                    if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
-                    waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
-                  } else {
-                    if (!existingTags.some(t => t.toLowerCase() === '❌ order canceled')) {
-                      existingTags.push('❌ Order Canceled');
-                      await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
-                    }
-                    await shopifyREST(`/orders/${ord.id}/cancel.json`, 'POST', {}).catch(() => {});
-                    await OM.upsert(_confirmSession.shopify_id, { stage: 'cancelled', updated_at: new Date().toISOString() });
-                    await sock.sendMessage(sender, { text: `❌ Order ${ord.name} cancelled. Let us know if you'd like to reorder anytime!` });
-                    waAdminAlert(`Order cancelled via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
-                  }
-                }
-              } catch (e) { console.error('Order confirm/cancel reply error:', e.message); }
-              await waSessionClear(sender);
               waPending.delete(sender);
               continue;
             }
