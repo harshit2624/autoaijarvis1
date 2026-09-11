@@ -1149,11 +1149,18 @@ async function getAccessToken() {
 }
 
 // ── Shopify REST helper ────────────────────────────────────────────────────
-async function shopifyREST(path) {
+// method/body were silently accepted-but-ignored here for a long time —
+// every caller passing shopifyREST(path, 'PUT', body) to write something
+// (tag updates, cancellations) was actually just issuing a GET, since this
+// function only ever declared `path`. Shopify returns 200 on the GET, so
+// no error surfaced anywhere — the write simply never happened. Fixed to
+// actually honor method/body while staying backward compatible with the
+// ~100 existing GET-only call sites that only ever pass `path`.
+async function shopifyREST(path, method = 'GET', body) {
   const token = await getAccessToken();
-  const res = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01${path}`, {
-    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-  });
+  const opts = { method, headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01${path}`, opts);
   if (!res.ok) throw new Error(`Shopify REST error ${res.status} on ${path}`);
   return res.json();
 }
@@ -1602,7 +1609,7 @@ app.post("/webhooks/orders", (req, res) => {
                 bodyParams: [payload.name, _itemsList, _addressLine, _total2.toFixed(0)],
               });
               if (cloudResult.sent) {
-                await waSetPendingConfirmSession(_codPhone, sid, payload.name);
+                await waSetPendingConfirmSession(_codPhone, sid, payload.name, cloudResult.messageId);
                 await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirm_cancel_sent': new Date().toISOString() } });
                 console.log(`📲 Confirm/Cancel card sent for new COD order ${payload.name}`);
               } else {
@@ -24414,8 +24421,13 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       // startBaileysBot() — no other changes needed inside the handler itself.
       if (msg.type === 'text' || msg.type === 'button' || msg.type === 'interactive') {
         if (waSharedMessageHandler) {
+          // msg.context.id (present on a button/quick-reply tap) is the
+          // wamid of the ORIGINAL message being replied to — carried
+          // through as contextWamid so the handler can disambiguate which
+          // specific order a Confirm/Cancel tap belongs to, instead of
+          // just trusting "whatever's last pending for this phone".
           const fakeMsg = {
-            key: { remoteJid: `91${phone}@s.whatsapp.net`, fromMe: false, id: msg.id },
+            key: { remoteJid: `91${phone}@s.whatsapp.net`, fromMe: false, id: msg.id, contextWamid: msg.context?.id || null },
             message: { conversation: text },
           };
           waSharedMessageHandler({ messages: [fakeMsg], type: 'notify' }).catch(e => {
@@ -25874,9 +25886,26 @@ async function waSessionSet(sender, data) {
 // tap comes back as plain text ("✅ Confirm" / "❌ Cancel"), matched against
 // this session in the shared handler, same pattern as the old poll-vote
 // handler but working over Cloud API instead of a native WhatsApp poll.
-async function waSetPendingConfirmSession(phone10, shopifyId, orderName) {
+// Keyed by phone AND, when available, by the exact wamid of the sent
+// Confirm/Cancel card — the phone-only session gets silently overwritten
+// if a second order for the same customer goes out before they tap the
+// first one (a real incident: two orders, second one's session clobbered
+// the first, so tapping Cancel on order A actually cancelled order B).
+// Meta's button-tap webhook carries context.id pointing back to the exact
+// message that was replied to, so when it's present we look up by THAT
+// instead of "whatever's currently pending for this phone" — the
+// phone-keyed session stays only as a fallback for the rare case a reply
+// arrives with no context (e.g. customer types "confirm" as plain text).
+async function waSetPendingConfirmSession(phone10, shopifyId, orderName, wamid) {
   const jid = `91${phone10}@s.whatsapp.net`;
   await waSessionSet(jid, { type: 'order_confirm_pending', shopify_id: String(shopifyId), order_name: orderName });
+  if (wamid && mdb) {
+    await mdb.collection('wa_confirm_by_wamid').updateOne(
+      { _id: wamid },
+      { $set: { shopify_id: String(shopifyId), order_name: orderName, phone: phone10, created_at: new Date().toISOString() } },
+      { upsert: true }
+    ).catch(() => {});
+  }
 }
 
 // Store vendor session under both the actual JID and the plain phone JID so LID replies match
@@ -27606,6 +27635,7 @@ async function startBaileysBot() {
         if (type !== 'notify') continue;
         if (msg.key.remoteJid?.endsWith('@g.us')) continue;
         const sender = msg.key.remoteJid;
+        const contextWamid = msg.key.contextWamid || null;
         // Tapping a list row or a button sends listResponseMessage /
         // buttonsResponseMessage, NOT conversation/extendedTextMessage — a
         // tap that isn't captured here silently vanishes (text becomes ''
@@ -27813,7 +27843,15 @@ async function startBaileysBot() {
           // added — this is why. An explicit Confirm/Cancel tap is
           // unambiguous and time-sensitive; it must never be swallowed by
           // an unrelated pause state.
-          const _confirmSession = await waSessionGet(sender);
+          // Prefer the wamid-keyed lookup (which specific message this tap
+          // replied to) over the phone-keyed session — the latter is only
+          // "whatever order's card was sent most recently for this phone"
+          // and gets clobbered when two orders' cards go out close together.
+          const _byWamid = contextWamid ? await mdb.collection('wa_confirm_by_wamid').findOne({ _id: contextWamid }).catch(() => null) : null;
+          const _phoneSession = await waSessionGet(sender);
+          const _confirmSession = _byWamid
+            ? { type: 'order_confirm_pending', shopify_id: _byWamid.shopify_id, order_name: _byWamid.order_name }
+            : _phoneSession;
           if (_confirmSession?.type === 'order_confirm_pending') {
             const _ct = text.trim().toLowerCase();
             const isConfirm = _ct.includes('confirm');
@@ -27852,12 +27890,21 @@ async function startBaileysBot() {
                     if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
                     waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
                   } else {
+                    // Only add the tag — stage/cancellation is handled by
+                    // the existing tag-mapping system once Shopify's own
+                    // orders/updated webhook fires off the back of this tag
+                    // change (applyTagMappings), same as every other place
+                    // in the app that tags an order. Manually flipping our
+                    // own stage here AND manually calling /cancel.json was
+                    // redundant "oversmart" duplication of what the tag
+                    // mapping already does — and worse, it meant our own
+                    // stage could show "cancelled" even on the (previously
+                    // silent) failure path where the tag write itself
+                    // didn't land.
                     if (!existingTags.some(t => t.toLowerCase() === '❌ order canceled')) {
                       existingTags.push('❌ Order Canceled');
                       await shopifyREST(`/orders/${ord.id}.json`, 'PUT', { order: { id: ord.id, tags: existingTags.join(', ') } });
                     }
-                    await shopifyREST(`/orders/${ord.id}/cancel.json`, 'POST', {}).catch(() => {});
-                    await OM.upsert(_confirmSession.shopify_id, { stage: 'cancelled', updated_at: new Date().toISOString() });
                     await sock.sendMessage(sender, { text: `❌ Order ${ord.name} cancelled. Let us know if you'd like to reorder anytime!` });
                     waAdminAlert(`Order cancelled via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
                   }
