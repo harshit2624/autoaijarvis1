@@ -28405,15 +28405,10 @@ async function startBaileysBot() {
               // spam-flag risk the old cooldown was guarding against), and
               // staying silent isn't acceptable here; the bot only ever
               // goes quiet once a human has actually taken over
-              // (bot_paused_until, checked earlier). Silently re-showing
-              // the exact same menu also used to read as the bot ignoring
-              // what was just typed — a one-line "didn't catch that"
-              // acknowledgment first makes it feel heard. The menu itself
-              // still carries BOTH self-serve options and Talk to a Human
-              // side by side, so this isn't pushing customers toward human
-              // support, just re-surfacing every option (self-serve
-              // included) when free text wasn't understood.
-              await sock.sendMessage(sender, { text: `${_F}\n▪ C R O S C R O W ▪\nDIDN'T CATCH THAT\n────────────────\nNot sure I follow — pick an\noption below, or type it out\nagain a little differently.\n${_F}` });
+              // (bot_paused_until, checked earlier). The "didn't catch
+              // that" preamble was tried and explicitly rejected — reads
+              // as confusing/unnecessary to the customer. Just re-send the
+              // menu directly when free text isn't understood.
               await sock.sendMessage(sender, { ...waWelcomeListContent('menu'), text: WA_MENUS.welcome_menu });
               await waSessionSet(sender, { menu: 'welcome_menu' });
               waPending.delete(sender);
