@@ -1221,6 +1221,56 @@ async function issueShopifyStoreCredit(customerId, amount, currencyCode = 'INR')
   };
 }
 
+// ── Issue a one-time-use fixed-amount Shopify discount code ────────────────
+// Used instead of Shopify's native Store Credit (account balance, no code) —
+// a real code gives the customer something concrete to hold onto/redeem
+// regardless of whether their checkout email matches their account, and is
+// easy to explain over WhatsApp/email. Scoped to the specific customer
+// (can't be shared/leaked and used by someone else), usage_limit 1 (single
+// use), and the minimum order subtotal is set equal to the credit amount
+// itself — so it behaves like real compensation (can't be stacked on a tiny
+// order to extract more value than intended) while still being simple to
+// reason about: "spend at least what we're crediting you."
+async function createShopifyDiscountCode(customerId, amount, currency = 'INR', orderName = '') {
+  const token = await getAccessToken();
+  const amt = parseFloat(amount).toFixed(2);
+  const code = `CC${String(orderName).replace(/[^0-9]/g, '') || Math.floor(Math.random()*90000+10000)}${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+
+  const priceRuleBody = {
+    price_rule: {
+      title: `Store credit — ${orderName || 'RR'} — ${code}`,
+      target_type: 'line_item',
+      target_selection: 'all',
+      allocation_method: 'across',
+      value_type: 'fixed_amount',
+      value: `-${amt}`,
+      customer_selection: 'prerequisite',
+      prerequisite_customer_ids: [customerId],
+      prerequisite_subtotal_range: { greater_than_or_equal_to: amt },
+      usage_limit: 1,
+      starts_at: new Date().toISOString(),
+    },
+  };
+  const prRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/price_rules.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(priceRuleBody),
+  });
+  const prData = await prRes.json();
+  if (!prRes.ok || !prData.price_rule) throw new Error(`Price rule create failed: ${JSON.stringify(prData.errors || prData)}`);
+  const priceRuleId = prData.price_rule.id;
+
+  const dcRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/price_rules/${priceRuleId}/discount_codes.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ discount_code: { code } }),
+  });
+  const dcData = await dcRes.json();
+  if (!dcRes.ok || !dcData.discount_code) throw new Error(`Discount code create failed: ${JSON.stringify(dcData.errors || dcData)}`);
+
+  return { code: dcData.discount_code.code, priceRuleId, discountCodeId: dcData.discount_code.id, amount: amt, currency, minOrderAmount: amt };
+}
+
 // ── Fetch ALL orders using cursor-based pagination ─────────────────────────
 // Shopify's default window is ~60 days. Pass created_at_min to go further back.
 // Note: date filters only go on the FIRST request — page_info cursors carry the
@@ -16141,7 +16191,8 @@ async function sendRRWANotif(rr, event, extra = {}) {
     msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████░░░░ HELD\nQC NOT CLEARED\n────────────────\nORDER  ${orderName}\n\nSTATE  ${reason} Your item ships back within 2–3 days.\n────────────────\nREPLY 4 TO REACH US NOW\nHOURS  2 PM – 8 PM\nLINE   6375668971\n${_Fr}`;
   } else if (event === 'store_credit_issued') {
     const amt = extra.amount != null ? `₹${Number(extra.amount).toFixed(0)}` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nSTORE CREDIT ISSUED\n────────────────\nORDER  ${orderName}\n\nAMT    ${amt}\nSTATE  Added to your CROSCROW account. Auto-applies at checkout on your next order.\n────────────────\nCHECK YOUR EMAIL TOO\n${_Fr}`;
+    const codeLine = extra.code ? `CODE   ${extra.code}\n` : '';
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n██████████████ 100%\nCREDIT CODE ISSUED\n────────────────\nORDER  ${orderName}\n\nAMT    ${amt}\n${codeLine}STATE  Use this code at checkout on your next order.\n────────────────\nCHECK YOUR EMAIL TOO\n${_Fr}`;
   }
 
   if (!msg) return;
@@ -16179,6 +16230,15 @@ async function sendRRWANotif(rr, event, extra = {}) {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QC_NOT_CLEARED, bodyParams: [orderName, _itemLine, reason] });
   } else if (event === 'store_credit_issued') {
+    // NOTE: rr_store_credit_issued_v2 is still on its OLD 3-param body (no
+    // code param) — the edit adding {{4}} for the code hit Meta's "one edit
+    // per 24h" limit (2026-09-12, already edited 2026-09-11 in the bulk
+    // template push). Keep 3 params until that edit lands, or Cloud API
+    // rejects the send outright (param count mismatch). See
+    // project_wa_template_pending_approvals memory. The code still reaches
+    // the customer via email (always) and the Baileys-fallback plain-text
+    // msg above (dead path currently, but ready for when the template
+    // catches up).
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, _itemLine, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
   }
 
@@ -18936,20 +18996,24 @@ function templateRRCompletedCustomer({ req }) {
   return rrEmailSky(headline.replace('\n','<br>'), 'RETURN &amp; EXCHANGE', body);
 }
 
-// Customer: store credit issued
-function templateRRStoreCreditCustomer({ req, amount, balance, currency }) {
+// Customer: store credit issued — a real one-time-use discount code (not
+// Shopify's account-balance Store Credit), so it works even on a guest
+// checkout with a different email, and gives the customer something
+// concrete to hold onto. Min order amount is set equal to the credit
+// value itself.
+function templateRRStoreCreditCustomer({ req, amount, code, minOrderAmount, currency }) {
   const cur = currency === 'INR' ? '₹' : (currency || '');
   const body = `
-    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Store credit added! 🎁</div>
-    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Instead of a refund to your original payment method, we've added <strong style="color:#ccc;">${cur}${Number(amount).toFixed(0)}</strong> as CROSCROW store credit to your account. It applies automatically at checkout on your next order — no code needed.</div>
+    <div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Your credit code is here! 🎁</div>
+    <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">Instead of a refund to your original payment method, we've issued you a <strong style="color:#ccc;">${cur}${Number(amount).toFixed(0)}</strong> CROSCROW discount code — enter it at checkout on your next order.</div>
     ${rrInfoBoxSky(req)}
-    <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:14px 18px;margin-bottom:20px;">
-      <div style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Credited Amount</div>
-      <div style="font-size:22px;font-weight:800;color:#7eb8f7;">${cur}${Number(amount).toFixed(0)}</div>
-      ${balance != null ? `<div style="font-size:11px;color:#888;margin-top:6px;">Available account balance: ${cur}${Number(balance).toFixed(0)}</div>` : ''}
+    <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center;">
+      <div style="font-size:10px;color:#666;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Your Code</div>
+      <div style="font-size:26px;font-weight:800;color:#7eb8f7;letter-spacing:2px;font-family:monospace;">${code}</div>
+      <div style="font-size:11px;color:#888;margin-top:10px;">Worth ${cur}${Number(amount).toFixed(0)} · Minimum order ${cur}${Number(minOrderAmount ?? amount).toFixed(0)} · One-time use</div>
     </div>
     <div style="font-size:12px;color:#555;line-height:1.7;">Thank you for shopping with CROSCROW 🙏</div>`;
-  return rrEmailSky('STORE CREDIT<br>ADDED.', 'RETURN &amp; EXCHANGE', body);
+  return rrEmailSky('CREDIT CODE<br>ISSUED.', 'RETURN &amp; EXCHANGE', body);
 }
 
 // Customer: reverse shipment created (pickup AWB assigned)
@@ -19059,7 +19123,7 @@ async function sendRREmail(type, req, extra = {}) {
         if (vendorEmail) await send(vendorEmail, `⏰ Action Needed: Approved ${T} Not Yet Arranged — ${req.request_id}`, templateRRReminder24Vendor({req}));
         break;
       case 'store_credit':
-        if (req.customer_email) await send(req.customer_email, `Store Credit Added ✓ — ${req.request_id}`, templateRRStoreCreditCustomer({ req, amount: extra.amount, balance: extra.balance, currency: extra.currency }));
+        if (req.customer_email) await send(req.customer_email, `Your Credit Code — ${req.request_id}`, templateRRStoreCreditCustomer({ req, amount: extra.amount, code: extra.code, minOrderAmount: extra.minOrderAmount, currency: extra.currency }));
         break;
     }
   } catch(e) { console.error('RR email error:', e.message); }
@@ -20354,6 +20418,41 @@ app.delete("/admin/return-requests/:id", adminAuth, async (req, res) => {
 // and immediately emails + WhatsApps the customer. Requires the app's
 // `write_store_credit_account_transactions` scope to be granted in Shopify
 // Admin → Apps → Develop apps → (this app) → Configuration, then reinstalled.
+// ── Preview the discount-aware credit amount before issuing ───────────────
+// Lets the admin modal show the correct net-of-discount default instead of
+// a naive sum of listed item prices (which over-credits when the original
+// order had a discount applied).
+app.get("/admin/return-requests/:id/credit-preview", adminAuth, async (req, res) => {
+  try {
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+    if (!rr.shopify_order_id) return res.status(400).json({ error: 'No linked Shopify order on this request.' });
+    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,total_price,currency,line_items`);
+    const olis = order.line_items || [];
+    let grossAmount = 0, netAmount = 0, matchedAny = false;
+    (rr.items || []).forEach(it => {
+      const qty = parseInt(it.qty || it.quantity) || 1;
+      const match = olis.find(li => String(li.id) === String(it.line_item_id))
+        || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
+      const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
+      grossAmount += unitGross * qty;
+      if (match) {
+        matchedAny = true;
+        const lineQty = parseInt(match.quantity) || qty;
+        const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
+        netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
+      } else {
+        netAmount += unitGross * qty;
+      }
+    });
+    if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
+    const discountDetected = matchedAny && netAmount < grossAmount - 0.01;
+    res.json({ grossAmount, netAmount, discountDetected, defaultAmount: netAmount || grossAmount, currency: order.currency || 'INR' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/admin/return-requests/:id/store-credit", adminAuth, async (req, res) => {
   try {
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
@@ -20361,15 +20460,40 @@ app.post("/admin/return-requests/:id/store-credit", adminAuth, async (req, res) 
     if (rr.resolution === 'store_credit') return res.status(400).json({ error: 'Store credit already issued for this request.' });
     if (!rr.shopify_order_id) return res.status(400).json({ error: 'No linked Shopify order on this request.' });
 
-    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,currency`);
+    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,currency,line_items,discount_codes`);
     const customerId = order?.customer?.id;
     if (!customerId) return res.status(400).json({ error: 'Could not find a Shopify customer on this order — store credit requires a registered customer account.' });
 
-    const defaultAmount = (rr.items || []).reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.qty || it.quantity) || 1), 0) || parseFloat(order.total_price || 0);
+    // Default amount must reflect what the customer actually PAID, not the
+    // product's listed price — if the order had a discount applied, using
+    // the raw item price over-credits them. Shopify's line_items each carry
+    // their own allocated total_discount; net it out per returned item,
+    // matching by line_item_id (falls back to variant_id, then to the raw
+    // item price if the line can't be matched at all).
+    const olis = order.line_items || [];
+    let grossAmount = 0, netAmount = 0, matchedAny = false;
+    (rr.items || []).forEach(it => {
+      const qty = parseInt(it.qty || it.quantity) || 1;
+      const match = olis.find(li => String(li.id) === String(it.line_item_id))
+        || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
+      const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
+      grossAmount += unitGross * qty;
+      if (match) {
+        matchedAny = true;
+        const lineQty = parseInt(match.quantity) || qty;
+        const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
+        netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
+      } else {
+        netAmount += unitGross * qty; // no line match — can't net out a discount, use gross
+      }
+    });
+    if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
+    const discountDetected = matchedAny && netAmount < grossAmount - 0.01;
+    const defaultAmount = netAmount || grossAmount;
     const amount = parseFloat(req.body?.amount) > 0 ? parseFloat(req.body.amount) : defaultAmount;
     const currency = order.currency || 'INR';
 
-    const credit = await issueShopifyStoreCredit(customerId, amount.toFixed(2), currency);
+    const credit = await createShopifyDiscountCode(customerId, amount, currency, rr.order_name);
 
     const now = new Date().toISOString();
     const ledgerEntry = {
@@ -20379,8 +20503,13 @@ app.post("/admin/return-requests/:id/store-credit", adminAuth, async (req, res) 
       customer_email: rr.customer_email,
       customer_name: rr.customer_name,
       amount, currency,
-      shopify_account_id: credit.accountId || null,
-      balance_after: credit.balance != null ? parseFloat(credit.balance) : null,
+      code: credit.code,
+      min_order_amount: credit.minOrderAmount,
+      price_rule_id: credit.priceRuleId,
+      discount_code_id: credit.discountCodeId,
+      gross_amount: grossAmount,
+      net_amount: netAmount,
+      discount_detected: discountDetected,
       issued_by: 'admin',
       issued_at: now,
     };
@@ -20388,15 +20517,15 @@ app.post("/admin/return-requests/:id/store-credit", adminAuth, async (req, res) 
 
     await mdb.collection('return_requests').updateOne(
       { request_id: rr.request_id },
-      { $set: { resolution: 'store_credit', store_credit: { amount, currency, issued_at: now }, status: rrStatusRank(rr.status) < rrStatusRank('completed') ? 'completed' : rr.status, updated_at: now } }
+      { $set: { resolution: 'store_credit', store_credit: { amount, currency, code: credit.code, issued_at: now }, status: rrStatusRank(rr.status) < rrStatusRank('completed') ? 'completed' : rr.status, updated_at: now } }
     );
-    await rrPushHistory(rr.request_id, { event: 'store_credit_issued', status: 'completed', note: `₹${amount.toFixed(0)} store credit issued`, source: 'admin' });
+    await rrPushHistory(rr.request_id, { event: 'store_credit_issued', status: 'completed', note: `₹${amount.toFixed(0)} discount code issued (${credit.code})`, source: 'admin' });
 
-    sendRREmail('store_credit', { ...rr, resolution: 'store_credit' }, { amount, balance: credit.balance, currency }).catch(e => console.error('RR store credit email error:', e.message));
-    sendRRWANotif(rr, 'store_credit_issued', { amount }).catch(() => {});
-    auditLog('admin', 'rr_store_credit_issued', rr.request_id, { amount, currency, customerId });
+    sendRREmail('store_credit', { ...rr, resolution: 'store_credit' }, { amount, code: credit.code, minOrderAmount: credit.minOrderAmount, currency }).catch(e => console.error('RR store credit email error:', e.message));
+    sendRRWANotif(rr, 'store_credit_issued', { amount, code: credit.code }).catch(() => {});
+    auditLog('admin', 'rr_store_credit_issued', rr.request_id, { amount, currency, customerId, code: credit.code });
 
-    res.json({ success: true, amount, currency, balance: credit.balance });
+    res.json({ success: true, amount, currency, code: credit.code, minOrderAmount: credit.minOrderAmount, grossAmount, netAmount, discountDetected });
   } catch (err) {
     console.error('❌ RR store-credit error:', err.message);
     res.status(500).json({ error: err.message });

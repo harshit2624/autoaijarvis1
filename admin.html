@@ -5646,10 +5646,19 @@
   }
 
   function StoreCreditModal({ token, rr, onClose, onDone }) {
-    const defaultAmt = Math.round((rr.items||[]).reduce((s,it)=>s+(parseFloat(it.price)||0)*(parseInt(it.qty||it.quantity)||1),0));
-    const [amount, setAmount] = useState(defaultAmt || '');
+    const [amount, setAmount] = useState('');
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState(null);
+    const [preview, setPreview] = useState(null);
+    const [previewLoading, setPreviewLoading] = useState(true);
+
+    useEffect(() => {
+      fetch(`${API}/admin/return-requests/${rr.request_id}/credit-preview`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>{
+          setPreview(d);
+          setAmount(d.defaultAmount ? Math.round(d.defaultAmount) : '');
+        }).catch(()=>{}).finally(()=>setPreviewLoading(false));
+    }, [rr.request_id]);
 
     const submit = async () => {
       if (!amount || parseFloat(amount) <= 0) { setErr('Enter a valid amount.'); return; }
@@ -5670,11 +5679,14 @@
     return (
       <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:999}} onClick={onClose}>
         <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:20,width:340}} onClick={e=>e.stopPropagation()}>
-          <div style={{fontSize:14,fontWeight:700,marginBottom:4,color:'var(--text)'}}>🎁 Issue Store Credit</div>
-          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14,lineHeight:1.5}}>Adds to the customer's Shopify store-credit account — auto-applies at their next checkout, no code needed. Email + WhatsApp are sent to the customer immediately.</div>
-          <label style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Amount (₹)</label>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:4,color:'var(--text)'}}>🎁 Issue Credit Code</div>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14,lineHeight:1.5}}>Issues a one-time-use Shopify discount code for this amount (min order = same amount, so it can't be stacked on a cheaper order). Email + WhatsApp are sent to the customer immediately. Suggested amount already accounts for any discount on the original order — it's what they actually paid, not the listed price.</div>
+          <label style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase'}}>Amount (₹){previewLoading?' — loading suggestion…':''}</label>
           <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus
-            style={{width:'100%',marginTop:4,marginBottom:14,boxSizing:'border-box',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:13,outline:'none'}}/>
+            style={{width:'100%',marginTop:4,marginBottom:8,boxSizing:'border-box',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 10px',color:'var(--text)',fontFamily:'var(--font-family)',fontSize:13,outline:'none'}}/>
+          {preview?.discountDetected && (
+            <div style={{fontSize:10,color:'#f59e0b',marginBottom:10,lineHeight:1.5}}>⚠ This order had a discount — suggested amount (₹{Math.round(preview.netAmount)}) is net of that, not the listed price (₹{Math.round(preview.grossAmount)}).</div>
+          )}
           {err && <div className="alert alert-error" style={{marginBottom:10,fontSize:11}}>⚠ {err}</div>}
           <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
             <button onClick={onClose} style={{padding:'7px 14px',borderRadius:7,border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:12}}>Cancel</button>
@@ -5946,7 +5958,7 @@
         </div>
         {creditModalFor && (
           <StoreCreditModal token={token} rr={creditModalFor} onClose={()=>setCreditModalFor(null)}
-            onDone={(d)=>{ setMsg({type:'success',text:`✓ Store credit ₹${Number(d.amount).toFixed(0)} issued — email & WhatsApp sent to customer.`}); load(); }}/>
+            onDone={(d)=>{ setMsg({type:'success',text:`✓ Code ${d.code} issued for ₹${Number(d.amount).toFixed(0)}${d.discountDetected?` (order had a discount — used net amount ₹${Number(d.netAmount).toFixed(0)} instead of listed ₹${Number(d.grossAmount).toFixed(0)})`:''} — email & WhatsApp sent to customer.`}); load(); }}/>
         )}
       </div>
     );
