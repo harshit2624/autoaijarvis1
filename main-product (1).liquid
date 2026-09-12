@@ -4144,36 +4144,18 @@ media (min-width: 1024px){
                 {%- endif -%}
               }
 
-              // "available" alone isn't reliable here — a variant with
-              // "continue selling when out of stock" enabled stays
-              // available:true even at 0 quantity, which is exactly why
-              // this theme's own data includes qty/management separately
-              // (see the show_available block logic elsewhere in this
-              // file). Treat a variant as sold out if either Shopify says
-              // available:false, OR it's inventory-tracked and quantity
-              // is 0 or less — matching how the size buttons actually get
-              // disabled/crossed out visually.
-              var oosVariants = variantsData.filter(function(v){
-                var tracked = v.management && v.management !== 'null' && v.management !== '';
-                var qtyOut = tracked && (parseInt(v.qty, 10) || 0) < 1;
-                return !v.available || qtyOut;
-              });
+              // Shopify's own "available" flag already implements exactly
+              // this store's rule: false only when qty <= 0 AND "continue
+              // selling when out of stock" is off. No extra qty/management
+              // check needed — that's what broke the native variant
+              // dropdown last time (see productVariantsQty above).
+              var oosVariants = variantsData.filter(function(v){ return !v.available; });
               var sizeSelect = root.querySelector('.bisn-size');
 
-              // TEMP TEST OVERRIDE — forces the widget visible with every
-              // variant listed (not just out-of-stock ones), regardless of
-              // real stock, purely so the submit flow can be tested end to
-              // end while the visibility logic above is still being
-              // debugged. REMOVE this block (and the var below) once
-              // visibility itself is confirmed working — after that,
-              // oosVariants above is the real, correct source of truth.
-              var FORCE_VISIBLE_FOR_TESTING = true;
-              var testVariants = FORCE_VISIBLE_FOR_TESTING ? variantsData : oosVariants;
-
               function render() {
-                if (!FORCE_VISIBLE_FOR_TESTING && !oosVariants.length) { root.style.display = 'none'; return; }
+                if (!oosVariants.length) { root.style.display = 'none'; return; }
                 root.style.display = 'block';
-                sizeSelect.innerHTML = testVariants.map(function(v){
+                sizeSelect.innerHTML = oosVariants.map(function(v){
                   return '<option value="' + v.id + '">' + (v.option || 'This size') + '</option>';
                 }).join('');
               }
@@ -4189,7 +4171,7 @@ media (min-width: 1024px){
                   statusEl.className = 'bisn-status err';
                   return;
                 }
-                var chosen = testVariants.find(function(v){ return String(v.id) === String(sizeSelect.value); });
+                var chosen = oosVariants.find(function(v){ return String(v.id) === String(sizeSelect.value); });
                 if (!chosen) return;
                 btn.disabled = true;
                 statusEl.textContent = '';
@@ -5037,11 +5019,8 @@ media (min-width: 1024px){
             assign option = '"option":"' | append: op | append: '"'
             assign quantity = '"qty":' | append: variant.inventory_quantity
             assign available = '"available":' | append: variant.available
-            assign management = '"management":"' | append: variant.inventory_management | append: '"'
-            assign incoming = '"incoming":"' | append: variant.incoming | append: '"'
-            assign incoming_date = '"incoming_date":"' | append: variant.next_incoming_date | append: '"'
         -%}
-        { {{ id }},{{ option }},{{ quantity }},{{ available }},{{ management }},{{ incoming }},{{ incoming_date }}}
+        { {{ id }},{{ option }},{{ quantity }},{{ available }}}
         {%- unless forloop.last -%},{%- endunless forloop.last -%}
       {%- endfor -%}
     ]
