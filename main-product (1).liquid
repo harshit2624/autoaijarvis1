@@ -4144,7 +4144,20 @@ media (min-width: 1024px){
                 {%- endif -%}
               }
 
-              var oosVariants = variantsData.filter(function(v){ return !v.available; });
+              // "available" alone isn't reliable here — a variant with
+              // "continue selling when out of stock" enabled stays
+              // available:true even at 0 quantity, which is exactly why
+              // this theme's own data includes qty/management separately
+              // (see the show_available block logic elsewhere in this
+              // file). Treat a variant as sold out if either Shopify says
+              // available:false, OR it's inventory-tracked and quantity
+              // is 0 or less — matching how the size buttons actually get
+              // disabled/crossed out visually.
+              var oosVariants = variantsData.filter(function(v){
+                var tracked = v.management && v.management !== 'null' && v.management !== '';
+                var qtyOut = tracked && (parseInt(v.qty, 10) || 0) < 1;
+                return !v.available || qtyOut;
+              });
               var sizeSelect = root.querySelector('.bisn-size');
 
               function render() {
