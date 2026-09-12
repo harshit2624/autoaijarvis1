@@ -1445,6 +1445,7 @@ const DESIRED_WEBHOOKS = [
   { topic: 'orders/cancelled',    format: 'json', path: '/webhooks/orders' },
   { topic: 'fulfillments/create', format: 'json', path: '/webhooks/fulfillments' },
   { topic: 'fulfillments/update', format: 'json', path: '/webhooks/fulfillments' },
+  { topic: 'inventory_levels/update', format: 'json', path: '/webhooks/inventory-levels' },
 ];
 
 // ── GET /admin/webhooks — list all webhooks registered on Shopify ──────────
@@ -19872,6 +19873,87 @@ app.post("/track/validate-admin-code", async (req, res) => {
   return res.json({ valid: false, type: null });
 });
 
+// ── Public: back-in-stock notify signup ────────────────────────────────────
+// Customer picks an out-of-stock size on the product page, enters their
+// WhatsApp number — stored here with the variant's inventory_item_id
+// captured NOW (not looked up later), so the inventory webhook can match
+// directly on inventory_item_id without any reverse variant lookup at
+// notify-time.
+app.post("/notify-back-in-stock", async (req, res) => {
+  try {
+    const { variant_id, product_id, product_title, variant_title, image_url, phone } = req.body || {};
+    const digits = String(phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (!variant_id || !product_id) return res.status(400).json({ error: 'variant_id and product_id are required' });
+    if (digits.length !== 10 || !/^[6-9]/.test(digits)) return res.status(400).json({ error: 'Enter a valid 10-digit WhatsApp number' });
+
+    const [{ variant }, { product }] = await Promise.all([
+      shopifyREST(`/variants/${variant_id}.json?fields=id,inventory_item_id,available`),
+      shopifyREST(`/products/${product_id}.json?fields=id,handle`),
+    ]);
+    if (!variant) return res.status(404).json({ error: 'Variant not found' });
+    if (variant.available) return res.json({ success: true, already_in_stock: true });
+
+    await mdb.collection('back_in_stock_requests').updateOne(
+      { variant_id: String(variant_id), phone: digits },
+      { $set: {
+          variant_id: String(variant_id), product_id: String(product_id),
+          inventory_item_id: String(variant.inventory_item_id),
+          product_handle: product?.handle || '',
+          product_title: product_title || '', variant_title: variant_title || '',
+          image_url: image_url || '', phone: digits,
+          notified: false, requested_at: new Date().toISOString(),
+        } },
+      { upsert: true }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ /notify-back-in-stock error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Shopify inventory_levels/update webhook — fires the back-in-stock
+// WhatsApp blast the instant a watched variant's stock goes from 0 to >0.
+// Matches directly on inventory_item_id (captured at signup time), so no
+// reverse variant lookup is needed here at all.
+app.post('/webhooks/inventory-levels', async (req, res) => {
+  res.sendStatus(200);
+  try {
+    let body = req.body;
+    if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; } }
+    const { inventory_item_id, available } = body || {};
+    if (!inventory_item_id || !(available > 0)) return;
+
+    const pending = await mdb.collection('back_in_stock_requests').find({
+      inventory_item_id: String(inventory_item_id), notified: false,
+    }).toArray();
+    if (!pending.length) return;
+
+    for (const req_ of pending) {
+      try {
+        const productUrl = `https://${process.env.STOREFRONT_DOMAIN || 'croscrow.com'}/products/${req_.product_handle}?variant=${req_.variant_id}`;
+        // No header image on this template yet — Meta's media-example
+        // upload for a brand-new template hit a permissions wall with the
+        // current token (resumable upload API rejected the app-scoped
+        // session). Text-only for now; can be revisited to add the photo
+        // once that's sorted.
+        const cloudResult = await sendWACloudTemplate({
+          phone10: req_.phone,
+          templateName: WA_TPL.BACK_IN_STOCK,
+          bodyParams: [req_.product_title, req_.variant_title || '—'],
+          urlButtonParam: productUrl.replace(/^https?:\/\/[^/]+\//, ''), // template's URL button base is fixed to the domain; only the suffix is dynamic
+        });
+        if (!cloudResult.sent) console.error(`❌ Back-in-stock WA failed for ${req_.phone}: ${cloudResult.reason}`);
+        await mdb.collection('back_in_stock_requests').updateOne(
+          { _id: req_._id },
+          { $set: { notified: true, notified_at: new Date().toISOString(), send_result: cloudResult.sent ? 'sent' : cloudResult.reason } }
+        );
+      } catch (e) { console.error('Back-in-stock notify error:', e.message); }
+    }
+    console.log(`🔔 Back-in-stock: notified ${pending.length} customer(s) for inventory_item_id ${inventory_item_id}`);
+  } catch (err) { console.error('❌ inventory-levels webhook error:', err.message); }
+});
+
 // ── Public: submit return/exchange request ────────────────────────────────
 app.post("/track/request", async (req, res) => {
   try {
@@ -24341,6 +24423,7 @@ const WA_TPL = {
   VENDOR_DISPATCH_WARNING: 'vendor_dispatch_warning',
   VENDOR_PENALTY_TRIGGERED: 'vendor_penalty_triggered',
   VENDOR_CUSTOMER_QUERY: 'vendor_customer_query',
+  BACK_IN_STOCK: 'back_in_stock_v1',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
