@@ -4105,23 +4105,23 @@ media (min-width: 1024px){
               data-image="{{ product.featured_image | image_url: width: 600 }}"
               data-form-id="{{ product_form_id }}"
             >
-              <div class="bisn-msg">One or more sizes are currently out of stock.</div>
-              <div class="bisn-form">
+              <button type="button" class="bisn-trigger">🔔 Size out of stock? Get notified</button>
+              <div class="bisn-form" hidden>
                 <select class="bisn-size"></select>
                 <input type="tel" class="bisn-phone" placeholder="WhatsApp number" maxlength="10" inputmode="numeric" autocomplete="tel">
-                <button type="button" class="bisn-submit">🔔 Notify Me</button>
+                <button type="button" class="bisn-submit">Notify</button>
               </div>
               <div class="bisn-status" aria-live="polite"></div>
             </div>
             <style>
-              #BackInStockNotify-{{ section.id }} { border: 1px solid #e5e5e5; border-radius: 10px; padding: 14px; }
-              #BackInStockNotify-{{ section.id }} .bisn-msg { font-size: 13px; color: #b45309; font-weight: 600; margin-bottom: 10px; }
-              #BackInStockNotify-{{ section.id }} .bisn-form { display: flex; gap: 8px; flex-wrap: wrap; }
-              #BackInStockNotify-{{ section.id }} .bisn-size { flex: 0 0 auto; height: 40px; padding: 0 10px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 14px; background: #fff; }
-              #BackInStockNotify-{{ section.id }} .bisn-phone { flex: 1; min-width: 140px; height: 40px; padding: 0 12px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 14px; }
-              #BackInStockNotify-{{ section.id }} .bisn-submit { flex: 0 0 auto; height: 40px; padding: 0 16px; border: none; border-radius: 8px; background: #111; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+              #BackInStockNotify-{{ section.id }} .bisn-trigger { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #d7d7d7; border-radius: 999px; background: #fff; color: #b45309; font-size: 12px; font-weight: 600; cursor: pointer; }
+              #BackInStockNotify-{{ section.id }} .bisn-trigger:hover { border-color: #b45309; }
+              #BackInStockNotify-{{ section.id }} .bisn-form { display: flex; gap: 6px; margin-top: 8px; }
+              #BackInStockNotify-{{ section.id }} .bisn-size { flex: 0 0 auto; height: 34px; padding: 0 8px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 13px; background: #fff; max-width: 90px; }
+              #BackInStockNotify-{{ section.id }} .bisn-phone { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 13px; }
+              #BackInStockNotify-{{ section.id }} .bisn-submit { flex: 0 0 auto; height: 34px; padding: 0 14px; border: none; border-radius: 8px; background: #111; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
               #BackInStockNotify-{{ section.id }} .bisn-submit:disabled { opacity: .6; cursor: default; }
-              #BackInStockNotify-{{ section.id }} .bisn-status { font-size: 12px; margin-top: 8px; }
+              #BackInStockNotify-{{ section.id }} .bisn-status { font-size: 11px; margin-top: 6px; }
               #BackInStockNotify-{{ section.id }} .bisn-status.ok { color: #15803d; }
               #BackInStockNotify-{{ section.id }} .bisn-status.err { color: #dc2626; }
             </style>
@@ -4163,6 +4163,8 @@ media (min-width: 1024px){
               // dropdown last time (see productVariantsQty above).
               var oosVariants = variantsData.filter(function(v){ return !v.available; });
               var sizeSelect = root.querySelector('.bisn-size');
+              var trigger = root.querySelector('.bisn-trigger');
+              var formEl = root.querySelector('.bisn-form');
 
               function render() {
                 if (!oosVariants.length) { root.style.display = 'none'; return; }
@@ -4172,6 +4174,11 @@ media (min-width: 1024px){
                 }).join('');
               }
               render();
+
+              trigger.addEventListener('click', function(){
+                formEl.hidden = false;
+                trigger.hidden = true;
+              });
 
               var btn = root.querySelector('.bisn-submit');
               var phoneInput = root.querySelector('.bisn-phone');
