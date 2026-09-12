@@ -19905,6 +19905,13 @@ app.post("/notify-back-in-stock", async (req, res) => {
         } },
       { upsert: true }
     );
+
+    sendWACloudTemplate({
+      phone10: digits,
+      templateName: WA_TPL.BACK_IN_STOCK_SIGNUP,
+      bodyParams: [variant_title ? `${product_title} — ${variant_title}` : (product_title || 'this item')],
+    }).catch(e => console.error('❌ back_in_stock_signup send failed:', e.message));
+
     res.json({ success: true });
   } catch (err) {
     console.error('❌ /notify-back-in-stock error:', err.message);
@@ -24424,6 +24431,7 @@ const WA_TPL = {
   VENDOR_PENALTY_TRIGGERED: 'vendor_penalty_triggered',
   VENDOR_CUSTOMER_QUERY: 'vendor_customer_query',
   BACK_IN_STOCK: 'back_in_stock_v1',
+  BACK_IN_STOCK_SIGNUP: 'back_in_stock_signup_v1',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
