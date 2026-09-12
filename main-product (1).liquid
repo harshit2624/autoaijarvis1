@@ -4127,6 +4127,18 @@ media (min-width: 1024px){
             </style>
             <script>
             (function(){
+              // The productVariantsQty JSON tag this widget reads is emitted
+              // much further down the page (after the whole block loop ends),
+              // so at the moment this <script> is parsed it doesn't exist in
+              // the DOM yet — querying it here always returns null. Wait for
+              // the full page parse to finish so it's guaranteed to be there.
+              if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+              } else {
+                init();
+              }
+
+              function init(){
               var root = document.getElementById('BackInStockNotify-{{ section.id }}');
               if (!root) return;
               var variantsData = [];
@@ -4201,10 +4213,11 @@ media (min-width: 1024px){
                   btn.disabled = false;
                 });
               });
+              }
             })();
             </script>
 
-       
+
 
       {%- when 'modern_collapsible_row' -%}
 {%- assign bs = block.settings -%}
