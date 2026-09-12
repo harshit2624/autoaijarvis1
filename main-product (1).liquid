@@ -4082,14 +4082,19 @@ media (min-width: 1024px){
 
             {%- comment -%}
               ── Back-in-stock notify widget ──────────────────────────────
-              Sits directly below the size picker. Hidden by default; JS
-              shows it only when the currently selected variant (read from
-              the hidden #id input the theme keeps in sync) is unavailable
-              — hidden again the moment an in-stock size is picked. Submits
-              phone number + variant to the CROSCROW backend, which stores
-              it and fires a WhatsApp alert the instant that variant's
-              inventory goes back above 0 (Shopify inventory_levels/update
-              webhook → /webhooks/inventory-levels).
+              Sits directly below the size picker. Shown whenever ANY
+              variant of this product is out of stock — not just the
+              currently selected one, since an out-of-stock size is
+              usually disabled/unclickable in the picker itself, so a
+              customer could never "select" it to trigger a check that
+              way. Instead this has its OWN size dropdown listing only the
+              out-of-stock sizes, letting the customer request a notify
+              for a size they can't even pick above. Hidden entirely only
+              when every variant is in stock. Submits phone number +
+              chosen variant to the CROSCROW backend, which stores it and
+              fires a WhatsApp alert the instant that variant's inventory
+              goes back above 0 (Shopify inventory_levels/update webhook
+              → /webhooks/inventory-levels).
             {%- endcomment -%}
             <div
               id="BackInStockNotify-{{ section.id }}"
@@ -4100,8 +4105,9 @@ media (min-width: 1024px){
               data-image="{{ product.featured_image | image_url: width: 600 }}"
               data-form-id="{{ product_form_id }}"
             >
-              <div class="bisn-msg">This size is currently out of stock.</div>
+              <div class="bisn-msg">One or more sizes are currently out of stock.</div>
               <div class="bisn-form">
+                <select class="bisn-size"></select>
                 <input type="tel" class="bisn-phone" placeholder="WhatsApp number" maxlength="10" inputmode="numeric" autocomplete="tel">
                 <button type="button" class="bisn-submit">🔔 Notify Me</button>
               </div>
@@ -4110,8 +4116,9 @@ media (min-width: 1024px){
             <style>
               #BackInStockNotify-{{ section.id }} { border: 1px solid #e5e5e5; border-radius: 10px; padding: 14px; }
               #BackInStockNotify-{{ section.id }} .bisn-msg { font-size: 13px; color: #b45309; font-weight: 600; margin-bottom: 10px; }
-              #BackInStockNotify-{{ section.id }} .bisn-form { display: flex; gap: 8px; }
-              #BackInStockNotify-{{ section.id }} .bisn-phone { flex: 1; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 14px; }
+              #BackInStockNotify-{{ section.id }} .bisn-form { display: flex; gap: 8px; flex-wrap: wrap; }
+              #BackInStockNotify-{{ section.id }} .bisn-size { flex: 0 0 auto; height: 40px; padding: 0 10px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 14px; background: #fff; }
+              #BackInStockNotify-{{ section.id }} .bisn-phone { flex: 1; min-width: 140px; height: 40px; padding: 0 12px; border: 1px solid #d7d7d7; border-radius: 8px; font-size: 14px; }
               #BackInStockNotify-{{ section.id }} .bisn-submit { flex: 0 0 auto; height: 40px; padding: 0 16px; border: none; border-radius: 8px; background: #111; color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
               #BackInStockNotify-{{ section.id }} .bisn-submit:disabled { opacity: .6; cursor: default; }
               #BackInStockNotify-{{ section.id }} .bisn-status { font-size: 12px; margin-top: 8px; }
@@ -4122,38 +4129,32 @@ media (min-width: 1024px){
             (function(){
               var root = document.getElementById('BackInStockNotify-{{ section.id }}');
               if (!root) return;
-              var formId = root.getAttribute('data-form-id');
-              var form = document.getElementById(formId);
-              var hiddenIdInput = form ? form.querySelector('input[name="id"]') : document.querySelector('#' + formId + ' input[name="id"]');
               var variantsData = [];
               try {
                 var qtyScript = document.querySelector('.productVariantsQty');
                 if (qtyScript) variantsData = JSON.parse(qtyScript.textContent || '[]');
               } catch(e) {}
 
-              function currentVariant() {
-                var id = hiddenIdInput ? hiddenIdInput.value : null;
-                if (!id) return null;
-                var match = variantsData.find(function(v){ return String(v.id) === String(id); });
-                return { id: id, available: match ? match.available : true, option: match ? match.option : '' };
+              // Single-variant products have no productVariantsQty script at
+              // all (theme only emits it when has_only_default_variant is
+              // false) — fall back to the one variant Liquid already knows.
+              if (!variantsData.length) {
+                {%- if product.has_only_default_variant -%}
+                variantsData = [{ id: {{ product.selected_or_first_available_variant.id | default: 0 }}, option: '', available: {{ product.selected_or_first_available_variant.available | default: true | json }} }];
+                {%- endif -%}
               }
 
-              function refresh() {
-                var v = currentVariant();
-                if (!v) { root.style.display = 'none'; return; }
-                root.style.display = v.available ? 'none' : 'block';
-                root.setAttribute('data-variant-id', v.id);
-                root.setAttribute('data-variant-title', v.option || '');
-                root.querySelector('.bisn-status').textContent = '';
-                root.querySelector('.bisn-status').className = 'bisn-status';
-              }
+              var oosVariants = variantsData.filter(function(v){ return !v.available; });
+              var sizeSelect = root.querySelector('.bisn-size');
 
-              if (hiddenIdInput) {
-                new MutationObserver(refresh).observe(hiddenIdInput, { attributes: true, attributeFilter: ['value'] });
-                hiddenIdInput.addEventListener('change', refresh);
+              function render() {
+                if (!oosVariants.length) { root.style.display = 'none'; return; }
+                root.style.display = 'block';
+                sizeSelect.innerHTML = oosVariants.map(function(v){
+                  return '<option value="' + v.id + '">' + (v.option || 'This size') + '</option>';
+                }).join('');
               }
-              if (form) form.addEventListener('change', function(){ setTimeout(refresh, 50); });
-              refresh();
+              render();
 
               var btn = root.querySelector('.bisn-submit');
               var phoneInput = root.querySelector('.bisn-phone');
@@ -4165,16 +4166,18 @@ media (min-width: 1024px){
                   statusEl.className = 'bisn-status err';
                   return;
                 }
+                var chosen = oosVariants.find(function(v){ return String(v.id) === String(sizeSelect.value); });
+                if (!chosen) return;
                 btn.disabled = true;
                 statusEl.textContent = '';
                 fetch('https://dashboard.croscrow.com/notify-back-in-stock', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    variant_id: root.getAttribute('data-variant-id'),
+                    variant_id: chosen.id,
                     product_id: root.getAttribute('data-product-id'),
                     product_title: root.getAttribute('data-product-title'),
-                    variant_title: root.getAttribute('data-variant-title'),
+                    variant_title: chosen.option || '',
                     image_url: root.getAttribute('data-image'),
                     phone: phone,
                   }),
@@ -4182,7 +4185,7 @@ media (min-width: 1024px){
                 .then(function(r){ return r.json(); })
                 .then(function(d){
                   if (d.error) { statusEl.textContent = d.error; statusEl.className = 'bisn-status err'; btn.disabled = false; return; }
-                  statusEl.textContent = d.already_in_stock ? 'This is already in stock — refresh the page!' : "You're on the list! We'll WhatsApp you the moment it's back.";
+                  statusEl.textContent = d.already_in_stock ? 'That size is already back — refresh the page!' : "You're on the list! We'll WhatsApp you the moment it's back.";
                   statusEl.className = 'bisn-status ok';
                   phoneInput.value = '';
                   btn.disabled = false;
