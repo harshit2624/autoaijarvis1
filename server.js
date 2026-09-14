@@ -8611,6 +8611,12 @@ app.delete("/admin/settlements/:id", adminAuth, async (req, res) => {
   if (!s) return res.status(404).json({ error: "Not found." });
   await mdb.collection('settlement_orders').deleteMany({ settlement_id: sid });
   await mdb.collection('wallet_tx').deleteMany({ ref_id: String(sid) });
+  // Otherwise these penalties stay permanently marked "already invoiced" —
+  // /outstanding-penalties treats settlement_penalties membership as proof a
+  // penalty was billed, regardless of whether the settlement that billed it
+  // still exists — so a deleted invoice silently hides them from every
+  // future settlement for this vendor.
+  await mdb.collection('settlement_penalties').deleteMany({ settlement_id: sid });
   await mdb.collection('settlements').deleteOne({ id: sid });
   auditLog("admin", "settlement_deleted", req.params.id, { vendor: s.vendor_name, invoice: s.invoice_no });
   res.json({ success: true });
