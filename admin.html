@@ -2530,9 +2530,10 @@
 
     const prepaidOrders   = (orders||[]).filter(o => o.payment_type === 'prepaid');
     const codOrders       = (orders||[]).filter(o => o.payment_type !== 'prepaid');
-    const prepaidDiscount = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0)*0.1, 0);
-    // CROSCROW collects MRP - 10% discount from prepaid customer
-    const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + ((o.my_revenue||0)*0.9), 0);
+    const ppDiscPct        = (s.prepaid_discount_pct ?? 10) / 100;
+    const prepaidDiscount = prepaidOrders.reduce((sum,o) => sum + (o.my_revenue||0)*ppDiscPct, 0);
+    // CROSCROW collects MRP - vendor's prepaid discount % from prepaid customer
+    const prepaidCollected = prepaidOrders.reduce((sum,o) => sum + ((o.my_revenue||0)*(1-ppDiscPct)), 0);
     const taxableValue    = (s.gross_revenue||0) - prepaidDiscount;
     // COD shipping from settlement_orders (stored at generation time from Shopify shipping_lines)
     const totalCodShipping = (orders||[]).reduce((sum,o) => sum + (o.shipping_charge||0), 0);
@@ -2645,7 +2646,7 @@
                 <thead>
                   <tr>
                     <th>#</th><th>Order</th><th>MRP</th><th>Type</th>
-                    <th>Disc(10%)</th><th>Tax Base</th><th>Comm%</th>
+                    <th>Disc({s.prepaid_discount_pct??10}%)</th><th>Tax Base</th><th>Comm%</th>
                     <th>Commission</th><th>GST 18%</th><th>Advance</th>
                     <th>Prepaid Collected</th><th>Shipping(COD)</th><th>Net</th>
                   </tr>
@@ -2653,9 +2654,9 @@
                 <tbody>
                   {(orders||[]).map((o,i)=>{
                     const isPrepaid = o.payment_type === 'prepaid';
-                    const disc  = isPrepaid ? (o.my_revenue||0)*0.1 : 0;
+                    const disc  = isPrepaid ? (o.my_revenue||0)*ppDiscPct : 0;
                     const base  = (o.my_revenue||0) - disc;
-                    const prepCollected = isPrepaid ? base : 0; // MRP - 10% disc
+                    const prepCollected = isPrepaid ? base : 0; // MRP - vendor's prepaid disc %
                     const shipping = (!isPrepaid && (o.shipping_charge||0)>0) ? o.shipping_charge : 0;
                     return (
                       <tr key={i}>
