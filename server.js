@@ -691,12 +691,17 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
-const STAGE_ORDER = ['misc','new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','returned'];
-// 'returned' ranks last (highest) and is terminal — a genuine customer return
-// must always beat a real Shopify "delivered" status in the eligibility
-// comparison, the opposite problem 'misc' had (it ranked LOWEST, so real
-// delivery data silently overrode it during settlement generation).
-const TERMINAL_STAGES = ['rto','cancelled','returned']; // permanent overrides — always win, never reversible via tags
+const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc','returned'];
+// 'misc'/'returned' rank near the end and are terminal — a manual exclusion
+// override must always beat a real Shopify "delivered" status. 'misc' used
+// to rank LOWEST (below even 'new'), so any merge/comparison through
+// higherStage() — including the multi-row stage merge in settlement
+// generation, which runs BEFORE any misc-specific guard downstream —
+// silently discarded it in favor of real delivery data. Confirmed live:
+// an order's merged vendorStageMap entry came out 'new' from
+// higherStage('new','misc') even though its actual stored OVS row was
+// 'misc', because the merge itself lost it before any guard ever saw it.
+const TERMINAL_STAGES = ['rto','cancelled','misc','returned']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
   const aTerm = TERMINAL_STAGES.includes(a);
   const bTerm = TERMINAL_STAGES.includes(b);
