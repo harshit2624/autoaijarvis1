@@ -809,11 +809,11 @@ function undiscountedPrice(li) {
 // ── Product-level flat/margin commission calculator ───────────────────────
 // rule: { mode, flat_amount, flat_gst_inclusive, vendor_cost, margin_pct, margin_gst_inclusive }
 // sellingPrice: Shopify line item unit price, qty: quantity, paymentType: 'prepaid'|'cod'
-function calcProductCommission(rule, sellingPrice, qty, paymentType) {
+function calcProductCommission(rule, sellingPrice, qty, paymentType, prepaidDiscountPct = 10) {
   const unitPrice = parseFloat(sellingPrice);
   const totalPrice = unitPrice * (qty || 1);
-  // For prepaid: CROSCROW gives vendor 10% discount (same as standard calc)
-  const base = paymentType === 'prepaid' ? totalPrice * 0.9 : totalPrice;
+  // For prepaid: CROSCROW gives vendor its configured prepaid discount (same as standard calc)
+  const base = paymentType === 'prepaid' ? totalPrice * (1 - (prepaidDiscountPct ?? 10) / 100) : totalPrice;
   let commission = 0, gst = 0;
 
   if (rule.mode === 'flat' || rule.mode === 'mixed') {
@@ -869,6 +869,63 @@ async function findProductRule(vendor_name, product_id, sku) {
     if (r) return r;
   }
   return null;
+}
+
+// ── Per-order vendor commission computation ─────────────────────────────
+// Single source of truth for both settlement generation AND settlement-edit
+// recalculation. Previously the edit endpoint recalculated every order with
+// a blanket calcCommission() call, silently discarding any vendor's custom
+// per-product flat/margin commission rule the moment commission_pct or
+// prepaid_discount_pct was edited — the rule_label ("Flat ₹586") stayed on
+// the invoice but the actual ₹ figures quietly fell back to a generic %,
+// and reverting the edit never restored the original correct numbers since
+// they'd already been overwritten in the DB. Routing both paths through
+// this one function means an edit can never diverge from how the invoice
+// was originally generated.
+async function computeVendorOrderCommission(o, vName, vendor_name, payType, commPct, prepaidDiscPct, orderOverrides = {}) {
+  const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
+  const effectivePrice = (li) => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
+  const myRev = myItems.reduce((s, li) => s + effectivePrice(li) * (li.quantity || 1), 0);
+  const myDiscount = parseFloat(myItems.reduce((s, li) => s + (li.discount_allocations || []).reduce((ds, d) => ds + parseFloat(d.amount || 0), 0), 0).toFixed(2));
+
+  let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
+  let hasProductRule = false;
+  const ruleLabels = new Set();
+  let hasDefaultRule = false;
+  for (const li of myItems) {
+    const liPrice = effectivePrice(li);
+    const itemRev = liPrice * (li.quantity || 1);
+    const productRule = await findProductRule(vendor_name, li.product_id, li.sku);
+    let liCalc;
+    if (productRule) {
+      liCalc = calcProductCommission(productRule, liPrice, li.quantity || 1, payType, prepaidDiscPct);
+      hasProductRule = true;
+      if (productRule.mode === 'flat') ruleLabels.add(`Flat ₹${productRule.flat_amount}`);
+      else if (productRule.mode === 'margin') ruleLabels.add(`Margin ${productRule.margin_pct}%`);
+      else if (productRule.mode === 'mixed') ruleLabels.add(`Mixed`);
+    } else {
+      liCalc = calcCommission(itemRev, payType, commPct, 0, prepaidDiscPct);
+      hasDefaultRule = true;
+    }
+    totalItemComm += liCalc.commission;
+    totalItemGst  += liCalc.gst;
+    totalItemNet  += liCalc.net;
+  }
+  const ruleLabel = ruleLabels.size === 0 ? null
+    : ruleLabels.size === 1 && !hasDefaultRule ? [...ruleLabels][0]
+    : [...ruleLabels].join(' + ') + (hasDefaultRule ? ` + ${commPct}%` : '');
+
+  const hasPriceOverride = myItems.some(li => orderOverrides[String(li.id)] !== undefined);
+  return {
+    my_revenue:  parseFloat(myRev.toFixed(2)),
+    commission:  parseFloat(totalItemComm.toFixed(2)),
+    gst:         parseFloat(totalItemGst.toFixed(2)),
+    net:         parseFloat(totalItemNet.toFixed(2)), // COD/prepaid net before advance/shipping — caller applies those
+    has_product_rule:   hasProductRule,
+    rule_label:          ruleLabel,
+    has_price_override: hasPriceOverride,
+    discount_amount:     myDiscount,
+  };
 }
 
 // Derive payment_type from Shopify financial_status
@@ -7580,45 +7637,10 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       const meta    = metaMap[String(o.id)] || {};
       const payType = meta.payment_type || "cod";
       const isCod   = payType !== "prepaid";
-      const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
       const orderOverrides = priceOverrideMap[String(o.id)] || {};
-      // Use pre-discount (listed) price for settlement — CROSCROW promo discounts
-      // are invisible to vendors. Price overrides take precedence when set.
-      const effectivePrice = (li) => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
-      const myRev   = myItems.reduce((s, li) => s + effectivePrice(li) * (li.quantity || 1), 0);
-      // Vendor's share of any checkout discount CROSCROW applied (e.g. a promo
-      // code) — only relevant later for the "bear COD discount" toggle, since
-      // vendor settlement always runs on full listed price regardless.
-      const myDiscount = parseFloat(myItems.reduce((s, li) => s + (li.discount_allocations || []).reduce((ds, d) => ds + parseFloat(d.amount || 0), 0), 0).toFixed(2));
 
-      // Check product-level rules per line item
-      let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
-      let hasProductRule = false;
-      const ruleLabels = new Set();
-      let hasDefaultRule = false;
-      for (const li of myItems) {
-        const liPrice = effectivePrice(li);
-        const itemRev = liPrice * (li.quantity || 1);
-        const productRule = await findProductRule(vendor_name, li.product_id, li.sku);
-        let liCalc;
-        if (productRule) {
-          liCalc = calcProductCommission(productRule, liPrice, li.quantity || 1, payType);
-          hasProductRule = true;
-          if (productRule.mode === 'flat') ruleLabels.add(`Flat ₹${productRule.flat_amount}`);
-          else if (productRule.mode === 'margin') ruleLabels.add(`Margin ${productRule.margin_pct}%`);
-          else if (productRule.mode === 'mixed') ruleLabels.add(`Mixed`);
-        } else {
-          liCalc = calcCommission(itemRev, payType, config.commission_pct, 0, config.prepaid_discount_pct);
-          hasDefaultRule = true;
-        }
-        totalItemComm += liCalc.commission;
-        totalItemGst  += liCalc.gst;
-        totalItemNet  += liCalc.net;
-      }
-      // Build label: show all unique rules used, flag if mixed with default %
-      const ruleLabel = ruleLabels.size === 0 ? null
-        : ruleLabels.size === 1 && !hasDefaultRule ? [...ruleLabels][0]
-        : [...ruleLabels].join(' + ') + (hasDefaultRule ? ` + ${config.commission_pct}%` : '');
+      const item = await computeVendorOrderCommission(o, vName, vendor_name, payType, config.commission_pct, config.prepaid_discount_pct, orderOverrides);
+
       // For multi-vendor orders, split advance equally among delivered vendors only.
       // This matches the dashboard stat card behaviour and prevents double-crediting
       // the same advance against multiple vendors' invoices.
@@ -7629,8 +7651,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       // COD net: vendor owes CC (commission+gst) minus advance already collected.
       // Prepaid net: CC owes vendor (base - commission - gst) — negative value.
       const calcNet = isCod
-        ? parseFloat((totalItemNet - advancePaid).toFixed(2))
-        : totalItemNet;
+        ? parseFloat((item.net - advancePaid).toFixed(2))
+        : item.net;
 
       // COD shipping: vendor collects shipping cash from customer at doorstep,
       // so vendor owes CC that shipping amount back. Split by vendor count in order.
@@ -7640,23 +7662,22 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       const shippingSplit = isCod && ordVendors.size > 0 ? parseFloat((orderShipping / ordVendors.size).toFixed(2)) : 0;
 
       const calc = {
-        commission: parseFloat(totalItemComm.toFixed(2)),
-        gst:        parseFloat(totalItemGst.toFixed(2)),
+        commission: item.commission,
+        gst:        item.gst,
         net:        parseFloat((calcNet + shippingSplit).toFixed(2)), // shipping included in per-order net
       };
 
-      totalRev      += myRev;
+      totalRev      += item.my_revenue;
       totalComm     += calc.commission;
       totalGst      += calc.gst;
       totalAdv      += advancePaid; // track split advance (not full order advance)
       totalShipping += shippingSplit;
       totalNet      += calc.net; // already includes shipping
 
-      const hasPriceOverride = myItems.some(li => orderOverrides[String(li.id)] !== undefined);
       orderDetails.push({
         shopify_order_id: String(o.id),
         order_name:       o.name,
-        my_revenue:       parseFloat(myRev.toFixed(2)),
+        my_revenue:       item.my_revenue,
         payment_type:     payType,
         commission_pct:   config.commission_pct,
         commission:       calc.commission,
@@ -7664,10 +7685,10 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         advance_paid:     advancePaid,
         shipping_charge:  shippingSplit,
         net:              calc.net,
-        has_product_rule: hasProductRule,
-        rule_label:       ruleLabel,
-        has_price_override: hasPriceOverride,
-        discount_amount:  myDiscount,
+        has_product_rule: item.has_product_rule,
+        rule_label:       item.rule_label,
+        has_price_override: item.has_price_override,
+        discount_amount:  item.discount_amount,
         cod_discount_borne: 0,
       });
     }
@@ -8704,16 +8725,53 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   if (needsRecalc) {
     const commPctToUse   = newCommPct  ?? (s.custom_commission_pct || 20);
     const ppDiscToUse    = newPPDisc   ?? (s.prepaid_discount_pct  ?? 10);
+    const vName = s.vendor_name.toLowerCase();
+
+    // Re-fetch live order data (line items + discount_allocations) and price
+    // overrides, then recompute through computeVendorOrderCommission — the
+    // same per-product-rule-aware path settlement generation uses. Previously
+    // this recalculated every order with a single blanket calcCommission()
+    // call regardless of payment type or any custom per-product flat/margin
+    // rule, which silently discarded those rules (the rule_label stayed on
+    // the invoice but the ₹ figures quietly fell back to a generic %) and
+    // meant reverting an edit never restored the original correct numbers.
+    const orderIds = orders.map(o => o.shopify_order_id);
+    const liveOrdersById = {};
+    const BATCH = 250;
+    for (let i = 0; i < orderIds.length; i += BATCH) {
+      const idChunk = orderIds.slice(i, i + BATCH).join(',');
+      if (!idChunk) continue;
+      const { orders: chunkOrders } = await shopifyREST(`/orders.json?ids=${idChunk}&limit=${BATCH}&status=any&fields=id,line_items,shipping_lines`);
+      for (const co of (chunkOrders || [])) liveOrdersById[String(co.id)] = co;
+    }
+    const priceOverrideDocs = await mdb.collection('order_price_overrides').find({ shopify_order_id: { $in: orderIds } }, { projection: { _id: 0 } }).toArray();
+    const priceOverrideMap = {};
+    for (const ov of priceOverrideDocs) {
+      if (!priceOverrideMap[ov.shopify_order_id]) priceOverrideMap[ov.shopify_order_id] = {};
+      priceOverrideMap[ov.shopify_order_id][ov.line_item_id] = ov.overridden_price;
+    }
+
     for (const o of orders) {
-      const calc = calcCommission(o.my_revenue, o.payment_type, commPctToUse, o.advance_paid, ppDiscToUse);
-      const shippingCharge = o.payment_type !== 'prepaid' ? (o.shipping_charge || 0) : 0;
-      const newNet = parseFloat((calc.net + shippingCharge).toFixed(2));
+      const liveOrder = liveOrdersById[o.shopify_order_id];
+      if (!liveOrder) continue; // order no longer fetchable from Shopify — leave its stored figures untouched
+      const orderOverrides = priceOverrideMap[o.shopify_order_id] || {};
+      const item = await computeVendorOrderCommission(liveOrder, vName, s.vendor_name, o.payment_type, commPctToUse, ppDiscToUse, orderOverrides);
+      const shippingCharge = o.payment_type !== 'prepaid' ? (o.shipping_charge || 0) : 0; // shipping split doesn't depend on commission rate, keep as generated
+      const calcNet = o.payment_type !== 'prepaid'
+        ? parseFloat((item.net - (o.advance_paid || 0)).toFixed(2))
+        : item.net;
+      const newNet = parseFloat((calcNet + shippingCharge).toFixed(2));
       // commission_gross/net_gross hold the value before any "bear COD
       // discount" deduction below — kept separate so that toggling the
       // deduction on/off never has to guess what the pre-deduction figure was.
       await mdb.collection('settlement_orders').updateOne(
         { id: o.id },
-        { $set: { commission_pct: commPctToUse, commission: calc.commission, gst: calc.gst, net: newNet, commission_gross: calc.commission, net_gross: newNet } }
+        { $set: {
+            commission_pct: commPctToUse, commission: item.commission, gst: item.gst, net: newNet,
+            commission_gross: item.commission, net_gross: newNet,
+            my_revenue: item.my_revenue, has_product_rule: item.has_product_rule, rule_label: item.rule_label,
+            has_price_override: item.has_price_override, discount_amount: item.discount_amount,
+          } }
       );
     }
     orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
