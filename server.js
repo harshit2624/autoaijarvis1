@@ -7597,6 +7597,13 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       // Guard: Shopify terminal stages only count if OVS isn't a conflicting terminal
       // (prevents DELIVERED_SELLER-type false positives from overriding a known RTO).
       const vendorDbStage = vendorStageMap[sid]?.stage || 'new';
+      // 'misc' is a manual admin override pulling the order out of the normal
+      // pipeline (same rule already enforced for the order-list display at
+      // the safeStage() helper above) — higherStage() ranks 'misc' as the
+      // LOWEST-priority stage, so without this guard Shopify's real fulfillment
+      // data ("delivered") won the comparison and misc'd orders got invoiced
+      // anyway, silently defeating the whole point of bulk-moving them to misc.
+      if (vendorDbStage === 'misc') return false;
       const shopifyFulfillmentStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor_name] || null;
       const effectiveStage = (shopifyFulfillmentStage && INVOICE_TERMINAL.includes(shopifyFulfillmentStage) && INVOICE_TERMINAL.includes(vendorDbStage) && vendorDbStage !== 'delivered')
         ? vendorDbStage  // OVS says rto/cancelled — don't override with shopify delivered

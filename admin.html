@@ -5777,6 +5777,7 @@
     const [msg,      setMsg]      = useState(null);
     const [retCfgVendor, setRetCfgVendor] = useState(null);
     const [vendors,  setVendors]  = useState([]);
+    const [vendorFilter, setVendorFilter] = useState('all');
     const [creditModalFor, setCreditModalFor] = useState(null);
 
     const load = () => {
@@ -5852,7 +5853,11 @@
               textTransform:'capitalize',
             }}>{t}</button>
           ))}
-          <button onClick={()=>setRetCfgVendor(retCfgVendor?null:'__open')} style={{padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',background:retCfgVendor?'var(--yellow-bg)':'var(--bg-card2)',color:retCfgVendor?'var(--yellow)':'var(--text-muted)',fontFamily:'var(--font-family)',fontSize:11,marginLeft:'auto'}}>
+          <select value={vendorFilter} onChange={e=>setVendorFilter(e.target.value)} style={{marginLeft:'auto',padding:'5px 10px',borderRadius:99,border:'1px solid var(--border)',background:vendorFilter!=='all'?'var(--indigo-dim)':'var(--bg-card2)',color:vendorFilter!=='all'?'var(--indigo)':'var(--text-muted)',fontFamily:'var(--font-family)',fontSize:11,fontWeight:vendorFilter!=='all'?700:400,cursor:'pointer'}}>
+            <option value="all">All Vendors</option>
+            {vendors.slice().sort().map(v=><option key={v} value={v}>{v}</option>)}
+          </select>
+          <button onClick={()=>setRetCfgVendor(retCfgVendor?null:'__open')} style={{padding:'5px 14px',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',background:retCfgVendor?'var(--yellow-bg)':'var(--bg-card2)',color:retCfgVendor?'var(--yellow)':'var(--text-muted)',fontFamily:'var(--font-family)',fontSize:11}}>
             ⚙ Vendor Return Config
           </button>
         </div>
@@ -5864,9 +5869,11 @@
 
         <div className="card">
           <div className="card-header"><span className="card-title">Return & Exchange Requests</span></div>
-          {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div> : (
+          {loading ? <div style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div> : (() => {
+            const filteredRequests = vendorFilter === 'all' ? requests : requests.filter(rq => rq.vendor_name === vendorFilter);
+            return (
             <div style={{overflowX:'auto'}}>
-              {requests.length === 0 ? (
+              {filteredRequests.length === 0 ? (
                 <div style={{padding:32,textAlign:'center',color:'var(--text-muted)',fontSize:13}}>No requests found.</div>
               ) : (
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
@@ -5878,7 +5885,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {requests.map(rq=>{
+                    {filteredRequests.map(rq=>{
                       const isExp = expanded===rq.request_id;
                       return (
                         <React.Fragment key={rq.request_id}>
@@ -6035,7 +6042,8 @@
                 </table>
               )}
             </div>
-          )}
+            );
+          })()}
         </div>
         {creditModalFor && (
           <StoreCreditModal token={token} rr={creditModalFor} onClose={()=>setCreditModalFor(null)}
