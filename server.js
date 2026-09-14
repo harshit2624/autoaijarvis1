@@ -796,12 +796,14 @@ function calcCommission(myRevenue, paymentType, commPct, advancePaid = 0, prepai
 
 
 // ── Pre-discount (listed) price helper ────────────────────────────────────
-// Shopify stores li.price as post-discount unit price. For vendor settlements
-// CROSCROW's promo discounts are invisible to the vendor — always settle on
-// the listed price (what the vendor expects to sell at).
+// li.price from Shopify is already the pre-discount listed price (discount
+// codes only show up in discount_allocations, never subtracted from li.price
+// itself — confirmed against total_line_items_price on real orders). So the
+// listed price vendors settle on is just li.price as-is; adding
+// discount_allocations back on top double-counted it, inflating the vendor's
+// settlement base above true MRP whenever a checkout discount was applied.
 function undiscountedPrice(li) {
-  const totalDiscount = (li.discount_allocations || []).reduce((s, d) => s + parseFloat(d.amount || 0), 0);
-  return parseFloat(li.price || 0) + (totalDiscount / (li.quantity || 1));
+  return parseFloat(li.price || 0);
 }
 
 // ── Product-level flat/margin commission calculator ───────────────────────
