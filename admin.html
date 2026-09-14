@@ -953,6 +953,18 @@
 
   const fmtCur  = (v, c='INR') => { try { return new Intl.NumberFormat('en-IN',{style:'currency',currency:c,maximumFractionDigits:0}).format(v||0); } catch { return `₹${(v||0).toFixed(0)}`; } };
   const fmtDate = s => { const d=new Date(s); return isNaN(d)?s:d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+  // Elapsed time since an ISO timestamp — "3h ago", "2d ago". Used for the
+  // "Received at CC Xh ago" badge so admin can see at a glance how close a
+  // return is to the 24h unresolved-reminder without opening it.
+  const timeSince = s => {
+    const ms = Date.now() - new Date(s).getTime();
+    if (isNaN(ms) || ms < 0) return '';
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
 
   // ── Date helpers ──────────────────────────────────────────────────────────
   const isoToday = () => new Date().toISOString().slice(0,10);
@@ -5972,6 +5984,17 @@
                                           ✓ Received at CC — added to inventory
                                           {rq.received_at_cc_at && <span style={{color:'var(--text-muted)',fontSize:10}}>({fmtDate(rq.received_at_cc_at)})</span>}
                                         </span>
+                                        {rq.received_at_cc_at && rq.resolution !== 'store_credit' && (()=>{
+                                          const hrsSince = (Date.now() - new Date(rq.received_at_cc_at).getTime()) / 3600000;
+                                          const overdue = hrsSince >= 20; // reminder cron fires the WA nudge at 24h — start flagging it a few hours ahead
+                                          return (
+                                            <span title="Time since received — still unresolved" style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:10,
+                                              background: overdue ? 'rgba(239,68,68,0.12)' : 'rgba(148,163,184,0.12)',
+                                              color: overdue ? '#ef4444' : 'var(--text-muted)'}}>
+                                              ⏱ {timeSince(rq.received_at_cc_at)}{overdue ? ' — review now' : ''}
+                                            </span>
+                                          );
+                                        })()}
                                         <button className="btn btn-ghost btn-sm"
                                           style={{borderColor:'#f59e0b',color:'#f59e0b',fontSize:10}}
                                           onClick={()=>{ if(confirm('Re-add items to CC inventory? Quantity will be incremented again.')) receiveAtCC(rq.request_id, true); }}
