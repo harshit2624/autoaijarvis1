@@ -24772,10 +24772,13 @@ Supported actions:
 - generate_exchange — swap an item for a different size/variant, OR reship the identical item ("replace", "send a replacement", "wrong item/size sent — resend", damaged item, etc.). Fields: order_id, from_size (optional — omit if only one item on the order), to_size (omit entirely for a same-size replacement — the system defaults to reshipping the same variant when to_size is absent; only set it when the admin names a genuinely different size to exchange into).
 - generate_return — start a refund-path return for the whole order. Fields: order_id.
 - issue_store_credit — issue Shopify store credit for whatever the customer paid on the order. Fields: order_id.
+- waive_fee — waive the return/exchange fee for an order so the CUSTOMER can complete the return/replacement themselves on their own return page (no fee, no code to enter) — this does NOT create the request itself, just removes the fee. Triggers: "waive the fee for order X", "no fee for X", "fee waiver for X". Fields: order_id.
+- unlock_return — unlock return/exchange eligibility for an order (bypasses the window/vendor restrictions) so the customer can self-serve on their return page. Triggers: "unlock return for order X", "let them return X even though window closed". Fields: order_id.
 - unknown — doesn't clearly match any of the above, or no order number is present.
 
 order_id is the bare Shopify order number, digits only (strip any leading #). Respond with ONLY JSON in this exact shape:
 {"action":"generate_exchange","order_id":"3321","from_size":"S","to_size":"M","reason":""}
+For waive_fee/unlock_return, omit from_size/to_size: {"action":"waive_fee","order_id":"2345","reason":""}
 
 Message: "${text.replace(/"/g, '\\"')}"`;
 
@@ -24901,7 +24904,7 @@ async function handleAdminWACommand(fromDigits, text) {
 
   const intent = await parseAdminWACommand(text);
   if (!intent || intent.action === 'unknown' || !intent.order_id) {
-    await reply(`Didn't catch an order command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"`);
+    await reply(`Didn't catch an order command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"`);
     return;
   }
 
@@ -24923,6 +24926,12 @@ async function handleAdminWACommand(fromDigits, text) {
     } else if (intent.action === 'issue_store_credit') {
       const result = await adminIssueStoreCreditForOrder(order, intent.reason);
       await reply(`✅ Store credit issued for order ${order.name}: ₹${result.amount.toFixed(0)} (code ${result.code}).\nCustomer notified on WhatsApp.`);
+    } else if (intent.action === 'waive_fee') {
+      await applyReturnOverride({ shopify_order_id: order.id, fee_waived: true, note: intent.reason || 'Waived via WA admin command', set_by: 'wa_admin' });
+      await reply(`✅ RR fee waived for order ${order.name}. Customer can now return/exchange on their return page free of charge — they've been notified on WhatsApp.`);
+    } else if (intent.action === 'unlock_return') {
+      await applyReturnOverride({ shopify_order_id: order.id, force_unlock: true, note: intent.reason || 'Unlocked via WA admin command', set_by: 'wa_admin' });
+      await reply(`✅ Return/exchange unlocked for order ${order.name} — customer can self-serve on their return page now. They've been notified on WhatsApp.`);
     }
   } catch (e) {
     console.error('❌ Admin WA command failed:', e.message);
