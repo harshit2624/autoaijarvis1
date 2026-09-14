@@ -465,7 +465,7 @@ const OVS = {
 // order_vendor_stage row, in pipeline order — same pattern already used ad
 // hoc in a couple of places (e.g. the Meta campaign-performance endpoint),
 // pulled out here as one shared helper instead of copy-pasted per caller.
-const ORDER_STAGE_PIPELINE = ['new', 'confirmed', 'partial', 'hold', 'ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'cancelled', 'misc'];
+const ORDER_STAGE_PIPELINE = ['new', 'confirmed', 'partial', 'hold', 'ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'cancelled', 'misc', 'returned'];
 async function getEffectiveOrderStage(shopifyId, metaStage) {
   const sid = String(shopifyId);
   let best = ORDER_STAGE_PIPELINE.indexOf(metaStage || 'new');
@@ -691,8 +691,12 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
-const STAGE_ORDER = ['misc','new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled'];
-const TERMINAL_STAGES = ['rto','cancelled']; // permanent overrides — always win, never reversible via tags
+const STAGE_ORDER = ['misc','new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','returned'];
+// 'returned' ranks last (highest) and is terminal — a genuine customer return
+// must always beat a real Shopify "delivered" status in the eligibility
+// comparison, the opposite problem 'misc' had (it ranked LOWEST, so real
+// delivery data silently overrode it during settlement generation).
+const TERMINAL_STAGES = ['rto','cancelled','returned']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
   const aTerm = TERMINAL_STAGES.includes(a);
   const bTerm = TERMINAL_STAGES.includes(b);
@@ -966,15 +970,15 @@ async function applyTagMappings(orderId, tags, financialStatus) {
   if (winner) {
     const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
     const newStage = winner.stage;
-    // 'misc' is a manual override (only set via the admin bulk-select tool or
-    // the order-detail stage dropdown) meant to permanently pull an order out
-    // of settlement — a routine tag-mapping resync (fires on any Shopify
-    // orders/updated webhook, e.g. right after that same admin tool PATCHes
-    // the order's tags) has no business silently reverting it back to
+    // 'misc'/'returned' are manual overrides (only set via the admin bulk-select
+    // tool or the order-detail stage dropdown) meant to permanently pull an
+    // order out of settlement — a routine tag-mapping resync (fires on any
+    // Shopify orders/updated webhook, e.g. right after that same admin tool
+    // PATCHes the order's tags) has no business silently reverting it back to
     // whatever OTHER tag happens to match. Same rule already enforced at
     // buildOrderPayload's safeStage() for display — this is the actual
     // write path that was missing it.
-    if (prev?.stage === 'misc') return;
+    if (prev?.stage === 'misc' || prev?.stage === 'returned') return;
     const metaUpdate = { stage: newStage, updated_at: now };
 
     await OM.upsert(sid, metaUpdate);
@@ -7004,7 +7008,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
             // that stage, showing it in the UI would contradict what the settlement includes.
             const TERMINAL = ['delivered', 'rto', 'cancelled'];
             const safeStage = (stored, shopifyDerived) => {
-              if (stored === 'misc') return 'misc'; // misc is a manual override — never overwritten
+              if (stored === 'misc' || stored === 'returned') return stored; // manual overrides — never overwritten
               if (!shopifyDerived) return stored;
               // Don't let Shopify terminal override a non-terminal OVS stage
               if (TERMINAL.includes(shopifyDerived) && !TERMINAL.includes(stored)) return stored;
@@ -7109,7 +7113,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
 app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","returned"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   // RTO is a courier-confirmed terminal — never allow misc override
@@ -7153,7 +7157,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
   if (!stage && add_tags.length === 0 && remove_tags.length === 0)
     return res.status(400).json({ error: "Specify stage or tags to add/remove." });
 
-  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc"];
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","returned"];
   if (stage && !VALID_STAGES.includes(stage))
     return res.status(400).json({ error: "Invalid stage." });
 
@@ -7191,7 +7195,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
             // tag on the order happened to match. Scoped to just these two stages
             // so normal pipeline stages (confirmed/ready/etc.) still get picked up
             // by real courier-tracking auto-sync afterward, same as before.
-            const stickyOverride = ['misc', 'hold'].includes(stage);
+            const stickyOverride = ['misc', 'hold', 'returned'].includes(stage);
             await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: fulfilledStages.includes(stage)?0:(existing?.warning_sent||0), penalty_triggered: fulfilledStages.includes(stage)?0:(existing?.penalty_triggered||0), ...(stickyOverride && { manually_overridden: true }) });
           }
         } catch(e) { /* non-fatal */ }
@@ -7247,7 +7251,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
 app.put("/admin/orders/:id/vendor-stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { vendor_name, stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","returned"];
   if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 

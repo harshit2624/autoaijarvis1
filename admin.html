@@ -1195,6 +1195,7 @@
     { id:'hold',      label:'Hold',           color:'purple', icon:'⏸' },
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
     { id:'misc',      label:'Miscellaneous',  color:'gray',   icon:'◌' },
+    { id:'returned',  label:'Returned',       color:'gray',   icon:'⟲' },
     { id:'rr',        label:'Return/Exchange', color:'purple', icon:'↩' },
   ];
 
@@ -1790,10 +1791,13 @@
     };
 
     const save = async () => {
-      // Warn before moving a delivered order to misc — it will be excluded from settlement
-      if (stage === 'misc' && (order.stage === 'delivered' || order.deliveryStatus?.toLowerCase() === 'delivered')) {
+      // Warn before moving a delivered order to misc/returned — it will be excluded from settlement
+      if ((stage === 'misc' || stage === 'returned') && (order.stage === 'delivered' || order.deliveryStatus?.toLowerCase() === 'delivered')) {
+        const isReturn = stage === 'returned';
         const ok = window.confirm(
-          '⚠️ This order is marked DELIVERED.\n\nMoving it to MISC will exclude it from settlement — the vendor will NOT be paid for this order.\n\nOnly do this for influencer/gifted orders.\n\nContinue?'
+          `⚠️ This order is marked DELIVERED.\n\nMoving it to ${isReturn ? 'RETURNED' : 'MISC'} will exclude it from settlement — the vendor will NOT be paid for this order.\n\n`
+          + (isReturn ? 'Only do this for orders the customer actually returned/was refunded.' : 'Only do this for influencer/gifted orders.')
+          + '\n\nContinue?'
         );
         if (!ok) return;
       }
@@ -4868,14 +4872,16 @@
 
     const applyBulk = async () => {
       if (!bulkStage && bulkAddTags.length === 0 && bulkRmTags.length === 0) { setBulkMsg({type:'error',text:'Select a stage or pick tags to add/remove.'}); return; }
-      if (bulkStage === 'misc') {
+      if (bulkStage === 'misc' || bulkStage === 'returned') {
         const affected = orders.filter(o => selected.has(o.shopifyId));
         const names = affected.map(o => o.id).join('\n');
         const deliveredCount = affected.filter(o => o.stage === 'delivered').length;
+        const label = bulkStage === 'misc' ? 'MISC' : 'RETURNED';
+        const purpose = bulkStage === 'misc' ? 'Only do this for influencer/gifted orders.' : 'Only do this for orders the customer actually returned/was refunded.';
         const ok = window.confirm(
-          `⚠️ Moving ${affected.length} order${affected.length!==1?'s':''} to MISC — excluded from settlement, vendor will NOT be paid.\n`
+          `⚠️ Moving ${affected.length} order${affected.length!==1?'s':''} to ${label} — excluded from settlement, vendor will NOT be paid.\n`
           + (deliveredCount ? `${deliveredCount} of these are already DELIVERED.\n` : '')
-          + `\nOrders:\n${names}\n\nOnly do this for influencer/gifted orders. Continue?`
+          + `\nOrders:\n${names}\n\n${purpose} Continue?`
         );
         if (!ok) return;
       }
@@ -5170,7 +5176,7 @@
             <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)',whiteSpace:'nowrap'}}>{selected.size} selected</span>
             <select className="form-select" style={{fontSize:11,padding:'5px 8px',flex:'0 0 140px'}} value={bulkStage} onChange={e=>setBulkStage(e.target.value)}>
               <option value="">Set stage…</option>
-              {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled','misc'].map(s=><option key={s} value={s}>{s==='misc'?'Miscellaneous':s}</option>)}
+              {['new','confirmed','partial','ready','pickup','transit','delivered','rto','hold','cancelled','misc','returned'].map(s=><option key={s} value={s}>{s==='misc'?'Miscellaneous':s==='returned'?'Returned':s}</option>)}
             </select>
             {/* Add tags picker */}
             {(() => {
