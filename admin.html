@@ -4868,6 +4868,17 @@
 
     const applyBulk = async () => {
       if (!bulkStage && bulkAddTags.length === 0 && bulkRmTags.length === 0) { setBulkMsg({type:'error',text:'Select a stage or pick tags to add/remove.'}); return; }
+      if (bulkStage === 'misc') {
+        const affected = orders.filter(o => selected.has(o.shopifyId));
+        const names = affected.map(o => o.id).join('\n');
+        const deliveredCount = affected.filter(o => o.stage === 'delivered').length;
+        const ok = window.confirm(
+          `⚠️ Moving ${affected.length} order${affected.length!==1?'s':''} to MISC — excluded from settlement, vendor will NOT be paid.\n`
+          + (deliveredCount ? `${deliveredCount} of these are already DELIVERED.\n` : '')
+          + `\nOrders:\n${names}\n\nOnly do this for influencer/gifted orders. Continue?`
+        );
+        if (!ok) return;
+      }
       setBulkBusy(true); setBulkMsg(null);
       try {
         const r = await fetch(`${API}/admin/orders/bulk-update`, {

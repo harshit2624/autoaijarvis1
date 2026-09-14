@@ -966,6 +966,15 @@ async function applyTagMappings(orderId, tags, financialStatus) {
   if (winner) {
     const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
     const newStage = winner.stage;
+    // 'misc' is a manual override (only set via the admin bulk-select tool or
+    // the order-detail stage dropdown) meant to permanently pull an order out
+    // of settlement — a routine tag-mapping resync (fires on any Shopify
+    // orders/updated webhook, e.g. right after that same admin tool PATCHes
+    // the order's tags) has no business silently reverting it back to
+    // whatever OTHER tag happens to match. Same rule already enforced at
+    // buildOrderPayload's safeStage() for display — this is the actual
+    // write path that was missing it.
+    if (prev?.stage === 'misc') return;
     const metaUpdate = { stage: newStage, updated_at: now };
 
     await OM.upsert(sid, metaUpdate);
@@ -7175,7 +7184,15 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
           for (const vendor of vendors) {
             const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
             const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
-            await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: fulfilledStages.includes(stage)?0:(existing?.warning_sent||0), penalty_triggered: fulfilledStages.includes(stage)?0:(existing?.penalty_triggered||0) });
+            // manually_overridden only for the sticky override stages (misc/hold) —
+            // without it the next tag-mapping resync (applyTagMappings, fired by
+            // Shopify's own orders/updated webhook, e.g. right after the tag PUT
+            // below) silently reverted a bulk misc/hold move back to whatever OTHER
+            // tag on the order happened to match. Scoped to just these two stages
+            // so normal pipeline stages (confirmed/ready/etc.) still get picked up
+            // by real courier-tracking auto-sync afterward, same as before.
+            const stickyOverride = ['misc', 'hold'].includes(stage);
+            await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: fulfilledStages.includes(stage)?0:(existing?.warning_sent||0), penalty_triggered: fulfilledStages.includes(stage)?0:(existing?.penalty_triggered||0), ...(stickyOverride && { manually_overridden: true }) });
           }
         } catch(e) { /* non-fatal */ }
       }
