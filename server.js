@@ -10866,6 +10866,71 @@ app.delete("/admin/orders/:id/price-overrides/:lineItemId", requirePermission('o
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Admin: force-unlock return/exchange and/or waive RR fee for one order ──
+// Applies automatically on the customer's return page (buildOrderPayload
+// folds order_return_overrides into return_configs) — no shared code to type
+// in, unlike the old RR_FORCE_ENABLE_CODE/RR_FEE_WAIVER_CODE env-var codes.
+// Shared by both the admin panel button and the WA admin-command bot.
+async function applyReturnOverride({ shopify_order_id, force_unlock, fee_waived, note = '', set_by = 'admin' }) {
+  const now = new Date().toISOString();
+  const existing = await mdb.collection('order_return_overrides').findOne({ shopify_order_id: String(shopify_order_id) }, { projection: { _id: 0 } });
+  const doc = {
+    shopify_order_id: String(shopify_order_id),
+    force_unlock: force_unlock != null ? !!force_unlock : !!existing?.force_unlock,
+    fee_waived:   fee_waived   != null ? !!fee_waived   : !!existing?.fee_waived,
+    note: note || existing?.note || '',
+    set_by, set_at: now,
+  };
+  await mdb.collection('order_return_overrides').updateOne(
+    { shopify_order_id: String(shopify_order_id) },
+    { $set: doc },
+    { upsert: true }
+  );
+
+  // Notify the customer, but only for whichever flag actually just turned on
+  // (avoid re-pinging them every time an admin re-saves the same state).
+  const justUnlocked = force_unlock === true && !existing?.force_unlock;
+  const justWaived    = fee_waived   === true && !existing?.fee_waived;
+  if (justUnlocked || justWaived) {
+    try {
+      const { orders } = await shopifyREST(`/orders.json?ids=${shopify_order_id}&limit=1&status=any&fields=id,name,phone,shipping_address,billing_address,customer,email`);
+      const o = orders?.[0];
+      if (o) {
+        const digits = normalizePhone(o.shipping_address?.phone || o.billing_address?.phone || o.phone || '');
+        if (digits.length === 10) {
+          const messageLine = justUnlocked && justWaived
+            ? 'Return & exchange unlocked for this order, and the ₹199 fee has been waived — no code needed.'
+            : justUnlocked
+            ? 'Return & exchange unlocked for this order — no code needed.'
+            : 'The RR fee for this order has been waived.';
+          const orderSlug = encodeURIComponent(String(o.name).replace(/^#/, ''));
+          await sendWACloudTemplate({
+            phone10: digits,
+            templateName: WA_TPL.RR_ADMIN_OVERRIDE,
+            bodyParams: [o.name, messageLine],
+            urlButtonParam: `${orderSlug}&contact=na`,
+          });
+        }
+      }
+    } catch (e) { console.error('❌ return-override WA notify failed:', e.message); }
+  }
+  return doc;
+}
+
+app.put("/admin/orders/:id/return-override", requirePermission('orders'), async (req, res) => {
+  try {
+    const { force_unlock, fee_waived, note } = req.body || {};
+    const doc = await applyReturnOverride({ shopify_order_id: req.params.id, force_unlock, fee_waived, note, set_by: req.staffUsername || 'admin' });
+    auditLog(req.staffUsername || 'admin', 'return_override', req.params.id, doc);
+    res.json({ success: true, override: doc });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/admin/orders/:id/return-override", requirePermission('orders'), async (req, res) => {
+  const doc = await mdb.collection('order_return_overrides').findOne({ shopify_order_id: String(req.params.id) }, { projection: { _id: 0 } });
+  res.json({ override: doc || null });
+});
+
 // Vendor: get + post notes
 app.get("/vendor/orders/:id/notes", vendorAuth, async (req, res) => {
   const notes = await ON.allFor(req.params.id);
@@ -19274,8 +19339,20 @@ async function rrReminderCron() {
       await rrPushHistory(r.request_id, { event: 'pickup_overdue_48h', note: 'Pickup overdue 48h+ since approval — WA sent to admin & vendor', source: 'auto' });
     }
 
-    if (pendingOld.length + approvedOld.length + overdueRRs.length > 0)
-      console.log(`📧 RR reminders sent: ${pendingOld.length} admin(email), ${approvedOld.length} vendor(email), ${overdueRRs.length} 48h-overdue(WA)`);
+    // Received at Kekri warehouse > 24hrs with no resolution yet (no store
+    // credit / refund / exchange dispatch actioned) — re-nudge admin. Fires
+    // once (reminder_sent_receipt), same pattern as the other reminders here.
+    const receivedOld = await mdb.collection('return_requests').find({
+      received_at_cc: true, received_at_cc_at: { $lt: ago24 },
+      resolution: { $exists: false }, reminder_sent_receipt: { $ne: true },
+    }).toArray();
+    for (const r of receivedOld) {
+      await waAdminAlert(`⏰ *24h Reminder: Return Still Unreviewed*\n\nOrder *${r.order_name || r.shopify_order_id}*\nRequest: ${r.request_id}\nReceived at Kekri 24h+ ago — review and issue store credit / refund / exchange dispatch.`, 'return_receipt');
+      await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_receipt: true } });
+    }
+
+    if (pendingOld.length + approvedOld.length + overdueRRs.length + receivedOld.length > 0)
+      console.log(`📧 RR reminders sent: ${pendingOld.length} admin(email), ${approvedOld.length} vendor(email), ${overdueRRs.length} 48h-overdue(WA), ${receivedOld.length} receipt-24h(WA)`);
   } catch(e) { console.error('RR reminder cron error:', e.message); }
 }
 setTimeout(rrReminderCron, 90000);
@@ -19504,10 +19581,21 @@ async function buildOrderPayload(order) {
     if (!vendorNamesSeen.has(key)) vendorNamesSeen.set(key, v);
   }
   const vendorNames = [...vendorNamesSeen.values()];
+  // Admin can force-unlock return/exchange (bypasses window + vendor return_enabled)
+  // and/or waive the RR fee for this specific order — set from the admin panel or
+  // via WA admin command, applies automatically on the customer's return page with
+  // no code to type in (unlike the old shared RR_FORCE_ENABLE_CODE/RR_FEE_WAIVER_CODE).
+  const returnOverride = await mdb.collection('order_return_overrides').findOne({ shopify_order_id: String(order.id) }, { projection: { _id: 0 } }) || null;
   const returnConfigs = {};
   for (const v of vendorNames) {
     const cfg = await mdb.collection('vendor_return_config').findOne({ vendor_name: v }, { projection: { _id: 0 } }) || {};
-    returnConfigs[v] = { exchange_enabled: true, return_enabled: cfg.return_enabled === true, return_window_days: cfg.return_window_days || 7, return_address: cfg.return_address || null, rr_fee: cfg.rr_fee ?? 199 };
+    returnConfigs[v] = {
+      exchange_enabled: true,
+      return_enabled: returnOverride?.force_unlock ? true : cfg.return_enabled === true,
+      return_window_days: returnOverride?.force_unlock ? 36500 : (cfg.return_window_days || 7),
+      return_address: cfg.return_address || null,
+      rr_fee: returnOverride?.fee_waived ? 0 : (cfg.rr_fee ?? 199),
+    };
   }
   const items = (order.line_items || []).map(li => ({
     line_item_id: li.id, product_id: li.product_id, variant_id: li.variant_id,
@@ -19612,6 +19700,7 @@ async function buildOrderPayload(order) {
     items, vendor_names: vendorNames,
     vendor_shipments: vendorShipments,
     return_configs: returnConfigs, return_requests: returnRequests,
+    return_override: returnOverride ? { force_unlock: !!returnOverride.force_unlock, fee_waived: !!returnOverride.fee_waived, note: returnOverride.note || '', set_at: returnOverride.set_at || null } : null,
     cc_stock: ccStockItems,
     delivery_status: meta.delivery_status || '',
     delivery_status_updated_at: meta.delivery_status_updated_at || '',
@@ -20562,6 +20651,12 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
 
     await rrPushHistory(req.params.id, { event: 'received_at_cc', note: `${added.length} item(s) added to CC inventory`, source: 'admin' });
     auditLog("admin", "rr_received_at_cc", req.params.id, { added });
+
+    // Nudge admin to actually action this now that it's physically at the
+    // warehouse — a 24h reminder cron (see cronReturnReminders) re-pings if
+    // it's still sitting unresolved (no resolution set on the RR yet).
+    waAdminAlert(`📦 *Return Received at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nType: ${rr.type}\n\nReview it and issue store credit / refund / exchange dispatch.`, 'return_receipt').catch(() => {});
+
     res.json({ success: true, added });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -20646,82 +20741,92 @@ app.get("/admin/return-requests/:id/credit-preview", adminAuth, async (req, res)
   }
 });
 
+// Shared by the admin-panel store-credit button AND the WA admin-command
+// bot ("issue store credit to 2453 for whatever he paid") — single source
+// of truth so both paths compute the same discount-aware amount and hit the
+// same ledger/notification code. Throws Error(message) on failure so both
+// callers can surface it their own way (HTTP response vs WA reply).
+async function issueStoreCreditForRR(request_id, amountOverride) {
+  const rr = await mdb.collection('return_requests').findOne({ request_id }, { projection: { _id: 0 } });
+  if (!rr) throw new Error('Request not found');
+  if (rr.resolution === 'store_credit') throw new Error('Store credit already issued for this request.');
+  if (!rr.shopify_order_id) throw new Error('No linked Shopify order on this request.');
+
+  const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,currency,line_items,discount_codes`);
+  const customerId = order?.customer?.id;
+  if (!customerId) throw new Error('Could not find a Shopify customer on this order — store credit requires a registered customer account.');
+
+  // Default amount must reflect what the customer actually PAID, not the
+  // product's listed price — if the order had a discount applied, using
+  // the raw item price over-credits them. Shopify's line_items each carry
+  // their own allocated total_discount; net it out per returned item,
+  // matching by line_item_id (falls back to variant_id, then to the raw
+  // item price if the line can't be matched at all).
+  const olis = order.line_items || [];
+  let grossAmount = 0, netAmount = 0, matchedAny = false;
+  (rr.items || []).forEach(it => {
+    const qty = parseInt(it.qty || it.quantity) || 1;
+    const match = olis.find(li => String(li.id) === String(it.line_item_id))
+      || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
+    const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
+    grossAmount += unitGross * qty;
+    if (match) {
+      matchedAny = true;
+      const lineQty = parseInt(match.quantity) || qty;
+      const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
+      netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
+    } else {
+      netAmount += unitGross * qty; // no line match — can't net out a discount, use gross
+    }
+  });
+  if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
+  const discountDetected = matchedAny && netAmount < grossAmount - 0.01;
+  const defaultAmount = netAmount || grossAmount;
+  const amount = parseFloat(amountOverride) > 0 ? parseFloat(amountOverride) : defaultAmount;
+  const currency = order.currency || 'INR';
+
+  const credit = await createShopifyDiscountCode(customerId, amount, currency, rr.order_name);
+
+  const now = new Date().toISOString();
+  const ledgerEntry = {
+    request_id: rr.request_id,
+    shopify_order_id: rr.shopify_order_id,
+    shopify_customer_id: String(customerId),
+    customer_email: rr.customer_email,
+    customer_name: rr.customer_name,
+    amount, currency,
+    code: credit.code,
+    min_order_amount: credit.minOrderAmount,
+    price_rule_id: credit.priceRuleId,
+    discount_code_id: credit.discountCodeId,
+    gross_amount: grossAmount,
+    net_amount: netAmount,
+    discount_detected: discountDetected,
+    issued_by: 'admin',
+    issued_at: now,
+  };
+  await mdb.collection('store_credits').insertOne(ledgerEntry);
+
+  await mdb.collection('return_requests').updateOne(
+    { request_id: rr.request_id },
+    { $set: { resolution: 'store_credit', store_credit: { amount, currency, code: credit.code, issued_at: now }, status: rrStatusRank(rr.status) < rrStatusRank('completed') ? 'completed' : rr.status, updated_at: now } }
+  );
+  await rrPushHistory(rr.request_id, { event: 'store_credit_issued', status: 'completed', note: `₹${amount.toFixed(0)} discount code issued (${credit.code})`, source: 'admin' });
+
+  sendRREmail('store_credit', { ...rr, resolution: 'store_credit' }, { amount, code: credit.code, minOrderAmount: credit.minOrderAmount, currency }).catch(e => console.error('RR store credit email error:', e.message));
+  sendRRWANotif(rr, 'store_credit_issued', { amount, code: credit.code }).catch(() => {});
+  auditLog('admin', 'rr_store_credit_issued', rr.request_id, { amount, currency, customerId, code: credit.code });
+
+  return { amount, currency, code: credit.code, minOrderAmount: credit.minOrderAmount, grossAmount, netAmount, discountDetected };
+}
+
 app.post("/admin/return-requests/:id/store-credit", adminAuth, async (req, res) => {
   try {
-    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
-    if (!rr) return res.status(404).json({ error: 'Request not found' });
-    if (rr.resolution === 'store_credit') return res.status(400).json({ error: 'Store credit already issued for this request.' });
-    if (!rr.shopify_order_id) return res.status(400).json({ error: 'No linked Shopify order on this request.' });
-
-    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,currency,line_items,discount_codes`);
-    const customerId = order?.customer?.id;
-    if (!customerId) return res.status(400).json({ error: 'Could not find a Shopify customer on this order — store credit requires a registered customer account.' });
-
-    // Default amount must reflect what the customer actually PAID, not the
-    // product's listed price — if the order had a discount applied, using
-    // the raw item price over-credits them. Shopify's line_items each carry
-    // their own allocated total_discount; net it out per returned item,
-    // matching by line_item_id (falls back to variant_id, then to the raw
-    // item price if the line can't be matched at all).
-    const olis = order.line_items || [];
-    let grossAmount = 0, netAmount = 0, matchedAny = false;
-    (rr.items || []).forEach(it => {
-      const qty = parseInt(it.qty || it.quantity) || 1;
-      const match = olis.find(li => String(li.id) === String(it.line_item_id))
-        || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
-      const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
-      grossAmount += unitGross * qty;
-      if (match) {
-        matchedAny = true;
-        const lineQty = parseInt(match.quantity) || qty;
-        const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
-        netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
-      } else {
-        netAmount += unitGross * qty; // no line match — can't net out a discount, use gross
-      }
-    });
-    if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
-    const discountDetected = matchedAny && netAmount < grossAmount - 0.01;
-    const defaultAmount = netAmount || grossAmount;
-    const amount = parseFloat(req.body?.amount) > 0 ? parseFloat(req.body.amount) : defaultAmount;
-    const currency = order.currency || 'INR';
-
-    const credit = await createShopifyDiscountCode(customerId, amount, currency, rr.order_name);
-
-    const now = new Date().toISOString();
-    const ledgerEntry = {
-      request_id: rr.request_id,
-      shopify_order_id: rr.shopify_order_id,
-      shopify_customer_id: String(customerId),
-      customer_email: rr.customer_email,
-      customer_name: rr.customer_name,
-      amount, currency,
-      code: credit.code,
-      min_order_amount: credit.minOrderAmount,
-      price_rule_id: credit.priceRuleId,
-      discount_code_id: credit.discountCodeId,
-      gross_amount: grossAmount,
-      net_amount: netAmount,
-      discount_detected: discountDetected,
-      issued_by: 'admin',
-      issued_at: now,
-    };
-    await mdb.collection('store_credits').insertOne(ledgerEntry);
-
-    await mdb.collection('return_requests').updateOne(
-      { request_id: rr.request_id },
-      { $set: { resolution: 'store_credit', store_credit: { amount, currency, code: credit.code, issued_at: now }, status: rrStatusRank(rr.status) < rrStatusRank('completed') ? 'completed' : rr.status, updated_at: now } }
-    );
-    await rrPushHistory(rr.request_id, { event: 'store_credit_issued', status: 'completed', note: `₹${amount.toFixed(0)} discount code issued (${credit.code})`, source: 'admin' });
-
-    sendRREmail('store_credit', { ...rr, resolution: 'store_credit' }, { amount, code: credit.code, minOrderAmount: credit.minOrderAmount, currency }).catch(e => console.error('RR store credit email error:', e.message));
-    sendRRWANotif(rr, 'store_credit_issued', { amount, code: credit.code }).catch(() => {});
-    auditLog('admin', 'rr_store_credit_issued', rr.request_id, { amount, currency, customerId, code: credit.code });
-
-    res.json({ success: true, amount, currency, code: credit.code, minOrderAmount: credit.minOrderAmount, grossAmount, netAmount, discountDetected });
+    const result = await issueStoreCreditForRR(req.params.id, req.body?.amount);
+    res.json({ success: true, ...result });
   } catch (err) {
     console.error('❌ RR store-credit error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -24536,6 +24641,7 @@ const WA_TPL = {
   VENDOR_CUSTOMER_QUERY: 'vendor_customer_query',
   BACK_IN_STOCK: 'back_in_stock_v1',
   BACK_IN_STOCK_SIGNUP: 'back_in_stock_signup_v1',
+  RR_ADMIN_OVERRIDE: 'rr_admin_override_v1',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
@@ -24648,6 +24754,168 @@ app.get('/webhooks/whatsapp-cloud', (req, res) => {
   res.sendStatus(403);
 });
 
+// ── WA Admin Command Bot ────────────────────────────────────────────────
+// Lets the admin text CROSCROW's own WA number directly to execute return/
+// exchange actions in plain English — e.g. "generate exchange of order 3321
+// from S to M", "generate return for 2231", "issue store credit to 2453 for
+// whatever they paid". Parsed by Claude into a small structured intent, then
+// run through the exact same RR-creation/store-credit logic (adminCreateRR /
+// issueStoreCreditForRR) the admin panel itself uses — never a separate
+// implementation that could drift. Replies confirm what happened; the
+// customer gets notified on WhatsApp through the existing RR_* templates.
+async function parseAdminWACommand(text) {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) return { action: 'unknown' };
+  const prompt = `Extract a warehouse admin's WhatsApp command into strict JSON, nothing else — no prose, no markdown fences.
+
+Supported actions:
+- generate_exchange — swap an item for a different size/variant. Fields: order_id, from_size (optional — omit if only one item on the order), to_size (required).
+- generate_return — start a refund-path return for the whole order. Fields: order_id.
+- issue_store_credit — issue Shopify store credit for whatever the customer paid on the order. Fields: order_id.
+- unknown — doesn't clearly match any of the above, or no order number is present.
+
+order_id is the bare Shopify order number, digits only (strip any leading #). Respond with ONLY JSON in this exact shape:
+{"action":"generate_exchange","order_id":"3321","from_size":"S","to_size":"M","reason":""}
+
+Message: "${text.replace(/"/g, '\\"')}"`;
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const d = await r.json();
+    const raw = d.content?.[0]?.text || '{}';
+    const match = raw.match(/\{[\s\S]*\}/);
+    return JSON.parse(match ? match[0] : raw);
+  } catch (e) {
+    console.error('❌ parseAdminWACommand failed:', e.message);
+    return { action: 'unknown' };
+  }
+}
+
+// Resolve a bare order number ("3321") to the full live Shopify order.
+async function findOrderByNumber(orderIdRaw) {
+  const num = String(orderIdRaw || '').replace(/\D/g, '');
+  if (!num) return null;
+  const { orders } = await shopifyREST(`/orders.json?name=${encodeURIComponent('#' + num)}&status=any&limit=1`);
+  return orders?.[0] || null;
+}
+
+function _adminCmdCustomerName(order) {
+  return order.shipping_address
+    ? `${order.shipping_address.first_name || ''} ${order.shipping_address.last_name || ''}`.trim()
+    : order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : '';
+}
+
+// Creates a return_request pre-approved (skips the normal pending review —
+// the admin is commanding this directly) and fee-waived/force-enabled, same
+// as an admin manually using the panel's force-unlock + fee-waiver together.
+async function adminCreateRR({ order, type, fromSize, toSize, reason }) {
+  const lineItems = order.line_items || [];
+  let targetLi = lineItems[0];
+  if (fromSize) {
+    const found = lineItems.find(li => (li.variant_title || '').toLowerCase().includes(String(fromSize).toLowerCase()));
+    if (found) targetLi = found;
+  }
+  if (!targetLi) throw new Error('No line items on this order.');
+
+  let exchangeVariantId = null, exchangeSizeLabel = null;
+  if (type === 'exchange') {
+    if (!toSize) throw new Error('Need a target size to exchange to.');
+    const { product } = await shopifyREST(`/products/${targetLi.product_id}.json?fields=id,title,variants`);
+    const match = (product?.variants || []).find(v =>
+      [v.title, v.option1, v.option2, v.option3].filter(Boolean).some(s => String(s).toLowerCase().includes(String(toSize).toLowerCase()))
+    );
+    if (!match) throw new Error(`No "${toSize}" variant found for ${targetLi.title}.`);
+    exchangeVariantId = match.id;
+    exchangeSizeLabel = match.title;
+  }
+
+  const items = type === 'exchange'
+    ? [{ title: targetLi.title, variant_title: targetLi.variant_title, quantity: targetLi.quantity, sku: targetLi.sku || '', price: targetLi.price, line_item_id: targetLi.id, variant_id: targetLi.variant_id, exchange_for: toSize, exchange_size_label: exchangeSizeLabel, exchange_variant_id: exchangeVariantId }]
+    : lineItems.map(li => ({ title: li.title, variant_title: li.variant_title, quantity: li.quantity, sku: li.sku || '', price: li.price, line_item_id: li.id, variant_id: li.variant_id }));
+
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const rand = String(Math.floor(Math.random() * 9000) + 1000);
+  const request_id = `RR-${datePart}-${rand}`;
+
+  const doc = {
+    request_id,
+    shopify_order_id: String(order.id),
+    order_name: order.name,
+    customer_email: (order.email || '').toLowerCase().trim(),
+    customer_name: _adminCmdCustomerName(order),
+    customer_phone: normalizePhone(order.shipping_address?.phone || order.billing_address?.phone || order.phone || ''),
+    type, items,
+    reason: reason || 'Admin-generated via WhatsApp',
+    status: 'approved',
+    vendor_name: targetLi.vendor || '',
+    created_at: now.toISOString(),
+    approved_at: now.toISOString(),
+    admin_note: 'Generated by admin via WA command',
+    vendor_note: '',
+    fee_paid: 'waived',
+    fee_waived_by_admin: true,
+    force_enabled_by_admin: true,
+    image_urls: [],
+    history: [
+      { status: 'pending', at: now.toISOString(), note: 'Created by admin via WA', source: 'admin_wa' },
+      { status: 'approved', at: now.toISOString(), note: 'Auto-approved — admin generated', source: 'admin_wa' },
+    ],
+  };
+  await mdb.collection('return_requests').insertOne(doc);
+  mdb.collection('return_requests').createIndex({ request_id: 1 }, { unique: true }).catch(() => {});
+
+  sendRREmail('submitted', doc).catch(() => {});
+  sendRRWANotif(doc, 'request_received').catch(() => {});
+  sendRRVendorWANotif(doc, 'request_received').catch(() => {});
+  // Staggered so the "received" and "approved" templates don't land as one blur.
+  setTimeout(() => sendRRWANotif(doc, 'approved').catch(() => {}), 4000);
+  return doc;
+}
+
+async function adminIssueStoreCreditForOrder(order, reason) {
+  let rr = await mdb.collection('return_requests').findOne(
+    { shopify_order_id: String(order.id), resolution: { $ne: 'store_credit' } },
+    { projection: { _id: 0 }, sort: { created_at: -1 } }
+  );
+  if (!rr) rr = await adminCreateRR({ order, type: 'return', reason: reason || 'Admin-issued store credit via WhatsApp' });
+  return issueStoreCreditForRR(rr.request_id);
+}
+
+async function handleAdminWACommand(fromDigits, text) {
+  const jid = `91${fromDigits}@s.whatsapp.net`;
+  const reply = (msg) => waProxySock.sendMessage(jid, { text: msg }).catch(e => console.error('Admin WA reply failed:', e.message));
+
+  const intent = await parseAdminWACommand(text);
+  if (!intent || intent.action === 'unknown' || !intent.order_id) {
+    await reply(`Didn't catch an order command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"`);
+    return;
+  }
+
+  try {
+    const order = await findOrderByNumber(intent.order_id);
+    if (!order) { await reply(`❌ Couldn't find order #${intent.order_id}.`); return; }
+
+    if (intent.action === 'generate_exchange') {
+      const rr = await adminCreateRR({ order, type: 'exchange', fromSize: intent.from_size, toSize: intent.to_size, reason: intent.reason });
+      await reply(`✅ Exchange generated for order ${order.name}${intent.from_size ? ` (${intent.from_size} → ${intent.to_size})` : ` → ${intent.to_size}`}.\nRequest: ${rr.request_id}\nCustomer notified on WhatsApp.`);
+    } else if (intent.action === 'generate_return') {
+      const rr = await adminCreateRR({ order, type: 'return', reason: intent.reason });
+      await reply(`✅ Return generated for order ${order.name}.\nRequest: ${rr.request_id}\nCustomer notified on WhatsApp.`);
+    } else if (intent.action === 'issue_store_credit') {
+      const result = await adminIssueStoreCreditForOrder(order, intent.reason);
+      await reply(`✅ Store credit issued for order ${order.name}: ₹${result.amount.toFixed(0)} (code ${result.code}).\nCustomer notified on WhatsApp.`);
+    }
+  } catch (e) {
+    console.error('❌ Admin WA command failed:', e.message);
+    await reply(`❌ Couldn't do that: ${e.message}`);
+  }
+}
+
 // POST — inbound messages + delivery/read status updates
 app.post('/webhooks/whatsapp-cloud', async (req, res) => {
   res.sendStatus(200); // ack immediately, Meta retries on non-200
@@ -24735,6 +25003,14 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
         { upsert: true }
       );
       console.log(`📥 WA Cloud inbound: ${phone} → "${text.slice(0,60)}"`);
+
+      // Admin's own number gets routed to the command bot (generate exchange/
+      // return, issue store credit, in plain English) instead of the
+      // customer-support bot below — entirely separate brains.
+      if (phone === WA_ADMIN_NO && (msg.type === 'text') && text) {
+        handleAdminWACommand(phone, text).catch(e => console.error('Admin WA command error:', e.message));
+        continue;
+      }
 
       // Route into the shared bot handler (menu/smart-bot/order-lookup/human
       // handoff — same brain the Baileys bot used) by faking a Baileys-shaped

@@ -887,6 +887,25 @@ function renderPortal(d) {
     }
   }
 
+  // Admin has unlocked return/exchange and/or waived the fee for this specific
+  // order — applies automatically (no code to type), just show it clearly.
+  const override = d.return_override;
+  if (override && (override.force_unlock || override.fee_waived)) {
+    adminForceItems = adminForceItems || override.force_unlock;
+    const badgeText = override.force_unlock && override.fee_waived
+      ? 'Return unlocked by admin · Fee waived by admin'
+      : override.force_unlock
+      ? 'Return unlocked by admin'
+      : 'Fee waived by admin';
+    noticeEl.classList.remove('hidden');
+    noticeEl.innerHTML = (noticeEl.innerHTML || '') + `<div class="notice-box" style="margin-top:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3)">
+      <div class="notice-icon" style="color:var(--green,#10b981)">${IC_INFO}</div>
+      <div class="notice-text" style="font-weight:700;color:var(--green,#10b981)">🔓 ${badgeText}</div>
+    </div>`;
+    [returnBtn, exchangeBtn].forEach(b => { if (b) { b.style.opacity = ''; b.style.pointerEvents = ''; b.style.display = ''; } });
+    actionSec.classList.remove('hidden');
+  }
+
   // Pre-fill customer contact for submission
   if (d.customer_email && !document.getElementById('inp-contact').value) {
     document.getElementById('inp-contact').value = d.customer_email;

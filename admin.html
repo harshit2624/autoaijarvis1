@@ -1433,6 +1433,27 @@
     const [priceOverrides, setPriceOverrides] = useState({}); // { line_item_id: overridden_price }
     const [priceEditing,   setPriceEditing]   = useState({}); // { line_item_id: draftString }
     const [savingPrice,    setSavingPrice]     = useState({}); // { line_item_id: bool }
+    const [returnOverride, setReturnOverride] = useState(null); // { force_unlock, fee_waived, note, set_by, set_at }
+    const [savingReturnOv, setSavingReturnOv] = useState(false);
+
+    const loadReturnOverride = () => {
+      fetch(`${API}/admin/orders/${order.shopifyId}/return-override`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setReturnOverride(d.override||null)).catch(()=>{});
+    };
+
+    const toggleReturnOverride = async (field) => {
+      setSavingReturnOv(true);
+      try {
+        const body = { [field]: !(returnOverride?.[field]) };
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/return-override`, {
+          method:'PUT', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.override) setReturnOverride(d.override);
+      } catch(e) {}
+      setSavingReturnOv(false);
+    };
 
     // Create Shipment panel
     const [shipItems,       setShipItems]       = useState([]);
@@ -1561,6 +1582,7 @@
       }
       loadNotes();
       loadPriceOverrides();
+      loadReturnOverride();
       loadShipmentData();
       fetch(`${API}/admin/order-tags`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>setAvailTags(d.tags||[])).catch(()=>{});
@@ -1965,6 +1987,35 @@
                   );
                 })}
               </div>
+            </div>
+
+            {/* ── Return/Exchange Override ── */}
+            <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',marginBottom:16}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:10}}>
+                🔓 Return / Exchange Override
+              </div>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                <button onClick={()=>toggleReturnOverride('force_unlock')} disabled={savingReturnOv}
+                  style={{fontSize:11,fontWeight:600,padding:'8px 14px',borderRadius:6,cursor:'pointer',
+                    border: returnOverride?.force_unlock ? '1px solid #10b981' : '1px solid var(--border)',
+                    background: returnOverride?.force_unlock ? 'rgba(16,185,129,0.12)' : 'none',
+                    color: returnOverride?.force_unlock ? '#10b981' : 'var(--text)'}}>
+                  {returnOverride?.force_unlock ? '✓ Return Unlocked' : 'Force Unlock Return/Exchange'}
+                </button>
+                <button onClick={()=>toggleReturnOverride('fee_waived')} disabled={savingReturnOv}
+                  style={{fontSize:11,fontWeight:600,padding:'8px 14px',borderRadius:6,cursor:'pointer',
+                    border: returnOverride?.fee_waived ? '1px solid #10b981' : '1px solid var(--border)',
+                    background: returnOverride?.fee_waived ? 'rgba(16,185,129,0.12)' : 'none',
+                    color: returnOverride?.fee_waived ? '#10b981' : 'var(--text)'}}>
+                  {returnOverride?.fee_waived ? '✓ Fee Waived' : 'Waive RR Fee'}
+                </button>
+              </div>
+              {(returnOverride?.force_unlock || returnOverride?.fee_waived) && (
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:8}}>
+                  Customer notified on WhatsApp · set by {returnOverride.set_by} {returnOverride.set_at ? `on ${new Date(returnOverride.set_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}` : ''}
+                </div>
+              )}
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:6}}>Bypasses the vendor's return window/eligibility and/or the ₹{returnOverride?.fee_waived ? 0 : 199} RR fee for this order only — applies automatically on the customer's return page.</div>
             </div>
 
             {/* ── Customer Order History ── */}
