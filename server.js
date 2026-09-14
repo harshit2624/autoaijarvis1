@@ -24769,7 +24769,7 @@ async function parseAdminWACommand(text) {
   const prompt = `Extract a warehouse admin's WhatsApp command into strict JSON, nothing else — no prose, no markdown fences.
 
 Supported actions:
-- generate_exchange — swap an item for a different size/variant. Fields: order_id, from_size (optional — omit if only one item on the order), to_size (required).
+- generate_exchange — swap an item for a different size/variant, OR reship the identical item ("replace", "send a replacement", "wrong item/size sent — resend", damaged item, etc.). Fields: order_id, from_size (optional — omit if only one item on the order), to_size (omit entirely for a same-size replacement — the system defaults to reshipping the same variant when to_size is absent; only set it when the admin names a genuinely different size to exchange into).
 - generate_return — start a refund-path return for the whole order. Fields: order_id.
 - issue_store_credit — issue Shopify store credit for whatever the customer paid on the order. Fields: order_id.
 - unknown — doesn't clearly match any of the above, or no order number is present.
@@ -24823,14 +24823,23 @@ async function adminCreateRR({ order, type, fromSize, toSize, reason }) {
 
   let exchangeVariantId = null, exchangeSizeLabel = null;
   if (type === 'exchange') {
-    if (!toSize) throw new Error('Need a target size to exchange to.');
-    const { product } = await shopifyREST(`/products/${targetLi.product_id}.json?fields=id,title,variants`);
-    const match = (product?.variants || []).find(v =>
-      [v.title, v.option1, v.option2, v.option3].filter(Boolean).some(s => String(s).toLowerCase().includes(String(toSize).toLowerCase()))
-    );
-    if (!match) throw new Error(`No "${toSize}" variant found for ${targetLi.title}.`);
-    exchangeVariantId = match.id;
-    exchangeSizeLabel = match.title;
+    // No target size given ("replace order 3345", wrong item shipped, etc.) —
+    // treat as a same-size replacement: reship the identical variant instead
+    // of erroring out and forcing the admin to spell out a size that isn't
+    // actually changing.
+    if (!toSize) {
+      exchangeVariantId = targetLi.variant_id;
+      exchangeSizeLabel = targetLi.variant_title || '';
+      toSize = exchangeSizeLabel;
+    } else {
+      const { product } = await shopifyREST(`/products/${targetLi.product_id}.json?fields=id,title,variants`);
+      const match = (product?.variants || []).find(v =>
+        [v.title, v.option1, v.option2, v.option3].filter(Boolean).some(s => String(s).toLowerCase().includes(String(toSize).toLowerCase()))
+      );
+      if (!match) throw new Error(`No "${toSize}" variant found for ${targetLi.title}.`);
+      exchangeVariantId = match.id;
+      exchangeSizeLabel = match.title;
+    }
   }
 
   const items = type === 'exchange'
@@ -24902,7 +24911,12 @@ async function handleAdminWACommand(fromDigits, text) {
 
     if (intent.action === 'generate_exchange') {
       const rr = await adminCreateRR({ order, type: 'exchange', fromSize: intent.from_size, toSize: intent.to_size, reason: intent.reason });
-      await reply(`✅ Exchange generated for order ${order.name}${intent.from_size ? ` (${intent.from_size} → ${intent.to_size})` : ` → ${intent.to_size}`}.\nRequest: ${rr.request_id}\nCustomer notified on WhatsApp.`);
+      const rrItem = rr.items?.[0];
+      const isSameSizeReplacement = !intent.to_size;
+      const sizeLine = isSameSizeReplacement
+        ? `same-size replacement (${rrItem?.variant_title || rrItem?.exchange_size_label || ''})`
+        : `${intent.from_size ? `${intent.from_size} → ` : ''}${rrItem?.exchange_size_label || intent.to_size}`;
+      await reply(`✅ ${isSameSizeReplacement ? 'Replacement' : 'Exchange'} generated for order ${order.name} — ${sizeLine}.\nRequest: ${rr.request_id}\nCustomer notified on WhatsApp.`);
     } else if (intent.action === 'generate_return') {
       const rr = await adminCreateRR({ order, type: 'return', reason: intent.reason });
       await reply(`✅ Return generated for order ${order.name}.\nRequest: ${rr.request_id}\nCustomer notified on WhatsApp.`);
