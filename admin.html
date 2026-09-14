@@ -2672,7 +2672,10 @@
                         <td style={{color: o.has_product_rule?'#6366f1':'#666', fontWeight: o.has_product_rule?700:400, fontSize: o.has_product_rule?7.5:undefined}}>
                           {o.has_product_rule ? (o.rule_label||'Custom') : `${o.commission_pct}%`}
                         </td>
-                        <td>₹{(o.commission||0).toFixed(2)}</td>
+                        <td>
+                          ₹{(o.commission||0).toFixed(2)}
+                          {(o.cod_discount_borne||0)>0 && <div style={{fontSize:7.5,color:'#10b981',fontWeight:600}}>−₹{o.cod_discount_borne.toFixed(2)} CC-borne</div>}
+                        </td>
                         <td>₹{(o.gst||0).toFixed(2)}</td>
                         <td style={{color:'#555'}}>{(o.advance_paid||0)>0?`₹${(o.advance_paid||0).toFixed(2)}`:'—'}</td>
                         <td style={{color:'#10b981',fontWeight:600}}>{isPrepaid?`₹${prepCollected.toFixed(2)}`:'—'}</td>
@@ -2698,6 +2701,9 @@
                     <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount ({s.prepaid_discount_pct??10}%)</span><span>−₹{prepaidDiscount.toFixed(2)}</span></div>
                     <div className="inv-row" style={{fontWeight:600,borderTop:'1px solid #ddd',paddingTop:4,marginTop:2}}><span>Taxable Base</span><span>₹{taxableValue.toFixed(2)}</span></div>
                   </>}
+                  {s.bear_cod_discount && (s.cod_discount_total||0) > 0 &&
+                    <div className="inv-row" style={{color:'#10b981'}}><span>COD Checkout Discount Borne by CROSCROW</span><span>−₹{s.cod_discount_total.toFixed(2)}</span></div>
+                  }
 
                   {/* Per-rule commission breakdown */}
                   {(()=>{
@@ -6315,6 +6321,7 @@
     const [shipping,     setShipping]     = useState(String(init.shipping_adjustment || ''));
     const [extraAdv,     setExtraAdv]     = useState(String(init.extra_advance       || ''));
     const [waiverPct,    setWaiverPct]    = useState(init.penalty_waiver_pct || 0);
+    const [bearCodDisc,  setBearCodDisc]  = useState(!!init.bear_cod_discount);
     const [notes,        setNotes]        = useState(init.invoice_notes || '');
     const [saving,       setSaving]       = useState(false);
     const [msg,          setMsg]          = useState(null);
@@ -6357,6 +6364,7 @@
           invoice_notes:       notes,
           penalty_waiver_pct:  waiverPct,
           include_outstanding_penalties: includeOutstanding,
+          bear_cod_discount:   bearCodDisc,
         };
         if (commPct.trim()) body.custom_commission_pct = parseFloat(commPct);
         if (ppDisc.trim())  body.prepaid_discount_pct  = parseFloat(ppDisc);
@@ -6417,6 +6425,19 @@
                 </div>
                 <div style={{fontSize:10,color:'var(--text-muted)',marginTop:4}}>Default 10% — customer prepaid discount absorbed by vendor</div>
               </div>
+            </div>
+
+            {/* Section: Bear COD checkout-discount cost */}
+            <div style={{background:'rgba(16,185,129,0.05)',border:'1px solid rgba(16,185,129,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
+              <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+                <input type="checkbox" checked={bearCodDisc} onChange={e=>setBearCodDisc(e.target.checked)} style={{marginTop:2}}/>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>Bear COD checkout discount on CROSCROW</div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                    Default off — a COD order still settles on full listed price regardless of any checkout coupon, so the vendor collects less cash from the customer without it showing anywhere. Turn this on to deduct that discount straight out of CROSCROW's own commission on each affected order instead (capped so commission can't go negative) — shown per-order and in the summary below.
+                  </div>
+                </div>
+              </label>
             </div>
 
             {/* Section: Adjustments */}

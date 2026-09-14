@@ -7586,6 +7586,10 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       // are invisible to vendors. Price overrides take precedence when set.
       const effectivePrice = (li) => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
       const myRev   = myItems.reduce((s, li) => s + effectivePrice(li) * (li.quantity || 1), 0);
+      // Vendor's share of any checkout discount CROSCROW applied (e.g. a promo
+      // code) — only relevant later for the "bear COD discount" toggle, since
+      // vendor settlement always runs on full listed price regardless.
+      const myDiscount = parseFloat(myItems.reduce((s, li) => s + (li.discount_allocations || []).reduce((ds, d) => ds + parseFloat(d.amount || 0), 0), 0).toFixed(2));
 
       // Check product-level rules per line item
       let totalItemComm = 0, totalItemGst = 0, totalItemNet = 0;
@@ -7663,6 +7667,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
         has_product_rule: hasProductRule,
         rule_label:       ruleLabel,
         has_price_override: hasPriceOverride,
+        discount_amount:  myDiscount,
+        cod_discount_borne: 0,
       });
     }
 
@@ -7683,6 +7689,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       status: 'pending', invoice_no: invoiceNo,
       created_at: new Date().toISOString(),
       penalty_deduction: 0, extra_discount: 0, shipping_adjustment: 0, extra_advance: 0, invoice_notes: '',
+      bear_cod_discount: false, cod_discount_total: 0,
     });
 
     if (orderDetails.length > 0) {
@@ -8649,6 +8656,7 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     prepaid_discount_pct,  // override the 10% vendor prepaid discount for this invoice
     penalty_waiver_pct  = 0, // 0-100: % of penalty_deduction to waive
     include_outstanding_penalties = false, // fold in confirmed penalties on non-delivered (or otherwise out-of-period) orders
+    bear_cod_discount,  // when true, CROSCROW absorbs the COD checkout-discount cost out of its own commission instead of the vendor silently collecting less cash
   } = req.body || {};
 
   // Pull in any confirmed penalty for this vendor not yet tied to ANY
@@ -8690,22 +8698,50 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   if (needsRecalc) {
     const commPctToUse   = newCommPct  ?? (s.custom_commission_pct || 20);
     const ppDiscToUse    = newPPDisc   ?? (s.prepaid_discount_pct  ?? 10);
-    newCommission = 0; newGst = 0;
     for (const o of orders) {
       const calc = calcCommission(o.my_revenue, o.payment_type, commPctToUse, o.advance_paid, ppDiscToUse);
       const shippingCharge = o.payment_type !== 'prepaid' ? (o.shipping_charge || 0) : 0;
       const newNet = parseFloat((calc.net + shippingCharge).toFixed(2));
-      newCommission += calc.commission;
-      newGst        += calc.gst;
+      // commission_gross/net_gross hold the value before any "bear COD
+      // discount" deduction below — kept separate so that toggling the
+      // deduction on/off never has to guess what the pre-deduction figure was.
       await mdb.collection('settlement_orders').updateOne(
         { id: o.id },
-        { $set: { commission_pct: commPctToUse, commission: calc.commission, gst: calc.gst, net: newNet } }
+        { $set: { commission_pct: commPctToUse, commission: calc.commission, gst: calc.gst, net: newNet, commission_gross: calc.commission, net_gross: newNet } }
       );
     }
     orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
-    newCommission = parseFloat(newCommission.toFixed(2));
-    newGst        = parseFloat(newGst.toFixed(2));
   }
+
+  // ── Bear COD discount toggle ────────────────────────────────────────────
+  // When on, any checkout discount CROSCROW applied on a COD order is repaid
+  // out of CROSCROW's own commission on that order (capped so commission
+  // never goes negative) instead of silently coming out of the vendor's
+  // remitted cash. Always recomputed from the *_gross baseline so flipping
+  // the toggle on/off/on never compounds.
+  const bearCod = bear_cod_discount != null ? !!bear_cod_discount : !!s.bear_cod_discount;
+  let codDiscountTotal = 0;
+  for (const o of orders) {
+    const isCod = o.payment_type !== 'prepaid';
+    const grossComm = o.commission_gross ?? o.commission;
+    const grossNet  = o.net_gross ?? o.net;
+    const borne = (bearCod && isCod) ? Math.min(grossComm, o.discount_amount || 0) : 0;
+    const updatedCommission = parseFloat((grossComm - borne).toFixed(2));
+    const updatedNet        = parseFloat((grossNet - borne).toFixed(2));
+    codDiscountTotal += borne;
+    if (borne !== (o.cod_discount_borne || 0) || updatedCommission !== o.commission || updatedNet !== o.net) {
+      await mdb.collection('settlement_orders').updateOne(
+        { id: o.id },
+        { $set: { cod_discount_borne: parseFloat(borne.toFixed(2)), commission: updatedCommission, net: updatedNet, commission_gross: grossComm, net_gross: grossNet } }
+      );
+    }
+  }
+  codDiscountTotal = parseFloat(codDiscountTotal.toFixed(2));
+  if (needsRecalc || bear_cod_discount != null) {
+    orders = await mdb.collection('settlement_orders').find({ settlement_id: sid }, { projection: { _id: 0 } }).toArray();
+  }
+  newCommission = parseFloat(orders.reduce((sum, o) => sum + (o.commission || 0), 0).toFixed(2));
+  newGst        = parseFloat(orders.reduce((sum, o) => sum + (o.gst || 0), 0).toFixed(2));
 
   const baseNet = orders.reduce((sum, o) => sum + (o.net || 0), 0);
   // penalty_deduction is already baked into net_payable — re-apply after recalculation then subtract waiver
@@ -8727,6 +8763,8 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     shipping_adjustment: parseFloat(shipping_adjustment||0),
     extra_advance:       parseFloat(extra_advance||0),
     invoice_notes:       invoice_notes || "",
+    bear_cod_discount:   bearCod,
+    cod_discount_total:  codDiscountTotal,
     custom_commission_pct: newCommPct ?? s.custom_commission_pct ?? null,
     prepaid_discount_pct:  newPPDisc  ?? s.prepaid_discount_pct  ?? null,
     penalty_waiver_pct:  waiverPct,
