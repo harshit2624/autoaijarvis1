@@ -2695,7 +2695,7 @@
                   {/* Gross revenue */}
                   <div className="inv-row"><span>Gross Revenue (MRP)</span><span>₹{(s.gross_revenue||0).toFixed(2)}</span></div>
                   {prepaidDiscount > 0 && <>
-                    <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount (10%)</span><span>−₹{prepaidDiscount.toFixed(2)}</span></div>
+                    <div className="inv-row" style={{color:'#e67e22'}}><span>Prepaid Discount ({s.prepaid_discount_pct??10}%)</span><span>−₹{prepaidDiscount.toFixed(2)}</span></div>
                     <div className="inv-row" style={{fontWeight:600,borderTop:'1px solid #ddd',paddingTop:4,marginTop:2}}><span>Taxable Base</span><span>₹{taxableValue.toFixed(2)}</span></div>
                   </>}
 
