@@ -24675,6 +24675,7 @@ const WA_TPL = {
   BACK_IN_STOCK: 'back_in_stock_v1',
   BACK_IN_STOCK_SIGNUP: 'back_in_stock_signup_v1',
   RR_ADMIN_OVERRIDE: 'rr_admin_override_v1',
+  DEMO_PITCH_CTA: 'demo_pitch_cta_v1',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
@@ -24960,6 +24961,7 @@ async function sendDemoFlowToPhone(phone10) {
     { name: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, itemLine] },
     { name: WA_TPL.RR_EXCHANGE_SENT, bodyParams: [orderName, 'Delhivery'], urlButtonParam: `${orderSlug}&contact=na` },
     { name: WA_TPL.WIN_BACK_FLAT500, headerImageUrl: FLAT500_IMAGE, bodyParams: ['Farhan'] },
+    { name: WA_TPL.DEMO_PITCH_CTA },
   ];
 
   let sent = 0, failed = 0;
@@ -24984,7 +24986,7 @@ async function handleAdminWACommand(fromDigits, text) {
   if (intent.action === 'send_demo') {
     const demoPhone = String(intent.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
     if (demoPhone.length !== 10) { await reply(`❌ Couldn't read a valid 10-digit number from that.`); return; }
-    reply(`⏳ Sending demo flow to ${demoPhone} — 13 messages, ~30s...`);
+    reply(`⏳ Sending demo flow to ${demoPhone} — 14 messages, ~35s...`);
     try {
       const result = await sendDemoFlowToPhone(demoPhone);
       await reply(`✅ Demo sent to ${demoPhone}: ${result.sent}/${result.total} delivered${result.failed ? `, ${result.failed} failed` : ''}.`);
