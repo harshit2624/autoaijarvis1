@@ -24878,12 +24878,15 @@ Supported actions:
 - waive_fee — waive the return/exchange fee for an order so the CUSTOMER can complete the return/replacement themselves on their own return page (no fee, no code to enter) — this does NOT create the request itself, just removes the fee. Triggers: "waive the fee for order X", "no fee for X", "fee waiver for X". Fields: order_id.
 - unlock_return — unlock return/exchange eligibility for an order (bypasses the window/vendor restrictions) so the customer can self-serve on their return page. Triggers: "unlock return for order X", "let them return X even though window closed". Fields: order_id.
 - send_demo — send the full customer-facing WhatsApp template demo flow (order confirmation → shipped → delivered → exchange → refund → win-back, one message every few seconds) to a phone number, for showing a prospect/client what the notifications look like. Triggers: "send demo to 9876543210", "demo flow to this number 98765 43210", "show the wa flow to 9876543210". Fields: phone (10-digit Indian mobile number, digits only, strip any +91/91 prefix or spaces).
+- resend_order_confirmation — resend the order-confirmation WhatsApp message for an order (picks prepaid or COD-advance version automatically based on the order's actual state) — for when a customer says they never got it. Triggers: "send order confirmation to 3421", "resend confirmation for 3421", "order confirmation didn't reach 3421". Fields: order_id, phone (optional — only if the admin names a DIFFERENT number to send to instead of the order's own, e.g. "...on 9950812408").
+- resend_awaiting_confirmation — resend the "pay ₹99 to confirm" ask message. Triggers: "send partial awaiting to 3241", "resend the 99 ask for 3241", "awaiting confirmation didn't send for 3241". Fields: order_id, phone (optional, same as above).
 - unknown — doesn't clearly match any of the above, or no order number/phone is present.
 
 order_id is the bare Shopify order number, digits only (strip any leading #). Respond with ONLY JSON in this exact shape:
 {"action":"generate_exchange","order_id":"3321","from_size":"S","to_size":"M","reason":""}
 For waive_fee/unlock_return, omit from_size/to_size: {"action":"waive_fee","order_id":"2345","reason":""}
 For send_demo: {"action":"send_demo","phone":"9876543210"}
+For resend_order_confirmation/resend_awaiting_confirmation: {"action":"resend_order_confirmation","order_id":"3421","phone":""} — leave phone empty string unless the admin explicitly named a different number to redirect to.
 
 Message: "${text.replace(/"/g, '\\"')}"`;
 
@@ -25003,6 +25006,63 @@ async function adminIssueStoreCreditForOrder(order, reason) {
   return issueStoreCreditForRR(rr.request_id);
 }
 
+// ── Admin-triggered resends ─────────────────────────────────────────────
+// Covers the same gap as the Razorpay webhook, but for the notifications
+// themselves silently not landing (delivery failure, customer wasn't on
+// WhatsApp yet, etc.) rather than the payment-confirmation step. Optional
+// phoneOverride lets the admin redirect to a different WhatsApp number
+// entirely — e.g. the order's own number isn't on WhatsApp.
+function _resendPhone(order, phoneOverride) {
+  if (phoneOverride) {
+    const d = String(phoneOverride).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    return d.length === 10 ? d : null;
+  }
+  const d = normalizePhone(order.shipping_address?.phone || order.billing_address?.phone || order.phone || '');
+  return d.length === 10 ? d : null;
+}
+
+// Resends the order-confirmation message — picks ORDER_CONFIRMED_PREPAID or
+// ORDER_CONFIRMED_COD_ADVANCE based on the order's actual recorded payment
+// state, same logic the original send used.
+async function adminResendOrderConfirmation(order, phoneOverride) {
+  const phone10 = _resendPhone(order, phoneOverride);
+  if (!phone10) throw new Error('No valid WhatsApp number on this order — give one explicitly (e.g. "...on 9876543210").');
+
+  const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
+  const isPrepaid = (meta.payment_type || paymentTypeFromFinancial(order.financial_status)) === 'prepaid' || !!meta.converted_to_prepaid;
+  const total = parseFloat(order.total_price || 0);
+  const itemsList = (order.line_items || []).map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`).join('\n') || '—';
+  const addr = order.shipping_address || {};
+  const addressLine = [addr.address1, addr.city, addr.zip].filter(Boolean).join(', ') || 'address on file';
+  const enriched = await enrichOrderImages({ line_items: order.line_items }).catch(() => null);
+  const confImage = enriched?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE;
+  const orderSlug = encodeURIComponent(String(order.name).replace(/^#/, ''));
+
+  if (isPrepaid) {
+    const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
+    const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: confImage, bodyParams: [order.name, itemsList, addressLine, String(discountedTotal || total.toFixed(0))], urlButtonParam: `${orderSlug}&contact=na` });
+    if (!result.sent) throw new Error(result.reason);
+    return { sent: true, kind: 'prepaid' };
+  } else {
+    const remaining = Math.max(0, total - CONFIRM_FEE);
+    const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: confImage, bodyParams: [order.name, itemsList, addressLine, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
+    if (!result.sent) throw new Error(result.reason);
+    return { sent: true, kind: 'cod_advance' };
+  }
+}
+
+// Resends the "pay ₹99 to confirm" ask.
+async function adminResendAwaitingConfirmation(order, phoneOverride) {
+  const phone10 = _resendPhone(order, phoneOverride);
+  if (!phone10) throw new Error('No valid WhatsApp number on this order — give one explicitly (e.g. "...on 9876543210").');
+
+  const total = parseFloat(order.total_price || 0);
+  const orderSlug = encodeURIComponent(String(order.name).replace(/^#/, ''));
+  const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [order.name, Math.max(0, total - CONFIRM_FEE).toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
+  if (!result.sent) throw new Error(result.reason);
+  return { sent: true };
+}
+
 // Full customer-facing template demo flow — order confirmation through
 // delivery, exchange request through exchange-sent, plus win-back — sent to
 // any phone number for showing a prospect/client what the notifications
@@ -25048,7 +25108,7 @@ async function handleAdminWACommand(fromDigits, text) {
 
   const intent = await parseAdminWACommand(text);
   if (!intent || intent.action === 'unknown' || (!intent.order_id && intent.action !== 'send_demo')) {
-    await reply(`Didn't catch a command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"\n• "send demo to 9876543210"`);
+    await reply(`Didn't catch a command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"\n• "send demo to 9876543210"\n• "send order confirmation to 3421"\n• "send partial awaiting to 3241 on 9950812408"`);
     return;
   }
 
@@ -25090,6 +25150,12 @@ async function handleAdminWACommand(fromDigits, text) {
     } else if (intent.action === 'unlock_return') {
       await applyReturnOverride({ shopify_order_id: order.id, force_unlock: true, note: intent.reason || 'Unlocked via WA admin command', set_by: 'wa_admin' });
       await reply(`✅ Return/exchange unlocked for order ${order.name} — customer can self-serve on their return page now. They've been notified on WhatsApp.`);
+    } else if (intent.action === 'resend_order_confirmation') {
+      const result = await adminResendOrderConfirmation(order, intent.phone);
+      await reply(`✅ Order confirmation (${result.kind === 'prepaid' ? 'prepaid' : 'COD advance'}) resent for order ${order.name}${intent.phone ? ` to ${intent.phone}` : ''}.`);
+    } else if (intent.action === 'resend_awaiting_confirmation') {
+      await adminResendAwaitingConfirmation(order, intent.phone);
+      await reply(`✅ "Pay ₹99 to confirm" message resent for order ${order.name}${intent.phone ? ` to ${intent.phone}` : ''}.`);
     }
   } catch (e) {
     console.error('❌ Admin WA command failed:', e.message);
