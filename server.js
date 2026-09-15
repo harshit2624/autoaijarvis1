@@ -15974,7 +15974,12 @@ async function deliveryFollowupCron() {
 
         // Marketing category — Cloud API template first, Baileys image+caption
         // fallback only if the template send fails.
-        const cloudResult = await sendWACloudTemplate({ phone10: phone, templateName: WA_TPL.WIN_BACK_FLAT500, headerImageUrl: FLAT500_IMAGE, bodyParams: [name] });
+        // headerImageUrl dropped — win_back_flat500_v2's approved header is
+        // TEXT ("A Gift For You"), not an image; sending an image header
+        // against a TEXT-header template gets rejected by Meta outright
+        // (confirmed live), which meant every real win-back send was
+        // silently falling through to the rare Baileys fallback path below.
+        const cloudResult = await sendWACloudTemplate({ phone10: phone, templateName: WA_TPL.WIN_BACK_FLAT500, bodyParams: [name] });
         if (!cloudResult.sent && waSocket && waConnected) {
           const jid = `91${phone}@s.whatsapp.net`;
           await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
@@ -24960,7 +24965,7 @@ async function sendDemoFlowToPhone(phone10) {
     { name: WA_TPL.RR_PICKED_UP, bodyParams: [orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` },
     { name: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, itemLine] },
     { name: WA_TPL.RR_EXCHANGE_SENT, bodyParams: [orderName, 'Delhivery'], urlButtonParam: `${orderSlug}&contact=na` },
-    { name: WA_TPL.WIN_BACK_FLAT500, headerImageUrl: FLAT500_IMAGE, bodyParams: ['Farhan'] },
+    { name: WA_TPL.WIN_BACK_FLAT500, bodyParams: ['Farhan'] },
     { name: WA_TPL.DEMO_PITCH_CTA },
   ];
 
