@@ -15062,27 +15062,31 @@ app.post("/track/confirm-razorpay-order", async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /track/confirm-payment-verify — verify signature, record advance & confirm order
-app.post("/track/confirm-payment-verify", async (req, res) => {
-  try {
-    const { shopify_order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, mode } = req.body || {};
-    if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
+// Records a successful confirmation-fee/prepaid-convert payment: advance,
+// stage, Shopify tags/transaction, email, and the WA "advance received"
+// message. Shared by two callers — the client-side verify route below (the
+// browser calling back right after Razorpay checkout succeeds) and the
+// Razorpay webhook (payment.captured), which exists specifically because
+// the client-side call can silently never happen (tab closed, network
+// drop, app backgrounded mid-redirect) even though Razorpay DID capture
+// the money — confirmed live on order #3341, paid on Razorpay, zero record
+// on our side, no advance/tag/WA message, customer left retrying. Guards
+// against double-processing (the webhook firing after the client path
+// already succeeded, or Razorpay retrying an undelivered webhook) via the
+// confirmation_paid/converted_to_prepaid check right below.
+async function recordOrderConfirmationPayment({ shopify_order_id, razorpay_payment_id, mode }) {
+  const sid = String(shopify_order_id);
+  const now = new Date().toISOString();
+  const nowMs = Date.now();
 
-    const expectedSig = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest('hex');
-    if (expectedSig !== razorpay_signature)
-      return res.status(400).json({ error: "Payment verification failed." });
+  const existingMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { _id: 0 } }) || {};
+  const isPrepaidConvert = mode === 'prepaid';
+  const alreadyDone = isPrepaidConvert ? !!existingMeta.converted_to_prepaid : !!existingMeta.confirmation_paid;
+  if (alreadyDone) return { alreadyProcessed: true };
 
-    const sid = String(shopify_order_id);
-    const now = new Date().toISOString();
-    const nowMs = Date.now();
+  const newStage = higherStage(existingMeta.stage || 'new', 'confirmed');
 
-    const existingMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { _id: 0 } }) || {};
-    const newStage = higherStage(existingMeta.stage || 'new', 'confirmed');
-    const isPrepaidConvert = mode === 'prepaid';
-
+  {
     let metaUpdate;
     if (isPrepaidConvert) {
       const od0 = await shopifyREST(`/orders/${sid}.json?fields=total_price,financial_status`);
@@ -15233,11 +15237,71 @@ app.post("/track/confirm-payment-verify", async (req, res) => {
         }
       }
     } catch (e) { console.error('confirm-payment-verify WA error:', e.message); }
+  }
 
+  return { alreadyProcessed: false };
+}
+
+// POST /track/confirm-payment-verify — verify signature, then delegate to
+// recordOrderConfirmationPayment (the client-side call path — see that
+// function's comment for why the webhook below exists alongside this).
+app.post("/track/confirm-payment-verify", async (req, res) => {
+  try {
+    const { shopify_order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature, mode } = req.body || {};
+    if (!shopify_order_id) return res.status(400).json({ error: "shopify_order_id required" });
+
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+    if (expectedSig !== razorpay_signature)
+      return res.status(400).json({ error: "Payment verification failed." });
+
+    await recordOrderConfirmationPayment({ shopify_order_id, razorpay_payment_id, mode });
     res.json({ verified: true, payment_id: razorpay_payment_id });
   } catch (err) {
     console.error("❌ /track/confirm-payment-verify:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /webhooks/razorpay — server-side safety net for confirm-payment-verify.
+// Razorpay's own record of "payment.captured" is authoritative regardless of
+// whether the customer's browser ever called back — configure this URL in
+// the Razorpay Dashboard → Settings → Webhooks (or via the one-off setup
+// script that registers it through the Webhooks API) with events
+// payment.captured and order.paid, using RAZORPAY_WEBHOOK_SECRET.
+app.post('/webhooks/razorpay', async (req, res) => {
+  res.sendStatus(200); // ack immediately — Razorpay retries on non-2xx
+  try {
+    let body = req.body;
+    if (Buffer.isBuffer(body)) {
+      const raw = body;
+      const signature = req.headers['x-razorpay-signature'];
+      const secret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+      const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+      if (!secret || signature !== expected) { console.error('❌ Razorpay webhook: signature mismatch, ignoring'); return; }
+      body = JSON.parse(raw.toString('utf8'));
+    }
+
+    const event = body?.event;
+    if (event !== 'payment.captured' && event !== 'order.paid') return;
+
+    const payment = body?.payload?.payment?.entity;
+    if (!payment) return;
+    let notes = payment.notes || {};
+    // Notes aren't always copied onto the payment entity — fall back to
+    // fetching the order directly when they're missing.
+    if (!notes.shopify_order_id && payment.order_id) {
+      try { notes = (await getRzp().orders.fetch(payment.order_id))?.notes || {}; } catch (e) { console.error('Razorpay webhook order fetch error:', e.message); }
+    }
+    if (!notes.shopify_order_id || !['order_confirmation', 'order_convert_prepaid'].includes(notes.type)) return;
+
+    const mode = notes.type === 'order_convert_prepaid' ? 'prepaid' : undefined;
+    const result = await recordOrderConfirmationPayment({ shopify_order_id: notes.shopify_order_id, razorpay_payment_id: payment.id, mode });
+    console.log(`💳 Razorpay webhook: order ${notes.order_name || notes.shopify_order_id} — ${result.alreadyProcessed ? 'already processed (client path succeeded first)' : 'recorded via webhook (client-side callback never arrived)'}`);
+  } catch (e) {
+    console.error('❌ Razorpay webhook error:', e.message);
   }
 });
 
