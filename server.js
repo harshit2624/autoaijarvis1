@@ -24807,11 +24807,13 @@ Supported actions:
 - issue_store_credit — issue Shopify store credit for whatever the customer paid on the order. Fields: order_id.
 - waive_fee — waive the return/exchange fee for an order so the CUSTOMER can complete the return/replacement themselves on their own return page (no fee, no code to enter) — this does NOT create the request itself, just removes the fee. Triggers: "waive the fee for order X", "no fee for X", "fee waiver for X". Fields: order_id.
 - unlock_return — unlock return/exchange eligibility for an order (bypasses the window/vendor restrictions) so the customer can self-serve on their return page. Triggers: "unlock return for order X", "let them return X even though window closed". Fields: order_id.
-- unknown — doesn't clearly match any of the above, or no order number is present.
+- send_demo — send the full customer-facing WhatsApp template demo flow (order confirmation → shipped → delivered → exchange → refund → win-back, one message every few seconds) to a phone number, for showing a prospect/client what the notifications look like. Triggers: "send demo to 9876543210", "demo flow to this number 98765 43210", "show the wa flow to 9876543210". Fields: phone (10-digit Indian mobile number, digits only, strip any +91/91 prefix or spaces).
+- unknown — doesn't clearly match any of the above, or no order number/phone is present.
 
 order_id is the bare Shopify order number, digits only (strip any leading #). Respond with ONLY JSON in this exact shape:
 {"action":"generate_exchange","order_id":"3321","from_size":"S","to_size":"M","reason":""}
 For waive_fee/unlock_return, omit from_size/to_size: {"action":"waive_fee","order_id":"2345","reason":""}
+For send_demo: {"action":"send_demo","phone":"9876543210"}
 
 Message: "${text.replace(/"/g, '\\"')}"`;
 
@@ -24931,13 +24933,65 @@ async function adminIssueStoreCreditForOrder(order, reason) {
   return issueStoreCreditForRR(rr.request_id);
 }
 
+// Full customer-facing template demo flow — order confirmation through
+// delivery, exchange request through exchange-sent, plus win-back — sent to
+// any phone number for showing a prospect/client what the notifications
+// look like. Uses a real, already-delivered order (#3149) as the data
+// source so tracking/return links in the messages actually work.
+async function sendDemoFlowToPhone(phone10) {
+  const IMG = 'https://i.ibb.co/7vVcJyM/Mesh-Red-Front.jpg';
+  const orderName = '#3149';
+  const itemLine = 'HEAVEN MADE BOXY FIT - 001 CORE (S), SICOS NYC - 001 CORE (L)';
+  const addressLine = 'Kekri, Rajasthan 305404';
+  const orderSlug = '3149';
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  const steps = [
+    { name: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: ['Farhan Sandhi', '2972'], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: IMG, bodyParams: ['Farhan Sandhi', itemLine, addressLine, '3072'], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.SHIPMENT_PICKUP, bodyParams: [orderName, itemLine, 'Delhivery', '35692517568315'], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.SHIPMENT_TRANSIT, bodyParams: [orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.SHIPMENT_OFD, headerImageUrl: IMG, bodyParams: [orderName, itemLine, 'Prepaid — no cash due'], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [orderName, itemLine] },
+    { name: WA_TPL.RR_REQUEST_RECEIVED, bodyParams: ['Exchange', orderName, itemLine] },
+    { name: WA_TPL.RR_APPROVED, bodyParams: ['Exchange', orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, 'Delhivery'], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.RR_PICKED_UP, bodyParams: [orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, itemLine] },
+    { name: WA_TPL.RR_EXCHANGE_SENT, bodyParams: [orderName, 'Delhivery'], urlButtonParam: `${orderSlug}&contact=na` },
+    { name: WA_TPL.WIN_BACK_FLAT500, headerImageUrl: FLAT500_IMAGE, bodyParams: ['Farhan'] },
+  ];
+
+  let sent = 0, failed = 0;
+  for (const step of steps) {
+    const result = await sendWACloudTemplate({ phone10, templateName: step.name, headerImageUrl: step.headerImageUrl, bodyParams: step.bodyParams, urlButtonParam: step.urlButtonParam });
+    if (result.sent) sent++; else { failed++; console.error(`❌ Demo flow step "${step.name}" failed for ${phone10}: ${result.reason}`); }
+    await sleep(2500);
+  }
+  return { sent, failed, total: steps.length };
+}
+
 async function handleAdminWACommand(fromDigits, text) {
   const jid = `91${fromDigits}@s.whatsapp.net`;
   const reply = (msg) => waProxySock.sendMessage(jid, { text: msg }).catch(e => console.error('Admin WA reply failed:', e.message));
 
   const intent = await parseAdminWACommand(text);
-  if (!intent || intent.action === 'unknown' || !intent.order_id) {
-    await reply(`Didn't catch an order command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"`);
+  if (!intent || intent.action === 'unknown' || (!intent.order_id && intent.action !== 'send_demo')) {
+    await reply(`Didn't catch a command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"\n• "send demo to 9876543210"`);
+    return;
+  }
+
+  if (intent.action === 'send_demo') {
+    const demoPhone = String(intent.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (demoPhone.length !== 10) { await reply(`❌ Couldn't read a valid 10-digit number from that.`); return; }
+    reply(`⏳ Sending demo flow to ${demoPhone} — 13 messages, ~30s...`);
+    try {
+      const result = await sendDemoFlowToPhone(demoPhone);
+      await reply(`✅ Demo sent to ${demoPhone}: ${result.sent}/${result.total} delivered${result.failed ? `, ${result.failed} failed` : ''}.`);
+    } catch (e) {
+      console.error('❌ Demo flow send failed:', e.message);
+      await reply(`❌ Demo flow failed: ${e.message}`);
+    }
     return;
   }
 
