@@ -984,6 +984,16 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     // buildOrderPayload's safeStage() for display — this is the actual
     // write path that was missing it.
     if (prev?.stage === 'misc' || prev?.stage === 'returned') return;
+    // A tag can never downgrade a genuinely fully-paid order to 'partial' —
+    // confirmed live on order #3355: GoKwik tags EVERY order that passes
+    // through its checkout with "Gokwik_ppcod_upi" (its generic flow marker),
+    // regardless of whether the customer actually used its partial-COD/UPI
+    // path or paid in full by card. That tag matched tag_mappings' stage
+    // 'partial' entry and fired the wrong "Advance Collected" emails to the
+    // customer and all vendors on a fully prepaid order — financial_status
+    // (payType, computed above from Shopify's own authoritative field) is
+    // always more trustworthy than a third-party checkout tag.
+    if (newStage === 'partial' && payType === 'prepaid') return;
     const metaUpdate = { stage: newStage, updated_at: now };
 
     await OM.upsert(sid, metaUpdate);
