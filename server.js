@@ -16838,14 +16838,11 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
           // Kekri, so the vendor gets notified to act on it, not admin.
           notifyVendorReturnArrived(rr).catch(e => console.error('❌ Vendor return-arrived notify error:', e.message));
         }
-        // Admin FYI the moment the reverse leg completes on an exchange with
-        // no forward shipment yet — regardless of who arranged the reverse
-        // pickup (admin or vendor). Whoever's job it is to book the
-        // replacement, admin should know it's now due. A 24h escalation
-        // re-fires in rrReminderCron if it's still not booked by then.
-        if (rr.type === 'exchange' && !rr.forward_shipment?.awb) {
-          notifyAdminForwardPending(rr).catch(e => console.error('❌ Admin forward-pending notify error:', e.message));
-        }
+        // No immediate admin FYI here — admin only gets pinged if the
+        // forward shipment is STILL not booked 24h later (rrReminderCron's
+        // forwardPending block below). Pinging admin the instant the
+        // reverse leg lands would fire before anyone's had a chance to
+        // book the replacement at all, which is just noise/spam.
       }
     }
   } else if (direction === 'forward') {
@@ -20831,24 +20828,6 @@ async function notifyVendorReturnArrived(rr) {
   } catch (e) { console.error('❌ Vendor return-arrived email error:', e.message); }
 }
 
-// Admin FYI: the reverse leg of an exchange is back (whether admin or vendor
-// arranged that pickup) but the forward/replacement shipment hasn't been
-// booked yet. Deduped via wa_notif_sent.admin_forward_pending so it only
-// fires once per RR from here — rrReminderCron separately re-escalates
-// after 24h if it's STILL not booked.
-async function notifyAdminForwardPending(rr) {
-  if (rr.wa_notif_sent?.admin_forward_pending) return;
-  const fresh = await mdb.collection('return_requests').findOne({ request_id: rr.request_id }, { projection: { wa_notif_sent: 1 } });
-  if (fresh?.wa_notif_sent?.admin_forward_pending) return;
-  const itemsLine = (rr.items || []).map(it => `${it.title}${it.variant_title && it.variant_title !== 'Default Title' ? ` (${it.variant_title})` : ''}`).join(', ') || 'item(s)';
-  const arrangedBy = rr.reverse_shipment?.created_by === 'admin' ? 'admin' : (rr.vendor_name || 'vendor');
-  await waAdminAlert(`🔁 *Reverse Received — Forward Pending*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nVendor: ${rr.vendor_name || '—'}\n${itemsLine}\n\nReturned item is back (reverse pickup arranged by ${arrangedBy}), but the replacement shipment hasn't been created yet.`, 'return_receipt').catch(() => {});
-  await mdb.collection('return_requests').updateOne(
-    { request_id: rr.request_id },
-    { $set: { 'wa_notif_sent.admin_forward_pending': new Date().toISOString() } }
-  );
-}
-
 // Notifies admin (WA + email) whenever items land in the Kekri (CC)
 // warehouse inventory from a processed return — separate from the
 // "review this return" nudge above, this is specifically about stock now
@@ -21024,11 +21003,10 @@ async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
   // Nudge them to create the forward shipment now instead of it silently
   // stalling; reminder_sent_forward_pending gates the 24h cron follow-up
   // from re-notifying once this fires.
-  if (rr.type === 'exchange' && !rr.forward_shipment) {
-    if (rr.reverse_shipment?.created_by === 'vendor') {
-      sendRRVendorWANotif(rr, 'proceed_forward_shipment').catch(e => console.error('❌ Vendor proceed-forward notify error:', e.message));
-    }
-    notifyAdminForwardPending(rr).catch(e => console.error('❌ Admin forward-pending notify error:', e.message));
+  // No immediate admin FYI here either — same reasoning as above, admin
+  // only hears about it if it's still unbooked 24h later.
+  if (rr.type === 'exchange' && !rr.forward_shipment && rr.reverse_shipment?.created_by === 'vendor') {
+    sendRRVendorWANotif(rr, 'proceed_forward_shipment').catch(e => console.error('❌ Vendor proceed-forward notify error:', e.message));
   }
 
   return { alreadyReceived: false, added };
