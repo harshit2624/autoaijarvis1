@@ -25060,32 +25060,28 @@ async function adminCreateRR({ order, type, lineItemIds, fromSize, toSize, reaso
     selected = [targetLi];
   }
 
-  // Group into one RR per unit-of-work: exchange creates one RR per ITEM
-  // (its "items" array is structurally a single product-variant swap, and
-  // each item might need a different target size/vendor — e.g. "replace 6
-  // and 7" across two different vendors, same-size for both). Return
-  // bundles multiple items from the SAME vendor into one RR, but still
-  // splits across vendors (a single RR can't straddle vendors).
-  const groups = type === 'exchange'
-    ? selected.map(li => [li.vendor || '', [li]])
-    : (() => {
-        const byVendor = new Map();
-        for (const li of selected) {
-          const v = li.vendor || '';
-          if (!byVendor.has(v)) byVendor.set(v, []);
-          byVendor.get(v).push(li);
-        }
-        return [...byVendor.entries()];
-      })();
+  // One RR per vendor — same vendor's selected items (whether exchange or
+  // return) bundle into a single request; a single RR still can't straddle
+  // vendors, so a cross-vendor selection ("6 and 7" across two vendors)
+  // splits into one RR per vendor as before.
+  const byVendor = new Map();
+  for (const li of selected) {
+    const v = li.vendor || '';
+    if (!byVendor.has(v)) byVendor.set(v, []);
+    byVendor.get(v).push(li);
+  }
+  const groups = [...byVendor.entries()];
 
   const now = new Date();
   const created = [];
   for (const [vendorName, vendorItems] of groups) {
     let items;
     if (type === 'exchange') {
-      const li = vendorItems[0];
-      const { exchangeVariantId, exchangeSizeLabel, toSize: resolvedToSize } = await resolveExchangeVariant(li, toSize);
-      items = [{ title: li.title, variant_title: li.variant_title, quantity: li.quantity, sku: li.sku || '', price: li.price, line_item_id: li.id, variant_id: li.variant_id, exchange_for: resolvedToSize, exchange_size_label: exchangeSizeLabel, exchange_variant_id: exchangeVariantId }];
+      items = [];
+      for (const li of vendorItems) {
+        const { exchangeVariantId, exchangeSizeLabel, toSize: resolvedToSize } = await resolveExchangeVariant(li, toSize);
+        items.push({ title: li.title, variant_title: li.variant_title, quantity: li.quantity, sku: li.sku || '', price: li.price, line_item_id: li.id, variant_id: li.variant_id, exchange_for: resolvedToSize, exchange_size_label: exchangeSizeLabel, exchange_variant_id: exchangeVariantId });
+      }
     } else {
       items = vendorItems.map(li => ({ title: li.title, variant_title: li.variant_title, quantity: li.quantity, sku: li.sku || '', price: li.price, line_item_id: li.id, variant_id: li.variant_id }));
     }
@@ -25285,14 +25281,17 @@ async function runOrderCommand(intent, order, reply) {
     const created = await adminCreateRR({ order, type: 'exchange', lineItemIds: intent.lineItemIds, fromSize: intent.from_size, toSize: intent.to_size, reason: intent.reason });
     const isSameSizeReplacement = !intent.to_size;
     const label = isSameSizeReplacement ? 'Replacement' : 'Exchange';
+    const totalItems = created.reduce((s, rr) => s + rr.items.length, 0);
     const lines = created.map(rr => {
-      const rrItem = rr.items?.[0];
-      const sizeLine = isSameSizeReplacement
-        ? `same size (${rrItem?.variant_title || rrItem?.exchange_size_label || ''})`
-        : `${rrItem?.variant_title ? `${rrItem.variant_title} → ` : ''}${rrItem?.exchange_size_label || intent.to_size}`;
-      return `${rr.request_id} — ${rrItem?.title || ''} — ${sizeLine} (${rr.vendor_name || 'no vendor'})`;
+      const itemLines = rr.items.map(rrItem => {
+        const sizeLine = isSameSizeReplacement
+          ? `same size (${rrItem.variant_title || rrItem.exchange_size_label || ''})`
+          : `${rrItem.variant_title ? `${rrItem.variant_title} → ` : ''}${rrItem.exchange_size_label || intent.to_size}`;
+        return `  • ${rrItem.title} — ${sizeLine}`;
+      }).join('\n');
+      return `${rr.request_id} (${rr.vendor_name || 'no vendor'}):\n${itemLines}`;
     }).join('\n');
-    await reply(`✅ ${label}${created.length > 1 ? `s` : ''} generated for order ${order.name}${created.length > 1 ? ` — ${created.length} items` : ''}:\n${lines}\nCustomer notified on WhatsApp.`);
+    await reply(`✅ ${label}${totalItems > 1 ? `s` : ''} generated for order ${order.name}${totalItems > 1 ? ` — ${totalItems} items` : ''}:\n${lines}\nCustomer notified on WhatsApp.`);
   } else if (intent.action === 'generate_return') {
     const created = await adminCreateRR({ order, type: 'return', lineItemIds: intent.lineItemIds, reason: intent.reason });
     const lines = created.map(rr => `${rr.request_id} (${rr.vendor_name || 'no vendor'}, ${rr.items.length} item${rr.items.length !== 1 ? 's' : ''})`).join('\n');
