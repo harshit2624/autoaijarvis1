@@ -16587,8 +16587,12 @@ async function sendRRVendorWANotif(rr, event) {
     msg = `🔴 *OVERDUE — Reverse Pickup Not Arranged — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThis *${typeLabel.toLowerCase()} request* was approved *over 48 hours ago* and pickup still hasn't happened.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease arrange pickup *immediately* and update the AWB in your Vendor Portal — this is now attracting a delay penalty per your vendor agreement.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
     cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_PICKUP_OVERDUE, bodyParams: [orderName, rr.request_id || '', itemNames] });
   } else if (event === 'proceed_forward_shipment') {
-    msg = `📤 *Item Received — Ship the Replacement — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe returned item for this *exchange* has been received at Kekri.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease create the *forward shipment* to send the replacement to the customer, and update the AWB in your Vendor Portal.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+    msg = `📤 *Item Received — Ship the Replacement — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe returned item for this *exchange* has been delivered back to you.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease verify it, then create the *forward shipment* to send the replacement to the customer, and update the AWB in your Vendor Portal.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
     cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_PROCEED_FORWARD, bodyParams: [orderName, itemNames, rr.request_id || ''] });
+  } else if (event === 'return_item_received') {
+    msg = `📥 *Return Item Delivered Back to You — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe returned item has been delivered back to you by the courier.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease verify its condition. Once confirmed, CROSCROW will process the customer's refund / store credit.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+    // No dedicated Meta template yet for this event — falls through to the
+    // Baileys-socket fallback below like any other un-cloud-templated notif.
   }
 
   if (!msg) return;
@@ -16830,7 +16834,9 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
         if (rr.reverse_shipment?.created_by === 'admin') {
           receiveReturnAtCC(rr, { source: 'auto' }).catch(e => console.error('❌ Auto receive-at-CC error:', e.message));
         } else {
-          notifyReverseParcelArrived(rr).catch(e => console.error('❌ Reverse parcel arrived notify error:', e.message));
+          // Vendor-arranged pickup — parcel went back to the vendor, not
+          // Kekri, so the vendor gets notified to act on it, not admin.
+          notifyVendorReturnArrived(rr).catch(e => console.error('❌ Vendor return-arrived notify error:', e.message));
         }
       }
     }
@@ -20753,6 +20759,14 @@ app.delete('/admin/onboards/:email/vendor-account', adminAuth, async (req, res) 
 // added to CC inventory (that only happens once someone actually opens it
 // and clicks "Mark Received at CC"). Distinct, lighter-touch alert than
 // notifyCCInventoryAdded below, since nothing's been verified or stocked yet.
+// ONLY valid for reverse_shipment.created_by === 'admin' — an admin-arranged
+// pickup is the only case that's actually headed to Kekri. A vendor-arranged
+// self-service pickup (created_by === 'vendor') goes back to the VENDOR, not
+// Kekri, and never touches CC inventory — see notifyVendorReturnArrived below,
+// which handles that case instead. Confirmed live: RR-20260821-5943's reverse
+// shipment was booked through the vendor panel, but this function was firing
+// for it anyway and telling admin to "verify and mark received at Kekri" for
+// a parcel that was never coming to Kekri in the first place.
 async function notifyReverseParcelArrived(rr) {
   const itemsLine = (rr.items || []).map(it => `${it.title}${it.variant_title && it.variant_title !== 'Default Title' ? ` (${it.variant_title})` : ''}`).join(', ') || 'item(s)';
   waAdminAlert(`📥 *Return Parcel Arrived at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\n${itemsLine}\n\nCourier confirms it's physically here — not yet added to CC inventory. Verify contents and mark received.`, 'cc_inventory').catch(() => {});
@@ -20767,6 +20781,37 @@ async function notifyReverseParcelArrived(rr) {
       });
     }
   } catch (e) { console.error('❌ Reverse parcel arrived email error:', e.message); }
+}
+
+// The vendor-created-pickup counterpart to notifyReverseParcelArrived above —
+// fires when a vendor's own self-service reverse shipment shows delivered by
+// the courier. That parcel went back to the VENDOR, not Kekri, so the vendor
+// (not admin) is the one who needs to act on it: verify the item and, for an
+// exchange, ship the replacement. For a plain return, admin still eventually
+// needs to know so they can process the refund/store credit, but gets a
+// correctly-worded FYI — not the Kekri/CC-inventory language, since nothing
+// was stocked and nothing here is admin's to action right now.
+async function notifyVendorReturnArrived(rr) {
+  if (rr.type === 'exchange') {
+    // Reuses the existing proceed_forward_shipment vendor nudge — same
+    // message a manual admin "Mark Received" would trigger for this vendor,
+    // just fired automatically the moment the courier confirms delivery.
+    await sendRRVendorWANotif(rr, 'proceed_forward_shipment').catch(e => console.error('❌ Vendor proceed-forward notify error:', e.message));
+    return;
+  }
+  await sendRRVendorWANotif(rr, 'return_item_received').catch(e => console.error('❌ Vendor return-received notify error:', e.message));
+  try {
+    const itemsLine = (rr.items || []).map(it => `${it.title}${it.variant_title && it.variant_title !== 'Default Title' ? ` (${it.variant_title})` : ''}`).join(', ') || 'item(s)';
+    const cfg = await getSmtpConfig();
+    if (cfg?.host && cfg?.adminEmail) {
+      await sendEmail({
+        to: cfg.adminEmail,
+        subject: `Return Delivered Back to ${rr.vendor_name || 'Vendor'} — ${rr.order_name || rr.shopify_order_id}`,
+        html: `<p>Return <strong>${rr.request_id}</strong> (order ${rr.order_name || rr.shopify_order_id}) — courier tracking shows the parcel was delivered back to <strong>${rr.vendor_name || 'the vendor'}</strong> (this was a vendor-arranged self-service pickup, not a Kekri/CC shipment).</p><p>${rr.vendor_name || 'The vendor'} has been notified to verify the item. Once confirmed, process the refund / store credit here.</p><p>${itemsLine}</p>`,
+        shopifyId: rr.shopify_order_id, trigger: 'vendor_return_arrived',
+      });
+    }
+  } catch (e) { console.error('❌ Vendor return-arrived email error:', e.message); }
 }
 
 // Notifies admin (WA + email) whenever items land in the Kekri (CC)
