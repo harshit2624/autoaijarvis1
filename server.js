@@ -25060,20 +25060,27 @@ async function adminCreateRR({ order, type, lineItemIds, fromSize, toSize, reaso
     selected = [targetLi];
   }
 
-  // Exchange/replace is always exactly one item (picking a target size for
-  // more than one product at once isn't a coherent single action).
-  if (type === 'exchange' && selected.length > 1) selected = [selected[0]];
-
-  const byVendor = new Map();
-  for (const li of selected) {
-    const v = li.vendor || '';
-    if (!byVendor.has(v)) byVendor.set(v, []);
-    byVendor.get(v).push(li);
-  }
+  // Group into one RR per unit-of-work: exchange creates one RR per ITEM
+  // (its "items" array is structurally a single product-variant swap, and
+  // each item might need a different target size/vendor — e.g. "replace 6
+  // and 7" across two different vendors, same-size for both). Return
+  // bundles multiple items from the SAME vendor into one RR, but still
+  // splits across vendors (a single RR can't straddle vendors).
+  const groups = type === 'exchange'
+    ? selected.map(li => [li.vendor || '', [li]])
+    : (() => {
+        const byVendor = new Map();
+        for (const li of selected) {
+          const v = li.vendor || '';
+          if (!byVendor.has(v)) byVendor.set(v, []);
+          byVendor.get(v).push(li);
+        }
+        return [...byVendor.entries()];
+      })();
 
   const now = new Date();
   const created = [];
-  for (const [vendorName, vendorItems] of byVendor) {
+  for (const [vendorName, vendorItems] of groups) {
     let items;
     if (type === 'exchange') {
       const li = vendorItems[0];
@@ -25241,24 +25248,51 @@ async function sendDemoFlowToPhone(phone10) {
 const _pendingItemSelections = new Map(); // phone -> { action, order, reason, expiresAt }
 const SELECTION_TTL_MS = 10 * 60 * 1000;
 
+// Lenient on purpose — admins type these fast and casually ("6-7 same size
+// replacement", "6 and 7 replace", "2,3 to L"), and being too strict here
+// just bounces them out to "didn't catch a command", which is worse than
+// tolerating filler words. Only used while a selection is actually pending,
+// so a false-positive match has limited blast radius.
 function parseSelectionReply(text, itemCount) {
-  const m = String(text || '').trim().match(/^(all|\d+(?:\s*,\s*\d+)*)(?:\s+to\s+(.+))?$/i);
-  if (!m) return null;
-  const toSize = m[2] ? m[2].trim() : undefined;
-  if (m[1].toLowerCase() === 'all') return { indices: Array.from({ length: itemCount }, (_, i) => i + 1), toSize };
-  const indices = [...new Set(m[1].split(',').map(s => parseInt(s.trim(), 10)))].filter(n => n >= 1 && n <= itemCount);
-  return indices.length ? { indices, toSize } : null;
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  if (/^all\b/i.test(raw)) return { indices: Array.from({ length: itemCount }, (_, i) => i + 1), toSize: undefined };
+
+  // Pull out an explicit "to <size>" if present — everything else (ranges,
+  // "and", commas, trailing words like "replace"/"same size replacement")
+  // is just noise around the item numbers.
+  const toMatch = raw.match(/\bto\s+(\S+)/i);
+  const toSize = toMatch ? toMatch[1].trim() : undefined;
+  const selectionPart = toMatch ? raw.slice(0, toMatch.index) : raw;
+
+  const indices = new Set();
+  const tokenRe = /(\d+)\s*-\s*(\d+)|(\d+)/g;
+  let m;
+  while ((m = tokenRe.exec(selectionPart))) {
+    if (m[1] && m[2]) {
+      const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      for (let n = Math.min(a, b); n <= Math.max(a, b); n++) indices.add(n);
+    } else if (m[3]) {
+      indices.add(parseInt(m[3], 10));
+    }
+  }
+  const valid = [...indices].filter(n => n >= 1 && n <= itemCount).sort((a, b) => a - b);
+  return valid.length ? { indices: valid, toSize } : null;
 }
 
 async function runOrderCommand(intent, order, reply) {
   if (intent.action === 'generate_exchange') {
-    const [rr] = await adminCreateRR({ order, type: 'exchange', lineItemIds: intent.lineItemIds, fromSize: intent.from_size, toSize: intent.to_size, reason: intent.reason });
-    const rrItem = rr.items?.[0];
+    const created = await adminCreateRR({ order, type: 'exchange', lineItemIds: intent.lineItemIds, fromSize: intent.from_size, toSize: intent.to_size, reason: intent.reason });
     const isSameSizeReplacement = !intent.to_size;
-    const sizeLine = isSameSizeReplacement
-      ? `same-size replacement (${rrItem?.variant_title || rrItem?.exchange_size_label || ''})`
-      : `${intent.from_size ? `${intent.from_size} → ` : ''}${rrItem?.exchange_size_label || intent.to_size}`;
-    await reply(`✅ ${isSameSizeReplacement ? 'Replacement' : 'Exchange'} generated for order ${order.name} — ${rrItem?.title || ''} — ${sizeLine}.\nRequest: ${rr.request_id}\nCustomer notified on WhatsApp.`);
+    const label = isSameSizeReplacement ? 'Replacement' : 'Exchange';
+    const lines = created.map(rr => {
+      const rrItem = rr.items?.[0];
+      const sizeLine = isSameSizeReplacement
+        ? `same size (${rrItem?.variant_title || rrItem?.exchange_size_label || ''})`
+        : `${rrItem?.variant_title ? `${rrItem.variant_title} → ` : ''}${rrItem?.exchange_size_label || intent.to_size}`;
+      return `${rr.request_id} — ${rrItem?.title || ''} — ${sizeLine} (${rr.vendor_name || 'no vendor'})`;
+    }).join('\n');
+    await reply(`✅ ${label}${created.length > 1 ? `s` : ''} generated for order ${order.name}${created.length > 1 ? ` — ${created.length} items` : ''}:\n${lines}\nCustomer notified on WhatsApp.`);
   } else if (intent.action === 'generate_return') {
     const created = await adminCreateRR({ order, type: 'return', lineItemIds: intent.lineItemIds, reason: intent.reason });
     const lines = created.map(rr => `${rr.request_id} (${rr.vendor_name || 'no vendor'}, ${rr.items.length} item${rr.items.length !== 1 ? 's' : ''})`).join('\n');
