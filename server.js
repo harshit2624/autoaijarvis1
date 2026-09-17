@@ -16176,7 +16176,15 @@ function shipsagarStatusToStage(desc) {
   if (s.includes('out for delivery') || s.includes('out delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('no such consignee') || s.includes('address incomplete') || s.includes('address incorrect') || s.includes('incorrect address') || s.includes('charges pending') || s.includes('reattempt') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held') || s.includes('otp not shared') || s.includes('cancelled by consignee')) return 'ofd';
   if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed') || s.includes('delivery delayed') || s.includes('reached dest') || s.includes('reached at destination')) return 'transit';
   if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting') || s.includes('further connected') || s.includes('on its way') || s.includes('on the way')) return 'transit';
-  if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('pickup registered') || s.includes('pickup has been registered') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received') || s === 'pickup' || s.includes('waiting pickup') || s.includes('waiting for pickup') || s.includes('out to p')) return 'pickup';
+  // "Waiting for pickup" means the courier has NOT collected it yet — the
+  // literal opposite of "picked up"/"pickup done" — but was bucketed
+  // together with them here, so a scan meaning "still waiting" advanced an
+  // RR straight to picked_up (confirmed live: RR-20260917-1129-0, a
+  // WAITING_PICKUP scan two seconds before status flipped to picked_up).
+  // Not yet collected → no stage classification at all, rather than
+  // guessing it means either 'ready' or 'pickup' — falls through to null.
+  if (s.includes('waiting pickup') || s.includes('waiting for pickup') || s.includes('waiting for the pickup')) return null;
+  if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('pickup registered') || s.includes('pickup has been registered') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received') || s === 'pickup' || s.includes('out to p')) return 'pickup';
   return null;
 }
 
