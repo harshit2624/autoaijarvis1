@@ -16838,6 +16838,14 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
           // Kekri, so the vendor gets notified to act on it, not admin.
           notifyVendorReturnArrived(rr).catch(e => console.error('❌ Vendor return-arrived notify error:', e.message));
         }
+        // Admin FYI the moment the reverse leg completes on an exchange with
+        // no forward shipment yet — regardless of who arranged the reverse
+        // pickup (admin or vendor). Whoever's job it is to book the
+        // replacement, admin should know it's now due. A 24h escalation
+        // re-fires in rrReminderCron if it's still not booked by then.
+        if (rr.type === 'exchange' && !rr.forward_shipment?.awb) {
+          notifyAdminForwardPending(rr).catch(e => console.error('❌ Admin forward-pending notify error:', e.message));
+        }
       }
     }
   } else if (direction === 'forward') {
@@ -19536,18 +19544,27 @@ async function rrReminderCron() {
       await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_receipt: true } });
     }
 
-    // Vendor received the reverse item back (own self-service pickup) but
-    // still hasn't created the forward shipment 24h+ later — re-nudge them
-    // once (reminder_sent_forward_pending), same pattern as the others.
+    // Reverse leg is back (either received_at_cc for an admin/Kekri-bound
+    // pickup, or reverse_delivered_at for a vendor-arranged one — the two
+    // legs never both apply) but the forward/replacement shipment still
+    // isn't booked 24h+ later — re-nudge whoever's job it is, and always
+    // re-nudge admin too, regardless of who arranged the reverse pickup.
+    // Previously this only matched received_at_cc + created_by:'vendor',
+    // which is a contradiction — a vendor-arranged pickup never sets
+    // received_at_cc (that only happens for Kekri-bound stock), so this
+    // reminder could never actually fire for the case it was written for.
     const forwardPending = await mdb.collection('return_requests').find({
-      type: 'exchange', received_at_cc: true, received_at_cc_at: { $lt: ago24 },
-      forward_shipment: { $exists: false },
-      'reverse_shipment.created_by': 'vendor',
+      type: 'exchange', forward_shipment: { $exists: false },
+      $or: [
+        { received_at_cc: true, received_at_cc_at: { $lt: ago24 } },
+        { reverse_delivered_at: { $lt: ago24 } },
+      ],
       status: { $nin: ['completed', 'rejected', 'cancelled'] },
       reminder_sent_forward_pending: { $ne: true },
     }).toArray();
     for (const r of forwardPending) {
-      await sendRRVendorWANotif(r, 'proceed_forward_shipment');
+      if (r.reverse_shipment?.created_by === 'vendor') await sendRRVendorWANotif(r, 'proceed_forward_shipment');
+      await waAdminAlert(`⏰ *24h Reminder: Forward Shipment Still Pending*\n\nOrder *${r.order_name || r.shopify_order_id}*\nRequest: ${r.request_id}\nVendor: ${r.vendor_name || '—'}\n\nReturned item has been back 24h+ and the replacement still hasn't shipped.`, 'return_receipt');
       await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_forward_pending: true } });
     }
 
@@ -20814,6 +20831,24 @@ async function notifyVendorReturnArrived(rr) {
   } catch (e) { console.error('❌ Vendor return-arrived email error:', e.message); }
 }
 
+// Admin FYI: the reverse leg of an exchange is back (whether admin or vendor
+// arranged that pickup) but the forward/replacement shipment hasn't been
+// booked yet. Deduped via wa_notif_sent.admin_forward_pending so it only
+// fires once per RR from here — rrReminderCron separately re-escalates
+// after 24h if it's STILL not booked.
+async function notifyAdminForwardPending(rr) {
+  if (rr.wa_notif_sent?.admin_forward_pending) return;
+  const fresh = await mdb.collection('return_requests').findOne({ request_id: rr.request_id }, { projection: { wa_notif_sent: 1 } });
+  if (fresh?.wa_notif_sent?.admin_forward_pending) return;
+  const itemsLine = (rr.items || []).map(it => `${it.title}${it.variant_title && it.variant_title !== 'Default Title' ? ` (${it.variant_title})` : ''}`).join(', ') || 'item(s)';
+  const arrangedBy = rr.reverse_shipment?.created_by === 'admin' ? 'admin' : (rr.vendor_name || 'vendor');
+  await waAdminAlert(`🔁 *Reverse Received — Forward Pending*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nVendor: ${rr.vendor_name || '—'}\n${itemsLine}\n\nReturned item is back (reverse pickup arranged by ${arrangedBy}), but the replacement shipment hasn't been created yet.`, 'return_receipt').catch(() => {});
+  await mdb.collection('return_requests').updateOne(
+    { request_id: rr.request_id },
+    { $set: { 'wa_notif_sent.admin_forward_pending': new Date().toISOString() } }
+  );
+}
+
 // Notifies admin (WA + email) whenever items land in the Kekri (CC)
 // warehouse inventory from a processed return — separate from the
 // "review this return" nudge above, this is specifically about stock now
@@ -20989,8 +21024,11 @@ async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
   // Nudge them to create the forward shipment now instead of it silently
   // stalling; reminder_sent_forward_pending gates the 24h cron follow-up
   // from re-notifying once this fires.
-  if (rr.type === 'exchange' && !rr.forward_shipment && rr.reverse_shipment?.created_by === 'vendor') {
-    sendRRVendorWANotif(rr, 'proceed_forward_shipment').catch(e => console.error('❌ Vendor proceed-forward notify error:', e.message));
+  if (rr.type === 'exchange' && !rr.forward_shipment) {
+    if (rr.reverse_shipment?.created_by === 'vendor') {
+      sendRRVendorWANotif(rr, 'proceed_forward_shipment').catch(e => console.error('❌ Vendor proceed-forward notify error:', e.message));
+    }
+    notifyAdminForwardPending(rr).catch(e => console.error('❌ Admin forward-pending notify error:', e.message));
   }
 
   return { alreadyReceived: false, added };
