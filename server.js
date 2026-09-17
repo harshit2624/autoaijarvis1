@@ -16568,6 +16568,9 @@ async function sendRRVendorWANotif(rr, event) {
   } else if (event === 'pickup_overdue_48h') {
     msg = `🔴 *OVERDUE — Reverse Pickup Not Arranged — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThis *${typeLabel.toLowerCase()} request* was approved *over 48 hours ago* and pickup still hasn't happened.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease arrange pickup *immediately* and update the AWB in your Vendor Portal — this is now attracting a delay penalty per your vendor agreement.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
     cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_PICKUP_OVERDUE, bodyParams: [orderName, rr.request_id || '', itemNames] });
+  } else if (event === 'proceed_forward_shipment') {
+    msg = `📤 *Item Received — Ship the Replacement — ${orderName}*\n\nHi ${rr.vendor_name},\n\nThe returned item for this *exchange* has been received at Kekri.\n\n🛍️ Item: ${itemNames}\n👤 Customer: ${customerName}\n🆔 Request: ${rr.request_id}\n\nPlease create the *forward shipment* to send the replacement to the customer, and update the AWB in your Vendor Portal.${trackUrl ? `\n\n🔗 ${trackUrl}` : ''}\n\n_CROSCROW Operations Team_`;
+    cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_RR_PROCEED_FORWARD, bodyParams: [orderName, itemNames, rr.request_id || ''] });
   }
 
   if (!msg) return;
@@ -19493,8 +19496,23 @@ async function rrReminderCron() {
       await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_receipt: true } });
     }
 
-    if (pendingOld.length + approvedOld.length + overdueRRs.length + receivedOld.length > 0)
-      console.log(`📧 RR reminders sent: ${pendingOld.length} admin(email), ${approvedOld.length} vendor(email), ${overdueRRs.length} 48h-overdue(WA), ${receivedOld.length} receipt-24h(WA)`);
+    // Vendor received the reverse item back (own self-service pickup) but
+    // still hasn't created the forward shipment 24h+ later — re-nudge them
+    // once (reminder_sent_forward_pending), same pattern as the others.
+    const forwardPending = await mdb.collection('return_requests').find({
+      type: 'exchange', received_at_cc: true, received_at_cc_at: { $lt: ago24 },
+      forward_shipment: { $exists: false },
+      'reverse_shipment.created_by': 'vendor',
+      status: { $nin: ['completed', 'rejected', 'cancelled'] },
+      reminder_sent_forward_pending: { $ne: true },
+    }).toArray();
+    for (const r of forwardPending) {
+      await sendRRVendorWANotif(r, 'proceed_forward_shipment');
+      await mdb.collection('return_requests').updateOne({ request_id: r.request_id }, { $set: { reminder_sent_forward_pending: true } });
+    }
+
+    if (pendingOld.length + approvedOld.length + overdueRRs.length + receivedOld.length + forwardPending.length > 0)
+      console.log(`📧 RR reminders sent: ${pendingOld.length} admin(email), ${approvedOld.length} vendor(email), ${overdueRRs.length} 48h-overdue(WA), ${receivedOld.length} receipt-24h(WA), ${forwardPending.length} forward-pending-24h(WA)`);
   } catch(e) { console.error('RR reminder cron error:', e.message); }
 }
 setTimeout(rrReminderCron, 90000);
@@ -20885,6 +20903,16 @@ async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
   // it's still sitting unresolved (no resolution set on the RR yet).
   waAdminAlert(`📦 *Return Received at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nType: ${rr.type}\n\nReview it and issue store credit / refund / exchange dispatch.`, 'return_receipt').catch(() => {});
   notifyCCInventoryAdded(added, rr).catch(e => console.error('❌ CC inventory added notify error:', e.message));
+
+  // For a vendor's own self-service reverse shipment (as opposed to one
+  // admin arranged directly), receiving the wrong-size/damaged item back is
+  // only half the job — the vendor still owes the customer a replacement.
+  // Nudge them to create the forward shipment now instead of it silently
+  // stalling; reminder_sent_forward_pending gates the 24h cron follow-up
+  // from re-notifying once this fires.
+  if (rr.type === 'exchange' && !rr.forward_shipment && rr.reverse_shipment?.created_by === 'vendor') {
+    sendRRVendorWANotif(rr, 'proceed_forward_shipment').catch(e => console.error('❌ Vendor proceed-forward notify error:', e.message));
+  }
 
   return { alreadyReceived: false, added };
 }
@@ -24873,6 +24901,7 @@ const WA_TPL = {
   VENDOR_RR_REQUEST_RECEIVED: 'vendor_rr_request_received',
   VENDOR_RR_APPROVED: 'vendor_rr_approved',
   VENDOR_RR_PICKUP_OVERDUE: 'vendor_rr_pickup_overdue',
+  VENDOR_RR_PROCEED_FORWARD: 'vendor_rr_proceed_forward',
   VENDOR_DELIVERY_ATTEMPT_FAILED: 'vendor_delivery_attempt_failed',
   VENDOR_STUCK_ORDER_NUDGE: 'vendor_stuck_order_nudge',
   VENDOR_DISPATCH_WARNING: 'vendor_dispatch_warning',
