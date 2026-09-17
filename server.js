@@ -16768,14 +16768,28 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
 
   if (direction === 'reverse') {
     const reverseStage = shipsagarStatusToStage(desc);
+    // Status advance is now decoupled from the WA-notif dedup flag — it
+    // re-runs (idempotently, via rrAdvanceStatus's rank guard) on every
+    // cron pass regardless of whether the notification already went out.
+    // Previously both were gated on the same `!wa_notif_sent?.X` check, so
+    // if something else (e.g. a stale PUT) ever knocked rr.status backward
+    // after the notif had already fired once, the status could never
+    // self-heal — the notif flag would forever block re-checking it. This
+    // is what happened on RR-20260821-5943: cron advanced it to
+    // received_at_warehouse on 2026-08-31, a later vendor PUT reset status
+    // to 'approved', and it stayed wedged there because wa_notif_sent.
+    // picked_up / received_at_warehouse were already set. Now the cron
+    // re-derives and re-applies the correct status every pass no matter
+    // what knocked it backward.
+
     // Picked up from customer — advances status regardless of current status
     // (as long as it's not already further along or terminal), so a request
     // that never got manually "approved" doesn't get stuck on pending forever.
     const isPickedUp = RR_PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
-    if (isPickedUp && !rr.wa_notif_sent?.picked_up) {
-      await sendRRWANotif(rr, 'picked_up');
+    if (isPickedUp) {
+      if (!rr.wa_notif_sent?.picked_up) await sendRRWANotif(rr, 'picked_up');
       const adv = await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
-      events.push({ event: 'picked_up', advanced: adv });
+      if (adv) events.push({ event: 'picked_up', advanced: adv });
     }
     // In transit — courier moving it back toward the warehouse
     if (reverseStage === 'transit' && rrStatusRank(rr.status) < rrStatusRank('in_transit')) {
@@ -16790,11 +16804,11 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
     // not reuse the forward classifier's rto bucket here — that's why
     // this match list is independent and reverse-only.
     const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
-    if (isReceivedBack && !rr.wa_notif_sent?.received_at_warehouse) {
-      await sendRRWANotif(rr, 'received_at_warehouse');
+    if (isReceivedBack) {
+      if (!rr.wa_notif_sent?.received_at_warehouse) await sendRRWANotif(rr, 'received_at_warehouse');
       const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
-      events.push({ event: 'received_at_warehouse', advanced });
-      if (advanced) {
+      if (advanced) events.push({ event: 'received_at_warehouse', advanced });
+      if (advanced || !rr.reverse_delivered_at) {
         // Deliberately a DIFFERENT field from received_at_cc — this is just
         // the courier's tracking scan saying the package physically arrived,
         // not proof anyone opened it and added stock. Conflating the two
@@ -16804,8 +16818,10 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
         // cc_inventory never actually being touched for it.
         await mdb.collection('return_requests').updateOne(
           { request_id: rr.request_id },
-          { $set: { reverse_delivered_at: now } }
+          { $set: { reverse_delivered_at: rr.reverse_delivered_at || now } }
         );
+      }
+      if (advanced) {
         // Admin-created reverse shipments (the ones admin arranges directly,
         // as opposed to a vendor's own self-service pickup) are trusted
         // enough on courier confirmation alone to skip the manual "open it
@@ -20948,15 +20964,24 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
 
 app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
   try {
-    const { status, admin_note } = req.body;
+    const { status, admin_note, force } = req.body;
     const before = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { status: 1 } });
     const now = new Date().toISOString();
     const update = { updated_at: now };
-    if (status) update.status = status;
-    if (status === 'approved' && before?.status !== 'approved') update.approved_at = now;
+    // Same rank guard as the vendor endpoint — a stale admin panel render
+    // (button gated to only show for the current status, e.g. "Mark Pickup
+    // Scheduled") could otherwise re-send an old status and stomp progress
+    // the ShipSagar cron already made in the background. Admin can still
+    // force an explicit downgrade (e.g. correcting a wrong auto-advance) by
+    // passing force:true — rejected/cancelled are always allowed either way
+    // since they're terminal overrides, not pipeline steps.
+    const isTerminalStatus = RR_TERMINAL_STATUSES.includes(status);
+    const statusOk = status && (force || isTerminalStatus || rrStatusRank(status) > rrStatusRank(before?.status));
+    if (statusOk) update.status = status;
+    if (statusOk && status === 'approved' && before?.status !== 'approved') update.approved_at = now;
     if (admin_note !== undefined) update.admin_note = admin_note;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id }, { $set: update });
-    if (status) {
+    if (statusOk && status) {
       await rrPushHistory(req.params.id, { status, note: admin_note || '', source: 'admin' });
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
       if (updated) {
@@ -21462,7 +21487,7 @@ app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
   const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
   await mdb.collection('return_requests').updateOne(
     { request_id: req.params.id },
-    { $set: { [field]: { awb: awb.trim(), courier: courier||'', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+    { $set: { [field]: { awb: awb.trim(), courier: courier||'', partner: 'manual', created_by: 'vendor', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
   );
   sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
   if (direction === 'reverse') {
@@ -21590,13 +21615,27 @@ app.get("/vendor/return-requests", vendorAuth, async (req, res) => {
 app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
   try {
     const { vendor_note, status } = req.body;
+    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+
     const update = { updated_at: new Date().toISOString() };
     if (vendor_note !== undefined) update.vendor_note = vendor_note;
-    if (status) update.status = status;
-    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    // Vendor can only ever move status FORWARD through the pipeline (or leave
+    // it unchanged) — never downgrade it. Without this rank check, a stale
+    // page (e.g. vendor's "Confirm Approved" button, which only shows while
+    // status is already 'approved') can re-send status:'approved' after the
+    // ShipSagar cron has already auto-advanced the RR further (picked_up,
+    // received, etc), silently stomping that progress back down and
+    // permanently wedging it — the wa_notif_sent dedup flags mean the cron
+    // never re-fires those advance checks once already sent. Confirmed live
+    // on RR-20260821-5943: cron advanced it to received_at_warehouse on
+    // 2026-08-31, then a later 'approved' PUT reset it back to 'approved'.
+    const statusOk = status && (RR_TERMINAL_STATUSES.includes(status) ? false : rrStatusRank(status) > rrStatusRank(rr.status));
+    if (statusOk) update.status = status;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { $set: update });
     if (vendor_note !== undefined) await rrPushHistory(req.params.id, { note: vendor_note, source: 'vendor', event: 'vendor_note' });
-    if (status === 'approved') {
+    if (statusOk && status === 'approved') {
       await rrPushHistory(req.params.id, { status: 'approved', note: 'Vendor confirmed pickup arrangement', source: 'vendor' });
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
       if (updated) {
@@ -21605,7 +21644,7 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
         sendRRWANotif(updated, 'approved').catch(() => {});
       }
     }
-    res.json({ success: true });
+    res.json({ success: true, statusApplied: !!statusOk });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
