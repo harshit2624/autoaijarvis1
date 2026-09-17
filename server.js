@@ -16785,7 +16785,16 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
           { request_id: rr.request_id },
           { $set: { reverse_delivered_at: now } }
         );
-        notifyReverseParcelArrived(rr).catch(e => console.error('❌ Reverse parcel arrived notify error:', e.message));
+        // Admin-created reverse shipments (the ones admin arranges directly,
+        // as opposed to a vendor's own self-service pickup) are trusted
+        // enough on courier confirmation alone to skip the manual "open it
+        // and click Mark Received" step — auto-add to CC inventory right
+        // here instead of just flagging it as arrived-but-unverified.
+        if (rr.reverse_shipment?.created_by === 'admin') {
+          receiveReturnAtCC(rr, { source: 'auto' }).catch(e => console.error('❌ Auto receive-at-CC error:', e.message));
+        } else {
+          notifyReverseParcelArrived(rr).catch(e => console.error('❌ Reverse parcel arrived notify error:', e.message));
+        }
       }
     }
   } else if (direction === 'forward') {
@@ -20424,7 +20433,7 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
     await mdb.collection('return_requests').updateOne(
       { request_id: req.params.id },
-      { $set: { [field]: { awb: awb.trim(), courier: courier || '', partner: 'manual', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+      { $set: { [field]: { awb: awb.trim(), courier: courier || '', partner: 'manual', created_by: 'admin', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
     // Push to ShipSagar for tracking + send customer email
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
@@ -20774,15 +20783,16 @@ async function notifyOrderMatchesCCStock(order) {
 
 // ── Admin: update return request status / notes ───────────────────────────
 // ── POST /admin/return-requests/:id/receive-at-cc ────────────────────────
-app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res) => {
-  try {
-    const force = req.body?.force === true;
-    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
-    if (!rr) return res.status(404).json({ error: "Request not found." });
-    if (rr.received_at_cc && !force) return res.status(400).json({ error: "Already marked as received at CC." });
+// Actually adds a return's items to CC inventory and marks it received —
+// the real work behind /admin/return-requests/:id/receive-at-cc, extracted
+// so it can also be called automatically (see maybeAutoReceiveAtCC) for
+// admin-created reverse shipments once the courier confirms arrival,
+// without an admin having to click the button.
+async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
+  if (rr.received_at_cc && !force) return { alreadyReceived: true, added: [] };
 
-    const items = rr.items || [];
-    if (!items.length) return res.status(400).json({ error: "No items found on this request." });
+  const items = rr.items || [];
+  if (!items.length) throw new Error('No items found on this request.');
 
     // Build a title→line_item map from order_meta so we can resolve variant_id
     // even when RR items don't carry it (older submissions)
@@ -20861,22 +20871,32 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
       added.push({ variant_id: variantId, qty, product_title: productTitle, variant_title: variantTitle, vendor_name: rr.vendor_name || '' });
     }
 
-    // Mark RR as received
-    await mdb.collection('return_requests').updateOne(
-      { request_id: req.params.id },
-      { $set: { received_at_cc: true, received_at_cc_at: now, updated_at: now } }
-    );
+  // Mark RR as received
+  await mdb.collection('return_requests').updateOne(
+    { request_id: rr.request_id },
+    { $set: { received_at_cc: true, received_at_cc_at: now, updated_at: now } }
+  );
 
-    await rrPushHistory(req.params.id, { event: 'received_at_cc', note: `${added.length} item(s) added to CC inventory`, source: 'admin' });
-    auditLog("admin", "rr_received_at_cc", req.params.id, { added });
+  await rrPushHistory(rr.request_id, { event: 'received_at_cc', note: `${added.length} item(s) added to CC inventory`, source });
+  auditLog(source, "rr_received_at_cc", rr.request_id, { added });
 
-    // Nudge admin to actually action this now that it's physically at the
-    // warehouse — a 24h reminder cron (see cronReturnReminders) re-pings if
-    // it's still sitting unresolved (no resolution set on the RR yet).
-    waAdminAlert(`📦 *Return Received at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nType: ${rr.type}\n\nReview it and issue store credit / refund / exchange dispatch.`, 'return_receipt').catch(() => {});
-    notifyCCInventoryAdded(added, rr).catch(e => console.error('❌ CC inventory added notify error:', e.message));
+  // Nudge admin to actually action this now that it's physically at the
+  // warehouse — a 24h reminder cron (see cronReturnReminders) re-pings if
+  // it's still sitting unresolved (no resolution set on the RR yet).
+  waAdminAlert(`📦 *Return Received at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nType: ${rr.type}\n\nReview it and issue store credit / refund / exchange dispatch.`, 'return_receipt').catch(() => {});
+  notifyCCInventoryAdded(added, rr).catch(e => console.error('❌ CC inventory added notify error:', e.message));
 
-    res.json({ success: true, added });
+  return { alreadyReceived: false, added };
+}
+
+app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res) => {
+  try {
+    const force = req.body?.force === true;
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    if (!rr) return res.status(404).json({ error: "Request not found." });
+    const result = await receiveReturnAtCC(rr, { force, source: 'admin' });
+    if (result.alreadyReceived) return res.status(400).json({ error: "Already marked as received at CC." });
+    res.json({ success: true, added: result.added });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -21367,7 +21387,7 @@ app.post("/admin/return-requests/:id/create-shipment", adminAuth, async (req, re
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
     await mdb.collection('return_requests').updateOne(
       { request_id: req.params.id },
-      { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+      { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_by: 'admin', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
     sendRRShipmentEmail(rr, direction, result.awb, result.courier);
     if (direction === 'reverse') {
@@ -21470,7 +21490,7 @@ app.post("/vendor/return-requests/:id/create-shipment", vendorAuth, async (req, 
     const field = direction === 'reverse' ? 'reverse_shipment' : 'forward_shipment';
     await mdb.collection('return_requests').updateOne(
       { request_id: req.params.id },
-      { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
+      { $set: { [field]: { awb: result.awb, courier: result.courier, partner, created_by: 'vendor', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
     );
     sendRRShipmentEmail(rr, direction, result.awb, result.courier);
     if (direction === 'reverse') {
