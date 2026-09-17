@@ -1639,6 +1639,11 @@ app.post("/webhooks/orders", (req, res) => {
         // Snapshot full order data first — enables DB-first track page & bot queries
         snapshotOrder(payload).catch(e => console.error('snapshotOrder create failed:', e.message));
 
+        // Independent of email settings below (WA alert doesn't need SMTP) —
+        // flags when a fresh order could be fulfilled from CC stock already
+        // sitting at Kekri from a prior return, instead of restocking fresh.
+        notifyOrderMatchesCCStock(payload).catch(e => console.error('notifyOrderMatchesCCStock error:', e.message));
+
         const settingsRow = await ES.get();
         if (settingsRow?.enabled === 0) return;
         const cfg = await getSmtpConfig();
@@ -20666,6 +20671,70 @@ app.delete('/admin/onboards/:email/vendor-account', adminAuth, async (req, res) 
   }
 });
 
+// Notifies admin (WA + email) whenever items land in the Kekri (CC)
+// warehouse inventory from a processed return — separate from the
+// "review this return" nudge above, this is specifically about stock now
+// sitting there that could fulfill a fresh order instead of restocking
+// from the vendor.
+async function notifyCCInventoryAdded(added, rr) {
+  if (!added?.length) return;
+  const lines = added.map(a => `• ${a.product_title}${a.variant_title && a.variant_title !== 'Default Title' ? ` (${a.variant_title})` : ''} × ${a.qty} — ${a.vendor_name || 'unknown vendor'}`).join('\n');
+  waAdminAlert(`📦 *Added to CC Inventory*\n\nFrom return ${rr.request_id} (order *${rr.order_name || rr.shopify_order_id}*):\n${lines}`, 'cc_inventory').catch(() => {});
+
+  try {
+    const cfg = await getSmtpConfig();
+    if (cfg?.host && cfg?.adminEmail) {
+      const rowsHtml = added.map(a => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${a.product_title}${a.variant_title && a.variant_title !== 'Default Title' ? ` (${a.variant_title})` : ''}</td><td style="padding:4px 8px;border-bottom:1px solid #eee">${a.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee">${a.vendor_name || '—'}</td></tr>`).join('');
+      await sendEmail({
+        to: cfg.adminEmail,
+        subject: `Stock Added to CC Inventory — ${rr.order_name || rr.shopify_order_id}`,
+        html: `<p>Return <strong>${rr.request_id}</strong> (order ${rr.order_name || rr.shopify_order_id}) was received at Kekri and the following item(s) were added to CC inventory:</p>
+<table style="border-collapse:collapse;width:100%;max-width:500px"><thead><tr><th style="text-align:left;padding:4px 8px">Item</th><th style="text-align:left;padding:4px 8px">Qty</th><th style="text-align:left;padding:4px 8px">Vendor</th></tr></thead><tbody>${rowsHtml}</tbody></table>`,
+        shopifyId: rr.shopify_order_id, trigger: 'cc_inventory_added',
+      });
+    }
+  } catch (e) { console.error('❌ CC inventory added email error:', e.message); }
+}
+
+// Notifies admin (WA + email) when a fresh order comes in for a variant
+// that's already sitting in CC inventory from a prior return — a chance to
+// fulfill from that stock instead of waiting on the vendor. Called from
+// the orders/create webhook.
+async function notifyOrderMatchesCCStock(order) {
+  const items = order.line_items || [];
+  if (!items.length) return;
+  const variantIds = items.map(li => String(li.variant_id)).filter(Boolean);
+  if (!variantIds.length) return;
+  const matches = await mdb.collection('cc_inventory').find(
+    { variant_id: { $in: variantIds }, quantity: { $gt: 0 } },
+    { projection: { _id: 0 } }
+  ).toArray();
+  if (!matches.length) return;
+
+  const lines = matches.map(m => {
+    const li = items.find(li => String(li.variant_id) === m.variant_id);
+    return `• ${m.product_title}${m.variant_title && m.variant_title !== 'Default Title' ? ` (${m.variant_title})` : ''} — ${m.quantity} in CC stock (order wants ${li?.quantity || 1})`;
+  }).join('\n');
+  waAdminAlert(`🏬 *Order Matches CC Inventory*\n\nOrder *${order.name}* wants item(s) already sitting in CC stock:\n${lines}\n\nConsider fulfilling from CC instead of restocking from the vendor.`, 'cc_inventory').catch(() => {});
+
+  try {
+    const cfg = await getSmtpConfig();
+    if (cfg?.host && cfg?.adminEmail) {
+      const rowsHtml = matches.map(m => {
+        const li = items.find(li => String(li.variant_id) === m.variant_id);
+        return `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${m.product_title}${m.variant_title && m.variant_title !== 'Default Title' ? ` (${m.variant_title})` : ''}</td><td style="padding:4px 8px;border-bottom:1px solid #eee">${m.quantity}</td><td style="padding:4px 8px;border-bottom:1px solid #eee">${li?.quantity || 1}</td></tr>`;
+      }).join('');
+      await sendEmail({
+        to: cfg.adminEmail,
+        subject: `Order ${order.name} Matches CC Inventory Stock`,
+        html: `<p>Order <strong>${order.name}</strong> includes item(s) already sitting in CC (Kekri) inventory from a prior return — consider fulfilling from there instead of restocking from the vendor:</p>
+<table style="border-collapse:collapse;width:100%;max-width:500px"><thead><tr><th style="text-align:left;padding:4px 8px">Item</th><th style="text-align:left;padding:4px 8px">CC Stock</th><th style="text-align:left;padding:4px 8px">Order Wants</th></tr></thead><tbody>${rowsHtml}</tbody></table>`,
+        shopifyId: String(order.id), trigger: 'order_matches_cc_stock',
+      });
+    }
+  } catch (e) { console.error('❌ Order-matches-CC-stock email error:', e.message); }
+}
+
 // ── Admin: update return request status / notes ───────────────────────────
 // ── POST /admin/return-requests/:id/receive-at-cc ────────────────────────
 app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res) => {
@@ -20752,7 +20821,7 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
           created_at: now, updated_at: now,
         });
       }
-      added.push({ variant_id: variantId, qty });
+      added.push({ variant_id: variantId, qty, product_title: productTitle, variant_title: variantTitle, vendor_name: rr.vendor_name || '' });
     }
 
     // Mark RR as received
@@ -20768,6 +20837,7 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
     // warehouse — a 24h reminder cron (see cronReturnReminders) re-pings if
     // it's still sitting unresolved (no resolution set on the RR yet).
     waAdminAlert(`📦 *Return Received at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\nType: ${rr.type}\n\nReview it and issue store credit / refund / exchange dispatch.`, 'return_receipt').catch(() => {});
+    notifyCCInventoryAdded(added, rr).catch(e => console.error('❌ CC inventory added notify error:', e.message));
 
     res.json({ success: true, added });
   } catch (err) { res.status(500).json({ error: err.message }); }
