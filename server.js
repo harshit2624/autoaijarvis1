@@ -1323,6 +1323,17 @@ async function createShopifyDiscountCode(customerId, amount, currency = 'INR', o
   const amt = parseFloat(amount).toFixed(2);
   const code = `CC${String(orderName).replace(/[^0-9]/g, '') || Math.floor(Math.random()*90000+10000)}${Math.random().toString(36).slice(2,6).toUpperCase()}`;
 
+  // Deliberately no customer_selection/prerequisite_customer_ids — confirmed
+  // live on order #3292: our version (customer_selection:'prerequisite')
+  // didn't work at GoKwik's checkout (which powers this store's checkout,
+  // not native Shopify), while a manually-created plain code with the exact
+  // same discount+min-order but NO customer restriction worked fine there.
+  // Shopify was also silently normalizing our 'prerequisite' request down to
+  // 'all' with an empty customer list anyway (confirmed by refetching the
+  // price rule after creation) — so the restriction was never actually
+  // applying, just possibly leaving the rule in a state GoKwik's sync choked
+  // on. usage_limit:1 already prevents reuse by anyone regardless of who
+  // redeems it first, which is the security property that mattered here.
   const priceRuleBody = {
     price_rule: {
       title: `Store credit — ${orderName || 'RR'} — ${code}`,
@@ -1331,8 +1342,7 @@ async function createShopifyDiscountCode(customerId, amount, currency = 'INR', o
       allocation_method: 'across',
       value_type: 'fixed_amount',
       value: `-${amt}`,
-      customer_selection: 'prerequisite',
-      prerequisite_customer_ids: [customerId],
+      customer_selection: 'all',
       prerequisite_subtotal_range: { greater_than_or_equal_to: amt },
       usage_limit: 1,
       starts_at: new Date().toISOString(),
