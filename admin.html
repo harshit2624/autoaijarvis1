@@ -6008,7 +6008,7 @@
                                           ✓ Received at CC — added to inventory
                                           {rq.received_at_cc_at && <span style={{color:'var(--text-muted)',fontSize:10}}>({fmtDate(rq.received_at_cc_at)})</span>}
                                         </span>
-                                        {rq.received_at_cc_at && rq.resolution !== 'store_credit' && (()=>{
+                                        {rq.received_at_cc_at && rq.resolution !== 'store_credit' && rq.status !== 'completed' && (()=>{
                                           const hrsSince = (Date.now() - new Date(rq.received_at_cc_at).getTime()) / 3600000;
                                           const overdue = hrsSince >= 20; // reminder cron fires the WA nudge at 24h — start flagging it a few hours ahead
                                           return (
@@ -6027,11 +6027,19 @@
                                         </button>
                                       </div>
                                     ) : (
-                                      <button className="btn btn-ghost btn-sm"
-                                        style={{borderColor:'#fbbf24',color:'#fbbf24',fontSize:11,fontWeight:700}}
-                                        onClick={()=>receiveAtCC(rq.request_id)} disabled={saving}>
-                                        🏬 Mark Received at CC — Add to Inventory
-                                      </button>
+                                      <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-start'}}>
+                                        {rq.reverse_delivered_at && (
+                                          <span style={{fontSize:11,color:'#fbbf24',display:'flex',alignItems:'center',gap:5}}>
+                                            📥 Courier says arrived at Kekri — not yet added to inventory
+                                            <span style={{color:'var(--text-muted)',fontSize:10}}>({fmtDate(rq.reverse_delivered_at)})</span>
+                                          </span>
+                                        )}
+                                        <button className="btn btn-ghost btn-sm"
+                                          style={{borderColor:'#fbbf24',color:'#fbbf24',fontSize:11,fontWeight:700}}
+                                          onClick={()=>receiveAtCC(rq.request_id)} disabled={saving}>
+                                          🏬 Mark Received at CC — Add to Inventory
+                                        </button>
+                                      </div>
                                     )}
                                   </div>
                                 )}

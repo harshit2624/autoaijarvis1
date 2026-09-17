@@ -16774,10 +16774,18 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
       const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
       events.push({ event: 'received_at_warehouse', advanced });
       if (advanced) {
+        // Deliberately a DIFFERENT field from received_at_cc — this is just
+        // the courier's tracking scan saying the package physically arrived,
+        // not proof anyone opened it and added stock. Conflating the two
+        // (as before) made the admin panel claim "added to inventory" on
+        // return requests where nothing was ever added — confirmed live on
+        // RR-20260911-6167, showing the inventory checkmark despite
+        // cc_inventory never actually being touched for it.
         await mdb.collection('return_requests').updateOne(
           { request_id: rr.request_id },
-          { $set: { received_at_cc: true, received_at_cc_at: now } }
+          { $set: { reverse_delivered_at: now } }
         );
+        notifyReverseParcelArrived(rr).catch(e => console.error('❌ Reverse parcel arrived notify error:', e.message));
       }
     }
   } else if (direction === 'forward') {
@@ -19459,9 +19467,17 @@ async function rrReminderCron() {
     // Received at Kekri warehouse > 24hrs with no resolution yet (no store
     // credit / refund / exchange dispatch actioned) — re-nudge admin. Fires
     // once (reminder_sent_receipt), same pattern as the other reminders here.
+    // status !== 'completed' is the real "still needs review" signal — a
+    // pure exchange (no store credit involved) never sets `resolution` at
+    // all even once fully done, so resolution alone made this fire forever
+    // on completed exchanges (confirmed live: RR-20260911-6167, Completed
+    // status, exchange delivered back to customer, still showing "review
+    // now" days later).
     const receivedOld = await mdb.collection('return_requests').find({
       received_at_cc: true, received_at_cc_at: { $lt: ago24 },
-      resolution: { $exists: false }, reminder_sent_receipt: { $ne: true },
+      resolution: { $exists: false },
+      status: { $nin: ['completed', 'rejected', 'cancelled'] },
+      reminder_sent_receipt: { $ne: true },
     }).toArray();
     for (const r of receivedOld) {
       await waAdminAlert(`⏰ *24h Reminder: Return Still Unreviewed*\n\nOrder *${r.order_name || r.shopify_order_id}*\nRequest: ${r.request_id}\nReceived at Kekri 24h+ ago — review and issue store credit / refund / exchange dispatch.`, 'return_receipt');
@@ -20670,6 +20686,27 @@ app.delete('/admin/onboards/:email/vendor-account', adminAuth, async (req, res) 
     res.status(500).json({ error: err.message });
   }
 });
+
+// Notifies admin (WA + email) when a return's reverse-shipment courier scan
+// says the parcel physically arrived at Kekri — NOT the same as it being
+// added to CC inventory (that only happens once someone actually opens it
+// and clicks "Mark Received at CC"). Distinct, lighter-touch alert than
+// notifyCCInventoryAdded below, since nothing's been verified or stocked yet.
+async function notifyReverseParcelArrived(rr) {
+  const itemsLine = (rr.items || []).map(it => `${it.title}${it.variant_title && it.variant_title !== 'Default Title' ? ` (${it.variant_title})` : ''}`).join(', ') || 'item(s)';
+  waAdminAlert(`📥 *Return Parcel Arrived at Kekri*\n\nOrder *${rr.order_name || rr.shopify_order_id}*\nRequest: ${rr.request_id}\n${itemsLine}\n\nCourier confirms it's physically here — not yet added to CC inventory. Verify contents and mark received.`, 'cc_inventory').catch(() => {});
+  try {
+    const cfg = await getSmtpConfig();
+    if (cfg?.host && cfg?.adminEmail) {
+      await sendEmail({
+        to: cfg.adminEmail,
+        subject: `Return Parcel Arrived (Unverified) — ${rr.order_name || rr.shopify_order_id}`,
+        html: `<p>Return <strong>${rr.request_id}</strong> (order ${rr.order_name || rr.shopify_order_id}) — courier tracking shows the parcel physically arrived at Kekri.</p><p><strong>Not yet added to CC inventory</strong> — open it, verify the contents, and mark it received in the admin panel.</p><p>${itemsLine}</p>`,
+        shopifyId: rr.shopify_order_id, trigger: 'reverse_parcel_arrived',
+      });
+    }
+  } catch (e) { console.error('❌ Reverse parcel arrived email error:', e.message); }
+}
 
 // Notifies admin (WA + email) whenever items land in the Kekri (CC)
 // warehouse inventory from a processed return — separate from the
