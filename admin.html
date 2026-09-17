@@ -926,6 +926,8 @@
     .rr-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
     .rr-chip { padding:6px 14px; border-radius:99px; border:1px solid var(--border); cursor:pointer; background:var(--bg-card2); color:var(--text-muted); font-family:var(--font-family); font-size:11px; font-weight:600; text-transform:capitalize; transition:background .15s,color .15s,border-color .15s; }
     .rr-chip.active { background:var(--indigo-dim); color:var(--indigo); border-color:var(--indigo); }
+    .rr-chip-count { display:inline-block; margin-left:5px; font-size:9.5px; font-weight:800; font-variant-numeric:tabular-nums; padding:1px 6px; border-radius:99px; background:rgba(148,163,184,.18); color:inherit; opacity:.85; }
+    .rr-toolbar-sep { width:1px; align-self:stretch; background:var(--border); margin:2px 2px; }
     .rr-select { padding:6px 11px; border-radius:9px; border:1px solid var(--border); background:var(--bg-card2); color:var(--text); font-family:var(--font-family); font-size:11.5px; }
     .rr-search { flex:1; min-width:160px; padding:6px 12px; border-radius:9px; border:1px solid var(--border); background:var(--bg-card2); color:var(--text); font-family:var(--font-family); font-size:11.5px; }
 
@@ -5859,16 +5861,19 @@
     const [retCfgVendor, setRetCfgVendor] = useState(null);
     const [vendors,  setVendors]  = useState([]);
     const [vendorFilter, setVendorFilter] = useState('all');
+    const [typeFilter, setTypeFilter] = useState('all');
     const [search,   setSearch]   = useState('');
     const [creditModalFor, setCreditModalFor] = useState(null);
 
+    // Fetch everything once — tab/vendor/type/search all filter client-side
+    // now, so tab counts can reflect every status at once and switching
+    // tabs is instant instead of a re-fetch.
     const load = () => {
       setLoading(true);
-      const q = tab !== 'all' ? `?status=${tab}` : '';
-      fetch(`${API}/admin/return-requests${q}`, { headers:{ Authorization:`Bearer ${token}` } })
+      fetch(`${API}/admin/return-requests`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>setRequests(d.requests||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
-    useEffect(load, [tab]);
+    useEffect(load, []);
     useEffect(()=>{
       fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setVendors((d.vendors||[]).map(v=>typeof v==='string'?v:v.name).filter(Boolean))).catch(()=>{});
     },[]);
@@ -5922,7 +5927,11 @@
     const STATUS_COLOR = { pending:'var(--yellow)', approved:'var(--green)', rejected:'var(--red)', completed:'var(--teal)' };
     const TABS = ['all','pending','approved','rejected','completed'];
 
+    const tabCounts = Object.fromEntries(TABS.map(t => [t, t==='all' ? requests.length : requests.filter(rq=>rq.status===t).length]));
+
     const filtered = requests
+      .filter(rq => tab==='all' || rq.status===tab)
+      .filter(rq => typeFilter==='all' || rq.type===typeFilter)
       .filter(rq => vendorFilter==='all' || rq.vendor_name===vendorFilter)
       .filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id,rq.vendor_name].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
 
@@ -5947,7 +5956,15 @@
 
         <div className="rr-toolbar">
           {TABS.map(t=>(
-            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>{t}</button>
+            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>
+              {t} <span className="rr-chip-count">{tabCounts[t]}</span>
+            </button>
+          ))}
+          <span className="rr-toolbar-sep"></span>
+          {['all','return','exchange'].map(t=>(
+            <button key={t} className={`rr-chip ${typeFilter===t?'active':''}`} onClick={()=>setTypeFilter(t)}>
+              {t==='all' ? 'Return + Exchange' : (t==='exchange'?'⇄':'↩')+' '+t}
+            </button>
           ))}
           <select className="rr-select" value={vendorFilter} onChange={e=>setVendorFilter(e.target.value)}>
             <option value="all">All Vendors</option>

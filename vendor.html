@@ -634,6 +634,8 @@
     .rr-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
     .rr-chip { padding:6px 14px; border-radius:99px; border:1px solid var(--border); cursor:pointer; background:var(--bg-card2); color:var(--text-muted); font-family:var(--font-family); font-size:11px; font-weight:600; text-transform:capitalize; transition:background .15s,color .15s,border-color .15s; }
     .rr-chip.active { background:var(--green-dim); color:var(--green); border-color:var(--green); }
+    .rr-chip-count { display:inline-block; margin-left:5px; font-size:9.5px; font-weight:800; font-variant-numeric:tabular-nums; padding:1px 6px; border-radius:99px; background:rgba(148,163,184,.18); color:inherit; opacity:.85; }
+    .rr-toolbar-sep { width:1px; align-self:stretch; background:var(--border); margin:2px 2px; }
     .rr-search { flex:1; min-width:160px; padding:6px 12px; border-radius:9px; border:1px solid var(--border); background:var(--bg-card2); color:var(--text); font-family:var(--font-family); font-size:11.5px; }
 
     .rr-board { display:grid; grid-template-columns:330px 1fr; gap:16px; align-items:start; }
@@ -3711,14 +3713,14 @@
     const [saving,   setSaving]   = useState(false);
     const [msg,      setMsg]      = useState(null);
     const [search,   setSearch]   = useState('');
+    const [typeFilter, setTypeFilter] = useState('all');
 
     const load = () => {
       setLoading(true);
-      const q = tab !== 'all' ? `?status=${tab}` : '';
-      fetch(`${API}/vendor/return-requests${q}`, { headers:{ Authorization:`Bearer ${token}` } })
+      fetch(`${API}/vendor/return-requests`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>setRequests(d.requests||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
-    useEffect(load, [tab]);
+    useEffect(load, []);
 
     const saveNote = async (id) => {
       setSaving(true); setMsg(null);
@@ -3748,7 +3750,12 @@
     const STATUS_COLOR = { pending:'var(--yellow)', approved:'var(--green)', rejected:'var(--red)', completed:'var(--teal)' };
     const TABS = ['all','pending','approved','rejected','completed'];
 
-    const filtered = requests.filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
+    const tabCounts = Object.fromEntries(TABS.map(t => [t, t==='all' ? requests.length : requests.filter(rq=>rq.status===t).length]));
+
+    const filtered = requests
+      .filter(rq => tab==='all' || rq.status===tab)
+      .filter(rq => typeFilter==='all' || rq.type===typeFilter)
+      .filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
     const selected = filtered.find(rq => rq.request_id === selectedId) || filtered[0] || null;
     useEffect(()=>{ if (selected && selected.request_id !== selectedId) setSelectedId(selected.request_id); }, [filtered.map(r=>r.request_id).join(',')]);
     useEffect(()=>{ if (selected) setNoteVal(selected.vendor_note||''); }, [selected?.request_id]);
@@ -3770,7 +3777,15 @@
 
         <div className="rr-toolbar">
           {TABS.map(t=>(
-            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>{t}</button>
+            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>
+              {t} <span className="rr-chip-count">{tabCounts[t]}</span>
+            </button>
+          ))}
+          <span className="rr-toolbar-sep"></span>
+          {['all','return','exchange'].map(t=>(
+            <button key={t} className={`rr-chip ${typeFilter===t?'active':''}`} onClick={()=>setTypeFilter(t)}>
+              {t==='all' ? 'Return + Exchange' : (t==='exchange'?'⇄':'↩')+' '+t}
+            </button>
           ))}
           <input className="rr-search" type="search" placeholder="Search order, customer, request ID…" value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
