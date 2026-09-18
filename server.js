@@ -17462,9 +17462,17 @@ app.get("/vendor/shipsagar/couriers", vendorAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Run every 2 hours, offset 60s from startup
-setTimeout(() => shipsagarTrackingCron().catch(() => {}), 60000);
-setInterval(shipsagarTrackingCron, 2 * 60 * 60 * 1000);
+// Run every 30 min, offset 60s from startup. In-flight guard so a slow run
+// (300ms per AWB) never overlaps the next tick and double-fires notifications.
+let _shipsagarCronRunning = false;
+async function shipsagarTrackingCronGuarded() {
+  if (_shipsagarCronRunning) return;
+  _shipsagarCronRunning = true;
+  try { await shipsagarTrackingCron(); } catch (e) { console.error('❌ shipsagarTrackingCron:', e.message); }
+  finally { _shipsagarCronRunning = false; }
+}
+setTimeout(shipsagarTrackingCronGuarded, 60000);
+setInterval(shipsagarTrackingCronGuarded, 30 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════════════════
 //  WEEKLY REPORT SYSTEM
