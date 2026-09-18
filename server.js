@@ -16766,7 +16766,7 @@ const RR_REVERSE_RECEIVED_CODES = ['delivered_seller','delivered to seller','del
 // tracking_history, never actually re-running the classification+advance
 // logic). Returns the list of {event, advanced} transitions that fired, so
 // callers can report back what happened.
-async function rrApplyStageLogic(rr, direction, desc, descLow) {
+async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '') {
   const events = [];
   const now = new Date().toISOString();
 
@@ -16831,7 +16831,11 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
         // enough on courier confirmation alone to skip the manual "open it
         // and click Mark Received" step — auto-add to CC inventory right
         // here instead of just flagging it as arrived-but-unverified.
-        if (rr.reverse_shipment?.created_by === 'admin') {
+        // Legacy shipments booked before created_by was tagged have none —
+        // fall back to where the courier actually delivered it: a scan at
+        // Kekri means it's Kekri-bound stock, same as an admin pickup.
+        const kekriBound = rr.reverse_shipment?.created_by === 'admin' || (!rr.reverse_shipment?.created_by && /kekri/i.test(latestLoc));
+        if (kekriBound) {
           receiveReturnAtCC(rr, { source: 'auto' }).catch(e => console.error('❌ Auto receive-at-CC error:', e.message));
         } else {
           // Vendor-arranged pickup — parcel went back to the vendor, not
@@ -16899,6 +16903,111 @@ async function rrApplyStageLogic(rr, direction, desc, descLow) {
 
   return events;
 }
+
+// Courier scan text → coarse rank, used only to stop ShipSagar's flapping
+// ("OUT_DELIVERY_SELLER" → "Dispatched" → "Pending" → "DELIVERED_SELLER")
+// from making the reverse leg look like it went backwards. 0 = unrecognised.
+function rrScanRank(desc) {
+  const t = String(desc || '').toLowerCase().replace(/[_\s]+/g, ' ');
+  if (!t) return 0;
+  if (RR_REVERSE_RECEIVED_CODES.some(c => t.includes(c)) || (t.includes('delivered') && (t.includes('seller') || t.includes('origin') || t.includes('return')))) return 5;
+  if (t.includes('out delivery') || t.includes('out for delivery')) return 4;
+  if (t.includes('reached') || t.includes('transit') || t.includes('hub') || t.includes('city')) return 3;
+  if (t.includes('dispatched') || t.includes('picked') || t.includes('prod replaced') || t.includes('pickup done')) return 2;
+  if (t.includes('pending') || t.includes('scheduled')) return 1;
+  return 0;
+}
+
+// Return/exchange (reverse + forward) AWB tracking. Split out of
+// shipsagarTrackingCron so it runs every 30 min instead of every 2h (a
+// delivery was showing "Dispatched" for up to 2h after the courier said
+// Returned) and so it can't be skipped when there are no active order AWBs.
+async function rrTrackingPass() {
+  const runLog = { ran_at: new Date().toISOString(), kind: 'rr_tracking', checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [], rrUpdates: [] };
+  try {
+    const creds = await getShipSagarCreds();
+    if (!creds?.api_key) return;
+    const activeRRs = await mdb.collection('return_requests').find(
+      { status: { $nin: ['completed', 'cancelled', 'rejected'] },
+        $or: [{ 'reverse_shipment.awb': { $exists: true, $ne: '' } }, { 'forward_shipment.awb': { $exists: true, $ne: '' } }] },
+      { projection: { request_id:1, type:1, status:1, order_name:1, shopify_order_id:1, customer_name:1, customer_phone:1, items:1, admin_note:1, reverse_shipment:1, forward_shipment:1, wa_notif_sent:1, _id:0 } }
+    ).toArray();
+
+    for (const rr of activeRRs) {
+      for (const direction of ['reverse', 'forward']) {
+        const shipField = direction === 'reverse' ? rr.reverse_shipment : rr.forward_shipment;
+        if (!shipField?.awb) continue;
+        const awb = shipField.awb;
+        try {
+          const ss = await shipsagarTrackShipment(awb);
+          if (!ss?.found || !ss.history?.length) continue;
+
+          const latest = ss.history[ss.history.length - 1];
+          const desc = (latest.ActionDescription || ss.currentStatus || '').trim();
+          const descLow = desc.toLowerCase().replace(/[_\s]+/g, ' ');
+          const now = new Date().toISOString();
+          const prevStatus = shipField.tracking_status || '';
+          const latestLoc = latest.ActionLocation || latest.City || latest.Location || latest.ScanCity || latest.Hub || latest.DestCity || latest.ScanLocation || '';
+          // Reverse leg only: ignore a courier scan that ranks LOWER than the
+          // one already stored (ShipSagar flaps between statuses on the same
+          // AWB) so the panel never shows a delivered/out-for-delivery
+          // parcel sliding back to "Dispatched"/"Pending". Unrecognised
+          // text (rank 0) is always accepted.
+          const flap = direction === 'reverse' && rrScanRank(prevStatus) > 0 && rrScanRank(desc) > 0 && rrScanRank(desc) < rrScanRank(prevStatus);
+          const descChanged = !!desc && desc !== prevStatus && !flap;
+          if (flap) continue;
+
+          if (descChanged) {
+            const rrHistoryToSave = ss.history.map(h => ({
+              desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
+              date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
+              time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
+              location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
+            })).filter(h => h.desc);
+
+            // Update tracking_status + full scan history on the shipment field —
+            // the customer track page renders this the same way it renders the
+            // main forward-order scan log.
+            await mdb.collection('return_requests').updateOne(
+              { request_id: rr.request_id },
+              { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, [`${direction}_shipment.tracking_history`]: rrHistoryToSave, updated_at: now } }
+            );
+            console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
+            await rrPushHistory(rr.request_id, { event: `${direction}_tracking`, note: desc, source: 'courier' });
+          }
+
+          // Stage-advance checks run on every cron pass using the LATEST known
+          // scan text — not gated on descChanged. rrApplyStageLogic's checks
+          // are each idempotent (rank-based rrAdvanceStatus, wa_notif_sent
+          // dedup), so re-running them on an unchanged status is safe and is
+          // exactly what recovers an RR that got its tracking_status saved on
+          // one run but failed (transient error, unmatched pattern at the
+          // time) to actually advance its stage — previously that RR would be
+          // stuck forever, since the old code skipped this whole block once
+          // desc stopped changing.
+          if (!desc) continue;
+
+          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc);
+          for (const ev of rrEvents) {
+            runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: ev.event, advanced: ev.advanced });
+          }
+
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          console.error(`❌ RR tracking ${rr.request_id} ${direction}:`, e.message);
+        }
+      }
+    }
+    runLog.checked = activeRRs.length;
+    console.log(`📦 RR tracking done: checked ${activeRRs.length} return/exchange requests`);
+  } catch (e) {
+    runLog.errors.push({ error: e.message });
+    console.error('❌ rrTrackingPass:', e.message);
+  }
+  if (runLog.rrUpdates.length || runLog.errors.length) await mdb.collection('shipsagar_cron_log').insertOne(runLog).catch(() => {});
+}
+setTimeout(() => rrTrackingPass().catch(() => {}), 45000);
+setInterval(() => rrTrackingPass().catch(() => {}), 30 * 60 * 1000);
 
 async function shipsagarTrackingCron() {
   const runLog = { ran_at: new Date().toISOString(), checked: 0, tagged: 0, updated: 0, skipped: 0, errors: [], updates: [], rrUpdates: [] };
@@ -17067,71 +17176,9 @@ async function shipsagarTrackingCron() {
     runLog.message = `Checked ${runLog.checked}, updated ${runLog.updated}, skipped ${runLog.skipped}`;
     console.log(`📦 ShipSagar cron done: ${runLog.message}`);
 
-    // ── Track return/exchange (reverse + forward) AWBs ────────────────────
-    const activeRRs = await mdb.collection('return_requests').find(
-      { status: { $nin: ['completed', 'cancelled', 'rejected'] },
-        $or: [{ 'reverse_shipment.awb': { $exists: true, $ne: '' } }, { 'forward_shipment.awb': { $exists: true, $ne: '' } }] },
-      { projection: { request_id:1, type:1, status:1, order_name:1, shopify_order_id:1, customer_name:1, customer_phone:1, items:1, admin_note:1, reverse_shipment:1, forward_shipment:1, wa_notif_sent:1, _id:0 } }
-    ).toArray();
-
-    for (const rr of activeRRs) {
-      for (const direction of ['reverse', 'forward']) {
-        const shipField = direction === 'reverse' ? rr.reverse_shipment : rr.forward_shipment;
-        if (!shipField?.awb) continue;
-        const awb = shipField.awb;
-        try {
-          const ss = await shipsagarTrackShipment(awb);
-          if (!ss?.found || !ss.history?.length) continue;
-
-          const latest = ss.history[ss.history.length - 1];
-          const desc = (latest.ActionDescription || ss.currentStatus || '').trim();
-          const descLow = desc.toLowerCase().replace(/[_\s]+/g, ' ');
-          const now = new Date().toISOString();
-          const prevStatus = shipField.tracking_status || '';
-          const descChanged = !!desc && desc !== prevStatus;
-
-          if (descChanged) {
-            const rrHistoryToSave = ss.history.map(h => ({
-              desc: h.ActionDescription || h.Status || h.EventDescription || h.Description || '',
-              date: h.ActionDate || h.ScanDate || h.Date || h.EventDate || '',
-              time: h.ActionTime || h.ScanTime || h.Time || h.EventTime || '',
-              location: h.ActionLocation || h.City || h.Location || h.ScanCity || h.Hub || h.DestCity || h.ScanLocation || '',
-            })).filter(h => h.desc);
-
-            // Update tracking_status + full scan history on the shipment field —
-            // the customer track page renders this the same way it renders the
-            // main forward-order scan log.
-            await mdb.collection('return_requests').updateOne(
-              { request_id: rr.request_id },
-              { $set: { [`${direction}_shipment.tracking_status`]: desc, [`${direction}_shipment.tracking_updated_at`]: now, [`${direction}_shipment.tracking_history`]: rrHistoryToSave, updated_at: now } }
-            );
-            console.log(`📦 RR ${rr.request_id} ${direction} ${awb}: "${prevStatus}" → "${desc}"`);
-            await rrPushHistory(rr.request_id, { event: `${direction}_tracking`, note: desc, source: 'courier' });
-          }
-
-          // Stage-advance checks run on every cron pass using the LATEST known
-          // scan text — not gated on descChanged. rrApplyStageLogic's checks
-          // are each idempotent (rank-based rrAdvanceStatus, wa_notif_sent
-          // dedup), so re-running them on an unchanged status is safe and is
-          // exactly what recovers an RR that got its tracking_status saved on
-          // one run but failed (transient error, unmatched pattern at the
-          // time) to actually advance its stage — previously that RR would be
-          // stuck forever, since the old code skipped this whole block once
-          // desc stopped changing.
-          if (!desc) continue;
-
-          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow);
-          for (const ev of rrEvents) {
-            runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: ev.event, advanced: ev.advanced });
-          }
-
-          await new Promise(r => setTimeout(r, 300));
-        } catch (e) {
-          console.error(`❌ RR tracking ${rr.request_id} ${direction}:`, e.message);
-        }
-      }
-    }
-    console.log(`📦 RR tracking done: checked ${activeRRs.length} return/exchange requests`);
+    // Return/exchange AWBs are tracked by rrTrackingPass on its own faster
+    // interval (below) — not here, since the early-return above when there are
+    // no active order shipments used to skip them entirely.
 
   } catch(e) {
     runLog.errors.push({ error: e.message });
