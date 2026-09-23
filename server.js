@@ -21136,32 +21136,55 @@ app.delete("/admin/return-requests/:id", adminAuth, async (req, res) => {
 // Lets the admin modal show the correct net-of-discount default instead of
 // a naive sum of listed item prices (which over-credits when the original
 // order had a discount applied).
+// Shared credit math for the admin-panel preview AND the actual issue path.
+// Nets out line-level discounts, then caps the result by what the customer
+// actually PAID: a discount applied at order level (GoKwik/prepaid/cart
+// discount) is not allocated to any line, so line total_discount stays 0 and
+// list price over-credits. Confirmed live on #3258: paid ₹1411.70, but the
+// two returned lines listed at ₹2972 and a ₹2972 code went out.
+function computeRRCreditAmounts(rr, order) {
+  const olis = order.line_items || [];
+  let grossAmount = 0, netAmount = 0, matchedAny = false;
+  (rr.items || []).forEach(it => {
+    const qty = parseInt(it.qty || it.quantity) || 1;
+    const match = olis.find(li => String(li.id) === String(it.line_item_id))
+      || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
+    const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
+    grossAmount += unitGross * qty;
+    if (match) {
+      matchedAny = true;
+      const lineQty = parseInt(match.quantity) || qty;
+      const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
+      netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
+    } else {
+      netAmount += unitGross * qty;
+    }
+  });
+  if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
+
+  // Paid-goods cap: scale every returned line by (goods actually paid /
+  // net value of all lines on the order). Never scales up.
+  const linesNet = olis.reduce((sum, li) => sum + Math.max(0, parseFloat(li.price || 0) * (parseInt(li.quantity) || 0) - parseFloat(li.total_discount || 0)), 0);
+  const subtotal = parseFloat(order.subtotal_price || order.total_price || 0);
+  const outstanding = parseFloat(order.total_outstanding || 0);
+  const paidGoods = Math.max(0, Math.min(subtotal, parseFloat(order.total_price || 0) - outstanding));
+  let paidRatio = 1;
+  if (linesNet > 0 && paidGoods > 0 && paidGoods < linesNet - 0.01) {
+    paidRatio = paidGoods / linesNet;
+    netAmount = Math.round(netAmount * paidRatio * 100) / 100;
+  }
+  const discountDetected = (matchedAny && netAmount < grossAmount - 0.01) || paidRatio < 1;
+  return { grossAmount, netAmount, discountDetected, paidRatio, defaultAmount: netAmount || grossAmount };
+}
+
 app.get("/admin/return-requests/:id/credit-preview", adminAuth, async (req, res) => {
   try {
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
     if (!rr) return res.status(404).json({ error: 'Request not found' });
     if (!rr.shopify_order_id) return res.status(400).json({ error: 'No linked Shopify order on this request.' });
-    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,total_price,currency,line_items`);
-    const olis = order.line_items || [];
-    let grossAmount = 0, netAmount = 0, matchedAny = false;
-    (rr.items || []).forEach(it => {
-      const qty = parseInt(it.qty || it.quantity) || 1;
-      const match = olis.find(li => String(li.id) === String(it.line_item_id))
-        || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
-      const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
-      grossAmount += unitGross * qty;
-      if (match) {
-        matchedAny = true;
-        const lineQty = parseInt(match.quantity) || qty;
-        const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
-        netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
-      } else {
-        netAmount += unitGross * qty;
-      }
-    });
-    if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
-    const discountDetected = matchedAny && netAmount < grossAmount - 0.01;
-    res.json({ grossAmount, netAmount, discountDetected, defaultAmount: netAmount || grossAmount, currency: order.currency || 'INR' });
+    const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,total_price,subtotal_price,total_outstanding,currency,line_items`);
+    const { grossAmount, netAmount, discountDetected, defaultAmount } = computeRRCreditAmounts(rr, order);
+    res.json({ grossAmount, netAmount, discountDetected, defaultAmount, currency: order.currency || 'INR' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -21178,36 +21201,12 @@ async function issueStoreCreditForRR(request_id, amountOverride) {
   if (rr.resolution === 'store_credit') throw new Error('Store credit already issued for this request.');
   if (!rr.shopify_order_id) throw new Error('No linked Shopify order on this request.');
 
-  const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,currency,line_items,discount_codes`);
+  const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,subtotal_price,total_outstanding,currency,line_items,discount_codes`);
   const customerId = order?.customer?.id;
   if (!customerId) throw new Error('Could not find a Shopify customer on this order — store credit requires a registered customer account.');
 
-  // Default amount must reflect what the customer actually PAID, not the
-  // product's listed price — if the order had a discount applied, using
-  // the raw item price over-credits them. Shopify's line_items each carry
-  // their own allocated total_discount; net it out per returned item,
-  // matching by line_item_id (falls back to variant_id, then to the raw
-  // item price if the line can't be matched at all).
-  const olis = order.line_items || [];
-  let grossAmount = 0, netAmount = 0, matchedAny = false;
-  (rr.items || []).forEach(it => {
-    const qty = parseInt(it.qty || it.quantity) || 1;
-    const match = olis.find(li => String(li.id) === String(it.line_item_id))
-      || olis.find(li => it.variant_id && String(li.variant_id) === String(it.variant_id));
-    const unitGross = parseFloat(it.price) || (match ? parseFloat(match.price) : 0) || 0;
-    grossAmount += unitGross * qty;
-    if (match) {
-      matchedAny = true;
-      const lineQty = parseInt(match.quantity) || qty;
-      const perUnitDiscount = lineQty ? parseFloat(match.total_discount || 0) / lineQty : 0;
-      netAmount += Math.max(0, unitGross - perUnitDiscount) * qty;
-    } else {
-      netAmount += unitGross * qty; // no line match — can't net out a discount, use gross
-    }
-  });
-  if (!grossAmount) { grossAmount = parseFloat(order.total_price || 0); netAmount = grossAmount; }
-  const discountDetected = matchedAny && netAmount < grossAmount - 0.01;
-  const defaultAmount = netAmount || grossAmount;
+  // Amount reflects what the customer actually PAID — see computeRRCreditAmounts.
+  const { grossAmount, netAmount, discountDetected, defaultAmount } = computeRRCreditAmounts(rr, order);
   const amount = parseFloat(amountOverride) > 0 ? parseFloat(amountOverride) : defaultAmount;
   const currency = order.currency || 'INR';
 
