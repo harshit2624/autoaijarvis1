@@ -25384,11 +25384,19 @@ async function adminCreateRR({ order, type, lineItemIds, fromSize, toSize, reaso
   return created;
 }
 
-async function adminIssueStoreCreditForOrder(order, reason, lineItemIds) {
-  let rr = await mdb.collection('return_requests').findOne(
-    { shopify_order_id: String(order.id), resolution: { $ne: 'store_credit' } },
+// An existing live return request for this order (customer-submitted or
+// admin-made) — checked before creating a new one so a "refund"/"return"
+// command never duplicates it (#3258 got a second admin RR while the
+// customer's own was still in transit).
+async function findOpenReturnRR(order) {
+  return mdb.collection('return_requests').findOne(
+    { shopify_order_id: String(order.id), type: 'return', resolution: { $ne: 'store_credit' }, status: { $nin: ['rejected', 'cancelled', 'completed'] } },
     { projection: { _id: 0 }, sort: { created_at: -1 } }
   );
+}
+
+async function adminIssueStoreCreditForOrder(order, reason, lineItemIds) {
+  let rr = await findOpenReturnRR(order);
   // Store credit keeps its original "whole order" behavior regardless of
   // item/vendor count — unlike exchange/return, it was never asked to
   // require explicit item selection, so default to every item when the
@@ -25551,6 +25559,11 @@ async function runOrderCommand(intent, order, reply) {
     }).join('\n');
     await reply(`✅ ${label}${totalItems > 1 ? `s` : ''} generated for order ${order.name}${totalItems > 1 ? ` — ${totalItems} items` : ''}:\n${lines}\nCustomer notified on WhatsApp.`);
   } else if (intent.action === 'generate_return') {
+    const existing = await findOpenReturnRR(order);
+    if (existing) {
+      await reply(`ℹ️ Order ${order.name} already has an open return: ${existing.request_id} (${(existing.status || '').replace(/_/g, ' ')}, ${existing.vendor_name || 'no vendor'}, ${(existing.items || []).length} item${(existing.items || []).length !== 1 ? 's' : ''}). Not creating a duplicate — say "issue store credit to ${String(order.name).replace('#', '')}" to refund against it.`);
+      return;
+    }
     const created = await adminCreateRR({ order, type: 'return', lineItemIds: intent.lineItemIds, reason: intent.reason });
     const lines = created.map(rr => `${rr.request_id} (${rr.vendor_name || 'no vendor'}, ${rr.items.length} item${rr.items.length !== 1 ? 's' : ''})`).join('\n');
     await reply(`✅ Return generated for order ${order.name}${created.length > 1 ? ` — split across ${created.length} vendors` : ''}:\n${lines}\nCustomer notified on WhatsApp.`);
