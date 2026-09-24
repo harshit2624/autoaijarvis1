@@ -16766,6 +16766,21 @@ const RR_REVERSE_RECEIVED_CODES = ['delivered_seller','delivered to seller','del
 // tracking_history, never actually re-running the classification+advance
 // logic). Returns the list of {event, advanced} transitions that fired, so
 // callers can report back what happened.
+// Tells the customer their reverse pickup attempt failed. No approved Meta
+// template exists for this yet, so it goes out on the Baileys fallback (same
+// as other un-templated RR messages); dedup is per attempt via the scanKey
+// stored in wa_notif_sent.pickup_failed by the caller.
+async function sendPickupFailedCustomerWA(rr) {
+  const digits = String(rr.customer_phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+  if (digits.length !== 10 || !/^[6-9]/.test(digits)) return;
+  if (!waSocket || !waConnected) return;
+  const orderName = rr.order_name || rr.shopify_order_id || '';
+  const item = (rr.items || []).map(i => i.title || 'item').join(', ');
+  const msg = `*CROSCROW*\n\n📦 *Pickup Attempt Missed*\n\nOrder *${orderName}*${item ? `\n${item}` : ''}\n\nOur courier couldn't complete your pickup today — nobody was available.\n\nPlease keep the item *packed with original tags* and stay reachable. We'll reattempt shortly.`;
+  await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+  console.log(`📲 Pickup-failed WA → ${rr.request_id} → +91${digits}`);
+}
+
 async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', scanKey = '') {
   const events = [];
   const now = new Date().toISOString();
@@ -16801,6 +16816,7 @@ async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', s
     if (/unsuccessful pickup|no one available/.test(descLow) && scanKey && rr.wa_notif_sent?.pickup_failed !== scanKey) {
       await mdb.collection('return_requests').updateOne({ request_id: rr.request_id }, { $set: { 'wa_notif_sent.pickup_failed': scanKey, updated_at: now } });
       await rrPushHistory(rr.request_id, { event: 'pickup_failed', note: desc, source: 'courier' });
+      sendPickupFailedCustomerWA(rr).catch(e => console.error('❌ Pickup-failed customer WA error:', e.message));
       waAdminAlert(`⚠️ *Reverse Pickup Attempt Failed*\n\nOrder *${rr.order_name || ''}*\nRequest: ${rr.request_id}\nVendor: ${rr.vendor_name || '—'}\n\nCourier: ${desc}\n\nCall the customer so the next attempt succeeds.`, 'return_receipt').catch(() => {});
       events.push({ event: 'pickup_failed', advanced: false });
     }
