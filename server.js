@@ -16766,7 +16766,7 @@ const RR_REVERSE_RECEIVED_CODES = ['delivered_seller','delivered to seller','del
 // tracking_history, never actually re-running the classification+advance
 // logic). Returns the list of {event, advanced} transitions that fired, so
 // callers can report back what happened.
-async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '') {
+async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', scanKey = '') {
   const events = [];
   const now = new Date().toISOString();
 
@@ -16789,7 +16789,21 @@ async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '') {
     // Picked up from customer — advances status regardless of current status
     // (as long as it's not already further along or terminal), so a request
     // that never got manually "approved" doesn't get stuck on pending forever.
-    const isPickedUp = RR_PROD_REPLACED_CODES.some(c => descLow.includes(c)) || reverseStage === 'pickup';
+    // Must be a genuine collection scan. The generic 'pickup' bucket also
+    // matches "Dispatched - Executive X on their way to pick up your
+    // package" / "Manifested", which means the opposite (not collected yet) —
+    // that marked RR-20260922-9887 picked_up and sent the customer a false
+    // "picked up" WhatsApp before the courier had even arrived.
+    const notCollectedYet = /on (their|the) way to pick|waiting|unsuccessful|no one available|will be scheduled|manifested|scheduled/.test(descLow) && !descLow.includes('pickup completed');
+    // descLow already has underscores turned into spaces, so normalise the codes the same way ('prod_replaced' would never match 'prod replaced').
+    const isPickedUp = !notCollectedYet && (RR_PROD_REPLACED_CODES.some(c => descLow.includes(c.replace(/_/g, ' '))) || descLow.includes('pickup completed') || reverseStage === 'transit');
+    // Failed pickup attempt (customer unavailable) — nobody was told before.
+    if (/unsuccessful pickup|no one available/.test(descLow) && scanKey && rr.wa_notif_sent?.pickup_failed !== scanKey) {
+      await mdb.collection('return_requests').updateOne({ request_id: rr.request_id }, { $set: { 'wa_notif_sent.pickup_failed': scanKey, updated_at: now } });
+      await rrPushHistory(rr.request_id, { event: 'pickup_failed', note: desc, source: 'courier' });
+      waAdminAlert(`⚠️ *Reverse Pickup Attempt Failed*\n\nOrder *${rr.order_name || ''}*\nRequest: ${rr.request_id}\nVendor: ${rr.vendor_name || '—'}\n\nCourier: ${desc}\n\nCall the customer so the next attempt succeeds.`, 'return_receipt').catch(() => {});
+      events.push({ event: 'pickup_failed', advanced: false });
+    }
     if (isPickedUp) {
       if (!rr.wa_notif_sent?.picked_up) await sendRRWANotif(rr, 'picked_up');
       const adv = await rrAdvanceStatus(rr, 'picked_up', 'Courier scan: picked up from customer', 'courier');
@@ -16987,7 +17001,7 @@ async function rrTrackingPass() {
           // desc stopped changing.
           if (!desc) continue;
 
-          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc);
+          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc, `${latest.ActionDate||latest.ScanDate||latest.Date||''} ${latest.ActionTime||latest.ScanTime||latest.Time||''}`.trim());
           for (const ev of rrEvents) {
             runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: ev.event, advanced: ev.advanced });
           }

@@ -678,6 +678,33 @@
     .rr-activity summary::-webkit-details-marker { display:none; }
     .rr-activity summary::before { content:"▸"; transition:transform .15s; }
     .rr-activity[open] summary::before { transform:rotate(90deg); }
+  
+    /* ── RR console: mobile ─────────────────────────────────────────────── */
+    @media (max-width:860px) {
+      .rr-board:not(.rr-board-full) .rr-list { display:none; }
+      .rr-list { max-height:none; overflow-y:visible; }
+      .rr-detail { padding:14px 14px 20px; min-height:0; border-radius:10px; }
+      .rr-detail-head > div:last-child { order:-1; width:100%; display:flex; gap:8px; }
+      .rr-detail-head > div:last-child .btn { flex:1; min-height:40px; }
+      .rr-detail-head h2 { font-size:16px !important; line-height:1.3; }
+    }
+    @media (max-width:640px) {
+      .rr-stats { grid-template-columns:repeat(2,1fr); gap:8px; }
+      .rr-stat { padding:11px 12px; }
+      .rr-toolbar { gap:7px; }
+      .rr-chip { padding:8px 13px; font-size:11.5px; min-height:36px; }
+      .rr-search { order:-1; flex:1 0 100%; min-height:40px; padding:9px 13px; font-size:14px; }
+      .rr-select { min-height:36px; flex:1; }
+      .rr-ticket { padding:13px; }
+      .rr-ticket-full { grid-template-columns:1fr; }
+      .rr-ticket-full > div:last-child { flex-direction:row !important; align-items:center !important; justify-content:space-between; order:-1; }
+      .rr-item-thumb { width:42px; height:42px; }
+      .rr-detail .btn { min-height:38px; }
+      .rr-detail input, .rr-detail select, .rr-detail textarea { font-size:16px !important; }
+      .rr-infogrid { grid-template-columns:1fr 1fr; gap:12px; }
+      .rr-stockline { flex-direction:column; align-items:stretch; }
+      .rr-stockline .btn { margin-left:0 !important; width:100%; }
+    }
   </style>
   <style>
     #cc-intro { position:fixed; inset:0; z-index:999999; background:#000; }
@@ -3851,6 +3878,7 @@
       .filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
     const selected = selectedId ? (filtered.find(rq => rq.request_id === selectedId) || null) : null;
     useEffect(()=>{ if (selectedId && !filtered.find(rq=>rq.request_id===selectedId)) setSelectedId(null); }, [filtered.map(r=>r.request_id).join(',')]);
+    useEffect(()=>{ if (selectedId) { const el=document.querySelector('.rr-console'); if (el&&el.scrollIntoView) el.scrollIntoView({block:'start'}); } }, [selectedId]);
     useEffect(()=>{ if (selected) setNoteVal(selected.vendor_note||''); }, [selected?.request_id]);
 
     const stats = [
