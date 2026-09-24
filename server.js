@@ -16473,7 +16473,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
     const trackUrlRR = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
     const trackLine = awb ? `TRACK    ${trackUrlRR}\n` : '';
-    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${trackLine}\nPACK   Original tags and packaging. Photo or clip while you pack.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
+    msg = `${_Fr}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n███████░░░░░░░ 50%\nPICKUP SCHEDULED\n────────────────\nORDER  ${orderName}\n\n●───●───◉───○───○\nREQ APR PCK QC DONE\n\nCOURIER  ${courier}\n${trackLine}\nPACK   Original tags and packaging.\nVIDEO  Record a video while packing and handing over.\n────────────────\nKEEP THE PACK READY\n${_Fr}`;
   } else if (event === 'picked_up') {
     const awb = rr.reverse_shipment?.awb || extra.awb || '';
     const trackUrlRR = orderName ? `${SERVER_URL}/o/${encodeURIComponent(String(orderName).replace(/^#/, ''))}` : '';
@@ -16514,12 +16514,12 @@ async function sendRRWANotif(rr, event, extra = {}) {
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_APPROVED, bodyParams: [TypeLabel, orderName, _itemLine], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'pickup_scheduled') {
     const courier = extra.courier || rr.reverse_shipment?.courier || 'Our courier partner';
-    // NOTE: rr_pickup_scheduled_v2 is still on its OLD 2-param body — the
-    // item-name edit hit Meta's "one edit per 24h" limit (2026-09-09) and is
-    // pending retry. Keep 2 params until that edit lands, or Cloud API
-    // rejects the send outright (param count mismatch). See
-    // project_wa_template_pending_approvals memory.
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, courier], urlButtonParam: `${orderSlug}&contact=na` });
+    // rr_pickup_scheduled_v2 was edited on Meta (2026-09-25) to a 3-param body
+    // (order, item, courier). While that edit is PENDING Meta still serves
+    // the old 2-param version, so try 3 params first and fall back to 2 —
+    // switches over on its own once approved.
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, _itemLine, courier], urlButtonParam: `${orderSlug}&contact=na` });
+    if (!cloudResult.sent) cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKUP_SCHEDULED, bodyParams: [orderName, courier], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'picked_up') {
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_PICKED_UP, bodyParams: [orderName, _itemLine], urlButtonParam: `${orderSlug}&contact=na` });
   } else if (event === 'received_at_warehouse') {
