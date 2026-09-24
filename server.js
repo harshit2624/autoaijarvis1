@@ -25243,7 +25243,7 @@ async function parseAdminWACommand(text) {
 Supported actions:
 - generate_exchange — swap an item for a different size/variant, OR reship the identical item ("replace", "send a replacement", "wrong item/size sent — resend", damaged item, etc.). Fields: order_id, from_size (optional — omit if only one item on the order), to_size (omit entirely for a same-size replacement — the system defaults to reshipping the same variant when to_size is absent; only set it when the admin names a genuinely different size to exchange into).
 - generate_return — start a refund-path return for the whole order. Fields: order_id.
-- issue_store_credit — issue Shopify store credit for whatever the customer paid on the order. Fields: order_id.
+- issue_store_credit — issue a store credit / discount code for an order. By default it's whatever the customer actually paid; if the admin names a specific rupee amount ("issue store credit of 2131 to order 3042", "give 500 credit to 3100", "discount code of 1200 for 3055") set amount to that number. Fields: order_id, amount (optional number, digits only — omit or 0 when no amount was named).
 - waive_fee — waive the return/exchange fee for an order so the CUSTOMER can complete the return/replacement themselves on their own return page (no fee, no code to enter) — this does NOT create the request itself, just removes the fee. Triggers: "waive the fee for order X", "no fee for X", "fee waiver for X". Fields: order_id.
 - unlock_return — unlock return/exchange eligibility for an order (bypasses the window/vendor restrictions) so the customer can self-serve on their return page. Triggers: "unlock return for order X", "let them return X even though window closed". Fields: order_id.
 - send_demo — send the full customer-facing WhatsApp template demo flow (order confirmation → shipped → delivered → exchange → refund → win-back, one message every few seconds) to a phone number, for showing a prospect/client what the notifications look like. Triggers: "send demo to 9876543210", "demo flow to this number 98765 43210", "show the wa flow to 9876543210". Fields: phone (10-digit Indian mobile number, digits only, strip any +91/91 prefix or spaces).
@@ -25254,6 +25254,7 @@ Supported actions:
 order_id is the bare Shopify order number, digits only (strip any leading #). Respond with ONLY JSON in this exact shape:
 {"action":"generate_exchange","order_id":"3321","from_size":"S","to_size":"M","reason":""}
 For waive_fee/unlock_return, omit from_size/to_size: {"action":"waive_fee","order_id":"2345","reason":""}
+For issue_store_credit: {"action":"issue_store_credit","order_id":"3042","amount":2131,"reason":""} (amount 0 when none named)
 For send_demo: {"action":"send_demo","phone":"9876543210"}
 For resend_order_confirmation/resend_awaiting_confirmation: {"action":"resend_order_confirmation","order_id":"3421","phone":""} — leave phone empty string unless the admin explicitly named a different number to redirect to.
 
@@ -25426,7 +25427,7 @@ async function findOpenReturnRR(order) {
   );
 }
 
-async function adminIssueStoreCreditForOrder(order, reason, lineItemIds) {
+async function adminIssueStoreCreditForOrder(order, reason, lineItemIds, amount) {
   let rr = await findOpenReturnRR(order);
   // Store credit keeps its original "whole order" behavior regardless of
   // item/vendor count — unlike exchange/return, it was never asked to
@@ -25434,7 +25435,7 @@ async function adminIssueStoreCreditForOrder(order, reason, lineItemIds) {
   // caller didn't pin any (avoids adminCreateRR's needs-selection guard).
   const scLineItemIds = lineItemIds && lineItemIds.length ? lineItemIds : (order.line_items || []).map(li => String(li.id));
   if (!rr) [rr] = await adminCreateRR({ order, type: 'return', lineItemIds: scLineItemIds, reason: reason || 'Admin-issued store credit via WhatsApp' });
-  return issueStoreCreditForRR(rr.request_id);
+  return issueStoreCreditForRR(rr.request_id, amount);
 }
 
 // ── Admin-triggered resends ─────────────────────────────────────────────
@@ -25599,8 +25600,10 @@ async function runOrderCommand(intent, order, reply) {
     const lines = created.map(rr => `${rr.request_id} (${rr.vendor_name || 'no vendor'}, ${rr.items.length} item${rr.items.length !== 1 ? 's' : ''})`).join('\n');
     await reply(`✅ Return generated for order ${order.name}${created.length > 1 ? ` — split across ${created.length} vendors` : ''}:\n${lines}\nCustomer notified on WhatsApp.`);
   } else if (intent.action === 'issue_store_credit') {
-    const result = await adminIssueStoreCreditForOrder(order, intent.reason, intent.lineItemIds);
-    await reply(`✅ Store credit issued for order ${order.name}: ₹${result.amount.toFixed(0)} (code ${result.code}).\nCustomer notified on WhatsApp.`);
+    const customAmt = parseFloat(intent.amount) > 0 ? parseFloat(intent.amount) : 0;
+    const result = await adminIssueStoreCreditForOrder(order, intent.reason, intent.lineItemIds, customAmt);
+    const paidNote = customAmt && customAmt > parseFloat(order.total_price || 0) + 0.01 ? `\n⚠️ That's more than the order total (₹${parseFloat(order.total_price || 0).toFixed(0)}).` : '';
+    await reply(`✅ Store credit issued for order ${order.name}: ₹${result.amount.toFixed(0)}${customAmt ? ' (custom amount)' : ''} (code ${result.code}).${paidNote}\nCustomer notified on WhatsApp.`);
   } else if (intent.action === 'waive_fee') {
     await applyReturnOverride({ shopify_order_id: order.id, fee_waived: true, note: intent.reason || 'Waived via WA admin command', set_by: 'wa_admin' });
     await reply(`✅ RR fee waived for order ${order.name}. Customer can now return/exchange on their return page free of charge — they've been notified on WhatsApp.`);
@@ -25647,7 +25650,7 @@ async function handleAdminWACommand(fromDigits, text) {
 
   const intent = await parseAdminWACommand(text);
   if (!intent || intent.action === 'unknown' || (!intent.order_id && intent.action !== 'send_demo')) {
-    await reply(`Didn't catch a command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"\n• "send demo to 9876543210"\n• "send order confirmation to 3421"\n• "send partial awaiting to 3241 on 9950812408"`);
+    await reply(`Didn't catch a command in that. Try things like:\n• "generate exchange of order 3321 from S to M"\n• "replace order 3345"\n• "generate return for 2231"\n• "issue store credit to 2453 for whatever they paid"\n• "issue store credit of 2131 to order 3042"\n• "waive the fee for order 2345"\n• "unlock return for order 2345"\n• "send demo to 9876543210"\n• "send order confirmation to 3421"\n• "send partial awaiting to 3241 on 9950812408"`);
     return;
   }
 
