@@ -1502,7 +1502,10 @@
                     <span style={{fontSize:9,color:'var(--text-muted)'}}>via ShipSagar</span>
                   </div>
                 )}
-                <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}><span className="dr-label" style={{fontWeight:700}}>Remaining COD to Collect</span><span className="dr-val" style={{color: order.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(order.remainingCOD, order.currency)}</span></div>
+                <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}><span className="dr-label" style={{fontWeight:700}}>{order.paymentType==='prepaid' ? 'Payment' : 'Remaining COD to Collect'}</span>{order.paymentType==='prepaid'
+                  ? <span className="dr-val" style={{color:'var(--green)',fontWeight:700}}>PREPAID · Collect ₹0</span>
+                  : <span className="dr-val" style={{color: order.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(order.remainingCOD, order.currency)}</span>}
+                </div>
               </div>
 
               <div className="detail-box">
@@ -2110,7 +2113,7 @@
                     <td className="td-amt">{fmtCur(o.myRevenueMRP||o.myRevenue,o.currency)}</td>
                     <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                     <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
-                    <td className="td-amt" style={{color: o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
+                    <td className="td-amt" style={{color: o.paymentType==='prepaid'?'var(--green)':(o.advancePaid>0?'var(--orange)':'var(--teal)'),fontWeight:700}}>{o.paymentType==='prepaid'?'Prepaid':fmtCur(o.remainingCOD,o.currency)}</td>
                     <td>
                       <div style={{display:'flex',alignItems:'center',gap:2}}>
                         <StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>
@@ -2239,6 +2242,7 @@
           <div style={{textAlign:'right',flexShrink:0,marginLeft:12}}>
             <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>{fmtCur(o.myRevenueMRP||o.myRevenue,o.currency)}</div>
             {o.remainingCOD>0 && <div style={{fontSize:10,color:'var(--teal)',marginTop:2}}>COD {fmtCur(o.remainingCOD,o.currency)}</div>}
+            {o.paymentType==='prepaid' && <div style={{fontSize:10,color:'var(--green)',marginTop:2,fontWeight:700}}>PREPAID · no cash</div>}
             <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>›</div>
           </div>
         </div>
@@ -2388,7 +2392,7 @@
                           <td className="td-amt">{fmtCur(o.myRevenueMRP||o.myRevenue,o.currency)}</td>
                           <td style={{color:'var(--blue)',fontSize:11}}>{o.shippingCharge>0?fmtCur(o.shippingCharge,o.currency):'—'}</td>
                           <td style={{color:'var(--green)',fontSize:11}}>{o.advancePaid>0?`−${fmtCur(o.advancePaid,o.currency)}`:'—'}</td>
-                          <td className="td-amt" style={{color:o.advancePaid>0?'var(--orange)':'var(--teal)',fontWeight:700}}>{fmtCur(o.remainingCOD,o.currency)}</td>
+                          <td className="td-amt" style={{color: o.paymentType==='prepaid'?'var(--green)':(o.advancePaid>0?'var(--orange)':'var(--teal)'),fontWeight:700}}>{o.paymentType==='prepaid'?'Prepaid':fmtCur(o.remainingCOD,o.currency)}</td>
                           <td className="td-muted">{fmtDate(o.date)}</td>
                           <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>▶</td>
                         </tr>

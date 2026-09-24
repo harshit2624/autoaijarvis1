@@ -5114,7 +5114,8 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
           paymentType:  payType,
           advancePaid,
           totalCollectable: parseFloat((myRevenueAfterDiscount + shippingCharge).toFixed(2)),
-          remainingCOD:     parseFloat(Math.max(0, myRevenueAfterDiscount + shippingCharge - advancePaid).toFixed(2)),
+          // Prepaid = already fully paid online, nothing for the courier to collect.
+          remainingCOD:     payType === "prepaid" ? 0 : parseFloat(Math.max(0, myRevenueAfterDiscount + shippingCharge - advancePaid).toFixed(2)),
           awb:          vStageMap[String(o.id)]?.awb || "",
           courier:      vStageMap[String(o.id)]?.courier || "",
           trackingUrl:  vStageMap[String(o.id)]?.tracking_url || "",
@@ -5224,7 +5225,7 @@ async function buildVendorReport(vendorName, from, to) {
     const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
     const shippingCharge = paymentType !== "prepaid" ? parseFloat((orderShipping / vendorCount).toFixed(2)) : 0;
     const advancePaid = parseFloat(((meta.advance_paid || 0) / vendorCount).toFixed(2));
-    const remainingCOD = parseFloat(Math.max(0, myRevenueNet + shippingCharge - advancePaid).toFixed(2));
+    const remainingCOD = paymentType === "prepaid" ? 0 : parseFloat(Math.max(0, myRevenueNet + shippingCharge - advancePaid).toFixed(2));
 
     const stage = deriveVendorStage(o, vendorName, vStageMap, metaMap);
     stageCounts[stage] = (stageCounts[stage] || 0) + 1;
