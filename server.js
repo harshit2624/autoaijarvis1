@@ -21226,10 +21226,10 @@ app.get("/admin/return-requests/:id/credit-preview", adminAuth, async (req, res)
 // of truth so both paths compute the same discount-aware amount and hit the
 // same ledger/notification code. Throws Error(message) on failure so both
 // callers can surface it their own way (HTTP response vs WA reply).
-async function issueStoreCreditForRR(request_id, amountOverride) {
+async function issueStoreCreditForRR(request_id, amountOverride, { additional = false } = {}) {
   const rr = await mdb.collection('return_requests').findOne({ request_id }, { projection: { _id: 0 } });
   if (!rr) throw new Error('Request not found');
-  if (rr.resolution === 'store_credit') throw new Error('Store credit already issued for this request.');
+  if (rr.resolution === 'store_credit' && !additional) throw new Error('Store credit already issued for this request.');
   if (!rr.shopify_order_id) throw new Error('No linked Shopify order on this request.');
 
   const { order } = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=id,customer,total_price,subtotal_price,total_outstanding,currency,line_items,discount_codes`);
@@ -21263,7 +21263,15 @@ async function issueStoreCreditForRR(request_id, amountOverride) {
   };
   await mdb.collection('store_credits').insertOne(ledgerEntry);
 
-  await mdb.collection('return_requests').updateOne(
+  if (additional) {
+    // A further code on an RR that was already credited — keep the original
+    // resolution/store_credit intact, log the extra one alongside it, and
+    // clear the WA dedup flag so the customer is told about this code too.
+    await mdb.collection('return_requests').updateOne(
+      { request_id: rr.request_id },
+      { $push: { store_credit_extra: { amount, currency, code: credit.code, issued_at: now } }, $unset: { 'wa_notif_sent.store_credit_issued': '' }, $set: { updated_at: now } }
+    );
+  } else await mdb.collection('return_requests').updateOne(
     { request_id: rr.request_id },
     { $set: { resolution: 'store_credit', store_credit: { amount, currency, code: credit.code, issued_at: now }, status: rrStatusRank(rr.status) < rrStatusRank('completed') ? 'completed' : rr.status, updated_at: now } }
   );
@@ -25429,13 +25437,27 @@ async function findOpenReturnRR(order) {
 
 async function adminIssueStoreCreditForOrder(order, reason, lineItemIds, amount) {
   let rr = await findOpenReturnRR(order);
+  let additional = false;
+  if (!rr) {
+    // Already credited once? Anchor any further code to that same request
+    // instead of spawning a brand-new return for the order (#3042 got a
+    // duplicate RR this way).
+    const credited = await mdb.collection('return_requests').findOne(
+      { shopify_order_id: String(order.id), resolution: 'store_credit' },
+      { projection: { _id: 0 }, sort: { created_at: -1 } }
+    );
+    if (credited) {
+      if (!(parseFloat(amount) > 0)) throw new Error(`Order ${order.name} was already credited ₹${Number(credited.store_credit?.amount || 0).toFixed(0)} (code ${credited.store_credit?.code || '—'}) on ${credited.request_id}. To issue another code, give an amount — e.g. "issue store credit of 500 to ${String(order.name).replace('#', '')}".`);
+      rr = credited; additional = true;
+    }
+  }
   // Store credit keeps its original "whole order" behavior regardless of
   // item/vendor count — unlike exchange/return, it was never asked to
   // require explicit item selection, so default to every item when the
   // caller didn't pin any (avoids adminCreateRR's needs-selection guard).
   const scLineItemIds = lineItemIds && lineItemIds.length ? lineItemIds : (order.line_items || []).map(li => String(li.id));
   if (!rr) [rr] = await adminCreateRR({ order, type: 'return', lineItemIds: scLineItemIds, reason: reason || 'Admin-issued store credit via WhatsApp' });
-  return issueStoreCreditForRR(rr.request_id, amount);
+  return issueStoreCreditForRR(rr.request_id, amount, { additional });
 }
 
 // ── Admin-triggered resends ─────────────────────────────────────────────
