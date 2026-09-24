@@ -16536,16 +16536,13 @@ async function sendRRWANotif(rr, event, extra = {}) {
     const reason = extra.reason || rr.admin_note || 'Item did not meet return criteria';
     cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_QC_NOT_CLEARED, bodyParams: [orderName, _itemLine, reason] });
   } else if (event === 'store_credit_issued') {
-    // NOTE: rr_store_credit_issued_v2 is still on its OLD 3-param body (no
-    // code param) — the edit adding {{4}} for the code hit Meta's "one edit
-    // per 24h" limit (2026-09-12, already edited 2026-09-11 in the bulk
-    // template push). Keep 3 params until that edit lands, or Cloud API
-    // rejects the send outright (param count mismatch). See
-    // project_wa_template_pending_approvals memory. The code still reaches
-    // the customer via email (always) and the Baileys-fallback plain-text
-    // msg above (dead path currently, but ready for when the template
-    // catches up).
-    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, _itemLine, extra.amount != null ? Number(extra.amount).toFixed(0) : '—'] });
+    // rr_store_credit_issued_v2 was edited on Meta (2026-09-25) to a 4-param
+    // body (order, item, amount, code). While that edit is PENDING Meta still
+    // serves the old 3-param version — try 4 first, fall back to 3, switches
+    // over on its own once approved.
+    const _scAmt = extra.amount != null ? Number(extra.amount).toFixed(0) : '—';
+    cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, _itemLine, _scAmt, extra.code || '—'] });
+    if (!cloudResult.sent) cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.RR_STORE_CREDIT_ISSUED, bodyParams: [orderName, _itemLine, _scAmt] });
   }
 
   try {
