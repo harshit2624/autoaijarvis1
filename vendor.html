@@ -2379,7 +2379,7 @@
                               </div>
                             ))}
                           </td>
-                          <td><div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>{o.superHold&&<SuperHoldBadge/>}<PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/><PenaltyBadge triggered={o.penaltyTriggered>0} confirmedAmount={o.confirmedPenalty||0} shopifyId={o.shopifyId} token={token}/></div></td>
+                          <td><div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}><StagePill stage={o.stage} awb={o.awb} courier={o.courier} trackingUrl={o.trackingUrl}/>{o.superHold&&<SuperHoldBadge/>}<PenaltyTimer stageStartedAt={o.stageStartedAt} penaltyTriggered={o.penaltyTriggered} stage={o.stage}/><PenaltyBadge triggered={o.penaltyTriggered>0} confirmedAmount={o.confirmedPenalty||0} shopifyId={o.shopifyId} token={token}/>{o.ccStock&&<span style={{fontSize:9,padding:'2px 6px',borderRadius:4,background:'rgba(251,191,36,0.15)',border:'1px solid rgba(251,191,36,0.5)',color:'#fbbf24',fontWeight:700}}>🏬 CC Stock</span>}</div></td>
                           <td>{(()=>{
                             const ds = o.deliveryStatus;
                             const allFulfilled = o.myItems.length > 0 && o.myItems.every(i=>i.fulfilled);
