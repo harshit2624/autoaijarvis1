@@ -3624,6 +3624,8 @@
     const [campPerf, setCampPerf] = useState(null);
     const [campOrganic, setCampOrganic] = useState(null);
     const [campLoading, setCampLoading] = useState(true);
+    const [metaOv, setMetaOv] = useState(null);
+    const [metaOvErr, setMetaOvErr] = useState('');
     const [expandedCamp, setExpandedCamp] = useState(null);
     const [expandedAd, setExpandedAd] = useState(null);
     const [showAllCamps, setShowAllCamps] = useState(false);
@@ -3635,6 +3637,9 @@
       try { const s = localStorage.getItem('croscrow_audience_tag_map'); if (s) tierMapQS = `&tierMap=${encodeURIComponent(s)}`; } catch(e) {}
       fetch(`${API}/admin/meta-ads/campaign-performance?from=${from}&to=${to}${tierMapQS}`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{ setCampPerf(d.campaigns||[]); setCampOrganic(d.organic||null); }).catch(()=>{setCampPerf([]);setCampOrganic(null);}).finally(()=>setCampLoading(false));
+      setMetaOvErr('');
+      fetch(`${API}/admin/meta-ads/insights?since=${from}&until=${to}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ if(d.error) setMetaOvErr(d.error); else setMetaOv(d.overview||null); }).catch(e=>setMetaOvErr(e.message));
     },[token, aPeriod]);
 
     // Product photos for Top Selling Products — batch-fetched from the
@@ -4599,6 +4604,107 @@
             </div>
           </div>
         )}
+
+        {/* ── Meta Ads Overview — Meta's own numbers vs what the store actually
+            kept, reconciled against the real order outcomes already computed
+            for the campaign cards below (campPerf + campOrganic). ── */}
+        {(() => {
+          const o = metaOv;
+          const allSummaries = [...(campPerf||[]), ...(campOrganic ? [campOrganic] : [])];
+          const storeGross = allSummaries.reduce((s,c)=>s+(c.sales||0),0);
+          const storeNet    = allSummaries.reduce((s,c)=>s+(c.netSales||0),0);
+          const storeOrders = allSummaries.reduce((s,c)=>s+(c.orderCount||0),0);
+          const storeDelivered = allSummaries.reduce((s,c)=>s+(c.delivered||0),0);
+          const storeDeliveredRev = allSummaries.reduce((s,c)=>{
+            const share = c.orderCount ? (c.delivered||0)/c.orderCount : 0;
+            return s + (c.sales||0)*share;
+          },0);
+          const spend = o?.spend||0;
+          const metaRoas = o?.roas || (spend ? (o?.revenue||0)/spend : 0);
+          const grossRoas = spend ? storeGross/spend : 0;
+          const netRoas   = spend ? storeNet/spend : 0;
+          const delRoas   = spend ? storeDeliveredRev/spend : 0;
+          const lmax = Math.max(metaRoas, grossRoas, netRoas, delRoas, 1);
+          const claimPct = storeGross ? Math.min(999,(o?.revenue||0)/storeGross*100) : 0;
+          const erodePct = grossRoas ? (1-netRoas/grossRoas)*100 : 0;
+          const ladder = [
+            { l:'Meta says', v:metaRoas, sub:`${fmtCur(o?.revenue||0)} attributed from ${(o?.purchases||0).toLocaleString()} purchases`, c:'#60a5fa' },
+            { l:'Store gross', v:grossRoas, sub:`${fmtCur(storeGross)} from ${storeOrders.toLocaleString()} matched orders`, c:'#a78bfa' },
+            { l:'After RTO + cancel', v:netRoas, sub:`${fmtCur(storeNet)} net kept`, c:'#f59e0b' },
+            { l:'Delivered so far', v:delRoas, sub:`${fmtCur(storeDeliveredRev)} in hand · ${storeDelivered.toLocaleString()} delivered`, c:'#10b981' },
+          ];
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">📊 Meta Ads Overview</div>
+                  <div className="dash-section-meta">{periodLabel} · Meta's own account totals vs. real order outcomes from the campaign cards below</div>
+                </div>
+                <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
+              </div>
+              {metaOvErr && <div style={{fontSize:12,color:'var(--red)',padding:'8px 0'}}>Meta unavailable: {metaOvErr}</div>}
+              {!metaOvErr && (
+              <div className="stats-grid" style={{marginBottom:14}}>
+                <StatCard color="indigo" icon="📣" label="Ad Spend" value={fmtCur(spend)} sub={o?`${(o.impressions||0).toLocaleString()} impressions`:'…'}/>
+                <StatCard color="cyan"   icon="🎯" label="Meta ROAS" value={`${metaRoas.toFixed(2)}x`} sub={o?`${fmtCur(o.revenue||0)} attributed`:'…'}/>
+                <StatCard color="green"  icon="🛍" label="Purchases" value={(o?.purchases||0).toLocaleString()} sub={o?.cpp?`${fmtCur(o.cpp)} per purchase`:''}/>
+                <StatCard color="purple" icon="⚖" label="Blended ROAS" value={`${netRoas.toFixed(2)}x`} sub="net store revenue ÷ ad spend"/>
+              </div>
+              )}
+              {!metaOvErr && o && (
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14}}>
+                <div className="card" style={{padding:'14px 16px'}}>
+                  <div className="card-title" style={{marginBottom:10}}>ROAS reality check</div>
+                  {ladder.map(x=>(
+                    <div key={x.l} style={{marginBottom:11}}>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
+                        <span>{x.l}</span><b style={{color:x.c,fontSize:13}}>{x.v.toFixed(2)}x</b>
+                      </div>
+                      <div style={{height:6,background:'var(--bg-hover)',borderRadius:4,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${Math.min(100,x.v/lmax*100)}%`,background:x.c,borderRadius:4}}/>
+                      </div>
+                      <div style={{fontSize:9.5,color:'var(--text-muted)',marginTop:3}}>{x.sub}</div>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)',lineHeight:1.5}}>
+                    Meta attributes <b style={{color:'var(--text)'}}>{claimPct.toFixed(0)}%</b> of matched store revenue. RTO + cancellations trim gross ROAS by <b style={{color:'var(--text)'}}>{Math.max(0,erodePct).toFixed(0)}%</b>.
+                  </div>
+                </div>
+                <div className="card" style={{padding:'14px 16px'}}>
+                  <div className="card-title" style={{marginBottom:10}}>Meta vs store</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr',gap:6,fontSize:9.5,color:'var(--text-muted)',textTransform:'uppercase',fontWeight:700,paddingBottom:6,borderBottom:'1px solid var(--border)',marginBottom:6}}>
+                    <span/><span>Meta</span><span>Store</span>
+                  </div>
+                  {[
+                    ['Orders', (o.purchases||0).toLocaleString(), storeOrders.toLocaleString()],
+                    ['Revenue', fmtCur(o.revenue||0), fmtCur(storeGross)],
+                    ['Avg order value', o.purchases?fmtCur(o.revenue/o.purchases):'—', storeOrders?fmtCur(storeGross/storeOrders):'—'],
+                    ['Cost / order', o.purchases?fmtCur(spend/o.purchases):'—', storeOrders?fmtCur(spend/storeOrders):'—'],
+                    ['Cost / delivered', '—', storeDelivered?fmtCur(spend/storeDelivered):'—'],
+                  ].map(([l,m,st])=>(
+                    <div key={l} style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr',gap:6,fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{color:'var(--text-muted)'}}>{l}</span><b>{m}</b><b>{st}</b>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>The gap is orders Meta didn't credit — organic, direct, WhatsApp, influencer, or UTM tracking loss.</div>
+                </div>
+                <div className="card" style={{padding:'14px 16px'}}>
+                  <div className="card-title" style={{marginBottom:10}}>Funnel &amp; efficiency</div>
+                  {[
+                    ['CTR', `${(o.ctr||0).toFixed(2)}%`], ['CPM', fmtCur(o.cpm||0)], ['CPC', fmtCur(o.cpc||0)],
+                    ['Reach', (o.reach||0).toLocaleString()], ['Frequency', (o.frequency||0).toFixed(2)+'x'],
+                    ['Add to cart', (o.addtocart||0).toLocaleString()], ['Checkout', (o.initcheckout||0).toLocaleString()],
+                  ].map(([l,v])=>(
+                    <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{color:'var(--text-muted)'}}>{l}</span><b>{v}</b>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Meta Campaign Performance — real order outcomes joined to Meta
             campaigns via UTM attribution (order_meta.ad_campaign, captured
