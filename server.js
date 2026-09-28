@@ -17503,6 +17503,67 @@ setTimeout(shipsagarTrackingCronGuarded, 60000);
 setInterval(shipsagarTrackingCronGuarded, 30 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════════════════
+//  BRAND SALES RANK — recomputed every 7 days, written to a Shop metafield
+//  so the theme's brand list can sort by real sales with zero runtime cost
+//  (the theme just reads shop.metafields.custom.brand_sales_rank, same as
+//  reading any other Liquid setting — no extra work happens on page load).
+// ══════════════════════════════════════════════════════════════════════════
+const BRAND_RANK_LOOKBACK_DAYS = 90; // rolling window so the ranking reflects current best-sellers, not old one-off spikes
+
+async function computeBrandSalesRank() {
+  const since = new Date(Date.now() - BRAND_RANK_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const unitsByVendor = {};
+  let path = `/orders.json?status=any&created_at_min=${encodeURIComponent(since)}&limit=250&fields=line_items`;
+  let pages = 0;
+  while (path && pages < 200) { // hard cap so a runaway Link header can't loop forever
+    const { data, link } = await shopifyRESTRaw(path);
+    for (const order of data.orders || []) {
+      for (const li of order.line_items || []) {
+        const vendor = (li.vendor || '').trim();
+        if (!vendor) continue;
+        unitsByVendor[vendor] = (unitsByVendor[vendor] || 0) + (li.quantity || 0);
+      }
+    }
+    pages++;
+    const next = /<([^>]+)>;\s*rel="next"/.exec(link || '');
+    path = next ? next[1].replace(/^https:\/\/[^/]+\/admin\/api\/2025-01/, '') : null;
+  }
+  return Object.entries(unitsByVendor)
+    .sort((a, b) => b[1] - a[1])
+    .map(([vendor]) => vendor);
+}
+
+async function writeShopMetafield(namespace, key, type, value) {
+  const existing = await shopifyREST(`/metafields.json?namespace=${namespace}&key=${key}`);
+  const mf = (existing.metafields || [])[0];
+  const body = { metafield: { namespace, key, type, value } };
+  if (mf) {
+    await shopifyREST(`/metafields/${mf.id}.json`, 'PUT', { metafield: { id: mf.id, value, type } });
+  } else {
+    await shopifyREST(`/metafields.json`, 'POST', body);
+  }
+}
+
+async function brandSalesRankCron() {
+  try {
+    const ranked = await computeBrandSalesRank();
+    if (!ranked.length) { console.log('📊 Brand sales rank: no orders in window, skipping write'); return; }
+    await writeShopMetafield('custom', 'brand_sales_rank', 'json', JSON.stringify(ranked));
+    console.log(`✅ Brand sales rank updated — ${ranked.length} vendors, top 5: ${ranked.slice(0, 5).join(', ')}`);
+  } catch (e) {
+    console.error('❌ Brand sales rank cron failed:', e.message);
+  }
+}
+setTimeout(brandSalesRankCron, 90000); // let the server settle first
+setInterval(brandSalesRankCron, 7 * 24 * 60 * 60 * 1000); // every 7 days
+
+// manual trigger for testing without waiting a week
+app.post("/admin/brand-rank/run-now", requirePermission('settings'), async (req, res) => {
+  try { await brandSalesRankCron(); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 //  WEEKLY REPORT SYSTEM
 // ══════════════════════════════════════════════════════════════════════════
 
