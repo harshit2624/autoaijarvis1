@@ -17590,7 +17590,7 @@ async function pinWinterProductsToTopOfAll() {
   // front in the same order as the source collection, and leaves every
   // other product's relative order untouched (collectionReorderProducts'
   // own documented behavior — no need to enumerate the rest of the catalog).
-  const moves = winterIds.map((id, i) => ({ id, newPosition: i }));
+  const moves = winterIds.map((id, i) => ({ id, newPosition: String(i) })); // UnsignedInt64 must be sent as a string
 
   const result = await shopifyGraphQL(
     `mutation($id: ID!, $moves: [MoveInput!]!) { collectionReorderProducts(id: $id, moves: $moves) { job { id done } userErrors { field message } } }`,
