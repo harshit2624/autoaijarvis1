@@ -13288,6 +13288,7 @@
           </div>
           <div style={{padding:'7px 9px'}}>
             <div style={{fontSize:11,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.productName}>{p.productName}</div>
+            {p.vendor && <div style={{fontSize:9,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.vendor}</div>}
             <div style={{fontSize:13,fontWeight:800,color:'var(--indigo)',marginTop:2}}>{p.count} {countLabel}</div>
           </div>
         </div>
@@ -13311,10 +13312,21 @@
     const [logs,      setLogs]      = useState([]);
     const [logsLoading,setLogsLoading] = useState(true);
     const [now,       setNow]       = useState(Date.now());
+    const [brands,    setBrands]    = useState([]);
+    const [brand,     setBrand]     = useState('');
+    const [searchQ,   setSearchQ]   = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchRan, setSearchRan] = useState(false);
 
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
 
-    const qs = () => `from=${period.from}&to=${period.to}`;
+    useEffect(() => {
+      fetch(`${API}/admin/pixel-tracker/brands`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setBrands(d.brands||[])).catch(()=>{});
+    }, []);
+
+    const qs = () => `from=${period.from}&to=${period.to}${brand?`&vendor=${encodeURIComponent(brand)}`:''}`;
 
     const loadSummary = () => {
       setSumLoading(true);
@@ -13332,14 +13344,22 @@
         .then(r=>r.json()).then(d=>setLeaderboard(d.products||[])).catch(()=>{}).finally(()=>setLbLoading(false));
     };
     const loadLogs = () => {
-      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=50`, { headers:{ Authorization:'Bearer '+token } })
+      const vq = brand?`&vendor=${encodeURIComponent(brand)}`:'';
+      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=50${vq}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>{ setLogs(d.logs||[]); setLogsLoading(false); }).catch(()=>setLogsLoading(false));
     };
+    const runSearch = () => {
+      if (!searchQ.trim()) { setSearchResults([]); setSearchRan(false); return; }
+      setSearchLoading(true); setSearchRan(true);
+      fetch(`${API}/admin/pixel-tracker/product-search?q=${encodeURIComponent(searchQ.trim())}&${qs()}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setSearchResults(d.products||[])).catch(()=>{}).finally(()=>setSearchLoading(false));
+    };
 
-    useEffect(loadSummary, [period]);
-    useEffect(loadTopProducts, [period, topTab, topLimit]);
-    useEffect(loadLeaderboard, [period, rankBy, lbLimit, minViews]);
-    useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, []);
+    useEffect(loadSummary, [period, brand]);
+    useEffect(loadTopProducts, [period, topTab, topLimit, brand]);
+    useEffect(loadLeaderboard, [period, rankBy, lbLimit, minViews, brand]);
+    useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, [brand]);
+    useEffect(() => { const t = setTimeout(runSearch, 350); return () => clearTimeout(t); }, [searchQ, brand, period]);
 
     const EVENT_META = {
       ViewContent:       { label:'Views',     icon:'👁', color:'#6366f1' },
@@ -13372,7 +13392,13 @@
             <h2 style={{margin:0,color:'var(--text)',fontSize:18}}>🎯 Pixel Tracker</h2>
             <div style={{fontSize:12,color:'var(--text-muted)'}}>Storefront product performance — views, add-to-cart, checkout, purchases</div>
           </div>
-          <PeriodPicker period={period} onChange={setPeriod} align="right"/>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <select value={brand} onChange={e=>setBrand(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'7px 10px',cursor:'pointer',fontWeight:brand?700:400}}>
+              <option value="">All brands</option>
+              {brands.map(b=><option key={b} value={b}>{b}</option>)}
+            </select>
+            <PeriodPicker period={period} onChange={setPeriod} align="right"/>
+          </div>
         </div>
 
         {/* Summary stat cards */}
@@ -13399,6 +13425,43 @@
             ))}
           </div>
         )}
+
+        {/* Search a specific product's metrics */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16,marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:10}}>🔍 Search a product</div>
+          <input
+            type="text"
+            placeholder="Type a product name…"
+            value={searchQ}
+            onChange={e=>setSearchQ(e.target.value)}
+            style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid var(--border)',background:'var(--bg-input,var(--bg))',color:'var(--text)',fontSize:13,outline:'none',marginBottom:searchRan?10:0,boxSizing:'border-box'}}
+          />
+          {searchLoading && <div style={{fontSize:12,color:'var(--text-muted)',padding:'6px 2px'}}>Searching…</div>}
+          {!searchLoading && searchRan && searchResults.length===0 && (
+            <div style={{fontSize:12,color:'var(--text-muted)',padding:'6px 2px'}}>No matching products{brand?` for ${brand}`:''} in this period.</div>
+          )}
+          {!searchLoading && searchResults.length>0 && (
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {searchResults.map((p,i) => (
+                <div key={p.productName+i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg-hover)',borderRadius:8,flexWrap:'wrap'}}>
+                  {p.productImage ? <img src={p.productImage} style={{width:36,height:36,borderRadius:6,objectFit:'cover',flexShrink:0}} onError={e=>e.target.style.display='none'}/> : <div style={{width:36,height:36,borderRadius:6,background:'var(--bg-card2)',flexShrink:0}}/>}
+                  <div style={{flex:1,minWidth:160}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>{p.productName}</div>
+                    <div style={{fontSize:10,color:'var(--text-muted)'}}>{p.vendor || 'Unknown brand'}</div>
+                  </div>
+                  <div style={{display:'flex',gap:14,fontSize:11,color:'var(--text-dim)',flexWrap:'wrap'}}>
+                    <span>👁 {p.views}</span>
+                    <span>🛒 {p.atc}</span>
+                    <span>💳 {p.checkout}</span>
+                    <span>✅ {p.purchases}{p.purchaseValue?` (₹${p.purchaseValue.toLocaleString()})`:''}</span>
+                    <span style={{color:'#10b981',fontWeight:700}}>{p.viewToAtcRate.toFixed(1)}% → ATC</span>
+                    <span style={{color:'#10b981',fontWeight:700}}>{p.viewToPurchaseRate.toFixed(1)}% → Purchase</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Top N products by metric */}
         <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:16,marginBottom:20}}>
@@ -13450,7 +13513,7 @@
                 <span style={{fontSize:11,fontWeight:800,color:'var(--text-muted)',width:20,flexShrink:0}}>#{i+1}</span>
                 {p.productImage ? <img src={p.productImage} style={{width:36,height:36,borderRadius:6,objectFit:'cover',flexShrink:0}} onError={e=>e.target.style.display='none'}/> : <div style={{width:36,height:36,borderRadius:6,background:'var(--bg-card2)',flexShrink:0}}/>}
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.productName}</div>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.productName}{p.vendor?<span style={{color:'var(--text-muted)',fontWeight:400}}> · {p.vendor}</span>:null}</div>
                   <div style={{fontSize:10,color:'var(--text-muted)'}}>{p.views} views · {p.atc} ATC · {p.checkout} checkout · {p.purchases} purchased</div>
                 </div>
                 <div style={{fontSize:16,fontWeight:800,color:'#10b981',flexShrink:0}}>{p[rankBy].toFixed(1)}%</div>
