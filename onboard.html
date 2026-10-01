@@ -325,6 +325,20 @@
   }
 
   ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+
+  // Tell the Shopify page embedding us (as a fixed-height iframe) our real
+  // content height, so it can resize the iframe to fit — avoids a scrollbar
+  // inside the iframe on top of the page's own scrollbar.
+  (function(){
+    function reportHeight(){
+      var h = document.documentElement.scrollHeight;
+      try { window.parent.postMessage({ type: 'cc-onboard-resize', height: h }, '*'); } catch(e){}
+    }
+    new ResizeObserver(reportHeight).observe(document.documentElement);
+    window.addEventListener('load', reportHeight);
+    setTimeout(reportHeight, 300);
+    setTimeout(reportHeight, 1000);
+  })();
 </script>
 </body>
 </html>
