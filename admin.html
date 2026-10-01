@@ -9774,6 +9774,7 @@
     // Product search + collection filter
     const [productSearch,     setProductSearch]     = useState('');
     const [collectionFilter,  setCollectionFilter]  = useState('');  // collection_id
+    const [statusFilter,      setStatusFilter]      = useState('');  // '' | 'active' | 'draft' | 'unlisted' | 'archived'
     const [vendorCollections, setVendorCollections] = useState([]);
     const [collectionsLoading, setCollectionsLoading] = useState(false);
     // Map modal
@@ -9787,6 +9788,13 @@
     // { step:'loading'|'search_cc'|'review', req, vendorVariants, ccProduct, matches, saving, saveMsg }
     // match: { vendorVariant, ccVariant|null, autoMatched, action:'map'|'create'|'skip', overrideCcVariantId }
 
+    // 'active' (status active + published) / 'unlisted' (active but not published to any channel) / 'draft' / 'archived'
+    const productBucket = (p) => {
+      if (p.status === 'draft') return 'draft';
+      if (p.status === 'archived') return 'archived';
+      if (p.status === 'active' && !p.published_at) return 'unlisted';
+      return 'active';
+    };
 
     const loadConnections = () => {
       setLoading(true);
@@ -10202,9 +10210,29 @@
                       {vendorCollections.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}
                     </select>
                   </div>
+                  {/* Status filter */}
+                  {!prodLoading && (() => {
+                    const counts = { '':products.length, active:0, unlisted:0, draft:0, archived:0 };
+                    products.forEach(p=>{ counts[productBucket(p)]++; });
+                    const tabs = [
+                      ['', 'All'], ['active','Active'], ['draft','Draft'], ['unlisted','Unlisted'], ['archived','Archived'],
+                    ];
+                    return (
+                      <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+                        {tabs.map(([key,label])=>(
+                          <button key={key||'all'} className={`btn btn-sm ${statusFilter===key?'btn-primary':'btn-ghost'}`}
+                            onClick={()=>setStatusFilter(key)}>
+                            {label} ({counts[key]})
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {prodLoading ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>Loading products…</div> :
                   (() => {
-                    const visibleProducts = products.filter(p=>!productSearch.trim() || p.title.toLowerCase().includes(productSearch.trim().toLowerCase()));
+                    const visibleProducts = products
+                      .filter(p=>!productSearch.trim() || p.title.toLowerCase().includes(productSearch.trim().toLowerCase()))
+                      .filter(p=>!statusFilter || productBucket(p)===statusFilter);
                     return visibleProducts.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>{productSearch ? 'No products match your search.' : 'No products found in vendor store.'}</div> :
                   (<>
                   {/* Bulk action toolbar */}

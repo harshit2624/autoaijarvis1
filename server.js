@@ -12991,7 +12991,7 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   try {
     const { collection_id } = req.query;
     const collQs = collection_id ? `&collection_id=${encodeURIComponent(collection_id)}` : '';
-    const path = `/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor,body_html,tags${collQs}`;
+    const path = `/products.json?limit=250&fields=id,title,variants,images,status,published_at,product_type,vendor,body_html,tags${collQs}`;
     const data = await vendorShopifyRESTByConn(conn, path);
     const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
