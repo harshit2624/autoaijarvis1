@@ -17563,6 +17563,51 @@ app.post("/admin/brand-rank/run-now", requirePermission('settings'), async (req,
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Keep "WINTERS 003" products pinned to the top of "All", in the same
+// manual order they're sorted in over there — re-synced on a schedule so it
+// never needs to be dragged by hand, even as Winters' lineup/order changes.
+const WINTER_PIN_SOURCE_HANDLE = 'winters-003';
+const WINTER_PIN_TARGET_HANDLE = 'all';
+
+async function pinWinterProductsToTopOfAll() {
+  const source = (await shopifyGraphQL(
+    `query($h: String!) { collectionByHandle(handle: $h) { id title products(first: 250, sortKey: COLLECTION_DEFAULT) { edges { node { id } } } } }`,
+    { h: WINTER_PIN_SOURCE_HANDLE }
+  )).collectionByHandle;
+  if (!source) { console.log(`📌 Winter pin: source collection "${WINTER_PIN_SOURCE_HANDLE}" not found, skipping`); return; }
+
+  const target = (await shopifyGraphQL(
+    `query($h: String!) { collectionByHandle(handle: $h) { id } }`,
+    { h: WINTER_PIN_TARGET_HANDLE }
+  )).collectionByHandle;
+  if (!target) { console.log(`📌 Winter pin: target collection "${WINTER_PIN_TARGET_HANDLE}" not found, skipping`); return; }
+
+  const winterIds = source.products.edges.map(e => e.node.id);
+  if (!winterIds.length) { console.log('📌 Winter pin: source collection is empty, skipping'); return; }
+
+  // Moves apply sequentially, each relative to the state left by the prior
+  // move — moving each product to its own index in turn stacks them at the
+  // front in the same order as the source collection, and leaves every
+  // other product's relative order untouched (collectionReorderProducts'
+  // own documented behavior — no need to enumerate the rest of the catalog).
+  const moves = winterIds.map((id, i) => ({ id, newPosition: i }));
+
+  const result = await shopifyGraphQL(
+    `mutation($id: ID!, $moves: [MoveInput!]!) { collectionReorderProducts(id: $id, moves: $moves) { job { id done } userErrors { field message } } }`,
+    { id: target.id, moves }
+  );
+  const errs = result.collectionReorderProducts?.userErrors || [];
+  if (errs.length) throw new Error(`collectionReorderProducts errors: ${JSON.stringify(errs)}`);
+  console.log(`✅ Winter pin: moved ${winterIds.length} "${WINTER_PIN_SOURCE_HANDLE}" products to the top of "${WINTER_PIN_TARGET_HANDLE}"`);
+}
+setTimeout(() => pinWinterProductsToTopOfAll().catch(e => console.error('❌ Winter pin cron failed:', e.message)), 120000);
+setInterval(() => pinWinterProductsToTopOfAll().catch(e => console.error('❌ Winter pin cron failed:', e.message)), 6 * 60 * 60 * 1000); // every 6 hours
+
+app.post("/admin/winter-pin/run-now", requirePermission('settings'), async (req, res) => {
+  try { await pinWinterProductsToTopOfAll(); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 //  WEEKLY REPORT SYSTEM
 // ══════════════════════════════════════════════════════════════════════════
