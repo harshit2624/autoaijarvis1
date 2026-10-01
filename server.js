@@ -24728,36 +24728,49 @@ function pixelDateRange(from, to) {
   return Object.keys(match).length ? { created_at: match } : {};
 }
 
-// ── Product title → vendor cache ────────────────────────────────────────────
+// ── Product title → {vendor, image} cache ───────────────────────────────────
 // The storefront pixel (pasted into Shopify's Customer Events UI, outside our
 // deploy) doesn't send vendor on every event (GoKwik's checkout-step payloads
-// in particular only carry a product name). Resolving vendor by title here
-// means brand filtering works for all events, including ones already in the
-// DB, without needing anyone to touch the pixel script in Shopify Admin.
+// in particular only carry a product name), and sometimes sends no image —
+// e.g. product_viewed only has an image when the specific VARIANT shown has
+// its own image; many products only set images on some variants. Resolving
+// both by title here means brand filtering and thumbnails work for all
+// events, including ones already in the DB, without needing anyone to touch
+// the pixel script in Shopify Admin.
 let productVendorCache = new Map(); // lowercased title -> vendor
+let productImageCache = new Map();  // lowercased title -> featured image url
 async function refreshProductVendorCache() {
   try {
-    const map = new Map();
-    let path = `/products.json?limit=250&fields=title,vendor&status=active`;
+    const vMap = new Map();
+    const iMap = new Map();
+    let path = `/products.json?limit=250&fields=title,vendor,image&status=active`;
     let pages = 0;
     while (path && pages < 200) {
       const { data, link } = await shopifyRESTRaw(path);
       for (const p of data.products || []) {
-        if (p.title && p.vendor) map.set(p.title.trim().toLowerCase(), p.vendor.trim());
+        const key = p.title ? p.title.trim().toLowerCase() : '';
+        if (!key) continue;
+        if (p.vendor) vMap.set(key, p.vendor.trim());
+        if (p.image && p.image.src) iMap.set(key, p.image.src);
       }
       pages++;
       const next = /<([^>]+)>;\s*rel="next"/.exec(link || '');
       path = next ? next[1].replace(/^https:\/\/[^/]+\/admin\/api\/2025-01/, '') : null;
     }
-    productVendorCache = map;
-    console.log(`✅ Product→vendor cache refreshed — ${map.size} products`);
+    productVendorCache = vMap;
+    productImageCache = iMap;
+    console.log(`✅ Product→vendor/image cache refreshed — ${vMap.size} products`);
   } catch (e) {
-    console.error('❌ Product→vendor cache refresh failed:', e.message);
+    console.error('❌ Product→vendor/image cache refresh failed:', e.message);
   }
 }
 function lookupVendor(productName) {
   if (!productName) return '';
   return productVendorCache.get(String(productName).trim().toLowerCase()) || '';
+}
+function lookupImage(productName) {
+  if (!productName) return '';
+  return productImageCache.get(String(productName).trim().toLowerCase()) || '';
 }
 setTimeout(refreshProductVendorCache, 60000);
 setInterval(refreshProductVendorCache, 3 * 60 * 60 * 1000); // every 3 hours
@@ -24823,13 +24836,14 @@ app.post('/track-event', async (req, res) => {
     if (!eventName || !PIXEL_EVENT_NAMES.includes(eventName)) return res.status(400).json({ error: 'Invalid or missing eventName' });
     const cleanName = (productName || 'N/A').toString().slice(0, 200);
     const resolvedVendor = (vendor && String(vendor).trim()) || lookupVendor(cleanName);
+    const resolvedImage = (productImage && String(productImage).trim()) || lookupImage(cleanName);
     await mdb.collection('pixel_events').insertOne({
       storeCode: storeCode || '',
       brandName: brandName || '',
       vendor: resolvedVendor,
       eventName,
       productName: cleanName,
-      productImage: (productImage || '').toString().slice(0, 500),
+      productImage: resolvedImage.toString().slice(0, 500),
       value: value != null && value !== '' ? parseFloat(value) || 0 : null,
       currency: currency || '',
       client_timestamp: timestamp || null,
