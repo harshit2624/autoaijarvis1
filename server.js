@@ -10063,6 +10063,25 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
     // Save AWB to this vendor's order_vendor_stage only — never to order_meta.awb
     if (result?.awb) {
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+
+      // Deduct CC Inventory stock for any shipped items that are physically at CROSCROW
+      try {
+        for (const li of items) {
+          const variantId = li?.variant_id ? String(li.variant_id) : null;
+          if (!variantId) continue;
+          const ccItem = await mdb.collection('cc_inventory').findOne({ variant_id: variantId });
+          if (!ccItem) continue;
+          const newQty = Math.max(0, (ccItem.quantity || 0) - li.quantity);
+          await mdb.collection('cc_inventory').updateOne(
+            { variant_id: variantId },
+            {
+              $set: { quantity: newQty, updated_at: new Date().toISOString() },
+              $push: { history: { $each: [{ type: 'shipment_deducted', qty: li.quantity, order_name: shopifyOrder.name, note: `Shipped via ${partner} (AWB ${result.awb})`, date: new Date().toISOString() }], $slice: -50 } },
+            }
+          );
+        }
+      } catch (e) { console.error("CC inventory deduction failed (vendor):", e.message); }
+
       // Auto-register with ShipSagar for tracking
       shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: ((shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||'')).trim(), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
@@ -10574,6 +10593,25 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       created_at: new Date().toISOString(),
     };
     await mdb.collection('order_shipments').insertOne(shipmentDoc);
+
+    // Deduct CC Inventory stock for any shipped items that are physically at CROSCROW
+    try {
+      for (const it of selected) {
+        const li = liMap[it.line_item_id];
+        const variantId = li?.variant_id ? String(li.variant_id) : null;
+        if (!variantId) continue;
+        const ccItem = await mdb.collection('cc_inventory').findOne({ variant_id: variantId });
+        if (!ccItem) continue;
+        const newQty = Math.max(0, (ccItem.quantity || 0) - it.quantity);
+        await mdb.collection('cc_inventory').updateOne(
+          { variant_id: variantId },
+          {
+            $set: { quantity: newQty, updated_at: new Date().toISOString() },
+            $push: { history: { $each: [{ type: 'shipment_deducted', qty: it.quantity, order_name: shopifyOrder.name, note: `Shipped via ${partner} (AWB ${result.awb})`, date: new Date().toISOString() }], $slice: -50 } },
+          }
+        );
+      }
+    } catch (e) { console.error("CC inventory deduction failed:", e.message); }
 
     // Update per-vendor stage: 'ready' if fully fulfilled, 'partial' if pieces remain pending
     const vendorsTouched = [...new Set(selected.map(s => s.vendor).filter(Boolean))];
@@ -21146,14 +21184,20 @@ async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
       if (!variantId) continue;
       const qty = parseInt(item.qty || item.quantity || 1);
 
+      const historyEntry = { type: 'return_received', qty, note: `From return ${rr.request_id}`, rr_id: rr.request_id, date: now };
       const existing = await mdb.collection('cc_inventory').findOne({ variant_id: variantId });
       if (existing) {
         await mdb.collection('cc_inventory').updateOne(
           { variant_id: variantId },
-          { $inc: { quantity: qty }, $set: { updated_at: now, notes: `Last added: RR ${rr.request_id}` } }
+          {
+            $inc: { quantity: qty },
+            $set: { updated_at: now, notes: `Last added: RR ${rr.request_id}` },
+            $push: { history: { $each: [historyEntry], $slice: -50 } },
+          }
         );
       } else {
         const id = await nextId('cc_inventory');
+        const image_url = await fetchProductImageUrl(productId);
         await mdb.collection('cc_inventory').insertOne({
           id, variant_id: variantId,
           product_id: productId,
@@ -21161,11 +21205,12 @@ async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
           variant_title: variantTitle,
           sku,
           vendor_name: rr.vendor_name || '',
-          quantity: qty,
+          quantity: qty, image_url,
           notes: `From RR ${rr.request_id}`,
           added_by: 'rr',
           rr_id: rr.request_id,
           created_at: now, updated_at: now,
+          history: [historyEntry],
         });
       }
       added.push({ variant_id: variantId, qty, product_title: productTitle, variant_title: variantTitle, vendor_name: rr.vendor_name || '' });
@@ -22671,11 +22716,52 @@ app.get("/admin/cc-inventory/alerts", adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET all CC inventory (admin)
+// Fetch a product's first image via Shopify GraphQL (used to backfill cc_inventory.image_url)
+async function fetchProductImageUrl(productId) {
+  if (!productId) return null;
+  try {
+    const data = await shopifyGraphQL(
+      `query($id: ID!) { product(id: $id) { images(first: 1) { edges { node { url } } } } }`,
+      { id: `gid://shopify/Product/${productId}` }
+    );
+    return data?.product?.images?.edges?.[0]?.node?.url || null;
+  } catch (e) { return null; }
+}
+
+// GET all CC inventory (admin) — lazy-backfills image_url for older items missing it
 app.get("/admin/cc-inventory", adminAuth, async (req, res) => {
   try {
     const items = await mdb.collection('cc_inventory').find({}, { projection: { _id: 0 } }).sort({ vendor_name: 1, product_title: 1 }).toArray();
+    const missing = items.filter(i => !i.image_url && i.product_id);
+    if (missing.length) {
+      const seenProducts = {};
+      for (const item of missing) {
+        if (!(item.product_id in seenProducts)) {
+          seenProducts[item.product_id] = await fetchProductImageUrl(item.product_id);
+        }
+        const url = seenProducts[item.product_id];
+        if (url) {
+          item.image_url = url;
+          mdb.collection('cc_inventory').updateOne({ variant_id: item.variant_id }, { $set: { image_url: url } }).catch(() => {});
+        }
+      }
+    }
     res.json({ items });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET flattened inventory history/log feed (added / adjusted / return received / shipment deducted)
+app.get("/admin/cc-inventory/logs", adminAuth, async (req, res) => {
+  try {
+    const items = await mdb.collection('cc_inventory').find({}, { projection: { _id: 0, product_title: 1, variant_title: 1, sku: 1, vendor_name: 1, history: 1 } }).toArray();
+    const log = [];
+    for (const item of items) {
+      for (const h of (item.history || [])) {
+        log.push({ ...h, product_title: item.product_title, variant_title: item.variant_title, sku: item.sku, vendor_name: item.vendor_name });
+      }
+    }
+    log.sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json({ log: log.slice(0, 200) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -22687,11 +22773,29 @@ app.get("/admin/cc-inventory/unshipped-orders", adminAuth, async (req, res) => {
     const ccMap = Object.fromEntries(ccItems.map(i => [String(i.variant_id), i]));
     const ccVariantIds = Object.keys(ccMap);
 
-    // Fetch unshipped/unfulfilled orders from order_meta
-    const metas = await mdb.collection('order_meta').find(
-      { stage: { $in: ['new', 'confirmed', 'ready', 'hold'] } },
+    // Fetch candidate orders from order_meta — cast wide here since 'ready' lives on
+    // order_vendor_stage, not order_meta.stage; the real effective-stage filter happens below.
+    const metasRaw = await mdb.collection('order_meta').find(
+      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'returned'] } },
       { projection: { shopify_id: 1, shopify_order_name: 1, stage: 1, _id: 0 } }
     ).sort({ shopify_id: -1 }).limit(500).toArray();
+
+    const candidateIds = metasRaw.map(m => String(m.shopify_id));
+    const vendorStages = await mdb.collection('order_vendor_stage').find(
+      { shopify_id: { $in: candidateIds } },
+      { projection: { shopify_id: 1, stage: 1, _id: 0 } }
+    ).toArray();
+    const vendorStageMap = {};
+    for (const vs of vendorStages) {
+      const sid = String(vs.shopify_id);
+      vendorStageMap[sid] = higherStage(vendorStageMap[sid] || 'new', vs.stage || 'new');
+    }
+
+    // Effective stage = highest of order_meta.stage and any per-vendor stage for that order
+    const UNSHIPPED_STAGES = ['new', 'confirmed', 'partial', 'hold', 'ready'];
+    const metas = metasRaw
+      .map(m => ({ ...m, stage: higherStage(m.stage || 'new', vendorStageMap[String(m.shopify_id)] || 'new') }))
+      .filter(m => UNSHIPPED_STAGES.includes(m.stage));
 
     const shopifyIds = metas.map(m => String(m.shopify_id));
     // Pull snapshots to get line_items
@@ -22740,18 +22844,24 @@ app.post("/admin/cc-inventory", adminAuth, async (req, res) => {
     const { variant_id, product_id, product_title, variant_title, sku, vendor_name, quantity, notes } = req.body || {};
     if (!variant_id || !vendor_name || quantity == null) return res.status(400).json({ error: "variant_id, vendor_name, quantity required." });
     const existing = await mdb.collection('cc_inventory').findOne({ variant_id: String(variant_id) });
+    const historyEntry = { type: existing ? 'adjusted' : 'added', qty: parseInt(quantity), note: notes || '', date: new Date().toISOString() };
     if (existing) {
       await mdb.collection('cc_inventory').updateOne(
         { variant_id: String(variant_id) },
-        { $set: { quantity: parseInt(quantity), notes: notes || '', updated_at: new Date().toISOString() } }
+        {
+          $set: { quantity: parseInt(quantity), notes: notes || '', updated_at: new Date().toISOString() },
+          $push: { history: { $each: [historyEntry], $slice: -50 } },
+        }
       );
     } else {
       const id = await nextId('cc_inventory');
+      const image_url = await fetchProductImageUrl(product_id);
       await mdb.collection('cc_inventory').insertOne({
         id, variant_id: String(variant_id), product_id: String(product_id || ''),
         product_title: product_title || '', variant_title: variant_title || '',
-        sku: sku || '', vendor_name, quantity: parseInt(quantity),
+        sku: sku || '', vendor_name, quantity: parseInt(quantity), image_url,
         notes: notes || '', added_by: 'manual', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        history: [historyEntry],
       });
     }
     auditLog("admin", "cc_inventory_upsert", String(variant_id), { vendor_name, quantity });
@@ -22765,7 +22875,10 @@ app.put("/admin/cc-inventory/:variantId", adminAuth, async (req, res) => {
     const { quantity, notes } = req.body || {};
     await mdb.collection('cc_inventory').updateOne(
       { variant_id: req.params.variantId },
-      { $set: { quantity: parseInt(quantity), notes: notes || '', updated_at: new Date().toISOString() } }
+      {
+        $set: { quantity: parseInt(quantity), notes: notes || '', updated_at: new Date().toISOString() },
+        $push: { history: { $each: [{ type: 'adjusted', qty: parseInt(quantity), note: notes || '', date: new Date().toISOString() }], $slice: -50 } },
+      }
     );
     auditLog("admin", "cc_inventory_update", req.params.variantId, { quantity });
     res.json({ success: true });

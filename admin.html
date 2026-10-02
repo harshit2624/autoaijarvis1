@@ -16248,22 +16248,28 @@
 
     const [unshipped,    setUnshipped]    = useState([]);
     const [unshippedLoading, setUnshippedLoading] = useState(false);
+    const [logs,         setLogs]         = useState([]);
+    const [showLogs,     setShowLogs]     = useState(false);
+    const [vendorFilter, setVendorFilter] = useState('all');
 
     const load = useCallback(async () => {
       setLoading(true);
       setUnshippedLoading(true);
       try {
-        const [iRes, aRes, uRes] = await Promise.all([
+        const [iRes, aRes, uRes, lRes] = await Promise.all([
           fetch(`${API}/admin/cc-inventory`, { headers:{ Authorization:`Bearer ${token}` } }),
           fetch(`${API}/admin/cc-inventory/alerts`, { headers:{ Authorization:`Bearer ${token}` } }),
           fetch(`${API}/admin/cc-inventory/unshipped-orders`, { headers:{ Authorization:`Bearer ${token}` } }),
+          fetch(`${API}/admin/cc-inventory/logs`, { headers:{ Authorization:`Bearer ${token}` } }),
         ]);
         const iData = await iRes.json();
         const aData = aRes.ok ? await aRes.json() : { alerts: [] };
         const uData = uRes.ok ? await uRes.json() : { orders: [] };
+        const lData = lRes.ok ? await lRes.json() : { log: [] };
         setItems(iData.items || []);
         setAlerts(aData.alerts || []);
         setUnshipped(uData.orders || []);
+        setLogs(lData.log || []);
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setLoading(false);
       setUnshippedLoading(false);
@@ -16326,14 +16332,27 @@
       load();
     };
 
-    // Group by vendor
-    const byVendor = items.reduce((acc, i) => {
-      if (!acc[i.vendor_name]) acc[i.vendor_name] = [];
-      acc[i.vendor_name].push(i);
+    const vendors = [...new Set(items.map(i=>i.vendor_name).filter(Boolean))].sort();
+    const visibleItems = vendorFilter==='all' ? items : items.filter(i=>i.vendor_name===vendorFilter);
+
+    // Group by product — one card per product, variants (sizes) as chips inside
+    const byProduct = visibleItems.reduce((acc, i) => {
+      const key = i.product_id || i.product_title;
+      if (!acc[key]) acc[key] = { product_id: i.product_id, product_title: i.product_title, image_url: i.image_url, vendor_name: i.vendor_name, variants: [] };
+      if (!acc[key].image_url && i.image_url) acc[key].image_url = i.image_url;
+      acc[key].variants.push(i);
       return acc;
     }, {});
+    const productGroups = Object.values(byProduct).sort((a,b)=>(a.product_title||'').localeCompare(b.product_title||''));
 
     const unseenAlerts = alerts.filter(a => !a.seen);
+
+    const LOG_META = {
+      added:              { icon:'➕', color:'#10b981', label:'Added' },
+      adjusted:           { icon:'✎',  color:'var(--indigo)', label:'Adjusted' },
+      return_received:    { icon:'↩️', color:'#f59e0b', label:'Return received' },
+      shipment_deducted:  { icon:'📦', color:'#ef4444', label:'Shipped out' },
+    };
 
     return (
       <div className="page">
@@ -16351,13 +16370,66 @@
         )}
 
         {/* Header */}
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:12}}>
           <div>
             <div style={{fontWeight:700,fontSize:14,color:'var(--text)'}}>🏬 CC Inventory</div>
             <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>Products physically at CROSCROW admin location</div>
           </div>
-          <button className="btn btn-indigo" onClick={()=>setShowAdd(v=>!v)}>+ Add Stock</button>
+          <div style={{display:'flex',gap:10,alignItems:'center'}}>
+            {vendors.length>0 && (
+              <select className="form-input" style={{width:'auto',minWidth:140}} value={vendorFilter} onChange={e=>setVendorFilter(e.target.value)}>
+                <option value="all">All vendors</option>
+                {vendors.map(v=><option key={v} value={v}>{v}</option>)}
+              </select>
+            )}
+            <button className="btn btn-ghost" onClick={()=>setShowLogs(v=>!v)}>{showLogs?'Hide':'📜 Logs'}</button>
+            <button className="btn btn-indigo" onClick={()=>setShowAdd(v=>!v)}>+ Add Stock</button>
+          </div>
         </div>
+
+        {/* Summary strip */}
+        <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
+          {[
+            { label:'Products', value: productGroups.length, color:'var(--indigo)' },
+            { label:'Total units', value: visibleItems.reduce((s,i)=>s+i.quantity,0), color:'#10b981' },
+            { label:'Out of stock', value: visibleItems.filter(i=>i.quantity===0).length, color:'#ef4444' },
+            { label:'Low stock (≤2)', value: visibleItems.filter(i=>i.quantity>0&&i.quantity<=2).length, color:'#f59e0b' },
+          ].map(s=>(
+            <div key={s.label} className="card" style={{padding:'10px 18px',flex:'1 1 140px',minWidth:120}}>
+              <div style={{fontSize:20,fontWeight:800,color:s.color,fontVariantNumeric:'tabular-nums'}}>{s.value}</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {showLogs && (
+          <div className="card" style={{marginBottom:16,overflow:'hidden'}}>
+            <div className="card-header"><span className="card-title">📜 Inventory Logs</span><span className="card-sub">{logs.length} recent entries</span></div>
+            <div style={{maxHeight:360,overflowY:'auto'}}>
+              {logs.length===0 ? (
+                <div className="empty"><div className="empty-sub">No activity logged yet.</div></div>
+              ) : logs.map((l,idx)=>{
+                const meta = LOG_META[l.type] || { icon:'•', color:'var(--text-muted)', label:l.type };
+                return (
+                  <div key={idx} style={{display:'flex',gap:12,alignItems:'flex-start',padding:'10px 16px',borderBottom:'1px solid var(--border)'}}>
+                    <span style={{fontSize:16}}>{meta.icon}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,color:'var(--text)'}}>
+                        <span style={{fontWeight:700,color:meta.color}}>{meta.label}</span>
+                        {' · '}{l.product_title}{l.variant_title && l.variant_title!=='Default Title' ? ` / ${l.variant_title}` : ''}
+                        {' '}<span style={{fontWeight:700,fontVariantNumeric:'tabular-nums'}}>×{l.qty}</span>
+                      </div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>
+                        {l.vendor_name ? `${l.vendor_name} · ` : ''}{l.note || (l.order_name ? `Order ${l.order_name}` : '')}
+                      </div>
+                    </div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',whiteSpace:'nowrap'}}>{fmtDate(l.date)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
@@ -16408,65 +16480,55 @@
           </div>
         )}
 
-        {/* Inventory table */}
+        {/* Inventory — grouped by product, one card per product with all its sizes inside */}
         {loading ? <div style={{textAlign:'center',padding:40,color:'var(--text-muted)'}}>Loading…</div> :
-         items.length === 0 ? (
+         productGroups.length === 0 ? (
           <div className="card"><div className="empty"><div className="empty-icon">🏬</div><div className="empty-title">No inventory yet</div><div className="empty-sub">Add products that are physically at CROSCROW location.</div></div></div>
          ) : (
-          Object.entries(byVendor).map(([vendor, vendorItems]) => (
-            <div key={vendor} className="card" style={{marginBottom:16}}>
-              <div className="card-header">
-                <span className="card-title">🏪 {vendor}</span>
-                <span className="card-sub">{vendorItems.length} SKU{vendorItems.length!==1?'s':''} · {vendorItems.reduce((s,i)=>s+i.quantity,0)} units total</span>
-              </div>
-              <div className="tbl-wrap">
-                <table>
-                  <thead><tr>
-                    <th>Product</th><th>Variant</th><th>SKU</th><th>Qty</th><th>Notes</th><th>Updated</th><th>Action</th>
-                  </tr></thead>
-                  <tbody>
-                    {vendorItems.map(item=>(
-                      <tr key={item.variant_id}>
-                        <td style={{fontWeight:600,color:'var(--text)'}}>{item.product_title}</td>
-                        <td><span style={{background:'var(--indigo-dim)',color:'var(--indigo)',padding:'2px 8px',borderRadius:4,fontSize:11}}>{item.variant_title||'—'}</span></td>
-                        <td style={{fontFamily:'monospace',fontSize:11,color:'var(--text-muted)'}}>{item.sku||'—'}</td>
-                        <td>
-                          {editItem?.variant_id===item.variant_id ? (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(320px, 1fr))',gap:14}}>
+            {productGroups.map(group => {
+              const totalQty = group.variants.reduce((s,i)=>s+i.quantity,0);
+              return (
+                <div key={group.product_id||group.product_title} className="card" style={{overflow:'hidden',display:'flex',flexDirection:'column'}}>
+                  <div style={{display:'flex',gap:12,padding:14,borderBottom:'1px solid var(--border)'}}>
+                    <div style={{width:56,height:56,borderRadius:8,background:'var(--bg)',flexShrink:0,overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      {group.image_url ? <img src={group.image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontSize:22,opacity:0.3}}>👕</span>}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:700,fontSize:13,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{group.product_title}</div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>🏪 {group.vendor_name||'—'}</div>
+                      <div style={{display:'flex',gap:10,marginTop:4,fontSize:11}}>
+                        <span style={{color:'var(--text-muted)'}}>{group.variants.length} size{group.variants.length!==1?'s':''}</span>
+                        <span style={{fontWeight:700,color:totalQty===0?'#ef4444':totalQty<=2?'#f59e0b':'#10b981'}}>{totalQty} units</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{padding:12,display:'flex',flexDirection:'column',gap:8,flex:1}}>
+                    {group.variants.map(item=>(
+                      <div key={item.variant_id} style={{display:'flex',alignItems:'center',gap:8,background:'var(--bg)',borderRadius:6,padding:'6px 10px'}}>
+                        <span style={{background:'var(--indigo-dim)',color:'var(--indigo)',padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:600,minWidth:44,textAlign:'center'}}>{item.variant_title||'—'}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)',fontFamily:'monospace',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.sku||'—'}</span>
+                        {editItem?.variant_id===item.variant_id ? (
+                          <>
                             <input type="number" min="0" value={editItem.quantity} onChange={e=>setEditItem(v=>({...v,quantity:e.target.value}))}
-                              style={{width:60,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:4,color:'var(--text)',padding:'2px 6px',fontSize:12}}/>
-                          ) : (
-                            <span style={{fontWeight:700,color:item.quantity===0?'var(--red)':item.quantity<=2?'#f59e0b':'#10b981',fontSize:13}}>{item.quantity}</span>
-                          )}
-                        </td>
-                        <td style={{fontSize:11,color:'var(--text-muted)',maxWidth:180}}>
-                          {editItem?.variant_id===item.variant_id ? (
-                            <input value={editItem.notes} onChange={e=>setEditItem(v=>({...v,notes:e.target.value}))}
-                              style={{width:'100%',background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:4,color:'var(--text)',padding:'2px 6px',fontSize:11}}/>
-                          ) : (item.notes||'—')}
-                        </td>
-                        <td className="td-mut">{fmtDate(item.updated_at)}</td>
-                        <td>
-                          <div style={{display:'flex',gap:6}}>
-                            {editItem?.variant_id===item.variant_id ? (
-                              <>
-                                <button className="btn btn-indigo btn-sm" onClick={()=>updateItem(item.variant_id, editItem.quantity, editItem.notes)} disabled={saving}>✓</button>
-                                <button className="btn btn-ghost btn-sm" onClick={()=>setEditItem(null)}>✕</button>
-                              </>
-                            ) : (
-                              <>
-                                <button className="btn btn-ghost btn-sm" onClick={()=>setEditItem({variant_id:item.variant_id,quantity:item.quantity,notes:item.notes||''})}>✎ Edit</button>
-                                <button className="btn btn-danger btn-sm" onClick={()=>deleteItem(item.variant_id)}>✕</button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
+                              style={{width:50,background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:4,color:'var(--text)',padding:'2px 6px',fontSize:12}}/>
+                            <button className="btn btn-indigo btn-sm" onClick={()=>updateItem(item.variant_id, editItem.quantity, editItem.notes)} disabled={saving}>✓</button>
+                            <button className="btn btn-ghost btn-sm" onClick={()=>setEditItem(null)}>✕</button>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{fontWeight:700,fontVariantNumeric:'tabular-nums',color:item.quantity===0?'#ef4444':item.quantity<=2?'#f59e0b':'#10b981',minWidth:20,textAlign:'right'}}>{item.quantity}</span>
+                            <button className="btn btn-ghost btn-sm" onClick={()=>setEditItem({variant_id:item.variant_id,quantity:item.quantity,notes:item.notes||''})}>✎</button>
+                            <button className="btn btn-danger btn-sm" onClick={()=>deleteItem(item.variant_id)}>✕</button>
+                          </>
+                        )}
+                      </div>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
 
         {/* ── Unshipped orders matching CC inventory ── */}
