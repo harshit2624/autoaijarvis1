@@ -22773,11 +22773,15 @@ app.get("/admin/cc-inventory/unshipped-orders", adminAuth, async (req, res) => {
     const ccMap = Object.fromEntries(ccItems.map(i => [String(i.variant_id), i]));
     const ccVariantIds = Object.keys(ccMap);
 
-    // Fetch candidate orders from order_meta — cast wide here since 'ready' lives on
-    // order_vendor_stage, not order_meta.stage; the real effective-stage filter happens below.
+    // Candidate orders — line items live directly on order_meta.items (there is no
+    // separate order_snapshots collection in this schema), so pull orders that still
+    // have at least one of our CC variant_ids among their items, pre-filtered by Mongo.
     const metasRaw = await mdb.collection('order_meta').find(
-      { stage: { $nin: ['delivered', 'rto', 'cancelled', 'returned'] } },
-      { projection: { shopify_id: 1, shopify_order_name: 1, stage: 1, _id: 0 } }
+      {
+        stage: { $nin: ['delivered', 'rto', 'cancelled', 'returned'] },
+        'items.variant_id': { $in: ccVariantIds.map(v => Number(v)).concat(ccVariantIds) },
+      },
+      { projection: { shopify_id: 1, order_name: 1, stage: 1, items: 1, shipping_address: 1, shopify_created_at: 1, _id: 0 } }
     ).sort({ shopify_id: -1 }).limit(500).toArray();
 
     const candidateIds = metasRaw.map(m => String(m.shopify_id));
@@ -22797,30 +22801,22 @@ app.get("/admin/cc-inventory/unshipped-orders", adminAuth, async (req, res) => {
       .map(m => ({ ...m, stage: higherStage(m.stage || 'new', vendorStageMap[String(m.shopify_id)] || 'new') }))
       .filter(m => UNSHIPPED_STAGES.includes(m.stage));
 
-    const shopifyIds = metas.map(m => String(m.shopify_id));
-    // Pull snapshots to get line_items
-    const snapshots = await mdb.collection('order_snapshots').find(
-      { shopify_id: { $in: shopifyIds } },
-      { projection: { shopify_id: 1, 'snapshot.name': 1, 'snapshot.line_items': 1, 'snapshot.fulfillment_status': 1, 'snapshot.shipping_address': 1, 'snapshot.created_at': 1, _id: 0 } }
-    ).toArray();
-
     const results = [];
-    for (const snap of snapshots) {
-      const lineItems = snap.snapshot?.line_items || [];
+    for (const meta of metas) {
+      const lineItems = meta.items || [];
       const matchedLines = lineItems
         .filter(li => ccVariantIds.includes(String(li.variant_id)))
         .map(li => ({
           ...ccMap[String(li.variant_id)],
-          ordered_qty: li.quantity,
+          ordered_qty: li.qty,
         }));
       if (!matchedLines.length) continue;
-      const meta = metas.find(m => String(m.shopify_id) === String(snap.shopify_id));
       results.push({
-        order_name: snap.snapshot?.name || meta?.shopify_order_name || `#${snap.shopify_id}`,
-        stage: meta?.stage || 'unknown',
-        created_at: snap.snapshot?.created_at || null,
-        customer: snap.snapshot?.shipping_address
-          ? `${snap.snapshot.shipping_address.first_name || ''} ${snap.snapshot.shipping_address.last_name || ''}`.trim()
+        order_name: meta.order_name || `#${meta.shopify_id}`,
+        stage: meta.stage || 'unknown',
+        created_at: meta.shopify_created_at || null,
+        customer: meta.shipping_address
+          ? `${meta.shipping_address.first_name || ''} ${meta.shipping_address.last_name || ''}`.trim()
           : null,
         matches: matchedLines,
       });
