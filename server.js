@@ -9930,6 +9930,8 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       const orderDateStr = (shopifyOrder.created_at || new Date().toISOString())
         .replace("T", " ").replace(/\.\d+Z$/, "").replace("Z", "");
 
+      const retInfo = resolveDelhiveryReturnInfo({ ...creds, company_name: creds.company_name || req.vendor }, creds.pickup_location || "Primary");
+      const hasReturnInfo = !!(retInfo.pincode && retInfo.city);
       const shipData = {
         pickup_location: { name: creds.pickup_location || "Primary" },
         shipments: [{
@@ -9943,13 +9945,21 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           phone:         (addr.phone || "").replace(/\D/g, "").slice(-10),
           order:         shopifyOrder.name,
           payment_mode:  cod ? "COD" : "Pre-paid",
-          return_pin:    creds.return_pincode || "",
-          return_city:   creds.return_city    || "",
-          return_phone:  creds.return_phone   || "",
-          return_name:   creds.company_name   || req.vendor,
-          return_add:    creds.return_address || "",
-          return_state:  creds.return_state   || "",
-          return_country:"India",
+          ...(hasReturnInfo ? {
+            return_pin:     retInfo.pincode,
+            return_city:    retInfo.city,
+            return_phone:   (retInfo.phone || "").replace(/\D/g, "").slice(-10),
+            return_name:    retInfo.name,
+            return_add:     retInfo.address,
+            return_state:   retInfo.state,
+            return_country: "India",
+            seller_name:    retInfo.name,
+            seller_add:     retInfo.address,
+            seller_city:    retInfo.city,
+            seller_state:   retInfo.state,
+            seller_pin:     retInfo.pincode,
+            seller_country: "India",
+          } : {}),
           products_desc: items.map(shipmentItemDesc).join(", ").slice(0, 250),
           hsn_code:      "",
           cod_amount:    cod ? codAmt : "",
@@ -9962,12 +9972,6 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           shipment_height: String(height),
           weight:          String(Math.round(parseFloat(weight) * 1000)),
           shipping_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
-          seller_name:   creds.company_name || req.vendor,
-          seller_add:    creds.return_address || "",
-          seller_city:   creds.return_city   || "",
-          seller_state:  creds.return_state  || "",
-          seller_pin:    creds.return_pincode || "",
-          seller_country:"India",
         }],
       };
       console.log(`[delhivery-payload]`, JSON.stringify({ weight: shipData.shipments[0].weight, shipping_mode: shipData.shipments[0].shipping_mode }));
@@ -10311,7 +10315,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       const f = foliMap[liId];
       const fulfillable = f ? f.fulfillable_quantity : 0;
       if (qty > fulfillable) return res.status(400).json({ error: `${li.title}: only ${fulfillable} unit(s) available to fulfill` });
-      selected.push({ line_item_id: liId, vendor: li.vendor || '', title: li.title, sku: li.sku || '', quantity: qty, price: parseFloat(li.price || 0), foli: f });
+      selected.push({ line_item_id: liId, vendor: li.vendor || '', title: li.title, variant_title: li.variant_title || '', sku: li.sku || '', quantity: qty, price: parseFloat(li.price || 0), foli: f });
     }
     if (!selected.length) return res.status(400).json({ error: "No items with quantity > 0 selected" });
 
@@ -10347,6 +10351,8 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
     let result;
 
     if (partner === "delhivery") {
+      const retInfo = resolveDelhiveryReturnInfo(creds, warehouseName);
+      const hasReturnInfo = !!(retInfo.pincode && retInfo.city);
       const shipData = {
         pickup_location: { name: warehouseName },
         shipments: [{
@@ -10360,13 +10366,24 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
           phone:         (addr.phone || "").replace(/\D/g, "").slice(-10),
           order:         orderRef,
           payment_mode:  cod ? "COD" : "Pre-paid",
-          return_pin:    creds.return_pincode || "",
-          return_city:   creds.return_city    || "",
-          return_phone:  creds.return_phone   || "",
-          return_name:   creds.company_name   || "Croscrow",
-          return_add:    creds.return_address || "",
-          return_state:  creds.return_state   || "",
-          return_country:"India",
+          // Only send return/seller address fields when we actually have them —
+          // sending blanks overrides Delhivery's own registered warehouse address
+          // on the shipping label instead of falling back to it.
+          ...(hasReturnInfo ? {
+            return_pin:     retInfo.pincode,
+            return_city:    retInfo.city,
+            return_phone:   (retInfo.phone || "").replace(/\D/g, "").slice(-10),
+            return_name:    retInfo.name,
+            return_add:     retInfo.address,
+            return_state:   retInfo.state,
+            return_country: "India",
+            seller_name:    retInfo.name,
+            seller_add:     retInfo.address,
+            seller_city:    retInfo.city,
+            seller_state:   retInfo.state,
+            seller_pin:     retInfo.pincode,
+            seller_country: "India",
+          } : {}),
           products_desc: selected.map(shipmentItemDesc).join(", ").slice(0, 250),
           hsn_code:      "",
           cod_amount:    cod ? codAmt : "",
@@ -10379,12 +10396,6 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
           shipment_height: String(height),
           weight:          String(Math.round(parseFloat(weight) * 1000)),
           shipping_mode:   shipMode === 'Express' ? 'Express' : 'Surface',
-          seller_name:   creds.company_name || "Croscrow",
-          seller_add:    creds.return_address || "",
-          seller_city:   creds.return_city   || "",
-          seller_state:  creds.return_state  || "",
-          seller_pin:    creds.return_pincode || "",
-          seller_country:"India",
         }],
       };
       const dlBody = new URLSearchParams();
@@ -20005,6 +20016,22 @@ function normalizePhone(p='') {
 // packaging team can tell items apart without opening Shopify. Shopify's
 // default single-variant products get variant_title "Default Title", which
 // isn't a real size and shouldn't be printed.
+// Resolve a Delhivery shipment's return/seller address from the selected warehouse's
+// saved location (preferred) or the credential's flat return_* fields (legacy fallback).
+function resolveDelhiveryReturnInfo(creds, warehouseName) {
+  const loc = (creds.pickup_locations || []).find(
+    l => (l.name || '').trim().toLowerCase() === (warehouseName || '').trim().toLowerCase()
+  );
+  return {
+    name:    creds.company_name || loc?.name || 'Croscrow',
+    address: loc?.address || creds.return_address || '',
+    city:    loc?.city    || creds.return_city    || '',
+    state:   loc?.state   || creds.return_state   || '',
+    pincode: loc?.pincode || creds.return_pincode  || '',
+    phone:   loc?.phone   || creds.return_phone    || '',
+  };
+}
+
 function shipmentItemDesc(li) {
   const size = (li.variant_title || '').trim();
   const hasRealSize = size && size.toLowerCase() !== 'default title';
