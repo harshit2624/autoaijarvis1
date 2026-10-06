@@ -16828,7 +16828,7 @@ async function sendPickupFailedCustomerWA(rr) {
   console.log(`📲 Pickup-failed WA → ${rr.request_id} → +91${digits}`);
 }
 
-async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', scanKey = '') {
+async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', scanKey = '', currentStatus = '') {
   const events = [];
   const now = new Date().toISOString();
 
@@ -16884,7 +16884,21 @@ async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', s
     // RTO/failure, handled separately by shipsagarStatusToStage). Do
     // not reuse the forward classifier's rto bucket here — that's why
     // this match list is independent and reverse-only.
-    const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c)) || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')));
+    //
+    // Also check ShipSagar's own top-level CurrentStatus field, not just the
+    // latest per-scan ActionDescription text. Confirmed live on orders #3258
+    // and #3284: ShipSagar's CurrentStatus had already flipped to "RTO" (its
+    // terminal label for a completed reverse AWB — same "success, not
+    // failure" meaning as above) while the latest scan description was still
+    // verbose transit/redelivery text ("On the Way - Return - Package
+    // arrived at our Delhi facility", "Out for Return - Our executive... is
+    // on their way to deliver") that shipsagarStatusToStage/RR_REVERSE_
+    // RECEIVED_CODES never matched — so the RR sat stuck on "in_transit"
+    // indefinitely even though ShipSagar itself already considered it done.
+    const currentStatusLow = String(currentStatus || '').toLowerCase().trim();
+    const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c))
+      || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')))
+      || currentStatusLow === 'rto';
     if (isReceivedBack) {
       if (!rr.wa_notif_sent?.received_at_warehouse) await sendRRWANotif(rr, 'received_at_warehouse');
       const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
@@ -17064,7 +17078,7 @@ async function rrTrackingPass() {
           // desc stopped changing.
           if (!desc) continue;
 
-          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc, `${latest.ActionDate||latest.ScanDate||latest.Date||''} ${latest.ActionTime||latest.ScanTime||latest.Time||''}`.trim());
+          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc, `${latest.ActionDate||latest.ScanDate||latest.Date||''} ${latest.ActionTime||latest.ScanTime||latest.Time||''}`.trim(), ss.currentStatus);
           for (const ev of rrEvents) {
             runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: ev.event, advanced: ev.advanced });
           }
@@ -20436,7 +20450,7 @@ app.get("/track/rr-shipment-status", async (req, res) => {
       { $set: { [`${field}.tracking_status`]: desc, [`${field}.tracking_updated_at`]: now, [`${field}.tracking_history`]: historyToSave, updated_at: now } }
     );
 
-    const events = desc ? await rrApplyStageLogic(rr, direction, desc, descLow) : [];
+    const events = desc ? await rrApplyStageLogic(rr, direction, desc, descLow, '', '', ss.currentStatus) : [];
     const advanced = events.some(e => e.advanced);
     const freshStatus = advanced
       ? (await mdb.collection('return_requests').findOne({ request_id }, { projection: { status: 1, _id: 0 } }))?.status

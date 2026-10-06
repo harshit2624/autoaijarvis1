@@ -6174,8 +6174,13 @@
       pending_forward: rq => rq.type==='exchange' && !rq.forward_shipment &&
         (rq.received_at_cc || rq.reverse_delivered_at) &&
         !['completed','rejected','cancelled'].includes(rq.status),
+      // Actively moving with the courier — past "approved" (which now mostly
+      // just means "not yet picked up" via pending_pickup above) but short of
+      // landing back here. The old flat TABS had no way to see these at all
+      // except by scrolling "all".
+      in_progress: rq => ['pickup_scheduled','pickup','picked_up','in_transit','received','received_at_warehouse'].includes(rq.status),
     };
-    const EXTRA_TAB_LABELS = { pending_pickup: '📦 pending pickup', pending_forward: '🔁 pending forward' };
+    const EXTRA_TAB_LABELS = { pending_pickup: '📦 pending pickup', pending_forward: '🔁 pending forward', in_progress: '🚚 in progress' };
     // Tinted background (not just a colored border) so status pills actually
     // read as different colors at a glance instead of all looking like the
     // same neutral outline.
