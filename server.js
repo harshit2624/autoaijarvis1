@@ -21300,7 +21300,7 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
 
 app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
   try {
-    const { status, admin_note, force } = req.body;
+    const { status, admin_note, force, silent } = req.body;
     const before = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { status: 1 } });
     const now = new Date().toISOString();
     const update = { updated_at: now };
@@ -21318,9 +21318,13 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
     if (admin_note !== undefined) update.admin_note = admin_note;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id }, { $set: update });
     if (statusOk && status) {
-      await rrPushHistory(req.params.id, { status, note: admin_note || '', source: 'admin' });
+      await rrPushHistory(req.params.id, { status, note: (admin_note || '') + (silent ? ' (marked manually — no customer/vendor notification sent)' : ''), source: 'admin' });
       const updated = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
-      if (updated) {
+      // `silent` is for backfilling old requests (e.g. closing out a return
+      // that was actually completed weeks ago, outside this flow) — the
+      // customer/vendor already know, or there's nothing to tell them, so
+      // skip every email/WA send that would normally fire off a status change.
+      if (updated && !silent) {
         const emailType = { approved: 'approved_by_admin', rejected: 'rejected', pickup: 'pickup', in_transit: 'in_transit', completed: 'completed' }[status];
         if (emailType) sendRREmail(emailType, updated).catch(() => {});
         if (status === 'rejected') sendRRWANotif(updated, 'rejected', { reason: admin_note || updated.admin_note }).catch(() => {});

@@ -6179,8 +6179,13 @@
       // landing back here. The old flat TABS had no way to see these at all
       // except by scrolling "all".
       in_progress: rq => ['pickup_scheduled','pickup','picked_up','in_transit','received','received_at_warehouse'].includes(rq.status),
+      // Return (not exchange) physically back with us, but no refund/store
+      // credit has gone out yet — resolution is only ever set when the
+      // refund/credit actually gets issued, so its absence here is exactly
+      // "received, nothing paid out yet."
+      refund_pending: rq => rq.type==='return' && ['received','received_at_warehouse'].includes(rq.status) && !rq.resolution,
     };
-    const EXTRA_TAB_LABELS = { pending_pickup: '📦 pending pickup', pending_forward: '🔁 pending forward', in_progress: '🚚 in progress' };
+    const EXTRA_TAB_LABELS = { pending_pickup: '📦 pending pickup', pending_forward: '🔁 pending forward', in_progress: '🚚 in progress', refund_pending: '💸 refund pending' };
     // Tinted background (not just a colored border) so status pills actually
     // read as different colors at a glance instead of all looking like the
     // same neutral outline.
@@ -6204,6 +6209,7 @@
       { n: requests.filter(rq=>rq.status==='pending').length, l: 'Pending Approval', cls:'attn' },
       { n: requests.filter(EXTRA_TABS.pending_pickup).length, l: 'Pending Pickup', cls: requests.some(rrIsPickupOverdue)?'urgent':'attn' },
       { n: requests.filter(EXTRA_TABS.pending_forward).length, l: 'Pending Forward', cls:'attn' },
+      { n: requests.filter(EXTRA_TABS.refund_pending).length, l: 'Refund Pending', cls:'attn' },
       { n: requests.filter(rrIsPickupOverdue).length, l: 'Pickup Overdue 48h+', cls: requests.some(rrIsPickupOverdue)?'urgent':'' },
       { n: requests.filter(rrNeedsReview).length, l: 'Received — Needs Review', cls: requests.filter(rrNeedsReview).some(rq=>rrReceivedHoursSince(rq)>=20)?'urgent':'attn' },
       { n: requests.filter(rq=>rq.status==='completed').length, l: 'Completed', cls:'ok' },
@@ -6440,11 +6446,22 @@
 
                   {/* Stage progression buttons */}
                   {['approved','pickup','in_transit'].includes(rq.status) && (
-                    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
                       {rq.status==='approved'&&<button className="btn btn-ghost btn-sm" style={{borderColor:'var(--yellow)',color:'var(--yellow)'}} onClick={()=>updateRequest(rq.request_id,{status:'pickup'})} disabled={saving}>📍 Mark Pickup Scheduled</button>}
-                      {rq.status==='approved'&&<button className="btn btn-ghost btn-sm" style={{borderColor:'var(--teal)',color:'var(--teal)'}} onClick={()=>updateRequest(rq.request_id,{status:'completed'})} disabled={saving} title="Skip straight to completed, bypassing pickup/transit tracking">✓ Mark Done (skip tracking)</button>}
                       {rq.status==='pickup'&&<button className="btn btn-ghost btn-sm" style={{borderColor:'var(--indigo)',color:'var(--indigo)'}} onClick={()=>updateRequest(rq.request_id,{status:'in_transit'})} disabled={saving}>🚚 Mark In Transit</button>}
-                      {rq.status==='in_transit'&&<button className="btn btn-ghost btn-sm" style={{borderColor:'var(--teal)',color:'var(--teal)'}} onClick={()=>updateRequest(rq.request_id,{status:'completed'})} disabled={saving}>✓ Mark Completed</button>}
+                    </div>
+                  )}
+
+                  {/* Manual "mark completed" — for closing out old/stuck requests without
+                      walking through pickup/transit tracking. The silent variant is for
+                      backfilling requests that were actually resolved outside this system
+                      (e.g. handled over WhatsApp weeks ago) — skips every completion
+                      email/WA send so the customer/vendor don't get a confusing notification
+                      about something that already happened. */}
+                  {!['completed','rejected','cancelled'].includes(rq.status) && (
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
+                      <button className="btn btn-ghost btn-sm" style={{borderColor:'var(--teal)',color:'var(--teal)'}} onClick={()=>updateRequest(rq.request_id,{status:'completed',force:true})} disabled={saving} title="Marks completed and sends the normal completion email/WhatsApp message">✓ Mark Completed</button>
+                      <button className="btn btn-ghost btn-sm" style={{borderColor:'var(--text-muted)',color:'var(--text-muted)'}} onClick={()=>{ if(window.confirm('Mark completed WITHOUT notifying the customer or vendor? Use this only for backfilling old requests that were already resolved elsewhere.')) updateRequest(rq.request_id,{status:'completed',force:true,silent:true}); }} disabled={saving} title="For old/backfilled requests — marks completed with no email or WhatsApp sent to anyone">🔇 Mark Completed (No Message)</button>
                     </div>
                   )}
 
