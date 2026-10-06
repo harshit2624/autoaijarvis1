@@ -6163,15 +6163,29 @@
     const TYPE_COLOR = { return:'var(--cyan)', exchange:'var(--green)' };
     const STATUS_COLOR = { pending:'#f59e0b', approved:'#22c55e', pickup_scheduled:'#eab308', pickup:'#eab308', picked_up:'#3b82f6', in_transit:'#6366f1', received:'#06b6d4', received_at_warehouse:'#06b6d4', completed:'#10b981', rejected:'#ef4444', cancelled:'#6b7280' };
     const TABS = ['all','pending','approved','rejected','completed'];
+    // Two extra tabs that aren't a single status — "approved" covers both
+    // "picked up, nothing left to do" and "still waiting on the courier",
+    // and exchanges need a second, separate leg (the replacement item
+    // shipped back out) that status alone doesn't distinguish either.
+    // Predicates mirror the backend's own 48h-reminder queries so "pending"
+    // here means the exact same thing it does in those alerts.
+    const EXTRA_TABS = {
+      pending_pickup: rq => rq.status==='approved' && !rq.received_at_cc && !rq.reverse_delivered_at,
+      pending_forward: rq => rq.type==='exchange' && !rq.forward_shipment &&
+        (rq.received_at_cc || rq.reverse_delivered_at) &&
+        !['completed','rejected','cancelled'].includes(rq.status),
+    };
+    const EXTRA_TAB_LABELS = { pending_pickup: '📦 pending pickup', pending_forward: '🔁 pending forward' };
     // Tinted background (not just a colored border) so status pills actually
     // read as different colors at a glance instead of all looking like the
     // same neutral outline.
     const pillStyle = c => ({ borderColor:c, color:c, background:`color-mix(in srgb, ${c} 14%, transparent)` });
 
     const tabCounts = Object.fromEntries(TABS.map(t => [t, t==='all' ? requests.length : requests.filter(rq=>rq.status===t).length]));
+    const extraTabCounts = Object.fromEntries(Object.entries(EXTRA_TABS).map(([k,fn]) => [k, requests.filter(fn).length]));
 
     const filtered = requests
-      .filter(rq => tab==='all' || rq.status===tab)
+      .filter(rq => tab==='all' ? true : EXTRA_TABS[tab] ? EXTRA_TABS[tab](rq) : rq.status===tab)
       .filter(rq => typeFilter==='all' || rq.type===typeFilter)
       .filter(rq => vendorFilter==='all' || rq.vendor_name===vendorFilter)
       .filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id,rq.vendor_name].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
@@ -6183,6 +6197,8 @@
 
     const stats = [
       { n: requests.filter(rq=>rq.status==='pending').length, l: 'Pending Approval', cls:'attn' },
+      { n: requests.filter(EXTRA_TABS.pending_pickup).length, l: 'Pending Pickup', cls: requests.some(rrIsPickupOverdue)?'urgent':'attn' },
+      { n: requests.filter(EXTRA_TABS.pending_forward).length, l: 'Pending Forward', cls:'attn' },
       { n: requests.filter(rrIsPickupOverdue).length, l: 'Pickup Overdue 48h+', cls: requests.some(rrIsPickupOverdue)?'urgent':'' },
       { n: requests.filter(rrNeedsReview).length, l: 'Received — Needs Review', cls: requests.filter(rrNeedsReview).some(rq=>rrReceivedHoursSince(rq)>=20)?'urgent':'attn' },
       { n: requests.filter(rq=>rq.status==='completed').length, l: 'Completed', cls:'ok' },
@@ -6200,6 +6216,11 @@
           {TABS.map(t=>(
             <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>
               {t} <span className="rr-chip-count">{tabCounts[t]}</span>
+            </button>
+          ))}
+          {Object.keys(EXTRA_TABS).map(t=>(
+            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)} title={t==='pending_pickup' ? 'Approved, but the returned item hasn\'t been picked up from the customer yet' : 'Exchange approved, replacement item hasn\'t been shipped out yet'}>
+              {EXTRA_TAB_LABELS[t]} <span className="rr-chip-count">{extraTabCounts[t]}</span>
             </button>
           ))}
           <span className="rr-toolbar-sep"></span>
