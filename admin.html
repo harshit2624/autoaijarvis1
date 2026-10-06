@@ -3671,10 +3671,10 @@
     // here so "Configure tiers in Tag Mappings" still points at the same
     // saved config.
     const AUD_TIERS = [
-      { id:'high_risk',   label:'High Risk',   color:'#ef4444', dim:'rgba(239,68,68,.08)',   border:'rgba(239,68,68,.25)',   icon:'🔴', defaults:['cod','rto_customer','unverified','rto','fraud_risk','blacklisted','address_issue','cod_undelivered'] },
-      { id:'medium_risk', label:'Medium Risk', color:'#f59e0b', dim:'rgba(245,158,11,.08)',  border:'rgba(245,158,11,.25)',  icon:'🟠', defaults:['new_customer','partial_payment','first_order','cod_confirmed','review_needed','flagged'] },
-      { id:'control',     label:'Control',     color:'#a78bfa', dim:'rgba(139,92,246,.08)',  border:'rgba(139,92,246,.25)',  icon:'🟣', defaults:['confirmed','standard','normal','default_segment','organic'] },
-      { id:'low_risk',    label:'Low Risk',    color:'#10b981', dim:'rgba(16,185,129,.08)',  border:'rgba(16,185,129,.25)',  icon:'🟢', defaults:['prepaid','repeat_customer','vip','verified','loyal','exchange_done','delivered','upi_paid','paid'] },
+      { id:'high_risk',   label:'High Risk',   color:'#ef4444', dim:'rgba(239,68,68,.08)',   border:'rgba(239,68,68,.25)',   icon:'🔴', defaults:['High Risk','rto_prediction_high','Bad Address'] },
+      { id:'medium_risk', label:'Medium Risk', color:'#f59e0b', dim:'rgba(245,158,11,.08)',  border:'rgba(245,158,11,.25)',  icon:'🟠', defaults:['Medium Risk','⚠ Confirmation Pending','🫲 On Hold','on hold'] },
+      { id:'control',     label:'Control',     color:'#a78bfa', dim:'rgba(139,92,246,.08)',  border:'rgba(139,92,246,.25)',  icon:'🟣', defaults:['Standard','SR_STANDARD','confirmed on call ✅'] },
+      { id:'low_risk',    label:'Low Risk',    color:'#10b981', dim:'rgba(16,185,129,.08)',  border:'rgba(16,185,129,.25)',  icon:'🟢', defaults:['Low Risk','prepaid','prepaid💰','UPI'] },
     ];
     const [tagCounts, setTagCounts] = useState(null);
     const [tagTotal,  setTagTotal]  = useState(0);
@@ -11256,7 +11256,7 @@
       borderColor: 'rgba(239,68,68,0.3)',
       icon: '🔴',
       desc: 'COD, RTO history, unverified, risky city',
-      defaults: ['cod','rto_customer','unverified','rto','fraud_risk','blacklisted','address_issue','cod_undelivered'],
+      defaults: ['High Risk','rto_prediction_high','Bad Address'],
     },
     {
       id: 'medium_risk',
@@ -11266,7 +11266,7 @@
       borderColor: 'rgba(249,115,22,0.3)',
       icon: '🟠',
       desc: 'New customer, partial payment, COD confirmed',
-      defaults: ['new_customer','partial_payment','first_order','cod_confirmed','review_needed','flagged'],
+      defaults: ['Medium Risk','⚠ Confirmation Pending','🫲 On Hold','on hold'],
     },
     {
       id: 'control',
@@ -11276,7 +11276,7 @@
       borderColor: 'rgba(99,102,241,0.3)',
       icon: '🟣',
       desc: 'Benchmark group — standard buyer',
-      defaults: ['confirmed','standard','normal','default_segment','organic'],
+      defaults: ['Standard','SR_STANDARD','confirmed on call ✅'],
     },
     {
       id: 'low_risk',
@@ -11286,7 +11286,7 @@
       borderColor: 'rgba(16,185,129,0.3)',
       icon: '🟢',
       desc: 'Prepaid, repeat buyer, VIP, verified',
-      defaults: ['prepaid','repeat_customer','vip','verified','loyal','exchange_done','delivered','upi_paid','paid'],
+      defaults: ['Low Risk','prepaid','prepaid💰','UPI'],
     },
   ];
 
