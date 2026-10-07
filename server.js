@@ -20008,6 +20008,8 @@ app.get("/order/lookup", async (req, res) => {
       is_prepaid: isPrepaid,
       // confirm-specific
       already_confirmed: alreadyConfirmed,
+      advance_paid: advancePaid,
+      payment_type: isPrepaid ? 'prepaid' : (advancePaid > 0 ? 'advance' : 'cod'),
       fee: CONFIRM_FEE,
       prepaid_savings: prepaidSavings,
       prepaid_amount_due: Math.max(0, discountedTotal - advancePaid),

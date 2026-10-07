@@ -229,6 +229,20 @@ html,body{
 .stage-pill.rto{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
 .stage-pill.new{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
 
+/* payment status strip — visible across the whole tracking journey */
+.payment-info{
+  display:flex;align-items:center;gap:10px;padding:11px 20px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  font-size:12px;color:var(--text);
+}
+.payment-info .pi-icon{font-size:15px;flex-shrink:0}
+.payment-info .pi-main{font-weight:700}
+.payment-info .pi-sub{color:var(--muted);font-size:11px;margin-top:1px}
+.payment-info.prepaid{background:var(--green-light)}
+.payment-info.prepaid .pi-main{color:var(--green-dark)}
+.payment-info.cod .pi-main{color:var(--text)}
+.payment-info.hidden{display:none}
+
 /* progress stepper */
 .stepper{
   padding:24px 20px 20px;background:var(--surface);
@@ -806,6 +820,11 @@ html,body{
       </div>
     </div>
 
+    <!-- Payment status — stays visible through the whole tracking journey,
+         not just pre-dispatch, so a COD-confirmed/prepaid/discounted order
+         doesn't just read "Confirmed" with no further detail until it ships. -->
+    <div class="payment-info hidden" id="payment-info"></div>
+
     <!-- Single-vendor hero image -->
     <div class="track-hero-wrap hidden" id="track-hero-wrap">
       <div class="track-hero-ph" id="track-hero-ph">
@@ -1344,6 +1363,29 @@ function renderTrack(d) {
 
   document.getElementById('track-order-num').textContent = d.order_name;
   document.getElementById('track-customer').textContent = d.customer_name || '';
+
+  // Payment status — rendered once here and left alone for the rest of the
+  // journey (every other section below re-renders per stage; this doesn't),
+  // so a customer who paid ₹99 or paid in full keeps seeing that confirmed
+  // the whole way through instead of it only showing pre-dispatch.
+  (function renderPaymentInfo() {
+    const el = document.getElementById('payment-info');
+    const total = parseFloat(d.total || 0);
+    const advance = parseFloat(d.advance_paid || 0);
+    let html = null, cls = 'cod';
+    if (d.is_prepaid) {
+      cls = 'prepaid';
+      const savings = Math.round(d.prepaid_savings || 0);
+      html = `<span class="pi-icon">💳</span><div><div class="pi-main">Paid in full online</div>` +
+        (savings > 0 ? `<div class="pi-sub">You saved ₹${savings} by paying upfront</div>` : '') + `</div>`;
+    } else if (d.already_confirmed) {
+      const due = Math.max(0, Math.round(total - advance));
+      html = `<span class="pi-icon">✅</span><div><div class="pi-main">₹${Math.round(advance) || d.fee || 99} confirmation paid</div>` +
+        `<div class="pi-sub">₹${due} due on delivery (Cash on Delivery)</div></div>`;
+    }
+    if (html) { el.innerHTML = html; el.className = `payment-info ${cls}`; }
+    else { el.className = 'payment-info hidden'; }
+  })();
 
   // Stage pill (based on best overall stage)
   const pill = document.getElementById('stage-pill');
