@@ -391,6 +391,18 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
 </style>
 </head>
 <body>
+<script>
+  // Self-serve return/exchange flow is itself the clearest "policy engagement"
+  // signal we have for this page — fired once on load, same batched endpoint
+  // the theme's on-site tracking uses.
+  (function(){
+    try {
+      var body = JSON.stringify({ events: [{ event: 'policy_view', session_id: 'returns_' + Date.now(), page: location.pathname, section: 'returns_page', ts: Date.now() }] });
+      if (navigator.sendBeacon) navigator.sendBeacon('/track/site-events', new Blob([body], { type: 'application/json' }));
+      else fetch('/track/site-events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function(){});
+    } catch (e) {}
+  })();
+</script>
 
 <!-- HEADER -->
 <header class="site-header">
