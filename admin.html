@@ -6184,8 +6184,11 @@
       // refund/credit actually gets issued, so its absence here is exactly
       // "received, nothing paid out yet."
       refund_pending: rq => rq.type==='return' && ['received','received_at_warehouse'].includes(rq.status) && !rq.resolution,
+      // Same rule the "Received — Needs Review" stat always used, just made
+      // clickable/filterable like every other bucket now instead of being a
+      // number you could look at but not tap through to.
+      needs_review: rrNeedsReview,
     };
-    const EXTRA_TAB_LABELS = { pending_pickup: '📦 pending pickup', pending_forward: '🔁 pending forward', in_progress: '🚚 in progress', refund_pending: '💸 refund pending' };
     // Tinted background (not just a colored border) so status pills actually
     // read as different colors at a glance instead of all looking like the
     // same neutral outline.
@@ -6205,36 +6208,68 @@
     useEffect(()=>{ if (selectedId) { const el=document.querySelector('.rr-console'); if (el&&el.scrollIntoView) el.scrollIntoView({block:'start'}); } }, [selectedId]);
     useEffect(()=>{ if (selected) setNoteVal(selected.admin_note||''); }, [selected?.request_id]);
 
-    const stats = [
-      { n: requests.filter(rq=>rq.status==='pending').length, l: 'Pending Approval', cls:'attn' },
-      { n: requests.filter(EXTRA_TABS.pending_pickup).length, l: 'Pending Pickup', cls: requests.some(rrIsPickupOverdue)?'urgent':'attn' },
-      { n: requests.filter(EXTRA_TABS.pending_forward).length, l: 'Pending Forward', cls:'attn' },
-      { n: requests.filter(EXTRA_TABS.refund_pending).length, l: 'Refund Pending', cls:'attn' },
-      { n: requests.filter(rrIsPickupOverdue).length, l: 'Pickup Overdue 48h+', cls: requests.some(rrIsPickupOverdue)?'urgent':'' },
-      { n: requests.filter(rrNeedsReview).length, l: 'Received — Needs Review', cls: requests.filter(rrNeedsReview).some(rq=>rrReceivedHoursSince(rq)>=20)?'urgent':'attn' },
-      { n: requests.filter(rq=>rq.status==='completed').length, l: 'Completed', cls:'ok' },
+    const pickupOverdue = requests.some(rrIsPickupOverdue);
+    const reviewStale = requests.filter(rrNeedsReview).some(rq=>rrReceivedHoursSince(rq)>=20);
+
+    // One dashboard, in the order you'd actually work through a day: new
+    // requests to decide on, then pickup, then courier transit, then the
+    // things that land back in your hands and need a call (review/refund/
+    // replacement). Each card both shows the count AND is the filter button
+    // — no more separate "stats row" and "tabs row" saying overlapping
+    // things in two different places.
+    const ACTION_CARDS = [
+      { key:'pending', icon:'🆕', label:'New Requests', hint:'Approve or reject', count: requests.filter(rq=>rq.status==='pending').length, color:'#f59e0b' },
+      { key:'pending_pickup', icon:'📦', label:'Pending Pickup', hint:'Schedule courier pickup', count: extraTabCounts.pending_pickup, color:'#eab308', urgent: pickupOverdue },
+      { key:'in_progress', icon:'🚚', label:'In Progress', hint:'With courier — just watch', count: extraTabCounts.in_progress, color:'#6366f1' },
+      { key:'needs_review', icon:'🔍', label:'Needs Review', hint:'Received — decide what happens next', count: extraTabCounts.needs_review, color:'#06b6d4', urgent: reviewStale },
+      { key:'refund_pending', icon:'💸', label:'Refund Pending', hint:'Issue refund or store credit', count: extraTabCounts.refund_pending, color:'#ef4444' },
+      { key:'pending_forward', icon:'🔁', label:'Pending Forward', hint:'Ship the replacement item', count: extraTabCounts.pending_forward, color:'#22c55e' },
+    ];
+    // Reference-only, no action needed from these — kept as small text links
+    // rather than cards so they don't compete for attention.
+    const QUIET_LINKS = [
+      { key:'all', label:'All', count: requests.length },
+      { key:'approved', label:'Approved', count: tabCounts.approved },
+      { key:'completed', label:'Completed', count: tabCounts.completed },
+      { key:'rejected', label:'Rejected', count: tabCounts.rejected },
     ];
 
     return (
       <div className="page rr-console">
-        <div className="rr-stats">
-          {stats.map((s,i)=>(
-            <div key={i} className={`rr-stat ${s.cls}`}><div className="rr-stat-n">{s.n}</div><div className="rr-stat-l">{s.l}</div></div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))',gap:10,marginBottom:14}}>
+          {ACTION_CARDS.map(c=>(
+            <button key={c.key} onClick={()=>setTab(c.key)} style={{
+              textAlign:'left',cursor:'pointer',borderRadius:10,padding:'14px 16px',
+              border: tab===c.key ? `1.5px solid ${c.color}` : '1px solid var(--border)',
+              background: tab===c.key ? `color-mix(in srgb, ${c.color} 10%, var(--bg-card))` : 'var(--bg-card)',
+              boxShadow: c.urgent ? `0 0 0 1px ${c.color}` : 'none',
+            }}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontSize:20}}>{c.icon}</span>
+                <span style={{fontSize:22,fontWeight:800,color:c.color,fontVariantNumeric:'tabular-nums'}}>{c.count}</span>
+              </div>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginTop:6}}>{c.label}</div>
+              <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:2}}>{c.hint}</div>
+              {c.urgent && <div style={{fontSize:10,color:c.color,fontWeight:700,marginTop:4}}>⏰ needs attention</div>}
+            </button>
+          ))}
+        </div>
+
+        <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:10,fontSize:11.5}}>
+          <span style={{color:'var(--text-muted)'}}>View:</span>
+          {QUIET_LINKS.map(q=>(
+            <button key={q.key} onClick={()=>setTab(q.key)} style={{
+              background:'none',border:'none',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:11.5,padding:0,
+              color: tab===q.key ? 'var(--indigo)' : 'var(--text-muted)',
+              fontWeight: tab===q.key ? 700 : 400,
+              textDecoration: tab===q.key ? 'underline' : 'none',
+            }}>
+              {q.label} ({q.count})
+            </button>
           ))}
         </div>
 
         <div className="rr-toolbar">
-          {TABS.map(t=>(
-            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>
-              {t} <span className="rr-chip-count">{tabCounts[t]}</span>
-            </button>
-          ))}
-          {Object.keys(EXTRA_TABS).map(t=>(
-            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)} title={t==='pending_pickup' ? 'Approved, but the returned item hasn\'t been picked up from the customer yet' : 'Exchange approved, replacement item hasn\'t been shipped out yet'}>
-              {EXTRA_TAB_LABELS[t]} <span className="rr-chip-count">{extraTabCounts[t]}</span>
-            </button>
-          ))}
-          <span className="rr-toolbar-sep"></span>
           {['all','return','exchange'].map(t=>(
             <button key={t} className={`rr-chip ${typeFilter===t?'active':''}`} onClick={()=>setTypeFilter(t)}>
               {t==='all' ? 'Return + Exchange' : (t==='exchange'?'⇄':'↩')+' '+t}
