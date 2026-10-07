@@ -16296,12 +16296,33 @@ function toShipSagarCourierCode(courier) {
   if (c.includes('dhl'))                               return 'DHL';
   if (c.includes('ups'))                               return 'UPS';
   if (c.includes('aramex'))                            return 'ARAMEX';
-  if (c.includes('india post') || c.includes('indiapost')) return 'INDIAPOST';
-  if (c.includes('shadowfax'))                         return 'SHADOWFAX';
+  if (c.includes('india post') || c.includes('indiapost')) return 'IP';
+  if (c.includes('shadowfax'))                         return 'SDF';
+  if (c.includes('amazon'))                            return 'ATS';
   if (c.includes('ekart'))                             return 'EKART';
   if (c.includes('shiprocket'))                        return '';  // aggregator, no single code
   if (c.includes('shipmozo'))                          return '';
   return courier.toUpperCase();  // pass through as-is
+}
+
+// Matches ShipSagar's own wording for "your account is out of money" — seen
+// live causing a real, silent dispatch-tracking gap for every order placed
+// from 2026-09-27 onward (nothing pushed failures anywhere before this, so
+// there was no way to notice short of a customer asking "where's my order").
+const SHIPSAGAR_BALANCE_ERROR = /insufficient\s*balance|low\s*balance|recharge|top[\s-]?up|wallet\s*balance|not\s*enough\s*balance/i;
+
+// Alerts admin at most once per 2h regardless of how many pushes fail in that
+// window — a bad balance doesn't need 500 identical WhatsApp pings, it needs
+// exactly one that gets seen and acted on.
+let _shipsagarBalanceAlertAt = 0;
+async function shipsagarMaybeAlertLowBalance(message) {
+  const now = Date.now();
+  if (now - _shipsagarBalanceAlertAt < 2 * 60 * 60 * 1000) return;
+  _shipsagarBalanceAlertAt = now;
+  await waAdminAlert(
+    `\`\`\`\n▪ C R O S C R O W ▪\nSHIPSAGAR LOW BALANCE\n────────────────\nOrders are NOT being pushed for\ncourier tracking right now.\n\nREASON ${message || 'insufficient balance'}\n────────────────\nAdd balance, then run:\nAdmin → Shipping → Retry Failed Pushes\n\`\`\``,
+    'dispatch_alert'
+  ).catch(() => {});
 }
 
 // Push a single AWB to ShipSagar for tracking
@@ -16330,8 +16351,23 @@ async function shipsagarPushShipment({ awb, courierCode = '', orderNo = '', cust
       }),
     }).then(r => r.json());
     console.log(`📦 ShipSagar push AWB ${awb}: ${res.status} — ${res.message}`);
-    return { ok: res.status?.toLowerCase() === 'success', response: res };
-  } catch(e) { return { ok: false, reason: e.message }; }
+    const ok = res.status?.toLowerCase() === 'success';
+    if (!ok) {
+      const reason = res.message || 'Unknown ShipSagar error';
+      mdb?.collection('shipsagar_push_failures').insertOne({
+        awb, order_no: orderNo || '', courier_code: courierCode || '', reason,
+        is_balance_error: SHIPSAGAR_BALANCE_ERROR.test(reason), created_at: new Date().toISOString(),
+      }).catch(() => {});
+      if (SHIPSAGAR_BALANCE_ERROR.test(reason)) shipsagarMaybeAlertLowBalance(reason).catch(() => {});
+    }
+    return { ok, response: res };
+  } catch(e) {
+    mdb?.collection('shipsagar_push_failures').insertOne({
+      awb, order_no: orderNo || '', courier_code: courierCode || '', reason: e.message,
+      is_balance_error: false, created_at: new Date().toISOString(),
+    }).catch(() => {});
+    return { ok: false, reason: e.message };
+  }
 }
 
 // Track a single AWB via ShipSagar
@@ -17387,6 +17423,40 @@ app.post("/admin/shipsagar/push", adminAuth, async (req, res) => {
   if (!awb) return res.status(400).json({ error: 'awb required' });
   const result = await shipsagarPushShipment({ awb, courierCode, orderNo, customerName, email, mobileNo });
   res.json(result);
+});
+
+// Recent push failures (balance errors and everything else) — the queryable
+// log that didn't exist before this: shipsagarPushShipment now writes every
+// failed push here instead of only console.logging it.
+app.get("/admin/shipsagar/push-failures", adminAuth, async (req, res) => {
+  const failures = await mdb.collection('shipsagar_push_failures').find({}, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(200).toArray();
+  res.json({ failures, balance_error_count: failures.filter(f => f.is_balance_error).length });
+});
+
+// Retry every logged push failure (or just the balance-related ones) — for
+// after topping up ShipSagar balance, so the whole backlog of orders that
+// silently never got pushed can be re-synced in one click instead of one
+// AWB at a time. Successful retries are removed from the failure log;
+// anything that fails again gets re-logged (e.g. balance still isn't enough).
+app.post("/admin/shipsagar/retry-failed", adminAuth, async (req, res) => {
+  const { balance_only } = req.body || {};
+  const query = balance_only ? { is_balance_error: true } : {};
+  const failures = await mdb.collection('shipsagar_push_failures').find(query, { projection: { _id: 0 } }).toArray();
+  // De-dupe by AWB — the same shipment can have failed more than once.
+  const byAwb = {};
+  failures.forEach(f => { byAwb[f.awb] = f; });
+  let success = 0, stillFailing = 0;
+  for (const f of Object.values(byAwb)) {
+    const result = await shipsagarPushShipment({ awb: f.awb, courierCode: f.courier_code, orderNo: f.order_no });
+    if (result.ok) {
+      success++;
+      await mdb.collection('shipsagar_push_failures').deleteMany({ awb: f.awb });
+    } else {
+      stillFailing++;
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+  res.json({ attempted: Object.keys(byAwb).length, success, stillFailing });
 });
 
 // Bulk register all AWBs from orders after 3 May 2026
