@@ -13069,6 +13069,7 @@
     { id:'supportchats', label:'Support Chats',    icon:'💬', desc:'Customer chat inbox' },
     { id:'reports',      label:'Reports',          icon:'📊', desc:'Sales and performance reports' },
     { id:'pixeltracker', label:'Pixel Tracker',    icon:'🎯', desc:'Ad pixel events and conversion leaderboard' },
+    { id:'siteanalytics', label:'Site Analytics',   icon:'📈', desc:'On-site engagement: clicks, collections, wishlist, cart, policy views' },
     { id:'vendorscores', label:'Vendor Scores',    icon:'🏆', desc:'Vendor performance scorecards' },
     { id:'abandonedcarts',label:'Abandoned Carts', icon:'🛒', desc:'Abandoned checkout recovery' },
     { id:'audit',        label:'Audit Log',        icon:'📋', desc:'Full admin action history' },
@@ -13440,6 +13441,129 @@
       ))}
     </div>
   );
+
+  const SITE_EVENT_LABELS = {
+    collection_view: 'Collection Views', collection_dwell: 'Collection Dwell',
+    card_impression: 'Card Impressions', card_click: 'Card Clicks',
+    add_to_cart: 'Add to Cart', buy_now: 'Buy Now',
+    wishlist_add: 'Wishlist Adds', wishlist_remove: 'Wishlist Removes',
+    cart_drawer_open: 'Cart Drawer Opens', cart_drawer_close: 'Cart Drawer Closes',
+    pdp_section_view: 'PDP Section Views', pdp_dwell: 'PDP Dwell',
+    policy_view: 'Policy Views', brand_view: 'Brand Page Views',
+    nav_click: 'Nav Clicks', search_use: 'Search Used',
+  };
+  const SITE_GROUP_LABELS = { brand:'Brand', product_handle:'Product', collection_handle:'Collection', section:'Section', source:'Source', page:'Page' };
+
+  function SiteBreakdownTable({ token, event, groupBy, period, title, limit = 10 }) {
+    const [rows, setRows] = useState(null);
+    useEffect(() => {
+      setRows(null);
+      fetch(`${API}/admin/site-analytics/breakdown?event=${event}&group_by=${groupBy}&from=${period.from}&to=${period.to}&limit=${limit}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setRows(d.rows||[])).catch(()=>setRows([]));
+    }, [event, groupBy, period.from, period.to]);
+    const isDwell = event.includes('dwell');
+    return (
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header"><span className="card-title">{title}</span></div>
+        {rows === null ? (
+          <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:12}}><span className="spin">↻</span> Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No data for this period yet.</div>
+        ) : (
+          <div className="tbl-wrap">
+            <table>
+              <thead><tr><th>{SITE_GROUP_LABELS[groupBy]}</th><th>{isDwell ? 'Avg Dwell' : 'Count'}</th>{!isDwell && <th>Avg Dwell (ms)</th>}</tr></thead>
+              <tbody>
+                {rows.map((r,i)=>(
+                  <tr key={i}>
+                    <td style={{fontWeight:600,color:'var(--text)'}}>{r.product_title || r.key || '—'}</td>
+                    <td style={{fontWeight:700,fontVariantNumeric:'tabular-nums'}}>{isDwell ? `${Math.round((r.avg_value||0)/1000)}s` : r.count}</td>
+                    {!isDwell && <td className="td-mut" style={{fontVariantNumeric:'tabular-nums'}}>{r.avg_value!=null ? `${Math.round(r.avg_value)}ms` : '—'}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function SiteAnalytics({ token }) {
+    const [period, setPeriod] = useState(PERIOD_PRESETS[2]); // Last 7 Days
+    const [overview, setOverview] = useState(null);
+    const [qEvent, setQEvent] = useState('add_to_cart');
+    const [qGroup, setQGroup] = useState('brand');
+
+    useEffect(() => {
+      setOverview(null);
+      fetch(`${API}/admin/site-analytics/overview?from=${period.from}&to=${period.to}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setOverview(d.events||[])).catch(()=>setOverview([]));
+    }, [period.from, period.to]);
+
+    return (
+      <div className="page">
+        <div style={{background:'#0d1f10',border:'1px solid #1a4a2a',borderRadius:10,padding:'12px 16px',marginBottom:16,fontSize:12,color:'var(--text)'}}>
+          <div style={{fontWeight:700,color:'#10b981',marginBottom:6}}>📈 Site Analytics</div>
+          <div style={{lineHeight:1.8,color:'var(--text-muted)'}}>
+            On-site engagement — separate from Pixel Tracker's ad-conversion funnel. Covers what customers actually click, browse and engage with: collections, product cards, add-to-cart source, wishlist, cart drawer, PDP sections, policy pages, brand pages.
+          </div>
+        </div>
+
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:16}}>
+          {PERIOD_PRESETS.map(p=>(
+            <button key={p.label} className={`btn btn-sm ${period.label===p.label?'btn-indigo':'btn-ghost'}`} onClick={()=>setPeriod(p)}>{p.label}</button>
+          ))}
+        </div>
+
+        {/* Overview strip — one tile per tracked event */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))',gap:10,marginBottom:20}}>
+          {overview === null ? (
+            <div style={{gridColumn:'1/-1',padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div>
+          ) : overview.length === 0 ? (
+            <div style={{gridColumn:'1/-1',padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:12,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10}}>No site events tracked in this period yet.</div>
+          ) : overview.map(ev=>(
+            <div key={ev.event} className="card" style={{padding:'12px 14px'}}>
+              <div style={{fontSize:18,fontWeight:800,color:'var(--indigo)',fontVariantNumeric:'tabular-nums'}}>{ev.count}</div>
+              <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginTop:2}}>{SITE_EVENT_LABELS[ev.event] || ev.event}</div>
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{ev.sessions} session{ev.sessions!==1?'s':''}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Pinned, most-asked-for breakdowns */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+          <SiteBreakdownTable token={token} event="add_to_cart" groupBy="source" period={period} title="🛒 Add to Cart — by Source" />
+          <SiteBreakdownTable token={token} event="add_to_cart" groupBy="brand" period={period} title="🛒 Add to Cart — by Brand" />
+          <SiteBreakdownTable token={token} event="buy_now" groupBy="brand" period={period} title="⚡ Buy Now — by Brand" />
+          <SiteBreakdownTable token={token} event="wishlist_add" groupBy="brand" period={period} title="❤️ Wishlist Adds — by Brand" />
+          <SiteBreakdownTable token={token} event="card_click" groupBy="product_handle" period={period} title="👆 Most-Clicked Products" />
+          <SiteBreakdownTable token={token} event="collection_view" groupBy="collection_handle" period={period} title="📂 Most-Browsed Collections" />
+          <SiteBreakdownTable token={token} event="collection_dwell" groupBy="collection_handle" period={period} title="⏱ Collection Dwell Time" />
+          <SiteBreakdownTable token={token} event="brand_view" groupBy="brand" period={period} title="🏷 Brand Page Views" />
+          <SiteBreakdownTable token={token} event="pdp_section_view" groupBy="section" period={period} title="📄 PDP Section Engagement" />
+          <SiteBreakdownTable token={token} event="policy_view" groupBy="section" period={period} title="📜 Policy Page Views" />
+          <SiteBreakdownTable token={token} event="nav_click" groupBy="page" period={period} title="🧭 Nav Clicks — by Destination" />
+          <SiteBreakdownTable token={token} event="card_impression" groupBy="brand" period={period} title="👁 Card Impressions — by Brand" />
+        </div>
+
+        {/* Flexible query — any event × any dimension, for anything not pinned above */}
+        <div className="card" style={{marginTop:20,marginBottom:14}}>
+          <div className="card-header"><span className="card-title">🔍 Custom Breakdown</span></div>
+          <div style={{padding:16,display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+            <select className="form-input" style={{width:'auto'}} value={qEvent} onChange={e=>setQEvent(e.target.value)}>
+              {Object.keys(SITE_EVENT_LABELS).map(ev=><option key={ev} value={ev}>{SITE_EVENT_LABELS[ev]}</option>)}
+            </select>
+            <span style={{color:'var(--text-muted)',fontSize:12}}>grouped by</span>
+            <select className="form-input" style={{width:'auto'}} value={qGroup} onChange={e=>setQGroup(e.target.value)}>
+              {Object.keys(SITE_GROUP_LABELS).map(g=><option key={g} value={g}>{SITE_GROUP_LABELS[g]}</option>)}
+            </select>
+          </div>
+        </div>
+        <SiteBreakdownTable token={token} event={qEvent} groupBy={qGroup} period={period} title={`${SITE_EVENT_LABELS[qEvent]} — by ${SITE_GROUP_LABELS[qGroup]}`} limit={25} />
+      </div>
+    );
+  }
 
   function PixelTracker({ token }) {
     const [period,    setPeriod]    = useState(PERIOD_PRESETS[2]); // Last 7 Days
@@ -17242,6 +17366,7 @@
       { id:'supportchats', icon:'💬', label:'Support Chats', section:'main' },
       { id:'whatsapp',    icon:'📱', label:'WhatsApp Bot',  section:'main' },
       { id:'pixeltracker', icon:'🎯', label:'Pixel Tracker',  section:'main' },
+      { id:'siteanalytics', icon:'📈', label:'Site Analytics', section:'main' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
@@ -17353,6 +17478,7 @@
           {view==='supportchats' && <SupportChats token={token}/>}
           {view==='whatsapp'    && <WhatsAppSettings token={token}/>}
           {view==='pixeltracker' && <PixelTracker token={token}/>}
+          {view==='siteanalytics' && <SiteAnalytics token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
