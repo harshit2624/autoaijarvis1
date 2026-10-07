@@ -17233,7 +17233,24 @@ async function shipsagarTrackingCron() {
           console.log(`  ✓ ${rec.shopify_id} ${rec.awb}: ${rec.stage}→${newStage} "${desc}" ${tag||''}`);
 
           // ── WA customer notification on stage change ──────────────────
+          // Walk every notifiable stage between prevStage and newStage, not
+          // just newStage itself. The cron only ever samples the courier's
+          // SINGLE latest scan each 30-min pass — many couriers compress or
+          // skip the "out for delivery" scan, so a shipment can go straight
+          // from transit to delivered between two polls. Firing only for
+          // newStage silently dropped 'ofd' (and any other skipped stage)
+          // for good, every time that happened — confirmed live, this is
+          // why OFD notifs were firing "very rarely". Each sendShipmentWANotif
+          // call is independently deduped per stage via wa_notif_sent.<stage>,
+          // so re-walking a stage that was already notified is a harmless
+          // no-op, never a duplicate message.
           if (['pickup','transit','ofd','delivered'].includes(newStage)) {
+            const prevIdx = STAGE_ORDER.indexOf(prevStage);
+            const newIdx = STAGE_ORDER.indexOf(newStage);
+            const stagesToNotify = ['pickup','transit','ofd','delivered'].filter(s => {
+              const idx = STAGE_ORDER.indexOf(s);
+              return idx > prevIdx && idx <= newIdx;
+            });
             (async () => {
               try {
                 const od = await shopifyREST(`/orders/${rec.shopify_id}.json?fields=id,name,shipping_address,billing_address,phone,financial_status,total_price,total_outstanding,line_items`).catch(() => null);
@@ -17243,13 +17260,18 @@ async function shipsagarTrackingCron() {
                 const codAmount = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_outstanding || order.total_price || 0)) : 0;
                 const _stageVendorItems = (order.line_items || []).filter(li => li.vendor === rec.vendor_name);
                 const _stageItemName = _stageVendorItems.map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ');
-                await sendShipmentWANotif(rec.shopify_id, newStage, {
-                  orderName: order.name || `#${rec.shopify_id}`,
-                  customerName, customerPhone,
-                  awb: rec.awb, courier: rec.courier,
-                  deliveryStatus: desc, codAmount, itemName: _stageItemName,
-                  itemImageUrl: _stageVendorItems[0]?.image_url,
-                });
+                for (const stg of stagesToNotify) {
+                  await sendShipmentWANotif(rec.shopify_id, stg, {
+                    orderName: order.name || `#${rec.shopify_id}`,
+                    customerName, customerPhone,
+                    awb: rec.awb, courier: rec.courier,
+                    deliveryStatus: desc, codAmount, itemName: _stageItemName,
+                    itemImageUrl: _stageVendorItems[0]?.image_url,
+                  });
+                  // Small stagger so a multi-stage catch-up doesn't land as
+                  // one indistinguishable burst of WhatsApp messages.
+                  if (stagesToNotify.length > 1) await new Promise(r => setTimeout(r, 1500));
+                }
               } catch (e) { console.error('WA shipment notif error:', e.message); }
             })();
           }
