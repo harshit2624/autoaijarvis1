@@ -6329,6 +6329,7 @@
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
                         <span className="badge-pill" style={pillStyle(STATUS_COLOR[rq.status]||'var(--text-muted)')}>{rq.status.replace(/_/g,' ')}</span>
+                        {rq.silent_completed && <span className="badge-pill sm" title="Marked completed manually — no email/WhatsApp was sent" style={pillStyle('var(--text-muted)')}>🔇 silent</span>}
                         <span style={{fontSize:10,color:'var(--text-muted)'}}>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</span>
                       </div>
                     </div>
@@ -6350,6 +6351,7 @@
                       <span className="rr-dot"></span>
                       <span>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</span>
                       {rrIsPickupOverdue(rq) && <span className="badge-pill sm" style={pillStyle('#ef4444')}>⏰ overdue</span>}
+                      {rq.silent_completed && <span className="badge-pill sm" title="Marked completed manually — no email/WhatsApp was sent" style={pillStyle('var(--text-muted)')}>🔇 silent</span>}
                     </div>
                     {(() => { const log = rrTrackingLogLine(rq); return log && <div style={{fontSize:10,color:'var(--indigo)',marginTop:5,fontFamily:'var(--font-mono,monospace)'}}>📡 {log}</div>; })()}
                     {overdueReview && <div className="rr-ticket-attn">⚠ {Math.floor(hrs)}h since received — review now</div>}
@@ -6374,6 +6376,7 @@
                         {rq.fee_paid==='waived' && <span className="badge-pill" style={pillStyle('#f59e0b')}>🔑 Admin Code</span>}
                         {rq.fee_paid===true && <span className="badge-pill" style={pillStyle('#10b981')}>💳 Fee Paid</span>}
                         {rq.resolution==='store_credit' && <span className="badge-pill" style={pillStyle('var(--indigo)')}>🎁 Credit</span>}
+                        {rq.silent_completed && <span className="badge-pill" title="Marked completed manually — no email/WhatsApp was sent to the customer or vendor" style={pillStyle('var(--text-muted)')}>🔇 Marked silently</span>}
                       </div>
                     </div>
                     <div style={{display:'flex',gap:8}}>

@@ -21316,6 +21316,10 @@ app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
     if (statusOk) update.status = status;
     if (statusOk && status === 'approved' && before?.status !== 'approved') update.approved_at = now;
     if (admin_note !== undefined) update.admin_note = admin_note;
+    // Structured flag (not just free text buried in the history log) so the
+    // admin UI can show a persistent "silently marked complete" tag on the
+    // ticket itself — easy to spot later without opening the activity log.
+    if (statusOk && status === 'completed' && silent) update.silent_completed = true;
     await mdb.collection('return_requests').updateOne({ request_id: req.params.id }, { $set: update });
     if (statusOk && status) {
       await rrPushHistory(req.params.id, { status, note: (admin_note || '') + (silent ? ' (marked manually — no customer/vendor notification sent)' : ''), source: 'admin' });
