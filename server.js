@@ -25208,7 +25208,7 @@ const SITE_EVENT_NAMES = [
   'collection_view', 'collection_dwell', 'card_impression', 'card_click',
   'add_to_cart', 'buy_now', 'wishlist_add', 'wishlist_remove',
   'cart_drawer_open', 'cart_drawer_close', 'pdp_section_view', 'pdp_dwell',
-  'policy_view', 'brand_view', 'nav_click', 'search_use',
+  'policy_view', 'brand_view', 'nav_click', 'search_use', 'search_open',
 ];
 
 // Batched ingestion — the client script queues events in memory and flushes
