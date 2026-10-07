@@ -6101,6 +6101,8 @@
     const [typeFilter, setTypeFilter] = useState('all');
     const [search,   setSearch]   = useState('');
     const [creditModalFor, setCreditModalFor] = useState(null);
+    const [checkedIds, setCheckedIds] = useState(() => new Set());
+    const [bulkBusy, setBulkBusy] = useState(false);
 
     // Fetch everything once — tab/vendor/type/search all filter client-side
     // now, so tab counts can reflect every status at once and switching
@@ -6142,6 +6144,38 @@
         load();
       } catch(e) { setMsg({type:'error',text:e.message}); }
       setSaving(false);
+    };
+
+    const toggleChecked = (id) => setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+    // One request at a time, sequentially — these are admin-triggered bulk
+    // actions on a handful of tickets at once (not hundreds), so a simple
+    // loop over the existing single-request PUT is plenty, and keeps every
+    // side effect (WA notifs, history entries, rank guards) identical to
+    // doing it one by one by hand.
+    const bulkUpdate = async (fields, confirmMsg) => {
+      const ids = [...checkedIds];
+      if (!ids.length) return;
+      if (confirmMsg && !window.confirm(confirmMsg.replace('{n}', ids.length))) return;
+      setBulkBusy(true); setMsg(null);
+      let okCount = 0, failCount = 0;
+      for (const id of ids) {
+        try {
+          const r = await fetch(`${API}/admin/return-requests/${id}`, {
+            method:'PUT', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+            body: JSON.stringify({ ...fields, force:true }),
+          });
+          if (r.ok) okCount++; else failCount++;
+        } catch(e) { failCount++; }
+      }
+      setMsg({ type: failCount ? 'error' : 'success', text: `${okCount} updated${failCount ? `, ${failCount} failed` : ''}.` });
+      setCheckedIds(new Set());
+      setBulkBusy(false);
+      load();
     };
 
     const deleteRequest = async (id) => {
@@ -6288,6 +6322,20 @@
         {retCfgVendor && <VendorReturnConfigPanel token={token} vendors={vendors} onClose={()=>setRetCfgVendor(null)}/>}
         {msg && <div className={`alert alert-${msg.type}`} style={{marginBottom:12}}>{msg.type==='success'?'✓':'⚠'} {msg.text}</div>}
 
+        {checkedIds.size > 0 && (
+          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',background:'var(--bg-card)',border:'1px solid var(--indigo)',borderRadius:10,padding:'10px 14px',marginBottom:12}}>
+            <span style={{fontSize:12,fontWeight:700,color:'var(--indigo)'}}>{checkedIds.size} selected</span>
+            <span style={{width:1,height:18,background:'var(--border)'}}></span>
+            <button className="btn btn-ghost btn-sm" disabled={bulkBusy} onClick={()=>bulkUpdate({status:'approved'})}>✓ Approve</button>
+            <button className="btn btn-ghost btn-sm" style={{borderColor:'var(--red)',color:'var(--red)'}} disabled={bulkBusy} onClick={()=>bulkUpdate({status:'rejected'}, 'Reject {n} selected requests?')}>✗ Reject</button>
+            <button className="btn btn-ghost btn-sm" style={{borderColor:'var(--teal)',color:'var(--teal)'}} disabled={bulkBusy} onClick={()=>bulkUpdate({status:'completed'}, 'Mark {n} selected requests completed? This sends the normal completion email/WhatsApp to each.')}>✓ Mark Completed</button>
+            <button className="btn btn-ghost btn-sm" style={{borderColor:'var(--text-muted)',color:'var(--text-muted)'}} disabled={bulkBusy} onClick={()=>bulkUpdate({status:'completed', silent:true}, 'Mark {n} selected requests completed WITHOUT notifying anyone? Use this only for backfilling old requests.')}>🔇 Mark Completed (No Message)</button>
+            <span style={{flex:1}}></span>
+            <button className="btn btn-ghost btn-sm" disabled={bulkBusy} onClick={()=>setCheckedIds(new Set())}>Clear</button>
+            {bulkBusy && <span className="spin" style={{fontSize:14}}>↻</span>}
+          </div>
+        )}
+
         {loading ? (
           <div style={{padding:40,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div>
         ) : filtered.length === 0 ? (
@@ -6295,6 +6343,15 @@
         ) : (
           <div className={`rr-board ${!selected?'rr-board-full':''}`}>
             <div className="rr-list">
+              {!selected && (
+                <div style={{display:'flex',alignItems:'center',gap:8,padding:'2px 4px 8px',fontSize:11.5,color:'var(--text-muted)'}}>
+                  <input type="checkbox"
+                    checked={filtered.length>0 && filtered.every(rq=>checkedIds.has(rq.request_id))}
+                    onChange={e=>setCheckedIds(e.target.checked ? new Set(filtered.map(rq=>rq.request_id)) : new Set())}
+                  />
+                  <span>Select all {filtered.length} shown</span>
+                </div>
+              )}
               {filtered.map(rq=>{
                 const needsReview = rrNeedsReview(rq);
                 const hrs = rrReceivedHoursSince(rq);
@@ -6302,7 +6359,9 @@
                 if (!selected) {
                   return (
                     <div key={rq.request_id} className="rr-ticket rr-ticket-full" onClick={()=>setSelectedId(rq.request_id)}>
-                      <div>
+                      <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
+                        <input type="checkbox" style={{marginTop:3,flexShrink:0}} checked={checkedIds.has(rq.request_id)} onClick={e=>e.stopPropagation()} onChange={()=>toggleChecked(rq.request_id)}/>
+                        <div style={{minWidth:0,flex:1}}>
                         <div className="rr-ticket-id">{rq.request_id}</div>
                         <div className="rr-ticket-order">{rq.order_name} · {rq.customer_name||rq.customer_email}</div>
                         <div className="rr-ticket-meta" style={{marginTop:4}}>
@@ -6326,6 +6385,7 @@
                         </div>
                         {(() => { const log = rrTrackingLogLine(rq); return log && <div style={{fontSize:10.5,color:'var(--indigo)',marginTop:5,fontFamily:'var(--font-mono,monospace)'}}>📡 {log}</div>; })()}
                         {overdueReview && <div className="rr-ticket-attn">⚠ {Math.floor(hrs)}h since received — review now</div>}
+                        </div>
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
                         <span className="badge-pill" style={pillStyle(STATUS_COLOR[rq.status]||'var(--text-muted)')}>{rq.status.replace(/_/g,' ')}</span>
