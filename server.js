@@ -140,6 +140,10 @@ async function startServer() {
       mdb.collection("pixel_events").createIndex({ created_at: -1 }),
       mdb.collection("pixel_events").createIndex({ eventName: 1, created_at: -1 }),
       mdb.collection("pixel_events").createIndex({ productName: 1, eventName: 1 }),
+      mdb.collection("site_events").createIndex({ event: 1, created_at: -1 }),
+      mdb.collection("site_events").createIndex({ session_id: 1 }),
+      mdb.collection("site_events").createIndex({ brand: 1, event: 1 }),
+      mdb.collection("site_events").createIndex({ product_handle: 1, event: 1 }),
       mdb.collection("admin_sessions").createIndex({ token: 1 }, { unique: true }),
       mdb.collection("admin_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       mdb.collection("product_commission_rules").createIndex({ vendor_name: 1, product_id: 1 }, { unique: true, sparse: true }),
@@ -25186,6 +25190,108 @@ app.post('/track-event', async (req, res) => {
       created_at: new Date().toISOString(),
     });
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SITE BEHAVIOR TRACKING — on-site engagement, separate from the Meta/
+//  GoKwik funnel pixel above (pixel_events). This covers what that one
+//  doesn't: collection browsing + dwell, which product cards get clicked,
+//  add-to-cart/buy-now SOURCE (pdp/card/quick-add/sticky bar), wishlist,
+//  cart drawer opens, PDP section engagement (size chart/trust/deals/
+//  policy accordions), brand page views, nav clicks.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Whitelist keeps this endpoint from becoming a free-form write sink for
+// arbitrary client-supplied event names.
+const SITE_EVENT_NAMES = [
+  'collection_view', 'collection_dwell', 'card_impression', 'card_click',
+  'add_to_cart', 'buy_now', 'wishlist_add', 'wishlist_remove',
+  'cart_drawer_open', 'cart_drawer_close', 'pdp_section_view', 'pdp_dwell',
+  'policy_view', 'brand_view', 'nav_click', 'search_use',
+];
+
+// Batched ingestion — the client script queues events in memory and flushes
+// them as one array via sendBeacon/fetch-keepalive, so this is one insertMany
+// per flush, not one request per click/impression.
+app.post('/track/site-events', async (req, res) => {
+  try {
+    const { events } = req.body || {};
+    if (!Array.isArray(events) || !events.length) return res.json({ ok: true, inserted: 0 });
+    const now = new Date();
+    const docs = events
+      .filter(e => e && SITE_EVENT_NAMES.includes(e.event))
+      .slice(0, 100) // one flush batch can't be a vector for an unbounded write
+      .map(e => ({
+        event: e.event,
+        session_id: (e.session_id || '').toString().slice(0, 80),
+        page: (e.page || '').toString().slice(0, 300),
+        brand: e.brand ? String(e.brand).slice(0, 120) : null,
+        product_handle: e.product_handle ? String(e.product_handle).slice(0, 200) : null,
+        product_title: e.product_title ? String(e.product_title).slice(0, 200) : null,
+        collection_handle: e.collection_handle ? String(e.collection_handle).slice(0, 200) : null,
+        section: e.section ? String(e.section).slice(0, 80) : null,
+        source: e.source ? String(e.source).slice(0, 40) : null,
+        position: Number.isFinite(e.position) ? e.position : null,
+        value: Number.isFinite(e.value) ? e.value : null,
+        client_ts: Number.isFinite(e.ts) ? e.ts : null,
+        created_at: now,
+      }));
+    if (docs.length) await mdb.collection('site_events').insertMany(docs, { ordered: false });
+    res.json({ ok: true, inserted: docs.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// One flexible breakdown endpoint instead of a bespoke route per dimension —
+// event name (required) + what to group by (optional) + date range.
+app.get('/admin/site-analytics/breakdown', adminAuth, async (req, res) => {
+  try {
+    const { event, group_by, from, to, limit } = req.query;
+    if (!event || !SITE_EVENT_NAMES.includes(event)) return res.status(400).json({ error: 'Valid event required' });
+    const GROUPABLE = ['brand', 'product_handle', 'collection_handle', 'section', 'source', 'page'];
+    const match = { event };
+    if (from || to) {
+      match.created_at = {};
+      if (from) match.created_at.$gte = new Date(from);
+      if (to) match.created_at.$lte = new Date(to + 'T23:59:59Z');
+    }
+    if (!group_by) {
+      const total = await mdb.collection('site_events').countDocuments(match);
+      const avgValue = await mdb.collection('site_events').aggregate([
+        { $match: { ...match, value: { $ne: null } } },
+        { $group: { _id: null, avg: { $avg: '$value' } } },
+      ]).toArray();
+      return res.json({ total, avg_value: avgValue[0]?.avg ?? null });
+    }
+    if (!GROUPABLE.includes(group_by)) return res.status(400).json({ error: `group_by must be one of ${GROUPABLE.join(', ')}` });
+    const rows = await mdb.collection('site_events').aggregate([
+      { $match: { ...match, [group_by]: { $ne: null } } },
+      { $group: { _id: `$${group_by}`, count: { $sum: 1 }, avg_value: { $avg: '$value' }, product_title: { $first: '$product_title' } } },
+      { $sort: { count: -1 } },
+      { $limit: parseInt(limit) || 25 },
+    ]).toArray();
+    res.json({ rows: rows.map(r => ({ key: r._id, count: r.count, avg_value: r.avg_value ?? null, product_title: r.product_title || null })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Overview — one row per tracked event name, for a top-level summary card
+// row (mirrors the funnel-summary pattern PixelTracker already uses).
+app.get('/admin/site-analytics/overview', adminAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const match = {};
+    if (from || to) {
+      match.created_at = {};
+      if (from) match.created_at.$gte = new Date(from);
+      if (to) match.created_at.$lte = new Date(to + 'T23:59:59Z');
+    }
+    const rows = await mdb.collection('site_events').aggregate([
+      { $match: match },
+      { $group: { _id: '$event', count: { $sum: 1 }, sessions: { $addToSet: '$session_id' } } },
+      { $project: { event: '$_id', count: 1, sessions: { $size: '$sessions' }, _id: 0 } },
+      { $sort: { count: -1 } },
+    ]).toArray();
+    res.json({ events: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
