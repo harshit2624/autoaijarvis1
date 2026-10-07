@@ -25295,6 +25295,36 @@ app.get('/admin/site-analytics/overview', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Daily counts for one or more events — the trend-chart data source. One row
+// per day per event, zero-filled so a quiet day still shows as 0 rather than
+// a gap in the line.
+app.get('/admin/site-analytics/timeseries', adminAuth, async (req, res) => {
+  try {
+    const { events, from, to } = req.query;
+    const eventList = (events || '').split(',').map(s => s.trim()).filter(e => SITE_EVENT_NAMES.includes(e));
+    if (!eventList.length) return res.status(400).json({ error: 'events (comma-separated, from the known list) required' });
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 29 * 86400000);
+    const toDate = to ? new Date(to + 'T23:59:59Z') : new Date();
+
+    const rows = await mdb.collection('site_events').aggregate([
+      { $match: { event: { $in: eventList }, created_at: { $gte: fromDate, $lte: toDate } } },
+      { $group: { _id: { event: '$event', day: { $dateToString: { format: '%Y-%m-%d', date: '$created_at' } } }, count: { $sum: 1 } } },
+      { $project: { event: '$_id.event', day: '$_id.day', count: 1, _id: 0 } },
+    ]).toArray();
+
+    // Zero-fill every day in range for every requested event.
+    const byKey = {};
+    rows.forEach(r => { byKey[`${r.event}|${r.day}`] = r.count; });
+    const days = [];
+    for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) days.push(d.toISOString().slice(0, 10));
+    const series = eventList.map(event => ({
+      event,
+      points: days.map(day => ({ day, count: byKey[`${event}|${day}`] || 0 })),
+    }));
+    res.json({ series, days });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Distinct brands seen in pixel data — powers the brand filter dropdown ──
 app.get('/admin/pixel-tracker/brands', adminAuth, async (req, res) => {
   try {

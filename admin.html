@@ -13450,10 +13450,18 @@
     cart_drawer_open: 'Cart Drawer Opens', cart_drawer_close: 'Cart Drawer Closes',
     pdp_section_view: 'PDP Section Views', pdp_dwell: 'PDP Dwell',
     policy_view: 'Policy Views', brand_view: 'Brand Page Views',
-    nav_click: 'Nav Clicks', search_use: 'Search Used',
+    nav_click: 'Nav Clicks', search_use: 'Searches', search_open: 'Search Opened',
   };
   const SITE_GROUP_LABELS = { brand:'Brand', product_handle:'Product', collection_handle:'Collection', section:'Section', source:'Source', page:'Page' };
+  // Fixed categorical order, reused everywhere a chart needs series color —
+  // never reassigned per-filter, so a series keeps its color even when
+  // others are added/removed around it.
+  const SITE_CHART_COLORS = ['var(--indigo)','var(--cyan)','var(--green)','var(--yellow)','var(--red)','var(--teal)'];
 
+  // Horizontal bar list — the default form for a ranked breakdown (brand,
+  // product, collection, …). Bars share one scale (the row's own max), has
+  // a legend-free single series (the title names it), and a visible value
+  // label on every bar since there are rarely more than ~10 rows.
   function SiteBreakdownTable({ token, event, groupBy, period, title, limit = 10 }) {
     const [rows, setRows] = useState(null);
     useEffect(() => {
@@ -13462,6 +13470,12 @@
         .then(r=>r.json()).then(d=>setRows(d.rows||[])).catch(()=>setRows([]));
     }, [event, groupBy, period.from, period.to]);
     const isDwell = event.includes('dwell');
+    // search_use repurposes `page` to hold the query text, not a URL path —
+    // give it a header that actually describes what's shown.
+    const groupLabel = event==='search_use' && groupBy==='page' ? 'Search Term'
+      : event==='search_use' && groupBy==='section' ? 'Result'
+      : SITE_GROUP_LABELS[groupBy];
+    const maxCount = rows && rows.length ? Math.max(...rows.map(r=>r.count)) : 1;
     return (
       <div className="card" style={{marginBottom:14}}>
         <div className="card-header"><span className="card-title">{title}</span></div>
@@ -13470,19 +13484,128 @@
         ) : rows.length === 0 ? (
           <div style={{padding:24,textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No data for this period yet.</div>
         ) : (
-          <div className="tbl-wrap">
-            <table>
-              <thead><tr><th>{SITE_GROUP_LABELS[groupBy]}</th><th>{isDwell ? 'Avg Dwell' : 'Count'}</th>{!isDwell && <th>Avg Dwell (ms)</th>}</tr></thead>
-              <tbody>
-                {rows.map((r,i)=>(
-                  <tr key={i}>
-                    <td style={{fontWeight:600,color:'var(--text)'}}>{r.product_title || r.key || '—'}</td>
-                    <td style={{fontWeight:700,fontVariantNumeric:'tabular-nums'}}>{isDwell ? `${Math.round((r.avg_value||0)/1000)}s` : r.count}</td>
-                    {!isDwell && <td className="td-mut" style={{fontVariantNumeric:'tabular-nums'}}>{r.avg_value!=null ? `${Math.round(r.avg_value)}ms` : '—'}</td>}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{padding:'10px 16px 14px',display:'flex',flexDirection:'column',gap:7}}>
+            {rows.map((r,i)=>{
+              const label = r.product_title || r.key || '—';
+              const pct = Math.max(4, Math.round((r.count/maxCount)*100));
+              return (
+                <div key={i} style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 46px',gap:10,alignItems:'center'}} title={isDwell ? `${label}: ${Math.round((r.avg_value||0)/1000)}s avg` : `${label}: ${r.count}${r.avg_value!=null?` · ${Math.round(r.avg_value)}ms avg dwell`:''}`}>
+                  <div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:3,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{label}</div>
+                    <div style={{height:7,background:'var(--bg)',borderRadius:4,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:'var(--indigo)',borderRadius:4,transition:'width .3s ease'}}></div>
+                    </div>
+                  </div>
+                  <div style={{fontSize:12,fontWeight:700,color:'var(--text)',textAlign:'right',fontVariantNumeric:'tabular-nums'}}>
+                    {isDwell ? `${Math.round((r.avg_value||0)/1000)}s` : r.count}
+                  </div>
+                </div>
+              );
+            })}
+            {!isDwell && groupBy!=='page' && <div style={{fontSize:9.5,color:'var(--text-muted)',marginTop:2,textTransform:'uppercase',letterSpacing:.04,opacity:.7}}>{groupLabel}, by {SITE_EVENT_LABELS[event]?.toLowerCase()}</div>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Multi-line trend chart — daily counts for a fixed set of events over the
+  // selected period. One axis, thin 2px lines with rounded joins, recessive
+  // gridlines, a legend (always present, 3 series here), and a hover
+  // crosshair + tooltip reading all series at the nearest day.
+  function SiteTrendChart({ token, period }) {
+    const SERIES = [
+      { key:'add_to_cart', label:'Add to Cart', color:SITE_CHART_COLORS[0] },
+      { key:'card_click', label:'Card Clicks', color:SITE_CHART_COLORS[1] },
+      { key:'collection_view', label:'Collection Views', color:SITE_CHART_COLORS[2] },
+      { key:'wishlist_add', label:'Wishlist Adds', color:SITE_CHART_COLORS[3] },
+    ];
+    const [data, setData] = useState(null);
+    const [hoverIdx, setHoverIdx] = useState(null);
+    const svgRef = React.useRef(null);
+
+    useEffect(() => {
+      setData(null);
+      const evs = SERIES.map(s=>s.key).join(',');
+      fetch(`${API}/admin/site-analytics/timeseries?events=${evs}&from=${period.from}&to=${period.to}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(setData).catch(()=>setData({series:[],days:[]}));
+    }, [period.from, period.to]);
+
+    if (data === null) return <div className="card" style={{marginBottom:16,padding:40,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading trend…</div>;
+    const days = data.days || [];
+    if (!days.length) return null;
+
+    const W = 900, H = 220, padL = 36, padR = 16, padT = 14, padB = 26;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const maxVal = Math.max(1, ...data.series.flatMap(s=>s.points.map(p=>p.count)));
+    const niceMax = Math.ceil(maxVal / 5) * 5 || 5;
+    const xFor = (i) => padL + (days.length>1 ? (i/(days.length-1))*plotW : plotW/2);
+    const yFor = (v) => padT + plotH - (v/niceMax)*plotH;
+    const pathFor = (pts) => pts.map((p,i)=>`${i===0?'M':'L'}${xFor(i).toFixed(1)},${yFor(p.count).toFixed(1)}`).join(' ');
+
+    const gridLines = [0,0.25,0.5,0.75,1].map(f=>Math.round(niceMax*f));
+    // Sparse x-axis labels so dates never collide — at most ~7 shown.
+    const labelEvery = Math.max(1, Math.ceil(days.length/7));
+
+    const handleMove = (e) => {
+      const rect = svgRef.current.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * W;
+      let idx = Math.round(((x - padL) / plotW) * (days.length-1));
+      idx = Math.max(0, Math.min(days.length-1, idx));
+      setHoverIdx(idx);
+    };
+
+    return (
+      <div className="card" style={{marginBottom:16,padding:'16px 18px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,flexWrap:'wrap',gap:10}}>
+          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>📈 Engagement Trend</span>
+          {/* Legend — always shown since this is a 4-series chart */}
+          <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
+            {SERIES.map(s=>(
+              <span key={s.key} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--text-muted)'}}>
+                <span style={{width:8,height:8,borderRadius:2,background:s.color,display:'inline-block'}}></span>{s.label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',display:'block'}}
+          onMouseMove={handleMove} onMouseLeave={()=>setHoverIdx(null)}>
+          {/* recessive gridlines */}
+          {gridLines.map((v,i)=>(
+            <g key={i}>
+              <line x1={padL} x2={W-padR} y1={yFor(v)} y2={yFor(v)} stroke="var(--border)" strokeWidth="1" />
+              <text x={padL-8} y={yFor(v)+3} textAnchor="end" fontSize="9" fill="var(--text-muted)">{v}</text>
+            </g>
+          ))}
+          {/* x-axis date labels */}
+          {days.map((d,i)=> i % labelEvery === 0 ? (
+            <text key={i} x={xFor(i)} y={H-8} textAnchor="middle" fontSize="9" fill="var(--text-muted)">{d.slice(5)}</text>
+          ) : null)}
+          {/* lines */}
+          {data.series.map((s,si) => {
+            const meta = SERIES.find(m=>m.key===s.event) || SERIES[si];
+            return <path key={s.event} d={pathFor(s.points)} fill="none" stroke={meta.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />;
+          })}
+          {/* hover crosshair + dots */}
+          {hoverIdx !== null && (
+            <g>
+              <line x1={xFor(hoverIdx)} x2={xFor(hoverIdx)} y1={padT} y2={padT+plotH} stroke="var(--text-muted)" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
+              {data.series.map((s,si) => {
+                const meta = SERIES.find(m=>m.key===s.event) || SERIES[si];
+                const pt = s.points[hoverIdx];
+                return pt ? <circle key={s.event} cx={xFor(hoverIdx)} cy={yFor(pt.count)} r="3.5" fill={meta.color} stroke="var(--bg-card)" strokeWidth="1.5" /> : null;
+              })}
+            </g>
+          )}
+        </svg>
+        {hoverIdx !== null && (
+          <div style={{marginTop:6,padding:'8px 12px',background:'var(--bg)',borderRadius:8,fontSize:11,display:'flex',gap:16,flexWrap:'wrap'}}>
+            <span style={{fontWeight:700,color:'var(--text)'}}>{days[hoverIdx]}</span>
+            {data.series.map((s,si) => {
+              const meta = SERIES.find(m=>m.key===s.event) || SERIES[si];
+              const pt = s.points[hoverIdx];
+              return <span key={s.event} style={{color:'var(--text-muted)'}}><span style={{color:meta.color,fontWeight:700}}>{pt?.count ?? 0}</span> {meta.label}</span>;
+            })}
           </div>
         )}
       </div>
@@ -13531,13 +13654,17 @@
           ))}
         </div>
 
+        <SiteTrendChart token={token} period={period} />
+
         {/* Pinned, most-asked-for breakdowns */}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
           <SiteBreakdownTable token={token} event="add_to_cart" groupBy="source" period={period} title="🛒 Add to Cart — by Source" />
           <SiteBreakdownTable token={token} event="add_to_cart" groupBy="brand" period={period} title="🛒 Add to Cart — by Brand" />
+          <SiteBreakdownTable token={token} event="add_to_cart" groupBy="section" period={period} title="🛒 Add to Cart — by PDP Carousel" />
           <SiteBreakdownTable token={token} event="buy_now" groupBy="brand" period={period} title="⚡ Buy Now — by Brand" />
           <SiteBreakdownTable token={token} event="wishlist_add" groupBy="brand" period={period} title="❤️ Wishlist Adds — by Brand" />
           <SiteBreakdownTable token={token} event="card_click" groupBy="product_handle" period={period} title="👆 Most-Clicked Products" />
+          <SiteBreakdownTable token={token} event="card_click" groupBy="section" period={period} title="👆 Card Clicks — by PDP Carousel" />
           <SiteBreakdownTable token={token} event="collection_view" groupBy="collection_handle" period={period} title="📂 Most-Browsed Collections" />
           <SiteBreakdownTable token={token} event="collection_dwell" groupBy="collection_handle" period={period} title="⏱ Collection Dwell Time" />
           <SiteBreakdownTable token={token} event="brand_view" groupBy="brand" period={period} title="🏷 Brand Page Views" />
@@ -13545,6 +13672,8 @@
           <SiteBreakdownTable token={token} event="policy_view" groupBy="section" period={period} title="📜 Policy Page Views" />
           <SiteBreakdownTable token={token} event="nav_click" groupBy="page" period={period} title="🧭 Nav Clicks — by Destination" />
           <SiteBreakdownTable token={token} event="card_impression" groupBy="brand" period={period} title="👁 Card Impressions — by Brand" />
+          <SiteBreakdownTable token={token} event="search_use" groupBy="page" period={period} title="🔎 Top Search Terms" />
+          <SiteBreakdownTable token={token} event="search_use" groupBy="section" period={period} title="🔎 Searches — Results vs Zero Results" />
         </div>
 
         {/* Flexible query — any event × any dimension, for anything not pinned above */}
