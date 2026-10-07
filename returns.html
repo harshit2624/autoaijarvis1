@@ -398,8 +398,10 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
   (function(){
     try {
       var body = JSON.stringify({ events: [{ event: 'policy_view', session_id: 'returns_' + Date.now(), page: location.pathname, section: 'returns_page', ts: Date.now() }] });
-      if (navigator.sendBeacon) navigator.sendBeacon('/track/site-events', new Blob([body], { type: 'application/json' }));
-      else fetch('/track/site-events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function(){});
+      // fetch(keepalive), not sendBeacon — see cc-track.js for why: sendBeacon
+      // reports success just for being queued, not for actually being
+      // delivered, and was found to silently drop cross-origin JSON sends.
+      fetch('/track/site-events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function(){});
     } catch (e) {}
   })();
 </script>
