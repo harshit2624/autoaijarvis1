@@ -23319,15 +23319,54 @@ async function scGetReturnStatus(order_name) {
   );
   if (!rr) return { found: false, message: `No return or exchange request found for order #${name}` };
   const STATUS_LABELS = { pending:'Request received', submitted:'Request received', approved:'Approved', pickup_scheduled:'Pickup scheduled', picked_up:'Item picked up', received:'Received at warehouse', received_at_warehouse:'Received at warehouse', qc:'Quality check', refund_initiated:'Refund initiated', exchange_dispatched:'Exchange shipped', completed:'Completed', rejected:'Rejected', cancelled:'Cancelled' };
+  // Reverse (item heading back to the seller) and forward (exchange
+  // replacement heading to the customer) are two genuinely separate legs —
+  // report both distinctly instead of collapsing to a single awb, so an
+  // exchange where the return is in transit AND the replacement has already
+  // shipped shows both instead of silently picking one.
+  const legInfo = (shipment) => shipment?.awb ? {
+    awb: shipment.awb,
+    courier: shipment.courier || null,
+    tracking_status: shipment.tracking_status || null,
+    tracking_updated_at: shipment.tracking_updated_at || null,
+  } : null;
   return {
     found: true,
+    request_id: rr.request_id,
     type: rr.type || 'return',
     status: rr.status,
     status_label: STATUS_LABELS[rr.status] || rr.status,
     items: (rr.items || []).map(i => i.title || i.product_title || 'item'),
     created_at: rr.created_at,
+    reverse: legInfo(rr.reverse_shipment),
+    forward: rr.type === 'exchange' ? legInfo(rr.forward_shipment) : null,
+    // Kept for any existing caller still reading the old single-field shape.
     awb: rr.reverse_shipment?.awb || rr.forward_shipment?.awb || null,
   };
+}
+
+// Plain-text WA rendering of scGetReturnStatus's result — shared by the
+// numbered-menu "Track Return/Exchange" option and anywhere else that needs
+// the same box-style summary.
+function waReturnStatusText(orderName, rs) {
+  if (!rs.found) return `${_F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nORDER  ${orderName}\n\nNo return or exchange request\nfound for this order.\n────────────────\nREPLY 4 FOR A HUMAN\n${_F}`;
+  const lines = [];
+  lines.push(`TYPE   ${(rs.type||'return').toUpperCase()}`);
+  lines.push(`STATUS ${rs.status_label || rs.status}`);
+  if (rs.items?.length) lines.push(`ITEM   ${rs.items.join(', ').slice(0,60)}`);
+  if (rs.reverse) {
+    lines.push('────────────────');
+    lines.push('RETURN LEG (to us)');
+    lines.push(`AWB    ${rs.reverse.awb}${rs.reverse.courier ? ` (${rs.reverse.courier})` : ''}`);
+    if (rs.reverse.tracking_status) lines.push(`STATUS ${rs.reverse.tracking_status}`.slice(0,60));
+  }
+  if (rs.forward) {
+    lines.push('────────────────');
+    lines.push('REPLACEMENT LEG (to you)');
+    lines.push(`AWB    ${rs.forward.awb}${rs.forward.courier ? ` (${rs.forward.courier})` : ''}`);
+    if (rs.forward.tracking_status) lines.push(`STATUS ${rs.forward.tracking_status}`.slice(0,60));
+  }
+  return `${_F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nORDER  ${orderName}\n${lines.join('\n')}\n────────────────\nREPLY 4 FOR A HUMAN\n${_F}`;
 }
 
 async function scRunTool(name, args, contact) {
@@ -28906,13 +28945,15 @@ function waWelcomeListContent(mode) {
     ? [
         { id: '1', title: 'Track Order', description: 'Check your order status' },
         { id: '2', title: 'Return / Exchange', description: 'Start a return or exchange' },
-        { id: '3', title: 'Talk to a Human', description: 'Connect with our support team' },
+        { id: '3', title: 'Track Return/Exchange', description: 'Status of a request you already raised' },
+        { id: '4', title: 'Talk to a Human', description: 'Connect with our support team' },
       ]
     : [
         { id: '1', title: 'Track Order', description: 'Check your order status' },
         { id: '2', title: 'Browse Products', description: 'See our latest drops' },
         { id: '3', title: 'Return / Exchange', description: 'Start a return or exchange' },
-        { id: '4', title: 'Talk to a Human', description: 'Connect with our support team' },
+        { id: '4', title: 'Track Return/Exchange', description: 'Status of a request you already raised' },
+        { id: '5', title: 'Talk to a Human', description: 'Connect with our support team' },
       ];
   return {
     list: {
@@ -28928,16 +28969,19 @@ function waWelcomeListContent(mode) {
 const _F = '```';
 const WA_MENUS = {
   welcome:
-    `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  BROWSE PRODUCTS\n3  RETURN / EXCHANGE\n4  HUMAN\n────────────────\nSELECT 1–4\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  BROWSE PRODUCTS\n3  RETURN / EXCHANGE\n4  TRACK RETURN/EXCHANGE\n5  HUMAN\n────────────────\nSELECT 1–5\n${_F}`,
 
   welcome_menu:
-    `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  RETURN / EXCHANGE\n3  AI ASSISTANT\n4  HUMAN\n────────────────\nSELECT 1–4\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  RETURN / EXCHANGE\n3  TRACK RETURN/EXCHANGE\n4  AI ASSISTANT\n5  HUMAN\n────────────────\nSELECT 1–5\n${_F}`,
 
   order_lookup:
     `${_F}\n▪ C R O S C R O W ▪\nORDER LOOKUP\n────────────────\nENTER ORDER ID\nFORMAT  #1234\n────────────────\nDROP IT BELOW\n${_F}`,
 
   order_lookup_rne:
     `${_F}\n▪ C R O S C R O W ▪\nRETURN / EXCHANGE\n────────────────\nENTER ORDER ID\nFORMAT  #1234\n────────────────\nDROP IT BELOW\n${_F}`,
+
+  order_lookup_rne_track:
+    `${_F}\n▪ C R O S C R O W ▪\nTRACK RETURN/EXCHANGE\n────────────────\nENTER ORDER ID\nFORMAT  #1234\n────────────────\nDROP IT BELOW\n${_F}`,
 
   order_not_confirmed: (name, url) =>
     `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${name}\n\nPay ₹99 to confirm your COD\norder — helps us block fake\nand mistaken orders.\n\nCONFIRM\n${url}\n────────────────\nGOES ON HOLD AFTER 48 HRS\n${_F}`,
@@ -29031,8 +29075,13 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
         await waSessionClear(sender);
       } else if (num === 3) {
         await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
-        await waSessionSet(sender, { menu: 'awaiting_order' });
+        // Was 'awaiting_order' — sent customer into plain order-tracking
+        // instead of the return/exchange start flow after picking option 3.
+        await waSessionSet(sender, { menu: 'awaiting_order_rne' });
       } else if (num === 4) {
+        await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne_track });
+        await waSessionSet(sender, { menu: 'awaiting_order_rne_track' });
+      } else if (num === 5) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from welcome menu');
       }
       return true;
@@ -29048,7 +29097,10 @@ async function waHandleMenuReply(sock, sender, chat, phone, num, session) {
       } else if (num === 2) {
         await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
         await waSessionSet(sender, { menu: 'awaiting_order_rne', returnTo: 'welcome_menu' });
-      } else if (num === 3 || num === 4) {
+      } else if (num === 3) {
+        await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne_track });
+        await waSessionSet(sender, { menu: 'awaiting_order_rne_track', returnTo: 'welcome_menu' });
+      } else if (num === 4 || num === 5) {
         await waTalkToHuman(sock, sender, chat, phone, 'Customer requested human support from menu bot');
       }
       return true;
@@ -29970,7 +30022,7 @@ async function startBaileysBot() {
           }
 
           // ── 2. Numbered reply → handle active menu ─────────────────────
-          const num = /^[0-4]$/.test(text) ? parseInt(text) : null;
+          const num = /^[0-5]$/.test(text) ? parseInt(text) : null;
           if (num) {
             const session = await waSessionGet(sender);
             if (session.menu) {
@@ -29991,7 +30043,7 @@ async function startBaileysBot() {
           // bot was last waiting on.
           {
             const _escSession = await waSessionGet(sender);
-            if (_escSession.menu === 'awaiting_order' || _escSession.menu === 'awaiting_order_rne') {
+            if (_escSession.menu === 'awaiting_order' || _escSession.menu === 'awaiting_order_rne' || _escSession.menu === 'awaiting_order_rne_track') {
               const _intentNum = waClassifyMenuIntent(text);
               if (_intentNum === 4) {
                 await SC.addMessage(chat._id, { sender: 'customer', text });
@@ -30026,6 +30078,29 @@ async function startBaileysBot() {
                 await waSessionClear(sender);
               } else {
                 await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne });
+              }
+              waPending.delete(sender);
+              continue;
+            }
+          }
+
+          // ── 2b-rne-track. awaiting_order_rne_track: live status for an
+          // EXISTING return/exchange request — reverse leg (item heading
+          // back to us) and forward leg (exchange replacement heading to
+          // the customer) reported separately, not just "here's a link".
+          {
+            const rneTrackSession = await waSessionGet(sender);
+            if (rneTrackSession.menu === 'awaiting_order_rne_track') {
+              await SC.addMessage(chat._id, { sender: 'customer', text });
+              const orderMatch = text.match(/\b(\d{3,6})\b/);
+              if (orderMatch) {
+                const oNum = orderMatch[1];
+                const oName = `#${oNum}`;
+                const rs = await scGetReturnStatus(oNum);
+                await sock.sendMessage(sender, { text: waReturnStatusText(oName, rs) });
+                await waSessionClear(sender);
+              } else {
+                await sock.sendMessage(sender, { text: WA_MENUS.order_lookup_rne_track });
               }
               waPending.delete(sender);
               continue;
