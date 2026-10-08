@@ -13451,6 +13451,7 @@
     pdp_section_view: 'PDP Section Views', pdp_dwell: 'PDP Dwell',
     policy_view: 'Policy Views', brand_view: 'Brand Page Views',
     nav_click: 'Nav Clicks', search_use: 'Searches', search_open: 'Search Opened',
+    variant_select: 'Size Selected', variant_unavailable_click: 'Sold-Out Size Clicked', rage_click: 'Rage Clicks',
   };
   const SITE_GROUP_LABELS = { brand:'Brand', product_handle:'Product', collection_handle:'Collection', section:'Section', source:'Source', page:'Page' };
   // Fixed categorical order, reused everywhere a chart needs series color —
@@ -13474,6 +13475,9 @@
     // give it a header that actually describes what's shown.
     const groupLabel = event==='search_use' && groupBy==='page' ? 'Search Term'
       : event==='search_use' && groupBy==='section' ? 'Result'
+      : (event==='variant_select'||event==='variant_unavailable_click') && groupBy==='section' ? 'Size / Value'
+      : (event==='variant_select'||event==='variant_unavailable_click') && groupBy==='source' ? 'Option'
+      : event==='rage_click' && groupBy==='section' ? 'Element'
       : SITE_GROUP_LABELS[groupBy];
     const maxCount = rows && rows.length ? Math.max(...rows.map(r=>r.count)) : 1;
     return (
@@ -13655,6 +13659,25 @@
         </div>
 
         <SiteTrendChart token={token} period={period} />
+
+        {/* Demand signals — size/variant data fashion retailers treat as real
+            inventory intelligence: a sold-out-size click is a customer who
+            wanted to buy right now and couldn't, not nothing. Raw sales data
+            alone can't tell "nobody wants size M" from "size M has been out
+            of stock the whole time nobody could buy it" — this is the
+            closest thing to that signal without a backend inventory join. */}
+        <div style={{background:'#1a0d0d',border:'1px solid #4a1a1a',borderRadius:10,padding:'12px 16px',marginBottom:14,fontSize:12,color:'var(--text)'}}>
+          <div style={{fontWeight:700,color:'#f87171',marginBottom:6}}>🚫 Demand Signals — Sold-Out Size Clicks</div>
+          <div style={{lineHeight:1.7,color:'var(--text-muted)'}}>
+            Someone tapped a size that was greyed out / unavailable — they wanted it right now. High counts on a product+size combo is a direct restock signal, not a popularity guess.
+          </div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:4}}>
+          <SiteBreakdownTable token={token} event="variant_unavailable_click" groupBy="product_handle" period={period} title="🚫 Sold-Out Clicks — by Product" />
+          <SiteBreakdownTable token={token} event="variant_unavailable_click" groupBy="section" period={period} title="🚫 Sold-Out Clicks — by Size" />
+          <SiteBreakdownTable token={token} event="variant_select" groupBy="section" period={period} title="✅ Sizes Actually Picked (for comparison)" />
+          <SiteBreakdownTable token={token} event="rage_click" groupBy="page" period={period} title="😤 Rage Clicks — Page Likely Has a UX Bug" />
+        </div>
 
         {/* Pinned, most-asked-for breakdowns */}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>

@@ -25209,6 +25209,11 @@ const SITE_EVENT_NAMES = [
   'add_to_cart', 'buy_now', 'wishlist_add', 'wishlist_remove',
   'cart_drawer_open', 'cart_drawer_close', 'pdp_section_view', 'pdp_dwell',
   'policy_view', 'brand_view', 'nav_click', 'search_use', 'search_open',
+  // Size/variant demand (fashion retail treats a sold-out-size click as real
+  // demand data — the "phantom demand" problem: raw sales alone can't tell
+  // "nobody wants this size" from "we were out of stock the whole time"),
+  // and rage_click (3+ clicks on the same dead element — a UX/bug signal).
+  'variant_select', 'variant_unavailable_click', 'rage_click',
 ];
 
 // Batched ingestion — the client script queues events in memory and flushes
