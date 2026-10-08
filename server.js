@@ -9874,6 +9874,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
     const vendorTotal     = parseFloat((vendorSubtotal + vendorShipping).toFixed(2));
     const codAmt          = cod ? parseFloat(Math.max(0, vendorTotal - advancePaid).toFixed(2)) : 0;
+    const orderRef        = buildOrderRef(shopifyOrder, req.vendor);
 
     let result;
 
@@ -9888,7 +9889,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
       const srToken = authRes.token;
       const payload = {
-        order_id:         shopifyOrder.name,
+        order_id:         orderRef,
         order_date:       shopifyOrder.created_at,
         pickup_location:  creds.pickup_location || "Primary",
         billing_customer_name:  addr.first_name || shopifyOrder.customer?.first_name || "Customer",
@@ -9947,7 +9948,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
           state:         addr.province || "",
           country:       "India",
           phone:         (addr.phone || "").replace(/\D/g, "").slice(-10),
-          order:         shopifyOrder.name,
+          order:         orderRef,
           payment_mode:  cod ? "COD" : "Pre-paid",
           ...(hasReturnInfo ? {
             return_pin:     retInfo.pincode,
@@ -10016,7 +10017,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       const weightGrams = Math.round(parseFloat(weight) * 1000);
 
       const smPayload = {
-        order_id:                   shopifyOrder.name,
+        order_id:                   orderRef,
         order_date:                 (shopifyOrder.created_at || "").slice(0, 10),
         consignee_name:             custName,
         consignee_phone:            (addr.phone || "").replace(/\D/g, "").slice(-10),
@@ -10349,8 +10350,9 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
     const custName = `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || shopifyOrder.customer?.first_name || "Customer";
     const orderDateStr = (shopifyOrder.created_at || new Date().toISOString()).replace("T", " ").replace(/\.\d+Z$/, "").replace("Z", "");
     const warehouseName = pickup_location || creds.pickup_location || "Primary";
-    // Unique order id per shipment attempt — avoids partner-side dedup when an order ships in multiple parcels
-    const orderRef = `${shopifyOrder.name}-${Date.now().toString(36).slice(-5).toUpperCase()}`;
+    // Branded order id; gets a vendor-code suffix on multi-vendor orders so each vendor's
+    // parcel is still distinct (couriers dedupe/reject a 2nd shipment under a seen order id)
+    const orderRef = buildOrderRef(shopifyOrder, selected[0]?.vendor || '');
 
     let result;
 
@@ -20148,6 +20150,22 @@ function shipmentItemDesc(li) {
   const size = (li.variant_title || '').trim();
   const hasRealSize = size && size.toLowerCase() !== 'default title';
   return hasRealSize ? `${li.title} - ${size}` : li.title;
+}
+
+// 3-letter code from a vendor name, for multi-vendor order refs (e.g. "Sicos" -> "SIC")
+function vendorCodeFor(name) {
+  return (name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'VEN';
+}
+
+// Courier-facing order id: CROSCROW-<orderNumber>, or CROSCROW-<VENDORCODE>-<orderNumber>
+// when the order has more than one vendor (so each vendor's parcel gets a distinct id —
+// couriers dedupe/reject a second shipment sent under an order id they've already seen).
+function buildOrderRef(shopifyOrder, shipVendor) {
+  const num = (shopifyOrder.name || '').replace(/^#/, '');
+  const distinctVendors = [...new Set((shopifyOrder.line_items || []).map(li => li.vendor).filter(Boolean))];
+  return distinctVendors.length > 1
+    ? `CROSCROW-${vendorCodeFor(shipVendor)}-${num}`
+    : `CROSCROW-${num}`;
 }
 
 async function buildOrderPayload(order) {
