@@ -16170,14 +16170,14 @@ const SS_STATUS_TAG_MAP = [
   // seller/hub, not the customer) contains "delivered" as a substring and
   // would otherwise tag a real RTO as "✅ Delivered". Mirrors the same
   // ordering already used in shipsagarStatusToStage() for the same reason.
-  { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery', 'prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled', 'ndr', 'held at location', 'shipment held', 'undelivered shipment held'], tag: '🛵 Out for Delivery' },
+  { match: ['out for delivery', 'ofd', 'shipment out for delivery', 'out-for-delivery', 'dispatched for delivery', 'sent for delivery', 'prohibited area', 'entry restricted', 'premises closed', 'office closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'delivery rescheduled', 'ndr', 'held at location', 'shipment held', 'undelivered shipment held'], tag: '🛵 Out for Delivery' },
   { match: ['undelivered', 'failed delivery', 'not delivered', 'delivery failed'], tag: '❌ Delivery Attempted' },
-  { match: ['rto', 'return to origin', 'returned to origin', 'return initiated', 'return to shipper', 'returning', 'delivered seller', 'delivered to seller', 'return as per', 'pickup cancelled', 'refus'], tag: '🔄 RTO' },
+  { match: ['rto', 'return to origin', 'returned to origin', 'return initiated', 'return is initiated', 'out for return', 'return to shipper', 'returning', 'delivered seller', 'delivered to seller', 'return as per', 'pickup cancelled', 'refus'], tag: '🔄 RTO' },
   { match: ['successfully delivered', 'shipment delivered', 'delivery successful', 'delivered successfully', 'delivered'], tag: '✅ Delivered' },
   { match: ['lost', 'damage'],                                            tag: '⚠️ Lost/Damaged' },
-  { match: ['pickdone', 'pick done', 'picked up', 'pickup done', 'shipment picked'],        tag: '📦 Picked Up' },
+  { match: ['pickdone', 'pick done', 'pick up done', 'picked up', 'pickup done', 'shipment picked'],        tag: '📦 Picked Up' },
   { match: ['manifested', 'shipment booked', 'dispatched', 'ready to dispatch'],            tag: '📋 Manifested' },
-  { match: ['in transit', 'intransit', 'arrived', 'received at', 'facility', 'hub', 'sorting', 'shipment in transit'], tag: '🚚 In Transit' },
+  { match: ['in transit', 'intransit', 'arrived', 'received at', 'facility', 'hub', 'sorting', 'shipment in transit', 'network delay', 'network issue', 'wrong pincode', 'scheduled for delivery', 'delivery scheduled', 'processing centre', 'redirected on same awb'], tag: '🚚 In Transit' },
   { match: ['data received', 'label created', 'softdata', 'booked'],     tag: '🏷️ Label Created' },
 ];
 
@@ -16194,7 +16194,7 @@ function shipsagarDescToTag(desc) {
 }
 
 // Statuses that are OFD-stage but also had a delivery attempt — get both tags
-const OFD_WITH_ATTEMPT_KEYWORDS = ['prohibited area', 'entry restricted', 'premises closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'ndr', 'held at location', 'shipment held', 'delivery rescheduled'];
+const OFD_WITH_ATTEMPT_KEYWORDS = ['prohibited area', 'entry restricted', 'premises closed', 'office closed', 'delivery attempt', 'door locked', 'customer not available', 'consignee not available', 'ndr', 'held at location', 'shipment held', 'delivery rescheduled'];
 
 async function applyShipSagarTag(shopifyId, desc) {
   const newTag = shipsagarDescToTag(desc);
@@ -16231,7 +16231,7 @@ function shipsagarStatusToStage(desc) {
   // Delivery" AND "Refusal Confirmation Code Verified" — a real courier
   // phrase that the exact word "refused" alone misses entirely. A refusal
   // reliably means the shipment is headed back to origin.
-  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled') || s.includes('refus')) return 'rto';
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return is initiated') || s.includes('out for return') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled') || s.includes('refus')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
   // "Dispatched — Our executive X is on their way to deliver" is a LOCAL
@@ -16239,9 +16239,11 @@ function shipsagarStatusToStage(desc) {
   // now), not a warehouse dispatch — checked before the generic pickup-
   // bucket 'dispatched' match below so it correctly lands on ofd, not pickup.
   if (s.includes('on their way to deliver') || s.includes('on the way to deliver') || (s.includes('executive') && s.includes('deliver'))) return 'ofd';
-  if (s.includes('out for delivery') || s.includes('out delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('no such consignee') || s.includes('address incomplete') || s.includes('address incorrect') || s.includes('incorrect address') || s.includes('charges pending') || s.includes('reattempt') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held') || s.includes('otp not shared') || s.includes('cancelled by consignee')) return 'ofd';
+  if (s.includes('out for delivery') || s.includes('out delivery') || s.includes('ofd') || s.includes('prohibited area') || s.includes('entry restricted') || s.includes('premises closed') || s.includes('office closed') || s.includes('delivery attempt') || s.includes('door locked') || s.includes('customer not available') || s.includes('consignee not available') || s.includes('no such consignee') || s.includes('address incomplete') || s.includes('address incorrect') || s.includes('incorrect address') || s.includes('charges pending') || s.includes('reattempt') || s.includes('ndr') || s.includes('held at location') || s.includes('shipment held') || s.includes('otp not shared') || s.includes('cancelled by consignee')) return 'ofd';
   if (s.includes('undelivered') || s.includes('failed delivery') || s.includes('not delivered') || s.includes('delivery failed') || s.includes('delivery delayed') || s.includes('reached dest') || s.includes('reached at destination')) return 'transit';
-  if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting') || s.includes('further connected') || s.includes('on its way') || s.includes('on the way')) return 'transit';
+  // Informational in-motion scans — still moving, just a delay/reroute/
+  // scheduling note, not a stage change in either direction.
+  if (s.includes('in transit') || s.includes('intransit') || s.includes('arrived') || s.includes('received at') || s.includes('facility') || s.includes('hub') || s.includes('sorting') || s.includes('further connected') || s.includes('on its way') || s.includes('on the way') || s.includes('network delay') || s.includes('network issue') || s.includes('wrong pincode') || s.includes('scheduled for delivery') || s.includes('delivery scheduled') || s.includes('processing centre') || s.includes('redirected on same awb')) return 'transit';
   // "Waiting for pickup" means the courier has NOT collected it yet — the
   // literal opposite of "picked up"/"pickup done" — but was bucketed
   // together with them here, so a scan meaning "still waiting" advanced an
@@ -16250,7 +16252,7 @@ function shipsagarStatusToStage(desc) {
   // Not yet collected → no stage classification at all, rather than
   // guessing it means either 'ready' or 'pickup' — falls through to null.
   if (s.includes('waiting pickup') || s.includes('waiting for pickup') || s.includes('waiting for the pickup')) return null;
-  if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('pickup registered') || s.includes('pickup has been registered') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received') || s === 'pickup' || s.includes('out to p')) return 'pickup';
+  if (s.includes('pickdone') || s.includes('pick done') || s.includes('pick up done') || s.includes('picked up') || s.includes('pickup done') || s.includes('pickup registered') || s.includes('pickup has been registered') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received') || s === 'pickup' || s.includes('out to p')) return 'pickup';
   return null;
 }
 
@@ -16287,7 +16289,7 @@ function shipsagarIsFailedAttempt(desc) {
     || s.includes('door locked') || s.includes('ndr') || s.includes('otp not shared') || s.includes('no such consignee')
     || s.includes('address incomplete') || s.includes('address incorrect') || s.includes('incorrect address')
     || s.includes('charges pending') || s.includes('cancelled by consignee') || s.includes('prohibited area')
-    || s.includes('entry restricted') || s.includes('premises closed') || s.includes('held at location') || s.includes('shipment held');
+    || s.includes('entry restricted') || s.includes('premises closed') || s.includes('office closed') || s.includes('held at location') || s.includes('shipment held');
 }
 
 // Map our internal courier names to ShipSagar courier codes
