@@ -16399,19 +16399,38 @@ async function shipsagarTrackShipment(awb) {
     } else if (res.trackingDetails) {
       try {
         let raw = res.trackingDetails;
+        let currentStatusValues = null;
         // Unwrap double encoding: might be "\"{ json }\"" or "{ json }"
         if (typeof raw === 'string') {
           raw = raw.trim();
           if (raw.startsWith('"')) raw = JSON.parse(raw); // unwrap outer quotes
-          if (typeof raw === 'string') raw = JSON.parse(raw); // parse inner JSON
+          if (typeof raw === 'string') {
+            // ShipSagar's payload sometimes repeats the CurrentStatus key —
+            // confirmed live on RR-20260922-8857/order #3347:
+            // {"CurrentStatus":"RTO In Transit",...,"CurrentStatus":"RTO",...}
+            // JSON.parse silently keeps only the LAST duplicate key, so
+            // detail.CurrentStatus below ends up as the bare generic "RTO"
+            // even though the shipment was still "RTO In Transit" — nowhere
+            // near actually delivered back. That bare "RTO" then matched
+            // the reverse-sync's currentStatusLow==='rto' shortcut and
+            // marked the return request received/restocked before the
+            // package ever arrived (the courier went on to cancel the
+            // pickup AWB entirely). Capture every raw value here so the
+            // caller can tell the two apart instead of trusting whichever
+            // one JSON.parse happens to keep.
+            currentStatusValues = Array.from(raw.matchAll(/"CurrentStatus"\s*:\s*"([^"]*)"/g)).map(m => m[1]);
+            raw = JSON.parse(raw); // parse inner JSON
+          }
           detail = raw;
+          if (detail && currentStatusValues) detail._currentStatusValues = currentStatusValues;
         }
       } catch { detail = null; }
     }
 
     if (!detail) return { found: false };
     const history = detail.TrackingHistory || [];
-    return { found: true, detail, history, currentStatus: detail.CurrentStatus || '' };
+    const currentStatusValues = detail._currentStatusValues || [detail.CurrentStatus].filter(Boolean);
+    return { found: true, detail, history, currentStatus: detail.CurrentStatus || '', currentStatusValues };
   } catch { return { found: false }; }
 }
 
@@ -16872,7 +16891,7 @@ async function sendPickupFailedCustomerWA(rr) {
   console.log(`📲 Pickup-failed WA → ${rr.request_id} → +91${digits}`);
 }
 
-async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', scanKey = '', currentStatus = '') {
+async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', scanKey = '', currentStatus = '', currentStatusValues = null) {
   const events = [];
   const now = new Date().toISOString();
 
@@ -16940,9 +16959,18 @@ async function rrApplyStageLogic(rr, direction, desc, descLow, latestLoc = '', s
     // RECEIVED_CODES never matched — so the RR sat stuck on "in_transit"
     // indefinitely even though ShipSagar itself already considered it done.
     const currentStatusLow = String(currentStatus || '').toLowerCase().trim();
+    // Trust the bare top-level "rto" shortcut only when EVERY raw
+    // CurrentStatus value ShipSagar sent back agrees it's actually done —
+    // ShipSagar's payload has shipped with a duplicate CurrentStatus key
+    // before (a specific "RTO In Transit" followed by a bare "RTO";
+    // JSON.parse keeps only the last, silently losing the "still moving"
+    // qualifier — see shipsagarTrackShipment). Bare "rto" alongside any
+    // value that still reads as in-progress is not a received signal.
+    const anyStatusStillInProgress = (currentStatusValues || [currentStatus])
+      .some(v => /in transit|pending|progress|process|initiated|scheduled/i.test(String(v || '')));
     const isReceivedBack = RR_REVERSE_RECEIVED_CODES.some(c => descLow.includes(c))
       || (descLow.includes('delivered') && (descLow.includes('seller') || descLow.includes('origin') || descLow.includes('return')))
-      || currentStatusLow === 'rto';
+      || (currentStatusLow === 'rto' && !anyStatusStillInProgress);
     if (isReceivedBack) {
       if (!rr.wa_notif_sent?.received_at_warehouse) await sendRRWANotif(rr, 'received_at_warehouse');
       const advanced = await rrAdvanceStatus(rr, 'received', 'Courier scan: delivered back to warehouse', 'courier');
@@ -17122,7 +17150,7 @@ async function rrTrackingPass() {
           // desc stopped changing.
           if (!desc) continue;
 
-          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc, `${latest.ActionDate||latest.ScanDate||latest.Date||''} ${latest.ActionTime||latest.ScanTime||latest.Time||''}`.trim(), ss.currentStatus);
+          const rrEvents = await rrApplyStageLogic(rr, direction, desc, descLow, latestLoc, `${latest.ActionDate||latest.ScanDate||latest.Date||''} ${latest.ActionTime||latest.ScanTime||latest.Time||''}`.trim(), ss.currentStatus, ss.currentStatusValues);
           for (const ev of rrEvents) {
             runLog.rrUpdates.push({ request_id: rr.request_id, order_name: rr.order_name, direction, awb, desc, event: ev.event, advanced: ev.advanced });
           }
@@ -20568,7 +20596,7 @@ app.get("/track/rr-shipment-status", async (req, res) => {
       { $set: { [`${field}.tracking_status`]: desc, [`${field}.tracking_updated_at`]: now, [`${field}.tracking_history`]: historyToSave, updated_at: now } }
     );
 
-    const events = desc ? await rrApplyStageLogic(rr, direction, desc, descLow, '', '', ss.currentStatus) : [];
+    const events = desc ? await rrApplyStageLogic(rr, direction, desc, descLow, '', '', ss.currentStatus, ss.currentStatusValues) : [];
     const advanced = events.some(e => e.advanced);
     const freshStatus = advanced
       ? (await mdb.collection('return_requests').findOne({ request_id }, { projection: { status: 1, _id: 0 } }))?.status
