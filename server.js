@@ -8308,8 +8308,24 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       .toArray();
     const invoiceNoMap = Object.fromEntries(savedInvoices.map(i => [i.vendor_name, i.invoice_no]));
 
-    // Build data rows
-    const dataRows = Object.entries(vendorMap).sort((a,b) => b[1].gross - a[1].gross).map(([vendorName, d]) => {
+    // Build data rows — ordered by invoice number (CA/accountant expectation
+    // for a GST report), not by sales. Was sorting by gross revenue
+    // descending, which only coincidentally looked like invoice order when
+    // invoice numbers happened to track vendor size. Invoice numbers are
+    // assigned sequentially as "CCINV<seq>" (see /admin/gst-invoices), so
+    // extract the numeric part and sort on that rather than the string
+    // (string sort breaks once seq crosses a digit boundary, e.g. "CCINV999"
+    // vs "CCINV1000"). A vendor with no invoice generated yet for this
+    // period (blank invoiceNo) sorts after every numbered one.
+    const invoiceSeq = vendorName => {
+      const n = invoiceNoMap[vendorName];
+      const m = n && String(n).match(/(\d+)\s*$/);
+      return m ? parseInt(m[1], 10) : Infinity;
+    };
+    const dataRows = Object.entries(vendorMap).sort((a, b) => {
+      const diff = invoiceSeq(a[0]) - invoiceSeq(b[0]);
+      return diff !== 0 ? diff : a[0].localeCompare(b[0]);
+    }).map(([vendorName, d]) => {
       const prof = vProfileMap[vendorName] || {};
       const gstNo = prof.gst_no || 'NA';
       const location = [prof.city, prof.state].filter(Boolean).join('/') || 'NA';
