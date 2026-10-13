@@ -630,6 +630,10 @@
     .rr-stat.urgent { border-color:rgba(239,68,68,.4); }
     .rr-stat.urgent .rr-stat-n { color:var(--red); }
     .rr-stat.urgent::before { content:""; position:absolute; top:0; left:0; right:0; height:3px; background:var(--red); }
+    .rr-stat.clickable { cursor:pointer; user-select:none; transition:border-color .15s,box-shadow .15s,transform .1s; }
+    .rr-stat.clickable:hover { border-color:var(--green); transform:translateY(-1px); }
+    .rr-stat.clickable:focus-visible { outline:2px solid var(--green); outline-offset:1px; }
+    .rr-stat.clickable.active { border-color:var(--green); box-shadow:0 0 0 1px var(--green); background:var(--green-dim); }
 
     .rr-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
     .rr-chip { padding:6px 14px; border-radius:99px; border:1px solid var(--border); cursor:pointer; background:var(--bg-card2); color:var(--text-muted); font-family:var(--font-family); font-size:11px; font-weight:600; text-transform:capitalize; transition:background .15s,color .15s,border-color .15s; }
@@ -3871,13 +3875,29 @@
 
     const TYPE_COLOR = { return:'var(--blue)', exchange:'var(--green)' };
     const STATUS_COLOR = { pending:'#f59e0b', approved:'#22c55e', pickup_scheduled:'#eab308', pickup:'#eab308', picked_up:'#3b82f6', in_transit:'#6366f1', received:'#06b6d4', received_at_warehouse:'#06b6d4', completed:'#10b981', rejected:'#ef4444', cancelled:'#6b7280' };
-    const TABS = ['all','pending','approved','rejected','completed'];
     const pillStyle = c => ({ borderColor:c, color:c, background:`color-mix(in srgb, ${c} 14%, transparent)` });
 
-    const tabCounts = Object.fromEntries(TABS.map(t => [t, t==='all' ? requests.length : requests.filter(rq=>rq.status===t).length]));
+    // Stat cards double as the status filter — each one's predicate decides
+    // both its own count and (via tab) what rr-list shows when clicked.
+    // Covers the full RR_STATUS_ORDER pipeline (server.js), not just the 4
+    // statuses the old tab bar exposed — pickup/in-transit/received had no
+    // way to filter to them at all before this.
+    const FILTERS = [
+      { id:'all',              label:'All',                   icon:'📋', cls:'',        pred: () => true },
+      { id:'pending',          label:'New Requests',          icon:'🆕', cls:'attn',    pred: rq => rq.status==='pending' },
+      { id:'pickup_pending',   label:'Pickup Pending',        icon:'⌛', cls:'',        pred: rq => ['approved','pickup_scheduled','pickup'].includes(rq.status) },
+      { id:'pickup_overdue',   label:'Pickup Overdue',        icon:'⏰', cls:'',        urgentWhenNonzero:true, pred: rq => rrIsPickupOverdue(rq) },
+      { id:'in_transit',       label:'In Transit',            icon:'🚚', cls:'',        pred: rq => ['picked_up','in_transit'].includes(rq.status) },
+      { id:'received',        label:'Received at CC',        icon:'📦', cls:'',        pred: rq => ['received','received_at_warehouse'].includes(rq.status) },
+      { id:'ship_replacement', label:'Ship Replacement Now',  icon:'🔁', cls:'',        urgentWhenNonzero:true, pred: rq => rq.type==='exchange' && rq.status==='received' },
+      { id:'completed',        label:'Completed',             icon:'✅', cls:'ok',      pred: rq => rq.status==='completed' },
+      { id:'rejected',         label:'Rejected / Cancelled',  icon:'🚫', cls:'',        pred: rq => ['rejected','cancelled'].includes(rq.status) },
+    ];
+    const filterCounts = Object.fromEntries(FILTERS.map(f => [f.id, requests.filter(f.pred).length]));
+    const activeFilter = FILTERS.find(f => f.id === tab) || FILTERS[0];
 
     const filtered = requests
-      .filter(rq => tab==='all' || rq.status===tab)
+      .filter(activeFilter.pred)
       .filter(rq => typeFilter==='all' || rq.type===typeFilter)
       .filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
     const selected = selectedId ? (filtered.find(rq => rq.request_id === selectedId) || null) : null;
@@ -3885,28 +3905,24 @@
     useEffect(()=>{ if (selectedId) { const el=document.querySelector('.rr-console'); if (el&&el.scrollIntoView) el.scrollIntoView({block:'start'}); } }, [selectedId]);
     useEffect(()=>{ if (selected) setNoteVal(selected.vendor_note||''); }, [selected?.request_id]);
 
-    const stats = [
-      { n: requests.filter(rq=>rq.status==='pending').length, l: 'New Requests', cls:'attn' },
-      { n: requests.filter(rq=>rq.status==='approved').length, l: 'Awaiting Your Pickup', cls:'' },
-      { n: requests.filter(rq=>rq.type==='exchange' && rq.status==='received').length, l: 'Ship Replacement Now', cls: requests.some(rq=>rq.type==='exchange'&&rq.status==='received')?'urgent':'' },
-      { n: requests.filter(rq=>rq.status==='completed').length, l: 'Completed', cls:'ok' },
-    ];
-
     return (
       <div className="page rr-console">
         <div className="rr-stats">
-          {stats.map((s,i)=>(
-            <div key={i} className={`rr-stat ${s.cls}`}><div className="rr-stat-n">{s.n}</div><div className="rr-stat-l">{s.l}</div></div>
-          ))}
+          {FILTERS.map(f=>{
+            const cls = f.urgentWhenNonzero && filterCounts[f.id] > 0 ? 'urgent' : f.cls;
+            return (
+              <div key={f.id} role="button" tabIndex={0}
+                className={`rr-stat clickable ${cls} ${tab===f.id?'active':''}`}
+                onClick={()=>setTab(f.id)}
+                onKeyDown={e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); setTab(f.id); } }}>
+                <div className="rr-stat-n">{filterCounts[f.id]}</div>
+                <div className="rr-stat-l">{f.icon} {f.label}</div>
+              </div>
+            );
+          })}
         </div>
 
         <div className="rr-toolbar">
-          {TABS.map(t=>(
-            <button key={t} className={`rr-chip ${tab===t?'active':''}`} onClick={()=>setTab(t)}>
-              {t} <span className="rr-chip-count">{tabCounts[t]}</span>
-            </button>
-          ))}
-          <span className="rr-toolbar-sep"></span>
           {['all','return','exchange'].map(t=>(
             <button key={t} className={`rr-chip ${typeFilter===t?'active':''}`} onClick={()=>setTypeFilter(t)}>
               {t==='all' ? 'Return + Exchange' : (t==='exchange'?'⇄':'↩')+' '+t}
