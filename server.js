@@ -22122,6 +22122,17 @@ app.put("/vendor/return-requests/:id/awb", vendorAuth, async (req, res) => {
     { request_id: req.params.id },
     { $set: { [field]: { awb: awb.trim(), courier: courier||'', partner: 'manual', created_by: 'vendor', created_at: new Date().toISOString() }, updated_at: new Date().toISOString() } }
   );
+  // Register with ShipSagar for tracking — the admin version of this same
+  // endpoint (/admin/return-requests/:id/awb) already does this; this one
+  // never did, so a vendor-entered AWB got stored but never polled for
+  // courier scans, leaving the progress bar stuck at "Pickup Scheduled"
+  // forever (confirmed: admin-submitted AWBs tracked fine, vendor-submitted
+  // ones silently didn't — the only code difference between the two paths).
+  {
+    const soData = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null);
+    const so = soData?.order || {};
+    shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: so.name || rr.request_id, customerName: rr.customer_name || '', email: rr.customer_email || so.email || '', mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) }).catch(() => {});
+  }
   sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
   if (direction === 'reverse') {
     sendRRWANotif(rr, 'pickup_scheduled', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
