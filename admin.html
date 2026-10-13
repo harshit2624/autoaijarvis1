@@ -7199,6 +7199,7 @@
     const [gstTo,       setGstTo]       = useState('');
     const [gstLoading,  setGstLoading]  = useState(false);
     const [gstMsg,      setGstMsg]      = useState(null);
+    const [caLoading,   setCaLoading]   = useState(false);
     const [invVendorFilter, setInvVendorFilter] = useState('');
     const [invStatusFilter, setInvStatusFilter] = useState('');
     // ── Tab 3: GST Invoices ────────────────────────────────────────────────
@@ -7320,6 +7321,24 @@
         setGstMsg({ type:'success', text:'GST sheet downloaded!' });
       } catch(e) { setGstMsg({ type:'error', text: e.message }); }
       setGstLoading(false);
+    };
+
+    const exportGstCa = async () => {
+      if (!gstFrom || !gstTo) { setGstMsg({ type:'error', text:'Select both From and To dates.' }); return; }
+      setCaLoading(true); setGstMsg(null);
+      try {
+        const url = `${API}/admin/settlements/gst-export-ca?from=${gstFrom}&to=${gstTo}`;
+        const r = await fetch(url, { headers:{ Authorization:`Bearer ${token}` } });
+        if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `CROSCROW_GST_CA_${gstFrom}_to_${gstTo}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setGstMsg({ type:'success', text:'CA-format sheet downloaded!' });
+      } catch(e) { setGstMsg({ type:'error', text: e.message }); }
+      setCaLoading(false);
     };
 
     const t = summary?.totals || {};
@@ -7800,7 +7819,7 @@
               </div>
               <div style={{padding:16}}>
                 {gstMsg && <div className={`alert alert-${gstMsg.type}`}>{gstMsg.type==='success'?'✓':'⚠'} {gstMsg.text}</div>}
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'end'}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto auto',gap:12,alignItems:'end'}}>
                   <div>
                     <label className="form-label">Period From</label>
                     <input className="form-input" type="date" value={gstFrom} onChange={e=>setGstFrom(e.target.value)}/>
@@ -7813,9 +7832,14 @@
                     style={{background:'var(--green)',color:'#fff',border:'none'}}>
                     {gstLoading ? <><span className="spin">↻</span> Exporting…</> : '⬇ Download GST Sheet'}
                   </button>
+                  <button className="btn" onClick={exportGstCa} disabled={caLoading||!gstFrom||!gstTo}
+                    style={{background:'#333',color:'#fff',border:'none'}}>
+                    {caLoading ? <><span className="spin">↻</span> Exporting…</> : '⬇ Download CA Format'}
+                  </button>
                 </div>
                 <div style={{marginTop:10,fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
-                  Columns: Date · Invoice No · Vendor · GST No · Location · Total Sales · Vendor Discount · Commissionable Sales · Commission · Shipping · CROSCROW Discount · Subtotal · HSN · IGST/SGST/CGST · Total GST · Total with GST
+                  <b>GST Sheet</b> columns: Date · Invoice No · Vendor · GST No · City · State · Total Sales · Vendor Discount · Commissionable Sales · Commission · Shipping · Penalty · Subtotal · HSN · IGST/SGST/CGST · Total GST · Total with GST<br/>
+                  <b>CA Format</b> columns: Party Name · GST No · State · Bill No · Date · Qty · Rate · Taxable Value · IGST · CGST · SGST · Total · HSN Code
                 </div>
               </div>
             </div>

@@ -8174,131 +8174,135 @@ app.get("/admin/settlements", adminAuth, async (req, res) => {
 // Mirrors invoice generator exactly: OVS-based delivered filter, price overrides,
 // delivered-vendor-only advance split, confirmed penalties, in-memory product rules.
 const ExcelJS = require('exceljs');
+// Shared aggregation for both GST export formats (detailed sheet + CA-format
+// sheet) — one row per vendor, delivered-orders-only, OVS-stage-driven. Was
+// inlined twice almost verbatim; factored out so the two sheet formats can't
+// silently drift out of sync with each other.
+async function buildGstVendorMap(from, to) {
+  const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
+
+  // Load all supporting data in parallel (same as dashboard)
+  const [metas, vProfiles, vConfigs, allProductRules, allVendorStages, priceOverrideDocs, confirmedPenalties] = await Promise.all([
+    mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
+    mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
+    VC.all(),
+    mdb.collection('product_commission_rules').find({}, { projection: { _id: 0 } }).toArray(),
+    mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray(),
+    mdb.collection('order_price_overrides').find({}, { projection: { _id: 0 } }).toArray(),
+    mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
+  ]);
+
+  const metaMap       = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+  const vProfileMap   = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
+  const vConfigMap    = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
+
+  // In-memory product rules — same as dashboard (fix: was doing per-item DB query)
+  const productRulesMap = {};
+  for (const r of allProductRules) {
+    if (!productRulesMap[r.vendor_name]) productRulesMap[r.vendor_name] = { byProduct: {}, bySku: {} };
+    if (r.product_id) productRulesMap[r.vendor_name].byProduct[String(r.product_id)] = r;
+    if (r.sku)        productRulesMap[r.vendor_name].bySku[r.sku] = r;
+  }
+  const findRuleFast = (vendor, product_id, sku) => {
+    const vm = productRulesMap[vendor];
+    if (!vm) return null;
+    if (product_id && vm.byProduct[String(product_id)]) return vm.byProduct[String(product_id)];
+    if (sku && vm.bySku[sku]) return vm.bySku[sku];
+    return null;
+  };
+
+  // OVS stage map — same as invoice generator: { shopify_id: { vendor_name: stage } }
+  const ovsMap = {};
+  for (const r of allVendorStages) {
+    if (!ovsMap[r.shopify_id]) ovsMap[r.shopify_id] = {};
+    // keep highest stage if duplicate vendor name rows
+    const existing = ovsMap[r.shopify_id][r.vendor_name];
+    ovsMap[r.shopify_id][r.vendor_name] = existing ? higherStage(existing, r.stage) : r.stage;
+  }
+
+  // Price overrides map: { shopify_order_id: { line_item_id: price } }
+  const priceOverrideMap = {};
+  for (const ov of priceOverrideDocs) {
+    if (!priceOverrideMap[ov.shopify_order_id]) priceOverrideMap[ov.shopify_order_id] = {};
+    priceOverrideMap[ov.shopify_order_id][ov.line_item_id] = ov.overridden_price;
+  }
+
+  // Aggregate per-vendor — only delivered orders, using OVS stage (not order_meta.stage)
+  const vendorMap = {};
+  for (const o of allOrders) {
+    const sid = String(o.id);
+    const meta = metaMap[sid] || {};
+    const payType = meta.payment_type || 'cod';
+    const isCod = payType !== 'prepaid';
+    const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+    const orderOverrides = priceOverrideMap[sid] || {};
+    const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
+
+    // Track which vendors have delivered items in this order (for advance split)
+    const deliveredVendorsInOrder = new Set();
+    for (const li of (o.line_items || [])) {
+      const vendor = li.vendor;
+      if (!vendor) continue;
+      const vendorDbStage = ovsMap[sid]?.[vendor] || 'new';
+      const shopifyStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor] || null;
+      const effectiveStage = higherStage(vendorDbStage, shopifyStage || 'new');
+      if (effectiveStage === 'delivered') deliveredVendorsInOrder.add(vendor);
+    }
+
+    for (const li of (o.line_items || [])) {
+      const vendor = li.vendor;
+      if (!vendor) continue;
+      if (!deliveredVendorsInOrder.has(vendor)) continue;
+
+      if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, qty: 0, ordersAdded: new Set() };
+
+      const liPrice   = effectivePrice(li);
+      const liRev     = liPrice * (li.quantity || 1);
+      const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
+      const ppDisc  = vProfileMap[vendor]?.prepaid_discount_pct ?? 10;
+      const productRule = findRuleFast(vendor, li.product_id, li.sku);
+      const calc = productRule
+        ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
+        : calcCommission(liRev, payType, commPct, 0, ppDisc);
+
+      vendorMap[vendor].gross += liRev;
+      vendorMap[vendor].qty += (li.quantity || 1);
+      if (!isCod) vendorMap[vendor].prepaidDiscount += (liRev - calc.base);
+      vendorMap[vendor].commission += calc.commission;
+      vendorMap[vendor].gst += calc.gst;
+
+      // Advance + shipping: once per order per vendor, split among delivered vendors only
+      if (!vendorMap[vendor].ordersAdded.has(sid)) {
+        vendorMap[vendor].ordersAdded.add(sid);
+        const deliveredCount = deliveredVendorsInOrder.size || 1;
+        if (isCod && (meta.advance_paid || 0) > 0)
+          vendorMap[vendor].advance += parseFloat(((meta.advance_paid || 0) / deliveredCount).toFixed(2));
+        if (isCod && orderShipping > 0)
+          vendorMap[vendor].shipping += parseFloat((orderShipping / deliveredVendorsInOrder.size).toFixed(2));
+      }
+    }
+  }
+
+  // Attach confirmed penalties (in the period — filtered by penalty created_at)
+  const fromTs = new Date(`${from}T00:00:00Z`).getTime();
+  const toTs   = new Date(`${to}T23:59:59Z`).getTime();
+  for (const p of confirmedPenalties) {
+    if (!p.vendor_name) continue;
+    const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
+    if (pTs < fromTs || pTs > toTs) continue;
+    if (!vendorMap[p.vendor_name]) vendorMap[p.vendor_name] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, qty: 0, ordersAdded: new Set() };
+    vendorMap[p.vendor_name].penalty += (p.penalty_amount || 0);
+  }
+
+  return { vendorMap, vProfileMap };
+}
+
 app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
 
   try {
-    const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
-
-    // Load all supporting data in parallel (same as dashboard)
-    const [metas, vProfiles, vConfigs, allProductRules, allVendorStages, priceOverrideDocs, confirmedPenalties] = await Promise.all([
-      mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
-      mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
-      VC.all(),
-      mdb.collection('product_commission_rules').find({}, { projection: { _id: 0 } }).toArray(),
-      mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, vendor_name: 1, stage: 1, _id: 0 } }).toArray(),
-      mdb.collection('order_price_overrides').find({}, { projection: { _id: 0 } }).toArray(),
-      mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
-    ]);
-
-    const metaMap       = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
-    const vProfileMap   = Object.fromEntries(vProfiles.map(v => [v.vendor_name, v]));
-    const vConfigMap    = Object.fromEntries(vConfigs.map(v => [v.vendor_name, v]));
-
-    // In-memory product rules — same as dashboard (fix: was doing per-item DB query)
-    const productRulesMap = {};
-    for (const r of allProductRules) {
-      if (!productRulesMap[r.vendor_name]) productRulesMap[r.vendor_name] = { byProduct: {}, bySku: {} };
-      if (r.product_id) productRulesMap[r.vendor_name].byProduct[String(r.product_id)] = r;
-      if (r.sku)        productRulesMap[r.vendor_name].bySku[r.sku] = r;
-    }
-    const findRuleFast = (vendor, product_id, sku) => {
-      const vm = productRulesMap[vendor];
-      if (!vm) return null;
-      if (product_id && vm.byProduct[String(product_id)]) return vm.byProduct[String(product_id)];
-      if (sku && vm.bySku[sku]) return vm.bySku[sku];
-      return null;
-    };
-
-    // OVS stage map — same as invoice generator: { shopify_id: { vendor_name: stage } }
-    const ovsMap = {};
-    for (const r of allVendorStages) {
-      if (!ovsMap[r.shopify_id]) ovsMap[r.shopify_id] = {};
-      // keep highest stage if duplicate vendor name rows
-      const existing = ovsMap[r.shopify_id][r.vendor_name];
-      ovsMap[r.shopify_id][r.vendor_name] = existing ? higherStage(existing, r.stage) : r.stage;
-    }
-
-    // Price overrides map: { shopify_order_id: { line_item_id: price } }
-    const priceOverrideMap = {};
-    for (const ov of priceOverrideDocs) {
-      if (!priceOverrideMap[ov.shopify_order_id]) priceOverrideMap[ov.shopify_order_id] = {};
-      priceOverrideMap[ov.shopify_order_id][ov.line_item_id] = ov.overridden_price;
-    }
-
-    // Confirmed penalties per vendor (same as invoice net payable)
-    const penaltyByVendor = {};
-    for (const p of confirmedPenalties) {
-      if (!p.vendor_name) continue;
-      penaltyByVendor[p.vendor_name] = (penaltyByVendor[p.vendor_name] || 0) + (p.penalty_amount || 0);
-    }
-
-    // Aggregate per-vendor — only delivered orders, using OVS stage (not order_meta.stage)
-    const vendorMap = {};
-    for (const o of allOrders) {
-      const sid = String(o.id);
-      const meta = metaMap[sid] || {};
-      const payType = meta.payment_type || 'cod';
-      const isCod = payType !== 'prepaid';
-      const orderShipping = (o.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
-      const orderOverrides = priceOverrideMap[sid] || {};
-      const effectivePrice = li => orderOverrides[String(li.id)] !== undefined ? orderOverrides[String(li.id)] : undiscountedPrice(li);
-
-      // Track which vendors have delivered items in this order (for advance split)
-      const deliveredVendorsInOrder = new Set();
-      for (const li of (o.line_items || [])) {
-        const vendor = li.vendor;
-        if (!vendor) continue;
-        const vendorDbStage = ovsMap[sid]?.[vendor] || 'new';
-        const shopifyStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor] || null;
-        const effectiveStage = higherStage(vendorDbStage, shopifyStage || 'new');
-        if (effectiveStage === 'delivered') deliveredVendorsInOrder.add(vendor);
-      }
-
-      for (const li of (o.line_items || [])) {
-        const vendor = li.vendor;
-        if (!vendor) continue;
-        if (!deliveredVendorsInOrder.has(vendor)) continue;
-
-        if (!vendorMap[vendor]) vendorMap[vendor] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
-
-        const liPrice   = effectivePrice(li);
-        const liRev     = liPrice * (li.quantity || 1);
-        const commPct = vProfileMap[vendor]?.commission_pct ?? vConfigMap[vendor]?.commission_pct ?? 20;
-        const ppDisc  = vProfileMap[vendor]?.prepaid_discount_pct ?? 10;
-        const productRule = findRuleFast(vendor, li.product_id, li.sku);
-        const calc = productRule
-          ? calcProductCommission(productRule, liPrice, li.quantity || 1, payType)
-          : calcCommission(liRev, payType, commPct, 0, ppDisc);
-
-        vendorMap[vendor].gross += liRev;
-        if (!isCod) vendorMap[vendor].prepaidDiscount += (liRev - calc.base);
-        vendorMap[vendor].commission += calc.commission;
-        vendorMap[vendor].gst += calc.gst;
-
-        // Advance + shipping: once per order per vendor, split among delivered vendors only
-        if (!vendorMap[vendor].ordersAdded.has(sid)) {
-          vendorMap[vendor].ordersAdded.add(sid);
-          const deliveredCount = deliveredVendorsInOrder.size || 1;
-          if (isCod && (meta.advance_paid || 0) > 0)
-            vendorMap[vendor].advance += parseFloat(((meta.advance_paid || 0) / deliveredCount).toFixed(2));
-          if (isCod && orderShipping > 0)
-            vendorMap[vendor].shipping += parseFloat((orderShipping / deliveredVendorsInOrder.size).toFixed(2));
-        }
-      }
-    }
-
-    // Attach confirmed penalties (in the period — filtered by penalty created_at)
-    const fromTs = new Date(`${from}T00:00:00Z`).getTime();
-    const toTs   = new Date(`${to}T23:59:59Z`).getTime();
-    for (const p of confirmedPenalties) {
-      if (!p.vendor_name) continue;
-      const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
-      if (pTs < fromTs || pTs > toTs) continue;
-      if (!vendorMap[p.vendor_name]) vendorMap[p.vendor_name] = { gross: 0, prepaidDiscount: 0, commission: 0, gst: 0, advance: 0, shipping: 0, penalty: 0, ordersAdded: new Set() };
-      vendorMap[p.vendor_name].penalty += (p.penalty_amount || 0);
-    }
+    const { vendorMap, vProfileMap } = await buildGstVendorMap(from, to);
 
     const periodLabel = `${from.split('-').reverse().join('/')}-${to.split('-').reverse().join('/')}`;
 
@@ -8464,6 +8468,121 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     res.send(buf);
   } catch (err) {
     console.error("❌ /admin/settlements/gst-export:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Same underlying numbers as /gst-export, reshaped into the simple columns
+// the user's CA actually wants: PARTY NAME / GST NO / STATE / BILL NO / DATE /
+// QTY / RATE / TAXABLE VALUE / IGST / CGST / SGST / TOTAL / HSN CODE — one
+// row per vendor's commission bill for the period (a service charge, so
+// QTY is always 1 and RATE equals the taxable value, same convention used
+// on the printed invoice PDF).
+app.get("/admin/settlements/gst-export-ca", adminAuth, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required." });
+
+  try {
+    const { vendorMap, vProfileMap } = await buildGstVendorMap(from, to);
+
+    // Need invoice number + the date it was raised (not in buildGstVendorMap —
+    // that's shared with the detailed sheet, which doesn't need a bill date).
+    const savedInvoices = await mdb.collection('gst_invoices')
+      .find({ period_from: from, period_to: to }, { projection: { vendor_name: 1, invoice_no: 1, created_at: 1, _id: 0 } })
+      .toArray();
+    const invoiceMap = Object.fromEntries(savedInvoices.map(i => [i.vendor_name, i]));
+    const fallbackDate = to.split('-').reverse().join('/'); // DD/MM/YYYY, period end — used only if no invoice has been generated yet
+
+    const invoiceSeq = vendorName => {
+      const n = invoiceMap[vendorName]?.invoice_no;
+      const m = n && String(n).match(/(\d+)\s*$/);
+      return m ? parseInt(m[1], 10) : Infinity;
+    };
+    const dataRows = Object.entries(vendorMap).sort((a, b) => {
+      const diff = invoiceSeq(a[0]) - invoiceSeq(b[0]);
+      return diff !== 0 ? diff : a[0].localeCompare(b[0]);
+    }).map(([vendorName, d]) => {
+      const prof = vProfileMap[vendorName] || {};
+      const gstNo = prof.gst_no || 'NA';
+      const state = prof.state || 'NA';
+      const inv = invoiceMap[vendorName];
+      const billNo = inv?.invoice_no || '';
+      const date = inv?.created_at ? new Date(inv.created_at).toLocaleDateString('en-GB') : fallbackDate;
+
+      const totalSales    = d.gross;
+      const commission    = d.commission;
+      const penalty       = d.penalty || 0;
+      const shippingTotal = d.shipping;
+      const shippingBase  = shippingTotal * 100 / 118;
+      const shippingGst   = shippingTotal * 18 / 118;
+      const taxableValue  = parseFloat((commission + shippingBase + penalty).toFixed(2));
+      const totalGst      = parseFloat((d.gst + shippingGst).toFixed(2));
+      const vendorStateCode = gstNo !== 'NA' ? gstNo.slice(0, 2) : null;
+      const isIGST = !vendorStateCode || vendorStateCode !== '08';
+      const igst = isIGST ? totalGst : 0;
+      const sgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
+      const cgst = isIGST ? 0 : parseFloat((totalGst / 2).toFixed(2));
+      const total = parseFloat((taxableValue + totalGst).toFixed(2));
+
+      return [
+        vendorName, gstNo, state, billNo, date,
+        1, taxableValue, taxableValue,
+        igst, cgst, sgst, total, '998599',
+      ];
+    });
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'CROSCROW';
+    const ws = wb.addWorksheet('GST Report', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+    const headers = ['PARTY NAME', 'GST NO', 'STATE', 'BILL NO', 'DATE', 'QTY', 'RATE', 'TAXABLE VALUE', 'IGST', 'CGST', 'SGST', 'TOTAL', 'HSN CODE'];
+    ws.columns = headers.map((h, i) => ({
+      header: h,
+      key: `c${i + 1}`,
+      width: [22, 20, 16, 14, 12, 8, 14, 16, 12, 12, 12, 14, 10][i],
+    }));
+
+    const headerRow = ws.getRow(1);
+    headerRow.height = 24;
+    headers.forEach((_, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF616161' } };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    });
+
+    dataRows.forEach(row => {
+      const wsRow = ws.addRow(row);
+      row.forEach((_, i) => {
+        const cell = wsRow.getCell(i + 1);
+        cell.alignment = { vertical: 'middle', horizontal: i < 5 ? 'left' : 'right' };
+        if (i >= 5 && i !== 12) cell.numFmt = i === 5 ? '0' : '#,##0.00'; // QTY plain, rest 2dp (not HSN)
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FFE0E0E0' } } };
+      });
+    });
+
+    const tTaxable = parseFloat(dataRows.reduce((s, r) => s + r[7], 0).toFixed(2));
+    const tIgst    = parseFloat(dataRows.reduce((s, r) => s + r[8], 0).toFixed(2));
+    const tCgst    = parseFloat(dataRows.reduce((s, r) => s + r[9], 0).toFixed(2));
+    const tSgst    = parseFloat(dataRows.reduce((s, r) => s + r[10], 0).toFixed(2));
+    const tTotal   = parseFloat(dataRows.reduce((s, r) => s + r[11], 0).toFixed(2));
+    const totalsRow = ws.addRow(['TOTAL', '', '', '', '', '', '', tTaxable, tIgst, tCgst, tSgst, tTotal, '']);
+    totalsRow.height = 20;
+    totalsRow.eachCell((cell, colNum) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+      cell.font = { bold: true, size: 10 };
+      cell.alignment = { vertical: 'middle', horizontal: colNum <= 5 ? 'left' : 'right' };
+      if (colNum >= 8 && colNum !== 13) cell.numFmt = '#,##0.00';
+      cell.border = { top: { style: 'medium', color: { argb: 'FF388E3C' } } };
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const filename = `CROSCROW_GST_CA_${from}_to_${to}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buf);
+  } catch (err) {
+    console.error("❌ /admin/settlements/gst-export-ca:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
