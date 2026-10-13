@@ -8328,7 +8328,8 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     }).map(([vendorName, d]) => {
       const prof = vProfileMap[vendorName] || {};
       const gstNo = prof.gst_no || 'NA';
-      const location = [prof.city, prof.state].filter(Boolean).join('/') || 'NA';
+      const city = prof.city || 'NA';
+      const state = prof.state || 'NA';
       const invoiceNo = invoiceNoMap[vendorName] || '';
 
       const totalSales     = parseFloat(d.gross.toFixed(2));
@@ -8349,7 +8350,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
       const totalWithGst = parseFloat((subtotal + totalGst).toFixed(2));
 
       return [
-        periodLabel, invoiceNo, vendorName, gstNo, location,
+        periodLabel, invoiceNo, vendorName, gstNo, city, state,
         totalSales, vendorDiscount, commissionable,
         commission, shippingBase, penalty,
         subtotal, '998599',
@@ -8379,8 +8380,8 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
 
     // Column definitions
     // Highlighted (yellow bg) = GST-filing critical columns
-    // Col indices (1-based): 2=Invoice No, 3=Vendor, 4=GST No, 5=State, 8=Commissionable, 9=Commission, 14=IGST, 15=SGST, 16=CGST, 17=Total GST, 18=Total with GST
-    const HIGHLIGHT_COLS = new Set([2, 3, 4, 5, 8, 9, 14, 15, 16, 17, 18]);
+    // Col indices (1-based): 2=Invoice No, 3=Vendor, 4=GST No, 6=State, 9=Commissionable, 10=Commission, 15=IGST, 16=SGST, 17=CGST, 18=Total GST, 19=Total with GST
+    const HIGHLIGHT_COLS = new Set([2, 3, 4, 6, 9, 10, 15, 16, 17, 18, 19]);
     const YELLOW_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9C4' } };
     const PLAIN_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
     const HEADER_FILL_HL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9A825' } }; // amber for highlighted header
@@ -8389,7 +8390,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
 
     const headers = [
       'DATE','COMMISSION INVOICE NO','VENDOR','VENDOR GST NO',
-      'STATE','TOTAL SALES','VENDOR DISCOUNT',
+      'CITY','STATE','TOTAL SALES','VENDOR DISCOUNT',
       'COMMISSIONABLE SALES','COMMISSION','SHIPPING (EXCL GST)',
       'PENALTY','SUBTOTAL','HSN CODE','IGST (18%)','SGST (9%)','CGST (9%)',
       'TOTAL GST','TOTAL BILLED',
@@ -8398,7 +8399,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     ws.columns = headers.map((h, i) => ({
       header: h,
       key: `c${i+1}`,
-      width: [12, 18, 22, 20, 14, 14, 14, 18, 14, 16, 10, 12, 10, 12, 12, 12, 12, 14][i],
+      width: [12, 18, 22, 20, 14, 14, 14, 14, 18, 14, 16, 10, 12, 10, 12, 12, 12, 12, 14][i],
     }));
 
     // Style header row
@@ -8420,8 +8421,8 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
         const cell = wsRow.getCell(i + 1);
         cell.fill = HIGHLIGHT_COLS.has(i + 1) ? YELLOW_FILL : PLAIN_FILL;
         cell.font = { size: 9, bold: HIGHLIGHT_COLS.has(i + 1) };
-        cell.alignment = { vertical: 'middle', horizontal: i < 5 ? 'left' : 'right' };
-        if (i >= 5 && i !== 12) { // numeric cols (not HSN)
+        cell.alignment = { vertical: 'middle', horizontal: i < 6 ? 'left' : 'right' };
+        if (i >= 6 && i !== 13) { // numeric cols (not HSN)
           cell.numFmt = '#,##0.00';
         }
         cell.border = {
@@ -8433,7 +8434,7 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
 
     // Totals row
     const totalsRow = ws.addRow([
-      'TOTAL', '', '', '', '',
+      'TOTAL', '', '', '', '', '',
       tSales, tDisc, tCommable,
       tComm, tShipBase, tPenalty,
       tSubtotal, '',
@@ -8444,17 +8445,17 @@ app.get("/admin/settlements/gst-export", adminAuth, async (req, res) => {
     totalsRow.eachCell((cell, colNum) => {
       cell.fill = TOTAL_FILL;
       cell.font = { bold: true, size: 9 };
-      cell.alignment = { vertical: 'middle', horizontal: colNum <= 5 ? 'left' : 'right' };
-      if (colNum >= 6 && colNum !== 13) cell.numFmt = '#,##0.00';
+      cell.alignment = { vertical: 'middle', horizontal: colNum <= 6 ? 'left' : 'right' };
+      if (colNum >= 7 && colNum !== 14) cell.numFmt = '#,##0.00';
       cell.border = { top: { style: 'medium', color: { argb: 'FF388E3C' } } };
     });
 
     // Legend row (2 rows below totals)
     const legendRow = ws.addRow([]);
-    ws.addRow(['★ Highlighted columns (amber/yellow) are required for GST filing.', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+    ws.addRow(['★ Highlighted columns (amber/yellow) are required for GST filing.', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
     const legCell = ws.getCell(`A${legendRow.number + 1}`);
     legCell.font = { italic: true, size: 8, color: { argb: 'FF6D4C41' } };
-    ws.mergeCells(`A${legendRow.number + 1}:R${legendRow.number + 1}`);
+    ws.mergeCells(`A${legendRow.number + 1}:S${legendRow.number + 1}`);
 
     const buf = await wb.xlsx.writeBuffer();
     const filename = `CROSCROW_GST_${from}_to_${to}.xlsx`;
