@@ -5643,7 +5643,9 @@
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
-        setMsg({ type: 'success', text: `AWB saved${d.ok?' & pushed to ShipSagar for tracking':''}.` });
+        setMsg(d.pushed
+          ? { type: 'success', text: 'AWB saved & pushed to ShipSagar for tracking.' }
+          : { type: 'error', text: `AWB saved, but ShipSagar registration failed (${d.pushError || 'unknown error'}) — tracking won't update until this is retried from Admin → Shipping → Retry Failed Pushes.` });
         setManualAwb(''); setManualCourier('');
         onUpdated && onUpdated();
       } catch(e) { setMsg({ type: 'error', text: e.message }); }

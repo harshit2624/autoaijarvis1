@@ -21059,10 +21059,25 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
     );
     // Push to ShipSagar for tracking + send customer email
     const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { _id: 0 } });
+    let pushResult = { ok: false, reason: 'return request not found' };
     if (rr) {
       const soData = await shopifyREST(`/orders/${rr.shopify_order_id}.json?fields=name,email,shipping_address`).catch(() => null);
       const so = soData?.order || {};
-      shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: so.name || rr.request_id, customerName: rr.customer_name || '', email: rr.customer_email || so.email || '', mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) }).catch(() => {});
+      // AWAITED on purpose — was fire-and-forget (.catch(()=>{}), never
+      // checked), so this endpoint always told the admin "pushed to
+      // ShipSagar for tracking" (admin.html's saveManualAwb already branches
+      // on a `d.ok` it expected this response to carry) regardless of
+      // whether the push actually succeeded. A transient failure (seen live:
+      // ECONNRESET on AWB 35692518383686, order #3522 — see
+      // shipsagar_push_failures) meant ShipSagar never had the AWB on file
+      // at all, so the tracking cron had nothing to poll and the progress
+      // bar sat frozen — with the admin having been told it worked.
+      const r = await shipsagarPushShipment({ awb: awb.trim(), courierCode: courier || '', orderNo: so.name || rr.request_id, customerName: rr.customer_name || '', email: rr.customer_email || so.email || '', mobileNo: (rr.customer_phone || so.shipping_address?.phone || '').replace(/\D/g,'').slice(-10) }).catch(e => ({ ok: false, reason: e.message }));
+      // "Tracking No Already Exist" means ShipSagar already has this AWB
+      // registered (e.g. pushed once before) — that's not a real failure,
+      // tracking still works off the existing registration.
+      const alreadyRegistered = /already exist/i.test(r?.response?.message || r?.reason || '');
+      pushResult = { ok: r.ok || alreadyRegistered, reason: r.ok ? null : (r.response?.message || r.reason || 'Unknown error') };
       sendRRShipmentEmail(rr, direction, awb.trim(), courier || '');
       if (direction === 'reverse') {
         sendRRWANotif(rr, 'pickup_scheduled', { awb: awb.trim(), courier: courier || '' }).catch(() => {});
@@ -21073,7 +21088,7 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
         await rrPushHistory(rr.request_id, { event: 'forward_awb_set', note: `AWB ${awb.trim()} (${courier || 'manual'}) assigned for exchange dispatch`, source: 'admin' });
       }
     }
-    res.json({ ok: true });
+    res.json({ ok: true, pushed: pushResult.ok, pushError: pushResult.reason });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
