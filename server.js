@@ -13194,6 +13194,31 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Auto-approve any pending product_upload_requests this admin action
+// fulfills. A vendor's "upload" request (asking a new product be imported)
+// is keyed by their OWN product_id; a "mapping" request (asking to be
+// linked to an existing CC product) is keyed by cc_product_id instead —
+// matches either shape, so the request clears regardless of which admin UI
+// path fulfilled it (the pending-requests queue's own buttons, or
+// Import/Map used directly from the vendor's product list — "below vendor
+// section"). Previously this only ever happened when the frontend
+// specifically threaded an upload_request_id through, which several entry
+// points never did, so e.g. Import performed from the vendor's product
+// list left its matching request stuck on pending forever even though the
+// product was already live.
+async function autoApproveProductRequests({ vendor_name, vendor_product_id, croscrow_product_id, action }) {
+  try {
+    const or = [];
+    if (vendor_product_id) or.push({ product_id: String(vendor_product_id), request_type: { $nin: ['mapping', 'removal'] } });
+    if (croscrow_product_id) or.push({ cc_product_id: String(croscrow_product_id), request_type: 'mapping' });
+    if (!or.length) return;
+    await mdb.collection('product_upload_requests').updateMany(
+      { vendor_name, status: 'pending', $or: or },
+      { $set: { status: 'approved', action, updated_at: new Date().toISOString() } }
+    );
+  } catch (e) { console.error('autoApproveProductRequests error:', e.message); }
+}
+
 // ── Admin: import vendor product as NEW product on CROSCROW store ──────────
 app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id, sync_inventory = true } = req.body || {};
@@ -13290,6 +13315,7 @@ app.post("/admin/vendor-sync/import", adminAuth, async (req, res) => {
     }
 
     auditLog("admin", "vendor_product_imported", String(newProduct.id), { vendor_name, vendor_product_id, croscrow_product_id: newProduct.id });
+    autoApproveProductRequests({ vendor_name, vendor_product_id, action: 'imported' }).catch(() => {});
     sendProductRequestEmail({ type:'imported', vendorName:vendor_name, productTitle:newProduct.title, productImage:newProduct.images?.[0]?.src||vProduct.images?.[0]?.src||'', extraRows:[['CC Product ID', String(newProduct.id)],['Variants', vProduct.variants.length]] }).catch(()=>{});
     res.json({ success: true, croscrow_product_id: newProduct.id, croscrow_product_title: newProduct.title, status: 'active', variants_mapped: vProduct.variants.length });
   } catch (e) {
@@ -13574,6 +13600,10 @@ app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
       );
     } catch {}
   }
+  // Also resolve by vendor+product match regardless of whether an explicit
+  // upload_request_id was passed — covers mapping done directly from the
+  // vendor's product list, which never threaded that id through.
+  autoApproveProductRequests({ vendor_name, vendor_product_id, croscrow_product_id, action: 'smart_mapped' }).catch(() => {});
 
   // Immediately sync price, stock, and image for the just-mapped variants
   // so admin doesn't need to hit "Sync Stock" manually after mapping.
