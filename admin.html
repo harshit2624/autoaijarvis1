@@ -1518,7 +1518,7 @@
     const [vendorTracking, setVendorTracking] = useState(order.vendorTracking || {});
     const [fulfillVS,   setFulfillVS]  = useState({}); // { vendor: { awb, courier, tracking_url } }
     const [fulfillingV, setFulfillingV]= useState({});
-    const [payType,    setPayType]    = useState(order.paymentType || 'cod');
+    const [payType,    setPayType]    = useState(order.paymentType === 'partial' ? 'advance' : (order.paymentType || 'cod'));
     const [advance,    setAdvance]    = useState(String(order.advancePaid || ''));
     const [notes,      setNotes]      = useState(order.notes || '');
     const [noteThread, setNoteThread] = useState([]);
@@ -2252,7 +2252,7 @@
                   <select className="form-select" value={payType} onChange={e=>setPayType(e.target.value)}>
                     <option value="cod">COD (Cash on Delivery)</option>
                     <option value="prepaid">Prepaid</option>
-                    <option value="partial">Partial (Advance)</option>
+                    <option value="advance">Partial (Advance)</option>
                   </select>
                 </div>
                 <div>
