@@ -3629,6 +3629,7 @@
     // campaigns via UTM attribution captured on order_meta at snapshot time.
     const [campPerf, setCampPerf] = useState(null);
     const [campOrganic, setCampOrganic] = useState(null);
+    const [campTotalStore, setCampTotalStore] = useState(null);
     const [campLoading, setCampLoading] = useState(true);
     const [metaOv, setMetaOv] = useState(null);
     const [metaOvErr, setMetaOvErr] = useState('');
@@ -3642,7 +3643,7 @@
       let tierMapQS = '';
       try { const s = localStorage.getItem('croscrow_audience_tag_map'); if (s) tierMapQS = `&tierMap=${encodeURIComponent(s)}`; } catch(e) {}
       fetch(`${API}/admin/meta-ads/campaign-performance?from=${from}&to=${to}${tierMapQS}`,{headers:{Authorization:`Bearer ${token}`}})
-        .then(r=>r.json()).then(d=>{ setCampPerf(d.campaigns||[]); setCampOrganic(d.organic||null); }).catch(()=>{setCampPerf([]);setCampOrganic(null);}).finally(()=>setCampLoading(false));
+        .then(r=>r.json()).then(d=>{ setCampPerf(d.campaigns||[]); setCampOrganic(d.organic||null); setCampTotalStore(d.totalStore||null); }).catch(()=>{setCampPerf([]);setCampOrganic(null);setCampTotalStore(null);}).finally(()=>setCampLoading(false));
       setMetaOvErr('');
       fetch(`${API}/admin/meta-ads/insights?since=${from}&until=${to}`,{headers:{Authorization:`Bearer ${token}`}})
         .then(r=>r.json()).then(d=>{ if(d.error) setMetaOvErr(d.error); else setMetaOv(d.overview||null); }).catch(e=>setMetaOvErr(e.message));
@@ -4641,15 +4642,27 @@
             for the campaign cards below (campPerf + campOrganic). ── */}
         {(() => {
           const o = metaOv;
+          // Real ROAS needs the TRUE period total — every order the store
+          // actually received, not just the ones Meta's own UTM attribution
+          // could match back to a live campaign. Summing campPerf+campOrganic
+          // undercounts (any order whose ad_campaign tag pointed to a
+          // campaign Meta's /insights call didn't return that day silently
+          // fell through both buckets), so use the backend's totalStore
+          // figure — computed straight from every order in the period —
+          // instead. Falls back to the old sum only if an older server
+          // response hasn't sent totalStore yet.
           const allSummaries = [...(campPerf||[]), ...(campOrganic ? [campOrganic] : [])];
-          const storeGross = allSummaries.reduce((s,c)=>s+(c.sales||0),0);
-          const storeNet    = allSummaries.reduce((s,c)=>s+(c.netSales||0),0);
-          const storeOrders = allSummaries.reduce((s,c)=>s+(c.orderCount||0),0);
-          const storeDelivered = allSummaries.reduce((s,c)=>s+(c.delivered||0),0);
-          const storeDeliveredRev = allSummaries.reduce((s,c)=>{
-            const share = c.orderCount ? (c.delivered||0)/c.orderCount : 0;
-            return s + (c.sales||0)*share;
-          },0);
+          const ts = campTotalStore;
+          const storeGross = ts ? ts.sales      : allSummaries.reduce((s,c)=>s+(c.sales||0),0);
+          const storeNet    = ts ? ts.netSales   : allSummaries.reduce((s,c)=>s+(c.netSales||0),0);
+          const storeOrders = ts ? ts.orderCount : allSummaries.reduce((s,c)=>s+(c.orderCount||0),0);
+          const storeDelivered = ts ? ts.delivered : allSummaries.reduce((s,c)=>s+(c.delivered||0),0);
+          const storeDeliveredRev = ts
+            ? (ts.orderCount ? ts.sales * (ts.delivered/ts.orderCount) : 0)
+            : allSummaries.reduce((s,c)=>{
+                const share = c.orderCount ? (c.delivered||0)/c.orderCount : 0;
+                return s + (c.sales||0)*share;
+              },0);
           const spend = o?.spend||0;
           const metaRoas = o?.roas || (spend ? (o?.revenue||0)/spend : 0);
           const grossRoas = spend ? storeGross/spend : 0;
@@ -4660,7 +4673,7 @@
           const erodePct = grossRoas ? (1-netRoas/grossRoas)*100 : 0;
           const ladder = [
             { l:'Meta says', v:metaRoas, sub:`${fmtCur(o?.revenue||0)} attributed from ${(o?.purchases||0).toLocaleString()} purchases`, c:'#60a5fa' },
-            { l:'Store gross', v:grossRoas, sub:`${fmtCur(storeGross)} from ${storeOrders.toLocaleString()} matched orders`, c:'#a78bfa' },
+            { l:'Store gross', v:grossRoas, sub:`${fmtCur(storeGross)} from ${storeOrders.toLocaleString()} total orders`, c:'#a78bfa' },
             { l:'After RTO + cancel', v:netRoas, sub:`${fmtCur(storeNet)} net kept`, c:'#f59e0b' },
             { l:'Delivered so far', v:delRoas, sub:`${fmtCur(storeDeliveredRev)} in hand · ${storeDelivered.toLocaleString()} delivered`, c:'#10b981' },
           ];
@@ -4698,7 +4711,7 @@
                     </div>
                   ))}
                   <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)',lineHeight:1.5}}>
-                    Meta attributes <b style={{color:'var(--text)'}}>{claimPct.toFixed(0)}%</b> of matched store revenue. RTO + cancellations trim gross ROAS by <b style={{color:'var(--text)'}}>{Math.max(0,erodePct).toFixed(0)}%</b>.
+                    Meta attributes <b style={{color:'var(--text)'}}>{claimPct.toFixed(0)}%</b> of total store revenue. RTO + cancellations trim gross ROAS by <b style={{color:'var(--text)'}}>{Math.max(0,erodePct).toFixed(0)}%</b>.
                   </div>
                 </div>
                 <div className="card" style={{padding:'14px 16px'}}>
@@ -4717,7 +4730,7 @@
                       <span style={{color:'var(--text-muted)'}}>{l}</span><b>{m}</b><b>{st}</b>
                     </div>
                   ))}
-                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>The gap is orders Meta didn't credit — organic, direct, WhatsApp, influencer, or UTM tracking loss.</div>
+                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>Store = every order placed this period. The gap below Meta's own count is orders it didn't credit — organic, direct, WhatsApp, influencer, or UTM tracking loss.</div>
                 </div>
                 <div className="card" style={{padding:'14px 16px'}}>
                   <div className="card-title" style={{marginBottom:10}}>Funnel &amp; efficiency</div>

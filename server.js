@@ -774,6 +774,31 @@ function istDayStart(dateStr) {
 function istDayEnd(dateStr) {
   return new Date(`${dateStr || istTodayStr()}T23:59:59.999+05:30`);
 }
+// order_meta.shopify_created_at is stored as a STRING with the +05:30
+// offset baked in (e.g. "2026-10-15T22:38:46+05:30"), not a BSON Date. A
+// Mongo $gte/$lte range filter on a string field is a plain lexicographic
+// compare — it only sorts correctly if every string being compared uses
+// the exact same timezone-suffix format. Bounding with `date.toISOString()`
+// (which always ends in "Z", i.e. UTC) against "+05:30" stored strings
+// silently drops orders: the hour digits no longer line up with real
+// chronological order (a 22:38 IST order can sort "after" a 18:30 UTC
+// upper bound even though it's hours earlier), so a chunk of each day's
+// late-evening orders vanish from any query using this pattern. Build the
+// bound strings in the SAME +05:30 format the data is actually stored in
+// instead of going through Date/toISOString.
+function istRangeStrs(fromStr, toStr) {
+  return {
+    gte: `${fromStr || istTodayStr()}T00:00:00+05:30`,
+    lte: `${toStr   || istTodayStr()}T23:59:59+05:30`,
+  };
+}
+// Same string-format problem as above, but for a rolling "N days back from
+// this exact instant" bound rather than a calendar-day one — converts any
+// absolute instant into the +05:30-suffixed string form the data is stored
+// in, so it still sorts correctly against it.
+function istOffsetStr(date) {
+  return new Date(date.getTime() + 5.5 * 3600000).toISOString().replace(/\.\d{3}Z$/, '+05:30');
+}
 
 // Call after DB connects (called in initDB)
 function canonicalVendor(name) {
@@ -6805,9 +6830,10 @@ app.get("/admin/vendor-stats", adminAuth, async (req, res) => {
     const { from, to, tierMap: tierMapRaw } = req.query;
     const periodFrom = from ? istDayStart(from) : new Date(Date.now() - 29 * 86400000);
     const periodTo   = to   ? istDayEnd(to)     : new Date();
+    const rangeStrs = istRangeStrs(from || periodFrom.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}), to || periodTo.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}));
 
     const metaDocs = await mdb.collection('order_meta').find(
-      { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() } },
+      { shopify_created_at: { $gte: rangeStrs.gte, $lte: rangeStrs.lte } },
       { projection: { _id: 0 } }
     ).toArray();
     const raw = metaDocs.map(orderStubFromMeta);
@@ -9229,12 +9255,15 @@ app.get("/admin/audience-tag-counts", requirePermission('orders'), async (req, r
   try {
     const { from, to } = req.query;
     const q = {};
-    // shopify_created_at is stored as an ISO string (from the Shopify webhook payload
-    // verbatim), so range-match it as a string rather than casting to Date.
+    // shopify_created_at is stored as a string with the +05:30 offset baked
+    // in, so this has to range-match in that SAME format — bounding with
+    // .toISOString() (UTC "Z") breaks the lexicographic string compare and
+    // silently drops a chunk of each day's late-evening (IST) orders.
     if (from || to) {
+      const rangeStrs = istRangeStrs(from, to);
       q.shopify_created_at = {};
-      if (from) q.shopify_created_at.$gte = new Date(from).toISOString();
-      if (to)   q.shopify_created_at.$lte = new Date(to + 'T23:59:59Z').toISOString();
+      if (from) q.shopify_created_at.$gte = rangeStrs.gte;
+      if (to)   q.shopify_created_at.$lte = rangeStrs.lte;
     }
     // Tags live on order_meta (populated from the Shopify order webhook payload),
     // not order_vendor_stage (which never stores a tags field).
@@ -18729,7 +18758,7 @@ app.get('/admin/reports/product-analytics', adminAuth, async (req, res) => {
   try {
     const { vendor = '', days = '30', search = '' } = req.query;
     const daysInt = parseInt(days);
-    const since = daysInt > 0 ? new Date(Date.now() - daysInt * 24 * 3600 * 1000).toISOString() : null;
+    const since = daysInt > 0 ? istOffsetStr(new Date(Date.now() - daysInt * 24 * 3600 * 1000)) : null;
 
     // Query order_meta — uses shopify_created_at for date field
     const vendorReLP = vendor ? new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
@@ -22980,7 +23009,13 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
     const { from, to, tierMap: tierMapRaw } = req.query;
     const periodFrom = from ? istDayStart(from) : new Date(Date.now() - 29*86400000);
     const periodTo   = to   ? istDayEnd(to)     : new Date();
-    const timeParams = { time_range: JSON.stringify({ since: periodFrom.toISOString().slice(0,10), until: periodTo.toISOString().slice(0,10) }) };
+    const periodFromStr = from || periodFrom.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+    const periodToStr   = to   || periodTo.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+    // Date().toISOString().slice(0,10) here would hand Meta the UTC calendar
+    // date — during the first 5.5h of any IST day that's still "yesterday",
+    // so Meta's own insights call silently covered the wrong day too. Pass
+    // the real IST date strings straight through instead.
+    const timeParams = { time_range: JSON.stringify({ since: periodFromStr, until: periodToStr }) };
     const insightFields = 'spend,impressions,clicks,actions,action_values,purchase_roas';
     const extract = (item) => {
       const purchases = parseFloat((item.actions||[]).find(a=>a.action_type==='purchase')?.value||0);
@@ -23002,8 +23037,9 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
     // ones, so orders with no campaign match (direct/organic/other channels,
     // or GoKwik checkouts where UTM didn't carry through) can be rolled up
     // into a separate "Organic / Other" card instead of silently vanishing.
+    const campRangeStrs = istRangeStrs(periodFromStr, periodToStr);
     const metaDocs = await mdb.collection('order_meta').find(
-      { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() } },
+      { shopify_created_at: { $gte: campRangeStrs.gte, $lte: campRangeStrs.lte } },
       { projection: { shopify_id:1, ad_campaign:1, ad_id:1, total_price:1, stage:1, items:1, shipping_address:1, tags:1 } }
     ).toArray();
     const ids = metaDocs.map(d => d.shopify_id);
@@ -23123,7 +23159,19 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
     // just as real, so it's worth its own card instead of disappearing.
     const organic = organicOrders.length ? { campaignId: 'organic', campaign: 'Organic / Other', spend: 0, roas: 0, purchases: 0, ...summarizeOrders(organicOrders), ads: [] } : null;
 
-    res.json({ campaigns, organic, from: periodFrom.toISOString().slice(0,10), to: periodTo.toISOString().slice(0,10) });
+    // ── Total store — every order placed in the period, full stop. Used for
+    // the "real ROAS" comparison (Meta's claimed purchases/revenue against
+    // what the store actually took in), so it can't silently undercount:
+    // summing campaigns[] + organic alone misses any order whose ad_campaign
+    // tag points to a campaign Meta's own /insights call didn't return this
+    // period (e.g. zero spend that day) — that bucket exists in byCampaign
+    // but never gets attached to a campaigns[] row, so it was vanishing
+    // instead of landing in either total. totalStore is computed straight
+    // from metaDocs, independent of the campaign-matching above, so it
+    // always equals the real period order count.
+    const totalStore = summarizeOrders(metaDocs);
+
+    res.json({ campaigns, organic, totalStore, from: periodFromStr, to: periodToStr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -24266,7 +24314,7 @@ app.post('/admin/brand-report/generate', adminAuth, async (req, res) => {
     const { vendor, days = 30 } = req.body;
     if (!vendor) return res.status(400).json({ error: 'vendor required' });
 
-    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const since = istOffsetStr(new Date(Date.now() - days * 24 * 3600 * 1000));
     const vendorRe = new RegExp(`^${vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
 
     // ── 1. Order stats for this vendor ──
