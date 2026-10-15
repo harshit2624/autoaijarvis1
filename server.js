@@ -6773,6 +6773,134 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
   }
 });
 
+// ── GET /admin/vendor-stats ──────────────────────────────────────────────
+// Per-vendor stats table for the Vendor Performance "Stats" tab: revenue,
+// order-stage counts, cancellation rate, prepaid/COD ratio, top products
+// (with product_id so the frontend can batch-fetch photos the same way the
+// dashboard's Top Selling Products card already does), and an audience
+// tier breakdown using the SAME tag→tier config as the rest of the
+// dashboard (tierMap query param, see /admin/meta-ads/campaign-performance).
+app.get("/admin/vendor-stats", adminAuth, async (req, res) => {
+  try {
+    const { from, to, tierMap: tierMapRaw } = req.query;
+    const periodFrom = from ? new Date(from + 'T00:00:00') : new Date(Date.now() - 29 * 86400000);
+    const periodTo   = to   ? new Date(to + 'T23:59:59')   : new Date();
+
+    const metaDocs = await mdb.collection('order_meta').find(
+      { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() } },
+      { projection: { _id: 0 } }
+    ).toArray();
+    const raw = metaDocs.map(orderStubFromMeta);
+    const ids = raw.map(o => String(o.id));
+    const allVS = ids.length ? await mdb.collection('order_vendor_stage').find(
+      { shopify_id: { $in: ids } },
+      { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, _id: 0 } }
+    ).toArray() : [];
+    const vsMap = {};
+    allVS.forEach(r => { if (!vsMap[r.shopify_id]) vsMap[r.shopify_id] = {}; vsMap[r.shopify_id][r.vendor_name] = r; });
+
+    const DISPATCHED_STAGES = new Set(['ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto']);
+    const DEAD_STAGES = new Set(['cancelled', 'hold']);
+
+    const DEFAULT_AUD_TIERS = [
+      { id: 'high_risk', label: 'High Risk', tags: ['cod', 'rto_customer', 'unverified', 'rto', 'fraud_risk', 'blacklisted', 'address_issue', 'cod_undelivered'] },
+      { id: 'medium_risk', label: 'Medium Risk', tags: ['new_customer', 'partial_payment', 'first_order', 'cod_confirmed', 'review_needed', 'flagged'] },
+      { id: 'control', label: 'Control', tags: ['confirmed', 'standard', 'normal', 'default_segment', 'organic'] },
+      { id: 'low_risk', label: 'Low Risk', tags: ['prepaid', 'repeat_customer', 'vip', 'verified', 'loyal', 'exchange_done', 'delivered', 'upi_paid', 'paid'] },
+    ];
+    let AUD_TIERS = DEFAULT_AUD_TIERS;
+    if (tierMapRaw) {
+      try {
+        const parsed = JSON.parse(tierMapRaw);
+        AUD_TIERS = DEFAULT_AUD_TIERS.map(t => ({ ...t, tags: (parsed[t.id] || t.tags).map(x => String(x).toLowerCase()) }));
+      } catch (e) { /* fall back to defaults on malformed param */ }
+    }
+    const tierOfTags = (tagStr) => {
+      const tagList = (tagStr || '').split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+      for (const tier of AUD_TIERS) if (tagList.some(t => tier.tags.includes(t))) return tier.id;
+      return null;
+    };
+
+    const vMap = {};
+    const get = (v) => {
+      if (!vMap[v]) vMap[v] = {
+        orders: new Set(), revenue: 0, dispatchedRev: 0,
+        dispatched: 0, pending: 0, delivered: 0, rto: 0, cancelled: 0,
+        prepaid: 0, cod: 0,
+        products: {},
+        audience: { high_risk: 0, medium_risk: 0, control: 0, low_risk: 0, untagged: 0 },
+      };
+      return vMap[v];
+    };
+
+    for (const o of raw) {
+      const sid = String(o.id);
+      const vendorsInOrder = [...new Set((o.line_items || []).map(li => canonicalVendor(li.vendor)).filter(Boolean))];
+      if (!vendorsInOrder.length) continue;
+      const tier = tierOfTags(o.tags);
+      const isPrepaid = o.financial_status === 'paid';
+      for (const v of vendorsInOrder) {
+        const d = get(v);
+        d.orders.add(sid);
+        const stage = vsMap[sid]?.[v]?.stage || 'new';
+        const vendorRev = (o.line_items || []).filter(li => canonicalVendor(li.vendor) === v)
+          .reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+        d.revenue += vendorRev;
+        if (DISPATCHED_STAGES.has(stage) || vsMap[sid]?.[v]?.awb) {
+          d.dispatched++;
+          d.dispatchedRev += vendorRev;
+          if (stage === 'delivered') d.delivered++;
+          if (stage === 'rto') d.rto++;
+        } else if (['confirmed', 'partial'].includes(stage)) {
+          d.pending++;
+        } else if (DEAD_STAGES.has(stage)) {
+          d.cancelled++;
+        }
+        if (isPrepaid) d.prepaid++; else d.cod++;
+        if (tier) d.audience[tier]++; else d.audience.untagged++;
+        (o.line_items || []).filter(li => canonicalVendor(li.vendor) === v).forEach(li => {
+          const key = li.product_id || li.title;
+          if (!d.products[key]) d.products[key] = { product_id: li.product_id || null, title: li.title, qty: 0, revenue: 0 };
+          d.products[key].qty += li.quantity || 1;
+          d.products[key].revenue += parseFloat(li.price || 0) * (li.quantity || 1);
+        });
+      }
+    }
+
+    const vendorStats = Object.entries(vMap)
+      .map(([vendor, d]) => {
+        const orderCount = d.orders.size;
+        const topProducts = Object.values(d.products).sort((a, b) => b.revenue - a.revenue).slice(0, 5)
+          .map(p => ({ ...p, revenue: parseFloat(p.revenue.toFixed(2)) }));
+        return {
+          vendor,
+          orders: orderCount,
+          revenue: parseFloat(d.revenue.toFixed(2)),
+          dispatchedRev: parseFloat(d.dispatchedRev.toFixed(2)),
+          dispatched: d.dispatched,
+          pending: d.pending,
+          delivered: d.delivered,
+          rto: d.rto,
+          cancelled: d.cancelled,
+          cancellationRate: orderCount > 0 ? Math.round(d.cancelled / orderCount * 100) : 0,
+          rtoRate: d.dispatched > 0 ? Math.round(d.rto / d.dispatched * 100) : 0,
+          prepaid: d.prepaid,
+          cod: d.cod,
+          prepaidPct: orderCount > 0 ? Math.round(d.prepaid / orderCount * 100) : 0,
+          codPct: orderCount > 0 ? Math.round(d.cod / orderCount * 100) : 0,
+          topProducts,
+          audience: d.audience,
+        };
+      })
+      .sort((a, b) => b.revenue - a.revenue);
+
+    res.json({ vendorStats, from: periodFrom.toISOString().slice(0,10), to: periodTo.toISOString().slice(0,10) });
+  } catch (err) {
+    console.error("❌ /admin/vendor-stats:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /admin/vendor-scorecard ───────────────────────────────────────────
 app.get("/admin/vendor-scorecard", adminAuth, async (req, res) => {
   try {

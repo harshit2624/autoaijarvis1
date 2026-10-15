@@ -3679,6 +3679,31 @@
     const [tagCounts, setTagCounts] = useState(null);
     const [tagTotal,  setTagTotal]  = useState(0);
     const [tagOutcomes, setTagOutcomes] = useState(null);
+
+    // ── Vendor Performance tab switcher — "Performance" (existing Health
+    // Score arena) vs "Stats" (sortable revenue/orders/RTO/audience table).
+    const [vpTab, setVpTab] = useState('performance'); // 'performance' | 'stats'
+    const [vendorStats, setVendorStats] = useState(null);
+    const [vendorStatsLoading, setVendorStatsLoading] = useState(false);
+    const [vsProductImages, setVsProductImages] = useState({});
+    const [vsSortBy, setVsSortBy] = useState('revenue');
+    const [vsExpanded, setVsExpanded] = useState(null);
+    useEffect(() => {
+      if (vpTab !== 'stats') return;
+      setVendorStatsLoading(true);
+      const from = aPeriod ? aPeriod.from : '2020-01-01';
+      const to   = aPeriod ? aPeriod.to   : isoToday();
+      let tierMapQS = '';
+      try { const s = localStorage.getItem('croscrow_audience_tag_map'); if (s) tierMapQS = `&tierMap=${encodeURIComponent(s)}`; } catch(e) {}
+      fetch(`${API}/admin/vendor-stats?from=${from}&to=${to}${tierMapQS}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setVendorStats(d.vendorStats||[])).catch(()=>setVendorStats([])).finally(()=>setVendorStatsLoading(false));
+    }, [vpTab, token, aPeriod]);
+    useEffect(() => {
+      const ids = (vendorStats||[]).flatMap(v=>v.topProducts||[]).map(p=>p.product_id).filter(Boolean);
+      if (!ids.length) return;
+      fetch(`${API}/admin/product-images?ids=${[...new Set(ids)].join(',')}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>setVsProductImages(d.images||{})).catch(()=>{});
+    }, [token, vendorStats]);
     useEffect(()=>{
       const from = aPeriod ? aPeriod.from : '2020-01-01';
       const to   = aPeriod ? aPeriod.to   : isoToday();
@@ -4912,7 +4937,7 @@
             dispatch rate, delivery rate, RTO rate and avg dispatch time,
             all real + period-scoped (a.vendorLeaderboard). Crowns the best
             and flags the worst, then ranks everyone else below. ── */}
-        {!aLoading && (a?.vendorLeaderboard||[]).length > 0 && (() => {
+        {!aLoading && (() => {
           const scoreOf = v => {
             const parts = [
               { w:0.25, v:v.dispatchRate },
@@ -4923,7 +4948,7 @@
             const totalW = parts.reduce((s,p)=>s+p.w,0);
             return Math.round(parts.reduce((s,p)=>s+p.w*p.v,0)/totalW);
           };
-          const ranked = a.vendorLeaderboard.map(v=>({...v, score:scoreOf(v)})).sort((x,y)=>y.score-x.score);
+          const ranked = (a?.vendorLeaderboard||[]).map(v=>({...v, score:scoreOf(v)})).sort((x,y)=>y.score-x.score);
           const best = ranked[0], worst = ranked[ranked.length-1];
           const scoreColor = s => s>=75?'#10b981':s>=50?'#f59e0b':'#ef4444';
           const fmtHrs = h => h==null?'—':h<24?`${h.toFixed(1)}h`:`${Math.floor(h/24)}d ${Math.round(h%24)}h`;
@@ -4958,54 +4983,176 @@
               </div>
             </div>
           );
+          const TabBtn = ({id, label}) => (
+            <button onClick={()=>setVpTab(id)} style={{
+              padding:'6px 14px',borderRadius:7,fontSize:11,fontWeight:800,letterSpacing:0.3,textTransform:'uppercase',cursor:'pointer',
+              border:`1px solid ${vpTab===id?'var(--indigo)':'var(--border)'}`,
+              background:vpTab===id?'rgba(99,102,241,.14)':'transparent',
+              color:vpTab===id?'#818cf8':'var(--text-muted)',
+            }}>{label}</button>
+          );
+
           return (
             <div className="dash-section">
               <div className="dash-section-hdr">
                 <div>
-                  <div className="dash-section-title">🏆 Vendor Performance Arena</div>
-                  <div className="dash-section-meta">{periodLabel} · Health Score = dispatch rate + delivery rate + RTO rate + avg dispatch speed, weighted</div>
+                  <div className="dash-section-title">🏆 Vendor Performance</div>
+                  <div className="dash-section-meta">
+                    {vpTab==='performance'
+                      ? `${periodLabel} · Health Score = dispatch rate + delivery rate + RTO rate + avg dispatch speed, weighted`
+                      : `${periodLabel} · Revenue, order stages, cancellation, prepaid/COD mix, top products & audience quality — sorted high to low`}
+                  </div>
                 </div>
-                <div className="dash-section-tag" style={{background:'rgba(99,102,241,.12)',color:'#818cf8',border:'1px solid rgba(99,102,241,.25)'}}>{ranked.length} VENDORS</div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <TabBtn id="performance" label="Performance"/>
+                  <TabBtn id="stats" label="Stats"/>
+                  {vpTab==='performance' && <div className="dash-section-tag" style={{background:'rgba(99,102,241,.12)',color:'#818cf8',border:'1px solid rgba(99,102,241,.25)'}}>{ranked.length} VENDORS</div>}
+                </div>
               </div>
 
-              {ranked.length > 1 && (
-                <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
-                  <HeroCard v={best} badge="👑 Top Performer" badgeC="#10b981" bg="rgba(16,185,129,.07)" bdr="rgba(16,185,129,.25)"/>
-                  <HeroCard v={worst} badge="🚩 Needs Attention" badgeC="#ef4444" bg="rgba(239,68,68,.07)" bdr="rgba(239,68,68,.25)"/>
+              {vpTab==='performance' && ranked.length > 0 && (<>
+                {ranked.length > 1 && (
+                  <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
+                    <HeroCard v={best} badge="👑 Top Performer" badgeC="#10b981" bg="rgba(16,185,129,.07)" bdr="rgba(16,185,129,.25)"/>
+                    <HeroCard v={worst} badge="🚩 Needs Attention" badgeC="#ef4444" bg="rgba(239,68,68,.07)" bdr="rgba(239,68,68,.25)"/>
+                  </div>
+                )}
+
+                <div style={{display:'flex',flexDirection:'column',gap:6,overflowX:'auto'}}>
+                  {ranked.map((v,i)=>(
+                    <div key={v.vendor} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:8,background:'var(--bg-hover)',border:'1px solid var(--border)',minWidth:500}}>
+                      <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',width:20,flexShrink:0,textAlign:'center'}}>{i+1}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:'var(--text)',width:130,flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={v.vendor}>{v.vendor}</span>
+                      <div style={{width:36,height:36,borderRadius:'50%',border:`3px solid ${scoreColor(v.score)}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:900,color:scoreColor(v.score),flexShrink:0}}>{v.score}</div>
+                      <div style={{flex:1,minWidth:0,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                        <div>
+                          <div style={{fontSize:8,color:'var(--text-muted)'}}>Dispatch</div>
+                          <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:v.dispatchRate+'%',background:'#818cf8'}}/></div>
+                          <div style={{fontSize:10,fontWeight:700,color:'#818cf8',marginTop:1}}>{v.dispatchRate}%</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'var(--text-muted)'}}>Delivery</div>
+                          <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:v.deliveryRate+'%',background:'#10b981'}}/></div>
+                          <div style={{fontSize:10,fontWeight:700,color:'#10b981',marginTop:1}}>{v.deliveryRate}%</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'var(--text-muted)'}}>RTO</div>
+                          <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:Math.min(v.rtoRate,100)+'%',background:'#ef4444'}}/></div>
+                          <div style={{fontSize:10,fontWeight:700,color:'#ef4444',marginTop:1}}>{v.rtoRate}%</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,color:'var(--text-muted)'}}>Avg Dispatch</div>
+                          <div style={{fontSize:11,fontWeight:700,color:'var(--text)',marginTop:3}}>{fmtHrs(v.avgDispatchHrs)}</div>
+                        </div>
+                      </div>
+                      <span style={{fontSize:11,fontWeight:700,color:'var(--text)',width:80,flexShrink:0,textAlign:'right'}}>{fmtCur(v.dispatchedRev)}</span>
+                    </div>
+                  ))}
                 </div>
+              </>)}
+
+              {vpTab==='performance' && ranked.length === 0 && (
+                <div style={{padding:'30px 0',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No vendors with 3+ confirmed orders in this period yet.</div>
               )}
 
-              <div style={{display:'flex',flexDirection:'column',gap:6,overflowX:'auto'}}>
-                {ranked.map((v,i)=>(
-                  <div key={v.vendor} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:8,background:'var(--bg-hover)',border:'1px solid var(--border)',minWidth:500}}>
-                    <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',width:20,flexShrink:0,textAlign:'center'}}>{i+1}</span>
-                    <span style={{fontSize:12,fontWeight:700,color:'var(--text)',width:130,flexShrink:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={v.vendor}>{v.vendor}</span>
-                    <div style={{width:36,height:36,borderRadius:'50%',border:`3px solid ${scoreColor(v.score)}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:900,color:scoreColor(v.score),flexShrink:0}}>{v.score}</div>
-                    <div style={{flex:1,minWidth:0,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
-                      <div>
-                        <div style={{fontSize:8,color:'var(--text-muted)'}}>Dispatch</div>
-                        <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:v.dispatchRate+'%',background:'#818cf8'}}/></div>
-                        <div style={{fontSize:10,fontWeight:700,color:'#818cf8',marginTop:1}}>{v.dispatchRate}%</div>
+              {vpTab==='stats' && (() => {
+                const AUD_LABELS = { high_risk:'High', medium_risk:'Medium', control:'Control', low_risk:'Low', untagged:'Untagged' };
+                const AUD_COLORS = { high_risk:'#ef4444', medium_risk:'#f59e0b', control:'#a78bfa', low_risk:'#10b981', untagged:'#6b7280' };
+                const SORTERS = {
+                  revenue:     (a,b)=>b.revenue-a.revenue,
+                  orders:      (a,b)=>b.orders-a.orders,
+                  cancelRate:  (a,b)=>b.cancellationRate-a.cancellationRate,
+                  rtoRate:     (a,b)=>b.rtoRate-a.rtoRate,
+                };
+                const rows = [...(vendorStats||[])].sort(SORTERS[vsSortBy] || SORTERS.revenue);
+                const SortHdr = ({id, label, align}) => (
+                  <span onClick={()=>setVsSortBy(id)} style={{cursor:'pointer',color:vsSortBy===id?'#818cf8':'var(--text-muted)',display:'flex',alignItems:'center',gap:3,justifyContent:align==='right'?'flex-end':'flex-start'}}>
+                    {label}{vsSortBy===id && <span style={{fontSize:9}}>▼</span>}
+                  </span>
+                );
+                return (
+                  <div>
+                    {vendorStatsLoading && <div style={{padding:'30px 0',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>Loading vendor stats…</div>}
+                    {!vendorStatsLoading && rows.length === 0 && (
+                      <div style={{padding:'30px 0',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No vendor orders in this period yet.</div>
+                    )}
+                    {!vendorStatsLoading && rows.length > 0 && (
+                      <div style={{overflowX:'auto'}}>
+                        <div style={{display:'grid',gridTemplateColumns:'26px 150px 90px 70px 150px 70px 80px 90px 1fr 24px',gap:10,padding:'0 10px 8px',fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:'uppercase',minWidth:980}}>
+                          <span></span>
+                          <span style={{color:'var(--text-muted)'}}>Brand</span>
+                          <SortHdr id="revenue" label="Revenue" align="right"/>
+                          <SortHdr id="orders" label="Orders"/>
+                          <span style={{color:'var(--text-muted)'}}>Dispatched / Pending / Delivered / RTO</span>
+                          <SortHdr id="cancelRate" label="Cancel %"/>
+                          <span style={{color:'var(--text-muted)'}}>Prepaid : COD</span>
+                          <SortHdr id="rtoRate" label="RTO %"/>
+                          <span style={{color:'var(--text-muted)'}}>Audience Quality</span>
+                          <span></span>
+                        </div>
+                        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                          {rows.map((v,i)=>{
+                            const audTotal = Object.values(v.audience||{}).reduce((s,n)=>s+n,0) || 1;
+                            const open = vsExpanded===v.vendor;
+                            return (
+                              <div key={v.vendor} style={{borderRadius:8,background:'var(--bg-hover)',border:'1px solid var(--border)',minWidth:980}}>
+                                <div onClick={()=>setVsExpanded(open?null:v.vendor)} style={{display:'grid',gridTemplateColumns:'26px 150px 90px 70px 150px 70px 80px 90px 1fr 24px',gap:10,alignItems:'center',padding:'10px',cursor:'pointer'}}>
+                                  <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textAlign:'center'}}>{i+1}</span>
+                                  <span style={{fontSize:12,fontWeight:700,color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={v.vendor}>{v.vendor}</span>
+                                  <span style={{fontSize:12,fontWeight:800,color:'var(--text)',textAlign:'right'}}>{fmtCur(v.revenue)}</span>
+                                  <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{v.orders}</span>
+                                  <span style={{fontSize:10,color:'var(--text-muted)'}}>
+                                    <b style={{color:'#818cf8'}}>{v.dispatched}</b> / <b style={{color:'#f59e0b'}}>{v.pending}</b> / <b style={{color:'#10b981'}}>{v.delivered}</b> / <b style={{color:'#ef4444'}}>{v.rto}</b>
+                                  </span>
+                                  <span style={{fontSize:12,fontWeight:700,color:v.cancellationRate>10?'#ef4444':'var(--text)'}}>{v.cancellationRate}%</span>
+                                  <span style={{fontSize:11,fontWeight:700,color:'var(--text)'}}>{v.prepaidPct}:{v.codPct}</span>
+                                  <span style={{fontSize:12,fontWeight:700,color:v.rtoRate>20?'#ef4444':v.rtoRate>10?'#f59e0b':'#10b981'}}>{v.rtoRate}%</span>
+                                  <div style={{display:'flex',height:8,borderRadius:4,overflow:'hidden',width:'100%'}}>
+                                    {Object.entries(v.audience||{}).filter(([,n])=>n>0).map(([k,n])=>(
+                                      <div key={k} title={`${AUD_LABELS[k]}: ${n}`} style={{width:(n/audTotal*100)+'%',background:AUD_COLORS[k]}}/>
+                                    ))}
+                                  </div>
+                                  <span style={{fontSize:11,color:'var(--text-muted)',textAlign:'center',transform:open?'rotate(90deg)':'none',transition:'transform .15s'}}>▶</span>
+                                </div>
+                                {open && (
+                                  <div style={{padding:'0 10px 14px',borderTop:'1px solid var(--border)',marginTop:2}}>
+                                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10,marginTop:12}}>
+                                      {(v.topProducts||[]).map(p=>(
+                                        <div key={p.product_id||p.title} style={{display:'flex',gap:8,alignItems:'center',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
+                                          {vsProductImages[p.product_id] ? (
+                                            <img src={vsProductImages[p.product_id]} alt="" style={{width:38,height:38,borderRadius:6,objectFit:'cover',flexShrink:0}}/>
+                                          ) : (
+                                            <div style={{width:38,height:38,borderRadius:6,background:'var(--bg-hover)',flexShrink:0}}/>
+                                          )}
+                                          <div style={{minWidth:0}}>
+                                            <div style={{fontSize:10,fontWeight:700,color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={p.title}>{p.title}</div>
+                                            <div style={{fontSize:9,color:'var(--text-muted)'}}>{p.qty} sold · {fmtCur(p.revenue)}</div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                      {(!v.topProducts || v.topProducts.length===0) && (
+                                        <div style={{fontSize:11,color:'var(--text-muted)'}}>No product data for this period.</div>
+                                      )}
+                                    </div>
+                                    <div style={{display:'flex',gap:14,marginTop:12,flexWrap:'wrap'}}>
+                                      {Object.entries(v.audience||{}).filter(([,n])=>n>0).map(([k,n])=>(
+                                        <div key={k} style={{display:'flex',alignItems:'center',gap:5,fontSize:10,color:'var(--text-muted)'}}>
+                                          <span style={{width:8,height:8,borderRadius:2,background:AUD_COLORS[k]}}/>
+                                          {AUD_LABELS[k]} · {n} ({Math.round(n/audTotal*100)}%)
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <div>
-                        <div style={{fontSize:8,color:'var(--text-muted)'}}>Delivery</div>
-                        <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:v.deliveryRate+'%',background:'#10b981'}}/></div>
-                        <div style={{fontSize:10,fontWeight:700,color:'#10b981',marginTop:1}}>{v.deliveryRate}%</div>
-                      </div>
-                      <div>
-                        <div style={{fontSize:8,color:'var(--text-muted)'}}>RTO</div>
-                        <div style={{height:3,background:'var(--border)',borderRadius:2,overflow:'hidden',marginTop:2}}><div style={{height:'100%',width:Math.min(v.rtoRate,100)+'%',background:'#ef4444'}}/></div>
-                        <div style={{fontSize:10,fontWeight:700,color:'#ef4444',marginTop:1}}>{v.rtoRate}%</div>
-                      </div>
-                      <div>
-                        <div style={{fontSize:8,color:'var(--text-muted)'}}>Avg Dispatch</div>
-                        <div style={{fontSize:11,fontWeight:700,color:'var(--text)',marginTop:3}}>{fmtHrs(v.avgDispatchHrs)}</div>
-                      </div>
-                    </div>
-                    <span style={{fontSize:11,fontWeight:700,color:'var(--text)',width:80,flexShrink:0,textAlign:'right'}}>{fmtCur(v.dispatchedRev)}</span>
+                    )}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </div>
           );
         })()}
