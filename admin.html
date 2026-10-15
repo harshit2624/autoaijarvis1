@@ -5357,11 +5357,11 @@
               <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`color-mix(in srgb, ${stageColor} 18%, transparent)`,color:stageColor,border:`1px solid color-mix(in srgb, ${stageColor} 40%, transparent)`}}>
                 {(o.stage||'new').charAt(0).toUpperCase()+(o.stage||'new').slice(1)}
               </span>
-              <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,
-                background:o.paymentType==='prepaid'?'rgba(16,185,129,0.15)':'rgba(245,158,11,0.15)',
-                color:o.paymentType==='prepaid'?'#10b981':'#f59e0b',
-                border:`1px solid ${o.paymentType==='prepaid'?'rgba(16,185,129,0.3)':'rgba(245,158,11,0.3)'}`}}>
-                {o.paymentType==='prepaid'?'Prepaid':'COD'}{o.advancePaid>0?` +₹${o.advancePaid} adv`:''}
+              <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,
+                background:`color-mix(in srgb, ${o.paymentType==='prepaid'?'#10b981':o.advancePaid>0?'#a78bfa':'#f59e0b'} 15%, transparent)`,
+                color:o.paymentType==='prepaid'?'#10b981':o.advancePaid>0?'#a78bfa':'#f59e0b',
+                border:`1px solid color-mix(in srgb, ${o.paymentType==='prepaid'?'#10b981':o.advancePaid>0?'#a78bfa':'#f59e0b'} 35%, transparent)`}}>
+                {o.paymentType==='prepaid'?'Prepaid':o.advancePaid>0?'Advance':'COD'}{o.advancePaid>0?` +₹${o.advancePaid}`:''}
               </span>
               
               <PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/>
@@ -5640,7 +5640,13 @@
                          <td><div style={{display:'flex',alignItems:'center',gap:7}}><div style={{width:22,height:22,borderRadius:'50%',background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,fontWeight:700,color:'var(--indigo)',flexShrink:0}}>{(o.customer||'G').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}</div><div><div style={{fontSize:12}}>{o.customer}</div>{o.email&&<div style={{fontSize:10,color:'var(--text-muted)'}}>{o.email}</div>}</div></div></td>
                          <td style={{color:'var(--text-dim)',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(o.vendors||[]).join(', ')||'—'}</td>
                          <td className="td-amt">{fmtCur(o.orderValue)}</td>
-                         <td><span style={{fontSize:9,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-dim)'}}>{o.paymentType}</span></td>
+                         <td>{(() => {
+                           const payColor = o.paymentType==='prepaid' ? '#10b981' : (o.advancePaid>0 ? '#a78bfa' : '#f59e0b');
+                           const payLabel = o.paymentType==='prepaid' ? 'Prepaid' : (o.advancePaid>0 ? 'Advance' : 'COD');
+                           return (
+                             <span style={{fontSize:9,fontWeight:700,letterSpacing:1,textTransform:'uppercase',padding:'2px 7px',borderRadius:4,background:`color-mix(in srgb, ${payColor} 15%, transparent)`,border:`1px solid color-mix(in srgb, ${payColor} 35%, transparent)`,color:payColor}}>{payLabel}</span>
+                           );
+                         })()}</td>
                          <td style={{color:'var(--text-dim)'}}>{o.advancePaid>0?`₹${o.advancePaid}`:'—'}</td>
                          <td>
                            <div style={{display:'flex',alignItems:'center',gap:2,flexWrap:'wrap'}}><StageBadge stage={o.stage} vendorStages={o.vendorStages||{}}/><PenaltyTimer vendorPenalty={o.vendorPenalty||{}} vendorStages={o.vendorStages||{}}/><PenaltyBadge triggered={anyPenaltyTriggered} confirmedAmount={totalConfirmedPenalty}/>{o.ccStock&&<span title={o.ccStock.map(s=>`${s.product_title}/${s.variant_title} (${s.quantity})`).join(', ')} style={{fontSize:9,padding:'2px 6px',borderRadius:4,background:'rgba(251,191,36,0.15)',border:'1px solid rgba(251,191,36,0.5)',color:'#fbbf24',fontWeight:700,cursor:'default'}}>🏬 CC Stock</span>}{o.hasRR&&<span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,background:(o.rrTypes||[]).includes('exchange')&&!(o.rrTypes||[]).includes('return')?'rgba(139,92,246,0.15)':'rgba(99,102,241,0.15)',border:`1px solid ${(o.rrTypes||[]).includes('exchange')&&!(o.rrTypes||[]).includes('return')?'rgba(139,92,246,0.45)':'rgba(99,102,241,0.45)'}`,color:(o.rrTypes||[]).includes('exchange')&&!(o.rrTypes||[]).includes('return')?'#a78bfa':'#818cf8'}}>{(o.rrTypes||[]).includes('return')&&(o.rrTypes||[]).includes('exchange')?'↩ R+E':(o.rrTypes||[]).includes('exchange')?'🔄 Exc':'↩ Ret'}</span>}</div>
