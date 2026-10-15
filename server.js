@@ -757,6 +757,24 @@ async function buildVendorCanonicalMap() {
     vendors.forEach(v => { VENDOR_CANONICAL[v.vendor_name.toLowerCase()] = v.vendor_name; });
   } catch {}
 }
+// ── IST date helpers ─────────────────────────────────────────────────────
+// Render's server clock runs in UTC, so a bare `new Date(); d.setHours(0,0,0,0)`
+// or `new Date(dateStr+'T00:00:00')` lands on UTC midnight — 5:30am IST, not
+// midnight IST. Every "today" / date-range boundary the admin panel filters
+// by must be anchored to IST explicitly, or the dashboard silently runs on
+// UTC days (todayLabel mislabels anything before 5:30am IST as "yesterday",
+// and custom from/to pickers shift by the same 5.5h). Use these everywhere
+// a day boundary is derived from a plain date string or "today".
+function istTodayStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+}
+function istDayStart(dateStr) {
+  return new Date(`${dateStr || istTodayStr()}T00:00:00+05:30`);
+}
+function istDayEnd(dateStr) {
+  return new Date(`${dateStr || istTodayStr()}T23:59:59.999+05:30`);
+}
+
 // Call after DB connects (called in initDB)
 function canonicalVendor(name) {
   if (!name) return name;
@@ -4036,7 +4054,7 @@ async function runJarvisTool(name, args, reqCache) {
   const ovsRtoSet = reqCache.ovsRtoSet;
 
   const now      = new Date();
-  const today    = new Date(now); today.setHours(0,0,0,0);
+  const today    = istDayStart();
   const weekAgo  = new Date(today); weekAgo.setDate(today.getDate()-7);
   const monthAgo = new Date(today); monthAgo.setDate(today.getDate()-30);
 
@@ -6211,13 +6229,15 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 
     const now      = Date.now();
     const DAY      = 86400000;
-    const today    = new Date(); today.setHours(0,0,0,0);
+    const today    = istDayStart();
 
-    // ── Selected period (from query params, default last 30d)
+    // ── Selected period (from query params, default last 30d) — anchored
+    // to IST day boundaries (see istDayStart/istDayEnd) so "today" and any
+    // custom from/to range match the calendar day the admin actually means.
     const fromParam = req.query.from;
     const toParam   = req.query.to;
-    const periodFrom = fromParam ? new Date(fromParam+'T00:00:00') : new Date(now - 29*DAY);
-    const periodTo   = toParam   ? new Date(toParam+'T23:59:59')   : new Date();
+    const periodFrom = fromParam ? istDayStart(fromParam) : new Date(now - 29*DAY);
+    const periodTo   = toParam   ? istDayEnd(toParam)     : new Date();
     // Prior period of same length for growth comparison
     const periodLen  = periodTo - periodFrom;
     const priorFrom  = new Date(periodFrom - periodLen);
@@ -6783,8 +6803,8 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
 app.get("/admin/vendor-stats", adminAuth, async (req, res) => {
   try {
     const { from, to, tierMap: tierMapRaw } = req.query;
-    const periodFrom = from ? new Date(from + 'T00:00:00') : new Date(Date.now() - 29 * 86400000);
-    const periodTo   = to   ? new Date(to + 'T23:59:59')   : new Date();
+    const periodFrom = from ? istDayStart(from) : new Date(Date.now() - 29 * 86400000);
+    const periodTo   = to   ? istDayEnd(to)     : new Date();
 
     const metaDocs = await mdb.collection('order_meta').find(
       { shopify_created_at: { $gte: periodFrom.toISOString(), $lte: periodTo.toISOString() } },
@@ -8162,8 +8182,9 @@ app.get('/admin/leakage-data', adminAuth, async (req, res) => {
   try {
     const days = Math.min(parseInt(req.query.days) || 30, 365);
     const DAY  = 86400000;
-    const from = new Date(Date.now() - (days - 1) * DAY); from.setHours(0,0,0,0);
-    const to   = new Date(); to.setHours(23,59,59,999);
+    const fromStr = new Date(Date.now() - (days - 1) * DAY).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const from = istDayStart(fromStr);
+    const to   = istDayEnd();
 
     // Fetch Shopify orders in window
     const raw = await fetchAllOrders('any', from.toISOString(), to.toISOString());
@@ -8307,7 +8328,7 @@ const ExcelJS = require('exceljs');
 // inlined twice almost verbatim; factored out so the two sheet formats can't
 // silently drift out of sync with each other.
 async function buildGstVendorMap(from, to) {
-  const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
+  const allOrders = await fetchAllOrders("any", istDayStart(from).toISOString(), istDayEnd(to).toISOString());
 
   // Load all supporting data in parallel (same as dashboard)
   const [metas, vProfiles, vConfigs, allProductRules, allVendorStages, priceOverrideDocs, confirmedPenalties] = await Promise.all([
@@ -22957,8 +22978,8 @@ app.get('/admin/meta-ads/campaign-performance', adminAuth, async (req, res) => {
   if (!META_TOKEN || !META_ACCOUNT) return res.status(400).json({ error: 'META_ACCESS_TOKEN and META_AD_ACCOUNT_ID env vars not set' });
   try {
     const { from, to, tierMap: tierMapRaw } = req.query;
-    const periodFrom = from ? new Date(from) : new Date(Date.now() - 29*86400000);
-    const periodTo   = to   ? new Date(to + 'T23:59:59')   : new Date();
+    const periodFrom = from ? istDayStart(from) : new Date(Date.now() - 29*86400000);
+    const periodTo   = to   ? istDayEnd(to)     : new Date();
     const timeParams = { time_range: JSON.stringify({ since: periodFrom.toISOString().slice(0,10), until: periodTo.toISOString().slice(0,10) }) };
     const insightFields = 'spend,impressions,clicks,actions,action_values,purchase_roas';
     const extract = (item) => {
