@@ -5241,8 +5241,8 @@ const REPORT_PENDING_STAGES    = new Set(['new', 'confirmed', 'partial', 'hold']
 const REPORT_ON_TIME_HRS       = 48; // matches the dispatch-window SLA quoted in vendor emails
 
 async function buildVendorReport(vendorName, from, to) {
-  const fromDate = from ? `${from}T00:00:00Z` : "2000-01-01T00:00:00Z";
-  const toDate   = to   ? `${to}T23:59:59Z`   : null;
+  const fromDate = from ? istDayStart(from).toISOString() : "2000-01-01T00:00:00Z";
+  const toDate   = to   ? istDayEnd(to).toISOString()     : null;
   const allOrders = await fetchAllOrders("any", fromDate, toDate);
   const vName = vendorName.toLowerCase();
 
@@ -5381,8 +5381,8 @@ app.get("/vendor/reports/export", vendorAuth, async (req, res) => {
 // ── GET /vendor/stats ─────────────────────────────────────────────────────
 app.get("/vendor/stats", vendorAuth, async (req, res) => {
   try {
-    const fromDate = req.query.from ? `${req.query.from}T00:00:00Z` : "2000-01-01T00:00:00Z";
-    const toDate   = req.query.to   ? `${req.query.to}T23:59:59Z`   : null;
+    const fromDate = req.query.from ? istDayStart(req.query.from).toISOString() : "2000-01-01T00:00:00Z";
+    const toDate   = req.query.to   ? istDayEnd(req.query.to).toISOString()     : null;
     const allOrders = await fetchAllOrders("any", fromDate, toDate);
     const vName = req.vendor.toLowerCase();
     const mine  = allOrders.filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName));
@@ -7787,7 +7787,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
     }
 
     // Fetch orders created within the period (use period_start, not 2020 — avoid pulling in all history)
-    const allOrders = await fetchAllOrders("any", period_start + "T00:00:00Z", period_end + "T23:59:59Z");
+    const allOrders = await fetchAllOrders("any", istDayStart(period_start).toISOString(), istDayEnd(period_end).toISOString());
     const vName  = vendor_name.toLowerCase();
     const vProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name }, { projection: { commission_pct: 1, prepaid_discount_pct: 1, _id: 0 } });
     const vConfig  = await VC.get(vendor_name);
@@ -7810,8 +7810,8 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       vendorStageMap[r.shopify_id] = { stage: merged, deliveredAt: existing?.deliveredAt || deliveredAt };
     }
 
-    const periodStartTs = new Date(period_start + 'T00:00:00Z').getTime();
-    const periodEndTs   = new Date(period_end   + 'T23:59:59Z').getTime();
+    const periodStartTs = istDayStart(period_start).getTime();
+    const periodEndTs   = istDayEnd(period_end).getTime();
 
     // Only include delivered orders that:
     // 1. Were NOT already invoiced
@@ -7992,7 +7992,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     }
     // Filter by order creation date — period represents when orders were placed
     const [allOrders, metas, vProfiles, vConfigs, allProductRules] = await Promise.all([
-      fetchAllOrders("any", from ? from + "T00:00:00Z" : "2020-01-01T00:00:00Z", to ? to + "T23:59:59Z" : null),
+      fetchAllOrders("any", from ? istDayStart(from).toISOString() : "2020-01-01T00:00:00Z", to ? istDayEnd(to).toISOString() : null),
       mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
       mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
       VC.all(),
@@ -8068,8 +8068,8 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
     });
 
     // Date filter: apply on delivery date (when vendor stage was last updated to delivered)
-    const fromDate = from ? new Date(from + "T00:00:00Z") : null;
-    const toDate   = to   ? new Date(to   + "T23:59:59Z") : null;
+    const fromDate = from ? istDayStart(from) : null;
+    const toDate   = to   ? istDayEnd(to)     : null;
 
     for (const o of allOrders) {
       const meta = metaMap[String(o.id)] || {};
@@ -8459,8 +8459,8 @@ async function buildGstVendorMap(from, to) {
   }
 
   // Attach confirmed penalties (in the period — filtered by penalty created_at)
-  const fromTs = new Date(`${from}T00:00:00Z`).getTime();
-  const toTs   = new Date(`${to}T23:59:59Z`).getTime();
+  const fromTs = istDayStart(from).getTime();
+  const toTs   = istDayEnd(to).getTime();
   for (const p of confirmedPenalties) {
     if (!p.vendor_name) continue;
     const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
@@ -8791,7 +8791,7 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
   if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM-DD) required" });
 
   try {
-    const allOrders = await fetchAllOrders("any", `${from}T00:00:00Z`, `${to}T23:59:59Z`);
+    const allOrders = await fetchAllOrders("any", istDayStart(from).toISOString(), istDayEnd(to).toISOString());
     const [metas, vProfiles, vConfigs, allProductRules, allVendorStages, priceOverrideDocs, confirmedPenalties, croscrowProfile] = await Promise.all([
       mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray(),
       mdb.collection('vendor_profiles').find({}, { projection: { _id: 0 } }).toArray(),
@@ -8891,8 +8891,8 @@ app.post("/admin/gst-invoices/generate", adminAuth, async (req, res) => {
     }
 
     // Penalties in the period
-    const fromTs = new Date(`${from}T00:00:00Z`).getTime();
-    const toTs   = new Date(`${to}T23:59:59Z`).getTime();
+    const fromTs = istDayStart(from).getTime();
+    const toTs   = istDayEnd(to).getTime();
     for (const p of confirmedPenalties) {
       if (!p.vendor_name) continue;
       const pTs = p.created_at ? new Date(p.created_at).getTime() : 0;
@@ -17865,8 +17865,8 @@ app.post("/admin/shipsagar/retry-failed", adminAuth, async (req, res) => {
 app.post("/admin/shipsagar/register-all", adminAuth, async (req, res) => {
   try {
     const { from, to } = req.body || {};
-    const dateFrom = from ? new Date(from).toISOString() : new Date('2026-05-03T00:00:00.000Z').toISOString();
-    const dateTo   = to   ? new Date(to + 'T23:59:59.999Z').toISOString() : null;
+    const dateFrom = from ? istDayStart(from).toISOString() : new Date('2026-05-03T00:00:00.000Z').toISOString();
+    const dateTo   = to   ? istDayEnd(to).toISOString() : null;
 
     const query = { awb: { $exists: true, $ne: '' }, updated_at: { $gte: dateFrom } };
     if (dateTo) query.updated_at.$lte = dateTo;
@@ -17922,8 +17922,8 @@ app.get("/admin/shipsagar/stage-transitions", adminAuth, async (req, res) => {
     const q = {};
     if (from || to) {
       q.ran_at = {};
-      if (from) q.ran_at.$gte = from + 'T00:00:00.000Z';
-      if (to)   q.ran_at.$lte = to + 'T23:59:59.999Z';
+      if (from) q.ran_at.$gte = istDayStart(from).toISOString();
+      if (to)   q.ran_at.$lte = istDayEnd(to).toISOString();
     }
     const runs = await mdb.collection('shipsagar_cron_log').find(q, { projection: { updates: 1, ran_at: 1, _id: 0 } }).toArray();
     const transitions = [];
@@ -18160,7 +18160,7 @@ const RS = {
 
 // ── Core report data generator ────────────────────────────────────────────
 async function generateReport(fromDate, toDate) {
-  const allOrders = await fetchAllOrders("any", fromDate + "T00:00:00Z", toDate + "T23:59:59Z");
+  const allOrders = await fetchAllOrders("any", istDayStart(fromDate).toISOString(), istDayEnd(toDate).toISOString());
   const metasArr = await mdb.collection('order_meta').find({}, { projection: { _id: 0 } }).toArray();
   const metas = Object.fromEntries(metasArr.map(m => [m.shopify_id, m]));
   const vendorStages = await mdb.collection('order_vendor_stage').find({}, { projection: { _id: 0 } }).toArray();
@@ -25499,9 +25499,15 @@ app.options('/mine-game/claim', (req, res) => {
 const PIXEL_EVENT_NAMES = ['ViewContent', 'AddToCart', 'InitiateCheckout', 'Purchase'];
 
 function pixelDateRange(from, to) {
+  // pixel_events.created_at IS stored as a proper UTC "Z" timestamp (unlike
+  // order_meta.shopify_created_at), so no string-format mismatch here — but
+  // anchoring with a bare "${date}T00:00:00.000Z" still means UTC midnight,
+  // not IST midnight, so "today"/custom ranges were off by 5.5h the same
+  // way the order-side queries were. istDayStart/istDayEnd already resolve
+  // to the correct UTC instant for real IST day boundaries.
   const match = {};
-  if (from) match.$gte = `${from}T00:00:00.000Z`;
-  if (to) match.$lte = `${to}T23:59:59.999Z`;
+  if (from) match.$gte = istDayStart(from).toISOString();
+  if (to) match.$lte = istDayEnd(to).toISOString();
   return Object.keys(match).length ? { created_at: match } : {};
 }
 
@@ -25576,8 +25582,8 @@ app.get('/admin/offer-analytics', adminAuth, async (req, res) => {
     const match = {};
     if (from || to) {
       match.created_at = {};
-      if (from) match.created_at.$gte = new Date(from).toISOString();
-      if (to)   match.created_at.$lte = new Date(to + 'T23:59:59.999Z').toISOString();
+      if (from) match.created_at.$gte = istDayStart(from).toISOString();
+      if (to)   match.created_at.$lte = istDayEnd(to).toISOString();
     }
     const rows = await mdb.collection('offer_clicks').aggregate([
       { $match: match },
@@ -25694,8 +25700,8 @@ app.get('/admin/site-analytics/breakdown', adminAuth, async (req, res) => {
     const match = { event };
     if (from || to) {
       match.created_at = {};
-      if (from) match.created_at.$gte = new Date(from);
-      if (to) match.created_at.$lte = new Date(to + 'T23:59:59Z');
+      if (from) match.created_at.$gte = istDayStart(from);
+      if (to) match.created_at.$lte = istDayEnd(to);
     }
     if (!group_by) {
       const total = await mdb.collection('site_events').countDocuments(match);
@@ -25724,8 +25730,8 @@ app.get('/admin/site-analytics/overview', adminAuth, async (req, res) => {
     const match = {};
     if (from || to) {
       match.created_at = {};
-      if (from) match.created_at.$gte = new Date(from);
-      if (to) match.created_at.$lte = new Date(to + 'T23:59:59Z');
+      if (from) match.created_at.$gte = istDayStart(from);
+      if (to) match.created_at.$lte = istDayEnd(to);
     }
     const rows = await mdb.collection('site_events').aggregate([
       { $match: match },
@@ -25745,12 +25751,12 @@ app.get('/admin/site-analytics/timeseries', adminAuth, async (req, res) => {
     const { events, from, to } = req.query;
     const eventList = (events || '').split(',').map(s => s.trim()).filter(e => SITE_EVENT_NAMES.includes(e));
     if (!eventList.length) return res.status(400).json({ error: 'events (comma-separated, from the known list) required' });
-    const fromDate = from ? new Date(from) : new Date(Date.now() - 29 * 86400000);
-    const toDate = to ? new Date(to + 'T23:59:59Z') : new Date();
+    const fromDate = from ? istDayStart(from) : new Date(Date.now() - 29 * 86400000);
+    const toDate = to ? istDayEnd(to) : new Date();
 
     const rows = await mdb.collection('site_events').aggregate([
       { $match: { event: { $in: eventList }, created_at: { $gte: fromDate, $lte: toDate } } },
-      { $group: { _id: { event: '$event', day: { $dateToString: { format: '%Y-%m-%d', date: '$created_at' } } }, count: { $sum: 1 } } },
+      { $group: { _id: { event: '$event', day: { $dateToString: { format: '%Y-%m-%d', date: '$created_at', timezone: 'Asia/Kolkata' } } }, count: { $sum: 1 } } },
       { $project: { event: '$_id.event', day: '$_id.day', count: 1, _id: 0 } },
     ]).toArray();
 
@@ -26986,8 +26992,8 @@ app.get('/admin/wa-bot/analytics', adminAuth, async (req, res) => {
     const q = {};
     if (from || to) {
       q.sent_at = {};
-      if (from) q.sent_at.$gte = from + 'T00:00:00.000Z';
-      if (to)   q.sent_at.$lte = to + 'T23:59:59.999Z';
+      if (from) q.sent_at.$gte = istDayStart(from).toISOString();
+      if (to)   q.sent_at.$lte = istDayEnd(to).toISOString();
     }
     const rows = await mdb.collection('wa_send_log').find(q, {
       projection: { phone: 1, recipient_type: 1, kind: 1, name: 1, status: 1, reason: 1, pricing_category: 1, category: 1, billable: 1, sent_at: 1, delivery_status: 1, wamid: 1, _id: 0 }
@@ -27439,8 +27445,8 @@ app.get('/admin/abandoned-carts', adminAuth, async (req, res) => {
     if (status && status !== 'all') q.status = status;
     if (from || to) {
       q.received_at = {};
-      if (from) q.received_at.$gte = `${from}T00:00:00.000Z`;
-      if (to)   q.received_at.$lte = `${to}T23:59:59.999Z`;
+      if (from) q.received_at.$gte = istDayStart(from).toISOString();
+      if (to)   q.received_at.$lte = istDayEnd(to).toISOString();
     }
     const carts = await mdb.collection('abandoned_carts')
       .find(q, { projection: { raw: 0 } })

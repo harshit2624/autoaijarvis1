@@ -812,10 +812,15 @@
     return <svg width={size} height={size} viewBox="0 0 24 24" style={{verticalAlign:'middle',flexShrink:0}} {...svgAttrs} dangerouslySetInnerHTML={{__html: frag}}/>;
   }
 
-  /* ── period helpers ── */
-  const isoToday     = () => new Date().toISOString().slice(0,10);
-  const isoDaysAgo   = n => { const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); };
-  const isoMonthStart= () => { const d=new Date(); d.setDate(1); return d.toISOString().slice(0,10); };
+  /* ── period helpers ──
+     IST, not UTC — .toISOString() gives the UTC calendar date, which is
+     still "yesterday" for the first 5.5h of every IST day, shifting every
+     Today/Yesterday/preset button here the same way it did on the admin
+     dashboard. */
+  const istDateStr = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+  const isoToday     = () => istDateStr(new Date());
+  const isoDaysAgo   = n => istDateStr(new Date(Date.now() - n*86400000));
+  const isoMonthStart= () => { const [y,m] = isoToday().split('-'); return `${y}-${m}-01`; };
   const PERIOD_PRESETS = [
     { label:'Today',        from: isoToday(),      to: isoToday() },
     { label:'Yesterday',    from: isoDaysAgo(1),   to: isoDaysAgo(1) },
@@ -1885,7 +1890,7 @@
                   </div>
                   <div style={{marginBottom:12}}>
                     <label style={{fontSize:11,color:'var(--text-muted)',display:'block',marginBottom:4}}>Expected dispatch date</label>
-                    <input type="date" className="form-input" min={new Date().toISOString().split('T')[0]}
+                    <input type="date" className="form-input" min={isoToday()}
                       value={delayEta} onChange={e=>setDelayEta(e.target.value)}/>
                   </div>
                   <button className="btn btn-green btn-sm" onClick={submitDelay} disabled={submittingDelay||!delayReason.trim()||!delayEta}>
@@ -4261,7 +4266,7 @@
 
     const STATUS_COLOR = { sent:'#f59e0b', signed:'#6366f1', approved:'#10b981', expired:'#ef4444' };
     const STATUS_LABEL = { sent:'Sent — Awaiting Signature', signed:'Signed — Pending Approval', approved:'Active', expired:'Expired' };
-    const today = new Date().toISOString().slice(0,10);
+    const today = isoToday();
 
     return (
       <div className="page">

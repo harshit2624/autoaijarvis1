@@ -14919,10 +14919,10 @@
     const [waRatesSaving, setWaRatesSaving] = useState(false);
 
     const waPeriodRange = (period) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = isoToday();
       if (period === 'today') return { from: today, to: today };
-      if (period === '7d') return { from: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10), to: today };
-      if (period === '30d') return { from: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), to: today };
+      if (period === '7d') return { from: isoDaysAgo(7), to: today };
+      if (period === '30d') return { from: isoDaysAgo(30), to: today };
       if (period === 'custom') return { from: waFrom, to: waTo };
       return null; // 'all'
     };
@@ -20789,9 +20789,12 @@
 
     React.useEffect(() => {
       setLoading(true);
-      const now = new Date(), from = new Date(Date.now() - (period-1)*86400000);
-      from.setHours(0,0,0,0); now.setHours(23,59,59,999);
-      const fStr = from.toISOString(), tStr = now.toISOString();
+      // /admin/analytics and /admin/pixel-tracker/summary both expect plain
+      // YYYY-MM-DD date strings (they build IST day boundaries from them
+      // internally) — passing full timestamps here used to produce
+      // "Invalid Date" once concatenated server-side, silently breaking
+      // this page's analytics regardless of timezone.
+      const fStr = isoDaysAgo(period-1), tStr = isoToday();
       Promise.all([
         api(`/admin/dashboard`),
         api(`/admin/analytics?from=${fStr}&to=${tStr}`),
