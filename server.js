@@ -340,6 +340,9 @@ async function snapshotOrder(payload) {
 
   const attribution = extractCampaignAttribution(payload);
 
+  const total_discounts = parseFloat(payload.total_discounts || 0);
+  const discount_codes = (payload.discount_codes || []).map(d => d.code).filter(Boolean);
+
   await OM.upsert(sid, {
     order_name: payload.name || '',
     customer_name: customerName,
@@ -350,6 +353,8 @@ async function snapshotOrder(payload) {
     fulfillment_status: payload.fulfillment_status || null,
     total_price: payload.total_price || '0.00',
     subtotal_price: payload.subtotal_price || '0.00',
+    total_discounts,
+    discount_codes,
     currency: payload.currency || 'INR',
     tags: payload.tags || '',
     items,
@@ -382,6 +387,10 @@ function orderStubFromMeta(meta) {
     financial_status: meta.financial_status || '',
     fulfillment_status: meta.fulfillment_status || null,
     total_price: meta.total_price || '0.00',
+    subtotal_price: meta.subtotal_price || '0.00',
+    total_discounts: meta.total_discounts || 0,
+    discount_codes: meta.discount_codes || [],
+    shipping_charge: meta.shipping_charge || 0,
     currency: meta.currency || 'INR',
     created_at: meta.shopify_created_at || null,
     tags: meta.tags || '',
@@ -6614,6 +6623,17 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       return { c: r2c(c), g: r2c(g) };
     };
 
+    // ── Revenue breakdown — the Revenue stat card's dropdown waterfall.
+    // total_price is what the customer actually paid (already net of
+    // discounts); total_discounts is what was given away to get there, so
+    // "subtotal before discount" = total_price + total_discounts, not a
+    // separate figure we have to derive. Discount codes containing "prepaid"
+    // (case-insensitive) are the automatic prepaid incentive; everything
+    // else is a real coupon/referral code.
+    const revBreak = {
+      subtotalBeforeDiscount: 0, prepaidDiscount: 0, couponDiscount: 0,
+      cancelledRevenue: 0, shippingCollected: 0, prepaidCollectedAmt: 0, codCollectedAmt: 0,
+    };
     for (const o of ordersMain) {
       const sid     = String(o.id);
       const vendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
@@ -6630,6 +6650,20 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         const gross = (o.line_items||[]).reduce((s,li)=>s+parseFloat(li.price||0)*(li.quantity||1),0);
         commBuckets.prepaid.amt += r2c(gross);
       }
+
+      const orderTotal = parseFloat(o.total_price || 0);
+      const orderDiscount = parseFloat(o.total_discounts || 0);
+      revBreak.subtotalBeforeDiscount += orderTotal + orderDiscount;
+      const codes = o.discount_codes || [];
+      if (codes.length) {
+        const isPrepaidCode = codes.some(c => /prepaid/i.test(c));
+        if (isPrepaidCode) revBreak.prepaidDiscount += orderDiscount;
+        else revBreak.couponDiscount += orderDiscount;
+      }
+      if (stage === 'cancelled' || stage === 'hold' || stage === 'rto') revBreak.cancelledRevenue += orderTotal;
+      revBreak.shippingCollected += parseFloat(o.shipping_charge || 0);
+      if (o.financial_status === 'paid') revBreak.prepaidCollectedAmt += orderTotal;
+      else revBreak.codCollectedAmt += orderTotal;
     }
 
     const allTimeTotals = {
@@ -6792,14 +6826,26 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         today:        { orders: ordersToday.length, revenue: rev(ordersToday) },
         last7d:       { orders: orders7d.length,    revenue: rev(orders7d),   aov: aov7 },
         period:       { orders: ordersMain.length,  revenue: revMain,         aov: aovMain,
-                        from: fromParam || periodFrom.toISOString().slice(0,10),
-                        to:   toParam   || periodTo.toISOString().slice(0,10),
+                        from: fromParam || periodFrom.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}),
+                        to:   toParam   || periodTo.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}),
                         days: periodDays },
         revenueGrowth, orderGrowth, rtoRate30,
         repeatRate, totalCustomers, repeatCustomers,
       },
       stageCounts,
       allTimeTotals,
+      revenueBreakdown: {
+        subtotalBeforeDiscount: r2c(revBreak.subtotalBeforeDiscount),
+        prepaidDiscount:        r2c(revBreak.prepaidDiscount),
+        couponDiscount:         r2c(revBreak.couponDiscount),
+        totalDiscount:          r2c(revBreak.prepaidDiscount + revBreak.couponDiscount),
+        netSales:                r2c(revMain),
+        cancelledRevenue:       r2c(revBreak.cancelledRevenue),
+        finalRealizedSales:     r2c(revMain - revBreak.cancelledRevenue),
+        shippingCollected:      r2c(revBreak.shippingCollected),
+        prepaidCollected:       r2c(revBreak.prepaidCollectedAmt),
+        codCollected:           r2c(revBreak.codCollectedAmt),
+      },
       commissionByBracket,
       topVendorsByCommission,
       fulfillStats,

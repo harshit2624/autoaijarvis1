@@ -3594,6 +3594,7 @@
     const [analytics, setAnalytics] = useState(()=> dashCache?.current?.analytics?.[PERIOD_PRESETS[3]?.label] || null);
     const [aLoading,  setALoading]  = useState(()=> !(dashCache?.current?.analytics?.[PERIOD_PRESETS[3]?.label]));
     const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
+    const [revBreakdownOpen, setRevBreakdownOpen] = useState(false);
 
     useEffect(()=>{
       const key = aPeriod?.label || 'all';
@@ -3769,12 +3770,55 @@
         {/* ── Stat cards ── */}
         <div className="stats-grid">
           <StatCard color="indigo" icon="◈" label={'Orders'}     value={aLoading?'…':(ps.orders!=null?ps.orders.toLocaleString():'0')} sub={aLoading?'':fmtCur(ps.revenue||0)}/>
-          <StatCard color="cyan"   icon="₹" label={'Revenue'}    value={aLoading?'…':fmtCur(ps.revenue||0)} sub={!aLoading && a?.summary?.revenueGrowth!=null ? `${a.summary.revenueGrowth>=0?'▲':'▼'} ${Math.abs(a.summary.revenueGrowth)}% vs prior` : `all time: ${fmtCur(at.revenue||0)}`}/>
+          <StatCard color="cyan"   icon="₹" label={<>{'Revenue'}<span style={{marginLeft:5,fontSize:9,opacity:0.7,transform:revBreakdownOpen?'rotate(180deg)':'none',display:'inline-block',transition:'transform .15s'}}>▾</span></>} value={aLoading?'…':fmtCur(ps.revenue||0)} sub={!aLoading && a?.summary?.revenueGrowth!=null ? `${a.summary.revenueGrowth>=0?'▲':'▼'} ${Math.abs(a.summary.revenueGrowth)}% vs prior` : `all time: ${fmtCur(at.revenue||0)}`} onClick={()=>setRevBreakdownOpen(v=>!v)}/>
           <StatCard color="green"  icon="✅" label={'Delivered'} value={aLoading?'…':(fs.delivered||0).toLocaleString()} sub={`${fs.delivery_rate||0}% delivery rate`}/>
           <StatCard color="red"    icon="↩" label={'RTO'}       value={aLoading?'…':(fs.rto||0).toLocaleString()} sub={`${fs.rto_rate||0}% RTO rate`}/>
           <StatCard color="orange" icon="📦" label={'Dispatched'} value={aLoading?'…':(fs.dispatched||0).toLocaleString()} sub={`of ${fs.active||0} confirmed`}/>
           <StatCard color="purple" icon="%" label={'Dispatch Rate'} value={aLoading?'…':`${fs.dispatch_rate||0}%`} sub={`${fs.dispatched||0}/${fs.active||0} dispatched`}/>
         </div>
+
+        {/* ── Revenue breakdown dropdown — click the Revenue card to open.
+            Waterfall from subtotal (before any discount) down to what was
+            actually realized after cancellation/RTO, plus shipping
+            collected and the prepaid/COD split — all period-scoped. ── */}
+        {revBreakdownOpen && !aLoading && a?.revenueBreakdown && (() => {
+          const rb = a.revenueBreakdown;
+          const Row = ({label, value, sign, bold, indent, color}) => (
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:'1px solid var(--border)',paddingLeft:indent?16:0}}>
+              <span style={{fontSize:12,color:bold?'var(--text)':'var(--text-muted)',fontWeight:bold?700:500}}>{label}</span>
+              <span style={{fontSize:13,fontWeight:bold?800:600,color:color||'var(--text)'}}>{sign==='-'?'− ':sign==='+'?'+ ':''}{fmtCur(value)}</span>
+            </div>
+          );
+          return (
+            <div className="card" style={{padding:'16px 18px',marginTop:-6}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                <div className="card-title">🧾 Revenue Breakdown</div>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel}</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Sales waterfall</div>
+                  <Row label="Subtotal (before discount)" value={rb.subtotalBeforeDiscount}/>
+                  <Row label="Prepaid discount" value={rb.prepaidDiscount} sign="-" indent color="#f59e0b"/>
+                  <Row label="Coupon / referral discount" value={rb.couponDiscount} sign="-" indent color="#f59e0b"/>
+                  <Row label="Net sales (actually charged)" value={rb.netSales} bold/>
+                  <Row label="Cancelled + RTO" value={rb.cancelledRevenue} sign="-" indent color="#ef4444"/>
+                  <Row label="Final realized sales" value={rb.finalRealizedSales} bold color="#10b981"/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Collected breakdown</div>
+                  <Row label="Shipping collected" value={rb.shippingCollected}/>
+                  <Row label="Prepaid collected" value={rb.prepaidCollected} color="#10b981"/>
+                  <Row label="COD collected" value={rb.codCollected} color="#f59e0b"/>
+                  <Row label="Total discount given" value={rb.totalDiscount} color="#f59e0b"/>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>
+                    "Net sales" is what customers were actually charged (discounts already applied). "Final realized sales" additionally removes orders that cancelled or came back RTO. Shipping/prepaid/COD are already included inside net sales — shown separately for visibility, not subtracted again.
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Daily Revenue Chart ── */}
         <div className="card" style={{padding:0}}>
@@ -4019,6 +4063,321 @@
                   </div>
                 );
               })()}
+            </div>
+          );
+        })()}
+
+        {/* ── Meta Ads Overview — Meta's own numbers vs what the store actually
+            kept, reconciled against the real order outcomes already computed
+            for the campaign cards below (campPerf + campOrganic). ── */}
+        {(() => {
+          const o = metaOv;
+          // Real ROAS needs the TRUE period total — every order the store
+          // actually received, not just the ones Meta's own UTM attribution
+          // could match back to a live campaign. Summing campPerf+campOrganic
+          // undercounts (any order whose ad_campaign tag pointed to a
+          // campaign Meta's /insights call didn't return that day silently
+          // fell through both buckets), so use the backend's totalStore
+          // figure — computed straight from every order in the period —
+          // instead. Falls back to the old sum only if an older server
+          // response hasn't sent totalStore yet.
+          const allSummaries = [...(campPerf||[]), ...(campOrganic ? [campOrganic] : [])];
+          const ts = campTotalStore;
+          const storeGross = ts ? ts.sales      : allSummaries.reduce((s,c)=>s+(c.sales||0),0);
+          const storeNet    = ts ? ts.netSales   : allSummaries.reduce((s,c)=>s+(c.netSales||0),0);
+          const storeOrders = ts ? ts.orderCount : allSummaries.reduce((s,c)=>s+(c.orderCount||0),0);
+          const storeDelivered = ts ? ts.delivered : allSummaries.reduce((s,c)=>s+(c.delivered||0),0);
+          const storeDeliveredRev = ts
+            ? (ts.orderCount ? ts.sales * (ts.delivered/ts.orderCount) : 0)
+            : allSummaries.reduce((s,c)=>{
+                const share = c.orderCount ? (c.delivered||0)/c.orderCount : 0;
+                return s + (c.sales||0)*share;
+              },0);
+          const spend = o?.spend||0;
+          const metaRoas = o?.roas || (spend ? (o?.revenue||0)/spend : 0);
+          const grossRoas = spend ? storeGross/spend : 0;
+          const netRoas   = spend ? storeNet/spend : 0;
+          const delRoas   = spend ? storeDeliveredRev/spend : 0;
+          const lmax = Math.max(metaRoas, grossRoas, netRoas, delRoas, 1);
+          const claimPct = storeGross ? Math.min(999,(o?.revenue||0)/storeGross*100) : 0;
+          const erodePct = grossRoas ? (1-netRoas/grossRoas)*100 : 0;
+          const ladder = [
+            { l:'Meta says', v:metaRoas, sub:`${fmtCur(o?.revenue||0)} attributed from ${(o?.purchases||0).toLocaleString()} purchases`, c:'#60a5fa' },
+            { l:'Store gross', v:grossRoas, sub:`${fmtCur(storeGross)} from ${storeOrders.toLocaleString()} total orders`, c:'#a78bfa' },
+            { l:'After RTO + cancel', v:netRoas, sub:`${fmtCur(storeNet)} net kept`, c:'#f59e0b' },
+            { l:'Delivered so far', v:delRoas, sub:`${fmtCur(storeDeliveredRev)} in hand · ${storeDelivered.toLocaleString()} delivered`, c:'#10b981' },
+          ];
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">📊 Meta Ads Overview</div>
+                  <div className="dash-section-meta">{periodLabel} · Meta's own account totals vs. real order outcomes from the campaign cards below</div>
+                </div>
+                <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
+              </div>
+              {metaOvErr && <div style={{fontSize:12,color:'var(--red)',padding:'8px 0'}}>Meta unavailable: {metaOvErr}</div>}
+              {!metaOvErr && (
+              <div className="stats-grid" style={{marginBottom:14}}>
+                <StatCard color="indigo" icon="📣" label="Ad Spend" value={fmtCur(spend)} sub={o?`${(o.impressions||0).toLocaleString()} impressions`:'…'}/>
+                <StatCard color="cyan"   icon="🎯" label="Meta ROAS" value={`${metaRoas.toFixed(2)}x`} sub={o?`${fmtCur(o.revenue||0)} attributed`:'…'}/>
+                <StatCard color="green"  icon="🛍" label="Purchases" value={(o?.purchases||0).toLocaleString()} sub={o?.cpp?`${fmtCur(o.cpp)} per purchase`:''}/>
+                <StatCard color="purple" icon="⚖" label="Blended ROAS" value={`${netRoas.toFixed(2)}x`} sub="net store revenue ÷ ad spend"/>
+              </div>
+              )}
+              {!metaOvErr && o && (
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14}}>
+                <div className="card" style={{padding:'14px 16px'}}>
+                  <div className="card-title" style={{marginBottom:10}}>ROAS reality check</div>
+                  {ladder.map(x=>(
+                    <div key={x.l} style={{marginBottom:11}}>
+                      <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
+                        <span>{x.l}</span><b style={{color:x.c,fontSize:13}}>{x.v.toFixed(2)}x</b>
+                      </div>
+                      <div style={{height:6,background:'var(--bg-hover)',borderRadius:4,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${Math.min(100,x.v/lmax*100)}%`,background:x.c,borderRadius:4}}/>
+                      </div>
+                      <div style={{fontSize:9.5,color:'var(--text-muted)',marginTop:3}}>{x.sub}</div>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)',lineHeight:1.5}}>
+                    Meta attributes <b style={{color:'var(--text)'}}>{claimPct.toFixed(0)}%</b> of total store revenue. RTO + cancellations trim gross ROAS by <b style={{color:'var(--text)'}}>{Math.max(0,erodePct).toFixed(0)}%</b>.
+                  </div>
+                </div>
+                <div className="card" style={{padding:'14px 16px'}}>
+                  <div className="card-title" style={{marginBottom:10}}>Meta vs store</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr',gap:6,fontSize:9.5,color:'var(--text-muted)',textTransform:'uppercase',fontWeight:700,paddingBottom:6,borderBottom:'1px solid var(--border)',marginBottom:6}}>
+                    <span/><span>Meta</span><span>Store</span>
+                  </div>
+                  {[
+                    ['Orders', (o.purchases||0).toLocaleString(), storeOrders.toLocaleString()],
+                    ['Revenue', fmtCur(o.revenue||0), fmtCur(storeGross)],
+                    ['Avg order value', o.purchases?fmtCur(o.revenue/o.purchases):'—', storeOrders?fmtCur(storeGross/storeOrders):'—'],
+                    ['Cost / order', o.purchases?fmtCur(spend/o.purchases):'—', storeOrders?fmtCur(spend/storeOrders):'—'],
+                    ['Cost / delivered', '—', storeDelivered?fmtCur(spend/storeDelivered):'—'],
+                  ].map(([l,m,st])=>(
+                    <div key={l} style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr',gap:6,fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{color:'var(--text-muted)'}}>{l}</span><b>{m}</b><b>{st}</b>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>Store = every order placed this period. The gap below Meta's own count is orders it didn't credit — organic, direct, WhatsApp, influencer, or UTM tracking loss.</div>
+                </div>
+                <div className="card" style={{padding:'14px 16px'}}>
+                  <div className="card-title" style={{marginBottom:10}}>Funnel &amp; efficiency</div>
+                  {[
+                    ['CTR', `${(o.ctr||0).toFixed(2)}%`], ['CPM', fmtCur(o.cpm||0)], ['CPC', fmtCur(o.cpc||0)],
+                    ['Reach', (o.reach||0).toLocaleString()], ['Frequency', (o.frequency||0).toFixed(2)+'x'],
+                    ['Add to cart', (o.addtocart||0).toLocaleString()], ['Checkout', (o.initcheckout||0).toLocaleString()],
+                  ].map(([l,v])=>(
+                    <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
+                      <span style={{color:'var(--text-muted)'}}>{l}</span><b>{v}</b>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Meta Campaign Performance — real order outcomes joined to Meta
+            campaigns via UTM attribution (order_meta.ad_campaign, captured
+            from GoKwik's note_attributes at order-snapshot time — see
+            extractCampaignAttribution in server.js). Each campaign expands
+            to show real sales/order-stage/audience/product/state breakdowns,
+            and each ad inside the campaign expands the same way. ── */}
+        {!campLoading && (campPerf?.length > 0 || campOrganic) && (() => {
+          const visibleCamps = showAllCamps ? (campPerf||[]) : (campPerf||[]).filter(c => c.status === 'ACTIVE');
+          const allCards = [...visibleCamps, ...(campOrganic ? [campOrganic] : [])];
+          const hiddenCount = (campPerf||[]).length - visibleCamps.length;
+          const OutcomeBreakdown = ({ s }) => {
+            const stageSegs = [
+              { v:s.delivered, c:'#10b981', l:'Delivered' },
+              { v:s.rto,       c:'#ef4444', l:'RTO' },
+              { v:s.dead,      c:'#94a3b8', l:'Cancelled/Hold' },
+              { v:s.inMotion,  c:'#818cf8', l:'In Motion' },
+            ];
+            const tierList = [
+              { id:'high_risk', label:'High', c:'#ef4444' },
+              { id:'medium_risk', label:'Medium', c:'#f59e0b' },
+              { id:'control', label:'Control', c:'#a78bfa' },
+              { id:'low_risk', label:'Low', c:'#10b981' },
+            ];
+            const maxTier = Math.max(...tierList.map(t=>s.tierCounts?.[t.id]||0), 1);
+            return (
+              <div style={{padding:'12px 14px',background:'var(--bg-hover)',borderRadius:8,marginTop:8}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Sales</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'var(--text)'}}>{fmtCur(s.sales)}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Net Sales</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>{fmtCur(s.netSales)}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Cancelled/Hold</div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#94a3b8'}}>{s.dead}</div>
+                  </div>
+                </div>
+                {/* Order stage breakdown */}
+                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:4}}>Order Progress ({s.orderCount})</div>
+                <div style={{display:'flex',height:16,borderRadius:5,overflow:'hidden',gap:1}}>
+                  {stageSegs.filter(x=>x.v>0).map(x=>{
+                    const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
+                    return (
+                      <div key={x.l} title={`${x.l}: ${x.v} (${pct}%)`} style={{flex:x.v,minWidth:2,background:x.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        {pct>=14 && <span style={{fontSize:8,fontWeight:800,color:'#fff'}}>{pct}%</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display:'flex',gap:1,marginBottom:12,marginTop:3}}>
+                  {stageSegs.filter(x=>x.v>0).map(x=>{
+                    const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
+                    const abbr = x.l==='Cancelled/Hold' ? 'Can/Hold' : x.l==='In Motion' ? 'Motion' : x.l;
+                    return (
+                      <div key={x.l} style={{flex:x.v,minWidth:2,textAlign:'center',overflow:'hidden'}}>
+                        <span style={{fontSize:8,fontWeight:700,color:x.c,whiteSpace:'nowrap'}}>{abbr} {pct}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Audience tier mini bars */}
+                {(s.tierCounts?.high_risk+s.tierCounts?.medium_risk+s.tierCounts?.control+s.tierCounts?.low_risk) > 0 && (
+                  <>
+                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:6}}>Audience Risk Mix</div>
+                    <div style={{display:'flex',gap:10,marginBottom:12}}>
+                      {tierList.map(t=>{
+                        const v = s.tierCounts?.[t.id]||0;
+                        return (
+                          <div key={t.id} style={{flex:1,textAlign:'center'}}>
+                            <div style={{height:36,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+                              <div style={{width:'70%',height:`${Math.max(v/maxTier*100,v>0?10:0)}%`,background:t.c,borderRadius:'3px 3px 0 0'}}/>
+                            </div>
+                            <div style={{fontSize:9,fontWeight:700,color:t.c,marginTop:3}}>{v}</div>
+                            <div style={{fontSize:8,color:'var(--text-muted)'}}>{t.label}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+                {/* Top products / states */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+                  {s.topProducts?.length > 0 && (
+                    <div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:5}}>Top Products</div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        {s.topProducts.slice(0,5).map((p,i)=>(
+                          <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10}}>
+                            <span style={{color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{p.title}</span>
+                            <span style={{color:'var(--text-muted)',flexShrink:0}}>{p.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {s.topStates?.length > 0 && (
+                    <div>
+                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:5}}>Top States</div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        {s.topStates.slice(0,5).map((st,i)=>(
+                          <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10}}>
+                            <span style={{color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{st.state}</span>
+                            <span style={{color:'var(--text-muted)',flexShrink:0}}>{st.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">📣 Meta Campaign Performance</div>
+                  <div className="dash-section-meta">{periodLabel} · real order outcomes matched to each campaign by UTM attribution</div>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <button onClick={()=>setShowAllCamps(v=>!v)} style={{fontSize:10,fontWeight:700,padding:'5px 10px',borderRadius:6,border:'1px solid var(--border)',background:showAllCamps?'var(--accent)':'var(--bg-card2)',color:showAllCamps?'#fff':'var(--text-muted)',cursor:'pointer'}}>
+                    {showAllCamps ? `Showing all ${(campPerf||[]).length}` : `Active only${hiddenCount>0?` (+${hiddenCount} hidden)`:''}`}
+                  </button>
+                  <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:10}}>
+                {allCards.map(c=>{
+                  const isOrganic = c.campaignId === 'organic';
+                  const isOpen = expandedCamp === c.campaignId;
+                  const roasC = v => v>=4?'#10b981':v>=2?'#f59e0b':'#ef4444';
+                  const roasBox = (label, val) => (
+                    <div style={{textAlign:'center',flex:1}}>
+                      <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:.3}}>{label}</div>
+                      <div style={{fontSize:14,fontWeight:800,color:roasC(val)}}>{val.toFixed(1)}x</div>
+                    </div>
+                  );
+                  return (
+                    <div key={c.campaignId} style={{border:`1px solid ${isOrganic?'rgba(16,185,129,.3)':'var(--border)'}`,borderRadius:10,overflow:'hidden',background:isOrganic?'rgba(16,185,129,.03)':'var(--bg-card2)',gridColumn:isOpen?'1 / -1':'auto'}}>
+                      <div onClick={()=>setExpandedCamp(isOpen?null:c.campaignId)} style={{padding:'12px 14px',cursor:'pointer',background:isOpen?'var(--bg-hover)':'transparent'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:isOrganic?4:10}}>
+                          <span style={{fontSize:10,color:'var(--text-muted)',transition:'transform 0.15s',transform:isOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
+                          <span style={{fontSize:12,fontWeight:700,color:isOrganic?'#34d399':'var(--text)',flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={c.campaign}>{isOrganic?'🌱 ':''}{c.campaign}</span>
+                        </div>
+                        {isOrganic ? (
+                          <div style={{fontSize:10,color:'var(--text-muted)'}}>direct / organic / no UTM match — no Meta spend to attribute · {c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no orders'}</div>
+                        ) : (
+                          <>
+                            <div style={{display:'flex',gap:6,marginBottom:8}}>
+                              {roasBox('Meta ROAS', c.roas)}
+                              {roasBox('Gross ROAS', c.grossRoas||0)}
+                              {roasBox('Net ROAS', c.netRoas||0)}
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',borderTop:'1px solid var(--border)',paddingTop:7}}>
+                              <span>Spend <strong style={{color:'var(--text)'}}>{fmtCur(c.spend)}</strong></span>
+                              <span>{c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no attributed orders'}</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {isOpen && (
+                        <div style={{padding:'0 14px 14px'}}>
+                          {c.orderCount > 0 ? <OutcomeBreakdown s={c}/> : (
+                            <div style={{fontSize:11,color:'var(--text-muted)',padding:'10px 0'}}>No orders in this period carry a UTM campaign tag matching "{c.campaign}" exactly — spend/ROAS above is still real Meta data, just not attributable to specific orders yet.</div>
+                          )}
+                          {c.ads?.length > 0 && (
+                            <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                              <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:8}}>Ads in this campaign</div>
+                              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                                {c.ads.map(ad=>{
+                                  const adOpen = expandedAd === ad.adId;
+                                  return (
+                                    <div key={ad.adId} style={{border:'1px solid var(--border)',borderRadius:6,overflow:'hidden'}}>
+                                      <div onClick={()=>setExpandedAd(adOpen?null:ad.adId)} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',cursor:'pointer',fontSize:11,background:adOpen?'var(--bg-hover)':'transparent'}}>
+                                        <span style={{color:'var(--text-muted)',transition:'transform 0.15s',transform:adOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
+                                        <span style={{color:'var(--text)',fontWeight:600,flex:'2 1 160px',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={ad.adName}>{ad.adName}</span>
+                                        <span style={{color:'var(--text-muted)',flexShrink:0}}>{fmtCur(ad.spend)}</span>
+                                        <span style={{color:'var(--text-muted)',flexShrink:0}}>{ad.orderCount} orders</span>
+                                      </div>
+                                      {adOpen && ad.orderCount > 0 && (
+                                        <div style={{padding:'0 10px 10px'}}><OutcomeBreakdown s={ad}/></div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}
@@ -4636,321 +4995,6 @@
             </div>
           </div>
         )}
-
-        {/* ── Meta Ads Overview — Meta's own numbers vs what the store actually
-            kept, reconciled against the real order outcomes already computed
-            for the campaign cards below (campPerf + campOrganic). ── */}
-        {(() => {
-          const o = metaOv;
-          // Real ROAS needs the TRUE period total — every order the store
-          // actually received, not just the ones Meta's own UTM attribution
-          // could match back to a live campaign. Summing campPerf+campOrganic
-          // undercounts (any order whose ad_campaign tag pointed to a
-          // campaign Meta's /insights call didn't return that day silently
-          // fell through both buckets), so use the backend's totalStore
-          // figure — computed straight from every order in the period —
-          // instead. Falls back to the old sum only if an older server
-          // response hasn't sent totalStore yet.
-          const allSummaries = [...(campPerf||[]), ...(campOrganic ? [campOrganic] : [])];
-          const ts = campTotalStore;
-          const storeGross = ts ? ts.sales      : allSummaries.reduce((s,c)=>s+(c.sales||0),0);
-          const storeNet    = ts ? ts.netSales   : allSummaries.reduce((s,c)=>s+(c.netSales||0),0);
-          const storeOrders = ts ? ts.orderCount : allSummaries.reduce((s,c)=>s+(c.orderCount||0),0);
-          const storeDelivered = ts ? ts.delivered : allSummaries.reduce((s,c)=>s+(c.delivered||0),0);
-          const storeDeliveredRev = ts
-            ? (ts.orderCount ? ts.sales * (ts.delivered/ts.orderCount) : 0)
-            : allSummaries.reduce((s,c)=>{
-                const share = c.orderCount ? (c.delivered||0)/c.orderCount : 0;
-                return s + (c.sales||0)*share;
-              },0);
-          const spend = o?.spend||0;
-          const metaRoas = o?.roas || (spend ? (o?.revenue||0)/spend : 0);
-          const grossRoas = spend ? storeGross/spend : 0;
-          const netRoas   = spend ? storeNet/spend : 0;
-          const delRoas   = spend ? storeDeliveredRev/spend : 0;
-          const lmax = Math.max(metaRoas, grossRoas, netRoas, delRoas, 1);
-          const claimPct = storeGross ? Math.min(999,(o?.revenue||0)/storeGross*100) : 0;
-          const erodePct = grossRoas ? (1-netRoas/grossRoas)*100 : 0;
-          const ladder = [
-            { l:'Meta says', v:metaRoas, sub:`${fmtCur(o?.revenue||0)} attributed from ${(o?.purchases||0).toLocaleString()} purchases`, c:'#60a5fa' },
-            { l:'Store gross', v:grossRoas, sub:`${fmtCur(storeGross)} from ${storeOrders.toLocaleString()} total orders`, c:'#a78bfa' },
-            { l:'After RTO + cancel', v:netRoas, sub:`${fmtCur(storeNet)} net kept`, c:'#f59e0b' },
-            { l:'Delivered so far', v:delRoas, sub:`${fmtCur(storeDeliveredRev)} in hand · ${storeDelivered.toLocaleString()} delivered`, c:'#10b981' },
-          ];
-          return (
-            <div className="dash-section">
-              <div className="dash-section-hdr">
-                <div>
-                  <div className="dash-section-title">📊 Meta Ads Overview</div>
-                  <div className="dash-section-meta">{periodLabel} · Meta's own account totals vs. real order outcomes from the campaign cards below</div>
-                </div>
-                <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
-              </div>
-              {metaOvErr && <div style={{fontSize:12,color:'var(--red)',padding:'8px 0'}}>Meta unavailable: {metaOvErr}</div>}
-              {!metaOvErr && (
-              <div className="stats-grid" style={{marginBottom:14}}>
-                <StatCard color="indigo" icon="📣" label="Ad Spend" value={fmtCur(spend)} sub={o?`${(o.impressions||0).toLocaleString()} impressions`:'…'}/>
-                <StatCard color="cyan"   icon="🎯" label="Meta ROAS" value={`${metaRoas.toFixed(2)}x`} sub={o?`${fmtCur(o.revenue||0)} attributed`:'…'}/>
-                <StatCard color="green"  icon="🛍" label="Purchases" value={(o?.purchases||0).toLocaleString()} sub={o?.cpp?`${fmtCur(o.cpp)} per purchase`:''}/>
-                <StatCard color="purple" icon="⚖" label="Blended ROAS" value={`${netRoas.toFixed(2)}x`} sub="net store revenue ÷ ad spend"/>
-              </div>
-              )}
-              {!metaOvErr && o && (
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:14}}>
-                <div className="card" style={{padding:'14px 16px'}}>
-                  <div className="card-title" style={{marginBottom:10}}>ROAS reality check</div>
-                  {ladder.map(x=>(
-                    <div key={x.l} style={{marginBottom:11}}>
-                      <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--text-muted)',marginBottom:4}}>
-                        <span>{x.l}</span><b style={{color:x.c,fontSize:13}}>{x.v.toFixed(2)}x</b>
-                      </div>
-                      <div style={{height:6,background:'var(--bg-hover)',borderRadius:4,overflow:'hidden'}}>
-                        <div style={{height:'100%',width:`${Math.min(100,x.v/lmax*100)}%`,background:x.c,borderRadius:4}}/>
-                      </div>
-                      <div style={{fontSize:9.5,color:'var(--text-muted)',marginTop:3}}>{x.sub}</div>
-                    </div>
-                  ))}
-                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)',lineHeight:1.5}}>
-                    Meta attributes <b style={{color:'var(--text)'}}>{claimPct.toFixed(0)}%</b> of total store revenue. RTO + cancellations trim gross ROAS by <b style={{color:'var(--text)'}}>{Math.max(0,erodePct).toFixed(0)}%</b>.
-                  </div>
-                </div>
-                <div className="card" style={{padding:'14px 16px'}}>
-                  <div className="card-title" style={{marginBottom:10}}>Meta vs store</div>
-                  <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr',gap:6,fontSize:9.5,color:'var(--text-muted)',textTransform:'uppercase',fontWeight:700,paddingBottom:6,borderBottom:'1px solid var(--border)',marginBottom:6}}>
-                    <span/><span>Meta</span><span>Store</span>
-                  </div>
-                  {[
-                    ['Orders', (o.purchases||0).toLocaleString(), storeOrders.toLocaleString()],
-                    ['Revenue', fmtCur(o.revenue||0), fmtCur(storeGross)],
-                    ['Avg order value', o.purchases?fmtCur(o.revenue/o.purchases):'—', storeOrders?fmtCur(storeGross/storeOrders):'—'],
-                    ['Cost / order', o.purchases?fmtCur(spend/o.purchases):'—', storeOrders?fmtCur(spend/storeOrders):'—'],
-                    ['Cost / delivered', '—', storeDelivered?fmtCur(spend/storeDelivered):'—'],
-                  ].map(([l,m,st])=>(
-                    <div key={l} style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr',gap:6,fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
-                      <span style={{color:'var(--text-muted)'}}>{l}</span><b>{m}</b><b>{st}</b>
-                    </div>
-                  ))}
-                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>Store = every order placed this period. The gap below Meta's own count is orders it didn't credit — organic, direct, WhatsApp, influencer, or UTM tracking loss.</div>
-                </div>
-                <div className="card" style={{padding:'14px 16px'}}>
-                  <div className="card-title" style={{marginBottom:10}}>Funnel &amp; efficiency</div>
-                  {[
-                    ['CTR', `${(o.ctr||0).toFixed(2)}%`], ['CPM', fmtCur(o.cpm||0)], ['CPC', fmtCur(o.cpc||0)],
-                    ['Reach', (o.reach||0).toLocaleString()], ['Frequency', (o.frequency||0).toFixed(2)+'x'],
-                    ['Add to cart', (o.addtocart||0).toLocaleString()], ['Checkout', (o.initcheckout||0).toLocaleString()],
-                  ].map(([l,v])=>(
-                    <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
-                      <span style={{color:'var(--text-muted)'}}>{l}</span><b>{v}</b>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* ── Meta Campaign Performance — real order outcomes joined to Meta
-            campaigns via UTM attribution (order_meta.ad_campaign, captured
-            from GoKwik's note_attributes at order-snapshot time — see
-            extractCampaignAttribution in server.js). Each campaign expands
-            to show real sales/order-stage/audience/product/state breakdowns,
-            and each ad inside the campaign expands the same way. ── */}
-        {!campLoading && (campPerf?.length > 0 || campOrganic) && (() => {
-          const visibleCamps = showAllCamps ? (campPerf||[]) : (campPerf||[]).filter(c => c.status === 'ACTIVE');
-          const allCards = [...visibleCamps, ...(campOrganic ? [campOrganic] : [])];
-          const hiddenCount = (campPerf||[]).length - visibleCamps.length;
-          const OutcomeBreakdown = ({ s }) => {
-            const stageSegs = [
-              { v:s.delivered, c:'#10b981', l:'Delivered' },
-              { v:s.rto,       c:'#ef4444', l:'RTO' },
-              { v:s.dead,      c:'#94a3b8', l:'Cancelled/Hold' },
-              { v:s.inMotion,  c:'#818cf8', l:'In Motion' },
-            ];
-            const tierList = [
-              { id:'high_risk', label:'High', c:'#ef4444' },
-              { id:'medium_risk', label:'Medium', c:'#f59e0b' },
-              { id:'control', label:'Control', c:'#a78bfa' },
-              { id:'low_risk', label:'Low', c:'#10b981' },
-            ];
-            const maxTier = Math.max(...tierList.map(t=>s.tierCounts?.[t.id]||0), 1);
-            return (
-              <div style={{padding:'12px 14px',background:'var(--bg-hover)',borderRadius:8,marginTop:8}}>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:12}}>
-                  <div>
-                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Sales</div>
-                    <div style={{fontSize:14,fontWeight:800,color:'var(--text)'}}>{fmtCur(s.sales)}</div>
-                  </div>
-                  <div>
-                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Net Sales</div>
-                    <div style={{fontSize:14,fontWeight:800,color:'#10b981'}}>{fmtCur(s.netSales)}</div>
-                  </div>
-                  <div>
-                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase'}}>Cancelled/Hold</div>
-                    <div style={{fontSize:14,fontWeight:800,color:'#94a3b8'}}>{s.dead}</div>
-                  </div>
-                </div>
-                {/* Order stage breakdown */}
-                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:4}}>Order Progress ({s.orderCount})</div>
-                <div style={{display:'flex',height:16,borderRadius:5,overflow:'hidden',gap:1}}>
-                  {stageSegs.filter(x=>x.v>0).map(x=>{
-                    const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
-                    return (
-                      <div key={x.l} title={`${x.l}: ${x.v} (${pct}%)`} style={{flex:x.v,minWidth:2,background:x.c,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                        {pct>=14 && <span style={{fontSize:8,fontWeight:800,color:'#fff'}}>{pct}%</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{display:'flex',gap:1,marginBottom:12,marginTop:3}}>
-                  {stageSegs.filter(x=>x.v>0).map(x=>{
-                    const pct = s.orderCount>0 ? Math.round(x.v/s.orderCount*100) : 0;
-                    const abbr = x.l==='Cancelled/Hold' ? 'Can/Hold' : x.l==='In Motion' ? 'Motion' : x.l;
-                    return (
-                      <div key={x.l} style={{flex:x.v,minWidth:2,textAlign:'center',overflow:'hidden'}}>
-                        <span style={{fontSize:8,fontWeight:700,color:x.c,whiteSpace:'nowrap'}}>{abbr} {pct}%</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* Audience tier mini bars */}
-                {(s.tierCounts?.high_risk+s.tierCounts?.medium_risk+s.tierCounts?.control+s.tierCounts?.low_risk) > 0 && (
-                  <>
-                    <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:6}}>Audience Risk Mix</div>
-                    <div style={{display:'flex',gap:10,marginBottom:12}}>
-                      {tierList.map(t=>{
-                        const v = s.tierCounts?.[t.id]||0;
-                        return (
-                          <div key={t.id} style={{flex:1,textAlign:'center'}}>
-                            <div style={{height:36,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
-                              <div style={{width:'70%',height:`${Math.max(v/maxTier*100,v>0?10:0)}%`,background:t.c,borderRadius:'3px 3px 0 0'}}/>
-                            </div>
-                            <div style={{fontSize:9,fontWeight:700,color:t.c,marginTop:3}}>{v}</div>
-                            <div style={{fontSize:8,color:'var(--text-muted)'}}>{t.label}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-                {/* Top products / states */}
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-                  {s.topProducts?.length > 0 && (
-                    <div>
-                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:5}}>Top Products</div>
-                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                        {s.topProducts.slice(0,5).map((p,i)=>(
-                          <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10}}>
-                            <span style={{color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{p.title}</span>
-                            <span style={{color:'var(--text-muted)',flexShrink:0}}>{p.qty}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {s.topStates?.length > 0 && (
-                    <div>
-                      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:5}}>Top States</div>
-                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                        {s.topStates.slice(0,5).map((st,i)=>(
-                          <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10}}>
-                            <span style={{color:'var(--text)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0}}>{st.state}</span>
-                            <span style={{color:'var(--text-muted)',flexShrink:0}}>{st.count}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          };
-
-          return (
-            <div className="dash-section">
-              <div className="dash-section-hdr">
-                <div>
-                  <div className="dash-section-title">📣 Meta Campaign Performance</div>
-                  <div className="dash-section-meta">{periodLabel} · real order outcomes matched to each campaign by UTM attribution</div>
-                </div>
-                <div style={{display:'flex',alignItems:'center',gap:10}}>
-                  <button onClick={()=>setShowAllCamps(v=>!v)} style={{fontSize:10,fontWeight:700,padding:'5px 10px',borderRadius:6,border:'1px solid var(--border)',background:showAllCamps?'var(--accent)':'var(--bg-card2)',color:showAllCamps?'#fff':'var(--text-muted)',cursor:'pointer'}}>
-                    {showAllCamps ? `Showing all ${(campPerf||[]).length}` : `Active only${hiddenCount>0?` (+${hiddenCount} hidden)`:''}`}
-                  </button>
-                  <div className="dash-section-tag" style={{background:'rgba(96,165,250,.1)',color:'#60a5fa',border:'1px solid rgba(96,165,250,.2)'}}>META ADS</div>
-                </div>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:10}}>
-                {allCards.map(c=>{
-                  const isOrganic = c.campaignId === 'organic';
-                  const isOpen = expandedCamp === c.campaignId;
-                  const roasC = v => v>=4?'#10b981':v>=2?'#f59e0b':'#ef4444';
-                  const roasBox = (label, val) => (
-                    <div style={{textAlign:'center',flex:1}}>
-                      <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:.3}}>{label}</div>
-                      <div style={{fontSize:14,fontWeight:800,color:roasC(val)}}>{val.toFixed(1)}x</div>
-                    </div>
-                  );
-                  return (
-                    <div key={c.campaignId} style={{border:`1px solid ${isOrganic?'rgba(16,185,129,.3)':'var(--border)'}`,borderRadius:10,overflow:'hidden',background:isOrganic?'rgba(16,185,129,.03)':'var(--bg-card2)',gridColumn:isOpen?'1 / -1':'auto'}}>
-                      <div onClick={()=>setExpandedCamp(isOpen?null:c.campaignId)} style={{padding:'12px 14px',cursor:'pointer',background:isOpen?'var(--bg-hover)':'transparent'}}>
-                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:isOrganic?4:10}}>
-                          <span style={{fontSize:10,color:'var(--text-muted)',transition:'transform 0.15s',transform:isOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
-                          <span style={{fontSize:12,fontWeight:700,color:isOrganic?'#34d399':'var(--text)',flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={c.campaign}>{isOrganic?'🌱 ':''}{c.campaign}</span>
-                        </div>
-                        {isOrganic ? (
-                          <div style={{fontSize:10,color:'var(--text-muted)'}}>direct / organic / no UTM match — no Meta spend to attribute · {c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no orders'}</div>
-                        ) : (
-                          <>
-                            <div style={{display:'flex',gap:6,marginBottom:8}}>
-                              {roasBox('Meta ROAS', c.roas)}
-                              {roasBox('Gross ROAS', c.grossRoas||0)}
-                              {roasBox('Net ROAS', c.netRoas||0)}
-                            </div>
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',borderTop:'1px solid var(--border)',paddingTop:7}}>
-                              <span>Spend <strong style={{color:'var(--text)'}}>{fmtCur(c.spend)}</strong></span>
-                              <span>{c.orderCount ? `${c.orderCount} orders · ${fmtCur(c.sales)}` : 'no attributed orders'}</span>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                      {isOpen && (
-                        <div style={{padding:'0 14px 14px'}}>
-                          {c.orderCount > 0 ? <OutcomeBreakdown s={c}/> : (
-                            <div style={{fontSize:11,color:'var(--text-muted)',padding:'10px 0'}}>No orders in this period carry a UTM campaign tag matching "{c.campaign}" exactly — spend/ROAS above is still real Meta data, just not attributable to specific orders yet.</div>
-                          )}
-                          {c.ads?.length > 0 && (
-                            <div style={{marginTop:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
-                              <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',marginBottom:8}}>Ads in this campaign</div>
-                              <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                                {c.ads.map(ad=>{
-                                  const adOpen = expandedAd === ad.adId;
-                                  return (
-                                    <div key={ad.adId} style={{border:'1px solid var(--border)',borderRadius:6,overflow:'hidden'}}>
-                                      <div onClick={()=>setExpandedAd(adOpen?null:ad.adId)} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',cursor:'pointer',fontSize:11,background:adOpen?'var(--bg-hover)':'transparent'}}>
-                                        <span style={{color:'var(--text-muted)',transition:'transform 0.15s',transform:adOpen?'rotate(90deg)':'none',flexShrink:0}}>▶</span>
-                                        <span style={{color:'var(--text)',fontWeight:600,flex:'2 1 160px',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={ad.adName}>{ad.adName}</span>
-                                        <span style={{color:'var(--text-muted)',flexShrink:0}}>{fmtCur(ad.spend)}</span>
-                                        <span style={{color:'var(--text-muted)',flexShrink:0}}>{ad.orderCount} orders</span>
-                                      </div>
-                                      {adOpen && ad.orderCount > 0 && (
-                                        <div style={{padding:'0 10px 10px'}}><OutcomeBreakdown s={ad}/></div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
 
         {/* ── Vendor Performance Arena — composite Health Score from
             dispatch rate, delivery rate, RTO rate and avg dispatch time,
