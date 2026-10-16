@@ -3812,7 +3812,10 @@
                 <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel}</span>
               </div>
 
-              {revBreakdownTab==='sales' && (
+              {revBreakdownTab==='sales' && (() => {
+                const productPriceOnly = rb.netSales - rb.shippingCollected;
+                const shippingPct = rb.netSales ? (rb.shippingCollected / rb.netSales * 100) : 0;
+                return (
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
                   <div>
                     <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Sales waterfall</div>
@@ -3820,21 +3823,23 @@
                     <Row label="Prepaid discount" value={rb.prepaidDiscount} sign="-" indent color="#f59e0b"/>
                     <Row label="Coupon / referral discount" value={rb.couponDiscount} sign="-" indent color="#f59e0b"/>
                     <Row label="Net sales (actually charged)" value={rb.netSales} bold/>
+                    <Row label="— Product price" value={productPriceOnly} indent/>
+                    <Row label={`— Shipping collected (${shippingPct.toFixed(1)}%)`} value={rb.shippingCollected} indent color="#60a5fa"/>
                     <Row label="Cancelled + RTO" value={rb.cancelledRevenue} sign="-" indent color="#ef4444"/>
                     <Row label="Final realized sales" value={rb.finalRealizedSales} bold color="#10b981"/>
                   </div>
                   <div>
                     <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Collected breakdown</div>
-                    <Row label="Shipping collected" value={rb.shippingCollected}/>
                     <Row label="Prepaid collected" value={rb.prepaidCollected} color="#10b981"/>
                     <Row label="COD collected" value={rb.codCollected} color="#f59e0b"/>
                     <Row label="Total discount given" value={rb.totalDiscount} color="#f59e0b"/>
                     <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>
-                      "Net sales" is what customers were actually charged (discounts already applied). "Final realized sales" additionally removes orders that cancelled or came back RTO. Shipping/prepaid/COD are already included inside net sales — shown separately for visibility, not subtracted again.
+                      "Net sales" is what customers were actually charged (discounts already applied), split into product price and shipping so you can see how much of it is shipping fees. "Final realized sales" additionally removes orders that cancelled or came back RTO. We don't track what's actually paid to the courier, so this is shipping collected, not shipping margin.
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
               {revBreakdownTab==='commission' && (() => {
                 const adSpend = metaOv?.spend || 0;
