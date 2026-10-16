@@ -3847,6 +3847,24 @@
                 const grossProfit = rb.commissionAfterDiscount - adSpend;
                 const finalRealizedTillNow = rb.realisedCommission - adSpend;
                 return (
+                <>
+                <div style={{display:'flex',gap:14,flexWrap:'wrap',padding:'10px 12px',marginBottom:14,borderRadius:8,background:'var(--bg-hover)',border:'1px solid var(--border)'}}>
+                  <div style={{flex:'1 1 140px'}}>
+                    <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>Revenue (net sales)</div>
+                    <div style={{fontSize:15,fontWeight:800,color:'var(--text)'}}>{fmtCur(rb.netSales)}</div>
+                  </div>
+                  <div style={{flex:'1 1 140px'}}>
+                    <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>— incl. shipping collected</div>
+                    <div style={{fontSize:15,fontWeight:800,color:'#60a5fa'}}>{fmtCur(rb.shippingCollected)}</div>
+                  </div>
+                  <div style={{flex:'1 1 140px'}}>
+                    <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4}}>Gross commission</div>
+                    <div style={{fontSize:15,fontWeight:800,color:'var(--text)'}}>{fmtCur(rb.grossCommission)}</div>
+                  </div>
+                  <div style={{flex:'1 1 100%',fontSize:10,color:'var(--text-muted)',lineHeight:1.5,marginTop:2}}>
+                    Shipping is part of revenue (net sales) but <b style={{color:'var(--text)'}}>not</b> part of the commission base below — commission is calculated on product price only, shipping charged to the customer passes straight through.
+                  </div>
+                </div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
                   <div>
                     <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Commission waterfall</div>
@@ -3884,6 +3902,7 @@
                     </div>
                   </div>
                 </div>
+                </>
                 );
               })()}
             </div>
