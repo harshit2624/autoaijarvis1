@@ -6719,17 +6719,49 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       revBreak.subtotalBeforeDiscount += orderTotal + orderDiscount;
       const codes = o.discount_codes || [];
       const isDead = stage === 'cancelled' || stage === 'hold' || stage === 'rto';
-      if (codes.length) {
+      if (codes.length || orderDiscount > 0) {
         const isPrepaidCode = codes.some(c => /prepaid/i.test(c));
-        if (isPrepaidCode) revBreak.prepaidDiscount += orderDiscount;
-        else revBreak.couponDiscount += orderDiscount;
+        // Shopify's checkout only lets a customer enter ONE discount code,
+        // so an order can carry a real coupon (flat300) *and* the prepaid
+        // incentive stacked on top, but discount_codes only ever shows the
+        // coupon — the prepaid side only shows up as a "PREPAID-DISCOUNT"
+        // order tag. Missing that tag meant the whole combined amount got
+        // counted as 100% coupon (confirmed live on #3610: ₹419.25 total
+        // was actually ₹300 flat300 + ₹119.25 prepaid, all filed as
+        // "coupon"). Split it: pull the coupon's own flat amount out of its
+        // name when the code says so (flat300 -> ₹300), remainder is
+        // prepaid; if the code's amount can't be read, fall back to the
+        // known flat 5% prepaid rate on the line total as the estimate.
+        const hasPrepaidTag = /prepaid[-_ ]?discount/i.test(o.tags || '');
+        const otherCodes = codes.filter(c => !/prepaid/i.test(c));
+        let prepaidAmt = 0, couponAmt = 0;
+        if (isPrepaidCode) {
+          prepaidAmt = orderDiscount;
+        } else if (hasPrepaidTag && otherCodes.length) {
+          const flatMatch = otherCodes.map(c => c.match(/flat\s*(\d+)/i)).find(Boolean);
+          if (flatMatch) {
+            couponAmt = Math.min(orderDiscount, parseFloat(flatMatch[1]));
+            prepaidAmt = r2c(orderDiscount - couponAmt);
+          } else {
+            const lineTotal = (o.line_items || []).reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+            prepaidAmt = Math.min(orderDiscount, r2c(lineTotal * 0.05));
+            couponAmt = r2c(orderDiscount - prepaidAmt);
+          }
+        } else {
+          couponAmt = orderDiscount;
+        }
+        revBreak.prepaidDiscount += prepaidAmt;
+        revBreak.couponDiscount  += couponAmt;
         // Coupon-wise breakdown — only for live orders, so it lines up with
         // the "after discount" commission step (which also excludes dead
         // orders). Prepaid-style codes get folded into one "Prepaid" bucket
         // instead of listed individually.
         if (!isDead) {
-          const key = isPrepaidCode ? 'Prepaid' : codes.join(' + ');
-          revBreak.discountByCoupon[key] = (revBreak.discountByCoupon[key] || 0) + orderDiscount;
+          if (prepaidAmt > 0) revBreak.discountByCoupon['Prepaid'] = (revBreak.discountByCoupon['Prepaid'] || 0) + prepaidAmt;
+          if (couponAmt > 0) {
+            const key = otherCodes.length ? otherCodes.join(' + ') : (codes.join(' + ') || 'Other');
+            revBreak.discountByCoupon[key] = (revBreak.discountByCoupon[key] || 0) + couponAmt;
+          }
         }
       }
       if (isDead) revBreak.cancelledRevenue += orderTotal;
