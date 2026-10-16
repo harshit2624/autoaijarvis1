@@ -3596,6 +3596,7 @@
     const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
     const [revBreakdownOpen, setRevBreakdownOpen] = useState(false);
     const [revBreakdownTab, setRevBreakdownTab] = useState('sales'); // 'sales' | 'commission'
+    const [discBreakdownOpen, setDiscBreakdownOpen] = useState(false);
 
     useEffect(()=>{
       const key = aPeriod?.label || 'all';
@@ -3835,24 +3836,51 @@
                 </div>
               )}
 
-              {revBreakdownTab==='commission' && (
+              {revBreakdownTab==='commission' && (() => {
+                const adSpend = metaOv?.spend || 0;
+                const discountImpact = Math.max(0, rb.commissionAfterCancellation - rb.commissionAfterDiscount);
+                const grossProfit = rb.commissionAfterDiscount - adSpend;
+                const finalRealizedTillNow = rb.realisedCommission - adSpend;
+                return (
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
                   <div>
                     <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Commission waterfall</div>
                     <Row label="Gross commission" value={rb.grossCommission} bold/>
                     <Row label="Cancelled + RTO" value={rb.cancelledRtoCommission} sign="-" indent color="#ef4444"/>
                     <Row label="After cancellation + RTO" value={rb.commissionAfterCancellation}/>
-                    <Row label="Prepaid discount impact" value={Math.max(0, rb.commissionAfterCancellation - rb.commissionAfterDiscount)} sign="-" indent color="#f59e0b"/>
+                    <div onClick={()=>setDiscBreakdownOpen(v=>!v)} style={{cursor:'pointer'}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:'1px solid var(--border)',paddingLeft:16}}>
+                        <span style={{fontSize:12,color:'var(--text-muted)',display:'flex',alignItems:'center',gap:4}}>
+                          Discount given
+                          <span style={{fontSize:9,opacity:0.7,transform:discBreakdownOpen?'rotate(180deg)':'none',display:'inline-block',transition:'transform .15s'}}>▾</span>
+                        </span>
+                        <span style={{fontSize:13,fontWeight:600,color:'#f59e0b'}}>− {fmtCur(discountImpact)}</span>
+                      </div>
+                    </div>
+                    {discBreakdownOpen && (
+                      <div style={{padding:'8px 0 8px 28px',borderBottom:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:5}}>
+                        {(rb.discountBreakdown||[]).length===0 && <span style={{fontSize:11,color:'var(--text-muted)'}}>No discounts used this period.</span>}
+                        {(rb.discountBreakdown||[]).map(d=>(
+                          <div key={d.code} style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
+                            <span style={{color:'var(--text-muted)'}}>{d.code==='Prepaid'?'💳 Prepaid incentive':`🏷 ${d.code}`}</span>
+                            <span style={{fontWeight:600,color:'var(--text)'}}>{fmtCur(d.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <Row label="After discount" value={rb.commissionAfterDiscount} bold/>
-                    <Row label="Realised (delivered, in hand now)" value={rb.realisedCommission} bold color="#10b981"/>
+                    <Row label="Ad spend" value={adSpend} sign="-" indent color="#60a5fa"/>
+                    <Row label="Gross profit" value={grossProfit} bold color={grossProfit>=0?'var(--text)':'#ef4444'}/>
+                    <Row label="Final realized till now" value={finalRealizedTillNow} bold color={finalRealizedTillNow>=0?'#10b981':'#ef4444'}/>
                   </div>
                   <div>
                     <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
-                      Gross commission is what CROSCROW earns on every order placed this period, before anything is removed. Cancelled and RTO orders never pay out, so their commission comes out first. The prepaid incentive then trims the base on prepaid orders that are still live. "Realised" is the strict number — only orders already marked Delivered — everything still In Pipeline or Pending is real but not collectible yet.
+                      Gross commission is what CROSCROW earns on every order placed this period, before anything is removed. Cancelled and RTO orders never pay out, so their commission comes out first. "Discount given" is every discount on live orders — the prepaid incentive and every coupon code (flat300 etc.), click to see the split. Gross profit removes ad spend from the full live-order commission. "Final realized till now" is the strict number — ad spend already paid out, against only the commission from orders actually marked Delivered — everything still in pipeline or pending isn't counted yet.
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           );
         })()}

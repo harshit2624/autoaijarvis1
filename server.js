@@ -6637,6 +6637,27 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       }
       return r2c(c);
     };
+    // Commission after EVERY discount on the order — not just the 10%
+    // prepaid incentive calcOrderComm hardcodes, but any coupon/referral
+    // code too (flat300 etc.), using the order's real total_discounts.
+    // Shopify doesn't tell us which line item a discount landed on, so it's
+    // spread proportionally across lines by their share of the order's
+    // undiscounted value — same simplifying assumption flat-rate coupons
+    // already make in practice. This only feeds the dashboard breakdown
+    // display; calcOrderComm (real vendor payouts) is untouched.
+    const calcOrderCommAllDiscounts = (o) => {
+      const lineItems = (o.line_items || []).filter(li => li.vendor);
+      const lineTotal = lineItems.reduce((s, li) => s + parseFloat(li.price||0) * (li.quantity||1), 0);
+      const discount = parseFloat(o.total_discounts || 0);
+      const discRatio = lineTotal > 0 ? Math.min(1, discount / lineTotal) : 0;
+      let c = 0;
+      for (const li of lineItems) {
+        const rate = getRate(li.vendor);
+        const base = parseFloat(li.price||0) * (li.quantity||1) * (1 - discRatio);
+        c += base * rate;
+      }
+      return r2c(c);
+    };
 
     // ── Revenue breakdown — the Revenue stat card's dropdown waterfall.
     // total_price is what the customer actually paid (already net of
@@ -6649,6 +6670,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       subtotalBeforeDiscount: 0, prepaidDiscount: 0, couponDiscount: 0,
       cancelledRevenue: 0, shippingCollected: 0, prepaidCollectedAmt: 0, codCollectedAmt: 0,
       grossCommission: 0, grossCancelledRtoCommission: 0,
+      commissionAfterAllDiscounts: 0, discountByCoupon: {},
     };
     for (const o of ordersMain) {
       const sid     = String(o.id);
@@ -6674,12 +6696,22 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       const orderDiscount = parseFloat(o.total_discounts || 0);
       revBreak.subtotalBeforeDiscount += orderTotal + orderDiscount;
       const codes = o.discount_codes || [];
+      const isDead = stage === 'cancelled' || stage === 'hold' || stage === 'rto';
       if (codes.length) {
         const isPrepaidCode = codes.some(c => /prepaid/i.test(c));
         if (isPrepaidCode) revBreak.prepaidDiscount += orderDiscount;
         else revBreak.couponDiscount += orderDiscount;
+        // Coupon-wise breakdown — only for live orders, so it lines up with
+        // the "after discount" commission step (which also excludes dead
+        // orders). Prepaid-style codes get folded into one "Prepaid" bucket
+        // instead of listed individually.
+        if (!isDead) {
+          const key = isPrepaidCode ? 'Prepaid' : codes.join(' + ');
+          revBreak.discountByCoupon[key] = (revBreak.discountByCoupon[key] || 0) + orderDiscount;
+        }
       }
-      if (stage === 'cancelled' || stage === 'hold' || stage === 'rto') revBreak.cancelledRevenue += orderTotal;
+      if (isDead) revBreak.cancelledRevenue += orderTotal;
+      else revBreak.commissionAfterAllDiscounts += calcOrderCommAllDiscounts(o);
       revBreak.shippingCollected += parseFloat(o.shipping_charge || 0);
       if (o.financial_status === 'paid') revBreak.prepaidCollectedAmt += orderTotal;
       else revBreak.codCollectedAmt += orderTotal;
@@ -6865,16 +6897,22 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         prepaidCollected:       r2c(revBreak.prepaidCollectedAmt),
         codCollected:           r2c(revBreak.codCollectedAmt),
         // Commission waterfall, in the order asked for: gross commission
-        // (no prepaid discount, all orders) -> after cancellation+RTO
-        // (dead orders' commission removed, still no discount) -> after
-        // discount (10% prepaid incentive applied, on the live orders
-        // only) -> realised (delivered only — the only part actually
-        // collectible right now).
+        // (no discount at all, all orders) -> after cancellation+RTO (dead
+        // orders' commission removed) -> after discount (EVERY discount —
+        // prepaid incentive AND coupon codes like flat300, spread
+        // proportionally across line items from the order's real
+        // total_discounts) -> realised (delivered only — the only part
+        // actually collectible right now).
         grossCommission:             r2c(revBreak.grossCommission),
         cancelledRtoCommission:      r2c(revBreak.grossCancelledRtoCommission),
         commissionAfterCancellation: r2c(revBreak.grossCommission - revBreak.grossCancelledRtoCommission),
-        commissionAfterDiscount:     r2c(allTimeTotals.totalCommission - (allTimeTotals.missedCommission + allTimeTotals.otherCommission)),
+        commissionAfterDiscount:     r2c(revBreak.commissionAfterAllDiscounts),
         realisedCommission:          r2c(allTimeTotals.deliveredCommission),
+        // Discount breakdown dropdown — prepaid vs each coupon code used,
+        // live orders only (matches the "after discount" step's scope).
+        discountBreakdown: Object.entries(revBreak.discountByCoupon)
+          .map(([code, amount]) => ({ code, amount: r2c(amount) }))
+          .sort((a, b) => b.amount - a.amount),
       },
       commissionByBracket,
       topVendorsByCommission,
