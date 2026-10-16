@@ -6622,6 +6622,21 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       }
       return { c: r2c(c), g: r2c(g) };
     };
+    // Same calc, minus the prepaid discount — the "gross" commission line
+    // in the breakdown waterfall, i.e. what commission would be before the
+    // 10% prepaid incentive reduces the base. Kept separate from
+    // calcOrderComm (which the vendor-facing commission figures everywhere
+    // else in this endpoint depend on) so that one stays untouched.
+    const calcOrderCommGross = (o) => {
+      let c = 0;
+      for (const li of (o.line_items || [])) {
+        if (!li.vendor) continue;
+        const rate = getRate(li.vendor);
+        const base = parseFloat(li.price||0) * (li.quantity||1);
+        c += base * rate;
+      }
+      return r2c(c);
+    };
 
     // ── Revenue breakdown — the Revenue stat card's dropdown waterfall.
     // total_price is what the customer actually paid (already net of
@@ -6633,12 +6648,16 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const revBreak = {
       subtotalBeforeDiscount: 0, prepaidDiscount: 0, couponDiscount: 0,
       cancelledRevenue: 0, shippingCollected: 0, prepaidCollectedAmt: 0, codCollectedAmt: 0,
+      grossCommission: 0, grossCancelledRtoCommission: 0,
     };
     for (const o of ordersMain) {
       const sid     = String(o.id);
       const vendors = [...new Set((o.line_items||[]).map(li=>canonicalVendor(li.vendor)).filter(Boolean))];
       const stage   = effectiveStage(sid, vendors);
       const { c, g } = calcOrderComm(o);
+      const grossC = calcOrderCommGross(o);
+      revBreak.grossCommission += grossC;
+      if (stage === 'cancelled' || stage === 'hold' || stage === 'rto') revBreak.grossCancelledRtoCommission += grossC;
       commBuckets.total.c += c; commBuckets.total.g += g;
       if (stage === 'delivered')                        { commBuckets.delivered.c += c; commBuckets.delivered.g += g; }
       else if (TRANSIT_STAGES.has(stage))               { commBuckets.transit.c   += c; commBuckets.transit.g   += g; }
@@ -6845,6 +6864,17 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         shippingCollected:      r2c(revBreak.shippingCollected),
         prepaidCollected:       r2c(revBreak.prepaidCollectedAmt),
         codCollected:           r2c(revBreak.codCollectedAmt),
+        // Commission waterfall, in the order asked for: gross commission
+        // (no prepaid discount, all orders) -> after cancellation+RTO
+        // (dead orders' commission removed, still no discount) -> after
+        // discount (10% prepaid incentive applied, on the live orders
+        // only) -> realised (delivered only — the only part actually
+        // collectible right now).
+        grossCommission:             r2c(revBreak.grossCommission),
+        cancelledRtoCommission:      r2c(revBreak.grossCancelledRtoCommission),
+        commissionAfterCancellation: r2c(revBreak.grossCommission - revBreak.grossCancelledRtoCommission),
+        commissionAfterDiscount:     r2c(allTimeTotals.totalCommission - (allTimeTotals.missedCommission + allTimeTotals.otherCommission)),
+        realisedCommission:          r2c(allTimeTotals.deliveredCommission),
       },
       commissionByBracket,
       topVendorsByCommission,

@@ -3595,6 +3595,7 @@
     const [aLoading,  setALoading]  = useState(()=> !(dashCache?.current?.analytics?.[PERIOD_PRESETS[3]?.label]));
     const [aPeriod,   setAPeriod]   = useState(PERIOD_PRESETS[3]); // Last 30 Days
     const [revBreakdownOpen, setRevBreakdownOpen] = useState(false);
+    const [revBreakdownTab, setRevBreakdownTab] = useState('sales'); // 'sales' | 'commission'
 
     useEffect(()=>{
       const key = aPeriod?.label || 'all';
@@ -3789,33 +3790,69 @@
               <span style={{fontSize:13,fontWeight:bold?800:600,color:color||'var(--text)'}}>{sign==='-'?'− ':sign==='+'?'+ ':''}{fmtCur(value)}</span>
             </div>
           );
+          const MiniTab = ({id, label}) => (
+            <button onClick={()=>setRevBreakdownTab(id)} style={{
+              padding:'4px 12px',borderRadius:6,fontSize:11,fontWeight:700,cursor:'pointer',
+              border:`1px solid ${revBreakdownTab===id?'var(--indigo)':'var(--border)'}`,
+              background:revBreakdownTab===id?'rgba(99,102,241,.14)':'transparent',
+              color:revBreakdownTab===id?'#818cf8':'var(--text-muted)',
+            }}>{label}</button>
+          );
           return (
             <div className="card" style={{padding:'16px 18px',marginTop:-6}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-                <div className="card-title">🧾 Revenue Breakdown</div>
-                <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel}</span>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
-                <div>
-                  <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Sales waterfall</div>
-                  <Row label="Subtotal (before discount)" value={rb.subtotalBeforeDiscount}/>
-                  <Row label="Prepaid discount" value={rb.prepaidDiscount} sign="-" indent color="#f59e0b"/>
-                  <Row label="Coupon / referral discount" value={rb.couponDiscount} sign="-" indent color="#f59e0b"/>
-                  <Row label="Net sales (actually charged)" value={rb.netSales} bold/>
-                  <Row label="Cancelled + RTO" value={rb.cancelledRevenue} sign="-" indent color="#ef4444"/>
-                  <Row label="Final realized sales" value={rb.finalRealizedSales} bold color="#10b981"/>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Collected breakdown</div>
-                  <Row label="Shipping collected" value={rb.shippingCollected}/>
-                  <Row label="Prepaid collected" value={rb.prepaidCollected} color="#10b981"/>
-                  <Row label="COD collected" value={rb.codCollected} color="#f59e0b"/>
-                  <Row label="Total discount given" value={rb.totalDiscount} color="#f59e0b"/>
-                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>
-                    "Net sales" is what customers were actually charged (discounts already applied). "Final realized sales" additionally removes orders that cancelled or came back RTO. Shipping/prepaid/COD are already included inside net sales — shown separately for visibility, not subtracted again.
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <div className="card-title">🧾 Revenue Breakdown</div>
+                  <div style={{display:'flex',gap:6}}>
+                    <MiniTab id="sales" label="Sales"/>
+                    <MiniTab id="commission" label="Commission"/>
                   </div>
                 </div>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>{periodLabel}</span>
               </div>
+
+              {revBreakdownTab==='sales' && (
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Sales waterfall</div>
+                    <Row label="Subtotal (before discount)" value={rb.subtotalBeforeDiscount}/>
+                    <Row label="Prepaid discount" value={rb.prepaidDiscount} sign="-" indent color="#f59e0b"/>
+                    <Row label="Coupon / referral discount" value={rb.couponDiscount} sign="-" indent color="#f59e0b"/>
+                    <Row label="Net sales (actually charged)" value={rb.netSales} bold/>
+                    <Row label="Cancelled + RTO" value={rb.cancelledRevenue} sign="-" indent color="#ef4444"/>
+                    <Row label="Final realized sales" value={rb.finalRealizedSales} bold color="#10b981"/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Collected breakdown</div>
+                    <Row label="Shipping collected" value={rb.shippingCollected}/>
+                    <Row label="Prepaid collected" value={rb.prepaidCollected} color="#10b981"/>
+                    <Row label="COD collected" value={rb.codCollected} color="#f59e0b"/>
+                    <Row label="Total discount given" value={rb.totalDiscount} color="#f59e0b"/>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10,lineHeight:1.5}}>
+                      "Net sales" is what customers were actually charged (discounts already applied). "Final realized sales" additionally removes orders that cancelled or came back RTO. Shipping/prepaid/COD are already included inside net sales — shown separately for visibility, not subtracted again.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {revBreakdownTab==='commission' && (
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:20}}>
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Commission waterfall</div>
+                    <Row label="Gross commission" value={rb.grossCommission} bold/>
+                    <Row label="Cancelled + RTO" value={rb.cancelledRtoCommission} sign="-" indent color="#ef4444"/>
+                    <Row label="After cancellation + RTO" value={rb.commissionAfterCancellation}/>
+                    <Row label="Prepaid discount impact" value={Math.max(0, rb.commissionAfterCancellation - rb.commissionAfterDiscount)} sign="-" indent color="#f59e0b"/>
+                    <Row label="After discount" value={rb.commissionAfterDiscount} bold/>
+                    <Row label="Realised (delivered, in hand now)" value={rb.realisedCommission} bold color="#10b981"/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
+                      Gross commission is what CROSCROW earns on every order placed this period, before anything is removed. Cancelled and RTO orders never pay out, so their commission comes out first. The prepaid incentive then trims the base on prepaid orders that are still live. "Realised" is the strict number — only orders already marked Delivered — everything still In Pipeline or Pending is real but not collectible yet.
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}
