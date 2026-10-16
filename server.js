@@ -462,12 +462,34 @@ const OVS = {
       { $set: { shopify_id: sid, vendor_name, ...fields, ...stageHistoryUpdate, _updated: new Date() } },
       { upsert: true }
     );
+
+    // Keep order_meta.stage from lagging behind reality. Every reader that
+    // wants the TRUE current stage already merges order_meta with every
+    // vendor's order_vendor_stage row (effectiveStage/getEffectiveOrderStage),
+    // but a lot of code still reads order_meta.stage directly — and on a
+    // real order that field was seen sitting at "confirmed" while the
+    // vendor had already progressed to "transit", because nothing ever
+    // wrote the advance back. Mirror it here, same never-downgrade rule
+    // OVS already uses on itself, so order_meta stays a true reflection
+    // instead of requiring every caller to know to merge.
+    const appliedStage = fields.stage ?? existing?.stage;
+    if (appliedStage) {
+      const metaDoc = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1, _id: 0 } });
+      const mergedStage = higherStage(metaDoc?.stage || 'new', appliedStage);
+      if (mergedStage !== metaDoc?.stage) {
+        await mdb.collection('order_meta').updateOne(
+          { shopify_id: sid },
+          { $set: { stage: mergedStage, _updated: new Date() } }
+        );
+      }
+    }
+
     // Return what was ACTUALLY applied — after higherStage() may have kept
     // the existing (higher) stage instead of the caller's requested one.
     // Callers that log stage transitions should use this, not their own
     // pre-protection value, or the log misleadingly shows a "downgrade"
     // that never actually happened to the stored record.
-    return { blocked: false, stage: fields.stage ?? existing?.stage, protectedFromDowngrade, requestedStage };
+    return { blocked: false, stage: appliedStage, protectedFromDowngrade, requestedStage };
   },
 };
 
