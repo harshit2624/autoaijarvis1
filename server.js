@@ -5864,6 +5864,209 @@ app.delete("/vendor/products/:productId/size-chart", vendorAuth, async (req, res
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+//  VENDOR BRANDING — a vendor's own storefront presence: their brand
+//  collection's logo (collection.image), description (collection.descriptionHtml),
+//  carousel card banner (custom.brand_carousel_banner metafield) and collection
+//  page banners for mobile/desktop (custom.brand_collection_banner[_desktop]).
+//  Resolution mirrors the theme's own cc-brands.liquid: handleize(vendor name)
+//  → collection handle (no alias-list lookup here; aliases are theme-settings-
+//  only today, so a mismatched handle just shows "collection not found" and
+//  the vendor should be pointed at support rather than silently guessing).
+// ══════════════════════════════════════════════════════════════════════════
+
+// Mirrors Shopify Liquid's `handleize` filter closely enough for our vendor
+// names (lowercase, non-alphanumerics → single hyphen, trim).
+function handleizeVendorName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+const BRANDING_MF = {
+  carousel_banner:  { namespace: 'custom', key: 'brand_carousel_banner' },
+  banner_mobile:     { namespace: 'custom', key: 'brand_collection_banner' },
+  banner_desktop:    { namespace: 'custom', key: 'brand_collection_banner_desktop' },
+};
+
+// Shared staged-upload-to-Shopify-Files helper (same 3-step flow used by the
+// size-chart upload above) — returns { fileId, imageUrl }. imageUrl can be
+// blank immediately after fileCreate while Shopify is still processing the
+// image; callers that need the URL right away should poll `node(id)` once.
+async function uploadImageToShopifyFiles(buffer, mimetype, filename) {
+  const token = await getAccessToken();
+  const stageRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: `mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+        stagedUploadsCreate(input: $input) {
+          stagedTargets { url resourceUrl parameters { name value } }
+          userErrors { field message }
+        }
+      }`,
+      variables: { input: [{ filename: filename || 'upload.png', mimeType: mimetype, resource: 'FILE', fileSize: String(buffer.length), httpMethod: 'POST' }] },
+    }),
+  });
+  const stageData = await stageRes.json();
+  const target = stageData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
+  if (!target) throw new Error('Failed to get upload URL: ' + JSON.stringify(stageData?.data?.stagedUploadsCreate?.userErrors));
+
+  const formData = new (require('form-data'))();
+  (target.parameters || []).forEach(p => formData.append(p.name, p.value));
+  formData.append('file', buffer, { filename: filename || 'upload.png', contentType: mimetype });
+  const uploadRes = await fetch(target.url, { method: 'POST', body: formData, headers: formData.getHeaders() });
+  if (!uploadRes.ok) throw new Error(`Staged upload failed: ${uploadRes.status}`);
+
+  const fileRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: `mutation fileCreate($files: [FileCreateInput!]!) {
+        fileCreate(files: $files) { files { id ... on MediaImage { image { url } } } userErrors { field message } }
+      }`,
+      variables: { files: [{ originalSource: target.resourceUrl, contentType: 'IMAGE' }] },
+    }),
+  });
+  const fileData = await fileRes.json();
+  const fileId = fileData?.data?.fileCreate?.files?.[0]?.id;
+  const imageUrl = fileData?.data?.fileCreate?.files?.[0]?.image?.url || '';
+  if (!fileId) throw new Error('Failed to create file: ' + JSON.stringify(fileData?.data?.fileCreate?.userErrors));
+  return { fileId, imageUrl };
+}
+
+// Resolves a vendor's brand collection via GraphQL (id, handle, title,
+// descriptionHtml, image, and all 3 branding metafields in one round trip).
+async function resolveVendorCollection(vendorName) {
+  const handle = handleizeVendorName(vendorName);
+  if (!handle) return null;
+  const data = await shopifyGraphQL(`
+    query($handle: String!) {
+      collectionByHandle(handle: $handle) {
+        id
+        handle
+        title
+        descriptionHtml
+        image { url }
+        carouselBanner: metafield(namespace: "custom", key: "brand_carousel_banner") { id reference { ... on MediaImage { image { url } } } }
+        bannerMobile:    metafield(namespace: "custom", key: "brand_collection_banner") { id reference { ... on MediaImage { image { url } } } }
+        bannerDesktop:   metafield(namespace: "custom", key: "brand_collection_banner_desktop") { id reference { ... on MediaImage { image { url } } } }
+      }
+    }
+  `, { handle });
+  return data?.collectionByHandle || null;
+}
+
+function brandingStatus(col) {
+  const has_logo = !!col?.image?.url;
+  const has_description = !!(col?.descriptionHtml || '').replace(/<[^>]*>/g, '').trim();
+  return { has_logo, has_description, is_complete: has_logo && has_description };
+}
+
+// ── GET /vendor/brand-page ──────────────────────────────────────────────────
+// Named "brand-page" (not "/vendor/branding", already taken by the vendor
+// PANEL's own cosmetic theme settings — accent color/font/panel logo — a
+// completely different feature) to avoid shadowing that existing route.
+app.get("/vendor/brand-page", vendorAuth, async (req, res) => {
+  try {
+    const col = await resolveVendorCollection(req.vendor);
+    if (!col) return res.json({ collection_found: false });
+    const status = brandingStatus(col);
+    res.json({
+      collection_found: true,
+      collection_id: col.id,
+      handle: col.handle,
+      title: col.title,
+      logo_url: col.image?.url || '',
+      description: col.descriptionHtml || '',
+      carousel_banner_url: col.carouselBanner?.reference?.image?.url || '',
+      banner_mobile_url: col.bannerMobile?.reference?.image?.url || '',
+      banner_desktop_url: col.bannerDesktop?.reference?.image?.url || '',
+      ...status,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+const brandingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// ── POST /vendor/branding/logo ─────────────────────────────────────────────
+// Square (1:1) PNG only, enforced server-side — sets collection.image.
+app.post("/vendor/brand-page/logo", vendorAuth, brandingUpload.single('image'), async (req, res) => {
+  try {
+    const col = await resolveVendorCollection(req.vendor);
+    if (!col) return res.status(404).json({ error: "We couldn't find your brand collection. Contact support." });
+    if (!req.file) return res.status(400).json({ error: 'Image file required.' });
+    if (req.file.mimetype !== 'image/png') return res.status(400).json({ error: 'Logo must be a PNG file.' });
+
+    const sharp = require('sharp');
+    const meta = await sharp(req.file.buffer).metadata();
+    if (Math.abs((meta.width || 0) - (meta.height || 0)) > 2) {
+      return res.status(400).json({ error: `Logo must be square (1:1) — yours is ${meta.width}×${meta.height}px.` });
+    }
+
+    const { imageUrl } = await uploadImageToShopifyFiles(req.file.buffer, 'image/png', req.file.originalname || 'brand-logo.png');
+    const upd = await shopifyGraphQL(`
+      mutation($input: CollectionInput!) {
+        collectionUpdate(input: $input) { collection { id image { url } } userErrors { field message } }
+      }
+    `, { input: { id: col.id, image: { url: imageUrl } } });
+    const errs = upd?.collectionUpdate?.userErrors;
+    if (errs?.length) return res.status(400).json({ error: errs.map(e => e.message).join(', ') });
+
+    auditLog("vendor", "branding_logo_upload", col.id, { vendor: req.vendor });
+    res.json({ success: true, logo_url: upd.collectionUpdate.collection.image?.url || imageUrl });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /vendor/branding/description ──────────────────────────────────────
+app.post("/vendor/brand-page/description", vendorAuth, async (req, res) => {
+  try {
+    const { description } = req.body || {};
+    if (!description || !description.trim()) return res.status(400).json({ error: 'Description is required.' });
+    const col = await resolveVendorCollection(req.vendor);
+    if (!col) return res.status(404).json({ error: "We couldn't find your brand collection. Contact support." });
+
+    const html = /<[a-z][\s\S]*>/i.test(description) ? description : `<p>${description.replace(/\n+/g, '</p><p>')}</p>`;
+    const upd = await shopifyGraphQL(`
+      mutation($input: CollectionInput!) {
+        collectionUpdate(input: $input) { collection { id descriptionHtml } userErrors { field message } }
+      }
+    `, { input: { id: col.id, descriptionHtml: html } });
+    const errs = upd?.collectionUpdate?.userErrors;
+    if (errs?.length) return res.status(400).json({ error: errs.map(e => e.message).join(', ') });
+
+    auditLog("vendor", "branding_description_update", col.id, { vendor: req.vendor });
+    res.json({ success: true, description: upd.collectionUpdate.collection.descriptionHtml });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /vendor/branding/banner/:variant ──────────────────────────────────
+// variant = carousel_banner | banner_mobile | banner_desktop
+app.post("/vendor/brand-page/banner/:variant", vendorAuth, brandingUpload.single('image'), async (req, res) => {
+  try {
+    const def = BRANDING_MF[req.params.variant];
+    if (!def) return res.status(400).json({ error: 'Unknown banner type.' });
+    const col = await resolveVendorCollection(req.vendor);
+    if (!col) return res.status(404).json({ error: "We couldn't find your brand collection. Contact support." });
+    if (!req.file) return res.status(400).json({ error: 'Image file required.' });
+    if (req.file.mimetype !== 'image/png') return res.status(400).json({ error: 'Banner must be a PNG file.' });
+
+    const { fileId, imageUrl } = await uploadImageToShopifyFiles(req.file.buffer, 'image/png', req.file.originalname || `${req.params.variant}.png`);
+    const upd = await shopifyGraphQL(`
+      mutation($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } }
+      }
+    `, { metafields: [{ ownerId: col.id, namespace: def.namespace, key: def.key, type: 'file_reference', value: fileId }] });
+    const errs = upd?.metafieldsSet?.userErrors;
+    if (errs?.length) return res.status(400).json({ error: errs.map(e => e.message).join(', ') });
+
+    auditLog("vendor", `branding_${req.params.variant}_upload`, col.id, { vendor: req.vendor });
+    res.json({ success: true, image_url: imageUrl });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── POST /vendor/orders/:shopifyId/fulfill ────────────────────────────────
 // Partially fulfills ONLY this vendor's line items — not the whole order
 app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
@@ -14462,6 +14665,49 @@ async function vendorScoreCron() {
   } catch (e) { console.error('❌ Vendor score cron failed:', e.message); }
 }
 setInterval(vendorScoreCron, 60 * 60 * 1000); // check every hour
+
+// Weekly cron — every Monday 10 AM IST (offset an hour from vendorScoreCron
+// so the two don't fire in the same minute). Nudges any vendor whose brand
+// collection is still missing a logo and/or description — the two fields
+// vendor branding treats as mandatory — with a friendly "you're missing free
+// marketing" reminder. Vendors who've completed both are silently skipped.
+async function brandingReminderCron() {
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  if (now.getDay() !== 1 || now.getHours() !== 10) return; // Monday 10 AM IST only
+
+  const already = await mdb.collection('branding_reminder_sends')
+    .findOne({ sent_at: { $gte: new Date(now.toDateString()).toISOString() } }).catch(() => null);
+  if (already) return; // already sent today
+
+  console.log('🎨 Running weekly branding reminder cron...');
+  try {
+    const vendors = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name: 1, phone: 1, _id: 0 } }).toArray();
+    let sent = 0, skippedComplete = 0, skippedNoPhone = 0, skippedNoCollection = 0;
+    for (const v of vendors) {
+      const col = await resolveVendorCollection(v.vendor_name).catch(() => null);
+      if (!col) { skippedNoCollection++; continue; }
+      const { is_complete } = brandingStatus(col);
+      if (is_complete) { skippedComplete++; continue; }
+
+      const digits = (v.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+      if (digits.length !== 10 || !waSocket || !waConnected) { skippedNoPhone++; continue; }
+
+      const missing = [];
+      if (!col.image?.url) missing.push('your logo');
+      if (!(col.descriptionHtml || '').replace(/<[^>]*>/g, '').trim()) missing.push('your brand description');
+
+      const msg = `🎨 *You're missing free marketing!*\n\nHey ${v.vendor_name} 👋 your brand page on CROSCROW is live, but ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} still missing — and it shows up across the homepage, the brand wall and your own collection page.\n\nTakes 2 minutes: Vendor Panel → Branding\nhttps://dashboard.croscrow.com/vendor.html\n\nUpload your banners and have fun 🚀`;
+      try {
+        await waSocket.sendMessage(`91${digits}@s.whatsapp.net`, { text: msg });
+        sent++;
+        await new Promise(r => setTimeout(r, 1500));
+      } catch (e) { console.error(`Branding reminder WA failed for ${v.vendor_name}:`, e.message); }
+    }
+    await mdb.collection('branding_reminder_sends').insertOne({ sent_at: now.toISOString(), sent, skippedComplete, skippedNoPhone, skippedNoCollection });
+    console.log(`✅ Branding reminder cron done: ${sent} sent, ${skippedComplete} already complete, ${skippedNoPhone} no phone/WA, ${skippedNoCollection} no collection`);
+  } catch (e) { console.error('❌ Branding reminder cron failed:', e.message); }
+}
+setInterval(brandingReminderCron, 60 * 60 * 1000); // check every hour
 
 // GET /admin/vendor-scores — compute live scores
 // GET /admin/wa-vendor-failures — vendors with WA send failures, grouped by vendor

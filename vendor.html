@@ -4361,6 +4361,279 @@
     );
   }
 
+  // ── Vendor Branding (Brand Page) ───────────────────────────────────────
+  // Lets a vendor manage their own storefront presence on CROSCROW: the
+  // logo + description shown on the brand wall / brands index, the 4:5
+  // banner shown on the discover carousel, and the collection-page banners
+  // (mobile 4:5, desktop 16:9). Logo + description are mandatory; the rest
+  // is optional but strongly encouraged ("free marketing").
+  function BrandPreviewMock({ kind, logoUrl, name, bannerUrl, description }) {
+    const displayName = name || 'YOUR BRAND';
+    if (kind === 'wall') {
+      return (
+        <div style={{background:'#0a0a0a',borderRadius:10,padding:'22px 16px',display:'flex',flexDirection:'column',alignItems:'center',gap:10,width:140}}>
+          <div style={{width:84,height:84,borderRadius:'50%',background:'#fff',display:'grid',placeItems:'center',overflow:'hidden',border:'1px solid rgba(255,255,255,.14)'}}>
+            {logoUrl ? <img src={logoUrl} alt="logo" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontFamily:'"Anton",Impact,sans-serif',fontSize:12,color:'#111',textTransform:'uppercase',padding:'0 6px',textAlign:'center'}}>{displayName}</span>}
+          </div>
+          <span style={{fontFamily:'Barlow Condensed, sans-serif',fontWeight:600,fontSize:11,letterSpacing:'.06em',textTransform:'uppercase',color:'#f5f5f2',textAlign:'center'}}>{displayName}</span>
+        </div>
+      );
+    }
+    if (kind === 'carousel-logo') {
+      return (
+        <div style={{width:150,height:190,borderRadius:22,background:'linear-gradient(165deg,#fff,#f3f2ee)',border:'1px solid rgba(15,15,14,.08)',boxShadow:'0 20px 40px -14px rgba(15,15,14,.28)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:16}}>
+          {logoUrl
+            ? <img src={logoUrl} alt="logo" style={{width:'60%',maxWidth:90,aspectRatio:'1/1',objectFit:'contain'}}/>
+            : <span style={{fontFamily:'"Anton",Impact,sans-serif',fontSize:20,textTransform:'uppercase',color:'#0f0f0e',textAlign:'center'}}>{displayName}</span>}
+        </div>
+      );
+    }
+    if (kind === 'carousel-banner') {
+      return (
+        <div style={{width:150,height:190,borderRadius:22,overflow:'hidden',position:'relative',background:bannerUrl?`#111 url(${bannerUrl}) center/cover`:'#2a2a2a',display:'flex',alignItems:'flex-end'}}>
+          <div style={{position:'absolute',inset:0,background:'linear-gradient(0deg,rgba(0,0,0,.78) 0%,rgba(0,0,0,.08) 45%,rgba(0,0,0,0) 70%)'}}/>
+          <span style={{position:'relative',width:'100%',textAlign:'center',padding:'0 8px 14px',fontFamily:'"Anton",Impact,sans-serif',fontSize:15,textTransform:'uppercase',color:'#fff',textShadow:'0 2px 10px rgba(0,0,0,.4)'}}>{displayName}</span>
+        </div>
+      );
+    }
+    if (kind === 'collection-banner') {
+      return (
+        <div style={{width:'100%',aspectRatio: bannerUrl ? undefined : '16/7',minHeight:90,borderRadius:8,overflow:'hidden',position:'relative',background:bannerUrl?`#111 url(${bannerUrl}) center/cover`:'#2a2a2a',display:'flex',alignItems:'flex-end'}}>
+          <div style={{position:'absolute',inset:0,background:'linear-gradient(0deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.28) 45%,rgba(0,0,0,.05) 75%)'}}/>
+          <div style={{position:'relative',padding:'14px 16px',width:'100%'}}>
+            <div style={{color:'#fff',fontSize:17,fontWeight:700,marginBottom:4}}>{displayName}</div>
+            <div style={{color:'rgba(255,255,255,.88)',fontSize:10,textTransform:'uppercase',letterSpacing:'.02em',maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{description || 'Your brand description shows here…'}</div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  function BrandUploadBox({ label, hint, required, currentUrl, uploading, error, success, onFile, accept, children }) {
+    const inputRef = useRef(null);
+    return (
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+          <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>{label}</span>
+          {required && <span style={{fontSize:9,fontWeight:800,letterSpacing:1,color:'#ef4444',background:'rgba(239,68,68,.12)',padding:'2px 7px',borderRadius:4}}>REQUIRED</span>}
+          {currentUrl && <span style={{fontSize:9,fontWeight:700,letterSpacing:.5,color:'var(--green)',background:'var(--green-dim)',padding:'2px 7px',borderRadius:4}}>✓ SET</span>}
+        </div>
+        <div style={{fontSize:11,color:'var(--text-muted)',lineHeight:1.5}}>{hint}</div>
+        {children}
+        <input ref={inputRef} type="file" accept={accept||'image/png'} style={{display:'none'}}
+          onChange={e=>{ const f=e.target.files?.[0]; if(f) onFile(f); e.target.value=''; }}/>
+        <button className="btn btn-sm" style={{alignSelf:'flex-start',background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text)'}}
+          onClick={()=>inputRef.current?.click()} disabled={uploading}>
+          {uploading ? <><span className="spin">↻</span> Uploading…</> : (currentUrl ? '↻ Upload new PNG' : '⬆ Upload PNG')}
+        </button>
+        {error && <div className="alert alert-error" style={{margin:0,padding:'6px 10px',fontSize:11}}>⚠ {error}</div>}
+        {success && <div className="alert alert-success" style={{margin:0,padding:'6px 10px',fontSize:11}}>✓ {success}</div>}
+      </div>
+    );
+  }
+
+  function VendorBranding({ token, vendorName, onStatusChange }) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [descDraft, setDescDraft] = useState('');
+    const [descSaving, setDescSaving] = useState(false);
+    const [descMsg, setDescMsg] = useState(null);
+    const [busy, setBusy] = useState({});   // { logo: true/false, carousel_banner: ..., banner_mobile: ..., banner_desktop: ... }
+    const [msgs, setMsgs] = useState({});   // { [key]: {type,text} }
+
+    const load = useCallback(() => {
+      setLoading(true);
+      fetch(`${API}/vendor/brand-page`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json())
+        .then(d=>{
+          setData(d);
+          setDescDraft(d?.description ? d.description.replace(/<[^>]*>/g,'').trim() : '');
+          if (onStatusChange) onStatusChange(d?.collection_found ? d.is_complete : null);
+        })
+        .catch(()=>{})
+        .finally(()=>setLoading(false));
+    }, [token]);
+
+    useEffect(()=>{ load(); }, [load]);
+
+    const upload = async (variantPath, key, file) => {
+      setBusy(b=>({...b,[key]:true}));
+      setMsgs(m=>({...m,[key]:null}));
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        const r = await fetch(`${API}${variantPath}`, { method:'POST', headers:{ Authorization:`Bearer ${token}` }, body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Upload failed');
+        setMsgs(m=>({...m,[key]:{type:'success',text:'Uploaded!'}}));
+        load();
+      } catch(e) {
+        setMsgs(m=>({...m,[key]:{type:'error',text:e.message}}));
+      }
+      setBusy(b=>({...b,[key]:false}));
+    };
+
+    const saveDescription = async () => {
+      if (!descDraft.trim()) { setDescMsg({type:'error',text:'Description is required.'}); return; }
+      setDescSaving(true); setDescMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/brand-page/description`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ description: descDraft }) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+        setDescMsg({type:'success',text:'Saved!'});
+        load();
+      } catch(e) { setDescMsg({type:'error',text:e.message}); }
+      setDescSaving(false);
+    };
+
+    if (loading) return <div className="page"><div className="skel" style={{height:300,borderRadius:8}}/></div>;
+
+    if (data && data.collection_found === false) {
+      return (
+        <div className="page">
+          <div className="card"><div style={{padding:24,textAlign:'center'}}>
+            <div style={{fontSize:28,marginBottom:8}}>🔍</div>
+            <div style={{fontWeight:700,marginBottom:6}}>We couldn't find your brand collection</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Contact CROSCROW support to get your brand collection set up — then come back here.</div>
+          </div></div>
+        </div>
+      );
+    }
+
+    const logoUrl = data?.logo_url || '';
+    const carouselBannerUrl = data?.carousel_banner_url || '';
+    const bannerMobileUrl = data?.banner_mobile_url || '';
+    const bannerDesktopUrl = data?.banner_desktop_url || '';
+    const plainDesc = (data?.description || '').replace(/<[^>]*>/g,'').trim();
+
+    return (
+      <div className="page">
+        {!data?.is_complete && (
+          <div style={{background:'#1c1208',border:'2px solid #f59e0b',borderRadius:8,padding:'12px 16px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:20}}>🎨</span>
+            <div style={{fontSize:12,color:'#fbbf24',fontWeight:600}}>
+              You're missing free marketing! Your logo and description show up across the homepage, brand wall and your own collection page — set them below (both required) to unlock it.
+            </div>
+          </div>
+        )}
+        {data?.is_complete && (
+          <div className="alert alert-success" style={{marginBottom:14}}>✓ Your brand page is fully set up. Banners below are optional extras — add them anytime.</div>
+        )}
+
+        {/* ── Logo ── */}
+        <div className="card" style={{marginBottom:14}}>
+          <div className="card-header">
+            <span className="card-title">Brand Logo</span>
+            <span className="card-sub">Shown wherever your brand appears across CROSCROW</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'1fr auto',gap:20,alignItems:'start'}}>
+            <BrandUploadBox
+              label="Logo" required currentUrl={logoUrl}
+              hint={<>Upload a <strong>square (1:1) PNG</strong> — a solid black background with your mark in a lighter colour reads best across every placement. Changing your logo always requires uploading a fresh PNG.</>}
+              uploading={!!busy.logo} error={msgs.logo?.type==='error'?msgs.logo.text:null} success={msgs.logo?.type==='success'?msgs.logo.text:null}
+              onFile={f=>upload('/vendor/brand-page/logo','logo',f)}
+            >
+              {logoUrl && <img src={logoUrl} alt="current logo" style={{width:64,height:64,borderRadius:'50%',objectFit:'cover',border:'1px solid var(--border)'}}/>}
+            </BrandUploadBox>
+            <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+              <div style={{textAlign:'center'}}>
+                <BrandPreviewMock kind="wall" logoUrl={logoUrl} name={vendorName}/>
+                <div style={{fontSize:9,color:'var(--text-dim)',marginTop:6,textTransform:'uppercase',letterSpacing:1}}>Brand Wall</div>
+              </div>
+              <div style={{textAlign:'center'}}>
+                <BrandPreviewMock kind="carousel-logo" logoUrl={logoUrl} name={vendorName}/>
+                <div style={{fontSize:9,color:'var(--text-dim)',marginTop:6,textTransform:'uppercase',letterSpacing:1}}>Discover Carousel</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Description ── */}
+        <div className="card" style={{marginBottom:14}}>
+          <div className="card-header">
+            <span className="card-title">Brand Description</span>
+            <span className="card-sub">Shown on the Brands page and on your collection page banner</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'1fr 300px',gap:20,alignItems:'start'}}>
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:'var(--text)'}}>Description</span>
+                <span style={{fontSize:9,fontWeight:800,letterSpacing:1,color:'#ef4444',background:'rgba(239,68,68,.12)',padding:'2px 7px',borderRadius:4}}>REQUIRED</span>
+                {plainDesc && <span style={{fontSize:9,fontWeight:700,letterSpacing:.5,color:'var(--green)',background:'var(--green-dim)',padding:'2px 7px',borderRadius:4}}>✓ SET</span>}
+              </div>
+              <textarea className="form-input" rows={4} style={{resize:'vertical',fontFamily:'var(--font-family)'}}
+                placeholder="A couple of sentences about what makes your brand different — fabric, fit, story, whatever sells it."
+                value={descDraft} onChange={e=>setDescDraft(e.target.value)}/>
+              <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center'}}>
+                <button className="btn btn-green btn-sm" onClick={saveDescription} disabled={descSaving}>
+                  {descSaving ? <><span className="spin">↻</span> Saving…</> : '✓ Save Description'}
+                </button>
+                {descMsg && <span style={{fontSize:11,color:descMsg.type==='error'?'var(--red)':'var(--green)'}}>{descMsg.type==='error'?'⚠':'✓'} {descMsg.text}</span>}
+              </div>
+            </div>
+            <div style={{textAlign:'center'}}>
+              <BrandPreviewMock kind="collection-banner" logoUrl={logoUrl} name={vendorName} bannerUrl={bannerMobileUrl||bannerDesktopUrl} description={descDraft||plainDesc}/>
+              <div style={{fontSize:9,color:'var(--text-dim)',marginTop:6,textTransform:'uppercase',letterSpacing:1}}>Your Collection Page</div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Carousel banner (optional) ── */}
+        <div className="card" style={{marginBottom:14}}>
+          <div className="card-header">
+            <span className="card-title">Discover Carousel Banner <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:11}}>(optional)</span></span>
+            <span className="card-sub">A full-photo card instead of your logo on the homepage brand carousel</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'1fr auto',gap:20,alignItems:'start'}}>
+            <BrandUploadBox
+              label="Carousel Banner" currentUrl={carouselBannerUrl}
+              hint={<>Suggested ratio <strong>4:5</strong> (portrait). PNG only. When set, this photo fills the whole carousel card with your brand name over it — instead of your plain logo.</>}
+              uploading={!!busy.carousel_banner} error={msgs.carousel_banner?.type==='error'?msgs.carousel_banner.text:null} success={msgs.carousel_banner?.type==='success'?msgs.carousel_banner.text:null}
+              onFile={f=>upload('/vendor/brand-page/banner/carousel_banner','carousel_banner',f)}
+            />
+            <div style={{textAlign:'center'}}>
+              <BrandPreviewMock kind="carousel-banner" logoUrl={logoUrl} name={vendorName} bannerUrl={carouselBannerUrl}/>
+              <div style={{fontSize:9,color:'var(--text-dim)',marginTop:6,textTransform:'uppercase',letterSpacing:1}}>Discover Carousel</div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Collection page banners (optional) ── */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Collection Page Banner <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:11}}>(optional)</span></span>
+            <span className="card-sub">The top banner on your own collection page — set separately for phone and desktop</span>
+          </div>
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+            <div>
+              <BrandUploadBox
+                label="Mobile Banner" currentUrl={bannerMobileUrl}
+                hint={<>Suggested ratio <strong>4:5</strong>. PNG only. Shown only on phones — if left unset, your collection page just shows a plain title on mobile instead.</>}
+                uploading={!!busy.banner_mobile} error={msgs.banner_mobile?.type==='error'?msgs.banner_mobile.text:null} success={msgs.banner_mobile?.type==='success'?msgs.banner_mobile.text:null}
+                onFile={f=>upload('/vendor/brand-page/banner/banner_mobile','banner_mobile',f)}
+              />
+              <div style={{marginTop:10}}>
+                <BrandPreviewMock kind="collection-banner" name={vendorName} bannerUrl={bannerMobileUrl} description={plainDesc}/>
+              </div>
+            </div>
+            <div>
+              <BrandUploadBox
+                label="Desktop Banner" currentUrl={bannerDesktopUrl}
+                hint={<>Suggested ratio <strong>16:9</strong>. PNG only. Shown only on desktop/laptop screens — if left unset, desktop visitors see a plain title instead.</>}
+                uploading={!!busy.banner_desktop} error={msgs.banner_desktop?.type==='error'?msgs.banner_desktop.text:null} success={msgs.banner_desktop?.type==='success'?msgs.banner_desktop.text:null}
+                onFile={f=>upload('/vendor/brand-page/banner/banner_desktop','banner_desktop',f)}
+              />
+              <div style={{marginTop:10}}>
+                <BrandPreviewMock kind="collection-banner" name={vendorName} bannerUrl={bannerDesktopUrl} description={plainDesc}/>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function Profile({ token }) {
     const [profile,   setProfile]   = useState({});
     const [saving,    setSaving]    = useState(false);
@@ -5526,6 +5799,8 @@
     const [loginErr,setLoginErr]= useState('');
     const [loginLoad,setLoginLoad]=useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
+    const [brandingIncomplete, setBrandingIncomplete] = useState(null); // null=unknown, true/false once checked
+    const [brandingNudgeDismissed, setBrandingNudgeDismissed] = useState(()=>sessionStorage.getItem('branding_nudge_dismissed')==='1');
     const [theme, setTheme] = useState(()=>{
       const old = localStorage.getItem('vendor_theme'); // legacy 'light'/'dark'
       const stored = localStorage.getItem('vendor_panel_theme');
@@ -5547,6 +5822,16 @@
       }
       fetch(`${API}/vendor/branding`,{headers:{Authorization:`Bearer ${auth.token}`}})
         .then(r=>r.json()).then(d=>{ if(d) setBrand(b=>({...b, ...d})); }).catch(()=>{});
+    },[auth?.token]);
+    // Separate check (on login) for the vendor's storefront brand-page completeness —
+    // drives the sidebar ❗ badge and the one-time login nudge, independent of the
+    // panel-theme fetch above.
+    useEffect(()=>{
+      if (!auth) { setBrandingIncomplete(null); return; }
+      fetch(`${API}/vendor/brand-page`,{headers:{Authorization:`Bearer ${auth.token}`}})
+        .then(r=>r.json())
+        .then(d=>{ if (d && d.collection_found !== false) setBrandingIncomplete(!d.is_complete); })
+        .catch(()=>{});
     },[auth?.token]);
     useEffect(()=>{
       const root = document.body.style;
@@ -5685,6 +5970,7 @@
       { id:'dashboard',   icon:'◈', label:'Dashboard',   section:'main' },
       { id:'orders',      icon:'◎', label:'My Orders',    section:'main' },
       { id:'products',    icon:'⬡', label:'My Products',  section:'main' },
+      { id:'brandpage',   icon:'🎨', label:'Brand Page',   section:'main', badge: brandingIncomplete },
       { id:'shipping',    icon:'🚚', label:'Shipping',     section:'main' },
       { id:'reports',     icon:'📊', label:'Reports',      section:'finance' },
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
@@ -5699,7 +5985,7 @@
     const sections = [...new Set(navItems.map(n=>n.section))];
     const sectionLabels = { main:'Store', finance:'Finance' };
 
-    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', shipping:'Shipping Partners', reports:'Reports', settlements:'Settlements', wallet:'Wallet', returns:'Returns', profile:'My Profile', agreement:'Agreement', theme:'Theme' };
+    const pageTitle = { dashboard:'Dashboard', orders:'My Orders', products:'My Products', brandpage:'Brand Page', shipping:'Shipping Partners', reports:'Reports', settlements:'Settlements', wallet:'Wallet', returns:'Returns', profile:'My Profile', agreement:'Agreement', theme:'Theme' };
     const closeSidebar = () => setSidebarOpen(false);
 
     // Bottom nav shows most important 5 items
@@ -5736,6 +6022,7 @@
                 {navItems.filter(n=>n.section===sec).map(n=>(
                   <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ setView(n.id); closeSidebar(); }}>
                     <span className="nav-icon"><Icon name={n.id} mode={brand.icon_style} fallback={n.icon} size={16}/></span>{n.label}
+                    {n.badge && <span style={{marginLeft:'auto',fontSize:12}} title="Missing required branding">❗</span>}
                   </button>
                 ))}
               </div>
@@ -5774,9 +6061,19 @@
               <button className="btn btn-sm" style={{background:'#f59e0b',color:'#000',fontWeight:700,whiteSpace:'nowrap'}} onClick={()=>setView('profile')}>Change Now →</button>
             </div>
           )}
+          {!auth.mustChangePassword && brandingIncomplete && !brandingNudgeDismissed && view!=='brandpage' && (
+            <div style={{background:'#1c1208',border:'2px solid #f59e0b',borderRadius:8,padding:'12px 16px',marginBottom:12,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+              <div style={{fontSize:13,color:'#fbbf24',fontWeight:600}}>🎨 You're missing free marketing! Your logo and description aren't set yet — they show up across the homepage, brand wall and your own collection page.</div>
+              <div style={{display:'flex',gap:8,flexShrink:0}}>
+                <button className="btn btn-sm" style={{background:'#f59e0b',color:'#000',fontWeight:700,whiteSpace:'nowrap'}} onClick={()=>setView('brandpage')}>Set Up Now →</button>
+                <button className="btn btn-sm btn-ghost" onClick={()=>{ setBrandingNudgeDismissed(true); sessionStorage.setItem('branding_nudge_dismissed','1'); }}>Dismiss</button>
+              </div>
+            </div>
+          )}
           {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}} vendorName={auth.vendorName}/>}
           {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName} onGoToShopifySync={()=>setView('shopifysync')}/>}
+          {view==='brandpage'   && <VendorBranding    token={auth.token} vendorName={auth.vendorName} onStatusChange={complete=>setBrandingIncomplete(complete===null?null:!complete)}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
           {view==='reports'     && <Reports           token={auth.token}/>}
           {view==='settlements' && <Settlements       token={auth.token} stats={stats}/>}
