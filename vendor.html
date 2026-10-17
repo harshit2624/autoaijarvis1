@@ -4367,7 +4367,7 @@
   // banner shown on the discover carousel, and the collection-page banners
   // (mobile 4:5, desktop 16:9). Logo + description are mandatory; the rest
   // is optional but strongly encouraged ("free marketing").
-  function BrandPreviewMock({ kind, logoUrl, name, bannerUrl, description }) {
+  function BrandPreviewMock({ kind, logoUrl, name, bannerUrl, description, ratio }) {
     const displayName = name || 'YOUR BRAND';
     if (kind === 'wall') {
       return (
@@ -4397,12 +4397,13 @@
       );
     }
     if (kind === 'collection-banner') {
+      const r = ratio || '16/9';
       return (
-        <div style={{width:'100%',aspectRatio: bannerUrl ? undefined : '16/7',minHeight:90,borderRadius:8,overflow:'hidden',position:'relative',background:bannerUrl?`#111 url(${bannerUrl}) center/cover`:'#2a2a2a',display:'flex',alignItems:'flex-end'}}>
+        <div style={{width:'100%',maxWidth: r==='4/5' ? 220 : undefined,aspectRatio:r,borderRadius:8,overflow:'hidden',position:'relative',background:bannerUrl?`#111 url(${bannerUrl}) center/cover`:'#2a2a2a',display:'flex',alignItems:'flex-end'}}>
           <div style={{position:'absolute',inset:0,background:'linear-gradient(0deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.28) 45%,rgba(0,0,0,.05) 75%)'}}/>
           <div style={{position:'relative',padding:'14px 16px',width:'100%'}}>
             <div style={{color:'#fff',fontSize:17,fontWeight:700,marginBottom:4}}>{displayName}</div>
-            <div style={{color:'rgba(255,255,255,.88)',fontSize:10,textTransform:'uppercase',letterSpacing:'.02em',maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{description || 'Your brand description shows here…'}</div>
+            <div style={{color:'rgba(255,255,255,.88)',fontSize:10,textTransform:'uppercase',letterSpacing:'.02em',maxWidth:r==='4/5'?'100%':280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:r==='4/5'?'normal':'nowrap'}}>{description || 'Your brand description shows here…'}</div>
           </div>
         </div>
       );
@@ -4614,7 +4615,7 @@
                 onFile={f=>upload('/vendor/brand-page/banner/banner_mobile','banner_mobile',f)}
               />
               <div style={{marginTop:10}}>
-                <BrandPreviewMock kind="collection-banner" name={vendorName} bannerUrl={bannerMobileUrl} description={plainDesc}/>
+                <BrandPreviewMock kind="collection-banner" name={vendorName} bannerUrl={bannerMobileUrl} description={plainDesc} ratio="4/5"/>
               </div>
             </div>
             <div>
@@ -4625,7 +4626,7 @@
                 onFile={f=>upload('/vendor/brand-page/banner/banner_desktop','banner_desktop',f)}
               />
               <div style={{marginTop:10}}>
-                <BrandPreviewMock kind="collection-banner" name={vendorName} bannerUrl={bannerDesktopUrl} description={plainDesc}/>
+                <BrandPreviewMock kind="collection-banner" name={vendorName} bannerUrl={bannerDesktopUrl} description={plainDesc} ratio="16/9"/>
               </div>
             </div>
           </div>
