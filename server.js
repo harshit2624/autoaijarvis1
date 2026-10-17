@@ -12653,6 +12653,29 @@ async function vendorShopifyRESTByConn(conn, path) {
   return vendorShopifyREST(conn.shop_domain, token, path);
 }
 
+// Paginated variant — follows the Link: rel="next" header across every page
+// instead of trusting a single response. A plain vendorShopifyREST call caps
+// out at whatever `limit` the path asks for (REST's hard max is 250/page),
+// so any vendor store with more items than that — confirmed live on FITCHECK
+// with 250+ products — silently had everything past the first page dropped.
+// `arrayKey` is the response field to concatenate across pages, e.g.
+// 'products', 'custom_collections', 'smart_collections'.
+async function vendorShopifyRESTPaginated(conn, path, arrayKey) {
+  const token = await getValidVendorToken(conn);
+  let all = [];
+  let nextUrl = `https://${conn.shop_domain}/admin/api/2024-01${path}`;
+  while (nextUrl) {
+    const res = await fetch(nextUrl, { headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' } });
+    if (!res.ok) throw new Error(`Vendor Shopify API error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    all.push(...(data[arrayKey] || []));
+    const link = res.headers.get('link') || res.headers.get('Link') || '';
+    const match = link.match(/<([^>]+)>;\s*rel="next"/);
+    nextUrl = match ? match[1] : null;
+  }
+  return all;
+}
+
 // Privacy policy page (required by Shopify)
 app.get('/privacy', (req, res) => {
   res.send(`<!DOCTYPE html><html><head><title>MARKETPLACE SYNC by Antortiq — Privacy Policy</title>
@@ -13553,8 +13576,7 @@ app.get("/vendor/shopify/products", vendorAuth, async (req, res) => {
   if (!conn) conn = await mdb.collection('vendor_shopify_connections').findOne({ vendor_name: { $regex: new RegExp(`^${req.vendor}$`, 'i') } }, { projection: { _id: 0 } });
   if (!conn) return res.status(404).json({ error: "Shopify store not connected." });
   try {
-    const data = await vendorShopifyRESTByConn(conn, '/products.json?limit=50&fields=id,title,variants,images,status,product_type,vendor');
-    const products = data.products || [];
+    const products = await vendorShopifyRESTPaginated(conn, '/products.json?limit=250&fields=id,title,variants,images,status,product_type,vendor', 'products');
     const liveProductIds = new Set(products.map(p => String(p.id)));
 
     // Check which are mapped and which have pending/approved requests
@@ -13714,13 +13736,10 @@ app.get("/admin/vendor-sync/:vendor/collections", adminAuth, async (req, res) =>
   if (!conn) return res.status(404).json({ error: "Vendor store not connected." });
   try {
     const [custom, smart] = await Promise.all([
-      vendorShopifyRESTByConn(conn, '/custom_collections.json?limit=250&fields=id,title,image'),
-      vendorShopifyRESTByConn(conn, '/smart_collections.json?limit=250&fields=id,title,image'),
+      vendorShopifyRESTPaginated(conn, '/custom_collections.json?limit=250&fields=id,title,image', 'custom_collections'),
+      vendorShopifyRESTPaginated(conn, '/smart_collections.json?limit=250&fields=id,title,image', 'smart_collections'),
     ]);
-    const all = [
-      ...(custom.custom_collections || []),
-      ...(smart.smart_collections || []),
-    ].sort((a, b) => a.title.localeCompare(b.title));
+    const all = [...custom, ...smart].sort((a, b) => a.title.localeCompare(b.title));
     res.json({ collections: all });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -13732,10 +13751,10 @@ app.get("/admin/vendor-sync/:vendor/products", adminAuth, async (req, res) => {
     const { collection_id } = req.query;
     const collQs = collection_id ? `&collection_id=${encodeURIComponent(collection_id)}` : '';
     const path = `/products.json?limit=250&fields=id,title,variants,images,status,published_at,product_type,vendor,body_html,tags${collQs}`;
-    const data = await vendorShopifyRESTByConn(conn, path);
+    const rawProducts = await vendorShopifyRESTPaginated(conn, path, 'products');
     const mappings = await VPM.allForVendor(req.params.vendor);
     const mappedVariants = new Set(mappings.map(m => m.vendor_variant_id));
-    const products = (data.products || []).map(p => ({
+    const products = rawProducts.map(p => ({
       ...p,
       variants: (p.variants || []).map(v => ({ ...v, mapped: mappedVariants.has(String(v.id)) }))
     }));
