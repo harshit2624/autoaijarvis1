@@ -17366,21 +17366,26 @@ function shipsagarStatusToStage(desc) {
 
 // Detects a vendor-side fake dispatch: an AWB was minted (satisfying the
 // 48hr dispatch-SLA on paper) but the courier never actually took custody
-// of the package — it explicitly cancels/rejects the pickup, or the order
-// itself gets cancelled before any courier scan ever happens. Deliberately
+// of the package — it explicitly cancels/rejects the pickup. Deliberately
 // SEPARATE from shipsagarStatusToStage's rto bucket: RTO means the package
 // was genuinely in motion and a delivery attempt failed; this means it
-// never left the vendor's hands in the first place. Confirmed live
-// (RTO audit, 2026-10-18): orders #3064/#3081 showed ShipSagar
-// CurrentStatus "RTO" from a single sparse scan reading "Order cancelled
-// after confirmation" — no pickup, no transit, nothing — which is not a
-// real RTO in any practical sense, it's the order never having shipped.
+// never left the vendor's hands in the first place.
+//
+// Deliberately NARROW — only the unambiguous phrasings. An earlier, broader
+// version also matched "order cancelled after confirmation" / generic
+// cancel+confirmation wording, which looked right on orders #2768/#2201
+// (paired with explicit "Not Picked" text) but was WRONG on #3064/#3081 —
+// confirmed genuinely RTO on review (2026-10-18), despite similar-sounding
+// cancellation text. That phrase alone isn't a reliable signal in this
+// courier's vocabulary; it can mean a real post-dispatch RTO just as often
+// as a pre-pickup failure. Removed rather than guessed at a better regex —
+// only react to wording that says the PICKUP itself failed, not any
+// "cancelled" text in general.
 function shipsagarIsPickupFailure(desc) {
   if (!desc) return false;
   const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
   return s.includes('pickup cancelled') || s.includes('cancelled by seller') || s.includes('cancelled on request')
-    || s.includes('order cancelled after confirmation') || s.includes('not picked') || s.includes('pickup rejected')
-    || s.includes('seller requested cancellation') || (s.includes('cancel') && s.includes('confirmation'));
+    || s.includes('not picked') || s.includes('pickup rejected') || s.includes('seller requested cancellation');
 }
 
 // Some couriers (observed on BlueDart) close out a return-to-origin shipment
