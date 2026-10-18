@@ -10480,6 +10480,31 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Shiprocket's /orders/create/adhoc does NOT reliably return an AWB on its
+// own (confirmed against Shiprocket's own API helpsheet) — AWB assignment is
+// a separate call, /courier/assign/awb, which auto-picks a courier from the
+// account's configured rules when no courier_id is given. Every call site
+// that creates a Shiprocket order was previously trusting create/adhoc's
+// bare `awb_code` field, which is typically empty unless the merchant's
+// Shiprocket account has auto-assign-on-create enabled — meaning shipments
+// silently got no AWB, skipped the whole downstream chain (OVS, inventory
+// deduction, ShipSagar push, Shopify fulfillment), and nothing surfaced an
+// error since the ORDER creation itself still reported success.
+// Returns { awb, courierName } or throws.
+async function shiprocketAssignAwb(srToken, shipmentId) {
+  const res = await fetch("https://apiv2.shiprocket.in/v1/external/courier/assign/awb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${srToken}` },
+    body: JSON.stringify({ shipment_id: shipmentId }),
+  });
+  const data = await res.json();
+  const d = data?.response?.data || data?.data || data || {};
+  const awb = d.awb_code || d.awb || '';
+  const courierName = d.courier_name || d.courier || '';
+  if (!awb) throw new Error(data?.message || `Shiprocket AWB assignment failed: ${JSON.stringify(data).slice(0, 300)}`);
+  return { awb, courierName };
+}
+
 // POST /vendor/orders/:shopifyId/create-shipment — create shipment via connected partner
 app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, res) => {
   try {
@@ -10607,7 +10632,18 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       }).then(r => r.json());
 
       if (srRes.status_code === 1) {
-        result = { success: true, orderId: srRes.order_id, shipmentId: srRes.shipment_id, awb: srRes.awb_code };
+        let awb = srRes.awb_code || '';
+        let courierName = '';
+        if (!awb && srRes.shipment_id) {
+          try {
+            const assigned = await shiprocketAssignAwb(srToken, srRes.shipment_id);
+            awb = assigned.awb;
+            courierName = assigned.courierName;
+          } catch (e) {
+            return res.status(400).json({ error: `Order created on Shiprocket but AWB assignment failed: ${e.message}` });
+          }
+        }
+        result = { success: true, orderId: srRes.order_id, shipmentId: srRes.shipment_id, awb, courierName };
       } else {
         return res.status(400).json({ error: srRes.message || JSON.stringify(srRes) });
       }
@@ -10756,7 +10792,13 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
 
     // Save AWB to this vendor's order_vendor_stage only — never to order_meta.awb
     if (result?.awb) {
-      await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+      // Shiprocket is an aggregator, not a trackable courier itself — ShipSagar
+      // has no "SHIPROCKET" code (toShipSagarCourierCode returns '' for it),
+      // so pushing courier:'shiprocket' silently makes the shipment untrackable
+      // forever. Use the REAL courier Shiprocket assigned (e.g. "Delhivery
+      // Surface", "Ekart") instead, captured from the AWB-assign step above.
+      const realCourier = (partner === 'shiprocket' && result.courierName) ? result.courierName : partner;
+      await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: realCourier, stage: 'ready', updated_at: new Date().toISOString() });
 
       // Deduct CC Inventory stock for any shipped items that are physically at CROSCROW
       try {
@@ -10777,7 +10819,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       } catch (e) { console.error("CC inventory deduction failed (vendor):", e.message); }
 
       // Auto-register with ShipSagar for tracking
-      shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: ((shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||'')).trim(), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
+      shipsagarPushShipment({ awb: result.awb, courierCode: realCourier, orderNo: shopifyOrder.name || sid, customerName: ((shopifyOrder.shipping_address?.first_name||'') + ' ' + (shopifyOrder.shipping_address?.last_name||'')).trim(), email: shopifyOrder.email || '', mobileNo: (shopifyOrder.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
       // Also create a Shopify partial fulfillment for exactly the quantities being shipped now
       try {
@@ -10806,7 +10848,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
         }
 
         if (line_items_by_fulfillment_order.length) {
-          const courierName = partner === 'shiprocket' ? 'Shiprocket' : partner === 'shipmozo' ? 'ShipMozo' : 'Delhivery';
+          const courierName = partner === 'shiprocket' ? (result.courierName ? `Shiprocket (${result.courierName})` : 'Shiprocket') : partner === 'shipmozo' ? 'ShipMozo' : 'Delhivery';
           const trackUrl = partner === 'delhivery'
             ? `https://www.delhivery.com/track/package/${result.awb}`
             : partner === 'shipmozo'
@@ -11144,7 +11186,18 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       }).then(r => r.json());
 
       if (srRes.status_code === 1) {
-        result = { success: true, orderId: srRes.order_id, shipmentId: srRes.shipment_id, awb: srRes.awb_code };
+        let awb = srRes.awb_code || '';
+        let courierName = '';
+        if (!awb && srRes.shipment_id) {
+          try {
+            const assigned = await shiprocketAssignAwb(authRes.token, srRes.shipment_id);
+            awb = assigned.awb;
+            courierName = assigned.courierName;
+          } catch (e) {
+            return res.status(400).json({ error: `Order created on Shiprocket but AWB assignment failed: ${e.message}` });
+          }
+        }
+        result = { success: true, orderId: srRes.order_id, shipmentId: srRes.shipment_id, awb, courierName };
       } else {
         return res.status(400).json({ error: srRes.message || JSON.stringify(srRes) });
       }
@@ -11207,6 +11260,12 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       return res.status(400).json({ error: `Unsupported partner: ${partner}` });
     }
 
+    // Shiprocket is an aggregator, not a trackable courier itself (ShipSagar has
+    // no "SHIPROCKET" code — toShipSagarCourierCode returns '' for it), so
+    // pushing courier:'shiprocket' silently makes the shipment untrackable
+    // forever. Use the real courier Shiprocket assigned instead.
+    const realCourier = (partner === 'shiprocket' && result.courierName) ? result.courierName : partner;
+
     // Build Shopify fulfillment for exactly the selected line-item quantities
     const byFo = {};
     for (const it of selected) {
@@ -11221,7 +11280,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
 
     let fulfillmentId = null;
     if (line_items_by_fulfillment_order.length) {
-      const courierName = partner === 'shiprocket' ? 'Shiprocket' : partner === 'shipmozo' ? 'ShipMozo' : 'Delhivery';
+      const courierName = partner === 'shiprocket' ? (result.courierName ? `Shiprocket (${result.courierName})` : 'Shiprocket') : partner === 'shipmozo' ? 'ShipMozo' : 'Delhivery';
       const trackUrl = partner === 'delhivery'
         ? `https://www.delhivery.com/track/package/${result.awb}`
         : partner === 'shipmozo'
@@ -11246,7 +11305,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
         console.error('⚠️  Shopify fulfillment after admin create-shipment failed:', e.message);
         result.shopifyFulfillError = e.message;
       }
-      shipsagarPushShipment({ awb: result.awb, courierCode: partner, orderNo: shopifyOrder.name || sid, customerName: custName, email: shopifyOrder.email || '', mobileNo: (addr.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
+      shipsagarPushShipment({ awb: result.awb, courierCode: realCourier, orderNo: shopifyOrder.name || sid, customerName: custName, email: shopifyOrder.email || '', mobileNo: (addr.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
       // Email customer + affected vendors about this shipment (grouped per vendor)
       try {
@@ -11286,7 +11345,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       order_name: shopifyOrder.name,
       partner,
       awb: result.awb,
-      courier: partner,
+      courier: realCourier,
       pickup_location: warehouseName,
       weight: parseFloat(weight), length: parseFloat(length), breadth: parseFloat(breadth), height: parseFloat(height), shipMode,
       items: selected.map(it => ({ line_item_id: it.line_item_id, vendor: it.vendor, title: it.title, quantity: it.quantity })),
@@ -11329,7 +11388,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
         remaining += Math.max(0, fulfillable);
       }
       if (remaining === 0) {
-        await OVS.upsert(sid, vendor, { awb: result.awb, courier: partner, stage: 'ready', updated_at: new Date().toISOString() });
+        await OVS.upsert(sid, vendor, { awb: result.awb, courier: realCourier, stage: 'ready', updated_at: new Date().toISOString() });
       } else {
         const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1 } });
         await OVS.upsert(sid, vendor, { stage: higherStage(existing?.stage || 'new', 'partial'), updated_at: new Date().toISOString() });
@@ -22496,7 +22555,20 @@ async function createRRShipment({ rr, direction, partner, creds, weight, length,
       method: 'POST', headers: {'Content-Type':'application/json','Authorization':`Bearer ${authRes.token}`},
       body: JSON.stringify(payload),
     }).then(r=>r.json());
-    if (srRes.status_code === 1) return { awb: srRes.awb_code, courier: 'shiprocket' };
+    if (srRes.status_code === 1) {
+      let awb = srRes.awb_code || '';
+      let courierName = '';
+      if (!awb && srRes.shipment_id) {
+        const assigned = await shiprocketAssignAwb(authRes.token, srRes.shipment_id);
+        awb = assigned.awb;
+        courierName = assigned.courierName;
+      }
+      // Shiprocket is an aggregator, not a trackable courier itself — ShipSagar
+      // has no "SHIPROCKET" code, so returning courier:'shiprocket' here would
+      // make this reverse shipment untrackable forever. Return the real
+      // assigned courier when we have one.
+      return { awb, courier: courierName || 'shiprocket' };
+    }
     throw new Error(srRes.message || JSON.stringify(srRes));
 
   } else if (partner === 'delhivery') {
