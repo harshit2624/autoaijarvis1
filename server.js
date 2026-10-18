@@ -434,23 +434,38 @@ const OVS = {
     // Automated syncs must never downgrade a stage — e.g. a NOT_PICKED event after
     // a transit scan should not rewind the stage back to pickup.
     //
-    // Exception: a confirmed 'delivered' is always allowed to override an
-    // existing 'rto', even though higherStage() ranks rto as terminal (and
-    // thus always-wins) — because this specific comparison isn't "did the
-    // package move backward in the pipeline", it's two mutually-exclusive
-    // REAL-WORLD outcomes, and whichever one the caller is asserting here
-    // already passed through shipsagarFinalStage's own full-history check
-    // for an earlier genuine RTO before returning 'delivered'. Without this,
-    // once a vendor stage is ever wrongly stuck on 'rto' (e.g. the
-    // #3479/#3467/RTO-audit incidents, 2026-10-18 — 16 orders this exact
-    // way), the cron sees the real "Shipment Delivered" status on every
-    // single pass and silently discards it forever, because terminal-beats-
-    // non-terminal is unconditional in higherStage(). That made the bug
-    // permanently unrecoverable instead of self-healing on the next sync.
+    // rto <-> delivered is special-cased in ONE direction only, deliberately
+    // asymmetric because the financial risk is asymmetric: a real order
+    // wrongly marked RTO is "just" a stuck-stage bug (low cost, self-heals
+    // once corrected), but a real DELIVERED order wrongly flipped to RTO by
+    // an automated sync is actual money — commission/settlement reversed on
+    // an order the vendor genuinely fulfilled.
+    //   rto -> delivered (automated): ALWAYS allowed. shipsagarFinalStage
+    //     has already vetted the full tracking history for a genuine earlier
+    //     RTO event before returning 'delivered', so this isn't a blind
+    //     downgrade-bypass. Without this, a vendor stage ever wrongly stuck
+    //     on 'rto' (e.g. the #3479/#3467/RTO-audit incidents, 2026-10-18 —
+    //     16 orders this exact way) could never self-heal: the cron saw the
+    //     real "Shipment Delivered" status every single pass and silently
+    //     discarded it forever, because terminal-beats-non-terminal is
+    //     unconditional in higherStage().
+    //   delivered -> rto (automated): NEVER allowed. An automated classifier
+    //     (cron/webhook/tag-mapping) flipping a confirmed delivery back to
+    //     RTO is far more likely a stale/reused-AWB or courier-glitch read
+    //     than a real event, and the blast radius of getting it wrong is
+    //     the dangerous direction. This only blocks AUTOMATED syncs — every
+    //     admin endpoint sets manually_overridden:true directly without
+    //     passing respectStageOrder, so an admin can still deliberately mark
+    //     an order RTO after the fact (e.g. a genuine post-delivery return
+    //     to origin) with zero restriction; only the blind-automated path
+    //     is closed off here.
     const requestedStage = fields.stage;
     let protectedFromDowngrade = false;
     if (fields.stage && respectStageOrder && existing?.stage) {
-      const kept = (fields.stage === 'delivered' && existing.stage === 'rto') ? 'delivered' : higherStage(existing.stage, fields.stage);
+      let kept;
+      if (fields.stage === 'delivered' && existing.stage === 'rto') kept = 'delivered';
+      else if (fields.stage === 'rto' && existing.stage === 'delivered') kept = 'delivered';
+      else kept = higherStage(existing.stage, fields.stage);
       if (kept !== requestedStage) protectedFromDowngrade = true;
       fields = { ...fields, stage: kept };
     }
