@@ -1086,17 +1086,25 @@ async function applyTagMappings(orderId, tags, financialStatus) {
       const isForce = FORCE_STAGES.includes(newStage);
       if (isForce || FORWARD_STAGES.includes(newStage)) {
         try {
-          const od = await shopifyREST(`/orders/${sid}.json?fields=id,line_items`);
+          const od = await shopifyREST(`/orders/${sid}.json?fields=id,name,line_items`);
+          const orderName = od?.order?.name || '';
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
           const ORDER_WIDE_STAGES = ['confirmed', 'partial']; // apply to all vendors regardless of order type
           const nowMs = Date.now();
           for (const vendor of vendors) {
-            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, _id: 0 } });
+            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, awb: 1, _id: 0 } });
             // Multi-vendor: only allow confirmed/partial via tag mapping (not transit/delivered etc.)
-            if (vendors.length > 1 && !ORDER_WIDE_STAGES.includes(newStage)) continue;
-            if (!isForce && existing && ADVANCED.includes(existing.stage)) continue;
+            if (vendors.length > 1 && !ORDER_WIDE_STAGES.includes(newStage)) {
+              logStageEvent({ shopifyId: sid, orderName, vendor, fromStage: existing?.stage || null, toStage: newStage, actor: 'webhook', actorId: 'orders/updated', source: 'tag_mapping_sync', reason: `tag matched: ${winner.shopify_tag}`, skipped: true, skipReason: 'multi-vendor order, non-order-wide stage from tag mapping' });
+              continue;
+            }
+            if (!isForce && existing && ADVANCED.includes(existing.stage)) {
+              logStageEvent({ shopifyId: sid, orderName, vendor, fromStage: existing?.stage || null, toStage: newStage, actor: 'webhook', actorId: 'orders/updated', source: 'tag_mapping_sync', reason: `tag matched: ${winner.shopify_tag}`, skipped: true, skipReason: 'vendor already past this stage, non-force stage' });
+              continue;
+            }
             const newStartedAt = ORDER_WIDE_STAGES.includes(newStage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
             await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: newStartedAt, warning_sent: 0, penalty_triggered: 0 });
+            logStageEvent({ shopifyId: sid, orderName, vendor, fromStage: existing?.stage || null, toStage: newStage, awb: existing?.awb || '', actor: 'webhook', actorId: 'orders/updated', source: 'tag_mapping_sync', reason: `tag matched: ${winner.shopify_tag}` });
           }
         } catch(e) { console.error('applyTagMappings vendor sync error:', e.message); }
       }
@@ -1254,6 +1262,67 @@ function auditLog(actor, action, targetId, details) {
     created_at: new Date().toISOString(),
   }).catch(() => {});
 }
+
+// ── Per-order, per-vendor stage activity log ───────────────────────────────
+// audit_log (above) is a flat, loosely-structured trail that's great for
+// "what actions has this admin taken" but bad for "what happened to order
+// #X" — bulk actions log target_id:"multiple" (not the real order ids they
+// touched), and no entry records which vendor a stage change applied to,
+// what it was before, or why. That gap is exactly what made the #3479/#3467
+// multi-vendor stage-corruption incident (2026-10-18) invisible to a direct
+// per-order audit search, even though the write itself was "logged".
+//
+// This collection is query-by-order-first: every call records shopify_id +
+// order_name up front, so `GET /admin/orders/:id/activity-log` (and any
+// future "what happened to order X" question) has one place to look instead
+// of cross-referencing order_vendor_stage.stage_history (has timestamps, no
+// actor/reason) against audit_log (has actor/reason, inconsistent order
+// linkage) by hand.
+//
+// Call this from EVERY place that changes (or considers and skips) a
+// vendor's stage — admin single/bulk stage tools, tag-mapping auto-sync,
+// webhook fulfillment handlers, vendor fulfill actions, the ShipSagar cron,
+// and the stage-repair tool — so there's one consistent, complete trail
+// regardless of origin.
+function logStageEvent({ shopifyId, orderName = '', vendor = null, fromStage = null, toStage = null, awb = '', courier = '', actor, actorId = '', source, reason = '', skipped = false, skipReason = '' }) {
+  mdb.collection('order_stage_events').insertOne({
+    shopify_id: String(shopifyId),
+    order_name: orderName,
+    vendor_name: vendor,
+    from_stage: fromStage,
+    to_stage: toStage,
+    awb, courier,
+    actor,        // 'admin' | 'vendor' | 'webhook' | 'cron' | 'system'
+    actor_id: actorId, // staff username / 'Admin' / vendor name / cron job name / webhook topic
+    source,       // the specific endpoint/function, e.g. 'admin_stage_change', 'admin_bulk_update'
+    reason,
+    skipped,      // true = this vendor was considered but NOT changed (and why, in skip_reason)
+    skip_reason: skipReason,
+    created_at: new Date().toISOString(),
+  }).catch(() => {});
+}
+
+// ── GET /admin/orders/:id/activity-log — full stage history for one order ──
+// Merges order_stage_events (rich, but only populated going forward) with
+// each vendor's order_vendor_stage.stage_history (timestamps only, but
+// covers everything historical) so a single call answers "what happened to
+// this order and why" without manual cross-referencing.
+app.get("/admin/orders/:id/activity-log", requirePermission('orders'), async (req, res) => {
+  try {
+    const sid = String(req.params.id);
+    const events = await mdb.collection('order_stage_events').find({ shopify_id: sid }).sort({ created_at: 1 }).toArray();
+    const vendorStages = await mdb.collection('order_vendor_stage').find({ shopify_id: sid }, { projection: { vendor_name: 1, stage: 1, stage_history: 1, awb: 1, courier: 1, manually_overridden: 1, _id: 0 } }).toArray();
+    const rawAudit = await mdb.collection('audit_log').find({ $or: [{ target_id: sid }, { target_id: 'multiple' }] }).sort({ created_at: 1 }).toArray();
+    res.json({
+      events: events.map(e => ({ ...e, _id: undefined })),
+      vendor_stages: vendorStages,
+      // audit_log entries with target_id:"multiple" are included too since a
+      // bulk action may have touched this order without recording its id —
+      // caller has to eyeball `details` to tell if this order was in that batch.
+      audit_log: rawAudit.map(a => ({ actor: a.actor, action: a.action, target_id: a.target_id, details: a.details, created_at: a.created_at })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ── Structured trigger log for automated WA order-notification sends ──────
 // audit_log covers admin/manual actions; this covers webhook-driven
@@ -2186,6 +2255,7 @@ app.post("/webhooks/fulfillments", (req, res) => {
             updated_at: new Date().toISOString(),
           });
           auditLog("webhook", "fulfillment_auto_ready", shopifyId, { vendorName, awb });
+          logStageEvent({ shopifyId, orderName: order.name || '', vendor: vendorName, fromStage: existing?.stage || null, toStage: newStage, awb: existingAWB || awb, courier, actor: 'webhook', actorId: 'fulfillments/create', source: 'webhook_fulfillment_create' });
 
           // Email customer — skip if already sent in the last 5 min (dedup webhook vs direct send)
           const recentlySent = await mdb.collection('email_log').findOne({
@@ -2235,7 +2305,9 @@ app.post("/webhooks/fulfillments", (req, res) => {
         const mappedStage = statusMap[status];
         if (mappedStage) {
           for (const vendorName of vendors) {
+            const existingVs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: shopifyId, vendor_name: vendorName }, { projection: { stage: 1, awb: 1, _id: 0 } });
             await OVS.upsert(shopifyId, vendorName, { stage: mappedStage, updated_at: new Date().toISOString() });
+            logStageEvent({ shopifyId, orderName: order.name || '', vendor: vendorName, fromStage: existingVs?.stage || null, toStage: mappedStage, awb: existingVs?.awb || awb, courier, actor: 'webhook', actorId: 'fulfillments/update', source: 'webhook_fulfillment_status_sync', reason: `shopify shipment_status: ${status}` });
           }
           // Also update order-level delivery status
           await OM.upsert(shopifyId, { delivery_status: status, updated_at: new Date().toISOString() });
@@ -6181,6 +6253,7 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
       updated_at: new Date().toISOString(),
     });
     auditLog("vendor", "vendor_fulfill", shopifyId, { vendorName, awb, courier });
+    logStageEvent({ shopifyId, vendor: vendorName, toStage: 'ready', awb, courier, actor: 'vendor', actorId: vendorName, source: 'vendor_fulfill' });
 
     // Step 5: email customer about this vendor's shipment
     const cfg = await getSmtpConfig();
@@ -6293,6 +6366,7 @@ app.put("/vendor/orders/:shopifyId/mark-delivered", vendorAuth, async (req, res)
   try {
     await OVS.upsert(shopifyId, req.vendor, { stage: 'delivered', updated_at: new Date().toISOString() });
     auditLog("vendor", "mark_delivered", shopifyId, { vendor: req.vendor });
+    logStageEvent({ shopifyId, vendor: req.vendor, toStage: 'delivered', actor: 'vendor', actorId: req.vendor, source: 'vendor_mark_delivered' });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7707,17 +7781,35 @@ app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res)
   const nowMs = Date.now();
   await OM.upsert(id, { stage, updated_at: now });
 
-  // Admin manual override — no guards, unconditional sync to all vendors
+  // Order-wide stages are legitimate to apply to every vendor regardless of
+  // shipment evidence (e.g. the whole order got cancelled before anyone
+  // shipped). Pipeline stages (ready..rto) describe a SPECIFIC shipment's
+  // progress — on a multi-vendor order, applying one to every vendor
+  // blindly is exactly the bug that silently marked FLYJONE/ATYPICAL
+  // "delivered" and FLYJONE "rto" on #3479/#3467 (2026-10-18) even though
+  // neither vendor had shipped anything. Now: pipeline stages only apply to
+  // a vendor on a multi-vendor order if that vendor already has an AWB
+  // (real shipment evidence) or it's a single-vendor order; otherwise the
+  // vendor is skipped and the skip is logged instead of silently happening.
+  const ORDER_WIDE_STAGES = ['new','confirmed','partial','hold','cancelled','misc','returned'];
   const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
+  const actorId = req.staffUsername || 'Admin';
   try {
-    const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+    const od = await shopifyREST(`/orders/${id}.json?fields=id,name,line_items`);
+    const orderName = od?.order?.name || '';
     const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+    const isOrderWide = ORDER_WIDE_STAGES.includes(stage);
     for (const vendor of vendors) {
-      const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
+      const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, awb: 1, _id: 0 } });
+      if (!isOrderWide && vendors.length > 1 && !existing?.awb) {
+        logStageEvent({ shopifyId: id, orderName, vendor, fromStage: existing?.stage || null, toStage: stage, actor: 'admin', actorId, source: 'admin_stage_change', skipped: true, skipReason: 'multi-vendor order, pipeline stage, vendor has no AWB on file' });
+        continue;
+      }
       const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
       const newWarning   = fulfilledStages.includes(stage) ? 0 : (existing?.warning_sent || 0);
       const newPenalty   = fulfilledStages.includes(stage) ? 0 : (existing?.penalty_triggered || 0);
       await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: newWarning, penalty_triggered: newPenalty, manually_overridden: true });
+      logStageEvent({ shopifyId: id, orderName, vendor, fromStage: existing?.stage || null, toStage: stage, awb: existing?.awb || '', actor: 'admin', actorId, source: 'admin_stage_change' });
     }
   } catch(e) { console.error('vendor stage sync error:', e.message); }
 
@@ -7752,6 +7844,16 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
   }
 
   const shopifyToken = await getAccessToken();
+  const bulkActorId = req.staffUsername || 'Admin';
+  // Same ORDER_WIDE_STAGES guard as the single-order endpoint — bulk-update
+  // is where the #3479/#3467 incident actually happened (confirmed via the
+  // target_id:"multiple" audit entries and the ~40-second burst timing
+  // across 8 orders on 2026-10-18): someone fed it a batch of order ids
+  // meaning to update ONE vendor's shipment per order, but the tool has no
+  // per-vendor targeting at all — it stamps every vendor on every order
+  // with the same stage. Pipeline stages now only apply to a vendor on a
+  // multi-vendor order if that vendor already has an AWB on file.
+  const ORDER_WIDE_STAGES = ['new','confirmed','partial','hold','cancelled','misc','returned'];
 
   for (const id of order_ids) {
     try {
@@ -7759,14 +7861,19 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
       if (stage) {
         await OM.upsert(id, { stage, updated_at: now });
         fireStageEmails(id, stage).catch(() => {});
-        // Admin bulk override — no guards, unconditional sync to all vendors
         const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
         const nowMs = Date.now();
         try {
-          const od = await shopifyREST(`/orders/${id}.json?fields=id,line_items`);
+          const od = await shopifyREST(`/orders/${id}.json?fields=id,name,line_items`);
+          const orderName = od?.order?.name || '';
           const vendors = [...new Set((od?.order?.line_items || []).map(li => li.vendor).filter(Boolean))];
+          const isOrderWide = ORDER_WIDE_STAGES.includes(stage);
           for (const vendor of vendors) {
-            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, _id: 0 } });
+            const existing = await mdb.collection('order_vendor_stage').findOne({ shopify_id: id, vendor_name: vendor }, { projection: { stage: 1, stage_started_at: 1, warning_sent: 1, penalty_triggered: 1, awb: 1, _id: 0 } });
+            if (!isOrderWide && vendors.length > 1 && !existing?.awb) {
+              logStageEvent({ shopifyId: id, orderName, vendor, fromStage: existing?.stage || null, toStage: stage, actor: 'admin', actorId: bulkActorId, source: 'admin_bulk_update', skipped: true, skipReason: 'multi-vendor order, pipeline stage, vendor has no AWB on file' });
+              continue;
+            }
             const newStartedAt = ['confirmed','partial'].includes(stage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
             // manually_overridden only for the sticky override stages (misc/hold) —
             // without it the next tag-mapping resync (applyTagMappings, fired by
@@ -7777,6 +7884,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
             // by real courier-tracking auto-sync afterward, same as before.
             const stickyOverride = ['misc', 'hold', 'returned'].includes(stage);
             await OVS.upsert(id, vendor, { stage, updated_at: now, stage_started_at: newStartedAt, warning_sent: fulfilledStages.includes(stage)?0:(existing?.warning_sent||0), penalty_triggered: fulfilledStages.includes(stage)?0:(existing?.penalty_triggered||0), ...(stickyOverride && { manually_overridden: true }) });
+            logStageEvent({ shopifyId: id, orderName, vendor, fromStage: existing?.stage || null, toStage: stage, awb: existing?.awb || '', actor: 'admin', actorId: bulkActorId, source: 'admin_bulk_update' });
           }
         } catch(e) { /* non-fatal */ }
       }
@@ -7823,7 +7931,14 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
     }
   }
 
-  auditLog("admin", "bulk_update", "multiple", { count: results.updated.length, stage, add_tags, remove_tags });
+  // One entry per order (not target_id:"multiple") so a per-order audit
+  // search actually finds bulk actions that touched it — the old single
+  // "multiple" entry was exactly why the #3479/#3467 incident left no
+  // discoverable trail on either order.
+  auditLog("admin", "bulk_update", "multiple", { count: results.updated.length, stage, add_tags, remove_tags, order_ids: results.updated });
+  for (const id of results.updated) {
+    auditLog("admin", "bulk_update", id, { stage, add_tags, remove_tags, batch_size: results.updated.length });
+  }
   res.json({ success: true, ...results, stageTag });
 });
 
@@ -8027,6 +8142,7 @@ app.post("/admin/orders/:id/fulfill-vendor", requirePermission('orders'), async 
     // Save AWB/courier/tracking to order_vendor_stage — ready = tracking submitted, awaiting pickup
     await OVS.upsert(shopifyId, vendor_name, { awb, courier: courier || '', tracking_url: tracking_url || '', stage: 'ready', updated_at: new Date().toISOString() });
     auditLog("admin", "vendor_fulfill", shopifyId, { vendor_name, awb, courier });
+    logStageEvent({ shopifyId, orderName: order.name || '', vendor: vendor_name, toStage: 'ready', awb, courier, actor: 'admin', actorId: req.staffUsername || 'Admin', source: 'admin_vendor_fulfill' });
     // Auto-register with ShipSagar for tracking
     shipsagarPushShipment({ awb, courierCode: courier || '', orderNo: order.name || shopifyId, customerName: ((order.shipping_address?.first_name||'') + ' ' + (order.shipping_address?.last_name||'')).trim(), email: order.email || '', mobileNo: (order.shipping_address?.phone||'').replace(/\D/g,'').slice(-10) }).catch(() => {});
 
@@ -9740,6 +9856,7 @@ app.post("/admin/repair-vendor-stages", adminAuth, async (req, res) => {
           stage_started_at: vs.stage_started_at || 0,
         });
         log.push({ shopify_id: meta.shopify_id, vendor: vs.vendor_name, from: vs.stage, to: meta.stage });
+        logStageEvent({ shopifyId: meta.shopify_id, vendor: vs.vendor_name, fromStage: vs.stage, toStage: meta.stage, actor: 'admin', actorId: req.staffUsername || 'Admin', source: 'repair_vendor_stages', reason: 'order_meta/order_vendor_stage mismatch repair' });
         fixed++;
       } catch(e) { errors++; log.push({ shopify_id: meta.shopify_id, error: e.message }); }
     }
@@ -17646,11 +17763,16 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
   let protectedFromDowngrade = false;
   let blockedByManualOverride = false;
   if (newStage) {
+    const beforeStage = (await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendorName }, { projection: { stage: 1, _id: 0 } }))?.stage || null;
     const result = await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
     appliedStage = result?.stage ?? newStage;
     protectedFromDowngrade = !!result?.protectedFromDowngrade;
     blockedByManualOverride = !!result?.blocked;
     auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage, appliedStage, protectedFromDowngrade, blockedByManualOverride });
+    logStageEvent({
+      shopifyId: sid, vendor: vendorName, fromStage: beforeStage, toStage: appliedStage, awb, actor: 'cron', actorId: 'shipsagar_tracking_cron', source: 'shipsagar_stage_sync', reason: desc,
+      skipped: blockedByManualOverride, skipReason: blockedByManualOverride ? 'blocked by manually_overridden flag' : (protectedFromDowngrade ? '' : ''),
+    });
   }
 
   return { desc, newStage: appliedStage, requestedStage: newStage, protectedFromDowngrade, blockedByManualOverride, history: ss.history };
