@@ -420,17 +420,37 @@ const OVS = {
 
     // If admin has manually locked this vendor's stage, automated systems must
     // not overwrite it — EXCEPT a genuine terminal-state detection (rto/
-    // cancelled). A manual correction at one point in time was never meant to
-    // permanently blind the order to a real RTO discovered weeks later; that
-    // silently hid confirmed RTOs from settlement/penalty logic indefinitely.
-    if (respectManualOverride && existing?.manually_overridden && !TERMINAL_STAGES.includes(fields.stage)) return { blocked: true, stage: existing?.stage };
+    // cancelled/delivered). A manual correction at one point in time was
+    // never meant to permanently blind the order to a real RTO — or a real
+    // DELIVERY — discovered later; that silently hid confirmed outcomes from
+    // settlement/penalty logic indefinitely. 'delivered' is included here
+    // alongside TERMINAL_STAGES (not added to that array itself — it isn't
+    // a true terminal in higherStage()'s pipeline-ordering sense) because
+    // the RTO audit (2026-10-18) found manually_overridden rows stuck on a
+    // wrongly-set 'rto' that ShipSagar had since confirmed as genuinely
+    // delivered, with no way for the cron to ever correct them.
+    if (respectManualOverride && existing?.manually_overridden && !TERMINAL_STAGES.includes(fields.stage) && fields.stage !== 'delivered') return { blocked: true, stage: existing?.stage };
 
     // Automated syncs must never downgrade a stage — e.g. a NOT_PICKED event after
     // a transit scan should not rewind the stage back to pickup.
+    //
+    // Exception: a confirmed 'delivered' is always allowed to override an
+    // existing 'rto', even though higherStage() ranks rto as terminal (and
+    // thus always-wins) — because this specific comparison isn't "did the
+    // package move backward in the pipeline", it's two mutually-exclusive
+    // REAL-WORLD outcomes, and whichever one the caller is asserting here
+    // already passed through shipsagarFinalStage's own full-history check
+    // for an earlier genuine RTO before returning 'delivered'. Without this,
+    // once a vendor stage is ever wrongly stuck on 'rto' (e.g. the
+    // #3479/#3467/RTO-audit incidents, 2026-10-18 — 16 orders this exact
+    // way), the cron sees the real "Shipment Delivered" status on every
+    // single pass and silently discards it forever, because terminal-beats-
+    // non-terminal is unconditional in higherStage(). That made the bug
+    // permanently unrecoverable instead of self-healing on the next sync.
     const requestedStage = fields.stage;
     let protectedFromDowngrade = false;
     if (fields.stage && respectStageOrder && existing?.stage) {
-      const kept = higherStage(existing.stage, fields.stage);
+      const kept = (fields.stage === 'delivered' && existing.stage === 'rto') ? 'delivered' : higherStage(existing.stage, fields.stage);
       if (kept !== requestedStage) protectedFromDowngrade = true;
       fields = { ...fields, stage: kept };
     }
