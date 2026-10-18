@@ -1378,6 +1378,60 @@ app.get("/admin/orders/:id/activity-log", requirePermission('orders'), async (re
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /admin/stage-log-map — every stage-change source, auto-discovered ──
+// Groups order_stage_events by `source` purely from the data itself (no
+// hardcoded list of sources here) — so the moment a new logStageEvent()
+// call site is added anywhere in the codebase, it shows up here on its own
+// next load, with real counts and recent examples, instead of needing a
+// matching manual update to this endpoint. The frontend pairs each source
+// with a human-written description where one exists, and shows a generic
+// "not yet documented" treatment for anything new.
+app.get("/admin/stage-log-map", requirePermission('orders'), async (req, res) => {
+  try {
+    const days = Math.max(1, parseInt(req.query.days) || 30);
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+
+    const bySource = await mdb.collection('order_stage_events').aggregate([
+      { $match: { created_at: { $gte: since } } },
+      { $group: {
+          _id: '$source',
+          count: { $sum: 1 },
+          skippedCount: { $sum: { $cond: ['$skipped', 1, 0] } },
+          actors: { $addToSet: '$actor' },
+          toStages: { $addToSet: '$to_stage' },
+          lastEvent: { $max: '$created_at' },
+          firstSeen: { $min: '$created_at' },
+        } },
+      { $sort: { count: -1 } },
+    ]).toArray();
+
+    // A few recent sample events per source, for a quick "does this look right" glance
+    const samples = {};
+    for (const s of bySource) {
+      const recent = await mdb.collection('order_stage_events')
+        .find({ source: s._id, created_at: { $gte: since } })
+        .sort({ created_at: -1 }).limit(5)
+        .project({ _id: 0, shopify_id: 1, order_name: 1, vendor_name: 1, from_stage: 1, to_stage: 1, awb: 1, actor_id: 1, reason: 1, skipped: 1, skip_reason: 1, created_at: 1 })
+        .toArray();
+      samples[s._id] = recent;
+    }
+
+    res.json({
+      sources: bySource.map(s => ({
+        source: s._id,
+        count: s.count,
+        skippedCount: s.skippedCount,
+        actors: s.actors,
+        toStages: s.toStages.filter(Boolean),
+        lastEvent: s.lastEvent,
+        firstSeen: s.firstSeen,
+        samples: samples[s._id] || [],
+      })),
+      windowDays: days,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Structured trigger log for automated WA order-notification sends ──────
 // audit_log covers admin/manual actions; this covers webhook-driven
 // automated sends specifically — order id, WHICH webhook/condition fired

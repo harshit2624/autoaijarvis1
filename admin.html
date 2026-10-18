@@ -1287,6 +1287,7 @@
     { id:'partial',   label:'Partial/Advance', color:'yellow', icon:'₹' },
     { id:'ready',     label:'Ready to Ship',  color:'teal',   icon:'⬡' },
     { id:'pickup',    label:'Pickup Pending', color:'yellow', icon:'⌛' },
+    { id:'stuck',     label:'Stuck',          color:'red',    icon:'🚨' },
     { id:'transit',   label:'In Transit',     color:'orange', icon:'↑' },
     { id:'ofd',       label:'Out for Delivery', color:'blue', icon:'🛵' },
     { id:'delivered', label:'Delivered',      color:'green',  icon:'✅' },
@@ -3946,6 +3947,7 @@
           );
           const confirmedStages = [
             {key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'},
+            {key:'stuck',label:'Stuck',c:'#dc2626',icon:'🚨'},
             {key:'ofd',label:'Out for Delivery',c:'#22d3ee',icon:'🛵'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},
             {key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},
             {key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'confirmed',label:'Confirmed',c:'#34d399',icon:'✓'},
@@ -4029,7 +4031,7 @@
                   column and the Overall Fulfillment block were both missing
                   here before. */}
               {(() => {
-                const dispStages = [{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'ofd',label:'Out for Delivery',c:'#22d3ee',icon:'🛵'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'}];
+                const dispStages = [{key:'delivered',label:'Delivered',c:'#10b981',icon:'✅'},{key:'ofd',label:'Out for Delivery',c:'#22d3ee',icon:'🛵'},{key:'transit',label:'In Transit',c:'#60a5fa',icon:'🚚'},{key:'pickup',label:'Pickup Pending',c:'#f59e0b',icon:'⌛'},{key:'ready',label:'Ready to Ship',c:'#a78bfa',icon:'📦'},{key:'rto',label:'RTO',c:'#f87171',icon:'↩'},{key:'stuck',label:'Stuck',c:'#dc2626',icon:'🚨'}];
                 const pendStages = [{key:'confirmed',label:'Confirmed',c:'#34d399',icon:'✓'},{key:'partial',label:'Partial',c:'#fbbf24',icon:'₹'}];
                 const MiniRow = ({s, den}) => {
                   const cnt = sm[s.key]||0, p = den>0?Math.round(cnt/den*100):0;
@@ -5482,7 +5484,7 @@
       return groups;
     };
 
-    const stageColors = { new:'var(--indigo)',confirmed:'var(--cyan)',ready:'var(--teal)',pickup:'var(--yellow)',transit:'var(--orange)',ofd:'var(--blue)',delivered:'var(--green)',hold:'var(--purple)',rto:'var(--red)',cancelled:'var(--red)',partial:'var(--yellow)',misc:'var(--gray)'};
+    const stageColors = { new:'var(--indigo)',confirmed:'var(--cyan)',ready:'var(--teal)',pickup:'var(--yellow)',transit:'var(--orange)',ofd:'var(--blue)',delivered:'var(--green)',hold:'var(--purple)',rto:'var(--red)',stuck:'var(--red)',cancelled:'var(--red)',partial:'var(--yellow)',misc:'var(--gray)'};
 
     const MobileOrderRow = ({ o }) => {
       const timeStr = new Date(o.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
@@ -11471,6 +11473,7 @@
     { value:'ofd',       label:'Out for Delivery' },
     { value:'delivered', label:'Delivered' },
     { value:'rto',       label:'RTO' },
+    { value:'stuck',     label:'Stuck' },
     { value:'penalty',   label:'Penalty' },
     { value:'hold',      label:'On Hold' },
     { value:'cancelled', label:'Cancelled' },
@@ -16567,6 +16570,132 @@
   }
 
   /* ══════════════════════════════════
+     STAGE LOG MAP — every mechanism that moves an order's stage, auto-
+     discovered from order_stage_events.source. KNOWN_LOG_SOURCES below is
+     just a human-readable label/description layered on top for sources
+     already identified this session — a brand new source (any future
+     logStageEvent() call site added anywhere in the codebase) shows up
+     here automatically, in its own "🆕 Newly identified" group, with no
+     frontend change required. Document it here later if it's worth
+     explaining; it works either way.
+  ══════════════════════════════════ */
+  const KNOWN_LOG_SOURCES = {
+    admin_stage_change:       { label: 'Admin — single order stage change', icon: '🛠️', desc: 'The stage dropdown on one order\'s detail view. Order-wide stages (confirmed/partial/hold/cancelled/misc/returned) apply to every vendor on the order; pipeline stages (ready→rto) only apply to a vendor who already has an AWB on a multi-vendor order.' },
+    admin_bulk_update:        { label: 'Admin — bulk update tool', icon: '🛠️', desc: 'Bulk-select orders and set a stage/tags at once. Same multi-vendor guard as the single stage-change tool. This is the tool behind the Oct-18 incident that wrongly blanket-applied delivered/rto to vendors who never shipped — now guarded.' },
+    admin_vendor_fulfill:     { label: 'Admin — fulfill on vendor\'s behalf', icon: '🛠️', desc: 'Admin manually creates a shipment/AWB for a specific vendor\'s line items.' },
+    tag_mapping_sync:         { label: 'Tag mapping auto-sync', icon: '🏷️', desc: 'Fires on every Shopify orders/updated webhook — matches order tags against configured Tag Mappings and syncs the mapped stage. Has always had the multi-vendor guard (never lets a tag force delivered/rto onto every vendor on a multi-vendor order).' },
+    webhook_fulfillment_create: { label: 'Shopify webhook — fulfillment created', icon: '🔗', desc: 'Fires when a fulfillment is created on Shopify (by anyone/anything) — advances that specific vendor to "ready", scoped correctly via the line items actually in that fulfillment.' },
+    webhook_fulfillment_status_sync: { label: 'Shopify webhook — fulfillment status update', icon: '🔗', desc: 'Fires when a fulfillment\'s shipment_status changes on Shopify\'s side — maps in_transit/out_for_delivery/delivered/failure to our stages.' },
+    vendor_fulfill:           { label: 'Vendor panel — create shipment', icon: '📦', desc: 'A vendor creates a real shipment/AWB for their own order from their panel.' },
+    vendor_mark_delivered:    { label: 'Vendor panel — mark delivered', icon: '📦', desc: 'A vendor manually marks their own shipment delivered.' },
+    shipsagar_stage_sync:     { label: 'ShipSagar tracking cron', icon: '🔄', desc: 'Runs every 30 min — polls live courier tracking for every shipment with an AWB and syncs the real stage. Source of truth for ready→delivered/rto once a real AWB exists. Includes the Oct-18 fixes: RTO vs "delivered to seller" disambiguation via CurrentStatus, and routing genuine pickup-failures to "stuck" instead of "rto".' },
+    fake_dispatch_detection:  { label: 'Penalty cron — fake-dispatch detector', icon: '🚨', desc: 'Runs every 15 min alongside the dispatch-SLA penalty check. Flags any ready/pickup order whose AWB has sat 48h+ with ZERO real courier scans ever recorded — closes the exploit where a vendor mints a throwaway AWB purely to escape the confirmed/partial penalty watch. Triggers the same 48hr penalty.' },
+    rto_audit_repair:         { label: 'Manual repair — Oct-18 RTO audit (pt.1)', icon: '🔧', desc: 'One-off corrections applied during the first pass of the Oct-18 RTO audit.' },
+    rto_audit_repair_pt2:     { label: 'Manual repair — Oct-18 RTO audit (pt.2)', icon: '🔧', desc: 'High-confidence transit/ofd corrections — live tracking event dated clearly after the wrongly-set RTO.' },
+    rto_audit_repair_pt3:     { label: 'Manual repair — Oct-18 RTO audit (pt.3)', icon: '🔧', desc: 'Reclassified from rto to the new "stuck" stage — confirmed "never picked up" wording, not a genuine RTO.' },
+    rto_audit_revert:         { label: 'Manual repair — misclassification revert', icon: '🔧', desc: 'Reverted orders that were WRONGLY corrected to "delivered" — ShipSagar\'s CurrentStatus said "RTO DELIVERED" (delivered back to the courier\'s own facility, not the customer), which a desc-only read missed. The bug that caused this is fixed in shipsagar_stage_sync.' },
+    manual_incident_repair:   { label: 'Manual repair — Oct-18 bulk-update incident', icon: '🔧', desc: 'Direct corrections for the specific orders caught by the multi-vendor bulk-update bug (#3479, #3467).' },
+    repair_vendor_stages:     { label: 'Admin tool — repair single-vendor mismatches', icon: '🔧', desc: 'One-click tool that fixes order_meta.stage vs order_vendor_stage.stage disagreements, single-vendor orders only.' },
+  };
+
+  function StageLogMap({ token }) {
+    const [data,    setData]    = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [days,    setDays]    = useState(30);
+    const [expanded, setExpanded] = useState({});
+
+    const load = useCallback(() => {
+      setLoading(true);
+      fetch(`${API}/admin/stage-log-map?days=${days}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(setData).catch(() => {}).finally(() => setLoading(false));
+    }, [token, days]);
+    useEffect(() => { load(); }, [load]);
+
+    const sources = data?.sources || [];
+    const known = sources.filter(s => KNOWN_LOG_SOURCES[s.source]);
+    const unknown = sources.filter(s => !KNOWN_LOG_SOURCES[s.source]);
+
+    const SourceCard = ({ s }) => {
+      const meta = KNOWN_LOG_SOURCES[s.source] || { label: s.source, icon: '🆕', desc: 'Not documented yet — this source was found automatically in the logs. Still fully functional; just hasn\'t been written up here.' };
+      const isOpen = !!expanded[s.source];
+      return (
+        <div className="card" style={{marginBottom:12}}>
+          <div className="card-header" style={{cursor:'pointer'}} onClick={()=>setExpanded(e=>({...e,[s.source]:!e[s.source]}))}>
+            <span className="card-title">{meta.icon} {meta.label}{!KNOWN_LOG_SOURCES[s.source] && <span style={{marginLeft:8,fontSize:9,fontWeight:800,letterSpacing:1,color:'#f59e0b',background:'rgba(245,158,11,.12)',padding:'2px 7px',borderRadius:4}}>🆕 NEWLY IDENTIFIED</span>}</span>
+            <span className="card-sub" style={{fontFamily:'monospace'}}>{s.source}</span>
+          </div>
+          <div style={{padding:16}}>
+            <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6,marginBottom:14}}>{meta.desc}</div>
+            <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:12}}>
+              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Events</div><div style={{fontSize:20,fontWeight:800,color:'var(--indigo)'}}>{s.count}</div></div>
+              {s.skippedCount>0 && <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Skipped (guard fired)</div><div style={{fontSize:20,fontWeight:800,color:'var(--yellow)'}}>{s.skippedCount}</div></div>}
+              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Actor</div><div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{s.actors.join(', ')}</div></div>
+              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Sets stages</div><div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{s.toStages.join(', ')}</div></div>
+              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Last fired</div><div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{fmtDate(s.lastEvent)}</div></div>
+            </div>
+            <button className="btn btn-sm" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text)'}} onClick={()=>setExpanded(e=>({...e,[s.source]:!e[s.source]}))}>
+              {isOpen ? '▲ Hide' : '▼ Show'} recent examples
+            </button>
+            {isOpen && (
+              <div className="tbl-wrap" style={{marginTop:10}}>
+                <table>
+                  <thead><tr><th>Order</th><th>Vendor</th><th>Stage Change</th><th>AWB</th><th>Reason</th><th>When</th></tr></thead>
+                  <tbody>
+                    {s.samples.map((ev,i)=>(
+                      <tr key={i}>
+                        <td className="td-mut">{ev.order_name || ev.shopify_id}</td>
+                        <td>{ev.vendor_name || '—'}</td>
+                        <td>
+                          {ev.skipped
+                            ? <span style={{color:'var(--yellow)'}}>⏭ skipped {ev.to_stage?`(would've been ${ev.to_stage})`:''}</span>
+                            : <><span style={{color:'var(--text-muted)'}}>{ev.from_stage||'—'}</span> → <strong style={{color:'var(--green)'}}>{ev.to_stage||'—'}</strong></>}
+                        </td>
+                        <td className="td-mut" style={{fontFamily:'monospace',fontSize:10}}>{ev.awb || '—'}</td>
+                        <td style={{fontSize:10,color:'var(--text-muted)',maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={ev.skipped?ev.skip_reason:ev.reason}>{ev.skipped?ev.skip_reason:ev.reason}</td>
+                        <td className="td-mut">{fmtDate(ev.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800,color:'var(--text)'}}>🗺️ Stage Log Map</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>Every mechanism that can move an order's stage, with real activity — your full picture of how tracking actually works.</div>
+          </div>
+          <div style={{display:'flex',gap:6}}>
+            {[7,30,90].map(d=>(
+              <button key={d} className="btn btn-sm" style={{background:days===d?'var(--indigo)':'var(--bg-card2)',color:days===d?'#fff':'var(--text)',border:'1px solid var(--border)'}} onClick={()=>setDays(d)}>{d}d</button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? <div className="skel" style={{height:300,borderRadius:8}}/> : (
+          <>
+            {sources.length===0 && <div className="empty"><div className="empty-icon">🗺️</div><div className="empty-title">No stage events logged in this window</div></div>}
+            {known.length>0 && <>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-dim)',margin:'4px 0 10px'}}>Documented sources</div>
+              {known.map(s=><SourceCard key={s.source} s={s}/>)}
+            </>}
+            {unknown.length>0 && <>
+              <div style={{fontSize:11,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--yellow)',margin:'20px 0 10px'}}>🆕 Newly identified — not yet documented</div>
+              {unknown.map(s=><SourceCard key={s.source} s={s}/>)}
+            </>}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════
      AUDIT LOG VIEW
   ══════════════════════════════════ */
   function AuditLog({ token }) {
@@ -17846,6 +17975,7 @@
       { id:'pixeltracker', icon:'🎯', label:'Pixel Tracker',  section:'main' },
       { id:'siteanalytics', icon:'📈', label:'Site Analytics', section:'main' },
       { id:'audit',       icon:'📋', label:'Audit Log',   section:'finance' },
+      { id:'stagelogmap', icon:'🗺️', label:'Stage Log Map', section:'finance' },
       { id:'webhooks',    icon:'🔗', label:'Webhooks',     section:'finance' },
       { id:'googlecontacts',   icon:'📒', label:'Google Contacts',    section:'finance' },
       { id:'commissionrules',  icon:'⚡', label:'Commission Rules',   section:'finance' },
@@ -17958,6 +18088,7 @@
           {view==='pixeltracker' && <PixelTracker token={token}/>}
           {view==='siteanalytics' && <SiteAnalytics token={token}/>}
           {view==='audit'       && <AuditLog    token={token}/>}
+          {view==='stagelogmap' && <StageLogMap token={token}/>}
           {view==='webhooks'    && <Webhooks    token={token}/>}
           {view==='googlecontacts'  && <GoogleContacts   token={token}/>}
           {view==='commissionrules' && <CommissionRules  token={token}/>}
