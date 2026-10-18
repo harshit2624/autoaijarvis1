@@ -17305,8 +17305,22 @@ function shipsagarStatusToStage(desc) {
 // over a later ambiguous "delivered" and keep it as 'rto'. A shipment with
 // no RTO event anywhere in its history is completely unaffected — normal
 // deliveries classify exactly as before.
-function shipsagarFinalStage(history, latestStage) {
+function shipsagarFinalStage(history, latestStage, currentStatus) {
   if (latestStage !== 'delivered') return latestStage;
+  // ShipSagar's summary CurrentStatus field is authoritative when it
+  // explicitly flags RTO — e.g. "RTO DELIVERED" vs plain "DELIVERED" — and
+  // must be checked even when nothing in the per-event history hints at it.
+  // Confirmed live: 13 of 16 BlueDart shipments misclassified as genuine
+  // customer deliveries (RTO audit, 2026-10-18) never emitted ANY
+  // RTO-wording scan event at all — every entry just said generic
+  // "Shipment Delivered" at the courier's own facility (e.g. "Jalandhar
+  // Service Centre", not a customer address), all the way through. The
+  // earlier-history check below is blind to this because there's nothing
+  // in the history for it to find — CurrentStatus was the ONLY place the
+  // return was ever actually recorded. Must be checked FIRST, not as a
+  // fallback, since a false 'delivered' here is the single costliest
+  // misclassification this pipeline can make (reverses real commission).
+  if (/\brto\b/i.test(currentStatus || '')) return 'rto';
   const hadEarlierRto = (history || []).some(h => {
     const d = h.ActionDescription || h.Status || h.EventDescription || h.Description || '';
     return shipsagarStatusToStage(d) === 'rto';
@@ -17769,7 +17783,7 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
 
   const latest = ss.history[ss.history.length - 1];
   const desc = latest.ActionDescription || ss.currentStatus || '';
-  const newStage = shipsagarFinalStage(ss.history, shipsagarStatusToStage(desc));
+  const newStage = shipsagarFinalStage(ss.history, shipsagarStatusToStage(desc), ss.currentStatus);
   const now = new Date().toISOString();
 
   // Always update delivery_status on order_meta — no lock needed here, it's just display
@@ -17782,8 +17796,13 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
     raw:      h,  // keep raw for future schema changes
   })).filter(h => h.desc);
   await OM.upsert(sid, { delivery_status: desc, delivery_status_updated_at: now, tracking_history: historyToSave });
-  // Also save per-vendor tracking history to OVS so multi-vendor orders show correct scan log per shipment
-  await OVS.upsert(sid, vendorName, { tracking_history: historyToSave, updated_at: now }, { respectManualOverride: false, respectStageOrder: false });
+  // Also save per-vendor tracking history to OVS so multi-vendor orders show correct scan log per shipment.
+  // current_status is ShipSagar's own summary field (e.g. "RTO DELIVERED" vs
+  // "DELIVERED") saved alongside so the stage-mismatch reconciliation tool
+  // below can recompute with the same authoritative signal this sync used —
+  // without it, that tool's recompute from stored history alone reproduces
+  // the exact misclassification this fix addresses.
+  await OVS.upsert(sid, vendorName, { tracking_history: historyToSave, current_status: ss.currentStatus || '', updated_at: now }, { respectManualOverride: false, respectStageOrder: false });
 
   // Shopify tags disabled (2026-09-08) — ShipSagar/OVS.stage is the source
   // of truth for delivery status now; Shopify tags lagged and went stale.
@@ -18247,7 +18266,7 @@ async function shipsagarTrackingCron() {
         if (!ss?.found || !ss.history?.length) continue;
         const latest = ss.history[ss.history.length - 1];
         const desc = latest.ActionDescription || ss.currentStatus || '';
-        const detectedStage = shipsagarFinalStage(ss.history, shipsagarStatusToStage(desc));
+        const detectedStage = shipsagarFinalStage(ss.history, shipsagarStatusToStage(desc), ss.currentStatus);
         if (detectedStage === 'delivered') {
           // Update tracking history/display only — do NOT change stage
           const now2 = new Date().toISOString();
@@ -18435,7 +18454,7 @@ app.get("/admin/shipsagar/audit", adminAuth, async (req, res) => {
   try {
     const records = await mdb.collection('order_vendor_stage').find(
       { awb: { $exists: true, $ne: '' } },
-      { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_history: 1, updated_at: 1, manually_overridden: 1, _id: 0 } }
+      { projection: { shopify_id: 1, vendor_name: 1, stage: 1, awb: 1, courier: 1, tracking_history: 1, current_status: 1, updated_at: 1, manually_overridden: 1, _id: 0 } }
     ).toArray();
 
     const unmatchedDescs = new Map();
@@ -18454,7 +18473,7 @@ app.get("/admin/shipsagar/audit", adminAuth, async (req, res) => {
 
       const latestDesc = history[history.length - 1]?.desc || '';
       const latestComputed = shipsagarStatusToStage(latestDesc);
-      const finalComputed = shipsagarFinalStage(history.map(h => ({ ActionDescription: h.desc })), latestComputed);
+      const finalComputed = shipsagarFinalStage(history.map(h => ({ ActionDescription: h.desc })), latestComputed, r.current_status);
 
       // A manually-overridden order can only be legitimately corrected to a
       // terminal stage automatically (matches the OVS.upsert guard) — don't
