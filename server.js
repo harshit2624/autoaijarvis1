@@ -1432,6 +1432,61 @@ app.get("/admin/stage-log-map", requirePermission('orders'), async (req, res) =>
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /admin/stage-log-map/phrases — every distinct courier scan phrase
+// we've actually seen, and which internal stage it resolves to RIGHT NOW ──
+// This is the "what is my tracking man actually doing" table: not which
+// function/cron fired, but the raw courier text itself (100+ distinct
+// phrasings across BlueDart/Delhivery/Shiprocket/etc — "Shipment
+// Delivered", "Consignee Not Available", "Returned - Package returned"...)
+// mapped against shipsagarStatusToStage()/shipsagarIsPickupFailure() LIVE,
+// so it's always accurate to whatever the classifier currently does — no
+// separate maintained list to go stale. Pulled from order_vendor_stage.
+// tracking_history (every real scan event ever saved) across every order,
+// unwound and grouped by the exact description text.
+app.get("/admin/stage-log-map/phrases", requirePermission('orders'), async (req, res) => {
+  try {
+    const rows = await mdb.collection('order_vendor_stage')
+      .find({ tracking_history: { $exists: true, $ne: [] } }, { projection: { shopify_id: 1, vendor_name: 1, awb: 1, courier: 1, tracking_history: 1, _id: 0 } })
+      .toArray();
+
+    const byDesc = new Map(); // desc -> { count, couriers:Set, samples:[] }
+    for (const r of rows) {
+      for (const h of (r.tracking_history || [])) {
+        const desc = (h.desc || '').trim();
+        if (!desc) continue;
+        if (!byDesc.has(desc)) byDesc.set(desc, { count: 0, couriers: new Set(), vendors: new Set(), samples: [] });
+        const bucket = byDesc.get(desc);
+        bucket.count++;
+        if (r.courier) bucket.couriers.add(r.courier);
+        if (r.vendor_name) bucket.vendors.add(r.vendor_name);
+        if (bucket.samples.length < 3 && !bucket.samples.some(s => s.shopify_id === r.shopify_id)) {
+          bucket.samples.push({ shopify_id: r.shopify_id, vendor_name: r.vendor_name, awb: r.awb, date: h.date, time: h.time, location: h.location });
+        }
+      }
+    }
+
+    // Need order_name for samples — batch-resolve once instead of per-row
+    const sampleSids = [...new Set([...byDesc.values()].flatMap(b => b.samples.map(s => s.shopify_id)))];
+    const nameRows = sampleSids.length ? await mdb.collection('order_meta').find({ shopify_id: { $in: sampleSids } }, { projection: { shopify_id: 1, order_name: 1, _id: 0 } }).toArray() : [];
+    const nameMap = Object.fromEntries(nameRows.map(n => [n.shopify_id, n.order_name]));
+
+    const phrases = [...byDesc.entries()].map(([desc, b]) => {
+      const resolvedStage = shipsagarStatusToStage(desc);
+      const isPickupFailure = shipsagarIsPickupFailure(desc);
+      return {
+        desc,
+        count: b.count,
+        couriers: [...b.couriers],
+        vendors: [...b.vendors],
+        resolvedStage: isPickupFailure ? 'stuck (pickup failure)' : (resolvedStage || '(no stage change — informational only)'),
+        samples: b.samples.map(s => ({ ...s, order_name: nameMap[s.shopify_id] || s.shopify_id })),
+      };
+    }).sort((a, b) => b.count - a.count);
+
+    res.json({ phrases, totalDistinct: phrases.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Structured trigger log for automated WA order-notification sends ──────
 // audit_log covers admin/manual actions; this covers webhook-driven
 // automated sends specifically — order id, WHICH webhook/condition fired

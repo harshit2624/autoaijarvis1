@@ -16598,98 +16598,154 @@
     repair_vendor_stages:     { label: 'Admin tool — repair single-vendor mismatches', icon: '🔧', desc: 'One-click tool that fixes order_meta.stage vs order_vendor_stage.stage disagreements, single-vendor orders only.' },
   };
 
+  const STAGE_BADGE_COLORS = {
+    delivered:'#10b981', rto:'#f87171', 'stuck (pickup failure)':'#dc2626', transit:'#60a5fa', ofd:'#22d3ee',
+    pickup:'#a78bfa', ready:'#818cf8', confirmed:'#34d399', partial:'#fbbf24', cancelled:'#f87171',
+  };
+  function stageBadgeColor(stage) { return STAGE_BADGE_COLORS[stage] || 'var(--text-muted)'; }
+
   function StageLogMap({ token }) {
-    const [data,    setData]    = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [days,    setDays]    = useState(30);
-    const [expanded, setExpanded] = useState({});
+    const [phraseData, setPhraseData] = useState(null);
+    const [phraseLoad, setPhraseLoad] = useState(true);
+    const [sourceData, setSourceData] = useState(null);
+    const [sourceLoad, setSourceLoad] = useState(true);
+    const [days,       setDays]       = useState(30);
+    const [search,     setSearch]     = useState('');
+    const [stageFilter, setStageFilter] = useState('all');
+    const [expandedRow, setExpandedRow] = useState(null);
+    const [tab,         setTab]       = useState('phrases'); // 'phrases' | 'sources'
 
-    const load = useCallback(() => {
-      setLoading(true);
+    useEffect(() => {
+      setPhraseLoad(true);
+      fetch(`${API}/admin/stage-log-map/phrases`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(setPhraseData).catch(() => {}).finally(() => setPhraseLoad(false));
+    }, [token]);
+
+    useEffect(() => {
+      setSourceLoad(true);
       fetch(`${API}/admin/stage-log-map?days=${days}`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.json()).then(setData).catch(() => {}).finally(() => setLoading(false));
+        .then(r => r.json()).then(setSourceData).catch(() => {}).finally(() => setSourceLoad(false));
     }, [token, days]);
-    useEffect(() => { load(); }, [load]);
 
-    const sources = data?.sources || [];
-    const known = sources.filter(s => KNOWN_LOG_SOURCES[s.source]);
-    const unknown = sources.filter(s => !KNOWN_LOG_SOURCES[s.source]);
+    const phrases = phraseData?.phrases || [];
+    const allStages = [...new Set(phrases.map(p => p.resolvedStage))].sort();
+    const filteredPhrases = phrases.filter(p => {
+      if (stageFilter !== 'all' && p.resolvedStage !== stageFilter) return false;
+      if (search && !p.desc.toLowerCase().includes(search.toLowerCase()) && !p.couriers.join(' ').toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
 
-    const SourceCard = ({ s }) => {
-      const meta = KNOWN_LOG_SOURCES[s.source] || { label: s.source, icon: '🆕', desc: 'Not documented yet — this source was found automatically in the logs. Still fully functional; just hasn\'t been written up here.' };
-      const isOpen = !!expanded[s.source];
-      return (
-        <div className="card" style={{marginBottom:12}}>
-          <div className="card-header" style={{cursor:'pointer'}} onClick={()=>setExpanded(e=>({...e,[s.source]:!e[s.source]}))}>
-            <span className="card-title">{meta.icon} {meta.label}{!KNOWN_LOG_SOURCES[s.source] && <span style={{marginLeft:8,fontSize:9,fontWeight:800,letterSpacing:1,color:'#f59e0b',background:'rgba(245,158,11,.12)',padding:'2px 7px',borderRadius:4}}>🆕 NEWLY IDENTIFIED</span>}</span>
-            <span className="card-sub" style={{fontFamily:'monospace'}}>{s.source}</span>
-          </div>
-          <div style={{padding:16}}>
-            <div style={{fontSize:12,color:'var(--text-muted)',lineHeight:1.6,marginBottom:14}}>{meta.desc}</div>
-            <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:12}}>
-              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Events</div><div style={{fontSize:20,fontWeight:800,color:'var(--indigo)'}}>{s.count}</div></div>
-              {s.skippedCount>0 && <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Skipped (guard fired)</div><div style={{fontSize:20,fontWeight:800,color:'var(--yellow)'}}>{s.skippedCount}</div></div>}
-              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Actor</div><div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{s.actors.join(', ')}</div></div>
-              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Sets stages</div><div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{s.toStages.join(', ')}</div></div>
-              <div><div style={{fontSize:9,color:'var(--text-dim)',letterSpacing:1,textTransform:'uppercase'}}>Last fired</div><div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{fmtDate(s.lastEvent)}</div></div>
-            </div>
-            <button className="btn btn-sm" style={{background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text)'}} onClick={()=>setExpanded(e=>({...e,[s.source]:!e[s.source]}))}>
-              {isOpen ? '▲ Hide' : '▼ Show'} recent examples
-            </button>
-            {isOpen && (
-              <div className="tbl-wrap" style={{marginTop:10}}>
-                <table>
-                  <thead><tr><th>Order</th><th>Vendor</th><th>Stage Change</th><th>AWB</th><th>Reason</th><th>When</th></tr></thead>
-                  <tbody>
-                    {s.samples.map((ev,i)=>(
-                      <tr key={i}>
-                        <td className="td-mut">{ev.order_name || ev.shopify_id}</td>
-                        <td>{ev.vendor_name || '—'}</td>
-                        <td>
-                          {ev.skipped
-                            ? <span style={{color:'var(--yellow)'}}>⏭ skipped {ev.to_stage?`(would've been ${ev.to_stage})`:''}</span>
-                            : <><span style={{color:'var(--text-muted)'}}>{ev.from_stage||'—'}</span> → <strong style={{color:'var(--green)'}}>{ev.to_stage||'—'}</strong></>}
-                        </td>
-                        <td className="td-mut" style={{fontFamily:'monospace',fontSize:10}}>{ev.awb || '—'}</td>
-                        <td style={{fontSize:10,color:'var(--text-muted)',maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={ev.skipped?ev.skip_reason:ev.reason}>{ev.skipped?ev.skip_reason:ev.reason}</td>
-                        <td className="td-mut">{fmtDate(ev.created_at)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    };
+    const sources = (sourceData?.sources || []).map(s => ({ ...s, meta: KNOWN_LOG_SOURCES[s.source] }));
 
     return (
       <div className="page">
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:10}}>
           <div>
             <div style={{fontSize:16,fontWeight:800,color:'var(--text)'}}>🗺️ Stage Log Map</div>
-            <div style={{fontSize:12,color:'var(--text-muted)'}}>Every mechanism that can move an order's stage, with real activity — your full picture of how tracking actually works.</div>
+            <div style={{fontSize:12,color:'var(--text-muted)'}}>What your tracking system is actually doing — every real courier phrase we've ever seen, and which stage it maps to right now.</div>
           </div>
           <div style={{display:'flex',gap:6}}>
-            {[7,30,90].map(d=>(
-              <button key={d} className="btn btn-sm" style={{background:days===d?'var(--indigo)':'var(--bg-card2)',color:days===d?'#fff':'var(--text)',border:'1px solid var(--border)'}} onClick={()=>setDays(d)}>{d}d</button>
-            ))}
+            <button className="btn btn-sm" style={{background:tab==='phrases'?'var(--indigo)':'var(--bg-card2)',color:tab==='phrases'?'#fff':'var(--text)',border:'1px solid var(--border)'}} onClick={()=>setTab('phrases')}>📜 Courier Phrases → Stage</button>
+            <button className="btn btn-sm" style={{background:tab==='sources'?'var(--indigo)':'var(--bg-card2)',color:tab==='sources'?'#fff':'var(--text)',border:'1px solid var(--border)'}} onClick={()=>setTab('sources')}>⚙️ Automated Actions</button>
           </div>
         </div>
 
-        {loading ? <div className="skel" style={{height:300,borderRadius:8}}/> : (
-          <>
-            {sources.length===0 && <div className="empty"><div className="empty-icon">🗺️</div><div className="empty-title">No stage events logged in this window</div></div>}
-            {known.length>0 && <>
-              <div style={{fontSize:11,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-dim)',margin:'4px 0 10px'}}>Documented sources</div>
-              {known.map(s=><SourceCard key={s.source} s={s}/>)}
-            </>}
-            {unknown.length>0 && <>
-              <div style={{fontSize:11,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--yellow)',margin:'20px 0 10px'}}>🆕 Newly identified — not yet documented</div>
-              {unknown.map(s=><SourceCard key={s.source} s={s}/>)}
-            </>}
-          </>
+        {tab==='phrases' && (
+          <div className="card">
+            <div className="card-header" style={{flexWrap:'wrap',gap:8}}>
+              <span className="card-title">Courier scan text → internal stage</span>
+              <span className="card-sub">{phraseData ? `${phraseData.totalDistinct} distinct phrases seen across every order` : ''}</span>
+            </div>
+            <div style={{padding:'12px 16px',display:'flex',gap:10,flexWrap:'wrap',alignItems:'center',borderBottom:'1px solid var(--border)'}}>
+              <input className="form-input" placeholder="Search phrase or courier…" value={search} onChange={e=>setSearch(e.target.value)} style={{maxWidth:280}}/>
+              <select className="form-select" value={stageFilter} onChange={e=>setStageFilter(e.target.value)} style={{maxWidth:220}}>
+                <option value="all">All resolved stages ({phrases.length})</option>
+                {allStages.map(s=>(
+                  <option key={s} value={s}>{s} ({phrases.filter(p=>p.resolvedStage===s).length})</option>
+                ))}
+              </select>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>Showing {filteredPhrases.length} of {phrases.length}</span>
+            </div>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Courier Phrase</th><th>Resolved Stage</th><th>Seen</th><th>Couriers</th><th>Vendors</th><th>Example</th></tr></thead>
+                <tbody>
+                  {phraseLoad ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={6}/>) :
+                   filteredPhrases.length===0 ? (
+                     <tr><td colSpan={6}><div className="empty"><div className="empty-icon">📜</div><div className="empty-title">No matching phrases</div></div></td></tr>
+                   ) :
+                   filteredPhrases.map((p,i)=>{
+                     const isOpen = expandedRow === p.desc;
+                     return (
+                      <React.Fragment key={p.desc}>
+                        <tr style={{cursor:'pointer'}} onClick={()=>setExpandedRow(isOpen?null:p.desc)}>
+                          <td style={{fontFamily:'monospace',fontSize:11,maxWidth:360,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.desc}>{isOpen?'▼':'▶'} {p.desc}</td>
+                          <td><span style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:12,background:`${stageBadgeColor(p.resolvedStage)}22`,color:stageBadgeColor(p.resolvedStage),border:`1px solid ${stageBadgeColor(p.resolvedStage)}44`,whiteSpace:'nowrap'}}>{p.resolvedStage}</span></td>
+                          <td className="td-mut" style={{fontVariantNumeric:'tabular-nums'}}>{p.count}×</td>
+                          <td className="td-mut" style={{fontSize:10}}>{p.couriers.join(', ')}</td>
+                          <td className="td-mut" style={{fontSize:10,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.vendors.join(', ')}>{p.vendors.length>2?`${p.vendors.slice(0,2).join(', ')} +${p.vendors.length-2}`:p.vendors.join(', ')}</td>
+                          <td className="td-mut">{p.samples[0]?.order_name || '—'}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td colSpan={6} style={{background:'var(--bg-card2)',padding:'10px 16px'}}>
+                              <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase',color:'var(--text-dim)',marginBottom:6}}>Sample orders</div>
+                              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                                {p.samples.map((s,j)=>(
+                                  <div key={j} style={{fontSize:11,color:'var(--text-muted)',display:'flex',gap:12}}>
+                                    <span style={{color:'var(--text)',fontWeight:600}}>{s.order_name}</span>
+                                    <span>{s.vendor_name}</span>
+                                    <span style={{fontFamily:'monospace'}}>{s.awb}</span>
+                                    <span>{s.date} {s.time}</span>
+                                    <span>{s.location}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                     );
+                   })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab==='sources' && (
+          <div className="card">
+            <div className="card-header" style={{flexWrap:'wrap',gap:8}}>
+              <span className="card-title">Which automated function set what, and why</span>
+              <div style={{display:'flex',gap:6}}>
+                {[7,30,90].map(d=>(
+                  <button key={d} className="btn btn-sm" style={{background:days===d?'var(--indigo)':'var(--bg-card2)',color:days===d?'#fff':'var(--text)',border:'1px solid var(--border)'}} onClick={()=>setDays(d)}>{d}d</button>
+                ))}
+              </div>
+            </div>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Source</th><th>What it is</th><th>Events</th><th>Skipped</th><th>Sets Stages</th><th>Actor</th><th>Last Fired</th></tr></thead>
+                <tbody>
+                  {sourceLoad ? Array.from({length:8}).map((_,i)=><SkelRow key={i} cols={7}/>) :
+                   sources.length===0 ? (
+                     <tr><td colSpan={7}><div className="empty"><div className="empty-icon">⚙️</div><div className="empty-title">No automated actions logged in this window</div></div></td></tr>
+                   ) :
+                   sources.map(s=>(
+                    <tr key={s.source}>
+                      <td style={{fontFamily:'monospace',fontSize:10}}>{s.meta?.icon||'🆕'} {s.source}{!s.meta && <span style={{marginLeft:6,fontSize:8,fontWeight:800,color:'#f59e0b',background:'rgba(245,158,11,.12)',padding:'1px 5px',borderRadius:3}}>NEW</span>}</td>
+                      <td style={{fontSize:11,color:'var(--text-muted)',maxWidth:320}}>{s.meta?.label || 'Not documented yet — found automatically in the logs.'}</td>
+                      <td className="td-mut" style={{fontVariantNumeric:'tabular-nums'}}>{s.count}</td>
+                      <td className="td-mut" style={{fontVariantNumeric:'tabular-nums',color:s.skippedCount>0?'var(--yellow)':undefined}}>{s.skippedCount||'—'}</td>
+                      <td className="td-mut" style={{fontSize:10}}>{s.toStages.join(', ')}</td>
+                      <td className="td-mut" style={{fontSize:10}}>{s.actors.join(', ')}</td>
+                      <td className="td-mut">{fmtDate(s.lastEvent)}</td>
+                    </tr>
+                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
     );
