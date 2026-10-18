@@ -10455,10 +10455,11 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
     if (!row) return res.status(404).json({ error: 'Partner not connected' });
     const creds = JSON.parse(row.credentials);
 
-    // Get dest pincode from order
-    const orderData = await shopifyREST(`/orders/${req.params.shopifyId}.json?fields=shipping_address`);
+    // Get dest pincode + payment status from order
+    const orderData = await shopifyREST(`/orders/${req.params.shopifyId}.json?fields=shipping_address,financial_status`);
     const destPin = orderData?.order?.shipping_address?.zip || '';
     const originPin = creds.return_pincode || creds.pickup_pincode || '';
+    const isCod = orderData?.order?.financial_status !== 'paid';
 
     if (partner === 'delhivery') {
       const md = parseFloat(weight) || 0.5;
@@ -10476,7 +10477,51 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
       ].filter(Boolean);
       return res.json({ rates, chargeable_weight: chargeable });
     }
-    res.json({ rates: [], message: 'Rate check only available for Delhivery' });
+
+    if (partner === 'shiprocket') {
+      const authRes = await fetch('https://apiv2.shiprocket.in/v1/external/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: creds.email, password: creds.password }),
+      }).then(r => r.json());
+      if (!authRes.token) return res.status(400).json({ error: 'Shiprocket auth failed. Check credentials.' });
+
+      // Shiprocket credentials only store the pickup location NAME, not its
+      // pincode — look it up live from Shiprocket's own registered addresses
+      // rather than asking vendors to enter yet another field.
+      let pickupPin = creds.pickup_pincode || originPin || '';
+      if (!pickupPin) {
+        const pickupList = await fetch('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
+          headers: { Authorization: `Bearer ${authRes.token}` },
+        }).then(r => r.json()).catch(() => null);
+        const match = (pickupList?.data?.shipping_address || []).find(a => (a.pickup_location || '').toLowerCase() === (creds.pickup_location || '').toLowerCase());
+        pickupPin = match?.pin_code || '';
+      }
+      const qs = new URLSearchParams({
+        pickup_postcode: pickupPin || '',
+        delivery_postcode: destPin || '',
+        weight: String(parseFloat(weight) || 0.5),
+        cod: isCod ? '1' : '0',
+      });
+      const srRates = await fetch(`https://apiv2.shiprocket.in/v1/external/courier/serviceability/?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${authRes.token}` },
+      }).then(r => r.json());
+
+      const couriers = srRates?.data?.available_courier_companies || [];
+      const rates = couriers
+        .map(c => ({
+          courier_id: c.courier_company_id,
+          courier_name: c.courier_name,
+          mode: c.air_max_weight ? 'Air' : 'Surface',
+          charge: c.rate ?? c.freight_charge ?? c.charge_with_tax ?? 0,
+          estimated_days: c.etd || c.estimated_delivery_days || null,
+          rating: c.rating || null,
+          cod_available: !!c.cod,
+        }))
+        .sort((a, b) => parseFloat(a.charge) - parseFloat(b.charge));
+      return res.json({ rates, source: 'shiprocket' });
+    }
+
+    res.json({ rates: [], message: 'Rate check only available for Delhivery and Shiprocket' });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -10490,12 +10535,15 @@ app.post("/vendor/orders/:shopifyId/rate-check", vendorAuth, async (req, res) =>
 // silently got no AWB, skipped the whole downstream chain (OVS, inventory
 // deduction, ShipSagar push, Shopify fulfillment), and nothing surfaced an
 // error since the ORDER creation itself still reported success.
+// `courierId` is optional — pass the courier_company_id a vendor picked from
+// the serviceability/rate list to use that specific courier; omit it to let
+// Shiprocket auto-pick from the account's configured rules.
 // Returns { awb, courierName } or throws.
-async function shiprocketAssignAwb(srToken, shipmentId) {
+async function shiprocketAssignAwb(srToken, shipmentId, courierId) {
   const res = await fetch("https://apiv2.shiprocket.in/v1/external/courier/assign/awb", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${srToken}` },
-    body: JSON.stringify({ shipment_id: shipmentId }),
+    body: JSON.stringify(courierId ? { shipment_id: shipmentId, courier_id: courierId } : { shipment_id: shipmentId }),
   });
   const data = await res.json();
   const d = data?.response?.data || data?.data || data || {};
@@ -10508,7 +10556,7 @@ async function shiprocketAssignAwb(srToken, shipmentId) {
 // POST /vendor/orders/:shopifyId/create-shipment — create shipment via connected partner
 app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, res) => {
   try {
-    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface', items: selectedItems } = req.body || {};
+    const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface', items: selectedItems, courier_id: chosenCourierId } = req.body || {};
     if (!partner) return res.status(400).json({ error: "partner required" });
 
     const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner, active: 1 }, { projection: { credentials: 1, _id: 0 } });
@@ -10634,9 +10682,13 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       if (srRes.status_code === 1) {
         let awb = srRes.awb_code || '';
         let courierName = '';
-        if (!awb && srRes.shipment_id) {
+        // If the vendor picked a specific courier from the rate list, always
+        // call assign/awb explicitly with it — create/adhoc's own auto-pick
+        // (if any) may have already grabbed a DIFFERENT courier, which would
+        // silently ignore the vendor's choice otherwise.
+        if (chosenCourierId || !awb) {
           try {
-            const assigned = await shiprocketAssignAwb(srToken, srRes.shipment_id);
+            const assigned = await shiprocketAssignAwb(srToken, srRes.shipment_id, chosenCourierId);
             awb = assigned.awb;
             courierName = assigned.courierName;
           } catch (e) {

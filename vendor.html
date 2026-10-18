@@ -1239,6 +1239,7 @@
     const [shipMode,     setShipMode]    = useState('Surface');
     const [shipRateInfo, setShipRateInfo]= useState(null);
     const [shipRateLoad, setShipRateLoad]= useState(false);
+    const [selectedCourierId, setSelectedCourierId] = useState(null);
     const [boxPresets,   setBoxPresets]  = useState([]);
     const [creatingShip, setCreatingShip]= useState(false);
     const [shipFulfillItems, setShipFulfillItems] = useState([]);
@@ -1300,7 +1301,7 @@
 
     const checkShipRate = async () => {
       if (!shipPartner) return;
-      setShipRateLoad(true); setShipRateInfo(null);
+      setShipRateLoad(true); setShipRateInfo(null); setSelectedCourierId(null);
       try {
         const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/rate-check`, {
           method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},
@@ -1332,12 +1333,15 @@
         .filter(([,q])=>(parseInt(q)||0)>0)
         .map(([line_item_id,quantity])=>({ line_item_id, quantity: parseInt(quantity) }));
       if (!itemsPayload.length) { setMsg({ type:'error', text:'Select at least one item to ship.' }); return; }
+      if (shipPartner==='shiprocket' && shipRateInfo?.source==='shiprocket' && (shipRateInfo.rates||[]).length>0 && !selectedCourierId) {
+        setMsg({ type:'error', text:'Pick a courier from the rate list, or clear the rates to let Shiprocket auto-assign.' }); return;
+      }
       setCreatingShip(true); setMsg(null);
       try {
         const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/create-shipment`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ partner: shipPartner, items: itemsPayload, weight: parseFloat(shipWeight) || 0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8, shipMode }),
+          body: JSON.stringify({ partner: shipPartner, items: itemsPayload, weight: parseFloat(shipWeight) || 0.5, length: parseFloat(shipLength)||15, breadth: parseFloat(shipBreadth)||12, height: parseFloat(shipHeight)||8, shipMode, ...(selectedCourierId ? { courier_id: selectedCourierId } : {}) }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
@@ -1740,7 +1744,14 @@
                       </div>
                     )}
 
-                    {shipRateInfo && (
+                    {shipPartner==='shiprocket' && (
+                      <button onClick={checkShipRate} disabled={shipRateLoad}
+                        style={{alignSelf:'flex-start',padding:'7px 12px',borderRadius:6,border:'1px solid var(--yellow)',background:'transparent',color:'var(--yellow)',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:11}}>
+                        {shipRateLoad?'Checking couriers…':'🚚 Check Couriers & Rates'}
+                      </button>
+                    )}
+
+                    {shipRateInfo && shipRateInfo.source!=='shiprocket' && (
                       <div style={{padding:'8px 12px',borderRadius:7,background:shipRateInfo.error?'rgba(239,68,68,0.08)':'rgba(16,185,129,0.08)',border:`1px solid ${shipRateInfo.error?'rgba(239,68,68,0.3)':'rgba(16,185,129,0.3)'}`,fontSize:11}}>
                         {shipRateInfo.error ? `❌ ${shipRateInfo.error}` : (
                           <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
@@ -1751,6 +1762,32 @@
                           </div>
                         )}
                       </div>
+                    )}
+
+                    {shipRateInfo && shipRateInfo.source==='shiprocket' && (
+                      shipRateInfo.error ? (
+                        <div style={{padding:'8px 12px',borderRadius:7,background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.3)',fontSize:11}}>❌ {shipRateInfo.error}</div>
+                      ) : (shipRateInfo.rates||[]).length===0 ? (
+                        <div style={{padding:'8px 12px',borderRadius:7,background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.3)',fontSize:11,color:'var(--text-muted)'}}>No couriers serviceable for this pincode.</div>
+                      ) : (
+                        <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:220,overflowY:'auto',border:'1px solid var(--border)',borderRadius:7,padding:8}}>
+                          <div style={{fontSize:10,color:'var(--text-muted)',letterSpacing:1,textTransform:'uppercase',marginBottom:2}}>Pick a courier ({shipRateInfo.rates.length} available)</div>
+                          {shipRateInfo.rates.map(r=>(
+                            <label key={r.courier_id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:6,cursor:'pointer',background:selectedCourierId===r.courier_id?'var(--green-dim)':'var(--bg-card2)',border:`1px solid ${selectedCourierId===r.courier_id?'var(--green)':'var(--border)'}`}}>
+                              <input type="radio" name="sr-courier" checked={selectedCourierId===r.courier_id} onChange={()=>setSelectedCourierId(r.courier_id)}/>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:12,fontWeight:700,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.courier_name}</div>
+                                <div style={{fontSize:10,color:'var(--text-muted)'}}>
+                                  {r.estimated_days && <>ETA: {r.estimated_days}d</>}
+                                  {r.rating && <> · ★{r.rating}</>}
+                                  {r.cod_available && <> · COD ok</>}
+                                </div>
+                              </div>
+                              <strong style={{color:'var(--green)',fontSize:13,whiteSpace:'nowrap'}}>₹{r.charge}</strong>
+                            </label>
+                          ))}
+                        </div>
+                      )
                     )}
 
                     <div style={{fontSize:10,color:'var(--text-muted)',lineHeight:1.6}}>
