@@ -465,6 +465,14 @@ const OVS = {
       let kept;
       if (fields.stage === 'delivered' && existing.stage === 'rto') kept = 'delivered';
       else if (fields.stage === 'rto' && existing.stage === 'delivered') kept = 'delivered';
+      // 'stuck' means "we concluded the courier never actually took this" —
+      // if a LATER real courier scan shows genuine forward motion (it was
+      // picked up after all, just late), that's direct evidence the stuck
+      // diagnosis no longer holds. Automated syncs may advance OUT of
+      // 'stuck' into real pipeline progress, but never INTO 'stuck' from
+      // one of these (that's the one-way penalty-triggering classification
+      // syncShipSagarStage makes explicitly, not a generic downgrade).
+      else if (existing.stage === 'stuck' && ['pickup', 'transit', 'ofd', 'delivered'].includes(fields.stage)) kept = fields.stage;
       else kept = higherStage(existing.stage, fields.stage);
       if (kept !== requestedStage) protectedFromDowngrade = true;
       fields = { ...fields, stage: kept };
@@ -535,7 +543,7 @@ const OVS = {
 // order_vendor_stage row, in pipeline order — same pattern already used ad
 // hoc in a couple of places (e.g. the Meta campaign-performance endpoint),
 // pulled out here as one shared helper instead of copy-pasted per caller.
-const ORDER_STAGE_PIPELINE = ['new', 'confirmed', 'partial', 'hold', 'ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'cancelled', 'misc', 'returned'];
+const ORDER_STAGE_PIPELINE = ['new', 'confirmed', 'partial', 'hold', 'ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'stuck', 'cancelled', 'misc', 'returned'];
 async function getEffectiveOrderStage(shopifyId, metaStage) {
   const sid = String(shopifyId);
   let best = ORDER_STAGE_PIPELINE.indexOf(metaStage || 'new');
@@ -761,7 +769,7 @@ if (!SHOP || !CLIENT_ID || !CLIENT_SECRET) {
 
 
 // ── Stage priority (higher index = more advanced) ────────────────────────
-const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','cancelled','misc','returned'];
+const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transit','ofd','delivered','rto','stuck','cancelled','misc','returned'];
 // 'misc'/'returned' rank near the end and are terminal — a manual exclusion
 // override must always beat a real Shopify "delivered" status. 'misc' used
 // to rank LOWEST (below even 'new'), so any merge/comparison through
@@ -771,7 +779,18 @@ const STAGE_ORDER = ['new','confirmed','partial','hold','ready','pickup','transi
 // an order's merged vendorStageMap entry came out 'new' from
 // higherStage('new','misc') even though its actual stored OVS row was
 // 'misc', because the merge itself lost it before any guard ever saw it.
-const TERMINAL_STAGES = ['rto','cancelled','misc','returned']; // permanent overrides — always win, never reversible via tags
+//
+// 'stuck' (added 2026-10-18): a vendor minted an AWB (reached 'ready') to
+// beat the 48hr dispatch-penalty clock, but the courier never actually took
+// custody — either it explicitly cancels pickup ("cancelled by seller",
+// "NOT_PICKED") or just goes silent forever. Previously these fell into the
+// 'rto' bucket right alongside genuine delivery-attempt failures, which is
+// wrong in a way that matters: RTO implies the package was actually in
+// motion and the courier tried; this is a fake dispatch that never left the
+// vendor's hands at all. Treated as terminal (same protections as rto) —
+// it's a dead end requiring human follow-up (re-ship for real, or cancel),
+// not something that should silently self-resolve.
+const TERMINAL_STAGES = ['rto','stuck','cancelled','misc','returned']; // permanent overrides — always win, never reversible via tags
 function higherStage(a, b) {
   const aTerm = TERMINAL_STAGES.includes(a);
   const bTerm = TERMINAL_STAGES.includes(b);
@@ -7802,7 +7821,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
 app.put("/admin/orders/:id/stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","returned"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","stuck","hold","cancelled","misc","returned"];
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
   // RTO is a courier-confirmed terminal — never allow misc override
@@ -7864,7 +7883,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
   if (!stage && add_tags.length === 0 && remove_tags.length === 0)
     return res.status(400).json({ error: "Specify stage or tags to add/remove." });
 
-  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","returned"];
+  const VALID_STAGES = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","stuck","hold","cancelled","misc","returned"];
   if (stage && !VALID_STAGES.includes(stage))
     return res.status(400).json({ error: "Invalid stage." });
 
@@ -7981,7 +8000,7 @@ app.post("/admin/orders/bulk-update", requirePermission('orders'), async (req, r
 app.put("/admin/orders/:id/vendor-stage", requirePermission('orders'), async (req, res) => {
   const { id } = req.params;
   const { vendor_name, stage } = req.body || {};
-  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","returned"];
+  const VALID = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","stuck","hold","cancelled","misc","returned"];
   if (!vendor_name) return res.status(400).json({ error: "vendor_name required." });
   if (!VALID.includes(stage)) return res.status(400).json({ error: "Invalid stage." });
 
@@ -14565,7 +14584,7 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
   // Email vendor
   const vcfg = await VC.get(vendorName);
   if (vcfg?.email) {
-    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not dispatched by your committed ETA date' : 'Manual penalty applied by admin';
+    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not dispatched by your committed ETA date' : reason === 'fake_dispatch_48hr' ? 'Tracking number was created but the courier never actually picked up the package within 48 hours' : 'Manual penalty applied by admin';
     const html = vendorEmailSky('#ef4444', 'PENALTY<br>TRIGGERED.', 'FULFILMENT ALERT',
       `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${vendorName} —</div>
       <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">A fulfilment penalty has been raised for order <strong style="color:#e0e0e0;">${orderName || shopifyId}</strong>. This is currently under admin review and will be confirmed or cancelled within 72 hours.</div>
@@ -14587,7 +14606,7 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
       const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
       if (rawPhone.length === 10) {
         const jid = `91${rawPhone}@s.whatsapp.net`;
-        const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : 'Manual penalty by admin';
+        const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : reason === 'fake_dispatch_48hr' ? 'Tracking number created but courier never picked it up within 48 hours' : 'Manual penalty by admin';
         const penaltyToken = await createVendorUpdateToken(shopifyId, orderName || shopifyId, vendorName, '').catch(() => null);
         const _Fpen = '```';
         const penaltyMsg = `${_Fpen}\n▪ C R O S C R O W ▪\nPENALTY TRIGGERED 🚨\n────────────────\nORDER  ${orderName || shopifyId}\nVENDOR ${vendorName}\n────────────────\nREASON ${reasonLabel}\nAMT    ₹100\n────────────────\nDeducted from next\nsettlement. To dispute,\nreply to this message.\n${penaltyToken ? `\nUPDATE HERE (no login)\ndashboard.croscrow.com/vendor/update/${penaltyToken}` : ''}\n${_Fpen}`;
@@ -16826,6 +16845,49 @@ async function penaltyCronJob() {
       }
     }
 
+    // ── Fake-dispatch detection (added 2026-10-18) ──────────────────────────
+    // Closes the exploit this whole cron only half-covered: a vendor mints an
+    // AWB (stage -> 'ready') purely to escape the confirmed/partial watch
+    // above — the 48hr clock stops counting the instant that happens,
+    // whether or not the courier ever actually takes custody. Reuses the
+    // SAME dispatched_at clock (set once, the first time a row enters a
+    // dispatched stage) and the SAME triggerPenalty() — a fake dispatch is
+    // not meaningfully different from no dispatch at all.
+    //
+    // Signal: ShipSagar's tracking_history has stayed completely EMPTY for
+    // 48h+ since dispatch — meaning not one single real courier scan was
+    // ever recorded for this AWB. This is deliberately narrower than "stage
+    // is stuck on ready/pickup", because a genuinely-picked-up shipment that
+    // later stalls in transit is a different (real-world logistics) problem,
+    // not a fake dispatch — it has real scan history, just not recent
+    // progress. Only a totally silent AWB counts here.
+    const fakeDispatchCandidates = await mdb.collection('order_vendor_stage').find(
+      {
+        stage: { $in: ['ready', 'pickup'] },
+        dispatched_at: { $gt: 0 },
+        $or: [{ tracking_history: { $exists: false } }, { tracking_history: { $size: 0 } }],
+      },
+      { projection: { _id: 0 } }
+    ).toArray();
+    for (const row of fakeDispatchCandidates) {
+      const elapsed = now - row.dispatched_at;
+      if (elapsed < HR48) continue;
+      const sid = row.shopify_id;
+      const vendor = row.vendor_name;
+      let orderName = '';
+      try { const od = await shopifyREST(`/orders/${sid}.json?fields=id,name`); orderName = od?.order?.name || ''; } catch {}
+
+      await OVS.upsert(sid, vendor, { stage: 'stuck', updated_at: new Date().toISOString() });
+      logStageEvent({
+        shopifyId: sid, orderName, vendor, fromStage: row.stage, toStage: 'stuck', awb: row.awb || '', courier: row.courier || '',
+        actor: 'cron', actorId: 'penalty_cron', source: 'fake_dispatch_detection',
+        reason: `AWB on file ${Math.round(elapsed / 3600000)}h ago, but ShipSagar has never recorded a single real courier scan for it — likely minted to beat the dispatch-SLA clock without an actual pickup.`,
+      });
+      if (!row.penalty_triggered) triggerPenalty(sid, vendor, orderName, 'fake_dispatch_48hr');
+      console.log(`🚨 Fake-dispatch detected: ${orderName} / ${vendor} — AWB ${row.awb || '(none)'} minted ${Math.round(elapsed / 3600000)}h ago, zero courier scans ever`);
+      waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nFAKE DISPATCH DETECTED\n────────────────\nORDER    ${orderName || sid}\nVENDOR   ${vendor}\nAWB      ${row.awb || '(none)'}\nAGE      ${Math.round(elapsed / 3600000)}h, zero courier scans ever\n\nMarked STUCK, penalty triggered.\n\`\`\``).catch(() => {});
+    }
+
     // ETA-date penalty check for delay remarks
     const today = new Date().toISOString().split('T')[0];
     const etaPast = await DR.expiredEta(today);
@@ -17271,7 +17333,13 @@ function shipsagarStatusToStage(desc) {
   // Delivery" AND "Refusal Confirmation Code Verified" — a real courier
   // phrase that the exact word "refused" alone misses entirely. A refusal
   // reliably means the shipment is headed back to origin.
-  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return is initiated') || s.includes('out for return') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('pickup cancelled') || s.includes('refus')) return 'rto';
+  // 'pickup cancelled' deliberately removed from this bucket (was here
+  // until 2026-10-18) — it means the courier never actually took custody of
+  // the package at all, which is a different real-world event than RTO
+  // (RTO implies it WAS in motion and the delivery attempt failed). See
+  // shipsagarIsPickupFailure() below, which routes this family of phrases
+  // to the new 'stuck' stage instead.
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return is initiated') || s.includes('out for return') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('refus')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
   // "Dispatched — Our executive X is on their way to deliver" is a LOCAL
@@ -17294,6 +17362,25 @@ function shipsagarStatusToStage(desc) {
   if (s.includes('waiting pickup') || s.includes('waiting for pickup') || s.includes('waiting for the pickup')) return null;
   if (s.includes('pickdone') || s.includes('pick done') || s.includes('picked up') || s.includes('pickup done') || s.includes('pickup registered') || s.includes('pickup has been registered') || s.includes('manifested') || s.includes('dispatched') || s.includes('shipment booked') || s.includes('data received') || s === 'pickup' || s.includes('out to p')) return 'pickup';
   return null;
+}
+
+// Detects a vendor-side fake dispatch: an AWB was minted (satisfying the
+// 48hr dispatch-SLA on paper) but the courier never actually took custody
+// of the package — it explicitly cancels/rejects the pickup, or the order
+// itself gets cancelled before any courier scan ever happens. Deliberately
+// SEPARATE from shipsagarStatusToStage's rto bucket: RTO means the package
+// was genuinely in motion and a delivery attempt failed; this means it
+// never left the vendor's hands in the first place. Confirmed live
+// (RTO audit, 2026-10-18): orders #3064/#3081 showed ShipSagar
+// CurrentStatus "RTO" from a single sparse scan reading "Order cancelled
+// after confirmation" — no pickup, no transit, nothing — which is not a
+// real RTO in any practical sense, it's the order never having shipped.
+function shipsagarIsPickupFailure(desc) {
+  if (!desc) return false;
+  const s = desc.toLowerCase().replace(/[_\s]+/g, ' ');
+  return s.includes('pickup cancelled') || s.includes('cancelled by seller') || s.includes('cancelled on request')
+    || s.includes('order cancelled after confirmation') || s.includes('not picked') || s.includes('pickup rejected')
+    || s.includes('seller requested cancellation') || (s.includes('cancel') && s.includes('confirmation'));
 }
 
 // Some couriers (observed on BlueDart) close out a return-to-origin shipment
@@ -17816,20 +17903,32 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
   let appliedStage = newStage;
   let protectedFromDowngrade = false;
   let blockedByManualOverride = false;
+  let effectiveNewStage = newStage;
   if (newStage) {
-    const beforeStage = (await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendorName }, { projection: { stage: 1, _id: 0 } }))?.stage || null;
-    const result = await OVS.upsert(sid, vendorName, { stage: newStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
-    appliedStage = result?.stage ?? newStage;
+    const existingRow = await mdb.collection('order_vendor_stage').findOne({ shopify_id: sid, vendor_name: vendorName }, { projection: { stage: 1, stage_history: 1, _id: 0 } });
+    const beforeStage = existingRow?.stage || null;
+    // 'rto' can only be genuine if the package was actually in motion at
+    // some point — reroute to 'stuck' when either the live description
+    // explicitly says it never got picked up, OR there's no pickup/transit/
+    // ofd ANYWHERE in this vendor's own stage history (the package truly
+    // never left their hands, regardless of what ShipSagar's text says).
+    if (newStage === 'rto') {
+      const everMoved = (existingRow?.stage_history || []).some(h => ['pickup', 'transit', 'ofd'].includes(h.stage));
+      if (shipsagarIsPickupFailure(desc) || !everMoved) effectiveNewStage = 'stuck';
+    }
+    const result = await OVS.upsert(sid, vendorName, { stage: effectiveNewStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
+    appliedStage = result?.stage ?? effectiveNewStage;
     protectedFromDowngrade = !!result?.protectedFromDowngrade;
     blockedByManualOverride = !!result?.blocked;
-    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, newStage, appliedStage, protectedFromDowngrade, blockedByManualOverride });
+    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, rawClassification: newStage, requestedStage: effectiveNewStage, appliedStage, protectedFromDowngrade, blockedByManualOverride, reroutedToStuck: effectiveNewStage !== newStage });
     logStageEvent({
-      shopifyId: sid, vendor: vendorName, fromStage: beforeStage, toStage: appliedStage, awb, actor: 'cron', actorId: 'shipsagar_tracking_cron', source: 'shipsagar_stage_sync', reason: desc,
+      shopifyId: sid, vendor: vendorName, fromStage: beforeStage, toStage: appliedStage, awb, actor: 'cron', actorId: 'shipsagar_tracking_cron', source: 'shipsagar_stage_sync',
+      reason: effectiveNewStage === 'stuck' ? `pickup never confirmed — courier says: "${desc}"` : desc,
       skipped: blockedByManualOverride, skipReason: blockedByManualOverride ? 'blocked by manually_overridden flag' : (protectedFromDowngrade ? '' : ''),
     });
   }
 
-  return { desc, newStage: appliedStage, requestedStage: newStage, protectedFromDowngrade, blockedByManualOverride, history: ss.history };
+  return { desc, newStage: appliedStage, requestedStage: effectiveNewStage, protectedFromDowngrade, blockedByManualOverride, history: ss.history };
 }
 
 // ── Failed-delivery-attempt notification (customer + vendor) ──────────────
