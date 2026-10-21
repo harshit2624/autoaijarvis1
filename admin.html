@@ -13781,6 +13781,7 @@
     policy_view: 'Policy Views', brand_view: 'Brand Page Views',
     nav_click: 'Nav Clicks', search_use: 'Searches', search_open: 'Search Opened',
     variant_select: 'Size Selected', variant_unavailable_click: 'Sold-Out Size Clicked', rage_click: 'Rage Clicks',
+    cart_checkout_click: 'Checkout Clicks', cart_coupon_copy: 'Coupon Copies', cart_upsell_add: 'Upsell Adds',
   };
   const SITE_GROUP_LABELS = { brand:'Brand', product_handle:'Product', collection_handle:'Collection', section:'Section', source:'Source', page:'Page' };
   // Fixed categorical order, reused everywhere a chart needs series color —
@@ -13846,8 +13847,8 @@
   // selected period. One axis, thin 2px lines with rounded joins, recessive
   // gridlines, a legend (always present, 3 series here), and a hover
   // crosshair + tooltip reading all series at the nearest day.
-  function SiteTrendChart({ token, period }) {
-    const SERIES = [
+  function SiteTrendChart({ token, period, series, title }) {
+    const SERIES = series || [
       { key:'add_to_cart', label:'Add to Cart', color:SITE_CHART_COLORS[0] },
       { key:'card_click', label:'Card Clicks', color:SITE_CHART_COLORS[1] },
       { key:'collection_view', label:'Collection Views', color:SITE_CHART_COLORS[2] },
@@ -13862,7 +13863,7 @@
       const evs = SERIES.map(s=>s.key).join(',');
       fetch(`${API}/admin/site-analytics/timeseries?events=${evs}&from=${period.from}&to=${period.to}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(setData).catch(()=>setData({series:[],days:[]}));
-    }, [period.from, period.to]);
+    }, [period.from, period.to, SERIES.map(s=>s.key).join(',')]);
 
     if (data === null) return <div className="card" style={{marginBottom:16,padding:40,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading trend…</div>;
     const days = data.days || [];
@@ -13891,7 +13892,7 @@
     return (
       <div className="card" style={{marginBottom:16,padding:'16px 18px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,flexWrap:'wrap',gap:10}}>
-          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>📈 Engagement Trend</span>
+          <span style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{title || '📈 Engagement Trend'}</span>
           {/* Legend — always shown since this is a 4-series chart */}
           <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
             {SERIES.map(s=>(
@@ -13942,6 +13943,126 @@
           </div>
         )}
       </div>
+    );
+  }
+
+  // Mini-cart (cart drawer) performance — time spent, checkout conversion,
+  // coupon-copy adoption, and whether an upsell add correlates with actually
+  // checking out vs bouncing. Pulls from the session-joined funnel endpoint
+  // plus the same breakdown/trend primitives the rest of this page uses.
+  function CartDrawerFunnelStat({ label, value, sub, color }) {
+    return (
+      <div className="card" style={{padding:'12px 14px'}}>
+        <div style={{fontSize:18,fontWeight:800,color:color||'var(--indigo)',fontVariantNumeric:'tabular-nums'}}>{value}</div>
+        <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginTop:2}}>{label}</div>
+        {sub && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{sub}</div>}
+      </div>
+    );
+  }
+
+  function CartDrawerPerformance({ token, period }) {
+    const [funnel, setFunnel] = useState(null);
+    const [upsellProducts, setUpsellProducts] = useState(null);
+
+    useEffect(() => {
+      setFunnel(null);
+      fetch(`${API}/admin/site-analytics/cart-drawer-funnel?from=${period.from}&to=${period.to}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(setFunnel).catch(()=>setFunnel({}));
+    }, [period.from, period.to]);
+
+    useEffect(() => {
+      setUpsellProducts(null);
+      fetch(`${API}/admin/site-analytics/breakdown?event=cart_upsell_add&group_by=product_handle&from=${period.from}&to=${period.to}&limit=10`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setUpsellProducts(d.rows||[])).catch(()=>setUpsellProducts([]));
+    }, [period.from, period.to]);
+
+    const pct = (v) => v==null ? '—' : `${Math.round(v*100)}%`;
+    const secs = (v) => v==null ? '—' : `${(v/1000).toFixed(1)}s`;
+
+    const upsellRate = funnel?.upsell_checkout_rate;
+    const nonUpsellRate = funnel?.non_upsell_checkout_rate;
+    const maxRate = Math.max(upsellRate||0, nonUpsellRate||0, 0.01);
+
+    return (
+      <>
+        <div style={{background:'#0d1420',border:'1px solid #1a3a5a',borderRadius:10,padding:'12px 16px',marginTop:24,marginBottom:16,fontSize:12,color:'var(--text)'}}>
+          <div style={{fontWeight:700,color:'#38bdf8',marginBottom:6}}>🛒 Mini Cart Performance</div>
+          <div style={{lineHeight:1.7,color:'var(--text-muted)'}}>
+            Is the redesigned cart drawer (progress bar, copy-only coupons, upsell row) helping or confusing people? Checkout conversion, bounce, coupon-copy adoption, and whether adding an upsell item makes someone more or less likely to actually check out.
+          </div>
+        </div>
+
+        {funnel === null ? (
+          <div style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div>
+        ) : (
+          <>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))',gap:10,marginBottom:16}}>
+              <CartDrawerFunnelStat label="Drawer Opens" value={funnel.opens ?? 0} />
+              <CartDrawerFunnelStat label="Checkout Rate" value={pct(funnel.checkout_rate)} sub={`${funnel.checkouts ?? 0} checkouts`} color="var(--green)" />
+              <CartDrawerFunnelStat label="Bounce Rate" value={pct(funnel.bounce_rate)} sub="Opened, never checked out" color="var(--red)" />
+              <CartDrawerFunnelStat label="Avg Time to Checkout" value={secs(funnel.avg_checkout_time_ms)} sub="Open → Checkout click" />
+              <CartDrawerFunnelStat label="Avg Time in Drawer" value={secs(funnel.avg_dwell_time_ms)} sub="Open → Close" />
+            </div>
+
+            <SiteTrendChart
+              token={token} period={period}
+              title="📈 Drawer Opens vs Checkout Clicks"
+              series={[
+                { key:'cart_drawer_open', label:'Drawer Opens', color:SITE_CHART_COLORS[0] },
+                { key:'cart_checkout_click', label:'Checkout Clicks', color:SITE_CHART_COLORS[2] },
+              ]}
+            />
+
+            {/* Does an upsell add correlate with checking out, or with bouncing? */}
+            <div className="card" style={{marginBottom:14,padding:'14px 16px'}}>
+              <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:10}}>🎯 Checkout Rate: Upsell-Add Sessions vs Others</div>
+              {funnel.upsell_sessions ? (
+                <div style={{display:'flex',flexDirection:'column',gap:10}}>
+                  {[
+                    { label:`Added an upsell item (${funnel.upsell_sessions} sessions)`, rate:upsellRate, color:'var(--green)' },
+                    { label:'Did not add an upsell item', rate:nonUpsellRate, color:'var(--indigo)' },
+                  ].map((row,i)=>(
+                    <div key={i} style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 50px',gap:10,alignItems:'center'}}>
+                      <div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:3}}>{row.label}</div>
+                        <div style={{height:9,background:'var(--bg)',borderRadius:4,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:`${Math.max(3,Math.round(((row.rate||0)/maxRate)*100))}%`,background:row.color,borderRadius:4,transition:'width .3s ease'}}></div>
+                        </div>
+                      </div>
+                      <div style={{fontSize:12,fontWeight:700,color:'var(--text)',textAlign:'right'}}>{pct(row.rate)}</div>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:2}}>
+                    {upsellRate!=null && nonUpsellRate!=null && (
+                      upsellRate >= nonUpsellRate
+                        ? `Upsell adds correlate with ${Math.round((upsellRate-nonUpsellRate)*100)}pt higher checkout — the upsell row is helping, not distracting.`
+                        : `Upsell adds correlate with ${Math.round((nonUpsellRate-upsellRate)*100)}pt lower checkout — worth watching whether it's adding friction.`
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div style={{fontSize:12,color:'var(--text-muted)',padding:'8px 0'}}>No upsell adds tracked in this period yet.</div>
+              )}
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+              <SiteBreakdownTable token={token} event="cart_coupon_copy" groupBy="section" period={period} title="🏷 Coupon Copies — by Code" />
+              <SiteBreakdownTable token={token} event="cart_upsell_add" groupBy="brand" period={period} title="➕ Upsell Adds — by Brand" />
+            </div>
+
+            <div className="card" style={{marginBottom:4}}>
+              <div className="card-header"><span className="card-title">🛍 Top Upsell Adds</span></div>
+              <div style={{padding:'10px 16px 14px'}}>
+                <ProductRow
+                  loading={upsellProducts===null}
+                  products={(upsellProducts||[]).map(r=>({ productName:r.product_title||r.key, productImage:r.image_url, vendor:r.brand, count:r.count }))}
+                  countLabel="adds"
+                />
+              </div>
+            </div>
+          </>
+        )}
+      </>
     );
   }
 
@@ -14027,6 +14148,8 @@
           <SiteBreakdownTable token={token} event="search_use" groupBy="page" period={period} title="🔎 Top Search Terms" />
           <SiteBreakdownTable token={token} event="search_use" groupBy="section" period={period} title="🔎 Searches — Results vs Zero Results" />
         </div>
+
+        <CartDrawerPerformance token={token} period={period} />
 
         {/* Flexible query — any event × any dimension, for anything not pinned above */}
         <div className="card" style={{marginTop:20,marginBottom:14}}>

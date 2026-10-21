@@ -26603,6 +26603,11 @@ const SITE_EVENT_NAMES = [
   // "nobody wants this size" from "we were out of stock the whole time"),
   // and rage_click (3+ clicks on the same dead element — a UX/bug signal).
   'variant_select', 'variant_unavailable_click', 'rage_click',
+  // Mini-cart (cart drawer) performance — checkout conversion, coupon-copy
+  // adoption (codes aren't auto-applied, just copied, so this is the only
+  // visibility into whether people actually grab one), and whether an
+  // upsell add correlates with checking out vs bouncing.
+  'cart_checkout_click', 'cart_coupon_copy', 'cart_upsell_add',
 ];
 
 // Batched ingestion — the client script queues events in memory and flushes
@@ -26624,6 +26629,7 @@ app.post('/track/site-events', async (req, res) => {
         product_handle: e.product_handle ? String(e.product_handle).slice(0, 200) : null,
         product_title: e.product_title ? String(e.product_title).slice(0, 200) : null,
         collection_handle: e.collection_handle ? String(e.collection_handle).slice(0, 200) : null,
+        image_url: e.image_url ? String(e.image_url).slice(0, 500) : null,
         section: e.section ? String(e.section).slice(0, 80) : null,
         source: e.source ? String(e.source).slice(0, 40) : null,
         position: Number.isFinite(e.position) ? e.position : null,
@@ -26660,11 +26666,11 @@ app.get('/admin/site-analytics/breakdown', adminAuth, async (req, res) => {
     if (!GROUPABLE.includes(group_by)) return res.status(400).json({ error: `group_by must be one of ${GROUPABLE.join(', ')}` });
     const rows = await mdb.collection('site_events').aggregate([
       { $match: { ...match, [group_by]: { $ne: null } } },
-      { $group: { _id: `$${group_by}`, count: { $sum: 1 }, avg_value: { $avg: '$value' }, product_title: { $first: '$product_title' } } },
+      { $group: { _id: `$${group_by}`, count: { $sum: 1 }, avg_value: { $avg: '$value' }, sum_value: { $sum: '$value' }, product_title: { $first: '$product_title' }, image_url: { $first: '$image_url' }, brand: { $first: '$brand' } } },
       { $sort: { count: -1 } },
       { $limit: parseInt(limit) || 25 },
     ]).toArray();
-    res.json({ rows: rows.map(r => ({ key: r._id, count: r.count, avg_value: r.avg_value ?? null, product_title: r.product_title || null })) });
+    res.json({ rows: rows.map(r => ({ key: r._id, count: r.count, avg_value: r.avg_value ?? null, sum_value: r.sum_value ?? null, product_title: r.product_title || null, image_url: r.image_url || null, brand: r.brand || null })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -26716,6 +26722,61 @@ app.get('/admin/site-analytics/timeseries', adminAuth, async (req, res) => {
       points: days.map(day => ({ day, count: byKey[`${event}|${day}`] || 0 })),
     }));
     res.json({ series, days });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Mini-cart (drawer) funnel — session-level join across the drawer's own
+//    event set. Everything else in this file aggregates per-event; this is
+//    the one view that needs to know, per session, which events co-occurred
+//    (did the session that opened the drawer also check out? did the
+//    sessions that added an upsell item check out at a different rate than
+//    the ones that didn't?) — hence the extra in-memory pass after the
+//    initial $group, rather than a single aggregation pipeline.
+app.get('/admin/site-analytics/cart-drawer-funnel', adminAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const match = { event: { $in: ['cart_drawer_open', 'cart_drawer_close', 'cart_checkout_click', 'cart_upsell_add'] } };
+    if (from || to) {
+      match.created_at = {};
+      if (from) match.created_at.$gte = istDayStart(from);
+      if (to) match.created_at.$lte = istDayEnd(to);
+    }
+
+    const sessions = await mdb.collection('site_events').aggregate([
+      { $match: match },
+      { $group: {
+          _id: '$session_id',
+          hasOpen: { $max: { $cond: [{ $eq: ['$event', 'cart_drawer_open'] }, 1, 0] } },
+          hasCheckout: { $max: { $cond: [{ $eq: ['$event', 'cart_checkout_click'] }, 1, 0] } },
+          hasUpsell: { $max: { $cond: [{ $eq: ['$event', 'cart_upsell_add'] }, 1, 0] } },
+          checkoutTime: { $max: { $cond: [{ $eq: ['$event', 'cart_checkout_click'] }, '$value', null] } },
+          dwellTime: { $max: { $cond: [{ $eq: ['$event', 'cart_drawer_close'] }, '$value', null] } },
+        } },
+    ]).toArray();
+
+    const withOpen = sessions.filter(s => s.hasOpen);
+    const opens = withOpen.length;
+    const checkouts = withOpen.filter(s => s.hasCheckout).length;
+    const checkoutRate = opens ? checkouts / opens : null;
+    const bounceRate = opens ? (opens - checkouts) / opens : null;
+
+    const avgOf = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+    const avgCheckoutTime = avgOf(withOpen.map(s => s.checkoutTime).filter(v => Number.isFinite(v)));
+    const avgDwellTime = avgOf(withOpen.map(s => s.dwellTime).filter(v => Number.isFinite(v)));
+
+    const upsellSessions = withOpen.filter(s => s.hasUpsell);
+    const nonUpsellSessions = withOpen.filter(s => !s.hasUpsell);
+    const upsellCheckoutRate = upsellSessions.length ? upsellSessions.filter(s => s.hasCheckout).length / upsellSessions.length : null;
+    const nonUpsellCheckoutRate = nonUpsellSessions.length ? nonUpsellSessions.filter(s => s.hasCheckout).length / nonUpsellSessions.length : null;
+
+    res.json({
+      opens, checkouts,
+      checkout_rate: checkoutRate, bounce_rate: bounceRate,
+      avg_checkout_time_ms: avgCheckoutTime, avg_dwell_time_ms: avgDwellTime,
+      upsell_sessions: upsellSessions.length,
+      upsell_checkout_rate: upsellCheckoutRate,
+      non_upsell_checkout_rate: nonUpsellCheckoutRate,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
