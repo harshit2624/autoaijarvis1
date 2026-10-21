@@ -11379,13 +11379,18 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       const f = foliMap[liId];
       const fulfillable = f ? f.fulfillable_quantity : 0;
       if (qty > fulfillable) return res.status(400).json({ error: `${li.title}: only ${fulfillable} unit(s) available to fulfill` });
-      selected.push({ line_item_id: liId, vendor: li.vendor || '', title: li.title, variant_title: li.variant_title || '', sku: li.sku || '', quantity: qty, price: parseFloat(li.price || 0), foli: f });
+      const itemDiscount = (li.discount_allocations || []).reduce((a, d) => a + parseFloat(d.amount || 0), 0);
+      selected.push({ line_item_id: liId, vendor: li.vendor || '', title: li.title, variant_title: li.variant_title || '', sku: li.sku || '', quantity: qty, price: parseFloat(li.price || 0), discount: itemDiscount, foli: f });
     }
     if (!selected.length) return res.status(400).json({ error: "No items with quantity > 0 selected" });
 
     const addr = shopifyOrder.shipping_address || {};
     const cod = shopifyOrder.financial_status !== "paid";
-    const shipmentValue = parseFloat(selected.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2));
+    // Net of each line item's own discount_allocations (order-level discount codes land
+    // here, proportioned by Shopify) — raw price × qty alone overcharges the customer on
+    // COD by the discount amount, which is exactly the bug that shipped a ₹3,400 collect
+    // amount on an order whose real total (after a ₹200 code) was ₹3,348.
+    const shipmentValue = parseFloat(selected.reduce((s, it) => s + Math.max(0, it.price * it.quantity - it.discount), 0).toFixed(2));
 
     // Deduct this shipment's share of any advance already paid: split equally across
     // vendors first, then within each vendor's share, split equally per item (by quantity)
@@ -11404,7 +11409,14 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       }
       allocatedAdvance = parseFloat(allocatedAdvance.toFixed(2));
     }
-    const codAmt = cod ? parseFloat(Math.max(0, shipmentValue - allocatedAdvance).toFixed(2)) : 0;
+    // Shipping charged to the customer isn't in shipmentValue (that's item price only) —
+    // same per-vendor split the vendor-facing endpoint uses, summed for whichever
+    // vendor(s) this particular shipment covers.
+    const totalShipping = (shopifyOrder.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+    const shippingShare = cod && allVendorsForAdvance.length
+      ? parseFloat(((totalShipping / allVendorsForAdvance.length) * new Set(selected.map(s => s.vendor).filter(Boolean)).size).toFixed(2))
+      : 0;
+    const codAmt = cod ? parseFloat(Math.max(0, shipmentValue + shippingShare - allocatedAdvance).toFixed(2)) : 0;
     const totalQty = selected.reduce((s, it) => s + it.quantity, 0);
     const custName = `${addr.first_name || ""} ${addr.last_name || ""}`.trim() || shopifyOrder.customer?.first_name || "Customer";
     const orderDateStr = (shopifyOrder.created_at || new Date().toISOString()).replace("T", " ").replace(/\.\d+Z$/, "").replace("Z", "");

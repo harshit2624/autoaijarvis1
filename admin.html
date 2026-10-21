@@ -1941,11 +1941,18 @@
                 <div className="detail-row"><span className="dr-label">Customer</span><span className="dr-val">{order.customer}</span></div>
                 {order.email && <div className="detail-row"><span className="dr-label">Email</span><span className="dr-val" style={{fontSize:10}}>{order.email}</span></div>}
                 <div className="detail-row"><span className="dr-label">Vendors</span><span className="dr-val">{order.vendors?.join(', ')||'—'}</span></div>
-                <div className="detail-row"><span className="dr-label">Order Value</span><span className="dr-val" style={{color:'var(--cyan)'}}>{fmtCur(order.orderValue)}</span></div>
+                {/* order.orderValue is Shopify's total_price — ALREADY net of any discount
+                    code (and inclusive of shipping). Showing it pre-discount here (adding
+                    totalDiscounts back) and then subtracting once below is the correct
+                    "X off Y" story; subtracting it a second time was the bug that made this
+                    panel disagree with the vendor panel and, worse, with the actual
+                    Delhivery shipment on order #3639 (real total ₹3,348, panel showed
+                    ₹3,148 "after discount" by subtracting the ₹200 code twice). */}
+                <div className="detail-row"><span className="dr-label">Order Value</span><span className="dr-val" style={{color:'var(--cyan)'}}>{fmtCur(order.orderValue + (order.totalDiscounts||0))}</span></div>
                 {order.totalDiscounts > 0 && (<>
                   <div className="detail-row"><span className="dr-label" style={{color:'#f59e0b'}}>CROSCROW Discount</span><span className="dr-val" style={{color:'#f59e0b',fontWeight:700}}>− {fmtCur(order.totalDiscounts)}</span></div>
                   {(order.discountCodes||[]).map(dc=>(
-                    <div key={dc.code} className="detail-row" style={{paddingLeft:8}}><span className="dr-label" style={{color:'var(--text-muted)',fontSize:10}}>Code: {dc.code}</span><span className="dr-val" style={{color:'var(--text-muted)',fontSize:10}}>−₹{parseFloat(dc.amount).toFixed(0)}</span></div>
+                    <div key={dc.code} className="detail-row" style={{paddingLeft:8}}><span className="dr-label" style={{color:'var(--text-muted)',fontSize:10}}>Code: {dc.code}</span><span className="dr-val" style={{color:'var(--text-muted)',fontSize:10}}>−₹{parseFloat(dc.amount||0).toFixed(0)}</span></div>
                   ))}
                   {/* Per-vendor discount split */}
                   {(()=>{
@@ -1962,14 +1969,14 @@
                       </div>
                     ));
                   })()}
-                  <div className="detail-row"><span className="dr-label">After Discount</span><span className="dr-val" style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(order.orderValue - order.totalDiscounts)}</span></div>
+                  <div className="detail-row"><span className="dr-label">After Discount</span><span className="dr-val" style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(order.orderValue)}</span></div>
                 </>)}
                 <div className="detail-row"><span className="dr-label">Shipping</span><span className="dr-val">{fmtCur(order.shippingCharge)}</span></div>
                 <div className="detail-row"><span className="dr-label">Payment</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
-                {order.financial === 'pending' && (order.totalDiscounts||0) > 0 && (
+                {(order.financial === 'pending' || order.financial === 'partially_paid') && (
                   <div className="detail-row" style={{borderTop:'1px solid var(--border)',paddingTop:6,marginTop:2}}>
                     <span className="dr-label" style={{fontWeight:700}}>COD to Collect</span>
-                    <span className="dr-val" style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(order.orderValue - (order.totalDiscounts||0))}</span>
+                    <span className="dr-val" style={{color:'var(--cyan)',fontWeight:700}}>{fmtCur(Math.max(0, order.orderValue - (order.advancePaid||0)))}</span>
                   </div>
                 )}
               </div>
