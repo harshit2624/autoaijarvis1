@@ -17166,7 +17166,15 @@ async function autoHoldCronJob() {
     const holdOvsArr = await mdb.collection('order_vendor_stage').find({}, { projection: { shopify_id: 1, stage: 1, _id: 0 } }).toArray();
     const holdOvsMap = {};
     holdOvsArr.forEach(r => { if (!holdOvsMap[r.shopify_id]) holdOvsMap[r.shopify_id] = []; holdOvsMap[r.shopify_id].push(r.stage); });
-    const HOLD_SO = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
+    // Was a hand-maintained partial copy of STAGE_ORDER missing 'returned'/'stuck'/'misc'.
+    // Any order actually in one of those (e.g. a delivered-then-RTO'd order correctly
+    // re-classified 'returned' by the ShipSagar cron) made indexOf return -1, and the old
+    // `bestIdx < 0 ? 0 : bestIdx` fallback silently treated index 0 ('new') as its stage —
+    // so this cron kept "auto-holding" already-resolved orders once a day, ShipSagar's own
+    // sync kept correcting them back to 'returned' within the hour, and the admin got a
+    // fresh "moved to hold" email every single day for the same handful of orders forever
+    // (confirmed live on #3042/#3013/#2928 — order_meta.stage was 'returned' the whole
+    // time; only the Shopify tag and this cron's miscalculation ever said "hold").
     const token = await getAccessToken();
     const cfg = await getSmtpConfig();
 
@@ -17176,9 +17184,10 @@ async function autoHoldCronJob() {
       const meta = metaMap[sid] || {};
       // Use max stage across order_meta and OVS to avoid holding vendor-confirmed orders
       const metaStage = meta.stage || 'new';
-      let bestIdx = HOLD_SO.indexOf(metaStage); if (bestIdx < 0) bestIdx = 0;
-      (holdOvsMap[sid] || []).forEach(s => { const vi = HOLD_SO.indexOf(s); if (vi > bestIdx) bestIdx = vi; });
-      const stage = HOLD_SO[bestIdx] || metaStage;
+      let bestIdx = STAGE_ORDER.indexOf(metaStage);
+      if (bestIdx < 0) continue; // unrecognized stage — never silently treat as 'new'
+      (holdOvsMap[sid] || []).forEach(s => { const vi = STAGE_ORDER.indexOf(s); if (vi > bestIdx) bestIdx = vi; });
+      const stage = STAGE_ORDER[bestIdx] || metaStage;
       if (stage !== 'new') continue; // only auto-hold orders still in new
 
       // Move to hold in our DB
