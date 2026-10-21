@@ -13950,12 +13950,26 @@
   // coupon-copy adoption, and whether an upsell add correlates with actually
   // checking out vs bouncing. Pulls from the session-joined funnel endpoint
   // plus the same breakdown/trend primitives the rest of this page uses.
-  function CartDrawerFunnelStat({ label, value, sub, color }) {
+  // Distinct "spotlight" tile — tinted glass background in the stat's own
+  // accent color, icon badge, big tabular number. Deliberately NOT the plain
+  // .card style used by every other tile on this page — this section is the
+  // one management actually opens this dashboard to check.
+  function CartDrawerSpotlightTile({ icon, label, value, sub, hue }) {
+    const H = {
+      blue:   { bg:'rgba(56,189,248,0.12)',  ring:'rgba(56,189,248,0.35)',  fg:'#38bdf8' },
+      green:  { bg:'rgba(16,185,129,0.12)',  ring:'rgba(16,185,129,0.35)',  fg:'#10b981' },
+      red:    { bg:'rgba(248,113,113,0.12)', ring:'rgba(248,113,113,0.35)', fg:'#f87171' },
+      amber:  { bg:'rgba(251,191,36,0.12)',  ring:'rgba(251,191,36,0.35)',  fg:'#fbbf24' },
+      purple: { bg:'rgba(167,139,250,0.12)', ring:'rgba(167,139,250,0.35)', fg:'#a78bfa' },
+    }[hue] || { bg:'var(--bg-card)', ring:'var(--border)', fg:'var(--indigo)' };
     return (
-      <div className="card" style={{padding:'12px 14px'}}>
-        <div style={{fontSize:18,fontWeight:800,color:color||'var(--indigo)',fontVariantNumeric:'tabular-nums'}}>{value}</div>
-        <div style={{fontSize:11,color:'var(--text)',fontWeight:600,marginTop:2}}>{label}</div>
-        {sub && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{sub}</div>}
+      <div style={{background:H.bg,border:`1px solid ${H.ring}`,borderRadius:14,padding:'14px 16px',position:'relative',overflow:'hidden'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+          <span style={{width:28,height:28,borderRadius:9,background:H.ring,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>{icon}</span>
+          <span style={{fontSize:11,color:'var(--text)',fontWeight:700}}>{label}</span>
+        </div>
+        <div style={{fontSize:26,fontWeight:800,color:H.fg,fontVariantNumeric:'tabular-nums',lineHeight:1}}>{value}</div>
+        {sub && <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:5}}>{sub}</div>}
       </div>
     );
   }
@@ -13981,14 +13995,24 @@
 
     const upsellRate = funnel?.upsell_checkout_rate;
     const nonUpsellRate = funnel?.non_upsell_checkout_rate;
-    const maxRate = Math.max(upsellRate||0, nonUpsellRate||0, 0.01);
+    const upsellWins = upsellRate!=null && nonUpsellRate!=null && upsellRate >= nonUpsellRate;
 
     return (
-      <>
-        <div style={{background:'#0d1420',border:'1px solid #1a3a5a',borderRadius:10,padding:'12px 16px',marginTop:24,marginBottom:16,fontSize:12,color:'var(--text)'}}>
-          <div style={{fontWeight:700,color:'#38bdf8',marginBottom:6}}>🛒 Mini Cart Performance</div>
-          <div style={{lineHeight:1.7,color:'var(--text-muted)'}}>
-            Is the redesigned cart drawer (progress bar, copy-only coupons, upsell row) helping or confusing people? Checkout conversion, bounce, coupon-copy adoption, and whether adding an upsell item makes someone more or less likely to actually check out.
+      <div style={{marginBottom:28}}>
+        {/* Hero banner — gradient, not the flat info-box style used elsewhere on this page */}
+        <div style={{
+          background:'linear-gradient(135deg, #0b1830 0%, #0d2440 55%, #0a3450 100%)',
+          border:'1px solid #1a3a5a', borderRadius:14, padding:'18px 20px', marginBottom:16,
+          position:'relative', overflow:'hidden',
+        }}>
+          <div style={{position:'absolute',top:-40,right:-40,width:160,height:160,borderRadius:'50%',background:'radial-gradient(circle, rgba(56,189,248,0.25), transparent 70%)'}}></div>
+          <div style={{position:'relative',display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+            <span style={{fontSize:20}}>🛒</span>
+            <span style={{fontSize:16,fontWeight:800,color:'#fff'}}>Mini Cart Performance</span>
+            <span style={{fontSize:9,fontWeight:700,letterSpacing:'.05em',color:'#38bdf8',background:'rgba(56,189,248,0.15)',border:'1px solid rgba(56,189,248,0.3)',borderRadius:99,padding:'2px 8px',textTransform:'uppercase'}}>Live</span>
+          </div>
+          <div style={{position:'relative',fontSize:12,lineHeight:1.7,color:'#9fb3c8',maxWidth:720}}>
+            Is the redesigned cart drawer (progress bar, copy-only coupons, upsell row) helping or confusing people? Checkout conversion, bounce, coupon-copy adoption, and whether an upsell add makes someone more or less likely to actually check out.
           </div>
         </div>
 
@@ -13996,12 +14020,12 @@
           <div style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}><span className="spin">↻</span> Loading…</div>
         ) : (
           <>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))',gap:10,marginBottom:16}}>
-              <CartDrawerFunnelStat label="Drawer Opens" value={funnel.opens ?? 0} />
-              <CartDrawerFunnelStat label="Checkout Rate" value={pct(funnel.checkout_rate)} sub={`${funnel.checkouts ?? 0} checkouts`} color="var(--green)" />
-              <CartDrawerFunnelStat label="Bounce Rate" value={pct(funnel.bounce_rate)} sub="Opened, never checked out" color="var(--red)" />
-              <CartDrawerFunnelStat label="Avg Time to Checkout" value={secs(funnel.avg_checkout_time_ms)} sub="Open → Checkout click" />
-              <CartDrawerFunnelStat label="Avg Time in Drawer" value={secs(funnel.avg_dwell_time_ms)} sub="Open → Close" />
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))',gap:12,marginBottom:16}}>
+              <CartDrawerSpotlightTile icon="🚪" hue="blue" label="Drawer Opens" value={funnel.opens ?? 0} sub="This period" />
+              <CartDrawerSpotlightTile icon="✅" hue="green" label="Checkout Rate" value={pct(funnel.checkout_rate)} sub={`${funnel.checkouts ?? 0} checkouts`} />
+              <CartDrawerSpotlightTile icon="🚫" hue="red" label="Bounce Rate" value={pct(funnel.bounce_rate)} sub="Opened, never checked out" />
+              <CartDrawerSpotlightTile icon="⏱" hue="amber" label="Time to Checkout" value={secs(funnel.avg_checkout_time_ms)} sub="Open → Checkout click" />
+              <CartDrawerSpotlightTile icon="👀" hue="purple" label="Time in Drawer" value={secs(funnel.avg_dwell_time_ms)} sub="Open → Close" />
             </div>
 
             <SiteTrendChart
@@ -14013,35 +14037,37 @@
               ]}
             />
 
-            {/* Does an upsell add correlate with checking out, or with bouncing? */}
-            <div className="card" style={{marginBottom:14,padding:'14px 16px'}}>
-              <div style={{fontSize:13,fontWeight:700,color:'var(--text)',marginBottom:10}}>🎯 Checkout Rate: Upsell-Add Sessions vs Others</div>
+            {/* Does an upsell add correlate with checking out, or with bouncing? — a
+                head-to-head split card, not another plain bar list. */}
+            <div className="card" style={{marginBottom:14,padding:0,overflow:'hidden'}}>
+              <div style={{padding:'12px 16px 0',fontSize:13,fontWeight:700,color:'var(--text)'}}>🎯 Checkout Rate: Upsell-Add Sessions vs Others</div>
               {funnel.upsell_sessions ? (
-                <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                  {[
-                    { label:`Added an upsell item (${funnel.upsell_sessions} sessions)`, rate:upsellRate, color:'var(--green)' },
-                    { label:'Did not add an upsell item', rate:nonUpsellRate, color:'var(--indigo)' },
-                  ].map((row,i)=>(
-                    <div key={i} style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) 50px',gap:10,alignItems:'center'}}>
-                      <div>
-                        <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:3}}>{row.label}</div>
-                        <div style={{height:9,background:'var(--bg)',borderRadius:4,overflow:'hidden'}}>
-                          <div style={{height:'100%',width:`${Math.max(3,Math.round(((row.rate||0)/maxRate)*100))}%`,background:row.color,borderRadius:4,transition:'width .3s ease'}}></div>
-                        </div>
-                      </div>
-                      <div style={{fontSize:12,fontWeight:700,color:'var(--text)',textAlign:'right'}}>{pct(row.rate)}</div>
+                <>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'center',gap:0,padding:'16px 16px 8px'}}>
+                    <div style={{textAlign:'center',padding:'10px 8px',borderRadius:12,background: upsellWins ? 'rgba(16,185,129,0.12)' : 'var(--bg)'}}>
+                      <div style={{fontSize:28,fontWeight:800,color: upsellWins ? '#10b981' : 'var(--text)',fontVariantNumeric:'tabular-nums'}}>{pct(upsellRate)}</div>
+                      <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:4}}>Added an upsell item</div>
+                      <div style={{fontSize:9.5,color:'var(--text-muted)',opacity:.8}}>{funnel.upsell_sessions} sessions</div>
+                      {upsellWins && <div style={{marginTop:6,fontSize:9,fontWeight:700,color:'#10b981',background:'rgba(16,185,129,0.15)',borderRadius:99,padding:'2px 8px',display:'inline-block'}}>🏆 BETTER</div>}
                     </div>
-                  ))}
-                  <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:2}}>
+                    <div style={{width:32,height:32,borderRadius:'50%',background:'var(--bg)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:800,color:'var(--text-muted)',margin:'0 10px'}}>VS</div>
+                    <div style={{textAlign:'center',padding:'10px 8px',borderRadius:12,background: !upsellWins ? 'rgba(16,185,129,0.12)' : 'var(--bg)'}}>
+                      <div style={{fontSize:28,fontWeight:800,color: !upsellWins ? '#10b981' : 'var(--text)',fontVariantNumeric:'tabular-nums'}}>{pct(nonUpsellRate)}</div>
+                      <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:4}}>No upsell item added</div>
+                      <div style={{fontSize:9.5,color:'var(--text-muted)',opacity:.8}}>baseline</div>
+                      {!upsellWins && upsellRate!=null && <div style={{marginTop:6,fontSize:9,fontWeight:700,color:'#10b981',background:'rgba(16,185,129,0.15)',borderRadius:99,padding:'2px 8px',display:'inline-block'}}>🏆 BETTER</div>}
+                    </div>
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text-muted)',padding:'4px 16px 14px',lineHeight:1.6}}>
                     {upsellRate!=null && nonUpsellRate!=null && (
-                      upsellRate >= nonUpsellRate
-                        ? `Upsell adds correlate with ${Math.round((upsellRate-nonUpsellRate)*100)}pt higher checkout — the upsell row is helping, not distracting.`
-                        : `Upsell adds correlate with ${Math.round((nonUpsellRate-upsellRate)*100)}pt lower checkout — worth watching whether it's adding friction.`
+                      upsellWins
+                        ? `✓ Upsell adds correlate with ${Math.round((upsellRate-nonUpsellRate)*100)}pt higher checkout — the upsell row is helping, not distracting.`
+                        : `⚠ Upsell adds correlate with ${Math.round((nonUpsellRate-upsellRate)*100)}pt lower checkout — worth watching whether it's adding friction.`
                     )}
                   </div>
-                </div>
+                </>
               ) : (
-                <div style={{fontSize:12,color:'var(--text-muted)',padding:'8px 0'}}>No upsell adds tracked in this period yet.</div>
+                <div style={{fontSize:12,color:'var(--text-muted)',padding:'8px 16px 16px'}}>No upsell adds tracked in this period yet.</div>
               )}
             </div>
 
@@ -14062,7 +14088,7 @@
             </div>
           </>
         )}
-      </>
+      </div>
     );
   }
 
@@ -14092,6 +14118,8 @@
             <button key={p.label} className={`btn btn-sm ${period.label===p.label?'btn-indigo':'btn-ghost'}`} onClick={()=>setPeriod(p)}>{p.label}</button>
           ))}
         </div>
+
+        <CartDrawerPerformance token={token} period={period} />
 
         {/* Overview strip — one tile per tracked event */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(150px, 1fr))',gap:10,marginBottom:20}}>
@@ -14148,8 +14176,6 @@
           <SiteBreakdownTable token={token} event="search_use" groupBy="page" period={period} title="🔎 Top Search Terms" />
           <SiteBreakdownTable token={token} event="search_use" groupBy="section" period={period} title="🔎 Searches — Results vs Zero Results" />
         </div>
-
-        <CartDrawerPerformance token={token} period={period} />
 
         {/* Flexible query — any event × any dimension, for anything not pinned above */}
         <div className="card" style={{marginTop:20,marginBottom:14}}>
