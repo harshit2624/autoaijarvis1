@@ -22725,6 +22725,28 @@ async function receiveReturnAtCC(rr, { force = false, source = 'admin' } = {}) {
   await rrPushHistory(rr.request_id, { event: 'received_at_cc', note: `${added.length} item(s) added to CC inventory`, source });
   auditLog(source, "rr_received_at_cc", rr.request_id, { added });
 
+  // Physically confirmed back at the warehouse — move the order to the
+  // 'returned' stage automatically instead of requiring a manual bulk-select/
+  // dropdown action every time (that gap is why #3042/#3013/#2928 only ever
+  // got there by hand). 'misc' is a separate, stronger manual override (e.g.
+  // fraud/dispute) — never clobber that one.
+  if (rr.shopify_order_id) {
+    const sid = String(rr.shopify_order_id);
+    const prevMeta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
+    if (prevMeta?.stage !== 'misc') {
+      await OM.upsert(sid, { stage: 'returned', updated_at: now });
+      logStageEvent({
+        shopifyId: sid, orderName: rr.order_name || '', vendor: rr.vendor_name || null,
+        fromStage: prevMeta?.stage || null, toStage: 'returned',
+        actor: source === 'admin' ? 'admin' : 'system', actorId: 'receive_at_cc',
+        source: 'return_request_received', reason: `Return request ${rr.request_id} received at CC`,
+      });
+      if (rr.vendor_name) {
+        await OVS.upsert(sid, rr.vendor_name, { stage: 'returned', updated_at: now });
+      }
+    }
+  }
+
   // Nudge admin to actually action this now that it's physically at the
   // warehouse — a 24h reminder cron (see cronReturnReminders) re-pings if
   // it's still sitting unresolved (no resolution set on the RR yet).
