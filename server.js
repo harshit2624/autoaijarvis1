@@ -11465,7 +11465,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
           hsn_code:      "",
           cod_amount:    cod ? codAmt : "",
           order_date:    orderDateStr,
-          total_amount:  shipmentValue,
+          total_amount:  parseFloat((shipmentValue + shippingShare).toFixed(2)),
           seller_inv:    shopifyOrder.name,
           quantity:      String(totalQty),
           shipment_length: String(length),
