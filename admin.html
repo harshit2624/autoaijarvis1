@@ -14019,14 +14019,51 @@
     );
   }
 
+  // Raw click-count head-to-head — "X clicks vs Y clicks", not a rate. Reuses
+  // the same split-card visual language as the upsell-vs-non-upsell card
+  // below, but for two straight counters (e.g. Add to Cart vs Buy It Now).
+  function ClickCompareCard({ title, note, leftLabel, leftValue, leftSub, rightLabel, rightValue, rightSub }) {
+    const haveBoth = leftValue != null && rightValue != null;
+    const leftWins = haveBoth && leftValue >= rightValue;
+    const fmt = (v) => v == null ? '…' : v.toLocaleString();
+    return (
+      <div className="card" style={{padding:0,overflow:'hidden'}}>
+        <div style={{padding:'12px 16px 0',fontSize:13,fontWeight:700,color:'var(--text)'}}>{title}</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',alignItems:'center',gap:0,padding:'16px 16px 8px'}}>
+          <div style={{textAlign:'center',padding:'10px 8px',borderRadius:12,background: leftWins ? 'rgba(16,185,129,0.12)' : 'var(--bg)'}}>
+            <div style={{fontSize:28,fontWeight:800,color: leftWins ? '#10b981' : 'var(--text)',fontVariantNumeric:'tabular-nums'}}>{fmt(leftValue)}</div>
+            <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:4}}>{leftLabel}</div>
+            {leftSub && <div style={{fontSize:9.5,color:'var(--text-muted)',opacity:.8}}>{leftSub}</div>}
+          </div>
+          <div style={{width:32,height:32,borderRadius:'50%',background:'var(--bg)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:800,color:'var(--text-muted)',margin:'0 10px'}}>VS</div>
+          <div style={{textAlign:'center',padding:'10px 8px',borderRadius:12,background: haveBoth && !leftWins ? 'rgba(16,185,129,0.12)' : 'var(--bg)'}}>
+            <div style={{fontSize:28,fontWeight:800,color: haveBoth && !leftWins ? '#10b981' : 'var(--text)',fontVariantNumeric:'tabular-nums'}}>{fmt(rightValue)}</div>
+            <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:4}}>{rightLabel}</div>
+            {rightSub && <div style={{fontSize:9.5,color:'var(--text-muted)',opacity:.8}}>{rightSub}</div>}
+          </div>
+        </div>
+        {note && <div style={{fontSize:11,color:'var(--text-muted)',padding:'4px 16px 14px',lineHeight:1.6}}>{note}</div>}
+      </div>
+    );
+  }
+
   function CartDrawerPerformance({ token, period }) {
     const [funnel, setFunnel] = useState(null);
     const [upsellProducts, setUpsellProducts] = useState(null);
+    const [eventCounts, setEventCounts] = useState(null);
 
     useEffect(() => {
       setFunnel(null);
       fetch(`${API}/admin/site-analytics/cart-drawer-funnel?from=${period.from}&to=${period.to}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(setFunnel).catch(()=>setFunnel({}));
+    }, [period.from, period.to]);
+
+    useEffect(() => {
+      setEventCounts(null);
+      fetch(`${API}/admin/site-analytics/overview?from=${period.from}&to=${period.to}`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json())
+        .then(d => setEventCounts(Object.fromEntries((d.events||[]).map(e => [e.event, e.count]))))
+        .catch(()=>setEventCounts({}));
     }, [period.from, period.to]);
 
     useEffect(() => {
@@ -14071,6 +14108,23 @@
               <CartDrawerSpotlightTile icon="🚫" hue="red" label="Bounce Rate" value={pct(funnel.bounce_rate)} sub="Opened, never checked out" />
               <CartDrawerSpotlightTile icon="⏱" hue="amber" label="Time to Checkout" value={secs(funnel.avg_checkout_time_ms)} sub="Open → Checkout click" />
               <CartDrawerSpotlightTile icon="👀" hue="purple" label="Time in Drawer" value={secs(funnel.avg_dwell_time_ms)} sub="Open → Close" />
+            </div>
+
+            {/* Raw click-count head-to-heads — how often people choose the
+                slower cart-drawer path vs the instant one-step checkout. */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:16}}>
+              <ClickCompareCard
+                title="🛒 Add to Cart vs ⚡ Buy It Now"
+                leftLabel="Add to Cart clicks" leftValue={eventCounts?.add_to_cart ?? null}
+                rightLabel="Buy It Now clicks" rightValue={eventCounts?.buy_now ?? null}
+                note="Add to Cart opens the drawer for a slower, multi-item checkout; Buy It Now skips straight to checkout for this one item."
+              />
+              <ClickCompareCard
+                title="⚡ Buy It Now vs 🛒 Sidecart Checkout"
+                leftLabel="Buy It Now clicks" leftValue={eventCounts?.buy_now ?? null}
+                rightLabel="Sidecart Checkout clicks" rightValue={funnel.checkouts ?? null}
+                note="Compares the two ways people actually start checkout — straight off the PDP, or after opening the cart drawer."
+              />
             </div>
 
             <SiteTrendChart
