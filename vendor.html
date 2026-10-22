@@ -4488,6 +4488,7 @@
     const [busy, setBusy] = useState({});   // { logo: true/false, carousel_banner: ..., banner_mobile: ..., banner_desktop: ... }
     const [removingKey, setRemovingKey] = useState({});
     const [msgs, setMsgs] = useState({});   // { [key]: {type,text} }
+    const [fallbackSaving, setFallbackSaving] = useState(false);
 
     const load = useCallback(() => {
       setLoading(true);
@@ -4536,6 +4537,17 @@
       setRemovingKey(b=>({...b,[key]:false}));
     };
 
+    const saveFallback = async (fallback) => {
+      setFallbackSaving(true);
+      try {
+        const r = await fetch(`${API}/vendor/brand-page/carousel-fallback`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ fallback }) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+        load();
+      } catch(e) { alert(e.message); }
+      setFallbackSaving(false);
+    };
+
     const DESC_LIMIT = 250;
     const descOverLimit = descDraft.length > DESC_LIMIT;
 
@@ -4571,6 +4583,7 @@
     const carouselBannerUrl = data?.carousel_banner_url || '';
     const bannerMobileUrl = data?.banner_mobile_url || '';
     const bannerDesktopUrl = data?.banner_desktop_url || '';
+    const carouselFallback = data?.carousel_fallback || 'logo';
     const plainDesc = (data?.description || '').replace(/<[^>]*>/g,'').trim();
 
     return (
@@ -4665,6 +4678,27 @@
             <div style={{textAlign:'center'}}>
               <BrandPreviewMock kind="carousel-banner" logoUrl={logoUrl} name={vendorName} bannerUrl={carouselBannerUrl}/>
               <div style={{fontSize:9,color:'var(--text-dim)',marginTop:6,textTransform:'uppercase',letterSpacing:1}}>Discover Carousel</div>
+            </div>
+          </div>
+          <div style={{padding:'0 16px 16px'}}>
+            <div style={{borderTop:'1px solid var(--border)',paddingTop:14}}>
+              <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginBottom:4}}>When no Carousel Banner is set, show:</div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Applies whenever the Carousel Banner above is empty.</div>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                {[
+                  { id:'logo', label:'🖼 My Logo' },
+                  { id:'collection_banner', label:'🏳 My Collection Banner' },
+                  { id:'none', label:'∅ Nothing (just brand name)' },
+                ].map(opt=>(
+                  <button key={opt.id} className="btn btn-sm" disabled={fallbackSaving}
+                    style={carouselFallback===opt.id
+                      ? {background:'var(--green-dim)',border:'1px solid var(--green)',color:'var(--green)',fontWeight:700}
+                      : {background:'var(--bg-card2)',border:'1px solid var(--border)',color:'var(--text-muted)'}}
+                    onClick={()=>saveFallback(opt.id)}>
+                    {carouselFallback===opt.id ? '✓ ' : ''}{opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>

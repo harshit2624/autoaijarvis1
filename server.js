@@ -6212,6 +6212,7 @@ async function resolveVendorCollection(vendorName) {
         carouselBanner: metafield(namespace: "custom", key: "brand_carousel_banner") { id reference { ... on MediaImage { image { url } } } }
         bannerMobile:    metafield(namespace: "custom", key: "brand_collection_banner") { id reference { ... on MediaImage { image { url } } } }
         bannerDesktop:   metafield(namespace: "custom", key: "brand_collection_banner_desktop") { id reference { ... on MediaImage { image { url } } } }
+        carouselFallback: metafield(namespace: "custom", key: "brand_carousel_fallback") { id value }
       }
     }
   `, { handle });
@@ -6243,6 +6244,7 @@ app.get("/vendor/brand-page", vendorAuth, async (req, res) => {
       carousel_banner_url: col.carouselBanner?.reference?.image?.url || '',
       banner_mobile_url: col.bannerMobile?.reference?.image?.url || '',
       banner_desktop_url: col.bannerDesktop?.reference?.image?.url || '',
+      carousel_fallback: col.carouselFallback?.value || 'logo',
       ...status,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6346,6 +6348,32 @@ app.delete("/vendor/brand-page/banner/:variant", vendorAuth, async (req, res) =>
 
     auditLog("vendor", `branding_${req.params.variant}_remove`, col.id, { vendor: req.vendor });
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── POST /vendor/brand-page/carousel-fallback ───────────────────────────────
+// Controls what the homepage carousel card shows when this vendor has no
+// Carousel Banner uploaded: 'logo' (default), 'collection_banner', or 'none'
+// (plain brand-name text card, ignoring both banner and logo).
+app.post("/vendor/brand-page/carousel-fallback", vendorAuth, async (req, res) => {
+  try {
+    const { fallback } = req.body || {};
+    if (!['logo', 'collection_banner', 'none'].includes(fallback)) {
+      return res.status(400).json({ error: "fallback must be 'logo', 'collection_banner', or 'none'." });
+    }
+    const col = await resolveVendorCollection(req.vendor);
+    if (!col) return res.status(404).json({ error: "We couldn't find your brand collection. Contact support." });
+
+    const upd = await shopifyGraphQL(`
+      mutation($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } }
+      }
+    `, { metafields: [{ ownerId: col.id, namespace: 'custom', key: 'brand_carousel_fallback', type: 'single_line_text_field', value: fallback }] });
+    const errs = upd?.metafieldsSet?.userErrors;
+    if (errs?.length) return res.status(400).json({ error: errs.map(e => e.message).join(', ') });
+
+    auditLog("vendor", "branding_carousel_fallback_update", col.id, { vendor: req.vendor, fallback });
+    res.json({ success: true, carousel_fallback: fallback });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
