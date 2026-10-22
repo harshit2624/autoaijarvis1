@@ -6284,6 +6284,7 @@ app.post("/vendor/brand-page/description", vendorAuth, async (req, res) => {
   try {
     const { description } = req.body || {};
     if (!description || !description.trim()) return res.status(400).json({ error: 'Description is required.' });
+    if (description.length > 250) return res.status(400).json({ error: 'Description must be 250 characters or fewer.' });
     const col = await resolveVendorCollection(req.vendor);
     if (!col) return res.status(404).json({ error: "We couldn't find your brand collection. Contact support." });
 

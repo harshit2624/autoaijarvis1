@@ -4536,8 +4536,12 @@
       setRemovingKey(b=>({...b,[key]:false}));
     };
 
+    const DESC_LIMIT = 250;
+    const descOverLimit = descDraft.length > DESC_LIMIT;
+
     const saveDescription = async () => {
       if (!descDraft.trim()) { setDescMsg({type:'error',text:'Description is required.'}); return; }
+      if (descOverLimit) { setDescMsg({type:'error',text:`Limit reached — max ${DESC_LIMIT} characters.`}); return; }
       setDescSaving(true); setDescMsg(null);
       try {
         const r = await fetch(`${API}/vendor/brand-page/description`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body: JSON.stringify({ description: descDraft }) });
@@ -4627,9 +4631,12 @@
               <textarea className="form-input" rows={4} style={{resize:'vertical',fontFamily:'var(--font-family)'}}
                 placeholder="A couple of sentences about what makes your brand different — fabric, fit, story, whatever sells it."
                 value={descDraft} onChange={e=>setDescDraft(e.target.value)}/>
+              <div style={{marginTop:4,textAlign:'right',fontSize:10,fontWeight:700,color:descOverLimit?'var(--red)':'var(--text-dim)'}}>
+                {descDraft.length}/{DESC_LIMIT}
+              </div>
               <div style={{marginTop:8,display:'flex',gap:8,alignItems:'center'}}>
-                <button className="btn btn-green btn-sm" onClick={saveDescription} disabled={descSaving}>
-                  {descSaving ? <><span className="spin">↻</span> Saving…</> : '✓ Save Description'}
+                <button className="btn btn-green btn-sm" onClick={saveDescription} disabled={descSaving||descOverLimit}>
+                  {descSaving ? <><span className="spin">↻</span> Saving…</> : (descOverLimit ? '⚠ Limit reached' : '✓ Save Description')}
                 </button>
                 {descMsg && <span style={{fontSize:11,color:descMsg.type==='error'?'var(--red)':'var(--green)'}}>{descMsg.type==='error'?'⚠':'✓'} {descMsg.text}</span>}
               </div>
