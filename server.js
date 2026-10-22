@@ -8533,6 +8533,9 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       // data ("delivered") won the comparison and misc'd orders got invoiced
       // anyway, silently defeating the whole point of bulk-moving them to misc.
       if (vendorDbStage === 'misc') return false;
+      // Orders hidden from this vendor are invisible to them end-to-end — no
+      // notifications, no penalties, and (here) no settlement credit either.
+      if ((metaMap[sid]?.hidden_from_vendors || []).includes(vendor_name)) return false;
       const shopifyFulfillmentStage = vendorStagesFromFulfillments(o.fulfillments || [], o.line_items || [])[vendor_name] || null;
       const effectiveStage = (shopifyFulfillmentStage && INVOICE_TERMINAL.includes(shopifyFulfillmentStage) && INVOICE_TERMINAL.includes(vendorDbStage) && vendorDbStage !== 'delivered')
         ? vendorDbStage  // OVS says rto/cancelled — don't override with shopify delivered
@@ -8788,6 +8791,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       for (const li of (o.line_items || [])) {
         const vendor = li.vendor;
         if (!vendor) continue;
+        if ((meta.hidden_from_vendors || []).includes(vendor)) continue;
         const vendorEntry = allVendorStageMap[String(o.id)]?.[vendor];
         // Use only order_vendor_stage — do not merge with order_meta.stage
         // order_meta.stage='rto' must not override a vendor's confirmed delivery
