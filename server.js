@@ -261,6 +261,22 @@ const OM = {
   },
 };
 
+// ── Per-vendor order hiding ────────────────────────────────────────────────
+// order_meta.hidden_from_vendors: [vendorName, ...] — admin-only toggle, set
+// via /admin/orders/:shopifyId/hide-vendor. A hidden vendor never sees the
+// order in their panel (filtered out of /vendor/orders) and never gets an
+// order-lifecycle email/WA about it; every OTHER vendor on a multi-vendor
+// order, and every customer notification, is completely unaffected — this
+// only ever removes ONE vendor's visibility into ONE order.
+async function isHiddenFromVendor(shopifyId, vendor) {
+  if (!vendor || !mdb) return false;
+  const meta = await mdb.collection('order_meta').findOne(
+    { shopify_id: String(shopifyId) },
+    { projection: { hidden_from_vendors: 1 } }
+  );
+  return (meta?.hidden_from_vendors || []).includes(vendor);
+}
+
 // ── Order snapshot — saves full Shopify order data to order_meta ──────────────
 // Called on every orders/create + orders/updated webhook so DB is always current.
 // Callers that need customer/address/items data read from here instead of hitting Shopify live.
@@ -2102,6 +2118,7 @@ app.post("/webhooks/orders", (req, res) => {
         const vendors = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
         const vcfgs = await VC.all();
         for (const vendorName of vendors) {
+          if (await isHiddenFromVendor(sid, vendorName)) continue;
           const vc = vcfgs.find(v => v.vendor_name === vendorName);
           if (vc?.email) {
             if (isPrepaid || isPartiallyPaid) {
@@ -4047,6 +4064,7 @@ async function fireStageEmails(shopifyId, newStage) {
     if (newStage === 'confirmed') {
       if (customerEmail && order.financial_status === 'paid') await sendEmail({ to: customerEmail, subject: `Order Confirmed: ${order.name} ✅`, html: templateOrderConfirmedCustomer({ order, adsStrip }), shopifyId, trigger: 'confirmed_customer' });
       for (const vendor of vendors) {
+        if (await isHiddenFromVendor(shopifyId, vendor)) continue;
         const vendorRow = await VC.get(vendor);
         const vendorMeta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Confirmed: ${order.name} — Dispatch Now`, html: templateOrderConfirmedVendor({ order, vendorName: vendor, meta: vendorMeta }), shopifyId, trigger: 'confirmed_vendor' });
@@ -4064,6 +4082,7 @@ async function fireStageEmails(shopifyId, newStage) {
         shopifyId, trigger: 'partial_customer'
       });
       for (const vendor of vendors) {
+        if (await isHiddenFromVendor(shopifyId, vendor)) continue;
         const vendorRow = await VC.get(vendor);
         if (vendorRow?.email) await sendEmail({
           to: vendorRow.email,
@@ -4101,6 +4120,7 @@ async function fireStageEmails(shopifyId, newStage) {
       if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Order Has Been Delivered! 🎉`, html: templateDelivered({ order, awb: meta.awb, courier: meta.courier, trackingUrl: meta.tracking_url, forRole: 'customer', adsStrip }), shopifyId, trigger: 'delivered_customer' });
       if (adminEmail)    await sendEmail({ to: adminEmail,    subject: `Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'admin' }), shopifyId, trigger: 'delivered_admin' });
       for (const vendor of vendors) {
+        if (await isHiddenFromVendor(shopifyId, vendor)) continue;
         const vendorRow = await VC.get(vendor);
         if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Delivered: ${order.name}`, html: templateDelivered({ order, forRole: 'vendor' }), shopifyId, trigger: 'delivered_vendor' });
       }
@@ -5385,6 +5405,10 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
 
     const orders = allOrders
       .filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName))
+      // Admin-hidden-from-this-vendor orders never reach their panel at all —
+      // other vendors on the same multi-vendor order are unaffected since this
+      // checks req.vendor specifically, not the order as a whole.
+      .filter(o => !(metaMap[String(o.id)]?.hidden_from_vendors || []).includes(req.vendor))
       .map(o => {
         const myItems = (o.line_items || []).filter(li => (li.vendor || "").toLowerCase() === vName);
         const myRevenue = myItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
@@ -6311,6 +6335,7 @@ app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
   if (!awb) return res.status(400).json({ error: "AWB / tracking number is required." });
 
   try {
+    if (await isHiddenFromVendor(shopifyId, vendorName)) return res.status(404).json({ error: "Order not found." });
     const token = await getAccessToken();
 
     // Step 1: fetch full order to know which line items belong to this vendor
@@ -7888,6 +7913,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         trackingUrl:    meta.tracking_url || (vendors.length === 1 ? (o.fulfillments||[]).find(f=>f.tracking_url)?.tracking_url || "" : ""),
         deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
+        hiddenFromVendors: meta.hidden_from_vendors || [],
         tags:           o.tags || "",
         totalDiscounts:  parseFloat(o.total_discounts || 0),
         discountCodes:   (o.discount_codes || []).map(dc => ({ code: dc.code, amount: dc.amount, type: dc.type })),
@@ -7924,6 +7950,29 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
     console.error("❌ /admin/orders:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Hide/unhide an order from one specific vendor ──────────────────────────
+// Toggle only — body: { vendor: "SICOS", hidden: true|false }. On a
+// multi-vendor order this touches ONLY the named vendor's visibility; every
+// other vendor on the same order is untouched, and no customer notification
+// is affected either way.
+app.post("/admin/orders/:shopifyId/hide-vendor", requirePermission('orders'), async (req, res) => {
+  try {
+    const { vendor, hidden } = req.body || {};
+    if (!vendor) return res.status(400).json({ error: "vendor is required" });
+    const sid = String(req.params.shopifyId);
+    const meta = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { hidden_from_vendors: 1 } });
+    let list = meta?.hidden_from_vendors || [];
+    if (hidden) {
+      if (!list.includes(vendor)) list.push(vendor);
+    } else {
+      list = list.filter(v => v !== vendor);
+    }
+    await OM.upsert(sid, { hidden_from_vendors: list });
+    auditLog('admin', hidden ? 'order_hidden_from_vendor' : 'order_unhidden_from_vendor', sid, { vendor });
+    res.json({ success: true, hidden_from_vendors: list });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── PUT /admin/orders/:id/stage ───────────────────────────────────────────
@@ -10836,6 +10885,7 @@ async function shiprocketAssignAwb(srToken, shipmentId, courierId) {
 // POST /vendor/orders/:shopifyId/create-shipment — create shipment via connected partner
 app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, res) => {
   try {
+    if (await isHiddenFromVendor(req.params.shopifyId, req.vendor)) return res.status(404).json({ error: "Order not found." });
     const { partner, weight = 0.5, length = 15, breadth = 12, height = 8, shipMode = 'Surface', items: selectedItems, courier_id: chosenCourierId } = req.body || {};
     if (!partner) return res.status(400).json({ error: "partner required" });
 
@@ -11666,7 +11716,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
               shopifyId: sid, trigger: 'vendor_shipped',
             });
           }
-          if (cfg) {
+          if (cfg && !(await isHiddenFromVendor(sid, vendor))) {
             const vendorRow = await VC.get(vendor);
             if (vendorRow?.email) {
               await sendEmail({
@@ -14702,6 +14752,10 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
   await OVS.upsert(shopifyId, vendorName, { penalty_triggered: 1 });
   console.log(`⚠️  Penalty triggered: ${orderName} / ${vendorName} — ${reason}`);
 
+  // Hiding is a communication toggle, not a penalty exemption — the penalty
+  // above still records normally, it just doesn't notify a hidden vendor.
+  if (await isHiddenFromVendor(shopifyId, vendorName)) return;
+
   // Email vendor
   const vcfg = await VC.get(vendorName);
   if (vcfg?.email) {
@@ -16447,6 +16501,7 @@ async function recordOrderConfirmationPayment({ shopify_order_id, razorpay_payme
           if (isPrepaidConvert) {
             if (customerEmail) await sendEmail({ to: customerEmail, subject: `You're All Set — ${order.name} is Fully Prepaid 🎉`, html: templateConvertedToPrepaidCustomer({ order, meta: newMeta, adsStrip }), shopifyId: sid, trigger: 'converted_prepaid_customer' });
             for (const vendor of vendors) {
+              if (await isHiddenFromVendor(sid, vendor)) continue;
               const vendorRow = await VC.get(vendor);
               if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Order Fully Prepaid: ${order.name} — No COD`, html: templateConvertedToPrepaidVendor({ order, vendorName: vendor, meta: newMeta }), shopifyId: sid, trigger: 'converted_prepaid_vendor' });
             }
@@ -16454,6 +16509,7 @@ async function recordOrderConfirmationPayment({ shopify_order_id, razorpay_payme
           } else {
             if (customerEmail) await sendEmail({ to: customerEmail, subject: `Your Advance is Confirmed — ${order.name} 🎉`, html: templatePartialAdvanceCustomer({ order, meta: newMeta, adsStrip }), shopifyId: sid, trigger: 'partial_customer' });
             for (const vendor of vendors) {
+              if (await isHiddenFromVendor(sid, vendor)) continue;
               const vendorRow = await VC.get(vendor);
               if (vendorRow?.email) await sendEmail({ to: vendorRow.email, subject: `Advance Collected — Updated COD for ${order.name}`, html: templatePartialAdvanceVendor({ order, vendorName: vendor, meta: newMeta }), shopifyId: sid, trigger: 'partial_vendor' });
             }
@@ -16670,6 +16726,7 @@ app.post("/admin/confirm-resync", adminAuth, async (req, res) => {
       if (isPrepaidConvert) {
         if (customerEmail) { await sendEmail({ to: customerEmail, subject: `You're All Set — ${order.name} is Fully Prepaid 🎉`, html: templateConvertedToPrepaidCustomer({ order, meta, adsStrip }), shopifyId: sid, trigger: 'converted_prepaid_customer' }); emailed.push(customerEmail); }
         for (const vendor of vendors) {
+          if (await isHiddenFromVendor(sid, vendor)) continue;
           const vendorRow = await VC.get(vendor);
           if (vendorRow?.email) { await sendEmail({ to: vendorRow.email, subject: `Order Fully Prepaid: ${order.name} — No COD`, html: templateConvertedToPrepaidVendor({ order, vendorName: vendor, meta }), shopifyId: sid, trigger: 'converted_prepaid_vendor' }); emailed.push(vendorRow.email); }
         }
@@ -16677,6 +16734,7 @@ app.post("/admin/confirm-resync", adminAuth, async (req, res) => {
       } else {
         if (customerEmail) { await sendEmail({ to: customerEmail, subject: `Your Advance is Confirmed — ${order.name} 🎉`, html: templatePartialAdvanceCustomer({ order, meta, adsStrip }), shopifyId: sid, trigger: 'partial_customer' }); emailed.push(customerEmail); }
         for (const vendor of vendors) {
+          if (await isHiddenFromVendor(sid, vendor)) continue;
           const vendorRow = await VC.get(vendor);
           if (vendorRow?.email) { await sendEmail({ to: vendorRow.email, subject: `Advance Collected — Updated COD for ${order.name}`, html: templatePartialAdvanceVendor({ order, vendorName: vendor, meta }), shopifyId: sid, trigger: 'partial_vendor' }); emailed.push(vendorRow.email); }
         }
@@ -16899,6 +16957,11 @@ async function penaltyCronJob() {
       const elapsed = now - row.stage_started_at;
       const sid = row.shopify_id;
       const vendor = row.vendor_name;
+      // Hiding is a communication toggle, not a penalty exemption — the 48hr
+      // breach below still calls triggerPenalty() as normal (which itself
+      // skips notifying a hidden vendor); this only skips the 24hr warning
+      // nudge below, a pure reminder with no penalty attached.
+      const vendorHiddenForWarning = await isHiddenFromVendor(sid, vendor);
 
       // Fetch order name (cheaply from Shopify if needed)
       let orderName = '';
@@ -16908,7 +16971,7 @@ async function penaltyCronJob() {
       } catch {}
 
       // 24hr warning
-      if (elapsed >= HR24 && !row.warning_sent) {
+      if (elapsed >= HR24 && !row.warning_sent && !vendorHiddenForWarning) {
         const token = penaltyToken(sid, vendor);
         const delayLink = `${SERVER_BASE}/vendor.html?openOrder=${sid}&action=delay`;
         const vcfg = await VC.get(vendor);
@@ -17951,6 +18014,7 @@ async function sendRRWANotif(rr, event, extra = {}) {
 // ── WA ping to vendor for return/exchange events ─────────────────────────
 async function sendRRVendorWANotif(rr, event) {
   if (!mdb) return;
+  if (rr.shopify_order_id && await isHiddenFromVendor(rr.shopify_order_id, rr.vendor_name)) return;
   const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: rr.vendor_name }, { projection: { phone: 1 } }).catch(() => null);
   const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
   if (rawPhone.length !== 10) return;
@@ -18089,6 +18153,7 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
     const customerPhone = (order.shipping_address?.phone || order.billing_address?.phone || order.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
     const customerEmail = order.email || '';
     const itemName = (order.line_items || []).filter(li => li.vendor === vendorName).map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ') || 'Your item';
+    const vendorHidden = await isHiddenFromVendor(sid, vendorName);
 
     // Mark alerted up-front so a slow/failing send doesn't cause duplicate retries on the next cron pass
     await mdb.collection('delivery_attempt_alerts').insertOne({ event_key: eventKey, shopify_id: sid, vendor_name: vendorName, awb, desc, alerted_at: new Date().toISOString() });
@@ -18109,7 +18174,7 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
     // ── WA to vendor — Cloud API template (WA_TPL.VENDOR_DELIVERY_ATTEMPT_FAILED),
     // Baileys plain text only as fallback. Vendor also gets the same info via
     // email below.
-    try {
+    if (!vendorHidden) try {
       const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName });
       const vendorPhone = (vp?.phone || '').replace(/\D/g,'').replace(/^91/,'').slice(-10);
       if (vendorPhone && vendorPhone.length === 10) {
@@ -18138,7 +18203,7 @@ async function sendDeliveryAttemptFailedNotif(shopifyId, vendorName, { awb, cour
       );
       await sendEmail({ to: customerEmail, subject: `📦 Delivery attempt failed for ${orderName}`, html: custHtml, shopifyId: sid, trigger: 'delivery_attempt_failed_customer' }).catch(() => {});
     }
-    if (vcfg?.email) {
+    if (vcfg?.email && !vendorHidden) {
       const vendorHtml = emailBase(
         `⚠️ Delivery Attempt Failed — ${orderName}`,
         '#dc2626',
@@ -18634,7 +18699,7 @@ async function shipsagarTrackingCron() {
                   </table>
                   <p style="color:#94a3b8;font-size:12px;margin-top:16px">If the delivery couldn't be completed, please contact the customer to arrange re-delivery.</p>`
                 );
-                if (vcfg?.email) await sendEmail({ to: vcfg.email, subject: `🛵 OFD: ${orderName} is Out for Delivery`, html: ofdHtml('vendor'), shopifyId: rec.shopify_id, trigger: 'ofd_vendor' });
+                if (vcfg?.email && !(await isHiddenFromVendor(rec.shopify_id, rec.vendor_name))) await sendEmail({ to: vcfg.email, subject: `🛵 OFD: ${orderName} is Out for Delivery`, html: ofdHtml('vendor'), shopifyId: rec.shopify_id, trigger: 'ofd_vendor' });
                 if (cfg?.adminEmail) await sendEmail({ to: cfg.adminEmail, subject: `🛵 OFD: ${orderName} — ${rec.vendor_name}`, html: ofdHtml('admin'), shopifyId: rec.shopify_id, trigger: 'ofd_admin' });
               } catch(e) { console.error('OFD vendor/admin email error:', e.message); }
             })();
@@ -25077,6 +25142,7 @@ async function scNotifyVendorsIfNeeded(chatId) {
 
   for (const vendorName of chat.vendor_names) {
     try {
+      if (chat.shopify_order_id && await isHiddenFromVendor(chat.shopify_order_id, vendorName)) continue;
       const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1, _id: 0 } });
       const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
       if (rawPhone.length !== 10) continue;
@@ -30411,6 +30477,7 @@ async function ticketSLACron() {
         if (chatDoc?.vendor_names?.length) {
           for (const vendorName of chatDoc.vendor_names) {
             try {
+              if (chatDoc.shopify_order_id && await isHiddenFromVendor(chatDoc.shopify_order_id, vendorName)) continue;
               const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1 } });
               const rawPhone = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
               if (rawPhone.length === 10) {
