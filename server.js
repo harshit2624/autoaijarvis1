@@ -14747,14 +14747,16 @@ function verifyPenaltyToken(shopifyId, vendorName, token) {
 }
 
 async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
+  // A hidden vendor is exempt from this order entirely — no penalty, no
+  // notification. They have no visibility into the order at all, so holding
+  // them to its fulfilment SLA would be penalizing them for something they
+  // can't even see or act on.
+  if (await isHiddenFromVendor(shopifyId, vendorName)) return;
+
   if (await OP.hasPending(shopifyId, vendorName)) return;
   await OP.insert(shopifyId, vendorName, orderName, reason);
   await OVS.upsert(shopifyId, vendorName, { penalty_triggered: 1 });
   console.log(`⚠️  Penalty triggered: ${orderName} / ${vendorName} — ${reason}`);
-
-  // Hiding is a communication toggle, not a penalty exemption — the penalty
-  // above still records normally, it just doesn't notify a hidden vendor.
-  if (await isHiddenFromVendor(shopifyId, vendorName)) return;
 
   // Email vendor
   const vcfg = await VC.get(vendorName);
@@ -16957,10 +16959,10 @@ async function penaltyCronJob() {
       const elapsed = now - row.stage_started_at;
       const sid = row.shopify_id;
       const vendor = row.vendor_name;
-      // Hiding is a communication toggle, not a penalty exemption — the 48hr
-      // breach below still calls triggerPenalty() as normal (which itself
-      // skips notifying a hidden vendor); this only skips the 24hr warning
-      // nudge below, a pure reminder with no penalty attached.
+      // A hidden vendor skips both the 24hr warning nudge below AND the 48hr
+      // triggerPenalty() call further down (that function exempts a hidden
+      // vendor itself) — they have no visibility into this order at all, so
+      // no SLA should apply to them either.
       const vendorHiddenForWarning = await isHiddenFromVendor(sid, vendor);
 
       // Fetch order name (cheaply from Shopify if needed)
