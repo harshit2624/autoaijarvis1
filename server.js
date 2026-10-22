@@ -26667,6 +26667,79 @@ function lookupImage(productName) {
   if (!productName) return '';
   return productImageCache.get(String(productName).trim().toLowerCase()) || '';
 }
+
+// ── Collection filter support ────────────────────────────────────────────
+// pixel_events only stores productName (no productId/collection), so a
+// "filter by collection" needs the collection's current product titles
+// resolved first, then matched against productName with $in. Cached per
+// handle for 10 min — collections list itself cached for 1hr since it
+// barely changes and only powers a dropdown.
+let pixelCollectionsListCache = { data: null, at: 0 };
+const pixelCollectionProductsCache = new Map(); // handle -> { titles, at }
+
+async function listCollectionsForPixelFilter() {
+  const now = Date.now();
+  if (pixelCollectionsListCache.data && now - pixelCollectionsListCache.at < 60 * 60 * 1000) {
+    return pixelCollectionsListCache.data;
+  }
+  const out = [];
+  let after = null;
+  for (let i = 0; i < 20; i++) {
+    const data = await shopifyGraphQL(`
+      query($after: String) {
+        collections(first: 50, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes { title handle productsCount { count } }
+        }
+      }
+    `, { after });
+    const page = data?.collections;
+    if (!page) break;
+    for (const c of page.nodes || []) {
+      if ((c.productsCount?.count || 0) > 0) out.push({ title: c.title, handle: c.handle });
+    }
+    if (!page.pageInfo?.hasNextPage) break;
+    after = page.pageInfo.endCursor;
+  }
+  out.sort((a, b) => a.title.localeCompare(b.title));
+  pixelCollectionsListCache = { data: out, at: now };
+  return out;
+}
+
+async function getCollectionProductTitles(handle) {
+  const now = Date.now();
+  const cached = pixelCollectionProductsCache.get(handle);
+  if (cached && now - cached.at < 10 * 60 * 1000) return cached.titles;
+  const titles = [];
+  let after = null;
+  for (let i = 0; i < 20; i++) {
+    const data = await shopifyGraphQL(`
+      query($handle: String!, $after: String) {
+        collectionByHandle(handle: $handle) {
+          products(first: 250, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { title }
+          }
+        }
+      }
+    `, { handle, after });
+    const page = data?.collectionByHandle?.products;
+    if (!page) break;
+    titles.push(...(page.nodes || []).map(n => n.title));
+    if (!page.pageInfo?.hasNextPage) break;
+    after = page.pageInfo.endCursor;
+  }
+  pixelCollectionProductsCache.set(handle, { titles, at: now });
+  return titles;
+}
+
+// Shared by every pixel-tracker endpoint — resolves req.query.collection (a
+// handle) into a productName $in clause, or {} if no collection filter set.
+async function pixelCollectionMatch(collectionHandle) {
+  if (!collectionHandle) return {};
+  const titles = await getCollectionProductTitles(collectionHandle);
+  return { productName: { $in: titles } };
+}
 setTimeout(refreshProductVendorCache, 60000);
 setInterval(refreshProductVendorCache, 3 * 60 * 60 * 1000); // every 3 hours
 
@@ -26954,6 +27027,13 @@ app.get('/admin/pixel-tracker/brands', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── All non-empty Shopify collections — powers the collection filter dropdown
+app.get('/admin/pixel-tracker/collections', adminAuth, async (req, res) => {
+  try {
+    res.json({ collections: await listCollectionsForPixelFilter() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Search by product name — one product's full funnel, for picking winners
 // for a specific campaign without scrolling the leaderboard ────────────────
 app.get('/admin/pixel-tracker/product-search', adminAuth, async (req, res) => {
@@ -26962,6 +27042,10 @@ app.get('/admin/pixel-tracker/product-search', adminAuth, async (req, res) => {
     if (!q) return res.json({ products: [] });
     const match = { ...pixelDateRange(req.query.from, req.query.to), productName: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } };
     if (req.query.vendor) match.vendor = req.query.vendor;
+    if (req.query.collection) {
+      const colMatch = await pixelCollectionMatch(req.query.collection);
+      if (colMatch.productName) match.productName = { ...match.productName, ...colMatch.productName };
+    }
     const rows = await mdb.collection('pixel_events').aggregate([
       { $match: match },
       { $group: {
@@ -26997,6 +27081,7 @@ app.get('/admin/pixel-tracker/summary', adminAuth, async (req, res) => {
   try {
     const match = pixelDateRange(req.query.from, req.query.to);
     if (req.query.vendor) match.vendor = req.query.vendor;
+    if (req.query.collection) Object.assign(match, await pixelCollectionMatch(req.query.collection));
     const rows = await mdb.collection('pixel_events').aggregate([
       { $match: match },
       { $group: { _id: '$eventName', count: { $sum: 1 }, value: { $sum: { $ifNull: ['$value', 0] } } } },
@@ -27024,6 +27109,10 @@ app.get('/admin/pixel-tracker/top-products', adminAuth, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 30, 100);
     const match = { ...pixelDateRange(req.query.from, req.query.to), eventName: metric, productName: { $ne: 'N/A' } };
     if (req.query.vendor) match.vendor = req.query.vendor;
+    if (req.query.collection) {
+      const colMatch = await pixelCollectionMatch(req.query.collection);
+      if (colMatch.productName) match.productName = { ...match.productName, ...colMatch.productName };
+    }
     const top = await mdb.collection('pixel_events').aggregate([
       { $match: match },
       { $group: { _id: '$productName', count: { $sum: 1 }, image: { $last: '$productImage' }, vendor: { $last: '$vendor' } } },
@@ -27041,6 +27130,10 @@ app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
     const minViews = parseInt(req.query.minViews) || 10;
     const match = { ...pixelDateRange(req.query.from, req.query.to), productName: { $ne: 'N/A' } };
     if (req.query.vendor) match.vendor = req.query.vendor;
+    if (req.query.collection) {
+      const colMatch = await pixelCollectionMatch(req.query.collection);
+      if (colMatch.productName) match.productName = { ...match.productName, ...colMatch.productName };
+    }
     const rows = await mdb.collection('pixel_events').aggregate([
       { $match: match },
       { $group: {
@@ -27077,6 +27170,7 @@ app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const match = req.query.vendor ? { vendor: req.query.vendor } : {};
+    if (req.query.collection) Object.assign(match, await pixelCollectionMatch(req.query.collection));
     const logs = await mdb.collection('pixel_events').find(match, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(limit).toArray();
     res.json({ logs });
   } catch (e) { res.status(500).json({ error: e.message }); }

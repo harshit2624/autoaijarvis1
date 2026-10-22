@@ -14258,6 +14258,8 @@
     const [now,       setNow]       = useState(Date.now());
     const [brands,    setBrands]    = useState([]);
     const [brand,     setBrand]     = useState('');
+    const [collections, setCollections] = useState([]);
+    const [collection,  setCollection]  = useState('');
     const [searchQ,   setSearchQ]   = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -14268,9 +14270,11 @@
     useEffect(() => {
       fetch(`${API}/admin/pixel-tracker/brands`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>setBrands(d.brands||[])).catch(()=>{});
+      fetch(`${API}/admin/pixel-tracker/collections`, { headers:{ Authorization:'Bearer '+token } })
+        .then(r=>r.json()).then(d=>setCollections(d.collections||[])).catch(()=>{});
     }, []);
 
-    const qs = () => `from=${period.from}&to=${period.to}${brand?`&vendor=${encodeURIComponent(brand)}`:''}`;
+    const qs = () => `from=${period.from}&to=${period.to}${brand?`&vendor=${encodeURIComponent(brand)}`:''}${collection?`&collection=${encodeURIComponent(collection)}`:''}`;
 
     const loadSummary = () => {
       setSumLoading(true);
@@ -14289,7 +14293,8 @@
     };
     const loadLogs = () => {
       const vq = brand?`&vendor=${encodeURIComponent(brand)}`:'';
-      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=50${vq}`, { headers:{ Authorization:'Bearer '+token } })
+      const cq = collection?`&collection=${encodeURIComponent(collection)}`:'';
+      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=50${vq}${cq}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>{ setLogs(d.logs||[]); setLogsLoading(false); }).catch(()=>setLogsLoading(false));
     };
     const runSearch = () => {
@@ -14299,11 +14304,11 @@
         .then(r=>r.json()).then(d=>setSearchResults(d.products||[])).catch(()=>{}).finally(()=>setSearchLoading(false));
     };
 
-    useEffect(loadSummary, [period, brand]);
-    useEffect(loadTopProducts, [period, topTab, topLimit, brand]);
-    useEffect(loadLeaderboard, [period, rankBy, lbLimit, minViews, brand]);
-    useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, [brand]);
-    useEffect(() => { const t = setTimeout(runSearch, 350); return () => clearTimeout(t); }, [searchQ, brand, period]);
+    useEffect(loadSummary, [period, brand, collection]);
+    useEffect(loadTopProducts, [period, topTab, topLimit, brand, collection]);
+    useEffect(loadLeaderboard, [period, rankBy, lbLimit, minViews, brand, collection]);
+    useEffect(() => { loadLogs(); const t = setInterval(loadLogs, 6000); return () => clearInterval(t); }, [brand, collection]);
+    useEffect(() => { const t = setTimeout(runSearch, 350); return () => clearTimeout(t); }, [searchQ, brand, collection, period]);
 
     const EVENT_META = {
       ViewContent:       { label:'Views',     icon:'👁', color:'#6366f1' },
@@ -14340,6 +14345,10 @@
             <select value={brand} onChange={e=>setBrand(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'7px 10px',cursor:'pointer',fontWeight:brand?700:400}}>
               <option value="">All brands</option>
               {brands.map(b=><option key={b} value={b}>{b}</option>)}
+            </select>
+            <select value={collection} onChange={e=>setCollection(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'7px 10px',cursor:'pointer',fontWeight:collection?700:400}}>
+              <option value="">All collections</option>
+              {collections.map(c=><option key={c.handle} value={c.handle}>{c.title}</option>)}
             </select>
             <PeriodPicker period={period} onChange={setPeriod} align="right"/>
           </div>
@@ -14382,7 +14391,7 @@
           />
           {searchLoading && <div style={{fontSize:12,color:'var(--text-muted)',padding:'6px 2px'}}>Searching…</div>}
           {!searchLoading && searchRan && searchResults.length===0 && (
-            <div style={{fontSize:12,color:'var(--text-muted)',padding:'6px 2px'}}>No matching products{brand?` for ${brand}`:''} in this period.</div>
+            <div style={{fontSize:12,color:'var(--text-muted)',padding:'6px 2px'}}>No matching products{brand?` for ${brand}`:''}{collection?` in ${collections.find(c=>c.handle===collection)?.title||collection}`:''} in this period.</div>
           )}
           {!searchLoading && searchResults.length>0 && (
             <div style={{display:'flex',flexDirection:'column',gap:6}}>
