@@ -1966,8 +1966,8 @@
                                 onUpdated();
                               } catch(e) { alert(e.message); }
                             }}
-                            style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:99,cursor:'pointer',border:'1px solid '+(isHidden?'#f87171':'var(--border)'),background:isHidden?'rgba(248,113,113,0.12)':'var(--bg-card2)',color:isHidden?'#f87171':'var(--text-muted)'}}>
-                            {isHidden ? `🙈 Hidden: ${v}` : v}
+                            style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:99,cursor:'pointer',border:'1px solid #f87171',background:isHidden?'#f87171':'rgba(248,113,113,0.1)',color:isHidden?'#fff':'#f87171'}}>
+                            {isHidden ? `🙈 Hidden: ${v} (click to unhide)` : `🚫 Hide from ${v}`}
                           </button>
                         );
                       })}
