@@ -6326,6 +6326,28 @@ app.post("/vendor/brand-page/banner/:variant", vendorAuth, brandingUpload.single
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── DELETE /vendor/brand-page/banner/:variant ───────────────────────────────
+// Clears an optional banner metafield (carousel/mobile/desktop) back to empty.
+app.delete("/vendor/brand-page/banner/:variant", vendorAuth, async (req, res) => {
+  try {
+    const def = BRANDING_MF[req.params.variant];
+    if (!def) return res.status(400).json({ error: 'Unknown banner type.' });
+    const col = await resolveVendorCollection(req.vendor);
+    if (!col) return res.status(404).json({ error: "We couldn't find your brand collection. Contact support." });
+
+    const upd = await shopifyGraphQL(`
+      mutation($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) { deletedMetafields { key } userErrors { field message } }
+      }
+    `, { metafields: [{ ownerId: col.id, namespace: def.namespace, key: def.key }] });
+    const errs = upd?.metafieldsDelete?.userErrors;
+    if (errs?.length) return res.status(400).json({ error: errs.map(e => e.message).join(', ') });
+
+    auditLog("vendor", `branding_${req.params.variant}_remove`, col.id, { vendor: req.vendor });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── POST /vendor/orders/:shopifyId/fulfill ────────────────────────────────
 // Partially fulfills ONLY this vendor's line items — not the whole order
 app.post("/vendor/orders/:shopifyId/fulfill", vendorAuth, async (req, res) => {
