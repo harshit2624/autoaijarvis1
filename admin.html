@@ -1948,32 +1948,6 @@
                 <div className="detail-row"><span className="dr-label">Customer</span><span className="dr-val">{order.customer}</span></div>
                 {order.email && <div className="detail-row"><span className="dr-label">Email</span><span className="dr-val" style={{fontSize:10}}>{order.email}</span></div>}
                 <div className="detail-row"><span className="dr-label">Vendors</span><span className="dr-val">{order.vendors?.join(', ')||'—'}</span></div>
-                {order.vendors?.length > 0 && (
-                  <div className="detail-row" style={{alignItems:'flex-start'}}>
-                    <span className="dr-label">Hide from Vendor</span>
-                    <span className="dr-val" style={{display:'flex',flexWrap:'wrap',gap:6,justifyContent:'flex-end'}}>
-                      {order.vendors.map(v => {
-                        const isHidden = (order.hiddenFromVendors||[]).includes(v);
-                        return (
-                          <button key={v} title={isHidden ? `Hidden from ${v} — no notifications, not visible in their panel. Click to unhide.` : `Click to hide this order from ${v} — admin dashboard only, customer notifications unaffected.`}
-                            onClick={async ()=>{
-                              try {
-                                const r = await fetch(`${API}/admin/orders/${order.shopifyId}/hide-vendor`, {
-                                  method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-                                  body: JSON.stringify({ vendor: v, hidden: !isHidden }),
-                                });
-                                if (!r.ok) throw new Error('Failed to update');
-                                onUpdated();
-                              } catch(e) { alert(e.message); }
-                            }}
-                            style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:99,cursor:'pointer',border:'1px solid #f87171',background:isHidden?'#f87171':'rgba(248,113,113,0.1)',color:isHidden?'#fff':'#f87171'}}>
-                            {isHidden ? `🙈 Hidden: ${v} (click to unhide)` : `🚫 Hide from ${v}`}
-                          </button>
-                        );
-                      })}
-                    </span>
-                  </div>
-                )}
                 {/* order.orderValue is Shopify's total_price — ALREADY net of any discount
                     code (and inclusive of shipping). Showing it pre-discount here (adding
                     totalDiscounts back) and then subtracting once below is the correct
@@ -2461,6 +2435,37 @@
                 </div>
               </div>
             </div>
+
+            {/* Hide from Vendor — kept out of the Order Info box above since that
+                section gets screenshotted and shared with vendors often; this one
+                never should be. */}
+            {order.vendors?.length > 0 && (
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
+                <div className="detail-box-title" style={{marginBottom:10}}>🙈 Hide from Vendor</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>Admin-only — a hidden vendor loses this order from their panel entirely and gets no notifications about it (penalties included). Other vendors on the same order and all customer notifications are unaffected.</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                  {order.vendors.map(v => {
+                    const isHidden = (order.hiddenFromVendors||[]).includes(v);
+                    return (
+                      <button key={v} title={isHidden ? `Hidden from ${v} — no notifications, not visible in their panel. Click to unhide.` : `Click to hide this order from ${v} — admin dashboard only, customer notifications unaffected.`}
+                        onClick={async ()=>{
+                          try {
+                            const r = await fetch(`${API}/admin/orders/${order.shopifyId}/hide-vendor`, {
+                              method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+                              body: JSON.stringify({ vendor: v, hidden: !isHidden }),
+                            });
+                            if (!r.ok) throw new Error('Failed to update');
+                            onUpdated();
+                          } catch(e) { alert(e.message); }
+                        }}
+                        style={{fontSize:11,fontWeight:700,padding:'5px 11px',borderRadius:99,cursor:'pointer',border:'1px solid #f87171',background:isHidden?'#f87171':'rgba(248,113,113,0.1)',color:isHidden?'#fff':'#f87171'}}>
+                        {isHidden ? `🙈 Hidden: ${v} (click to unhide)` : `🚫 Hide from ${v}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Create Shipment */}
             <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
