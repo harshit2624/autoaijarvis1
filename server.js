@@ -30829,13 +30829,13 @@ const WA_MENUS = {
     `${_F}\n▪ C R O S C R O W ▪\n60+ HOMEGROWN LABELS\n────────────────\n1  TRACK ORDER\n2  RETURN / EXCHANGE\n3  TRACK RETURN/EXCHANGE\n4  AI ASSISTANT\n5  HUMAN\n────────────────\nSELECT 1–5\n${_F}`,
 
   order_lookup:
-    `${_F}\n▪ C R O S C R O W ▪\nYour order ID please — e.g. #1234\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\nYour order ID please\ne.g. #1234\n${_F}`,
 
   order_lookup_rne:
-    `${_F}\n▪ C R O S C R O W ▪\nYour order ID please — e.g. #1234\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\nYour order ID please\ne.g. #1234\n${_F}`,
 
   order_lookup_rne_track:
-    `${_F}\n▪ C R O S C R O W ▪\nYour order ID please — e.g. #1234\n${_F}`,
+    `${_F}\n▪ C R O S C R O W ▪\nYour order ID please\ne.g. #1234\n${_F}`,
 
   order_not_confirmed: (name, url) =>
     `${_F}\n▪ C R O S C R O W ▪\n░░░░░░░░░░░░░░ 0%\nAWAITING CONFIRMATION\n────────────────\nORDER  ${name}\n\nPay ₹99 to confirm your COD\norder — helps us block fake\nand mistaken orders.\n\nCONFIRM\n${url}\n────────────────\nGOES ON HOLD AFTER 48 HRS\n${_F}`,
