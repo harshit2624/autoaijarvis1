@@ -426,6 +426,24 @@ function orderStubFromMeta(meta) {
   };
 }
 
+// Merges two stage values honoring the same domain-specific escape hatches
+// OVS.upsert already applies to its own stage field — factored out so the
+// order_meta mirror below can share them instead of silently diverging.
+// Without this, order_meta.stage could get permanently stuck on 'stuck'
+// even after the real per-vendor row genuinely advanced to pickup/transit/
+// ofd/delivered (confirmed live on order #3589, 2026-10-23: BlueDart's full
+// scanned journey through delivery was correctly reflected in
+// order_vendor_stage, but order_meta.stage stayed frozen at 'stuck' forever
+// because this merge used plain higherStage(), which ranks 'stuck' above
+// 'delivered' since it's listed later in STAGE_ORDER).
+function mergeStageWithEscapes(existingStage, incomingStage) {
+  if (!existingStage) return incomingStage;
+  if (incomingStage === 'delivered' && existingStage === 'rto') return 'delivered';
+  if (incomingStage === 'rto' && existingStage === 'delivered') return 'delivered';
+  if (existingStage === 'stuck' && ['pickup', 'transit', 'ofd', 'delivered'].includes(incomingStage)) return incomingStage;
+  return higherStage(existingStage, incomingStage);
+}
+
 const OVS = {
   async upsert(shopify_id, vendor_name, fields, { respectManualOverride = false, respectStageOrder = false } = {}) {
     const sid = String(shopify_id);
@@ -478,18 +496,7 @@ const OVS = {
     const requestedStage = fields.stage;
     let protectedFromDowngrade = false;
     if (fields.stage && respectStageOrder && existing?.stage) {
-      let kept;
-      if (fields.stage === 'delivered' && existing.stage === 'rto') kept = 'delivered';
-      else if (fields.stage === 'rto' && existing.stage === 'delivered') kept = 'delivered';
-      // 'stuck' means "we concluded the courier never actually took this" —
-      // if a LATER real courier scan shows genuine forward motion (it was
-      // picked up after all, just late), that's direct evidence the stuck
-      // diagnosis no longer holds. Automated syncs may advance OUT of
-      // 'stuck' into real pipeline progress, but never INTO 'stuck' from
-      // one of these (that's the one-way penalty-triggering classification
-      // syncShipSagarStage makes explicitly, not a generic downgrade).
-      else if (existing.stage === 'stuck' && ['pickup', 'transit', 'ofd', 'delivered'].includes(fields.stage)) kept = fields.stage;
-      else kept = higherStage(existing.stage, fields.stage);
+      const kept = mergeStageWithEscapes(existing.stage, fields.stage);
       if (kept !== requestedStage) protectedFromDowngrade = true;
       fields = { ...fields, stage: kept };
     }
@@ -547,7 +554,15 @@ const OVS = {
     const appliedStage = fields.stage ?? existing?.stage;
     if (appliedStage) {
       const metaDoc = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1, _id: 0 } });
-      const mergedStage = higherStage(metaDoc?.stage || 'new', appliedStage);
+      // Same escapes as the row-level merge above (stuck->real progress,
+      // rto->delivered) when this call opted into them — otherwise this
+      // mirror used to re-derive via plain higherStage() and could freeze
+      // order_meta.stage on 'stuck' forever even after the real row moved
+      // past it. Gated on respectStageOrder so a manual/admin call (which
+      // never asked for the escape) keeps the old strict behavior.
+      const mergedStage = respectStageOrder
+        ? mergeStageWithEscapes(metaDoc?.stage || 'new', appliedStage)
+        : higherStage(metaDoc?.stage || 'new', appliedStage);
       if (mergedStage !== metaDoc?.stage) {
         await mdb.collection('order_meta').updateOne(
           { shopify_id: sid },
