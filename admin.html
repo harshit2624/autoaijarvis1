@@ -2472,7 +2472,7 @@
                 for an order that looks fishy. Sending it also locks the
                 customer's track page to the pay-₹99 screen until paid or
                 dispatched. */}
-            {order.financial !== 'paid' && (order.advancePaid||0) < 99 && (
+            {order.financial !== 'paid' && (order.advancePaid||0) < 99 && !['ready','pickup','transit','ofd','delivered','rto','cancelled'].includes(order.stage) && (
               <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
                 <div className="detail-box-title" style={{marginBottom:10}}>⚠️ High-Risk Advance Ask</div>
                 <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>
