@@ -31764,7 +31764,11 @@ async function startBaileysBot() {
                     } else {
                       // No ₹99 ask over WhatsApp — risky orders already get
                       // mandatory partial payment enforced at checkout itself.
-                      await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! We're packing it up now — you'll get updates right here.\n\nTrack: ${SERVER_URL}/o/${_oSlug}` });
+                      const _Fcr = '```';
+                      await sock.sendMessage(sender, {
+                        text: `${_Fcr}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ✔\n────────────────\nORDER  ${ord.name}\n\nLocked in — packing now. Updates land right here on WhatsApp.\n────────────────\n${_Fcr}`,
+                        ctaUrl: { displayText: 'Track Order', url: `${SERVER_URL}/o/${_oSlug}` },
+                      });
                     }
                     waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
                   } else {
