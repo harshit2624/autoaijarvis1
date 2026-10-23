@@ -440,7 +440,12 @@ function mergeStageWithEscapes(existingStage, incomingStage) {
   if (!existingStage) return incomingStage;
   if (incomingStage === 'delivered' && existingStage === 'rto') return 'delivered';
   if (incomingStage === 'rto' && existingStage === 'delivered') return 'delivered';
-  if (existingStage === 'stuck' && ['pickup', 'transit', 'ofd', 'delivered'].includes(incomingStage)) return incomingStage;
+  // 'stuck' must be able to escape to ANY real courier-confirmed outcome,
+  // not a hardcoded partial list — 'rto' was missing here (confirmed live
+  // on #3622, 2026-10-24: the vendor row genuinely reached 'rto' but
+  // order_meta froze on 'stuck' since 'rto' wasn't in this escape list,
+  // same bug class as the pickup/transit/ofd/delivered case already fixed).
+  if (existingStage === 'stuck' && ['pickup', 'transit', 'ofd', 'delivered', 'rto'].includes(incomingStage)) return incomingStage;
   return higherStage(existingStage, incomingStage);
 }
 
@@ -554,15 +559,30 @@ const OVS = {
     const appliedStage = fields.stage ?? existing?.stage;
     if (appliedStage) {
       const metaDoc = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1, _id: 0 } });
-      // Same escapes as the row-level merge above (stuck->real progress,
-      // rto->delivered) when this call opted into them — otherwise this
-      // mirror used to re-derive via plain higherStage() and could freeze
-      // order_meta.stage on 'stuck' forever even after the real row moved
-      // past it. Gated on respectStageOrder so a manual/admin call (which
-      // never asked for the escape) keeps the old strict behavior.
-      const mergedStage = respectStageOrder
-        ? mergeStageWithEscapes(metaDoc?.stage || 'new', appliedStage)
-        : higherStage(metaDoc?.stage || 'new', appliedStage);
+      // Single-vendor order: there's exactly one source of truth, so
+      // order_meta.stage should just EQUAL it directly — no ranking merge,
+      // which is a multi-vendor concept (pick the furthest-along vendor)
+      // that has no meaning with only one vendor and can only cause
+      // needless divergence (confirmed live on #3622, 2026-10-24: single
+      // SICOS vendor, order_meta frozen on a stale stage while the vendor
+      // row had moved on — nothing to "merge", there was only ever one
+      // real value). Multi-vendor orders keep the merge, since there
+      // genuinely are multiple rows to reconcile into one order-level stage.
+      const vendorCount = await mdb.collection('order_vendor_stage').countDocuments({ shopify_id: sid });
+      let mergedStage;
+      if (vendorCount <= 1) {
+        mergedStage = appliedStage;
+      } else {
+        // Same escapes as the row-level merge above (stuck->real progress,
+        // rto->delivered) when this call opted into them — otherwise this
+        // mirror used to re-derive via plain higherStage() and could freeze
+        // order_meta.stage on 'stuck' forever even after the real row moved
+        // past it. Gated on respectStageOrder so a manual/admin call (which
+        // never asked for the escape) keeps the old strict behavior.
+        mergedStage = respectStageOrder
+          ? mergeStageWithEscapes(metaDoc?.stage || 'new', appliedStage)
+          : higherStage(metaDoc?.stage || 'new', appliedStage);
+      }
       if (mergedStage !== metaDoc?.stage) {
         await mdb.collection('order_meta').updateOne(
           { shopify_id: sid },
@@ -17716,6 +17736,18 @@ function shipsagarFinalStage(history, latestStage, currentStatus) {
   if (/\brto\b/i.test(currentStatus || '')) return 'rto';
   const hadEarlierRto = (history || []).some(h => {
     const d = h.ActionDescription || h.Status || h.EventDescription || h.Description || '';
+    // An "earlier RTO signal" must be a genuine refusal/return phrase, not a
+    // retry-able failed delivery ATTEMPT that happens to share the "refus"
+    // stem — e.g. "Cnee Refused Id/Otp Not Shared-Incorrect" is an OTP/ID
+    // verification failure on one attempt, not the customer refusing the
+    // package; confirmed live on #3622/#3618, 2026-10-24: both retried
+    // successfully within minutes, real current_status plain "DELIVERED",
+    // yet this check wrongly overrode it to 'rto'. shipsagarIsFailedAttempt
+    // already catalogues this whole family of retry-able NDR reasons
+    // (OTP, door locked, consignee not available, etc.) — exclude those
+    // from counting here even if shipsagarStatusToStage's broader 'refus'
+    // match would otherwise call it rto.
+    if (shipsagarIsFailedAttempt(d)) return false;
     return shipsagarStatusToStage(d) === 'rto';
   });
   return hadEarlierRto ? 'rto' : 'delivered';
