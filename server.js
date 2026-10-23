@@ -3011,15 +3011,19 @@ async function sendRREmail(type, rr) {
 // (2026-10-24), not yet wired into the live fireStageEmails()/cron send
 // paths. Kept standalone so they can be tested via /admin/email-test-send
 // without risking the existing confirmed/OFD send flow until approved.
-const EMAIL_BANNER_URL = `${SERVER_URL}/email-assets/banner-70brands.webp`;
 const EMAIL_BANNER_RATIO = 1400 / 1235; // real asset's natural height/width
 const EMAIL_RED = '#e23b23';
 
+// SERVER_URL isn't declared until further down the file (const, so it's in
+// the temporal dead zone up here) — read it lazily inside the function
+// instead of at module-load time, which crashed the whole process on boot
+// (ReferenceError: Cannot access 'SERVER_URL' before initialization).
 function emailBoldBanner(widthPx) {
   const innerW = widthPx - 80;
   const h = Math.round(innerW * EMAIL_BANNER_RATIO);
+  const bannerUrl = `${SERVER_URL}/email-assets/banner-70brands.webp`;
   return `<table role="presentation" width="100%" style="background:#ffffff"><tr><td align="center" style="padding:34px 40px">
-    <img src="${EMAIL_BANNER_URL}" width="${innerW}" height="${h}" style="width:100%;max-width:${innerW}px;height:auto;display:block">
+    <img src="${bannerUrl}" width="${innerW}" height="${h}" style="width:100%;max-width:${innerW}px;height:auto;display:block">
   </td></tr></table>`;
 }
 
