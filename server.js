@@ -511,9 +511,22 @@ const OVS = {
     // actually changes (avoid duplicate entries on no-op upserts that just
     // update other fields like awb/courier without changing stage).
     let stageHistoryUpdate = {};
-    if (fields.stage && fields.stage !== existing?.stage) {
+    const stageActuallyChanged = fields.stage && fields.stage !== existing?.stage;
+    if (stageActuallyChanged) {
       const history = Array.isArray(existing?.stage_history) ? existing.stage_history : [];
       stageHistoryUpdate = { stage_history: [...history, { stage: fields.stage, at: Date.now() }].slice(-25) };
+    }
+
+    // Baseline entry into order_stage_events for EVERY stage change through
+    // this single choke point — ~20 of the 39 call sites into
+    // order_vendor_stage never called logStageEvent themselves (confirmed by
+    // audit: SICOS had 994 stage rows but only 109 event-log entries), so
+    // dispatch-time/delivery-time/time-in-stage analysis silently had almost
+    // no data for most vendors/orders. Call sites that already log their own
+    // richer entry (actor/reason/source) right after this call still can —
+    // this is just the guaranteed floor, not a replacement for those.
+    if (stageActuallyChanged) {
+      logStageEvent({ shopifyId: sid, vendor: vendor_name, fromStage: existing?.stage || null, toStage: fields.stage, awb: fields.awb || existing?.awb || '', courier: fields.courier || existing?.courier || '', actor: 'system', actorId: 'ovs_upsert', source: 'ovs_upsert_auto' });
     }
 
     await mdb.collection('order_vendor_stage').updateOne(
@@ -6560,10 +6573,7 @@ app.delete("/vendor/orders/:shopifyId/fulfillment/:fulfillmentId", vendorAuth, a
     }
 
     // Clear AWB/stage in our DB so vendor can re-submit
-    await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: String(shopifyId), vendor_name: req.vendor },
-      { $unset: { awb: '', awb_courier: '' }, $set: { stage: 'confirmed', stage_started_at: Date.now() } }
-    );
+    await OVS.upsert(shopifyId, req.vendor, { awb: '', awb_courier: '', stage: 'confirmed', stage_started_at: Date.now() });
 
     auditLog('vendor', 'fulfillment_cancelled', shopifyId, { vendor: req.vendor, fulfillmentId });
     res.json({ success: true });
@@ -29390,10 +29400,7 @@ async function waHandleVendorReply(sock, sender, text) {
       await sendAndLog(`⚠️ Couldn't read the AWB. Please send it in this format:\n_123456789 Delhivery_`, vendorT);
       return;
     }
-    await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: String(shopify_id) },
-      { $set: { awb, courier, stage: 'transit', updated_at: new Date().toISOString() } }
-    );
+    await OVS.upsert(shopify_id, vendorT, { awb, courier, stage: 'transit', updated_at: new Date().toISOString() });
     await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), resolved: { $ne: true } }, { $set: { resolved: true } });
     await waSessionClear(sender);
     await sendAndLog(`✅ Tracking updated for *${order_name}*!\n\nAWB: *${awb}*\nCourier: *${courier}*\n\nThank you! 🙏`, vendorT);
@@ -29414,10 +29421,7 @@ async function waHandleVendorReply(sock, sender, text) {
         await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR DELAY\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor_name}\nREASON ${data.reason}\nETA    ${data.eta_display || 'not specified'}\n────────────────\nSOURCE Vendor WA (NL)\n\`\`\``);
         await sendAndLog(`✅ *Delay recorded for ${order_name}*\n\nReason: ${data.reason}\nShipping by: *${data.eta_display || 'not specified'}*\n\nCustomer has been notified. Thank you! 🙏`, vendor_name);
       } else if (action === 'tracking') {
-        await mdb.collection('order_vendor_stage').updateOne(
-          { shopify_id: String(shopify_id) },
-          { $set: { awb: data.awb, courier: data.courier, stage: 'transit', updated_at: new Date().toISOString() } }
-        );
+        await OVS.upsert(shopify_id, vendor_name, { awb: data.awb, courier: data.courier, stage: 'transit', updated_at: new Date().toISOString() });
         await mdb.collection('wa_vendor_nudges').updateOne({ shopify_id: String(shopify_id), vendor: vendor_name, resolved: { $ne: true } }, { $set: { resolved: true } }).catch(() => {});
         await waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR TRACKING\n────────────────\nORDER  ${order_name}\nVENDOR ${vendor_name}\nAWB    ${data.awb}\nVIA    ${data.courier}\n────────────────\nSOURCE Vendor WA (NL)\n\`\`\``);
         await sendAndLog(`✅ *Tracking updated for ${order_name}*\n\nAWB: *${data.awb}*\nCourier: *${data.courier}*\n\nThank you! 🙏`, vendor_name);
@@ -29605,10 +29609,10 @@ async function waHandleVendorReply(sock, sender, text) {
 
   if (parsed.type === 'tracking' && parsed.awb) {
     const courier = parsed.courier || 'Not specified';
-    const result = await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: String(orderNum) },
-      { $set: { awb: parsed.awb, courier, stage: 'transit', updated_at: new Date().toISOString() } }
-    );
+    const existingRow = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(orderNum) }, { projection: { vendor_name: 1 } });
+    const result = existingRow
+      ? (await OVS.upsert(orderNum, existingRow.vendor_name, { awb: parsed.awb, courier, stage: 'transit', updated_at: new Date().toISOString() }), { matchedCount: 1 })
+      : { matchedCount: 0 };
     if (result.matchedCount > 0) {
       if (recentNudge) await mdb.collection('wa_vendor_nudges').updateOne({ _id: recentNudge._id }, { $set: { resolved: true } });
       await sock.sendMessage(sender, { text: `✅ Tracking updated for order *${orderName}*!\n\nAWB: *${parsed.awb}*\nCourier: *${courier}*\n\nCustomer will be able to track their order. Thank you! 🙏` });
@@ -29622,10 +29626,10 @@ async function waHandleVendorReply(sock, sender, text) {
   if (parsed.type === 'delay') {
     const reason = parsed.reason || text;
     const eta = parsed.eta || 'Not specified';
-    const result = await mdb.collection('order_vendor_stage').updateOne(
-      { shopify_id: String(orderNum) },
-      { $set: { delay_reason: reason, delay_resolution_date: eta, updated_at: new Date().toISOString() } }
-    );
+    const existingDelayRow = await mdb.collection('order_vendor_stage').findOne({ shopify_id: String(orderNum) }, { projection: { vendor_name: 1 } });
+    const result = existingDelayRow
+      ? (await OVS.upsert(orderNum, existingDelayRow.vendor_name, { delay_reason: reason, delay_resolution_date: eta, updated_at: new Date().toISOString() }), { matchedCount: 1 })
+      : { matchedCount: 0 };
     if (result.matchedCount > 0) {
       if (recentNudge) await mdb.collection('wa_vendor_nudges').updateOne({ _id: recentNudge._id }, { $set: { resolved: true } });
       await sock.sendMessage(sender, { text: `✅ Update saved for order *${orderName}*!\n\nExpected by: *${eta}*\n\nWe'll let the customer know. Thank you for the update! 🙏` });
