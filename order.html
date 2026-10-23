@@ -1461,13 +1461,17 @@ function renderTrack(d) {
     rows += `<div class="summary-row"><span class="summary-label">Order total</span><span class="summary-val">₹${fmt(total)}</span></div>`;
     if (d.is_prepaid) {
       rows += `<div class="summary-row"><span class="summary-label">Paid online</span><span class="summary-val green">₹${fmt(total)}</span></div>`;
+      if (gateways.length) rows += `<div class="summary-row"><span class="summary-label">Paid via</span><span class="summary-val muted">${esc(gateways.join(', '))}</span></div>`;
     } else if (advance > 0) {
       rows += `<div class="summary-row"><span class="summary-label">Advance paid</span><span class="summary-val green">₹${fmt(advance)}</span></div>`;
       rows += `<div class="summary-row"><span class="summary-label">Due on delivery</span><span class="summary-val">₹${fmt(codDue)}</span></div>`;
+      if (gateways.length) rows += `<div class="summary-row"><span class="summary-label">Paid via</span><span class="summary-val muted">${esc(gateways.join(', '))}</span></div>`;
     } else {
-      rows += `<div class="summary-row"><span class="summary-label">Payment</span><span class="summary-val muted">Cash on Delivery</span></div>`;
+      // Nothing has actually been paid yet — don't echo Shopify's "Cash on
+      // Delivery" gateway name back as if it were a completed payment.
+      rows += `<div class="summary-row"><span class="summary-label">Payment</span><span class="summary-val" style="color:var(--amber,#b45309)">Pending — Cash on Delivery</span></div>`;
+      rows += `<div class="summary-row"><span class="summary-label">Due on delivery</span><span class="summary-val">₹${fmt(codDue)}</span></div>`;
     }
-    if (gateways.length) rows += `<div class="summary-row"><span class="summary-label">Paid via</span><span class="summary-val muted">${esc(gateways.join(', '))}</span></div>`;
     card.innerHTML = rows;
   })();
 
