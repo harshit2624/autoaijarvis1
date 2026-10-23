@@ -25440,6 +25440,24 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
   res.json({ connected: waConnected, qrDataUrl });
 });
 
+// Generic admin preview sender — sends arbitrary text (+ optional button)
+// to any phone via Baileys, for previewing a new message style before it
+// goes to real customers. Not customer-facing, admin-only.
+app.post('/admin/wa-test-send', adminAuth, async (req, res) => {
+  if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
+  try {
+    const { phone, text, buttonLabel, buttonUrl } = req.body || {};
+    const digits = String(phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (digits.length !== 10) return res.status(400).json({ error: 'Valid 10-digit phone required.' });
+    if (!text) return res.status(400).json({ error: 'text required.' });
+    const jid = `91${digits}@s.whatsapp.net`;
+    const payload = { text };
+    if (buttonLabel && buttonUrl) payload.ctaUrl = { displayText: buttonLabel, url: buttonUrl };
+    await waSocket.sendMessage(jid, payload);
+    res.json({ ok: true, jid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/admin/whatsapp-test-alert', adminAuth, async (req, res) => {
   if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
   try {
@@ -31766,7 +31784,7 @@ async function startBaileysBot() {
                       // mandatory partial payment enforced at checkout itself.
                       const _Fcr = '```';
                       await sock.sendMessage(sender, {
-                        text: `${_Fcr}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ✔\n────────────────\nORDER  ${ord.name}\n\nLocked in — packing now. Updates land right here on WhatsApp.\n────────────────\n${_Fcr}`,
+                        text: `${_Fcr}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ✔\n────────────────\nORDER  ${ord.name}\n\nLocked in — packing now.\nUpdates land right here on WhatsApp.\n────────────────\n${_Fcr}`,
                         ctaUrl: { displayText: 'Track Order', url: `${SERVER_URL}/o/${_oSlug}` },
                       });
                     }
