@@ -27529,6 +27529,7 @@ const WA_TPL = {
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
   STAFF_ALERT: 'staff_notification',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v3', // the "pay ₹99" ask after Confirm is tapped — 2 body params (order name, COD amount due)
+  ORDER_HIGH_RISK_ADVANCE: 'order_high_risk_advance_v1', // submitted to Meta 2026-10-23, PENDING — once approved, use as the outside-session-window fallback for adminSendHighRiskAdvanceAsk. 3 body params (order name, total, COD due).
   ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v3',
@@ -27953,17 +27954,15 @@ async function adminResendAwaitingConfirmation(order, phoneOverride) {
 // until the advance lands or it dispatches, instead of the normal tracking
 // view every other order gets.
 //
-// Delivery: the Cloud API template (ORDER_AWAITING_CONFIRMATION, already
-// Meta-approved) is sent for a guaranteed, compliant delivery with a real
-// tappable pay link. Its approved copy is the generic "pay ₹99 to confirm"
-// wording, not the fuller "high risk" explanation — Meta templates can't
-// use custom wording without a fresh submission+approval cycle. The richer
-// copy (shipping-partner rejection history, full total breakdown) is sent
-// as a companion message over the WA bot (Baileys) when it's connected, so
-// the customer sees the full context; if Baileys is disconnected that part
-// is simply skipped and the customer still gets the functional Cloud
-// message with the pay link. Submit a new Meta template with this exact
-// copy later to get it into the compliant path too.
+// Delivery: a single free-form Cloud API session message with a real
+// tappable "Pay ₹99 Now" button (ctaUrl, via waProxySock — same mechanism
+// as the tap-Confirm reply) — valid without Meta template approval as
+// long as we're within 24h of the customer's last inbound message, which
+// holds for the normal case (admin flags an order shortly after the
+// customer confirmed/messaged). A Meta template with this exact copy is
+// also being submitted for approval, as a fallback for when the session
+// window has closed — once approved, pending orders outside the window
+// can use it instead.
 async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
   const phone10 = _resendPhone(order, phoneOverride);
   if (!phone10) throw new Error('No valid WhatsApp number on this order — give one explicitly (e.g. "...on 9876543210").');
@@ -27979,17 +27978,9 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
     { upsert: true }
   );
 
-  const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [order.name, codDue.toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
-  if (!result.sent) throw new Error(result.reason);
-
-  // Cloud-API-aware proxy, not the raw (often-disconnected) Baileys socket
-  // directly — waProxySock routes through the official Cloud API session
-  // message first and only falls back to Baileys if Cloud isn't active.
-  try {
-    const _F = '```';
-    const richText = `${_F}\n▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nDispatched right after ₹99 is received.\n\nCONFIRM\n${trackUrl}\n${_F}`;
-    await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, { text: richText });
-  } catch (e) { console.error('High-risk advance ask — companion message failed:', e.message); }
+  const _F = '```';
+  const richText = `${_F}\n▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nYou'll receive courier tracking shortly after paying ₹99.\n\nUSE BUTTON BELOW TO PAY\n${_F}`;
+  await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, { text: richText, ctaUrl: { displayText: 'Pay ₹99 Now', url: trackUrl } });
 
   auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10 });
   return { sent: true };
