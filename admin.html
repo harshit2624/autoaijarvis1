@@ -356,7 +356,7 @@
     .tp-cnt { font-size: 15px; font-weight: 800; margin-top: 1px; }
     .tp-rev { font-size: 9px; color: var(--text-muted); margin-top: 1px; }
     /* Top cities / state performance */
-    .state-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(190px,1fr)); gap: 8px; }
+    .state-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(190px,1fr)); gap: 8px; max-height: 620px; overflow-y: auto; padding-right: 4px; align-content: start; }
     .state-card { border: 1px solid var(--border); border-radius: 8px; padding: 11px 13px; background: var(--bg-hover); }
     .state-name { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 7px; }
     .state-bar-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }

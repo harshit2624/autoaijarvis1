@@ -7090,7 +7090,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     // (confirmed/partial/ready/pickup/transit/ofd) — kept as two separate
     // buckets on the frontend instead of lumping cancelled/hold in with
     // orders that are still progressing toward delivery.
-    const bucketToRows = (map) => Object.values(map).sort((a,b)=>b.count-a.count).slice(0,8)
+    const bucketToRows = (map, limit) => Object.values(map).sort((a,b)=>b.count-a.count).slice(0, limit)
       .map(d => {
         const bestRawName = Object.entries(d.names).sort((a,b)=>b[1]-a[1])[0][0];
         return {
@@ -7100,8 +7100,11 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
           deadPct: d.count>0 ? Math.round(d.dead/d.count*100) : 0,
         };
       });
-    const topCities = bucketToRows(cityMap);
-    const topStates = bucketToRows(stateMap);
+    // Cities: capped at 20 (there can be hundreds of distinct cities, most
+    // with 1-2 orders — not useful past the top slice). States: no cap,
+    // there are only ~36 possible, all worth showing in a scrollable list.
+    const topCities = bucketToRows(cityMap, 20);
+    const topStates = bucketToRows(stateMap, Object.keys(stateMap).length);
 
     // ── Stage counts for selected period
     const STAGE_LIST = ["new","confirmed","partial","ready","pickup","transit","ofd","delivered","rto","hold","cancelled","misc","penalty"];
