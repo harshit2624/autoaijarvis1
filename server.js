@@ -25444,7 +25444,6 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 // to any phone via Baileys, for previewing a new message style before it
 // goes to real customers. Not customer-facing, admin-only.
 app.post('/admin/wa-test-send', adminAuth, async (req, res) => {
-  if (!waSocket || !waConnected) return res.status(503).json({ error: 'WhatsApp not connected' });
   try {
     const { phone, text, buttonLabel, buttonUrl } = req.body || {};
     const digits = String(phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
@@ -25453,7 +25452,9 @@ app.post('/admin/wa-test-send', adminAuth, async (req, res) => {
     const jid = `91${digits}@s.whatsapp.net`;
     const payload = { text };
     if (buttonLabel && buttonUrl) payload.ctaUrl = { displayText: buttonLabel, url: buttonUrl };
-    await waSocket.sendMessage(jid, payload);
+    // Cloud-API-aware proxy — routes through the official Cloud API session
+    // message first, falls back to Baileys only if Cloud isn't active.
+    await waProxySock.sendMessage(jid, payload);
     res.json({ ok: true, jid });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -27981,12 +27982,14 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
   const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [order.name, codDue.toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
   if (!result.sent) throw new Error(result.reason);
 
-  if (waSocket && waConnected) {
+  // Cloud-API-aware proxy, not the raw (often-disconnected) Baileys socket
+  // directly — waProxySock routes through the official Cloud API session
+  // message first and only falls back to Baileys if Cloud isn't active.
+  try {
     const _F = '```';
     const richText = `${_F}\n▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nDispatched right after ₹99 is received.\n\nCONFIRM\n${trackUrl}\n${_F}`;
-    try { await waSocket.sendMessage(`91${phone10}@s.whatsapp.net`, { text: richText }); }
-    catch (e) { console.error('High-risk advance ask — Baileys companion message failed:', e.message); }
-  }
+    await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, { text: richText });
+  } catch (e) { console.error('High-risk advance ask — companion message failed:', e.message); }
 
   auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10 });
   return { sent: true };
