@@ -3019,11 +3019,16 @@ const EMAIL_RED = '#e23b23';
 // instead of at module-load time, which crashed the whole process on boot
 // (ReferenceError: Cannot access 'SERVER_URL' before initialization).
 function emailBoldBanner(widthPx) {
-  const innerW = widthPx - 80;
+  const innerW = widthPx - 56;
   const h = Math.round(innerW * EMAIL_BANNER_RATIO);
-  const bannerUrl = `${SERVER_URL}/email-assets/banner-70brands.webp`;
-  return `<table role="presentation" width="100%" style="background:#ffffff"><tr><td align="center" style="padding:34px 40px">
-    <img src="${bannerUrl}" width="${innerW}" height="${h}" style="width:100%;max-width:${innerW}px;height:auto;display:block">
+  // .png, not .webp: the source asset is transparent, and iOS Mail renders
+  // transparent WEBP with a solid black fill instead of the background
+  // behind it — confirmed live (screenshot showed a black box where the
+  // banner should be). Flattened onto opaque white with sharp so every
+  // mail client shows it the same way, no alpha channel involved at all.
+  const bannerUrl = `${SERVER_URL}/email-assets/banner-70brands.png`;
+  return `<table role="presentation" width="100%" style="background:#ffffff"><tr><td align="center" style="padding:28px 28px">
+    <img src="${bannerUrl}" width="${innerW}" height="${h}" style="width:100%;max-width:${innerW}px;height:auto;display:block;border:0;outline:none">
   </td></tr></table>`;
 }
 
@@ -3074,7 +3079,7 @@ function emailBoldAddress(addr) {
   if (!addr) return '';
   return `<div style="margin-top:18px;padding:14px 16px;background:#f7f7f7;border-left:3px solid ${EMAIL_RED}">
     <div style="font-size:10px;letter-spacing:.1em;color:#999;text-transform:uppercase;font-weight:700;margin-bottom:6px">Deliver To</div>
-    <div style="font-size:13px;color:#111;font-weight:600;line-height:1.6">${addr.name}<br>${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>${addr.city}, ${addr.province} ${addr.zip}<br>${addr.phone || ''}</div>
+    <div class="ab-addr" style="font-size:13px;color:#111 !important;font-weight:600;line-height:1.6">${addr.name}<br>${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>${addr.city}, ${addr.province} ${addr.zip}<br>${addr.phone || ''}</div>
   </div>`;
 }
 
@@ -3097,7 +3102,17 @@ function templateOrderBold({ order, meta = {}, state, trackUrl, waUrl }) {
     ? emailBoldButtonRow({ label: 'Confirm WhatsApp', href: waUrl }, { label: 'Track Order', href: trackUrl })
     : emailBoldButtonRow({ label: 'Track Order', href: trackUrl }, { label: 'Message Us', href: waUrl });
 
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#f4f4f2}</style></head><body>
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    body{margin:0;background:#f4f4f2}
+    /* iOS/Apple Mail auto-links a street address or phone number it detects
+       in plain text and colors it its own default blue, overriding whatever
+       color the surrounding text has — confirmed live, the address line
+       rendered blue even though every style here says #111. This is the
+       standard reset: it forces that auto-detected link back to the
+       surrounding text's own color instead of Apple's blue. */
+    a[x-apple-data-detectors], .ab-addr a { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
+    #MessageViewBody a { color: inherit; text-decoration: none; }
+  </style></head><body>
   <table role="presentation" width="100%" style="background:#f4f4f2"><tr><td align="center">
   <table role="presentation" width="100%" style="max-width:600px;background:#fff;font-family:Arial,Helvetica,sans-serif">
     <tr><td>${emailBoldBanner(600)}</td></tr>
