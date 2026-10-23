@@ -228,6 +228,7 @@ html,body{
 .stage-pill.delivered{background:var(--green-light);color:var(--green-dark);border-color:var(--green-border)}
 .stage-pill.rto{background:var(--red-light);color:var(--red);border-color:var(--red-border)}
 .stage-pill.new{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
+.stage-pill.mixed{background:var(--amber-light);color:var(--amber);border-color:var(--amber-border)}
 
 /* payment status strip — visible across the whole tracking journey */
 .payment-info{
@@ -908,7 +909,7 @@ html,body{
 </div>
 
 <script>
-const API = '';
+const API = location.hostname === 'localhost' ? 'https://dashboard.croscrow.com' : '';
 let orderData = null;
 let lastContact = 'na';
 let paying = false;
@@ -1387,9 +1388,16 @@ function renderTrack(d) {
     new:'Pending',hold:'On Hold',confirmed:'Confirmed',partial:'Processing',
     ready:'Ready to Ship',pickup:'Picked Up',transit:'In Transit',
     ofd:'Out for Delivery',delivered:'Delivered',rto:'Returned',cancelled:'Cancelled',
+    // A multi-vendor order where vendors are at genuinely different stages
+    // (one delivered, one still confirmed) must never show a flat
+    // "Delivered" badge — confirmed live on #3704, which caused a real
+    // customer complaint. Use the server's own more specific summary when
+    // it's there; "Partially Delivered" is still the right fallback label.
+    mixed: d.stage_label || 'Partially Delivered',
   };
   pill.textContent = stageLabels[displayStage] || displayStage;
-  const pillClass = ['delivered','ready','pickup','transit','ofd'].includes(displayStage)
+  const pillClass = displayStage === 'mixed' ? 'mixed'
+    :['delivered','ready','pickup','transit','ofd'].includes(displayStage)
     ?(displayStage==='delivered'?'delivered':'transit')
     :['confirmed','partial'].includes(displayStage)?'confirmed'
     :['rto','cancelled'].includes(displayStage)?'rto':'new';

@@ -568,20 +568,22 @@ const OVS = {
       // row had moved on — nothing to "merge", there was only ever one
       // real value). Multi-vendor orders keep the merge, since there
       // genuinely are multiple rows to reconcile into one order-level stage.
-      const vendorCount = await mdb.collection('order_vendor_stage').countDocuments({ shopify_id: sid });
+      const allVendorRows = await mdb.collection('order_vendor_stage').find({ shopify_id: sid }, { projection: { stage: 1, _id: 0 } }).toArray();
+      // order_meta.stage must never collapse a genuinely mixed multi-vendor
+      // order (one vendor delivered, another still confirmed) into a single
+      // "highest stage wins" value — that's exactly what showed a customer
+      // "DELIVERED" on #3704's track page while their second vendor's item
+      // hadn't even shipped. Same stage across every vendor (or just one
+      // vendor): use that stage directly, no ranking needed. Different
+      // stages across vendors: 'mixed' — a literal, display-only value that
+      // feeds no pipeline/escape logic and is only interpreted by the
+      // customer- and admin-facing stage-badge renderers.
       let mergedStage;
-      if (vendorCount <= 1) {
+      if (allVendorRows.length <= 1) {
         mergedStage = appliedStage;
       } else {
-        // Same escapes as the row-level merge above (stuck->real progress,
-        // rto->delivered) when this call opted into them — otherwise this
-        // mirror used to re-derive via plain higherStage() and could freeze
-        // order_meta.stage on 'stuck' forever even after the real row moved
-        // past it. Gated on respectStageOrder so a manual/admin call (which
-        // never asked for the escape) keeps the old strict behavior.
-        mergedStage = respectStageOrder
-          ? mergeStageWithEscapes(metaDoc?.stage || 'new', appliedStage)
-          : higherStage(metaDoc?.stage || 'new', appliedStage);
+        const distinctStages = new Set(allVendorRows.map(r => r.stage).filter(Boolean));
+        mergedStage = distinctStages.size === 1 ? [...distinctStages][0] : 'mixed';
       }
       if (mergedStage !== metaDoc?.stage) {
         await mdb.collection('order_meta').updateOne(
@@ -1169,6 +1171,20 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     if (hit) { winner = m; break; }
   }
   if (winner) {
+    // Tag-mapping only ever had real authority BEFORE dispatch — confirming,
+    // partial-advance, holding, or cancelling an order are legitimate
+    // business decisions a tag can represent. Once a vendor has actually
+    // dispatched, the only trustworthy sources for ready/pickup/transit/
+    // ofd/delivered/rto are the ShipSagar cron (real courier data) or an
+    // explicit manual admin action — never a Shopify tag, which can be
+    // stale, reused, or re-fire on an unrelated webhook (confirmed live on
+    // #1767: a stale tag silently reset a manually-set 'misc' back to
+    // 'hold' eleven weeks later).
+    const TAG_ALLOWED_STAGES = ['confirmed', 'partial', 'hold', 'cancelled'];
+    if (!TAG_ALLOWED_STAGES.includes(winner.stage)) {
+      logStageEvent({ shopifyId: sid, orderName: '', vendor: '', fromStage: null, toStage: winner.stage, actor: 'webhook', actorId: 'orders/updated', source: 'tag_mapping_sync', reason: `tag matched: ${winner.shopify_tag}`, skipped: true, skipReason: 'tag-mapping has no authority over post-dispatch stages' });
+      return;
+    }
     const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
     const newStage = winner.stage;
     // 'misc'/'returned' are manual overrides (only set via the admin bulk-select
@@ -2987,6 +3003,112 @@ async function sendRREmail(type, rr) {
         break;
     }
   } catch (e) { console.error('RR email error:', e.message); }
+}
+
+// ── "Bold Streetwear" email templates (order placed / out for delivery) ────
+// New, deliberately separate from the legacy neonEmailBase() templates below
+// — these are the design approved from the 3-option artifact review
+// (2026-10-24), not yet wired into the live fireStageEmails()/cron send
+// paths. Kept standalone so they can be tested via /admin/email-test-send
+// without risking the existing confirmed/OFD send flow until approved.
+const EMAIL_BANNER_URL = `${SERVER_URL}/email-assets/banner-70brands.webp`;
+const EMAIL_BANNER_RATIO = 1400 / 1235; // real asset's natural height/width
+const EMAIL_RED = '#e23b23';
+
+function emailBoldBanner(widthPx) {
+  const innerW = widthPx - 80;
+  const h = Math.round(innerW * EMAIL_BANNER_RATIO);
+  return `<table role="presentation" width="100%" style="background:#ffffff"><tr><td align="center" style="padding:34px 40px">
+    <img src="${EMAIL_BANNER_URL}" width="${innerW}" height="${h}" style="width:100%;max-width:${innerW}px;height:auto;display:block">
+  </td></tr></table>`;
+}
+
+// Fixed-height, equal-width two-button row — a longer label never makes one
+// button taller than the other, which plain padding alone allowed.
+function emailBoldButtonRow(btn1, btn2) {
+  const BTN_H = 48;
+  const a = (href, label, bg, color) => `<a href="${href}" style="display:block;height:${BTN_H}px;line-height:${BTN_H}px;background:${bg};color:${color};text-decoration:none;font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;text-align:center;white-space:nowrap;overflow:hidden;border-radius:2px">${label}</a>`;
+  return `<table role="presentation" width="100%"><tr>
+    <td width="50%" valign="middle" style="padding-right:6px">${a(btn1.href, btn1.label, EMAIL_RED, '#fff')}</td>
+    <td width="50%" valign="middle" style="padding-left:6px">${a(btn2.href, btn2.label, '#111', '#fff')}</td>
+  </tr></table>`;
+}
+
+function emailBoldItemRows(items) {
+  return items.map(it => {
+    const img = it.image_url || `https://placehold.co/64x64`;
+    return `<tr><td style="padding:16px 0;border-bottom:1px solid #eee">
+      <table role="presentation" width="100%"><tr>
+        <td width="72" style="vertical-align:top"><img src="${img}" width="64" height="64" style="width:64px;height:64px;object-fit:cover;border-radius:2px;display:block"></td>
+        <td style="vertical-align:top;padding-left:14px">
+          <div style="font-size:13px;font-weight:800;color:#111;text-transform:uppercase;letter-spacing:.02em">${it.title}</div>
+          <div style="font-size:11px;color:#999;margin-top:4px;font-weight:600">${it.vendor || ''}${it.vendor && it.variant_title ? ' &nbsp;&middot;&nbsp; ' : ''}${it.variant_title || ''} &nbsp;&middot;&nbsp; QTY ${it.quantity}</div>
+        </td>
+        <td style="vertical-align:top;text-align:right;font-size:14px;font-weight:800;color:#111;white-space:nowrap">&#8377;${(parseFloat(it.price || 0) * (it.quantity || 1)).toFixed(0)}</td>
+      </tr></table></td></tr>`;
+  }).join('');
+}
+
+function emailBoldSummaryRows(subtotal, shipping, advance, codDue, isPrepaid) {
+  const rows = [['Subtotal', `&#8377;${subtotal.toFixed(0)}`], ['Shipping', shipping > 0 ? `&#8377;${shipping.toFixed(0)}` : 'Free']];
+  if (isPrepaid) {
+    rows.push(['Paid online', `&#8377;${(subtotal + shipping).toFixed(0)}`]);
+  } else if (advance > 0) {
+    rows.push(['Advance paid', `&#8722;&#8377;${advance.toFixed(0)}`]);
+    rows.push(['COD due on delivery', `&#8377;${codDue.toFixed(0)}`]);
+  } else {
+    rows.push(['Payment', 'Cash on Delivery']);
+    rows.push(['Due on delivery', `&#8377;${codDue.toFixed(0)}`]);
+  }
+  return `<table role="presentation" width="100%">${rows.map((r, i, arr) => {
+    const last = i === arr.length - 1;
+    return `<tr><td style="padding:6px 0;font-size:12.5px;color:${last ? '#111' : '#888'};font-weight:${last ? '800' : '600'}">${r[0]}</td><td style="padding:6px 0;font-size:12.5px;color:#111;text-align:right;font-weight:${last ? '800' : '700'}">${r[1]}</td></tr>`;
+  }).join('')}</table>`;
+}
+
+function emailBoldAddress(addr) {
+  if (!addr) return '';
+  return `<div style="margin-top:18px;padding:14px 16px;background:#f7f7f7;border-left:3px solid ${EMAIL_RED}">
+    <div style="font-size:10px;letter-spacing:.1em;color:#999;text-transform:uppercase;font-weight:700;margin-bottom:6px">Deliver To</div>
+    <div style="font-size:13px;color:#111;font-weight:600;line-height:1.6">${addr.name}<br>${addr.address1}${addr.address2 ? ', ' + addr.address2 : ''}<br>${addr.city}, ${addr.province} ${addr.zip}<br>${addr.phone || ''}</div>
+  </div>`;
+}
+
+// state: 'placed' | 'ofd'. order: a Shopify order object (line_items with
+// image_url already enriched). meta: order_meta doc (advance_paid, awb, courier).
+function templateOrderBold({ order, meta = {}, state, trackUrl, waUrl }) {
+  const isPlaced = state === 'placed';
+  const isPrepaid = order.financial_status === 'paid';
+  const addr = order.shipping_address;
+  const subtotal = parseFloat(order.subtotal_price || order.total_price || 0);
+  const shipping = (order.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0);
+  const advance = parseFloat(meta.advance_paid || 0);
+  const codDue = Math.max(0, subtotal + shipping - advance - (isPrepaid ? subtotal + shipping : 0));
+  const statusText = isPlaced ? 'ORDER PLACED' : 'OUT FOR DELIVERY';
+  const firstName = addr?.first_name || order.email?.split('@')[0] || 'there';
+  const statusSub = isPlaced
+    ? 'We’ve got it — confirm below to lock in dispatch.'
+    : 'Your package is on the road and lands today.';
+  const btns = isPlaced
+    ? emailBoldButtonRow({ label: 'Confirm WhatsApp', href: waUrl }, { label: 'Track Order', href: trackUrl })
+    : emailBoldButtonRow({ label: 'Track Order', href: trackUrl }, { label: 'Message Us', href: waUrl });
+
+  return `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#f4f4f2}</style></head><body>
+  <table role="presentation" width="100%" style="background:#f4f4f2"><tr><td align="center">
+  <table role="presentation" width="100%" style="max-width:600px;background:#fff;font-family:Arial,Helvetica,sans-serif">
+    <tr><td>${emailBoldBanner(600)}</td></tr>
+    <tr><td style="padding:10px 24px 6px">
+      <div style="display:inline-block;background:${EMAIL_RED};color:#fff;font-size:11px;font-weight:800;letter-spacing:.08em;padding:5px 12px;border-radius:2px;text-transform:uppercase">${statusText}</div>
+      <div style="font-size:21px;font-weight:900;color:#111;margin-top:14px;letter-spacing:-.01em">Hey ${firstName},</div>
+      <div style="font-size:13.5px;color:#666;margin-top:6px;line-height:1.6">${statusSub} Order <b style="color:#111">${order.name}</b>.</div>
+    </td></tr>
+    ${!isPlaced && meta.awb ? `<tr><td style="padding:14px 24px 0"><div style="background:#f7f7f7;border:1px solid #111;border-radius:2px;padding:12px 14px;font-size:12.5px;color:#111"><b>AWB ${meta.awb}</b>${meta.courier ? ` &middot; ${meta.courier}` : ''} &middot; arriving today</div></td></tr>` : ''}
+    <tr><td style="padding:20px 24px 0">${emailBoldItemRows(order.line_items || [])}</td></tr>
+    <tr><td style="padding:18px 24px 0">${emailBoldSummaryRows(subtotal, shipping, advance, codDue, isPrepaid)}</td></tr>
+    <tr><td style="padding:0 24px">${emailBoldAddress(addr)}</td></tr>
+    <tr><td style="padding:26px 24px 30px">${btns}</td></tr>
+    <tr><td style="padding:18px 24px;background:#111;text-align:center"><div style="font-size:10px;letter-spacing:.14em;color:#999;text-transform:uppercase">70+ Homegrown Brands &middot; One Stop &middot; CROSCROW.COM</div></td></tr>
+  </table></td></tr></table></body></html>`;
 }
 
 function templateOrderConfirmedCustomer({ order, adsStrip = '' }) {
@@ -18815,6 +18937,21 @@ async function shipsagarTrackingCron() {
             })();
           }
 
+          // ── Customer shipped/OFD/delivered emails ──────────────────────
+          // These used to fire only from tag-mapping or a manual admin stage
+          // change — now that tag-mapping has lost authority over post-
+          // dispatch stages, the cron (real courier data) is the only
+          // trigger left. fireStageEmails only has branches for
+          // transit/ofd/delivered/rto, so pickup is a no-op harmlessly
+          // included in stagesToNotify. Walked the same way as the WA notif
+          // above (not just newStage) so a courier that skips a scan (e.g.
+          // transit straight to delivered) doesn't silently drop the OFD
+          // email the way firing only on newStage would.
+          for (const stg of stagesToNotify) {
+            if (['transit', 'ofd', 'delivered'].includes(stg)) fireStageEmails(rec.shopify_id, stg).catch(() => {});
+          }
+          if (newStage === 'rto') fireStageEmails(rec.shopify_id, 'rto').catch(() => {});
+
           // Send vendor + admin OFD notification email
           if (newStage === 'ofd') {
             (async () => {
@@ -21759,16 +21896,29 @@ async function buildOrderPayload(order) {
     qty: li.quantity, price: li.price, vendor: li.vendor || '',
   }));
   // Use the most-advanced stage across order_meta and all vendor stages
-  // so vendor dispatching (OVS → ready) is immediately reflected even if order_meta lags
+  // so vendor dispatching (OVS → ready) is immediately reflected even if order_meta lags.
+  // EXCEPT: on a multi-vendor order where vendors are genuinely at different
+  // stages, collapsing to the single highest one is actively misleading to
+  // the customer — confirmed live on #3704 (2026-10-24): one vendor had
+  // delivered, the other was still only 'confirmed', and the "highest wins"
+  // rule showed the customer a flat "DELIVERED" badge on an order they
+  // hadn't fully received, which caused a real support complaint. In that
+  // case, stage is 'mixed' instead — interpreted by the badge/label below.
   const STAGE_ORD = ['new','hold','confirmed','partial','ready','pickup','transit','ofd','delivered','rto','cancelled'];
   const metaStage = meta.stage || 'new';
-  let bestIdx = STAGE_ORD.indexOf(metaStage);
-  if (bestIdx < 0) bestIdx = 0;
-  for (const vs of vendorStages) {
-    const vi = STAGE_ORD.indexOf(vs.stage);
-    if (vi > bestIdx) bestIdx = vi;
+  const distinctVendorStages = new Set(vendorStages.map(v => v.stage).filter(Boolean));
+  let stage;
+  if (vendorStages.length > 1 && distinctVendorStages.size > 1) {
+    stage = 'mixed';
+  } else {
+    let bestIdx = STAGE_ORD.indexOf(metaStage);
+    if (bestIdx < 0) bestIdx = 0;
+    for (const vs of vendorStages) {
+      const vi = STAGE_ORD.indexOf(vs.stage);
+      if (vi > bestIdx) bestIdx = vi;
+    }
+    stage = STAGE_ORD[bestIdx] || metaStage;
   }
-  const stage = STAGE_ORD[bestIdx] || metaStage;
   let awb = null, trackingUrl = null;
   for (const f of (order.fulfillments || [])) { if (f.tracking_number) { awb = f.tracking_number; trackingUrl = f.tracking_url || null; break; } }
   const customerName = order.shipping_address
@@ -21846,10 +21996,17 @@ async function buildOrderPayload(order) {
     cancelled: 'Order cancelled',
   };
 
+  let stageLabel = STAGE_LABELS[stage] || stage;
+  if (stage === 'mixed') {
+    stageLabel = distinctVendorStages.has('delivered')
+      ? 'Partially delivered — rest of your order is on the way'
+      : 'Your order is split — items are at different stages';
+  }
+
   return {
     shopify_order_id: order.id, order_name: order.name, customer_name: customerName,
     customer_email: order.email || '', customer_phone: order.shipping_address?.phone || order.billing_address?.phone || order.phone || '',
-    stage, stage_label: STAGE_LABELS[stage] || stage,
+    stage, stage_label: stageLabel,
     financial_status: order.financial_status, fulfillment_status: order.fulfillment_status,
     created_at: order.created_at,
     awb, courier: courierName, tracking_url: trackingUrl,
@@ -25516,6 +25673,44 @@ app.post('/admin/wa-test-send', adminAuth, async (req, res) => {
     // message first, falls back to Baileys only if Cloud isn't active.
     await waProxySock.sendMessage(jid, payload);
     res.json({ ok: true, jid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin-only preview/test send for the new Bold-style order emails — not yet
+// wired into the live confirmed/OFD send paths (see note above
+// templateOrderBold). Uses a realistic demo order so this can be sent
+// without needing a real Shopify order on hand.
+app.post('/admin/email-test-send', adminAuth, async (req, res) => {
+  try {
+    const { to, state } = req.body || {};
+    if (!to) return res.status(400).json({ error: 'to (email) required.' });
+    if (!['placed', 'ofd'].includes(state)) return res.status(400).json({ error: "state must be 'placed' or 'ofd'." });
+
+    const demoOrder = {
+      name: '#CC10482',
+      email: to,
+      financial_status: 'pending',
+      subtotal_price: '5199.00',
+      total_price: '5199.00',
+      shipping_lines: [],
+      shipping_address: {
+        first_name: 'Ramya', last_name: 'Raj', name: 'Ramya Raj',
+        address1: '42, MG Road, Indiranagar', address2: '',
+        city: 'Bengaluru', province: 'Karnataka', zip: '560038', phone: '+91 98XXXXXX26',
+      },
+      line_items: [
+        { title: 'ASH CAMO CARGOS', vendor: 'ODD AFFAIR', variant_title: 'M', quantity: 1, price: '3500.00', image_url: 'https://cdn.shopify.com/s/files/1/0688/9209/8691/files/05_4951be18-b2ec-4980-b9b1-ba4e7c7a2c98_064bffdc-350d-4750-ba1a-1a91d49f6035.jpg' },
+        { title: 'LAYERS T-SHIRT', vendor: 'FOURONE', variant_title: 'L', quantity: 1, price: '1699.00', image_url: 'https://cdn.shopify.com/s/files/1/0688/9209/8691/files/17.png' },
+      ],
+    };
+    const demoMeta = { advance_paid: 99, awb: 'DL4471829303', courier: 'Delhivery' };
+    const trackUrl = `${SERVER_URL}/o/CC10482`;
+    const waUrl = `https://wa.me/919876543210`;
+
+    const html = templateOrderBold({ order: demoOrder, meta: demoMeta, state, trackUrl, waUrl });
+    const subject = state === 'placed' ? `[TEST] Order Placed: ${demoOrder.name}` : `[TEST] Out for Delivery: ${demoOrder.name}`;
+    await sendEmail({ to, subject, html, shopifyId: 'test', trigger: `bold_email_test_${state}` });
+    res.json({ ok: true, to, state });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
