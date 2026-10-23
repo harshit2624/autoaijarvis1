@@ -21515,6 +21515,24 @@ app.get("/order/lookup", async (req, res) => {
       created_at: order.created_at,
       shipping_city: order.shipping_address?.city || order.billing_address?.city || '',
       shipping_state: order.shipping_address?.province || order.billing_address?.province || '',
+      // Full order-summary breakdown (subtotal/discount/shipping/tax/total)
+      // and delivery address — shown on the track page below the item list.
+      subtotal: order.subtotal_price || null,
+      total_discounts: order.total_discounts || '0.00',
+      discount_codes: (order.discount_codes || []).map(dc => ({ code: dc.code, amount: dc.amount })),
+      total_shipping: (order.shipping_lines || []).reduce((s, l) => s + parseFloat(l.price || 0), 0).toFixed(2),
+      total_tax: order.total_tax || '0.00',
+      payment_gateway_names: order.payment_gateway_names || [],
+      shipping_address: order.shipping_address ? {
+        name: [order.shipping_address.first_name, order.shipping_address.last_name].filter(Boolean).join(' '),
+        address1: order.shipping_address.address1 || '',
+        address2: order.shipping_address.address2 || '',
+        city: order.shipping_address.city || '',
+        province: order.shipping_address.province || '',
+        zip: order.shipping_address.zip || '',
+        country: order.shipping_address.country || '',
+        phone: order.shipping_address.phone || '',
+      } : null,
     });
   } catch (e) {
     console.error('❌ /order/lookup:', e.message);
