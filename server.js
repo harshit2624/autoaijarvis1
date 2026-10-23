@@ -2312,7 +2312,7 @@ app.post("/webhooks/orders", (req, res) => {
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'confirmed_tag';
-              } else {
+              } else if (WA_PARTIAL_AWAITING_ENABLED) {
                 // Tag present but no ₹99 yet, and our own WA Confirm handler
                 // hasn't already sent the ask (fallback path: tag added via
                 // admin dashboard / a Shopify Flow, not our button) — send
@@ -2321,9 +2321,16 @@ app.post("/webhooks/orders", (req, res) => {
                 _cloudTpl = { templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [payload.name, Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'pay99_ask_sent';
               }
-              await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
-              await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { [`wa_notif_sent.${_dedupKey}`]: new Date().toISOString() } });
-              console.log(`✅ WA confirmed_tag sent for ${payload.name} (${_dedupKey})`);
+              // WA_PARTIAL_AWAITING_ENABLED=false and no advance yet: nothing
+              // accurate to send here (order's already tagged confirmed by
+              // whatever added the tag — admin/Flow — and the ₹99 ask is
+              // off), so skip quietly rather than send a stale/misleading
+              // message. _waConfirm stays unset in that case.
+              if (_waConfirm) {
+                await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
+                await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { [`wa_notif_sent.${_dedupKey}`]: new Date().toISOString() } });
+                console.log(`✅ WA confirmed_tag sent for ${payload.name} (${_dedupKey})`);
+              }
               waLogNotifTrigger({
                 shopify_id: sid, order_name: payload.name, webhook_topic: topic, dedup_key: _dedupKey,
                 outcome: 'sent', reason: `financial_status=${payload.financial_status}`,
@@ -27423,6 +27430,17 @@ async function sendWACloudTemplate({ phone10, templateName, lang, headerImageUrl
   }
 }
 
+// Kill-switch for the "pay ₹99 to confirm" ask sent over WhatsApp after a
+// customer taps Confirm. Mandatory partial payment is now also enforced at
+// CHECKOUT for risky pincodes/profiles (GoKwik) — those customers already
+// get an accurate "order confirmed, advance received" message. Asking a
+// SECOND time over WhatsApp was correlating with cancellations, so this is
+// off for now: tapping Confirm just tags the order and sends a plain
+// "order confirmed" reply instead of the ₹99 ask. Flip back to true to
+// re-enable the WA ask whenever needed — nothing else about the flow
+// changes.
+const WA_PARTIAL_AWAITING_ENABLED = false;
+
 // Meta template names — must match exactly what's approved on the WABA.
 // Centralized here so a rename only needs one edit.
 // _v2 suffix: the original names got deleted+immediately resubmitted during
@@ -31640,13 +31658,19 @@ async function startBaileysBot() {
                     }
                     const _oSlug = encodeURIComponent(String(ord.name).replace(/^#/, ''));
                     const _total3 = parseFloat(ord.total_price || 0);
-                    const askResult = await sendWACloudTemplate({
-                      phone10: String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10),
-                      templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION,
-                      bodyParams: [ord.name, Math.max(0, _total3 - 99).toFixed(0)],
-                      urlButtonParam: `${_oSlug}&contact=na`,
-                    });
-                    if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
+                    if (WA_PARTIAL_AWAITING_ENABLED) {
+                      const askResult = await sendWACloudTemplate({
+                        phone10: String(sender).replace('@s.whatsapp.net', '').replace(/^91/, '').slice(-10),
+                        templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION,
+                        bodyParams: [ord.name, Math.max(0, _total3 - 99).toFixed(0)],
+                        urlButtonParam: `${_oSlug}&contact=na`,
+                      });
+                      if (!askResult.sent) await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! Pay ₹99 to lock it in: ${SERVER_URL}/o/${_oSlug}` });
+                    } else {
+                      // No ₹99 ask over WhatsApp — risky orders already get
+                      // mandatory partial payment enforced at checkout itself.
+                      await sock.sendMessage(sender, { text: `✅ Order ${ord.name} confirmed! We're packing it up now — you'll get updates right here.\n\nTrack: ${SERVER_URL}/o/${_oSlug}` });
+                    }
                     waAdminAlert(`Order confirmed via WhatsApp — ${ord.name}`, 'order_ticket').catch(() => {});
                   } else {
                     // Only add the tag — stage/cancellation is handled by
