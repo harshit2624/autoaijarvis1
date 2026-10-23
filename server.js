@@ -7972,6 +7972,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         deliveryStatus: meta.delivery_status || (o.fulfillments||[]).find(f=>f.shipment_status)?.shipment_status || "",
         shopifyFulfilled: (o.fulfillments||[]).length > 0,
         hiddenFromVendors: meta.hidden_from_vendors || [],
+        highRiskAdvanceRequested: !!meta.high_risk_advance_requested,
         tags:           o.tags || "",
         totalDiscounts:  parseFloat(o.total_discounts || 0),
         discountCodes:   (o.discount_codes || []).map(dc => ({ code: dc.code, amount: dc.amount, type: dc.type })),
@@ -8030,6 +8031,21 @@ app.post("/admin/orders/:shopifyId/hide-vendor", requirePermission('orders'), as
     await OM.upsert(sid, { hidden_from_vendors: list });
     auditLog('admin', hidden ? 'order_hidden_from_vendor' : 'order_unhidden_from_vendor', sid, { vendor });
     res.json({ success: true, hidden_from_vendors: list });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /admin/orders/:shopifyId/send-high-risk-advance-ask ─────────────
+// Manual trigger for a specific order that looks fishy — sends the "pay ₹99,
+// shipping partner shows repeat COD rejections" ask and locks that order's
+// track page to the pay-₹99 screen until it's paid or the order dispatches.
+app.post("/admin/orders/:shopifyId/send-high-risk-advance-ask", requirePermission('orders'), async (req, res) => {
+  try {
+    const sid = String(req.params.shopifyId);
+    const orderRes = await shopifyREST(`/orders/${sid}.json?fields=id,name,total_price,shipping_address,billing_address,phone,financial_status,line_items`);
+    const order = orderRes?.order;
+    if (!order) return res.status(404).json({ error: "Order not found." });
+    const result = await adminSendHighRiskAdvanceAsk(order, req.body?.phone || '');
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -21444,6 +21460,12 @@ app.get("/order/lookup", async (req, res) => {
     const isPrepaid = order.financial_status === 'paid';
     const advancePaid = parseFloat(meta.advance_paid || 0);
     const alreadyConfirmed = !!meta.confirmation_paid || advancePaid >= CONFIRM_FEE || isPrepaid;
+    // The pay-₹99 screen used to show for EVERY unconfirmed COD order. Now
+    // that the automatic WA ask is off (WA_PARTIAL_AWAITING_ENABLED), it
+    // should only force that screen for an order an admin has specifically
+    // flagged as high-risk (adminSendHighRiskAdvanceAsk) — everyone else
+    // goes straight to the normal tracking view.
+    const needsAdvanceConfirmation = !!meta.high_risk_advance_requested && !alreadyConfirmed;
     const total = parseFloat(order.total_price);
     const discountedTotal = Math.round(total * (1 - PREPAID_DISCOUNT_PCT / 100));
     const prepaidSavings = Math.round(total - discountedTotal);
@@ -21471,6 +21493,7 @@ app.get("/order/lookup", async (req, res) => {
       is_prepaid: isPrepaid,
       // confirm-specific
       already_confirmed: alreadyConfirmed,
+      needs_advance_confirmation: needsAdvanceConfirmation,
       advance_paid: advancePaid,
       payment_type: isPrepaid ? 'prepaid' : (advancePaid > 0 ? 'advance' : 'cod'),
       fee: CONFIRM_FEE,
@@ -27621,7 +27644,8 @@ Supported actions:
 - unlock_return — unlock return/exchange eligibility for an order (bypasses the window/vendor restrictions) so the customer can self-serve on their return page. Triggers: "unlock return for order X", "let them return X even though window closed". Fields: order_id.
 - send_demo — send the full customer-facing WhatsApp template demo flow (order confirmation → shipped → delivered → exchange → refund → win-back, one message every few seconds) to a phone number, for showing a prospect/client what the notifications look like. Triggers: "send demo to 9876543210", "demo flow to this number 98765 43210", "show the wa flow to 9876543210". Fields: phone (10-digit Indian mobile number, digits only, strip any +91/91 prefix or spaces).
 - resend_order_confirmation — resend the order-CONFIRMED message, for AFTER a payment/advance has already been collected (picks prepaid or COD-advance version automatically based on the order's actual state) — for when a customer says they never got it. Triggers: "send order confirmation to 3421", "resend confirmation for 3421", "order confirmation didn't reach 3421", "send advance collected to 3421", "advance received message didn't go to 3421", "resend the confirmed message for 3421". Fields: order_id, phone (optional — only if the admin names a DIFFERENT number to send to instead of the order's own, e.g. "...on 9950812408").
-- resend_awaiting_confirmation — resend the "please PAY ₹99 to confirm" ASK message — this is sent BEFORE any payment is made, chasing the customer to pay; never confuses with "advance collected/received" (that's resend_order_confirmation instead, since it means payment already happened). Triggers: "send partial awaiting to 3241", "resend the 99 ask for 3241", "awaiting confirmation didn't send for 3241", "chase 3241 to pay the 99", "remind 3241 to confirm". Fields: order_id, phone (optional, same as above).
+- resend_awaiting_confirmation — resend the already-sent "please PAY ₹99 to confirm" ASK message verbatim (no new risk-flag, no track-page lock) — only when the admin says it already went out and didn't arrive. Triggers: "resend the 99 ask for 3241, they say it never arrived", "awaiting confirmation message didn't reach 3241, resend it". Fields: order_id, phone (optional, same as above).
+- send_high_risk_advance_ask — flag a SPECIFIC order as high-risk and send the "pay ₹99, shipping partner shows repeat COD rejections" ask — also locks that order's track page to the pay-₹99 screen until paid or dispatched. This is the normal way to request the ₹99 advance now (the automatic ask is off by default); use this unless the admin explicitly says a message already sent needs resending. Triggers: "send partial awaiting to 3241", "this order looks fishy, ask for 99", "flag 3241 high risk and ask for advance", "send the 99 risk ask to 3241", "chase 3241 for the advance, looks fake". Fields: order_id, phone (optional, same as above).
 - unknown — doesn't clearly match any of the above, or no order number/phone is present.
 
 order_id is the bare Shopify order number, digits only (strip any leading #). Respond with ONLY JSON in this exact shape:
@@ -27629,7 +27653,7 @@ order_id is the bare Shopify order number, digits only (strip any leading #). Re
 For waive_fee/unlock_return, omit from_size/to_size: {"action":"waive_fee","order_id":"2345","reason":""}
 For issue_store_credit: {"action":"issue_store_credit","order_id":"3042","amount":2131,"reason":""} (amount 0 when none named)
 For send_demo: {"action":"send_demo","phone":"9876543210"}
-For resend_order_confirmation/resend_awaiting_confirmation: {"action":"resend_order_confirmation","order_id":"3421","phone":""} — leave phone empty string unless the admin explicitly named a different number to redirect to.
+For resend_order_confirmation/resend_awaiting_confirmation/send_high_risk_advance_ask: {"action":"send_high_risk_advance_ask","order_id":"3421","phone":""} — leave phone empty string unless the admin explicitly named a different number to redirect to.
 
 Message: "${text.replace(/"/g, '\\"')}"`;
 
@@ -27882,6 +27906,56 @@ async function adminResendAwaitingConfirmation(order, phoneOverride) {
   return { sent: true };
 }
 
+// Manual "high risk — pay ₹99" ask. Used when WA_PARTIAL_AWAITING_ENABLED is
+// off (the automatic ask is disabled) but an admin spots a specific order
+// that looks fishy (repeat COD-rejection history, mismatched details, etc.)
+// and wants to require the ₹99 advance for THIS one order only.
+//
+// Sets order_meta.high_risk_advance_requested — the track page (/order/
+// lookup) checks this flag and forces the pay-₹99 screen for this order
+// until the advance lands or it dispatches, instead of the normal tracking
+// view every other order gets.
+//
+// Delivery: the Cloud API template (ORDER_AWAITING_CONFIRMATION, already
+// Meta-approved) is sent for a guaranteed, compliant delivery with a real
+// tappable pay link. Its approved copy is the generic "pay ₹99 to confirm"
+// wording, not the fuller "high risk" explanation — Meta templates can't
+// use custom wording without a fresh submission+approval cycle. The richer
+// copy (shipping-partner rejection history, full total breakdown) is sent
+// as a companion message over the WA bot (Baileys) when it's connected, so
+// the customer sees the full context; if Baileys is disconnected that part
+// is simply skipped and the customer still gets the functional Cloud
+// message with the pay link. Submit a new Meta template with this exact
+// copy later to get it into the compliant path too.
+async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
+  const phone10 = _resendPhone(order, phoneOverride);
+  if (!phone10) throw new Error('No valid WhatsApp number on this order — give one explicitly (e.g. "...on 9876543210").');
+
+  const total = parseFloat(order.total_price || 0);
+  const codDue = Math.max(0, total - CONFIRM_FEE);
+  const orderSlug = encodeURIComponent(String(order.name).replace(/^#/, ''));
+  const trackUrl = `${SERVER_URL}/o/${orderSlug}`;
+
+  await mdb.collection('order_meta').updateOne(
+    { shopify_id: String(order.id) },
+    { $set: { high_risk_advance_requested: true, high_risk_advance_requested_at: new Date().toISOString() } },
+    { upsert: true }
+  );
+
+  const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_AWAITING_CONFIRMATION, bodyParams: [order.name, codDue.toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
+  if (!result.sent) throw new Error(result.reason);
+
+  if (waSocket && waConnected) {
+    const _F = '```';
+    const richText = `${_F}\n▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nDispatched right after ₹99 is received.\n\nCONFIRM\n${trackUrl}\n${_F}`;
+    try { await waSocket.sendMessage(`91${phone10}@s.whatsapp.net`, { text: richText }); }
+    catch (e) { console.error('High-risk advance ask — Baileys companion message failed:', e.message); }
+  }
+
+  auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10 });
+  return { sent: true };
+}
+
 // Full customer-facing template demo flow — order confirmation through
 // delivery, exchange request through exchange-sent, plus win-back — sent to
 // any phone number for showing a prospect/client what the notifications
@@ -28003,6 +28077,9 @@ async function runOrderCommand(intent, order, reply) {
   } else if (intent.action === 'resend_awaiting_confirmation') {
     await adminResendAwaitingConfirmation(order, intent.phone);
     await reply(`✅ "Pay ₹99 to confirm" message resent for order ${order.name}${intent.phone ? ` to ${intent.phone}` : ''}.`);
+  } else if (intent.action === 'send_high_risk_advance_ask') {
+    await adminSendHighRiskAdvanceAsk(order, intent.phone);
+    await reply(`✅ High-risk "pay ₹99" ask sent for order ${order.name}${intent.phone ? ` to ${intent.phone}` : ''} — their track page will show the pay-₹99 screen until it's paid or the order ships.`);
   }
 }
 

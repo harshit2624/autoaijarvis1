@@ -2467,6 +2467,36 @@
               </div>
             )}
 
+            {/* High-risk ₹99 advance ask — manual, per-order. The automatic
+                WA ask is off by default; this is the deliberate exception
+                for an order that looks fishy. Sending it also locks the
+                customer's track page to the pay-₹99 screen until paid or
+                dispatched. */}
+            {order.financial !== 'paid' && (order.advancePaid||0) < 99 && (
+              <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
+                <div className="detail-box-title" style={{marginBottom:10}}>⚠️ High-Risk Advance Ask</div>
+                <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:10}}>
+                  Manually ask this one customer to pay ₹99 before dispatch (repeat COD rejections, mismatched details, etc). Locks their track page to the pay-₹99 screen until paid or shipped.
+                </div>
+                <button
+                  onClick={async ()=>{
+                    if (!confirm(`Send the high-risk ₹99 advance ask for ${order.id}? Their track page will lock to the pay screen until paid or dispatched.`)) return;
+                    try {
+                      const r = await fetch(`${API}/admin/orders/${order.shopifyId}/send-high-risk-advance-ask`, {
+                        method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`}, body: JSON.stringify({}),
+                      });
+                      const d = await r.json();
+                      if (!r.ok) throw new Error(d.error || 'Failed to send');
+                      alert('Sent — track page locked to the pay-₹99 screen for this order.');
+                      onUpdated();
+                    } catch(e) { alert(e.message); }
+                  }}
+                  style={{fontSize:11,fontWeight:700,padding:'6px 13px',borderRadius:99,cursor:'pointer',border:'1px solid #fbbf24',background: order.highRiskAdvanceRequested ? '#fbbf24' : 'rgba(251,191,36,0.1)',color: order.highRiskAdvanceRequested ? '#111' : '#fbbf24'}}>
+                  {order.highRiskAdvanceRequested ? '⚠️ Sent — click to resend' : '⚠️ Send High-Risk ₹99 Ask'}
+                </button>
+              </div>
+            )}
+
             {/* Create Shipment */}
             <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:16,marginBottom:16}}>
               <div className="detail-box-title" style={{marginBottom:14}}>📦 Create Shipment</div>
