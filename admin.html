@@ -18741,6 +18741,7 @@
       commissionRate:'20%', settlementCycle:'days', settlementDate:'10', prepaidSettlementDays:'7',
       trackingPenalty:'₹200', pricingPenalty:'₹500', minimumTerm:'6 months', noticePeriod:'15 days', forceMajeureDays:'30 days',
       vendorName:'', vendorGstin:'', vendorAddress:'', vendorSignatory:'', croscrowSignatory:'Harshit',
+      logisticsByCroscrow:false,
     });
     const [validTill,      setValidTill]      = useState('');
     const [sendEmail,      setSendEmail]      = useState(true);
@@ -18782,6 +18783,7 @@
       settlementDate: form.settlementDate, prepaidSettlementDays: form.prepaidSettlementDays,
       trackingPenalty: form.trackingPenalty, pricingPenalty: form.pricingPenalty,
       minimumTerm: form.minimumTerm, noticePeriod: form.noticePeriod, forceMajeureDays: form.forceMajeureDays,
+      logisticsByCroscrow: form.logisticsByCroscrow,
       partyA: { name: form.vendorName.trim(), gstin: form.vendorGstin.trim(), address: form.vendorAddress.trim(), signatory: form.vendorSignatory.trim() },
       partyB: { signatory: form.croscrowSignatory.trim() },
     });
@@ -18875,6 +18877,14 @@
               {fl('CROSCROW Signatory', inp('croscrowSignatory',''))}
             </div>
 
+            <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:10,padding:'10px 12px',background:form.logisticsByCroscrow?'rgba(99,102,241,0.1)':'var(--bg-hover)',borderRadius:8,border:form.logisticsByCroscrow?'1px solid var(--indigo)':'1px solid transparent'}}>
+              <input type="checkbox" id="logistics_croscrow" checked={form.logisticsByCroscrow} onChange={e=>set('logisticsByCroscrow',e.target.checked)} style={{cursor:'pointer',marginTop:2}}/>
+              <label htmlFor="logistics_croscrow" style={{fontSize:12,color:'var(--text)',cursor:'pointer'}}>
+                Logistics handled by CROSCROW
+                <div style={{fontSize:10.5,color:'var(--text-muted)',fontWeight:400,marginTop:3,lineHeight:1.5}}>For vendors onboarded with CROSCROW managing shipping. Rewrites Section 13: CROSCROW bears forward logistics cost, forwards whatever claim amount the logistics partner actually pays out for a lost shipment, and CROSCROW (not the vendor) absorbs RTO cost.</div>
+              </label>
+            </div>
+
             <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16,padding:'10px 12px',background:'var(--bg-hover)',borderRadius:8}}>
               <input type="checkbox" id="send_email" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} style={{cursor:'pointer'}}/>
               <label htmlFor="send_email" style={{fontSize:12,color:'var(--text)',cursor:'pointer'}}>Email agreement to vendor (with .pdf attachment)</label>
@@ -18918,6 +18928,7 @@
       vendorAddress: '',
       vendorSignatory: '',
       croscrowSignatory: 'Harshit',
+      logisticsByCroscrow: false,
     });
     const [loading,       setLoading]       = useState(false);
     const [err,           setErr]           = useState('');
@@ -18967,6 +18978,7 @@
           minimumTerm:      form.minimumTerm,
           noticePeriod:     form.noticePeriod,
           forceMajeureDays: form.forceMajeureDays,
+          logisticsByCroscrow: form.logisticsByCroscrow,
           partyA: { name: form.vendorName.trim(), gstin: form.vendorGstin.trim(), address: form.vendorAddress.trim(), signatory: form.vendorSignatory.trim() },
           partyB: { signatory: form.croscrowSignatory.trim() },
         };
@@ -19072,6 +19084,13 @@
             {gField('Force Majeure Days', gInp('forceMajeureDays','30 days'))}
             {gField('Agreement Date', gInp('agreementDate',''), 'e.g. "15th day of May, 2026"')}
             {gField('Effective Date', gInp('effectiveDate',''), 'Short date shown on cover, e.g. "15 May 2026"')}
+            <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'10px 12px',background:form.logisticsByCroscrow?'rgba(99,102,241,0.1)':'var(--bg-card2)',borderRadius:8,border:form.logisticsByCroscrow?'1px solid var(--indigo)':'1px solid var(--border)'}}>
+              <input type="checkbox" id="g_logistics_croscrow" checked={form.logisticsByCroscrow} onChange={e=>set('logisticsByCroscrow',e.target.checked)} style={{cursor:'pointer',marginTop:2}}/>
+              <label htmlFor="g_logistics_croscrow" style={{fontSize:12,color:'var(--text)',cursor:'pointer'}}>
+                Logistics handled by CROSCROW
+                <div style={{fontSize:10.5,color:'var(--text-muted)',fontWeight:400,marginTop:3,lineHeight:1.5}}>Rewrites Section 13: CROSCROW bears forward logistics cost, forwards whatever claim the logistics partner actually pays for a lost shipment, and CROSCROW absorbs RTO cost.</div>
+              </label>
+            </div>
           </div>
         </div>
 
