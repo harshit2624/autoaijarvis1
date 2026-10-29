@@ -28096,7 +28096,19 @@ async function waCloudSendSession(jid, content) {
       // (confirmed: WA product-query replies sent the text/button but no
       // photo, because Baileys is fully retired so there was no fallback
       // transport for the failed Cloud upload to land on).
-      body = { messaging_product: 'whatsapp', to, type: 'image', image: { link: content.image.url, caption: content.caption || '' } };
+      //
+      // Cloud API's own link-fetcher caps images at 5MB — several product
+      // photos on this store's CDN are the full uploaded original (one
+      // confirmed at 9.4MB), which Meta accepts the send request for (a
+      // wamid comes back) but then fails to actually download, logged as
+      // "Media upload error". Shopify's CDN supports resizing via a
+      // `width` query param on the same URL — ask for a WhatsApp-sized
+      // copy instead of the original.
+      let imgUrl = content.image.url;
+      if (/cdn\.shopify\.com/.test(imgUrl) && !/[?&]width=/.test(imgUrl)) {
+        imgUrl += (imgUrl.includes('?') ? '&' : '?') + 'width=800';
+      }
+      body = { messaging_product: 'whatsapp', to, type: 'image', image: { link: imgUrl, caption: content.caption || '' } };
     } else if (content?.image) {
       const mediaId = await waCloudUploadMedia(content.image, content.mimetype || 'image/jpeg');
       body = { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId, caption: content.caption || '' } };
