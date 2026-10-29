@@ -32748,6 +32748,38 @@ async function startBaileysBot() {
                 waPending.delete(sender);
                 continue;
               }
+              // Product query from the PDP WhatsApp button — matches the
+              // exact prefilled text cc-mobile-dock.liquid sends ("Hi, can
+              // you tell me more about {product.title}?"). Handled directly
+              // here (bypassing the LLM) so it works in menu mode without
+              // needing WA_MENU_LLM_FALLBACK on for every unrecognized
+              // message — scoped to just this one known, reliable trigger.
+              const _pdpProductMatch = text.match(/^hi,?\s*can you tell me more about\s+(.+?)\??$/i);
+              if (_pdpProductMatch) {
+                const _pq = _pdpProductMatch[1].trim();
+                const _pqResult = await scSearchProducts(_pq).catch(() => ({ found: 0, products: [], collections: [] }));
+                if (_pqResult.products?.length) {
+                  await sock.sendMessage(sender, { text: `Here's what I found for "${_pq}" 👇` });
+                  await waSendProductImages(sock, sender, _pqResult.products);
+                  const _ctaProduct = _pqResult.products.find(p => p.handle);
+                  if (_ctaProduct) {
+                    const _discountUrl = `${STOREFRONT_URL}/discount/${PRODUCT_INQUIRY_DISCOUNT_CODE}?redirect=/products/${_ctaProduct.handle}`;
+                    await sock.sendMessage(sender, {
+                      text: `Since you asked — here's ${PRODUCT_INQUIRY_DISCOUNT_PCT}% off on us 🎁`,
+                      ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
+                    }).catch(() => {});
+                  }
+                } else if (_pqResult.collections?.length) {
+                  await sock.sendMessage(sender, { text: `Here's the collection: ${_pqResult.collections[0].url}` });
+                } else {
+                  await sock.sendMessage(sender, { text: `Couldn't find that exact product right now — here's our full range: ${STOREFRONT_URL}` });
+                }
+                await SC.addMessage(chat._id, { sender: 'assistant', text: `[product_query reply for "${_pq}"]` }).catch(() => {});
+                await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $addToSet: { tags: 'Product Inquiry' } }).catch(() => {});
+                await waSessionClear(sender).catch(() => {});
+                waPending.delete(sender);
+                continue;
+              }
               // Trial: let the LLM actually attempt an answer before
               // falling back to a bare menu resend — a real answer beats
               // "didn't catch that" every time it works. Guarded by
