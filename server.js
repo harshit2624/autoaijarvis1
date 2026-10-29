@@ -25205,6 +25205,32 @@ async function scSearchProducts(query) {
   } catch (e) { return { found: 0, products: [], collections: [], error: e.message }; }
 }
 
+// Exact-title lookup, no category-keyword shortcut — scSearchProducts
+// deliberately routes a query like "show me tees" to a curated category
+// list before ever running a real search (confirmed bug: "BURNOUT LS TEE"
+// matched the word "tee" and returned an unrelated curated product,
+// pikka-001-core-copy-1, as the top result). This is for callers that
+// already know the exact product name (e.g. the PDP WhatsApp button's
+// prefilled "tell me more about {title}" message) and need the real match,
+// not a category browse.
+async function scSearchProductByExactTitle(title) {
+  try {
+    const fullPhrase = title.trim().replace(/"/g, '');
+    if (!fullPhrase) return [];
+    const data = await shopifyGQL(`{ products(first: 5, query: "status:active AND title:*${fullPhrase}*") {
+      edges { node { title handle featuredImage { url }
+        variants(first: 10) { edges { node { price availableForSale } } } } } } }`);
+    const edges = (data.data?.products?.edges || []).map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale));
+    return edges.map(p => ({
+      title: p.title,
+      handle: p.handle,
+      url: `${STOREFRONT_URL}/products/${p.handle}`,
+      image: p.featuredImage?.url || null,
+      price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
+    }));
+  } catch (e) { return []; }
+}
+
 async function scGetOrderStatus(orderName, contact) {
   try {
     const normalized = String(orderName).replace(/^#/, '').trim();
@@ -32757,11 +32783,11 @@ async function startBaileysBot() {
               const _pdpProductMatch = text.match(/^hi,?\s*can you tell me more about\s+(.+?)\??$/i);
               if (_pdpProductMatch) {
                 const _pq = _pdpProductMatch[1].trim();
-                const _pqResult = await scSearchProducts(_pq).catch(() => ({ found: 0, products: [], collections: [] }));
-                if (_pqResult.products?.length) {
+                const _pqProducts = await scSearchProductByExactTitle(_pq);
+                if (_pqProducts.length) {
                   await sock.sendMessage(sender, { text: `Here's what I found for "${_pq}" 👇` });
-                  await waSendProductImages(sock, sender, _pqResult.products);
-                  const _ctaProduct = _pqResult.products.find(p => p.handle);
+                  await waSendProductImages(sock, sender, _pqProducts);
+                  const _ctaProduct = _pqProducts.find(p => p.handle);
                   if (_ctaProduct) {
                     const _discountUrl = `${STOREFRONT_URL}/discount/${PRODUCT_INQUIRY_DISCOUNT_CODE}?redirect=/products/${_ctaProduct.handle}`;
                     await sock.sendMessage(sender, {
@@ -32769,8 +32795,6 @@ async function startBaileysBot() {
                       ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
                     }).catch(() => {});
                   }
-                } else if (_pqResult.collections?.length) {
-                  await sock.sendMessage(sender, { text: `Here's the collection: ${_pqResult.collections[0].url}` });
                 } else {
                   await sock.sendMessage(sender, { text: `Couldn't find that exact product right now — here's our full range: ${STOREFRONT_URL}` });
                 }
