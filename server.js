@@ -29045,6 +29045,20 @@ app.post('/admin/wa-cloud/chats/:phone/send', adminAuth, async (req, res) => {
 //   POST https://dashboard.croscrow.com/webhooks/abandoned-cart
 // ══════════════════════════════════════════════════════════════════════════
 
+// Appends the UTM triple registered against COMEBACK in GoKwik's UTM
+// auto-discount dashboard (Marketing → Discounts → COMEBACK → UTM rule:
+// exact match, source=whatsapp / medium=chatbot / campaign=
+// abandoned_cart_recovery, Auto-apply on Checkout ON). Confirmed live
+// 2026-10-30 on a real mrid recovery link — GoKwik's checkout opens with
+// the ₹150 off already applied, no code typed. Works on the bare
+// croscrow.com?mrid=... recovery link too (GoKwik's mrid-resume script
+// hijacks the same page load the UTM engine reads, doesn't bypass it).
+function waAbandonedCartDiscountUrl(url) {
+  if (!url) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}utm_source=whatsapp&utm_medium=chatbot&utm_campaign=abandoned_cart_recovery`;
+}
+
 app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
     // Three middlewares can touch req.body before this handler ever runs:
@@ -29158,7 +29172,7 @@ app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' })
     const discountCode = 'COMEBACK';
     const discountAmt  = 150;
 
-    const buyUrl = checkoutUrl || `https://croscrow.com`;
+    const buyUrl = waAbandonedCartDiscountUrl(checkoutUrl) || `https://croscrow.com`;
     const afterDiscount = Math.max(0, total - discountAmt);
     const gkItemLines = items.slice(0,2).map(it =>
       `▸ ${it.title}${it.quantity>1?' ×'+it.quantity:''}`
@@ -29240,7 +29254,7 @@ app.post('/admin/shopify-abandoned-checkouts/send-wa', adminAuth, async (req, re
     const total     = parseFloat(c.total_price || 0);
     // Prefer GoKwik mrid URL saved in Shopify checkout note field over Shopify's own recovery link
     const gokwikNote = typeof c.note === 'string' && c.note.includes('mrid=') ? c.note.trim() : '';
-    const checkoutUrl = gokwikNote || c.abandoned_checkout_url || '';
+    const checkoutUrl = waAbandonedCartDiscountUrl(gokwikNote || c.abandoned_checkout_url || '');
 
     if (!phone || phone.length !== 10) return res.status(400).json({ error: 'No valid phone number in checkout' });
 
@@ -29387,7 +29401,7 @@ app.post('/admin/abandoned-carts/:id/send-wa', adminAuth, async (req, res) => {
     const discountCode = 'COMEBACK';
     const discountAmt = 150;
     const afterDiscount = Math.max(0, total - discountAmt);
-    const buyUrl = cart.checkout_url || 'https://croscrow.com';
+    const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url) || 'https://croscrow.com';
     const items = cart.items || [];
 
     const waMsg =
