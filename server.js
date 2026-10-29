@@ -27103,8 +27103,21 @@ app.get('/mine-game.js', (req, res) => {
 // in GoKwik's own discount-engine dashboard with the matching % — same
 // requirement as MINE_CODES below; GoKwik ignores/overrides discounts it
 // doesn't recognize even if they're valid on Shopify's side.
-const PRODUCT_INQUIRY_DISCOUNT_CODE = 'ASKED10';
+const PRODUCT_INQUIRY_DISCOUNT_CODE = 'SPECIALQUERY';
 const PRODUCT_INQUIRY_DISCOUNT_PCT = 10;
+// GoKwik UTM auto-discount rule for SPECIALQUERY (Marketing → Discounts →
+// SPECIALQUERY → UTM rule): exact match, source=whatsapp / medium=chatbot
+// / campaign=product_query, Auto-apply on Checkout ON. Deliberately a
+// different campaign value than the abandoned-cart UTM rule
+// (abandoned_cart_recovery) so the two never cross-trigger each other.
+// Same proven mechanism as the abandoned-cart fix — a plain product link
+// with these UTM params, not the Shopify /discount/CODE redirect (which
+// needs no separate GoKwik registration risk — GoKwik's own UTM engine
+// reads the live page load directly).
+function waProductInquiryDiscountUrl(productUrl) {
+  const sep = productUrl.includes('?') ? '&' : '?';
+  return `${productUrl}${sep}utm_source=whatsapp&utm_medium=chatbot&utm_campaign=product_query`;
+}
 
 // Generate a real Shopify discount code for the mine game winner
 // Fixed GoKwik discount codes — create these EXACTLY on GoKwik with the min order shown
@@ -32835,7 +32848,7 @@ async function startBaileysBot() {
                   if (_ctaProduct && _ctaProduct.price_from) {
                     const _currentPrice = Math.round(_ctaProduct.price_from);
                     const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
-                    const _discountUrl = `${STOREFRONT_URL}/discount/${PRODUCT_INQUIRY_DISCOUNT_CODE}?redirect=/products/${_ctaProduct.handle}`;
+                    const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
                     await sock.sendMessage(sender, {
                       text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nUse the button below to avail the discount.`,
                       ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
@@ -32899,10 +32912,12 @@ async function startBaileysBot() {
             // down. Only on products (not a bare curated-collection link,
             // which has no single product handle to redirect to).
             const _ctaProduct = products.find(p => p.handle);
-            if (_ctaProduct) {
-              const _discountUrl = `${STOREFRONT_URL}/discount/${PRODUCT_INQUIRY_DISCOUNT_CODE}?redirect=/products/${_ctaProduct.handle}`;
+            if (_ctaProduct && _ctaProduct.price_from) {
+              const _currentPrice = Math.round(_ctaProduct.price_from);
+              const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
+              const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
               await sock.sendMessage(sender, {
-                text: `Since you asked — here's ${PRODUCT_INQUIRY_DISCOUNT_PCT}% off on us 🎁`,
+                text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nUse the button below to avail the discount.`,
                 ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
               }).catch(() => {});
             }
