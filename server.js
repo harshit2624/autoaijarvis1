@@ -1859,6 +1859,35 @@ app.get("/health", (_, res) => res.json({
   time:   new Date().toISOString(),
 }));
 
+// ── Antortiq theme licence switch (Trendz Gifts) ────────────────────────────
+// Controls the trial/lock state of https://trendzgifts.com/new-theme/ .
+// Flip it from Render → Environment:  TRENDZ_LICENSE = trial | active | expired
+app.get("/license/trendzgifts", (req, res) => {
+  const mode    = (process.env.TRENDZ_LICENSE || "trial").toLowerCase();
+  const days    = parseInt(process.env.TRENDZ_TRIAL_DAYS || "4", 10);
+  const bootMs  = Date.now() - process.uptime() * 1000;
+  const start   = process.env.TRENDZ_TRIAL_START ? new Date(process.env.TRENDZ_TRIAL_START) : new Date(bootMs);
+  const contact = (process.env.TRENDZ_CONTACT_WA || "918209544626").replace(/\D/g, "");
+
+  const trialEnd = new Date(start.getTime() + days * 86400000);
+  const msLeft   = trialEnd.getTime() - Date.now();
+  const daysLeft = Math.max(0, Math.ceil(msLeft / 86400000));
+
+  let status = mode;
+  if (mode === "trial" && msLeft <= 0) status = "expired";
+
+  res.set("Cache-Control", "no-store");
+  res.json({
+    site:       "trendzgifts",
+    status,                       // trial | active | expired
+    days_left:  status === "trial" ? daysLeft : 0,
+    trial_end:  trialEnd.toISOString(),
+    contact_wa: contact,
+    message:    "Trendz Gifts theme — licensed by Antortiq",
+  });
+});
+// ────────────────────────────────────────────────────────────────────────────
+
 // ── GET /orders ───────────────────────────────────────────────────────────
 app.get("/orders", async (req, res) => {
   try {
