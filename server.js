@@ -25218,12 +25218,13 @@ async function scSearchProductByExactTitle(title) {
     const fullPhrase = title.trim().replace(/"/g, '');
     if (!fullPhrase) return [];
     const data = await shopifyGQL(`{ products(first: 5, query: "status:active AND title:*${fullPhrase}*") {
-      edges { node { title handle featuredImage { url }
+      edges { node { title handle description featuredImage { url }
         variants(first: 10) { edges { node { price availableForSale } } } } } } }`);
     const edges = (data.data?.products?.edges || []).map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale));
     return edges.map(p => ({
       title: p.title,
       handle: p.handle,
+      description: (p.description || '').trim(),
       url: `${STOREFRONT_URL}/products/${p.handle}`,
       image: p.featuredImage?.url || null,
       price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
@@ -31104,16 +31105,25 @@ async function waHandleAdminQuery(sock, sender, text) {
 }
 
 // ── Send product images one by one ────────────────────────────────────────
-async function waSendProductImages(sock, sender, products) {
+// descriptionOnly: title + plain-text description, no price/link/emoji —
+// used by the PDP "tell me more" flow, where the price + discount math
+// belongs in the separate CTA message that follows, not duplicated here.
+async function waSendProductImages(sock, sender, products, { descriptionOnly = false } = {}) {
   const list = products.slice(0, 3);
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
-    const priceStr = p.price_from ? `₹${Math.round(p.price_from)}` : '';
-    const caption = [
-      `*${p.title}*`,
-      priceStr ? `💰 ${priceStr}` : '',
-      p.url ? `🛍️ Shop now: ${p.url}` : '',
-    ].filter(Boolean).join('\n');
+    let caption;
+    if (descriptionOnly) {
+      const plainDesc = (p.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+      caption = [p.title, plainDesc].filter(Boolean).join('\n\n');
+    } else {
+      const priceStr = p.price_from ? `₹${Math.round(p.price_from)}` : '';
+      caption = [
+        `*${p.title}*`,
+        priceStr ? `💰 ${priceStr}` : '',
+        p.url ? `🛍️ Shop now: ${p.url}` : '',
+      ].filter(Boolean).join('\n');
+    }
     try {
       if (p.image) {
         await sock.sendMessage(sender, { image: { url: p.image }, caption });
@@ -32806,13 +32816,14 @@ async function startBaileysBot() {
                 const _pq = _pdpProductMatch[1].trim();
                 const _pqProducts = await scSearchProductByExactTitle(_pq);
                 if (_pqProducts.length) {
-                  await sock.sendMessage(sender, { text: `Here's what I found for "${_pq}" 👇` });
-                  await waSendProductImages(sock, sender, _pqProducts);
+                  await waSendProductImages(sock, sender, _pqProducts, { descriptionOnly: true });
                   const _ctaProduct = _pqProducts.find(p => p.handle);
-                  if (_ctaProduct) {
+                  if (_ctaProduct && _ctaProduct.price_from) {
+                    const _currentPrice = Math.round(_ctaProduct.price_from);
+                    const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
                     const _discountUrl = `${STOREFRONT_URL}/discount/${PRODUCT_INQUIRY_DISCOUNT_CODE}?redirect=/products/${_ctaProduct.handle}`;
                     await sock.sendMessage(sender, {
-                      text: `Since you asked — here's ${PRODUCT_INQUIRY_DISCOUNT_PCT}% off on us 🎁`,
+                      text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nUse the button below to avail the discount.`,
                       ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
                     }).catch(() => {});
                   }
