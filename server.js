@@ -25213,18 +25213,42 @@ async function scSearchProducts(query) {
 // already know the exact product name (e.g. the PDP WhatsApp button's
 // prefilled "tell me more about {title}" message) and need the real match,
 // not a category browse.
+// Converts Shopify's description HTML into WhatsApp's own plain-text
+// markup (bullets as real line breaks, *bold* via asterisks) instead of
+// the flat description field, which strips all structure — confirmed the
+// PDP's nicely formatted bullet list was arriving on WA as one run-on
+// paragraph because of that.
+function waFormatDescriptionHtml(html) {
+  if (!html) return '';
+  return html
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(strong|b)[^>]*>/gi, '*')
+    .replace(/<\/?(em|i)[^>]*>/gi, '_')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&(#39|rsquo|lsquo);/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 async function scSearchProductByExactTitle(title) {
   try {
     const fullPhrase = title.trim().replace(/"/g, '');
     if (!fullPhrase) return [];
     const data = await shopifyGQL(`{ products(first: 5, query: "status:active AND title:*${fullPhrase}*") {
-      edges { node { title handle description featuredImage { url }
+      edges { node { title handle descriptionHtml featuredImage { url }
         variants(first: 10) { edges { node { price availableForSale } } } } } } }`);
     const edges = (data.data?.products?.edges || []).map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale));
     return edges.map(p => ({
       title: p.title,
       handle: p.handle,
-      description: (p.description || '').trim(),
+      description: waFormatDescriptionHtml(p.descriptionHtml || ''),
       url: `${STOREFRONT_URL}/products/${p.handle}`,
       image: p.featuredImage?.url || null,
       price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
@@ -31141,7 +31165,10 @@ async function waSendProductImages(sock, sender, products, { descriptionOnly = f
     const p = list[i];
     let caption;
     if (descriptionOnly) {
-      const plainDesc = (p.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+      // p.description is already WhatsApp-formatted plain text (bullets/
+      // bold converted by waFormatDescriptionHtml) — only collapse
+      // same-line whitespace, never the newlines carrying that structure.
+      const plainDesc = (p.description || '').replace(/[ \t]+/g, ' ').trim().slice(0, 500);
       caption = [p.title, plainDesc].filter(Boolean).join('\n\n');
     } else {
       const priceStr = p.price_from ? `₹${Math.round(p.price_from)}` : '';
