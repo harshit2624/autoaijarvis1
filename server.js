@@ -28088,6 +28088,15 @@ async function waCloudSendSession(jid, content) {
           action: { name: 'cta_url', parameters: { display_text: content.ctaUrl.displayText, url: content.ctaUrl.url } },
         },
       };
+    } else if (content?.image?.url) {
+      // Image given as a remote URL (e.g. a Shopify CDN product photo) —
+      // Cloud API can fetch it directly via `link`, no upload needed. Do
+      // NOT route this through waCloudUploadMedia, which expects a raw
+      // Buffer — passing {url} there silently produced a broken upload
+      // (confirmed: WA product-query replies sent the text/button but no
+      // photo, because Baileys is fully retired so there was no fallback
+      // transport for the failed Cloud upload to land on).
+      body = { messaging_product: 'whatsapp', to, type: 'image', image: { link: content.image.url, caption: content.caption || '' } };
     } else if (content?.image) {
       const mediaId = await waCloudUploadMedia(content.image, content.mimetype || 'image/jpeg');
       body = { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId, caption: content.caption || '' } };
