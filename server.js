@@ -1186,6 +1186,25 @@ async function applyTagMappings(orderId, tags, financialStatus) {
       return;
     }
     const prev = await mdb.collection('order_meta').findOne({ shopify_id: sid }, { projection: { stage: 1 } });
+    // order_meta.stage is NOT kept in sync with real shipment progress — the
+    // ShipSagar tracking cron (the actual source of truth once a vendor
+    // dispatches) only ever writes order_vendor_stage, never order_meta
+    // (confirmed by reading shipsagarTrackingCronGuarded/applyShipSagarTag:
+    // it calls OVS.upsert exclusively). So order_meta.stage sits frozen at
+    // whatever it was set to at confirmation/advance time (usually
+    // 'confirmed') for the rest of that order's life, even after it's been
+    // picked up, shipped and delivered for real. Comparing against THAT
+    // stale value is what let a leftover "99 PARTIAL✅" tag re-fire the
+    // advance-collected emails on orders delivered weeks earlier (confirmed
+    // live on #3681/#3694/#3540 — order_vendor_stage correctly showed
+    // 'delivered' the whole time while order_meta.stage was still stuck on
+    // 'confirmed', so the old prev.stage !== newStage check saw a real
+    // "transition" into partial that never should have counted). Pull in
+    // the actual furthest-along stage across this order's OVS rows too, and
+    // use THAT for both the regression guard and the fired-or-not check.
+    const prevOvsRows = await mdb.collection('order_vendor_stage').find({ shopify_id: sid }, { projection: { stage: 1, _id: 0 } }).toArray();
+    let effectivePrevStage = prev?.stage || 'new';
+    for (const row of prevOvsRows) effectivePrevStage = higherStage(effectivePrevStage, row.stage);
     const newStage = winner.stage;
     // 'misc'/'returned' are manual overrides (only set via the admin bulk-select
     // tool or the order-detail stage dropdown) meant to permanently pull an
@@ -1196,6 +1215,20 @@ async function applyTagMappings(orderId, tags, financialStatus) {
     // buildOrderPayload's safeStage() for display — this is the actual
     // write path that was missing it.
     if (prev?.stage === 'misc' || prev?.stage === 'returned') return;
+    // A tag-mapping match must never REGRESS an order that has already moved
+    // past confirmed/partial/hold — a tag like "99 PARTIAL✅" or "Confirmed
+    // ₹99 Paid" is added PERMANENTLY to the Shopify order as an audit trail
+    // (see recordOrderConfirmationPayment) and never removed, so it keeps
+    // matching tag_mappings on every later orders/updated webhook — and on
+    // every /admin/tag-mappings/sync bulk run, which re-checks EVERY order
+    // since 2020. Without this guard, a months/years-old DELIVERED order
+    // gets silently pulled back to 'partial' purely because its leftover tag
+    // still matches, which then (via prev.stage !== newStage below) re-fires
+    // the "Your Advance is Confirmed" / "Advance Collected" emails on an
+    // already-completed order. Confirmed live as the cause of repeated
+    // advance-collected emails on very old orders.
+    const ADVANCED_STAGES = ['ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'stuck', 'cancelled'];
+    if (ADVANCED_STAGES.includes(effectivePrevStage) && TAG_ALLOWED_STAGES.includes(winner.stage)) return;
     // A tag can never downgrade a genuinely fully-paid order to 'partial' —
     // confirmed live on order #3355: GoKwik tags EVERY order that passes
     // through its checkout with "Gokwik_ppcod_upi" (its generic flow marker),
@@ -15025,22 +15058,33 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
   await OVS.upsert(shopifyId, vendorName, { penalty_triggered: 1 });
   console.log(`⚠️  Penalty triggered: ${orderName} / ${vendorName} — ${reason}`);
 
-  // Email vendor
+  // Email vendor — "never dispatched/late" and "dispatched but courier
+  // never picked up" are different failures with different fixes, so they
+  // get a different headline and action line, not just a different one-line
+  // reason buried inside an otherwise-identical template.
   const vcfg = await VC.get(vendorName);
   if (vcfg?.email) {
-    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not dispatched by your committed ETA date' : reason === 'fake_dispatch_48hr' ? 'Tracking number was created but the courier never actually picked up the package within 48 hours' : 'Manual penalty applied by admin';
-    const html = vendorEmailSky('#ef4444', 'PENALTY<br>TRIGGERED.', 'FULFILMENT ALERT',
+    const isPickupFailure = reason === 'fake_dispatch_48hr';
+    const reasonLabel = reason === '48hr_breach' ? 'Order not fulfilled within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not dispatched by your committed ETA date' : isPickupFailure ? 'Tracking number was created but the courier never actually picked up the package within 48 hours' : 'Manual penalty applied by admin';
+    const headline = isPickupFailure ? 'PICKUP<br>NEVER HAPPENED.' : 'PENALTY<br>TRIGGERED.';
+    const bodyText = isPickupFailure
+      ? `A penalty has been raised for order <strong style="color:#e0e0e0;">${orderName || shopifyId}</strong> because the AWB on file never got a single courier scan in 48 hours — this is treated the same as never dispatching. This is currently under admin review and will be confirmed or cancelled within 72 hours.`
+      : `A fulfilment penalty has been raised for order <strong style="color:#e0e0e0;">${orderName || shopifyId}</strong>. This is currently under admin review and will be confirmed or cancelled within 72 hours.`;
+    const alertText = isPickupFailure
+      ? 'If confirmed, ₹100 will be deducted from your next settlement. If the courier genuinely picked this up and ShipSagar just hasn\'t caught up, or you\'ve already re-shipped with a new AWB, contact us immediately on WhatsApp with the correct AWB.'
+      : 'If confirmed, ₹100 will be deducted from your next settlement. If you believe this is an error or have already shipped, please contact us immediately on WhatsApp.';
+    const html = vendorEmailSky('#ef4444', headline, isPickupFailure ? 'PICKUP FAILURE' : 'FULFILMENT ALERT',
       `<div style="font-size:17px;font-weight:700;color:#f0f0f0;margin-bottom:6px;">Hi ${vendorName} —</div>
-      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">A fulfilment penalty has been raised for order <strong style="color:#e0e0e0;">${orderName || shopifyId}</strong>. This is currently under admin review and will be confirmed or cancelled within 72 hours.</div>
+      <div style="font-size:13px;color:#888;line-height:1.8;margin-bottom:24px;">${bodyText}</div>
       ${vendorInfoBoxSky([
         ['Order', orderName || shopifyId, '#a5b4fc'],
         ['Reason', reasonLabel, '#fca5a5'],
         ['Status', 'Pending Admin Review', '#fbbf24'],
       ])}
-      ${vendorAlertBoxSky('If confirmed, ₹100 will be deducted from your next settlement. If you believe this is an error or have already shipped, please contact us immediately on WhatsApp.', '#ef4444')}
+      ${vendorAlertBoxSky(alertText, '#ef4444')}
       ${vendorWaButtonSky(orderName || shopifyId)}`
     );
-    await sendEmail({ to: vcfg.email, subject: `⚠️ Penalty Triggered: ${orderName || shopifyId}`, html, shopifyId, trigger: 'penalty_triggered' });
+    await sendEmail({ to: vcfg.email, subject: isPickupFailure ? `⚠️ Pickup Failed: ${orderName || shopifyId}` : `⚠️ Penalty Triggered: ${orderName || shopifyId}`, html, shopifyId, trigger: isPickupFailure ? 'penalty_triggered_pickup_failure' : 'penalty_triggered' });
   }
 
   // WA penalty notification — Cloud API template first, Baileys fallback.
@@ -15050,11 +15094,21 @@ async function triggerPenalty(shopifyId, vendorName, orderName, reason) {
       const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
       if (rawPhone.length === 10) {
         const jid = `91${rawPhone}@s.whatsapp.net`;
-        const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : reason === 'fake_dispatch_48hr' ? 'Tracking number created but courier never picked it up within 48 hours' : 'Manual penalty by admin';
+        const isPickupFailureWA = reason === 'fake_dispatch_48hr';
+        const reasonLabel = reason === '48hr_breach' ? 'Order not shipped within 48 hours of confirmation' : reason === 'eta_breach' ? 'Order not shipped by your committed ETA date' : isPickupFailureWA ? 'Tracking number created but courier never picked it up within 48 hours' : 'Manual penalty by admin';
         const penaltyToken = await createVendorUpdateToken(shopifyId, orderName || shopifyId, vendorName, '').catch(() => null);
         const _Fpen = '```';
-        const penaltyMsg = `${_Fpen}\n▪ C R O S C R O W ▪\nPENALTY TRIGGERED 🚨\n────────────────\nORDER  ${orderName || shopifyId}\nVENDOR ${vendorName}\n────────────────\nREASON ${reasonLabel}\nAMT    ₹100\n────────────────\nDeducted from next\nsettlement. To dispute,\nreply to this message.\n${penaltyToken ? `\nUPDATE HERE (no login)\ndashboard.croscrow.com/vendor/update/${penaltyToken}` : ''}\n${_Fpen}`;
-        const cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_PENALTY_TRIGGERED, bodyParams: [orderName || shopifyId, reasonLabel], urlButtonParam: penaltyToken || '' });
+        // vendor_penalty_pickup_failure_v1 — submitted to Meta 2026-10-29,
+        // PENDING approval; falls through to the Baileys plain-text message
+        // below until approved. Previously this reused the generic
+        // VENDOR_PENALTY_TRIGGERED template for a pickup failure too, with
+        // only the reasonLabel param differing — easy to miss at a glance.
+        const penaltyMsg = isPickupFailureWA
+          ? `${_Fpen}\n▪ C R O S C R O W ▪\nPICKUP NEVER HAPPENED 📦\n────────────────\nORDER  ${orderName || shopifyId}\nVENDOR ${vendorName}\n────────────────\nREASON ${reasonLabel}\nAMT    ₹100\n────────────────\nTreated same as a non-\ndispatch. Already re-shipped\nwith a new AWB? Reply to\nthis message with it.\n${penaltyToken ? `\nUPDATE HERE (no login)\ndashboard.croscrow.com/vendor/update/${penaltyToken}` : ''}\n${_Fpen}`
+          : `${_Fpen}\n▪ C R O S C R O W ▪\nPENALTY TRIGGERED 🚨\n────────────────\nORDER  ${orderName || shopifyId}\nVENDOR ${vendorName}\n────────────────\nREASON ${reasonLabel}\nAMT    ₹100\n────────────────\nDeducted from next\nsettlement. To dispute,\nreply to this message.\n${penaltyToken ? `\nUPDATE HERE (no login)\ndashboard.croscrow.com/vendor/update/${penaltyToken}` : ''}\n${_Fpen}`;
+        const cloudResult = isPickupFailureWA
+          ? await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_PENALTY_PICKUP_FAILURE, bodyParams: [orderName || shopifyId, '100'], urlButtonParam: penaltyToken || '' })
+          : await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_PENALTY_TRIGGERED, bodyParams: [orderName || shopifyId, reasonLabel], urlButtonParam: penaltyToken || '' });
         let actualJid = jid;
         if (!cloudResult.sent) {
           if (!waSocket || !waConnected) throw new Error(`Cloud API failed (${cloudResult.reason}) and Baileys not connected`);
@@ -15096,6 +15150,40 @@ function templateFulfilmentWarning({ order, vendorName, hoursElapsed, delayLink 
 
     <div style="text-align:center;margin-bottom:20px;">
       <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, I need help with order ${order.name} (${vendorName})`)}"
+         style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:12px;padding:10px 20px;font-family:Arial,sans-serif;">
+        Contact Support on WhatsApp
+      </a>
+    </div>
+    ${vendorCTAA()}
+  `);
+}
+
+// ── Pickup-pending warning template — distinct from the dispatch warning ──
+// above on purpose: "you haven't shipped yet" and "you shipped a label but
+// the courier never scanned it" are different operational problems with
+// different fixes (ship now vs. call your courier), and lumping them into
+// one generic "DISPATCH WARNING" message left vendors with no idea which
+// one they were being warned about.
+function templatePickupPendingWarning({ orderName, vendorName, awb, courier, hoursElapsed }) {
+  return vendorEmailA('PICKUP NOT CONFIRMED', 'ORDER ID', orderName, `
+    <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px;">Hey ${vendorName},</div>
+    <div style="font-size:13px;color:#888;line-height:1.6;margin-bottom:24px;">A tracking number exists for this order, but the courier has <strong>not yet scanned or picked up</strong> the package. This is different from a late dispatch — the shipment may still be sitting at your facility.</div>
+
+    <div style="border:2px solid #f59e0b;padding:20px 24px;text-align:center;margin-bottom:24px;">
+      <div style="font-size:9px;color:#aaa;letter-spacing:4px;text-transform:uppercase;margin-bottom:6px;">Hours Since AWB Created</div>
+      <div style="font-size:52px;font-weight:900;color:#111;font-family:'Courier New',monospace;line-height:1;">${hoursElapsed}</div>
+      <div style="font-size:12px;color:#888;margin-top:6px;">${48 - hoursElapsed} hours until this is treated as a failed pickup</div>
+    </div>
+
+    ${vendorInfoA([
+      { label: 'AWB', value: awb || '—', accent: '#002eff' },
+      { label: 'Courier', value: courier || '—', accent: '#002eff' },
+      { label: 'Issue', value: 'Zero courier scans recorded since dispatch', accent: '#dc2626' },
+    ])}
+    ${vendorAlertA('Please confirm the package is physically ready and contact your courier to schedule/confirm pickup. If this AWB is stale or the courier failed to collect, re-ship with a fresh AWB. If still unresolved in 24 hours, this will be marked as a failed pickup and penalized — the same as a non-dispatch.', 'danger')}
+
+    <div style="text-align:center;margin-bottom:20px;">
+      <a href="https://wa.me/${process.env.WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi CROSCROW, my courier hasn't picked up order ${orderName} (${vendorName}), AWB ${awb || 'N/A'}`)}"
          style="display:inline-block;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:12px;padding:10px 20px;font-family:Arial,sans-serif;">
         Contact Support on WhatsApp
       </a>
@@ -17334,9 +17422,49 @@ async function penaltyCronJob() {
     ).toArray();
     for (const row of fakeDispatchCandidates) {
       const elapsed = now - row.dispatched_at;
-      if (elapsed < HR48) continue;
       const sid = row.shopify_id;
       const vendor = row.vendor_name;
+
+      // 24hr "pickup pending" nudge — mirrors the pre-dispatch 24hr warning
+      // above, but for the OTHER half of the fulfilment funnel: an AWB
+      // exists, so the vendor may genuinely believe they're done, yet
+      // ShipSagar has recorded zero courier scans. Previously this case had
+      // NO warning at all — a vendor went straight from silence to a
+      // "PENALTY TRIGGERED" message at 48h, worded identically to a vendor
+      // who never shipped anything, with no earlier heads-up and no
+      // indication the problem is "courier hasn't come," not "you're late."
+      if (elapsed >= HR24 && elapsed < HR48 && !row.pickup_pending_warning_sent) {
+        let orderName = '';
+        try { const od = await shopifyREST(`/orders/${sid}.json?fields=id,name`); orderName = od?.order?.name || ''; } catch {}
+        const vcfg = await VC.get(vendor).catch(() => null);
+        if (vcfg?.email) {
+          const html = templatePickupPendingWarning({ orderName: orderName || sid, vendorName: vendor, awb: row.awb || '', courier: row.courier || '', hoursElapsed: Math.floor(elapsed / 3600000) });
+          await sendEmail({ to: vcfg.email, subject: `⚠️ Pickup Not Confirmed: ${orderName || sid}`, html, shopifyId: sid, trigger: 'pickup_pending_warning' }).catch(() => {});
+        }
+        try {
+          const vendorProfile = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendor }, { projection: { phone: 1, _id: 0 } });
+          const rawPhone = (vendorProfile?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+          if (rawPhone.length === 10) {
+            const jid = `91${rawPhone}@s.whatsapp.net`;
+            const hoursLeft = Math.max(0, 48 - Math.floor(elapsed / 3600000));
+            const awbCourierLine = `AWB: ${row.awb || 'N/A'}${row.courier ? ` (${row.courier})` : ''}`;
+            const ppToken = await createVendorUpdateToken(sid, orderName || sid, vendor, '').catch(() => null);
+            // vendor_pickup_pending_v1 — submitted to Meta 2026-10-29, PENDING
+            // approval. Falls through to the Baileys plain-text message
+            // below until Meta approves it (see WA_TPL comment).
+            const cloudResult = await sendWACloudTemplate({ phone10: rawPhone, templateName: WA_TPL.VENDOR_PICKUP_PENDING, bodyParams: [orderName || sid, awbCourierLine, String(hoursLeft)], urlButtonParam: ppToken || '' });
+            if (!cloudResult.sent && waSocket && waConnected) {
+              const _Fpp = '```';
+              const ppMsg = `${_Fpp}\n▪ C R O S C R O W ▪\nPICKUP NOT CONFIRMED 📦\n────────────────\nORDER  ${orderName || sid}\n${awbCourierLine}\n\nA tracking number exists but\nthe courier has NOT scanned\nor picked up this package yet.\nThis is different from a late\ndispatch — please follow up\nwith your courier directly.\n\nIf unresolved in ${hoursLeft}h, this\nwill be treated as a failed\npickup and penalized.\n────────────────\nReply to this message for help.\n${_Fpp}`;
+              await waSocket.sendMessage(jid, { text: ppMsg }).catch(() => {});
+            }
+          }
+        } catch (e) { console.error('pickup-pending WA nudge error:', e.message); }
+        await OVS.upsert(sid, vendor, { pickup_pending_warning_sent: 1 });
+        console.log(`📦 Pickup-pending warning sent: ${orderName} / ${vendor}`);
+      }
+
+      if (elapsed < HR48) continue;
       let orderName = '';
       try { const od = await shopifyREST(`/orders/${sid}.json?fields=id,name`); orderName = od?.order?.name || ''; } catch {}
 
@@ -17374,6 +17502,29 @@ async function penaltyCronJob() {
       { projection: { _id: 0 } }
     ).toArray();
     for (const p of pendingPenalties) {
+      // Re-check the vendor's CURRENT stage before blindly confirming — the
+      // penalty may have triggered correctly (vendor WAS late past 48h) but
+      // the vendor could have shipped at hour 55, 60, 70 — any time inside
+      // this 72h review window — and this cron never looked again until
+      // now. Confirmed live on order #3779/ODD GRAB: 48hr_breach fired on
+      // schedule, vendor dispatched a few hours later, order reached
+      // 'transit' with real courier scans, and the penalty just sat
+      // 'pending' with nothing watching it, about to auto-confirm as if the
+      // vendor never shipped at all. Also covers the order being pulled out
+      // of the vendor's hands entirely (hold/misc/cancelled/rto/stuck) in
+      // the meantime, where charging a fulfilment-delay penalty no longer
+      // makes sense either way.
+      const curOvs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: p.shopify_id, vendor_name: p.vendor_name }, { projection: { stage: 1, _id: 0 } });
+      const NO_LONGER_PENALIZABLE = ['ready', 'pickup', 'transit', 'ofd', 'delivered', 'rto', 'stuck', 'hold', 'misc', 'returned', 'cancelled'];
+      if (curOvs && NO_LONGER_PENALIZABLE.includes(curOvs.stage)) {
+        const waiveNote = ['ready','pickup','transit','ofd','delivered'].includes(curOvs.stage)
+          ? `Vendor fulfilled before the 72hr review window closed (now at '${curOvs.stage}'). Penalty waived.`
+          : `Order moved to '${curOvs.stage}' before the 72hr review window closed — no longer the vendor's SLA to hold. Penalty waived.`;
+        await OP.resolve(p.id, 'cancelled', 0, waiveNote);
+        console.log(`✅ Auto-waived penalty #${p.id}: ${p.order_name} / ${p.vendor_name} — ${waiveNote}`);
+        auditLog('system', 'penalty_auto_waived', p.id, { vendor: p.vendor_name, stage: curOvs.stage, note: waiveNote });
+        continue;
+      }
       await OP.resolve(p.id, 'confirmed', AUTO_CONFIRM_AMOUNT, AUTO_CONFIRM_NOTE);
       console.log(`✅ Auto-confirmed penalty #${p.id}: ${p.order_name} / ${p.vendor_name}`);
       auditLog('system', 'penalty_auto_confirmed', p.id, { vendor: p.vendor_name, amount: AUTO_CONFIRM_AMOUNT, note: AUTO_CONFIRM_NOTE });
@@ -25044,6 +25195,7 @@ async function scSearchProducts(query) {
       found: products.length,
       products: products.slice(0, 8).map(p => ({
         title: p.title,
+        handle: p.handle,
         url: `${STOREFRONT_URL}/products/${p.handle}`,
         image: p.featuredImage?.url || null,
         price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
@@ -26915,6 +27067,18 @@ app.get('/mine-game.js', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'mine-game.js'));
 });
 
+// Fixed discount code offered when a customer asks the WA bot about a
+// specific product ("tell me more about X") — sent as a cta_url button
+// pointing at /discount/{code}?redirect=/products/{handle}, which applies
+// the code to the Shopify cart session before GoKwik's checkout loads (so
+// GoKwik just inherits whatever's already on the cart). Must ALSO be
+// created as a real Shopify discount code AND registered as an active rule
+// in GoKwik's own discount-engine dashboard with the matching % — same
+// requirement as MINE_CODES below; GoKwik ignores/overrides discounts it
+// doesn't recognize even if they're valid on Shopify's side.
+const PRODUCT_INQUIRY_DISCOUNT_CODE = 'ASKED10';
+const PRODUCT_INQUIRY_DISCOUNT_PCT = 10;
+
 // Generate a real Shopify discount code for the mine game winner
 // Fixed GoKwik discount codes — create these EXACTLY on GoKwik with the min order shown
 // Suffixes are fixed but non-sequential so customers can't guess other tiers
@@ -27827,6 +27991,13 @@ const WA_TPL = {
   VENDOR_STUCK_ORDER_NUDGE: 'vendor_stuck_order_nudge',
   VENDOR_DISPATCH_WARNING: 'vendor_dispatch_warning',
   VENDOR_PENALTY_TRIGGERED: 'vendor_penalty_triggered',
+  // Submitted to Meta 2026-10-29, PENDING review — see
+  // memory/project_wa_template_pending_approvals.md. Until approved,
+  // sendWACloudTemplate's call below will fail (template not found/not
+  // approved) and silently fall through to the Baileys plain-text message
+  // already written at each call site, so no behavior changes until then.
+  VENDOR_PICKUP_PENDING: 'vendor_pickup_pending_v1',
+  VENDOR_PENALTY_PICKUP_FAILURE: 'vendor_penalty_pickup_failure_v1',
   VENDOR_CUSTOMER_QUERY: 'vendor_customer_query',
   BACK_IN_STOCK: 'back_in_stock_v1',
   BACK_IN_STOCK_SIGNUP: 'back_in_stock_signup_v1',
@@ -32620,6 +32791,19 @@ async function startBaileysBot() {
             const { products = [], collections = [] } = meta.data;
             await saveAndSend(reply, meta);
             await waSendProductImages(sock, sender, products);
+            // One personalized discount CTA on the top match — a real
+            // tappable button via cta_url (no Meta template needed, see
+            // waProxySock), auto-falls back to plain text if Cloud API is
+            // down. Only on products (not a bare curated-collection link,
+            // which has no single product handle to redirect to).
+            const _ctaProduct = products.find(p => p.handle);
+            if (_ctaProduct) {
+              const _discountUrl = `${STOREFRONT_URL}/discount/${PRODUCT_INQUIRY_DISCOUNT_CODE}?redirect=/products/${_ctaProduct.handle}`;
+              await sock.sendMessage(sender, {
+                text: `Since you asked — here's ${PRODUCT_INQUIRY_DISCOUNT_PCT}% off on us 🎁`,
+                ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
+              }).catch(() => {});
+            }
             if (collections.length) {
               await sock.sendMessage(sender, { text: collections.slice(0, 2).map(c => `🛍️ Browse ${c.title}: ${c.url}`).join('\n') });
             }
