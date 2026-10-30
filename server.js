@@ -16719,7 +16719,21 @@ async function sendDiwaliTicketEmail(ticket) {
       For reservations, call +91 88753 13203 &middot; Attire: Ethnic Wear
     </div>
   </div>`;
-  await sendEmail({ to: ticket.email, subject: 'Your Entry Pass — Diwali Soiree 2.0', html, shopifyId: null, trigger: 'diwali_ticket_qr' }).catch(e => console.error('Diwali ticket email error:', e.message));
+  // Dedicated Gmail SMTP for this event, separate from the main store's
+  // transactional SMTP (getSmtpConfig/sendEmail) — a leak or quota issue
+  // on either never touches the other.
+  const user = process.env.DIWALI_SMTP_USER;
+  const pass = process.env.DIWALI_SMTP_PASS;
+  if (!user || !pass) { logEmail(null, 'diwali_ticket_qr', ticket.email, 'Your Entry Pass — Diwali Soiree 2.0', 'skipped', 'DIWALI_SMTP_USER/PASS not configured'); return; }
+  try {
+    const transporter = createTransporter({ host: 'smtp.gmail.com', port: 587, user, pass });
+    await transporter.sendMail({ from: `"Creates" <${user}>`, to: ticket.email, subject: 'Your Entry Pass — Diwali Soiree 2.0', html });
+    logEmail(null, 'diwali_ticket_qr', ticket.email, 'Your Entry Pass — Diwali Soiree 2.0', 'sent');
+    console.log(`📧 Diwali ticket email sent → ${ticket.email}`);
+  } catch (err) {
+    logEmail(null, 'diwali_ticket_qr', ticket.email, 'Your Entry Pass — Diwali Soiree 2.0', 'failed', err.message);
+    console.error('Diwali ticket email error:', err.message);
+  }
 }
 
 app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
