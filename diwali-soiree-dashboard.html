@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Diwali Soiree — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,500;0,600&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#140607; --surface:#1a0a0b; --card:#1d0c0d; --card-hover:#220e10;
+  --border:rgba(176,138,75,.16); --border-strong:rgba(176,138,75,.4);
+  --text:#f3ebdd; --body:#c2b7a6; --muted:#796e5f;
+  --gold:#b08a4b; --gold-bright:#d4b579;
+  --ok:#5fc98d; --ok-bg:rgba(95,201,141,.1); --warn:#e0a94a; --warn-bg:rgba(224,169,74,.12); --err:#d9736a; --err-bg:rgba(217,115,106,.1);
+}
+html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}
+.serif{font-family:'Bodoni Moda',serif}
+.wrap{max-width:720px;margin:0 auto;padding:0 20px calc(40px + env(safe-area-inset-bottom,0px))}
+
+/* ── Login ─────────────────────────────────────────────────── */
+#login-screen{min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;max-width:340px;margin:0 auto}
+#login-screen b{font-size:11px;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
+.inp{width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);padding:16px 2px;font-size:16px;color:var(--text);outline:none;font-family:inherit;text-align:center}
+.inp:focus{border-color:var(--gold)}
+.btn{width:100%;background:transparent;color:var(--gold-bright);border:1px solid var(--gold);padding:15px;font-size:12px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
+.btn:active{background:var(--gold);color:var(--bg)}
+.err-msg{font-size:12px;color:var(--err);text-align:center;min-height:16px}
+
+/* ── Dashboard shell ───────────────────────────────────────── */
+#dash-screen{display:none}
+.topbar{position:sticky;top:0;z-index:30;background:rgba(20,6,7,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:18px 20px;margin:0 -20px 28px}
+.topbar-inner{max-width:720px;margin:0 auto;display:flex;align-items:center;justify-content:space-between}
+.topbar b{font-size:11px;letter-spacing:.24em;color:var(--gold);text-transform:uppercase}
+.topbar span{display:block;font-size:10px;color:var(--muted);margin-top:3px;letter-spacing:.04em}
+.btn-add{background:var(--gold);color:var(--bg);border:none;padding:10px 16px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+
+/* ── Stats grid ────────────────────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:32px}
+.stat{background:var(--card);padding:20px 18px}
+.stat-label{font-size:10px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase}
+.stat-val{font-family:'Bodoni Moda',serif;font-size:28px;font-weight:400;color:var(--gold-bright);margin-top:8px}
+.stat-sub{font-size:11px;color:var(--body);margin-top:4px}
+@media (min-width:520px){.stats{grid-template-columns:repeat(4,1fr)}}
+
+/* ── Ticket list ───────────────────────────────────────────── */
+.section-title{font-size:20px;font-weight:400;font-style:italic;font-family:'Bodoni Moda',serif;margin-bottom:4px}
+.section-sub{font-size:11.5px;color:var(--muted);margin-bottom:16px}
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.filter-chip{font-size:10.5px;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);padding:7px 13px;cursor:pointer;text-transform:uppercase;background:transparent}
+.filter-chip.active{color:var(--gold-bright);border-color:var(--gold)}
+
+.ticket-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 2px;border-bottom:1px solid var(--border);cursor:pointer}
+.ticket-row:hover{background:var(--card-hover)}
+.tr-left{display:flex;flex-direction:column;gap:3px;min-width:0}
+.tr-name{font-size:14.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr-meta{font-size:11px;color:var(--muted)}
+.tr-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.tr-amt{font-family:'Bodoni Moda',serif;font-size:15px;color:var(--gold-bright)}
+.badge{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;white-space:nowrap}
+.badge.entered{background:var(--ok-bg);color:var(--ok)}
+.badge.pending{background:var(--warn-bg);color:var(--warn)}
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted);font-size:13px}
+
+/* ── Modal (add ticket / view ticket) ─────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;z-index:50;background:rgba(10,3,4,.75);backdrop-filter:blur(4px);align-items:flex-end;justify-content:center}
+@media (min-width:520px){.modal-overlay{align-items:center}}
+.modal{width:100%;max-width:440px;background:var(--surface);border:1px solid var(--border-strong);border-bottom:none;padding:28px 24px;max-height:92svh;overflow-y:auto}
+@media (min-width:520px){.modal{border-bottom:1px solid var(--border-strong)}}
+.modal-title{font-family:'Bodoni Moda',serif;font-size:22px;font-style:italic;margin-bottom:4px}
+.modal-sub{font-size:11.5px;color:var(--muted);margin-bottom:22px}
+.modal .inp{text-align:left;margin-bottom:4px}
+.form-group{margin-bottom:16px}
+.form-label{font-size:10px;letter-spacing:.14em;color:var(--gold);text-transform:uppercase;display:block;margin-bottom:8px}
+.tier-select{display:flex;gap:8px}
+.tier-opt{flex:1;border:1px solid var(--border-strong);padding:12px;text-align:center;cursor:pointer;font-size:12px}
+.tier-opt.selected{border-color:var(--gold);background:rgba(176,138,75,.08);color:var(--gold-bright)}
+.modal-actions{display:flex;gap:10px;margin-top:22px}
+.modal-actions .btn{flex:1}
+.btn-cancel{flex:1;background:transparent;border:1px solid var(--border);color:var(--muted);padding:15px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+
+.qr-result{text-align:center;padding:10px 0}
+.qr-result img{width:200px;height:200px;border:1px solid var(--border-strong);padding:10px;background:#f3ebdd;margin:0 auto 18px}
+.qr-result b{display:block;font-family:'Bodoni Moda',serif;font-size:20px;color:var(--gold-bright);letter-spacing:.04em}
+.qr-result span{font-size:11px;color:var(--muted);display:block;margin-top:4px}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <b>Diwali Soiree 2.0</b>
+  <span style="font-size:13px;color:var(--muted)">Event Dashboard</span>
+  <input class="inp" id="pw" type="password" placeholder="Admin Password" autocomplete="current-password" style="margin-top:20px">
+  <button class="btn" onclick="doLogin()">Unlock Dashboard</button>
+  <div class="err-msg" id="login-err"></div>
+</div>
+
+<div id="dash-screen">
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div><b>Diwali Soiree 2.0</b><span>Event Dashboard</span></div>
+      <button class="btn-add" onclick="openAddModal()">+ Add Ticket</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><div class="stat-label">Total Revenue</div><div class="stat-val" id="s-revenue">₹0</div></div>
+      <div class="stat"><div class="stat-label">Tickets Sold</div><div class="stat-val" id="s-tickets">0</div><div class="stat-sub" id="s-pax">0 pax</div></div>
+      <div class="stat"><div class="stat-label">Entered</div><div class="stat-val" id="s-entered" style="color:var(--ok)">0</div></div>
+      <div class="stat"><div class="stat-label">Yet to Enter</div><div class="stat-val" id="s-pending" style="color:var(--warn)">0</div></div>
+    </div>
+
+    <div class="section-title">Guest List</div>
+    <div class="section-sub" id="list-sub">Loading…</div>
+    <div class="filters">
+      <button class="filter-chip active" data-f="all" onclick="setFilter('all')">All</button>
+      <button class="filter-chip" data-f="entered" onclick="setFilter('entered')">Entered</button>
+      <button class="filter-chip" data-f="pending" onclick="setFilter('pending')">Pending</button>
+      <button class="filter-chip" data-f="single" onclick="setFilter('single')">Single</button>
+      <button class="filter-chip" data-f="group" onclick="setFilter('group')">Group of 5</button>
+    </div>
+    <div id="ticket-list"></div>
+  </div>
+</div>
+
+<!-- Add Ticket Modal -->
+<div class="modal-overlay" id="add-overlay">
+  <div class="modal">
+    <div class="modal-title serif">Add Ticket</div>
+    <div class="modal-sub">Manual entry — door sale, comp, or guest</div>
+    <div class="form-group">
+      <span class="form-label">Ticket Tier</span>
+      <div class="tier-select">
+        <div class="tier-opt selected" data-tier="single" onclick="selectModalTier(this)">Single · ₹499</div>
+        <div class="tier-opt" data-tier="group" onclick="selectModalTier(this)">Group of 5 · ₹1,999</div>
+      </div>
+    </div>
+    <div class="form-group"><input class="inp" id="m-name" placeholder="Guest Name" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group"><input class="inp" id="m-phone" placeholder="Phone Number" maxlength="10" inputmode="numeric" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group"><input class="inp" id="m-email" placeholder="Email (optional)" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group"><input class="inp" id="m-amount" placeholder="Amount override (optional, e.g. 0 for comp)" type="number" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group"><input class="inp" id="m-note" placeholder="Note (optional — e.g. 'cash at door')" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="err-msg" id="add-err"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('add-overlay')">Cancel</button>
+      <button class="btn" id="add-submit-btn" onclick="submitManualTicket()">Create Ticket</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ticket QR view modal -->
+<div class="modal-overlay" id="qr-overlay">
+  <div class="modal">
+    <div class="modal-title serif">Entry Pass</div>
+    <div class="modal-sub" id="qr-sub"></div>
+    <div class="qr-result">
+      <img id="qr-img" src="" alt="QR">
+      <b id="qr-ticket-id"></b>
+      <span id="qr-status"></span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('qr-overlay')">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var allTickets = [];
+var currentFilter = 'all';
+
+function getToken() { try { return localStorage.getItem('ds_gate_token') || ''; } catch (e) { return ''; } }
+function setToken(t) { try { localStorage.setItem('ds_gate_token', t); } catch (e) {} }
+function authHeaders() { return { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' }; }
+
+function doLogin() {
+  var pw = document.getElementById('pw').value;
+  if (!pw) return;
+  fetch('/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.token) throw new Error(d.error || 'Login failed');
+      setToken(d.token);
+      showDashboard();
+    })
+    .catch(function (e) { document.getElementById('login-err').textContent = e.message || 'Incorrect password'; });
+}
+
+function showDashboard() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('dash-screen').style.display = 'block';
+  loadTickets();
+}
+
+function pax(t) { return t.tier === 'group' ? 5 : 1; }
+
+function loadTickets() {
+  fetch('/admin/diwali-tickets', { headers: authHeaders() })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { setToken(''); document.getElementById('dash-screen').style.display = 'none'; document.getElementById('login-screen').style.display = 'flex'; throw new Error('auth'); }
+      return r.json();
+    })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      allTickets = d.tickets || [];
+      renderStats();
+      renderList();
+    })
+    .catch(function () {});
+}
+
+function renderStats() {
+  var revenue = allTickets.reduce(function (s, t) { return s + (t.amount || 0); }, 0);
+  var totalPax = allTickets.reduce(function (s, t) { return s + pax(t); }, 0);
+  var entered = allTickets.filter(function (t) { return t.checked_in; }).length;
+  document.getElementById('s-revenue').textContent = '₹' + revenue.toLocaleString('en-IN');
+  document.getElementById('s-tickets').textContent = allTickets.length;
+  document.getElementById('s-pax').textContent = totalPax + ' pax';
+  document.getElementById('s-entered').textContent = entered;
+  document.getElementById('s-pending').textContent = allTickets.length - entered;
+  document.getElementById('list-sub').textContent = allTickets.length + ' ticket' + (allTickets.length === 1 ? '' : 's') + ' · ' + totalPax + ' total pax';
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(function (c) { c.classList.toggle('active', c.dataset.f === f); });
+  renderList();
+}
+
+function renderList() {
+  var list = allTickets;
+  if (currentFilter === 'entered') list = list.filter(function (t) { return t.checked_in; });
+  else if (currentFilter === 'pending') list = list.filter(function (t) { return !t.checked_in; });
+  else if (currentFilter === 'single' || currentFilter === 'group') list = list.filter(function (t) { return t.tier === currentFilter; });
+
+  var el = document.getElementById('ticket-list');
+  if (!list.length) { el.innerHTML = '<div class="empty-state">No tickets yet</div>'; return; }
+
+  el.innerHTML = list.map(function (t) {
+    var time = new Date(t.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return '<div class="ticket-row" onclick="viewTicketQr(\'' + t.ticket_id + '\')">' +
+      '<div class="tr-left">' +
+        '<div class="tr-name">' + escapeHtml(t.name || 'Guest') + (t.source === 'manual' ? ' · manual' : '') + '</div>' +
+        '<div class="tr-meta">' + escapeHtml(t.tier_label || '') + ' · ' + escapeHtml(t.phone || '-') + ' · ' + time + '</div>' +
+      '</div>' +
+      '<div class="tr-right">' +
+        '<span class="badge ' + (t.checked_in ? 'entered' : 'pending') + '">' + (t.checked_in ? 'Entered' : 'Pending') + '</span>' +
+        '<span class="tr-amt">₹' + t.amount + '</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+function viewTicketQr(ticketId) {
+  var t = allTickets.find(function (x) { return x.ticket_id === ticketId; });
+  if (!t) return;
+  document.getElementById('qr-img').src = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
+  document.getElementById('qr-ticket-id').textContent = ticketId;
+  document.getElementById('qr-sub').textContent = escapeHtml(t.name || 'Guest') + ' · ' + escapeHtml(t.tier_label || '');
+  document.getElementById('qr-status').textContent = t.checked_in ? 'Already entered at ' + new Date(t.checked_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Not yet entered';
+  document.getElementById('qr-overlay').style.display = 'flex';
+}
+
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+var modalTier = 'single';
+function openAddModal() {
+  document.getElementById('m-name').value = '';
+  document.getElementById('m-phone').value = '';
+  document.getElementById('m-email').value = '';
+  document.getElementById('m-amount').value = '';
+  document.getElementById('m-note').value = '';
+  document.getElementById('add-err').textContent = '';
+  document.getElementById('add-overlay').style.display = 'flex';
+}
+function selectModalTier(el) {
+  document.querySelectorAll('.tier-opt').forEach(function (c) { c.classList.remove('selected'); });
+  el.classList.add('selected');
+  modalTier = el.dataset.tier;
+}
+
+function submitManualTicket() {
+  var name = document.getElementById('m-name').value.trim();
+  var phone = document.getElementById('m-phone').value.trim().replace(/\D/g, '');
+  var email = document.getElementById('m-email').value.trim();
+  var amountRaw = document.getElementById('m-amount').value.trim();
+  var note = document.getElementById('m-note').value.trim();
+  if (!name) return document.getElementById('add-err').textContent = 'Enter guest name';
+  if (phone.length !== 10) return document.getElementById('add-err').textContent = 'Enter a valid 10-digit phone number';
+  document.getElementById('add-err').textContent = '';
+
+  var btn = document.getElementById('add-submit-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+
+  var body = { tier: modalTier, name: name, phone: phone, email: email, note: note };
+  if (amountRaw !== '') body.amount_override = Number(amountRaw);
+
+  fetch('/admin/diwali-tickets/manual', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      closeModal('add-overlay');
+      loadTickets();
+      setTimeout(function () { viewTicketQrById(d.ticket_id, name, modalTier); }, 300);
+    })
+    .catch(function (e) { document.getElementById('add-err').textContent = e.message || 'Failed to create ticket'; })
+    .finally(function () { btn.disabled = false; btn.textContent = 'Create Ticket'; });
+}
+
+function viewTicketQrById(ticketId, name, tier) {
+  document.getElementById('qr-img').src = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
+  document.getElementById('qr-ticket-id').textContent = ticketId;
+  document.getElementById('qr-sub').textContent = escapeHtml(name) + ' · ' + (tier === 'group' ? 'Group of 5' : 'Single Entry');
+  document.getElementById('qr-status').textContent = 'Not yet entered';
+  document.getElementById('qr-overlay').style.display = 'flex';
+}
+
+(function () {
+  if (getToken()) showDashboard();
+  else document.getElementById('login-screen').style.display = 'flex';
+})();
+</script>
+</body>
+</html>

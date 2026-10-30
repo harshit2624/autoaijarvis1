@@ -16738,6 +16738,35 @@ app.get('/admin/diwali-tickets', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /diwali-soiree/admin — staff dashboard (stats, ticket list, manual sale)
+app.get('/diwali-soiree/admin', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree-dashboard.html'));
+});
+
+// POST /admin/diwali-tickets/manual — create a ticket outside Razorpay
+// (door cash sale, comp/guest entry). amount defaults to the tier price
+// but can be overridden to 0 for a genuine comp — never silently assumed.
+app.post('/admin/diwali-tickets/manual', adminAuth, async (req, res) => {
+  try {
+    const { tier, name, phone, email, amount_override, note } = req.body || {};
+    const t = DIWALI_TICKET_TIERS[tier];
+    if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
+    if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
+    const amount = (amount_override === 0 || amount_override) ? Number(amount_override) : t.amount;
+    const ticket_id = diwaliTicketId();
+    const now = new Date().toISOString();
+    await mdb.collection('event_tickets').insertOne({
+      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount,
+      name, phone: String(phone).replace(/\D/g, '').slice(-10), email: email || '',
+      razorpay_order_id: null, razorpay_payment_id: `manual_${ticket_id}`, status: 'paid',
+      source: 'manual', note: note || '', created_by: req.staffUsername || 'admin',
+      checked_in: false, created_at: now,
+    });
+    auditLog('admin', 'diwali_ticket_manual_create', ticket_id, { tier, amount, name, phone, note });
+    res.json({ success: true, ticket_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /event/diwali-soiree/ticket-qr/:ticket_id — QR image (public, the
 // ticket_id itself is the only secret and it's long/random enough that
 // guessing one isn't practical). Encodes the check-in page URL directly
