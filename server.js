@@ -16782,6 +16782,7 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
     auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: t.amount, name, phone });
     waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${t.amount})\nName: ${name || '-'}\nPhone: ${phone || '-'}`, 'event_ticket').catch(() => {});
     sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: t.amount, name, email }).catch(() => {});
+    sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: String(phone || '').replace(/\D/g, '').slice(-10) }).catch(() => {});
 
     res.json({ verified: true, ticket_id, payment_id: razorpay_payment_id });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -17083,23 +17084,30 @@ app.post('/admin/diwali-tickets/:ticket_id/check-in', diwaliGateAuth, async (req
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /admin/diwali-tickets/:ticket_id/send-wa — send the ticket (QR +
-// details) to the guest via the approved diwali_ticket_confirmation
-// template. Used right after manual creation, or re-sendable anytime
-// from the dashboard's ticket view.
+// Shared by the automatic post-purchase send and the dashboard's manual
+// "Send on WhatsApp" button — sends the ticket's own QR as the image
+// header via the approved diwali_ticket_confirmation template.
+async function sendDiwaliTicketWA(ticket) {
+  if (!ticket.phone || ticket.phone.length !== 10) return { sent: false, reason: 'no_phone' };
+  const result = await sendWACloudTemplate({
+    phone10: ticket.phone,
+    templateName: WA_TPL.DIWALI_TICKET_CONFIRMATION,
+    headerImageUrl: `${SERVER_URL}/event/diwali-soiree/ticket-qr/${encodeURIComponent(ticket.ticket_id)}`,
+    bodyParams: [ticket.name || 'Guest', ticket.tier_label || '', ticket.ticket_id],
+  });
+  if (result.sent) auditLog('system', 'diwali_ticket_wa_sent', ticket.ticket_id, { phone: ticket.phone });
+  return result;
+}
+
+// POST /admin/diwali-tickets/:ticket_id/send-wa — re-sendable anytime
+// from the dashboard's ticket view (purchases already auto-send, see
+// sendDiwaliTicketWA call in razorpay-verify).
 app.post('/admin/diwali-tickets/:ticket_id/send-wa', diwaliGateAuth, async (req, res) => {
   try {
     const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' });
     if (!t) return res.status(404).json({ error: 'Ticket not found.' });
-    if (!t.phone || t.phone.length !== 10) return res.status(400).json({ error: 'No valid phone number on this ticket.' });
-    const result = await sendWACloudTemplate({
-      phone10: t.phone,
-      templateName: WA_TPL.DIWALI_TICKET_CONFIRMATION,
-      headerImageUrl: `${SERVER_URL}/event/diwali-soiree/ticket-qr/${encodeURIComponent(t.ticket_id)}`,
-      bodyParams: [t.name || 'Guest', t.tier_label || '', t.ticket_id],
-    });
-    if (!result.sent) return res.status(500).json({ error: result.reason || 'Send failed.' });
-    auditLog('admin', 'diwali_ticket_wa_sent', t.ticket_id, { phone: t.phone });
+    const result = await sendDiwaliTicketWA(t);
+    if (!result.sent) return res.status(400).json({ error: result.reason === 'no_phone' ? 'No valid phone number on this ticket.' : (result.reason || 'Send failed.') });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
