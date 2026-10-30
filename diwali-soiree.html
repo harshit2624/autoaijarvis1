@@ -31,11 +31,17 @@ html,body{
   min-height:100%;width:100%;max-width:100%;background:var(--bg);color:var(--text);
   font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
   font-weight:300;-webkit-font-smoothing:antialiased;overscroll-behavior:none;
-  overflow-x:hidden;
 }
+/* overflow-x belongs on body ONLY — if html also sets it, the browser
+   stops propagating body's overflow to the real viewport and creates
+   two separate nested scroll containers instead (the "scrollbar drag
+   works, wheel/touch scroll doesn't" bug). Scoping it to body alone
+   keeps single-context propagation intact. */
+body{overflow-x:hidden;scrollbar-width:none;-ms-overflow-style:none}
+body::-webkit-scrollbar{display:none}
 .serif{font-family:'Bodoni Moda',Georgia,serif}
 img{display:block;max-width:100%}
-.wrap{max-width:560px;width:100%;margin:0 auto;position:relative;overflow-x:hidden}
+.wrap{max-width:560px;width:100%;margin:0 auto;position:relative}
 .hairline{height:1px;background:linear-gradient(90deg,transparent,var(--border-strong) 50%,transparent)}
 
 /* ── Header ────────────────────────────────────────────────── */
@@ -146,7 +152,7 @@ img{display:block;max-width:100%}
 /* ── Scratch card ──────────────────────────────────────────── */
 .scratch-wrap{margin-top:10px;width:100%;max-width:280px}
 .scratch-label{font-size:10px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase;margin-bottom:12px}
-.scratch-card{position:relative;border:1px solid var(--border-strong);aspect-ratio:1.5;background:var(--card)}
+.scratch-card{position:relative;border:1px solid var(--border-strong);aspect-ratio:1.5;background:var(--card);overflow:hidden}
 .scratch-reveal{
   position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:18px;text-align:center;
   opacity:0;transform:scale(.8);
@@ -165,8 +171,42 @@ img{display:block;max-width:100%}
 .sr-actions{display:flex;gap:8px;width:100%;margin-top:4px}
 .btn-copy-sm{flex:1;font-size:10px;border:1px solid var(--border-strong);background:transparent;color:var(--gold-bright);padding:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;font-family:inherit}
 .btn-shop-sm{flex:1;background:var(--gold);color:var(--bg);text-decoration:none;padding:10px;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;text-align:center;display:flex;align-items:center;justify-content:center}
-#scratch-canvas{position:absolute;inset:0;touch-action:none;cursor:pointer}
-.scratch-hint{font-size:10.5px;color:var(--muted);margin-top:10px;letter-spacing:.04em}
+#scratch-canvas,#prank-canvas{position:absolute;inset:0;touch-action:none;cursor:pointer}
+.scratch-hint{font-size:10.5px;color:var(--muted);margin-top:10px;letter-spacing:.04em;text-align:center}
+
+/* Prank card — the gold foil is always visible, even locked (just
+   non-interactive via the lock overlay sitting on top); only the
+   scratch interaction itself is gated on name+phone being filled. */
+.prank-lock{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+  padding:0 20px;font-size:13px;color:#f3ebdd;letter-spacing:.03em;white-space:nowrap;
+  background:rgba(20,6,7,.5);backdrop-filter:blur(2px);transition:opacity .3s ease;z-index:5;
+}
+#prank-card.unlocked .prank-lock{opacity:0;pointer-events:none}
+#prank-card.locked #prank-canvas{pointer-events:none}
+#prank-wrap{margin-top:28px;max-width:none;width:100%;text-align:center}
+#prank-wrap .scratch-label{font-family:'Bodoni Moda',serif;font-size:22px;font-style:italic;font-weight:400;letter-spacing:.02em;color:var(--gold-bright);text-transform:none;margin-bottom:16px}
+/* Glass/gloss shine sweeping across the foil — pure CSS overlay above
+   the canvas, pointer-events:none so it never blocks scratching. Runs
+   whether locked or not, since the foil itself is always shown. */
+.prank-shine{
+  position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden;
+}
+#prank-reveal.revealed ~ .prank-shine{opacity:0;transition:opacity .4s ease}
+.prank-shine::before{
+  content:'';position:absolute;top:0;bottom:0;left:-60%;width:40%;
+  background:linear-gradient(115deg,transparent 0%,rgba(255,255,255,.55) 45%,rgba(255,255,255,.75) 50%,rgba(255,255,255,.55) 55%,transparent 100%);
+  animation:prank-sweep 3.2s ease-in-out infinite;
+}
+@keyframes prank-sweep{
+  0%{left:-60%}
+  45%{left:130%}
+  100%{left:130%}
+}
+.prank-result{display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;margin-top:14px;padding:16px 14px;border:1px solid var(--border-strong);background:rgba(176,138,75,.08);text-align:center}
+.prank-result.show{display:flex}
+.prank-result span{font-size:12.5px;color:var(--gold-bright);line-height:1.5}
+.prank-remove-btn{font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:transparent;border:1px solid var(--border-strong);color:var(--text);padding:9px 20px;cursor:pointer;font-family:inherit}
 @media (min-width:600px){.wrap{box-shadow:0 0 80px rgba(0,0,0,.55)}}
 </style>
 </head>
@@ -220,6 +260,27 @@ img{display:block;max-width:100%}
       <input class="inp" id="f-phone" name="tel" type="tel" placeholder="Phone Number" maxlength="10" autocomplete="tel" inputmode="numeric">
       <input class="inp" id="f-email" name="email" type="email" placeholder="Email (Optional)" autocomplete="email">
     </form>
+
+    <div class="scratch-wrap" id="prank-wrap">
+      <div class="scratch-label">Try Your Luck</div>
+      <div class="scratch-card locked" id="prank-card">
+        <div class="scratch-reveal" id="prank-reveal">
+          <span class="sr-eyebrow">A special code, just for you</span>
+          <span class="sr-code">CHARCHIT&amp;FRIENDS</span>
+          <div class="sr-actions">
+            <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyPrankCode()">Apply Now</button>
+          </div>
+        </div>
+        <canvas id="prank-canvas"></canvas>
+        <div class="prank-shine" id="prank-shine"></div>
+        <div class="prank-lock" id="prank-lock">Fill your name &amp; phone above to unlock</div>
+      </div>
+      <div class="prank-result" id="prank-result">
+        <span id="prank-result-text">If you're this close... don't you think you should pay double 👀?</span>
+        <button class="prank-remove-btn" onclick="removePrankCode()">Remove</button>
+      </div>
+      <div class="scratch-hint" id="prank-hint">Scratch the card to reveal your code</div>
+    </div>
   </div>
 
   <div class="footer">
@@ -303,14 +364,12 @@ document.getElementById('f-phone').addEventListener('input', function () {
 });
 
 // ── Scratch card ───────────────────────────────────────────────────
-// Canvas-based scratch-off — initialized only once the confirm screen is
-// actually visible (canvas has zero size while display:none).
-var _scratchInited = false;
-function initScratchCard() {
-  if (_scratchInited) return;
-  _scratchInited = true;
-  var canvas = document.getElementById('scratch-canvas');
-  if (!canvas) return;
+// Generic canvas scratch-off, shared by the post-payment coupon card and
+// the pre-payment prank card. revealSelector is the reveal panel inside
+// the same parent as the canvas. onRevealed fires once, after the pop-in.
+function setupScratchCanvas(canvas, revealSelector, onRevealed, getShowLabel) {
+  if (!canvas || canvas._scratchInited) return;
+  canvas._scratchInited = true;
   var ctx = canvas.getContext('2d');
   function sizeCanvas() {
     var rect = canvas.parentElement.getBoundingClientRect();
@@ -323,11 +382,17 @@ function initScratchCard() {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = grd;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'rgba(20,6,7,.8)';
-    ctx.font = '600 11px Jost, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('SCRATCH HERE', canvas.width / 2, canvas.height / 2);
+    // getShowLabel, when passed, gates the "SCRATCH HERE" text behind an
+    // unlock condition (the prank card) — omit it (confirm-screen card)
+    // and it always shows, same as before.
+    if (!getShowLabel || getShowLabel()) {
+      ctx.fillStyle = 'rgba(20,6,7,.8)';
+      ctx.font = '600 11px Jost, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SCRATCH HERE', canvas.width / 2, canvas.height / 2);
+    }
   }
+  canvas._redrawFoil = drawFoil;
   sizeCanvas();
 
   var scratching = false;
@@ -355,12 +420,10 @@ function initScratchCard() {
       canvas.style.transition = 'opacity .35s ease';
       canvas.style.opacity = '0';
       canvas.style.pointerEvents = 'none';
-      // Let the foil fully fade first, then pop the reward in — reads as
-      // an unlock moment rather than content that was already sitting
-      // there underneath.
       setTimeout(function () {
-        var reveal = canvas.parentElement.querySelector('.scratch-reveal');
+        var reveal = canvas.parentElement.querySelector(revealSelector);
         if (reveal) reveal.classList.add('revealed');
+        if (onRevealed) onRevealed();
       }, 220);
     }
   }
@@ -370,6 +433,10 @@ function initScratchCard() {
   canvas.addEventListener('touchstart', function (e) { scratching = true; scratchAt(e); e.preventDefault(); }, { passive: false });
   canvas.addEventListener('touchmove', function (e) { if (scratching) scratchAt(e); e.preventDefault(); }, { passive: false });
   canvas.addEventListener('touchend', function () { scratching = false; });
+}
+
+function initScratchCard() {
+  setupScratchCanvas(document.getElementById('scratch-canvas'), '.scratch-reveal');
 }
 
 function copyCoupon() {
@@ -397,6 +464,73 @@ function selectTier(el) {
   selectedTier = el.dataset.tier;
   selectedAmount = parseInt(el.dataset.amount, 10);
   document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+  // Switching tiers after applying the prank code would leave a doubled
+  // amount for the wrong tier — just drop it, keep the card scratched.
+  if (_prankApplied) removePrankCode();
+}
+
+// ── Prank scratch card (pre-payment) ────────────────────────────────
+// Locked until name + a valid phone are filled; "Apply Now" doubles the
+// selected tier's price as a joke, "Remove" instantly reverts it.
+var _prankApplied = false;
+var PRANK_DOUBLED = { single: 999, group: 3999 };
+var _prankUnlocked = false;
+function _prankCheckUnlock() {
+  var name = document.getElementById('f-name').value.trim();
+  var phoneOk = document.getElementById('f-phone').value.replace(/\D/g, '').length === 10;
+  var card = document.getElementById('prank-card');
+  var wasUnlocked = _prankUnlocked;
+  _prankUnlocked = !!(name && phoneOk);
+  if (_prankUnlocked) {
+    card.classList.remove('locked'); card.classList.add('unlocked');
+  } else {
+    card.classList.remove('unlocked'); card.classList.add('locked');
+  }
+  // Redraw only on an actual lock→unlock transition, so "SCRATCH HERE"
+  // appears on the foil the moment it unlocks instead of being there
+  // (or missing) from the start.
+  if (_prankUnlocked !== wasUnlocked) {
+    var canvas = document.getElementById('prank-canvas');
+    if (canvas && canvas._redrawFoil) canvas._redrawFoil();
+  }
+}
+['f-name', 'f-phone'].forEach(function (id) {
+  // input + change + blur: covers typing, autofill (some browsers only
+  // fire 'change', not 'input', for an autofilled value), and a value
+  // the browser restores on refresh without any event at all.
+  ['input', 'change', 'blur'].forEach(function (evt) {
+    document.getElementById(id).addEventListener(evt, _prankCheckUnlock);
+  });
+});
+// Foil (and the scratch listeners) are set up immediately — the card
+// shows gold and shiny from the start, but "SCRATCH HERE" only appears
+// once unlocked (getShowLabel). The lock overlay (not the canvas itself)
+// is what blocks interaction while details are missing — it sits
+// visually on top and intercepts clicks/touches before they reach the
+// canvas underneath.
+setupScratchCanvas(document.getElementById('prank-canvas'), '#prank-reveal', null, function () { return _prankUnlocked; });
+_prankCheckUnlock();
+setInterval(_prankCheckUnlock, 1000);
+
+function applyPrankCode() {
+  if (_prankApplied) return;
+  _prankApplied = true;
+  selectedAmount = PRANK_DOUBLED[selectedTier] || selectedAmount * 2;
+  document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+  document.getElementById('prank-apply-btn').textContent = 'Applied ✓';
+  document.getElementById('prank-apply-btn').disabled = true;
+  document.getElementById('prank-result').classList.add('show');
+}
+
+function removePrankCode() {
+  if (!_prankApplied) return;
+  _prankApplied = false;
+  var selectedCard = document.querySelector('.ticket-card.selected');
+  selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
+  document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+  document.getElementById('prank-apply-btn').textContent = 'Apply Now';
+  document.getElementById('prank-apply-btn').disabled = false;
+  document.getElementById('prank-result').classList.remove('show');
 }
 function setErr(msg) { document.getElementById('err-msg').textContent = msg || ''; }
 function startPayment() {
