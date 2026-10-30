@@ -269,7 +269,7 @@ img{display:block;max-width:100%}
           <span class="sr-eyebrow">This one's for close friends only</span>
           <span class="sr-code">CHARCHIT&amp;FRIENDS</span>
           <div class="sr-actions">
-            <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyPrankCode()">Apply Now</button>
+            <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyPrankCode()">Contribute</button>
           </div>
         </div>
         <canvas id="prank-canvas"></canvas>
@@ -533,7 +533,7 @@ function removePrankCode() {
   var selectedCard = document.querySelector('.ticket-card.selected');
   selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
   document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
-  document.getElementById('prank-apply-btn').textContent = 'Apply Now';
+  document.getElementById('prank-apply-btn').textContent = 'Contribute';
   document.getElementById('prank-apply-btn').disabled = false;
   document.getElementById('prank-result').classList.remove('show');
 }
