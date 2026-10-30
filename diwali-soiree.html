@@ -280,21 +280,23 @@ var _dsFormStarted = false;
 document.getElementById('f-name').addEventListener('input', function () {
   if (!_dsFormStarted && this.value.trim()) { _dsFormStarted = true; _dsTrack('form_started'); }
 });
-// Abandoned-checkout capture — fires once a real 10-digit phone is
-// entered, so a guest who fills the form and leaves without paying is
-// still reachable (name/phone/email/tier saved server-side).
-var _dsDetailsCaptured = false;
+// Abandoned-checkout capture — a guest is reachable the moment they've
+// given SOMETHING (a name alone counts, not just a full 10-digit phone),
+// so "typed their name and left" is caught, not just "entered a phone
+// and left". Fires on blur of any field, debounced, re-sends on every
+// change so the record always has the latest values they typed.
+function _dsCaptureDetails() {
+  var name = document.getElementById('f-name').value.trim();
+  var digits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  var email = document.getElementById('f-email').value.trim();
+  if (!name && digits.length < 3) return; // nothing meaningful typed yet
+  _dsTrack('details_captured', { name: name, phone: digits, email: email, tier: selectedTier });
+}
+['f-name', 'f-phone', 'f-email'].forEach(function (id) {
+  document.getElementById(id).addEventListener('blur', _dsCaptureDetails);
+});
 document.getElementById('f-phone').addEventListener('input', function () {
-  var digits = this.value.replace(/\D/g, '');
-  if (digits.length === 10) {
-    _dsDetailsCaptured = true;
-    _dsTrack('details_captured', {
-      name: document.getElementById('f-name').value.trim(),
-      phone: digits,
-      email: document.getElementById('f-email').value.trim(),
-      tier: selectedTier,
-    });
-  }
+  if (this.value.replace(/\D/g, '').length === 10) _dsCaptureDetails();
 });
 
 // ── Scratch card ───────────────────────────────────────────────────

@@ -269,17 +269,18 @@ function renderAbandoned(leads) {
   el.innerHTML = leads.map(function (l) {
     var tierLabel = l.tier === 'group' ? 'Group of 5' : l.tier === 'single' ? 'Single Entry' : 'Tier not picked';
     var badge = l.lead_status === 'payment_started' ? '<span class="ab-badge payment">Clicked Pay</span>' : '<span class="ab-badge details">Filled Details</span>';
-    var waLink = l.phone ? 'https://wa.me/91' + l.phone : '#';
-    var telLink = l.phone ? 'tel:+91' + l.phone : '#';
+    var hasPhone = l.phone && l.phone.length === 10;
+    var actions = hasPhone
+      ? '<a class="ab-action" href="tel:+91' + l.phone + '" title="Call">&#9742;</a>' +
+        '<a class="ab-action" href="https://wa.me/91' + l.phone + '" target="_blank" title="WhatsApp">&#9993;</a>'
+      : '<span class="ab-meta" style="font-style:italic">no phone</span>';
     return '<div class="abandoned-row">' +
       '<div class="ab-left">' +
         '<div class="ab-name">' + escapeHtml(l.name || 'No name') + '</div>' +
-        '<div class="ab-meta">' + escapeHtml(l.phone || '-') + ' · ' + tierLabel + ' · ' + timeAgo(l.last_seen) + '</div>' +
+        '<div class="ab-meta">' + escapeHtml(l.phone || (l.email ? l.email : 'no contact given')) + ' · ' + tierLabel + ' · ' + timeAgo(l.last_seen) + '</div>' +
       '</div>' +
       '<div class="ab-right">' +
-        badge +
-        '<a class="ab-action" href="' + telLink + '" title="Call">&#9742;</a>' +
-        '<a class="ab-action" href="' + waLink + '" target="_blank" title="WhatsApp">&#9993;</a>' +
+        badge + actions +
       '</div>' +
     '</div>';
   }).join('');

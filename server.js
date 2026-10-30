@@ -16844,8 +16844,15 @@ app.post('/event/diwali-soiree/track', async (req, res) => {
 // (or clicked pay) but never completed a booking, for the team to call/WA
 app.get('/admin/diwali-tickets/abandoned', diwaliGateAuth, async (req, res) => {
   try {
+    // Name-only leads (never got to typing a full phone) count too —
+    // $or instead of requiring phone, since a name alone is still
+    // something the team can note/search for at the door.
     const leads = await mdb.collection('event_sessions').find(
-      { event: 'diwali_soiree_2026', lead_status: { $in: ['details_captured', 'payment_started'] }, phone: { $exists: true, $ne: '' } },
+      {
+        event: 'diwali_soiree_2026',
+        lead_status: { $in: ['details_captured', 'payment_started'] },
+        $or: [{ phone: { $exists: true, $ne: '' } }, { name: { $exists: true, $ne: '' } }],
+      },
       { projection: { _id: 0 } }
     ).sort({ last_seen: -1 }).toArray();
     res.json({ leads, count: leads.length });
