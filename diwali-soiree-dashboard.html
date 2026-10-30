@@ -16,7 +16,12 @@
   --gold:#b08a4b; --gold-bright:#d4b579;
   --ok:#5fc98d; --ok-bg:rgba(95,201,141,.1); --warn:#e0a94a; --warn-bg:rgba(224,169,74,.12); --err:#d9736a; --err-bg:rgba(217,115,106,.1);
 }
-html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}
+/* Fixed app-like shell, see diwali-soiree-checkin.html for why — without
+   this the page rubber-bands/jumps on touch-scroll instead of feeling
+   like a stable native screen. */
+html{height:100%;overflow:hidden}
+body{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:pan-y;-webkit-text-size-adjust:100%}
+html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}
 .serif{font-family:'Bodoni Moda',serif}
 .wrap{max-width:720px;margin:0 auto;padding:0 20px calc(40px + env(safe-area-inset-bottom,0px))}
 
@@ -113,7 +118,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
     <div class="topbar-inner">
       <div><b>Diwali Soiree 2.0</b><span>Event Dashboard</span></div>
       <div style="display:flex;gap:8px">
-        <a class="btn-scan" href="/diwali-soiree/check-in" title="Open gate scanner">Scan Ticket</a>
+        <a class="btn-scan" href="/diwali-soiree/check-in?from=admin" title="Open gate scanner">Scan Ticket</a>
         <button class="btn-add" onclick="openAddModal()">+ Add Ticket</button>
       </div>
     </div>

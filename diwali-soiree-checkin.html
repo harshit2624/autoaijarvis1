@@ -15,12 +15,21 @@
   --text:#f3ebdd; --muted:#9a8e7c; --gold:#b08a4b; --gold-bright:#d4b579;
   --ok:#5fc98d; --ok-bg:rgba(95,201,141,.1); --warn:#e0a94a; --warn-bg:rgba(224,169,74,.12); --err:#d9736a; --err-bg:rgba(217,115,106,.1);
 }
-html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+/* Fixed app-like shell — html stays pinned, body is the only scroll
+   container. Without this, mobile browsers (Safari/Chrome) resize the
+   viewport and let the page rubber-band/bounce as the address bar
+   shows/hides or on any touch-scroll, which reads as the whole page
+   "shaking" instead of a stable native-feeling screen. */
+html{height:100%;overflow:hidden}
+body{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:pan-y;-webkit-text-size-adjust:100%}
+html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 .serif{font-family:'Bodoni Moda',serif}
-.wrap{max-width:420px;margin:0 auto;min-height:100svh;display:flex;flex-direction:column;padding:24px 20px calc(24px + env(safe-area-inset-bottom,0px))}
-.header{text-align:center;padding:16px 0 28px;border-bottom:1px solid var(--border);margin-bottom:28px}
+.wrap{max-width:420px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;padding:24px 20px calc(24px + env(safe-area-inset-bottom,0px))}
+.header{position:relative;text-align:center;padding:16px 0 28px;border-bottom:1px solid var(--border);margin-bottom:28px}
 .header b{display:block;font-size:11px;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
 .header span{display:block;font-size:13px;color:var(--muted);margin-top:8px}
+.back-link{position:absolute;left:0;top:2px;font-size:10px;letter-spacing:.1em;color:var(--muted);text-decoration:none;text-transform:uppercase;display:none}
+.back-link.show{display:block}
 
 /* Login gate */
 #login-screen{display:flex;flex-direction:column;gap:14px;margin-top:40px}
@@ -69,6 +78,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 <body>
 <div class="wrap">
   <div class="header">
+    <a class="back-link" id="back-link" href="/diwali-soiree/admin">&larr; Admin</a>
     <b>Diwali Soiree 2.0</b>
     <span>Gate Check-In</span>
   </div>
@@ -102,6 +112,12 @@ function setToken(t) { try { localStorage.setItem('ds_scan_token', t); } catch (
 function authHeaders() { return { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' }; }
 
 var pendingIdFromQr = new URLSearchParams(location.search).get('id');
+// Only show "Back to Admin" if we actually arrived from the dashboard
+// (its Scan Ticket link appends ?from=admin) — never when staff opened
+// this page directly or via a scanned ticket QR.
+if (new URLSearchParams(location.search).get('from') === 'admin') {
+  document.getElementById('back-link').classList.add('show');
+}
 
 function doLogin() {
   var pw = document.getElementById('pw').value;
