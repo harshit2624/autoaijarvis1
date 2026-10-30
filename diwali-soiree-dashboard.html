@@ -208,10 +208,12 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <b id="qr-ticket-id"></b>
       <span id="qr-status"></span>
     </div>
+    <div class="err-msg" id="qr-wa-err"></div>
     <div class="modal-actions">
       <a class="btn" id="qr-download" href="" download style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center">Download QR</a>
-      <button class="btn-cancel" onclick="closeModal('qr-overlay')">Done</button>
+      <button class="btn" id="qr-wa-btn" onclick="sendTicketWA()">Send on WhatsApp</button>
     </div>
+    <button class="btn-cancel" style="width:100%;margin-top:10px" onclick="closeModal('qr-overlay')">Done</button>
   </div>
 </div>
 
@@ -388,9 +390,11 @@ function renderList() {
 
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
+var _currentQrTicketId = null;
 function viewTicketQr(ticketId) {
   var t = allTickets.find(function (x) { return x.ticket_id === ticketId; });
   if (!t) return;
+  _currentQrTicketId = ticketId;
   var qrUrl = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
   document.getElementById('qr-img').src = qrUrl;
   document.getElementById('qr-download').href = qrUrl;
@@ -398,7 +402,27 @@ function viewTicketQr(ticketId) {
   document.getElementById('qr-ticket-id').textContent = ticketId;
   document.getElementById('qr-sub').textContent = escapeHtml(t.name || 'Guest') + ' · ' + escapeHtml(t.tier_label || '');
   document.getElementById('qr-status').textContent = t.checked_in ? 'Already entered at ' + new Date(t.checked_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Not yet entered';
+  document.getElementById('qr-wa-err').textContent = '';
   document.getElementById('qr-overlay').style.display = 'flex';
+}
+
+function sendTicketWA() {
+  if (!_currentQrTicketId) return;
+  var btn = document.getElementById('qr-wa-btn');
+  var err = document.getElementById('qr-wa-err');
+  err.textContent = '';
+  btn.disabled = true; btn.textContent = 'Sending…';
+  fetch('/admin/diwali-tickets/' + encodeURIComponent(_currentQrTicketId) + '/send-wa', { method: 'POST', headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      btn.textContent = 'Sent ✓';
+      setTimeout(function () { btn.textContent = 'Send on WhatsApp'; btn.disabled = false; }, 2000);
+    })
+    .catch(function (e) {
+      err.textContent = e.message || 'Failed to send';
+      btn.disabled = false; btn.textContent = 'Send on WhatsApp';
+    });
 }
 
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
@@ -451,6 +475,7 @@ function submitManualTicket() {
 }
 
 function viewTicketQrById(ticketId, name, tier) {
+  _currentQrTicketId = ticketId;
   var qrUrl = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
   document.getElementById('qr-img').src = qrUrl;
   document.getElementById('qr-download').href = qrUrl;
@@ -458,6 +483,7 @@ function viewTicketQrById(ticketId, name, tier) {
   document.getElementById('qr-ticket-id').textContent = ticketId;
   document.getElementById('qr-sub').textContent = escapeHtml(name) + ' · ' + (tier === 'group' ? 'Group of 5' : 'Single Entry');
   document.getElementById('qr-status').textContent = 'Not yet entered';
+  document.getElementById('qr-wa-err').textContent = '';
   document.getElementById('qr-overlay').style.display = 'flex';
 }
 

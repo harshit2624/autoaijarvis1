@@ -17083,6 +17083,27 @@ app.post('/admin/diwali-tickets/:ticket_id/check-in', diwaliGateAuth, async (req
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /admin/diwali-tickets/:ticket_id/send-wa — send the ticket (QR +
+// details) to the guest via the approved diwali_ticket_confirmation
+// template. Used right after manual creation, or re-sendable anytime
+// from the dashboard's ticket view.
+app.post('/admin/diwali-tickets/:ticket_id/send-wa', diwaliGateAuth, async (req, res) => {
+  try {
+    const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' });
+    if (!t) return res.status(404).json({ error: 'Ticket not found.' });
+    if (!t.phone || t.phone.length !== 10) return res.status(400).json({ error: 'No valid phone number on this ticket.' });
+    const result = await sendWACloudTemplate({
+      phone10: t.phone,
+      templateName: WA_TPL.DIWALI_TICKET_CONFIRMATION,
+      headerImageUrl: `${SERVER_URL}/event/diwali-soiree/ticket-qr/${encodeURIComponent(t.ticket_id)}`,
+      bodyParams: [t.name || 'Guest', t.tier_label || '', t.ticket_id],
+    });
+    if (!result.sent) return res.status(500).json({ error: result.reason || 'Send failed.' });
+    auditLog('admin', 'diwali_ticket_wa_sent', t.ticket_id, { phone: t.phone });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 //  Order Confirmation Page — small refundable-against-bill amount collected
 //  from customers post-order to weed out mistaken/fake COD orders that
@@ -28532,6 +28553,7 @@ const WA_TPL = {
   RR_ADMIN_OVERRIDE: 'rr_admin_override_v1',
   DEMO_PITCH_CTA: 'demo_pitch_cta_v1',
   DIWALI_SOIREE_RECOVERY: 'diwali_soiree_recovery',
+  DIWALI_TICKET_CONFIRMATION: 'diwali_ticket_confirmation',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
