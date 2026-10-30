@@ -133,7 +133,8 @@ img{display:block;max-width:100%}
 .confirm-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid var(--gold)}
 .confirm-title{font-family:'Bodoni Moda',serif;font-size:28px;font-weight:400;font-style:italic}
 .confirm-sub{font-size:12.5px;color:var(--muted);max-width:280px;line-height:1.8;letter-spacing:.02em}
-.ticket-id-box{border-top:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong);padding:20px 0;margin-top:8px;width:100%;max-width:240px}
+.confirm-qr{width:168px;height:168px;border:1px solid var(--border-strong);padding:10px;background:#f3ebdd}
+.ticket-id-box{border-top:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong);padding:20px 0;margin-top:0;width:100%;max-width:240px}
 .ticket-id-box span{font-size:10px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase}
 .ticket-id-box b{display:block;font-family:'Bodoni Moda',serif;font-size:22px;font-weight:400;color:var(--gold-bright);margin-top:8px;letter-spacing:.04em}
 .btn-secondary{margin-top:8px;background:transparent;border:1px solid var(--border-strong);color:var(--text);padding:14px 26px;border-radius:0;font-size:10.5px;font-weight:400;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
@@ -208,7 +209,8 @@ img{display:block;max-width:100%}
 <div id="confirm-screen">
   <div class="confirm-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d4b579" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></div>
   <div class="confirm-title serif">You're Invited</div>
-  <div class="confirm-sub">Your place at Diwali Soiree 2.0 is reserved. Present this ticket ID at the entrance.</div>
+  <div class="confirm-sub">Your place at Diwali Soiree 2.0 is reserved. Show this QR code at the entrance — it's your entry pass.</div>
+  <img id="confirm-qr" class="confirm-qr" src="" alt="Entry QR code">
   <div class="ticket-id-box"><span>Ticket ID</span><b id="confirm-ticket-id">—</b></div>
   <div class="confirm-sub" id="confirm-detail"></div>
   <button class="btn-secondary" onclick="location.reload()">Book Another</button>
@@ -255,6 +257,7 @@ function startPayment() {
             .then(function (v) {
               if (v.error) throw new Error(v.error);
               document.getElementById('confirm-ticket-id').textContent = v.ticket_id;
+              document.getElementById('confirm-qr').src = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(v.ticket_id);
               document.getElementById('confirm-detail').textContent = name + ' · ' + (selectedTier === 'group' ? 'Party of Five' : 'Single Entry') + ' · ₹' + selectedAmount;
               document.getElementById('main-view').style.display = 'none';
               document.getElementById('confirm-screen').style.display = 'flex';

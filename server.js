@@ -16738,6 +16738,56 @@ app.get('/admin/diwali-tickets', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /event/diwali-soiree/ticket-qr/:ticket_id — QR image (public, the
+// ticket_id itself is the only secret and it's long/random enough that
+// guessing one isn't practical). Encodes the check-in page URL directly
+// so a gate staffer's phone camera opens it with zero extra app needed.
+app.get('/event/diwali-soiree/ticket-qr/:ticket_id', async (req, res) => {
+  try {
+    const QRCode = require('qrcode');
+    const url = `${SERVER_URL}/diwali-soiree/check-in?id=${encodeURIComponent(req.params.ticket_id)}`;
+    const png = await QRCode.toBuffer(url, { width: 480, margin: 2, color: { dark: '#140607', light: '#f3ebdd' } });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(png);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /diwali-soiree/check-in — gate-side scan landing page (password-
+// gated once per device via localStorage, see the page itself)
+app.get('/diwali-soiree/check-in', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree-checkin.html'));
+});
+
+// GET /admin/diwali-tickets/lookup/:ticket_id — gate lookup, used by the
+// check-in page after it authenticates
+app.get('/admin/diwali-tickets/lookup/:ticket_id', adminAuth, async (req, res) => {
+  try {
+    const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' }, { projection: { _id: 0 } });
+    if (!t) return res.status(404).json({ error: 'Ticket not found.' });
+    res.json({ ticket: t });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /admin/diwali-tickets/:ticket_id/check-in — idempotent: a ticket
+// already checked in returns already_used instead of re-marking, so
+// re-scanning the same QR (or two gates scanning the same guest) can't
+// silently overwrite the original entry time.
+app.post('/admin/diwali-tickets/:ticket_id/check-in', adminAuth, async (req, res) => {
+  try {
+    const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' });
+    if (!t) return res.status(404).json({ error: 'Ticket not found.' });
+    if (t.checked_in) return res.json({ already_used: true, checked_in_at: t.checked_in_at, ticket: { ...t, _id: undefined } });
+    const now = new Date().toISOString();
+    await mdb.collection('event_tickets').updateOne(
+      { ticket_id: req.params.ticket_id },
+      { $set: { checked_in: true, checked_in_at: now, checked_in_by: req.staffUsername || 'admin' } }
+    );
+    auditLog('admin', 'diwali_ticket_checked_in', req.params.ticket_id, { name: t.name, tier: t.tier });
+    res.json({ success: true, checked_in_at: now, ticket: { ...t, _id: undefined, checked_in: true, checked_in_at: now } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 //  Order Confirmation Page — small refundable-against-bill amount collected
 //  from customers post-order to weed out mistaken/fake COD orders that
