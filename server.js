@@ -16772,6 +16772,37 @@ app.get('/diwali-soiree/admin', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree-dashboard.html'));
 });
 
+// ── Lightweight visit tracking for the public booking page ──────────────
+// One doc per browser session (a random id the page generates on load,
+// kept in a JS var — not persisted across reloads, so a refresh counts as
+// a new visit same as any other analytics tool). 'view' creates/touches
+// it, periodic 'heartbeat' pings keep last_seen fresh for the live-visitor
+// count, 'form_started' flips a flag the first time a guest types a name.
+app.post('/event/diwali-soiree/track', async (req, res) => {
+  try {
+    const { session_id, type } = req.body || {};
+    if (!session_id || !['view', 'heartbeat', 'form_started'].includes(type)) return res.status(400).json({ error: 'Invalid payload.' });
+    const now = new Date().toISOString();
+    const update = { $set: { last_seen: now }, $setOnInsert: { session_id, event: 'diwali_soiree_2026', first_seen: now } };
+    if (type === 'form_started') update.$set.form_started = true;
+    await mdb.collection('event_sessions').updateOne({ session_id, event: 'diwali_soiree_2026' }, update, { upsert: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /admin/diwali-tickets/analytics — page views, live visitors (active
+// in the last 60s), and how many started filling the booking form
+app.get('/admin/diwali-tickets/analytics', diwaliGateAuth, async (req, res) => {
+  try {
+    const col = mdb.collection('event_sessions');
+    const total_views = await col.countDocuments({ event: 'diwali_soiree_2026' });
+    const form_started = await col.countDocuments({ event: 'diwali_soiree_2026', form_started: true });
+    const liveSince = new Date(Date.now() - 60 * 1000).toISOString();
+    const live_now = await col.countDocuments({ event: 'diwali_soiree_2026', last_seen: { $gte: liveSince } });
+    res.json({ total_views, form_started, live_now });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /admin/diwali-tickets/manual — create a ticket outside Razorpay
 // (door cash sale, comp/guest entry). amount defaults to the tier price
 // but can be overridden to 0 for a genuine comp — never silently assumed.

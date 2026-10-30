@@ -220,6 +220,19 @@ img{display:block;max-width:100%}
 var selectedTier = 'single';
 var selectedAmount = 499;
 window.addEventListener('scroll', function () { document.getElementById('header').classList.toggle('scrolled', window.scrollY > 20); });
+
+// ── Lightweight visit tracking (dashboard: page views / live visitors /
+// started booking) — fire-and-forget, never blocks the page ──────────
+var _dsSessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+function _dsTrack(type) {
+  try { fetch('/event/diwali-soiree/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: _dsSessionId, type: type }) }).catch(function () {}); } catch (e) {}
+}
+_dsTrack('view');
+setInterval(function () { if (document.visibilityState === 'visible') _dsTrack('heartbeat'); }, 20000);
+var _dsFormStarted = false;
+document.getElementById('f-name').addEventListener('input', function () {
+  if (!_dsFormStarted && this.value.trim()) { _dsFormStarted = true; _dsTrack('form_started'); }
+});
 function selectTier(el) {
   document.querySelectorAll('.ticket-card').forEach(function (c) { c.classList.remove('selected'); });
   el.classList.add('selected');

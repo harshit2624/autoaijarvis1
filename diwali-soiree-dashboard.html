@@ -46,6 +46,14 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 .stat-sub{font-size:11px;color:var(--body);margin-top:4px}
 @media (min-width:520px){.stats{grid-template-columns:repeat(4,1fr)}}
 
+/* Live traffic row — separate from ticket stats, pulses so it reads as
+   genuinely live rather than a static number */
+.traffic{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:32px}
+.traffic .stat-val{color:var(--ok)}
+.live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:6px;animation:ds-pulse 1.6s ease-in-out infinite}
+@keyframes ds-pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(95,201,141,.5)}50%{opacity:.6;box-shadow:0 0 0 5px rgba(95,201,141,0)}}
+@media (min-width:520px){.traffic{grid-template-columns:repeat(3,1fr)}}
+
 /* ── Ticket list ───────────────────────────────────────────── */
 .section-title{font-size:20px;font-weight:400;font-style:italic;font-family:'Bodoni Moda',serif;margin-bottom:4px}
 .section-sub{font-size:11.5px;color:var(--muted);margin-bottom:16px}
@@ -112,6 +120,12 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
   </div>
 
   <div class="wrap">
+    <div class="traffic">
+      <div class="stat"><div class="stat-label"><span class="live-dot"></span>Live Right Now</div><div class="stat-val" id="t-live">0</div></div>
+      <div class="stat"><div class="stat-label">Page Views</div><div class="stat-val" id="t-views" style="color:var(--gold-bright)">0</div></div>
+      <div class="stat"><div class="stat-label">Started Booking</div><div class="stat-val" id="t-started" style="color:var(--gold-bright)">0</div><div class="stat-sub" id="t-conv">0% converted</div></div>
+    </div>
+
     <div class="stats">
       <div class="stat"><div class="stat-label">Total Revenue</div><div class="stat-val" id="s-revenue">₹0</div></div>
       <div class="stat"><div class="stat-label">Tickets Sold</div><div class="stat-val" id="s-tickets">0</div><div class="stat-sub" id="s-pax">0 pax</div></div>
@@ -203,6 +217,23 @@ function showDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('dash-screen').style.display = 'block';
   loadTickets();
+  loadTraffic();
+  setInterval(loadTraffic, 15000);
+  setInterval(loadTickets, 30000);
+}
+
+function loadTraffic() {
+  fetch('/admin/diwali-tickets/analytics', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) return;
+      document.getElementById('t-live').textContent = d.live_now;
+      document.getElementById('t-views').textContent = d.total_views;
+      document.getElementById('t-started').textContent = d.form_started;
+      var conv = d.total_views ? Math.round((d.form_started / d.total_views) * 100) : 0;
+      document.getElementById('t-conv').textContent = conv + '% converted';
+    })
+    .catch(function () {});
 }
 
 function pax(t) { return t.tier === 'group' ? 5 : 1; }
