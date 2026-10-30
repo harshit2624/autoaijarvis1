@@ -80,6 +80,16 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
 .badge.pending{background:var(--warn-bg);color:var(--warn)}
 .empty-state{text-align:center;padding:60px 20px;color:var(--muted);font-size:13px}
 
+.abandoned-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 2px;border-bottom:1px solid var(--border)}
+.ab-left{display:flex;flex-direction:column;gap:3px;min-width:0}
+.ab-name{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ab-meta{font-size:11px;color:var(--muted)}
+.ab-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.ab-badge{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;white-space:nowrap}
+.ab-badge.details{background:var(--warn-bg);color:var(--warn)}
+.ab-badge.payment{background:var(--err-bg);color:var(--err)}
+.ab-action{width:30px;height:30px;border:1px solid var(--border-strong);display:flex;align-items:center;justify-content:center;text-decoration:none;color:var(--gold-bright);flex-shrink:0}
+
 /* ── Modal (add ticket / view ticket) ─────────────────────── */
 .modal-overlay{display:none;position:fixed;inset:0;z-index:50;background:rgba(10,3,4,.75);backdrop-filter:blur(4px);align-items:flex-end;justify-content:center}
 @media (min-width:520px){.modal-overlay{align-items:center}}
@@ -148,6 +158,10 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <button class="filter-chip" data-f="group" onclick="setFilter('group')">Group of 5 <span id="fc-group">0</span></button>
     </div>
     <div id="ticket-list"></div>
+
+    <div class="section-title" style="margin-top:36px">Abandoned Checkouts</div>
+    <div class="section-sub" id="abandoned-sub">Filled details or started paying, never finished — reach out</div>
+    <div id="abandoned-list"></div>
   </div>
 </div>
 
@@ -223,8 +237,52 @@ function showDashboard() {
   document.getElementById('dash-screen').style.display = 'block';
   loadTickets();
   loadTraffic();
+  loadAbandoned();
   setInterval(loadTraffic, 15000);
   setInterval(loadTickets, 30000);
+  setInterval(loadAbandoned, 30000);
+}
+
+function loadAbandoned() {
+  fetch('/admin/diwali-tickets/abandoned', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) return;
+      renderAbandoned(d.leads || []);
+    })
+    .catch(function () {});
+}
+
+function timeAgo(iso) {
+  var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.round(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.round(hrs / 24) + 'd ago';
+}
+
+function renderAbandoned(leads) {
+  var el = document.getElementById('abandoned-list');
+  document.getElementById('abandoned-sub').textContent = leads.length + ' lead' + (leads.length === 1 ? '' : 's') + ' to follow up with';
+  if (!leads.length) { el.innerHTML = '<div class="empty-state">No abandoned checkouts right now</div>'; return; }
+  el.innerHTML = leads.map(function (l) {
+    var tierLabel = l.tier === 'group' ? 'Group of 5' : l.tier === 'single' ? 'Single Entry' : 'Tier not picked';
+    var badge = l.lead_status === 'payment_started' ? '<span class="ab-badge payment">Clicked Pay</span>' : '<span class="ab-badge details">Filled Details</span>';
+    var waLink = l.phone ? 'https://wa.me/91' + l.phone : '#';
+    var telLink = l.phone ? 'tel:+91' + l.phone : '#';
+    return '<div class="abandoned-row">' +
+      '<div class="ab-left">' +
+        '<div class="ab-name">' + escapeHtml(l.name || 'No name') + '</div>' +
+        '<div class="ab-meta">' + escapeHtml(l.phone || '-') + ' · ' + tierLabel + ' · ' + timeAgo(l.last_seen) + '</div>' +
+      '</div>' +
+      '<div class="ab-right">' +
+        badge +
+        '<a class="ab-action" href="' + telLink + '" title="Call">&#9742;</a>' +
+        '<a class="ab-action" href="' + waLink + '" target="_blank" title="WhatsApp">&#9993;</a>' +
+      '</div>' +
+    '</div>';
+  }).join('');
 }
 
 function loadTraffic() {

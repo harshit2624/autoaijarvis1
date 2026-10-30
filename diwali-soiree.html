@@ -267,14 +267,33 @@ window.addEventListener('scroll', function () { document.getElementById('header'
 // ── Lightweight visit tracking (dashboard: page views / live visitors /
 // started booking) — fire-and-forget, never blocks the page ──────────
 var _dsSessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-function _dsTrack(type) {
-  try { fetch('/event/diwali-soiree/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: _dsSessionId, type: type }) }).catch(function () {}); } catch (e) {}
+function _dsTrack(type, extra) {
+  try {
+    var body = Object.assign({ session_id: _dsSessionId, type: type }, extra || {});
+    fetch('/event/diwali-soiree/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function () {});
+  } catch (e) {}
 }
 _dsTrack('view');
 setInterval(function () { if (document.visibilityState === 'visible') _dsTrack('heartbeat'); }, 20000);
 var _dsFormStarted = false;
 document.getElementById('f-name').addEventListener('input', function () {
   if (!_dsFormStarted && this.value.trim()) { _dsFormStarted = true; _dsTrack('form_started'); }
+});
+// Abandoned-checkout capture — fires once a real 10-digit phone is
+// entered, so a guest who fills the form and leaves without paying is
+// still reachable (name/phone/email/tier saved server-side).
+var _dsDetailsCaptured = false;
+document.getElementById('f-phone').addEventListener('input', function () {
+  var digits = this.value.replace(/\D/g, '');
+  if (digits.length === 10) {
+    _dsDetailsCaptured = true;
+    _dsTrack('details_captured', {
+      name: document.getElementById('f-name').value.trim(),
+      phone: digits,
+      email: document.getElementById('f-email').value.trim(),
+      tier: selectedTier,
+    });
+  }
 });
 
 // ── Scratch card ───────────────────────────────────────────────────
@@ -381,6 +400,7 @@ function startPayment() {
   if (!name) return setErr('Enter your full name');
   if (phone.length !== 10) return setErr('Enter a valid 10-digit phone number');
   setErr('');
+  _dsTrack('payment_started', { name: name, phone: phone, email: email, tier: selectedTier });
   var btn = document.getElementById('pay-btn');
   btn.disabled = true; btn.textContent = 'Please Wait…';
   fetch('/event/diwali-soiree/razorpay-order', {
@@ -408,6 +428,7 @@ function startPayment() {
               document.getElementById('main-view').style.display = 'none';
               document.getElementById('confirm-screen').style.display = 'flex';
               initScratchCard();
+              _dsTrack('completed', { ticket_id: v.ticket_id });
             })
             .catch(function () { setErr('Payment captured but confirmation failed — contact us with payment ID ' + resp.razorpay_payment_id); })
             .finally(function () { btn.disabled = false; btn.textContent = 'Reserve Your Place'; });

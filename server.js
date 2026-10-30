@@ -16804,20 +16804,94 @@ app.get('/diwali-soiree/admin', (req, res) => {
 // ── Lightweight visit tracking for the public booking page ──────────────
 // One doc per browser session (a random id the page generates on load,
 // kept in a JS var — not persisted across reloads, so a refresh counts as
-// a new visit same as any other analytics tool). 'view' creates/touches
-// it, periodic 'heartbeat' pings keep last_seen fresh for the live-visitor
-// count, 'form_started' flips a flag the first time a guest types a name.
+// a new visit same as any other analytics tool).
+//   view/heartbeat   — page-views / live-visitor count (existing)
+//   form_started     — flips a flag the first time a guest types a name
+//   details_captured — fires once a valid 10-digit phone is entered, carries
+//                      name/phone/email/tier — this is the actual abandoned-
+//                      checkout capture point (someone who fills the form
+//                      and leaves without paying is still reachable)
+//   payment_started  — fires right as "Pay & Reserve" is clicked, before the
+//                      Razorpay order call — catches "clicked pay then left"
+//   completed        — fires after a successful ticket purchase, so this
+//                      session stops showing up as abandoned and never gets
+//                      a reminder email
 app.post('/event/diwali-soiree/track', async (req, res) => {
   try {
-    const { session_id, type } = req.body || {};
-    if (!session_id || !['view', 'heartbeat', 'form_started'].includes(type)) return res.status(400).json({ error: 'Invalid payload.' });
+    const { session_id, type, name, phone, email, tier, ticket_id } = req.body || {};
+    const VALID_TYPES = ['view', 'heartbeat', 'form_started', 'details_captured', 'payment_started', 'completed'];
+    if (!session_id || !VALID_TYPES.includes(type)) return res.status(400).json({ error: 'Invalid payload.' });
     const now = new Date().toISOString();
     const update = { $set: { last_seen: now }, $setOnInsert: { session_id, event: 'diwali_soiree_2026', first_seen: now } };
     if (type === 'form_started') update.$set.form_started = true;
+    if (type === 'details_captured' || type === 'payment_started') {
+      update.$set.lead_status = type;
+      if (name) update.$set.name = name;
+      if (phone) update.$set.phone = String(phone).replace(/\D/g, '').slice(-10);
+      if (email) update.$set.email = email;
+      if (tier) update.$set.tier = tier;
+    }
+    if (type === 'completed') {
+      update.$set.lead_status = 'completed';
+      if (ticket_id) update.$set.ticket_id = ticket_id;
+    }
     await mdb.collection('event_sessions').updateOne({ session_id, event: 'diwali_soiree_2026' }, update, { upsert: true });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// GET /admin/diwali-tickets/abandoned — leads who gave their details
+// (or clicked pay) but never completed a booking, for the team to call/WA
+app.get('/admin/diwali-tickets/abandoned', diwaliGateAuth, async (req, res) => {
+  try {
+    const leads = await mdb.collection('event_sessions').find(
+      { event: 'diwali_soiree_2026', lead_status: { $in: ['details_captured', 'payment_started'] }, phone: { $exists: true, $ne: '' } },
+      { projection: { _id: 0 } }
+    ).sort({ last_seen: -1 }).toArray();
+    res.json({ leads, count: leads.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── 30-minute abandoned-checkout reminder email ──────────────────────────
+// Checked every 2 minutes; sends once per session (reminder_sent flag) to
+// anyone who gave an email, reached details_captured/payment_started, and
+// has been inactive (no heartbeat) for 30+ minutes without completing.
+async function diwaliAbandonedReminderCron() {
+  try {
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const due = await mdb.collection('event_sessions').find({
+      event: 'diwali_soiree_2026',
+      lead_status: { $in: ['details_captured', 'payment_started'] },
+      email: { $exists: true, $ne: '' },
+      last_seen: { $lte: cutoff },
+      reminder_sent: { $ne: true },
+    }).toArray();
+    for (const lead of due) {
+      await mdb.collection('event_sessions').updateOne({ _id: lead._id }, { $set: { reminder_sent: true } });
+      const user = process.env.DIWALI_SMTP_USER, pass = process.env.DIWALI_SMTP_PASS;
+      if (!user || !pass) continue;
+      const html = `
+      <div style="font-family:Georgia,serif;background:#140607;color:#f3ebdd;padding:40px 24px;text-align:center;max-width:480px;margin:0 auto">
+        <div style="font-size:10px;letter-spacing:.3em;color:#b08a4b;text-transform:uppercase;margin-bottom:18px">Creates Presents</div>
+        <div style="font-size:26px;font-style:italic;margin-bottom:16px">Still coming to Diwali Soiree 2.0?</div>
+        <div style="font-size:13px;color:#c2b7a6;line-height:1.8;margin-bottom:28px">
+          ${lead.name || 'Hey'} — looks like you started booking your spot but didn't finish.<br>
+          Saturday, 7 November, 7 PM at Tirupati White, Kekri — spots are limited.
+        </div>
+        <a href="${SERVER_URL}/diwali-soiree" style="display:inline-block;background:#b08a4b;color:#140607;text-decoration:none;padding:14px 30px;font-size:12px;letter-spacing:.14em;text-transform:uppercase">Complete Your Booking</a>
+      </div>`;
+      try {
+        const transporter = createTransporter({ host: 'smtp.gmail.com', port: 587, user, pass });
+        await transporter.sendMail({ from: `"Creates" <${user}>`, to: lead.email, replyTo: user, subject: "You left your Diwali Soiree ticket unbooked", html });
+        logEmail(null, 'diwali_abandoned_reminder', lead.email, "You left your Diwali Soiree ticket unbooked", 'sent');
+        console.log(`📧 Diwali abandoned-checkout reminder sent → ${lead.email}`);
+      } catch (err) {
+        logEmail(null, 'diwali_abandoned_reminder', lead.email, "You left your Diwali Soiree ticket unbooked", 'failed', err.message);
+      }
+    }
+  } catch (e) { console.error('diwaliAbandonedReminderCron error:', e.message); }
+}
+setInterval(diwaliAbandonedReminderCron, 2 * 60 * 1000);
 
 // GET /admin/diwali-tickets/analytics — page views, live visitors (active
 // in the last 60s), and how many started filling the booking form
