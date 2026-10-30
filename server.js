@@ -16916,9 +16916,15 @@ app.get('/admin/diwali-tickets/analytics', diwaliGateAuth, async (req, res) => {
 // POST /admin/diwali-tickets/manual — create a ticket outside Razorpay
 // (door cash sale, comp/guest entry). amount defaults to the tier price
 // but can be overridden to 0 for a genuine comp — never silently assumed.
+// A second PIN gate on top of the regular event password — anyone with
+// the "creates" dashboard login can view everything, but minting a
+// manual/comp ticket (real money or a free entry) needs this extra
+// step so it's never a one-tap accident.
+const DIWALI_MANUAL_PIN = process.env.DIWALI_MANUAL_PIN || '6050';
 app.post('/admin/diwali-tickets/manual', diwaliGateAuth, async (req, res) => {
   try {
-    const { tier, name, phone, email, amount_override, note } = req.body || {};
+    const { tier, name, phone, email, amount_override, note, pin } = req.body || {};
+    if (String(pin || '') !== DIWALI_MANUAL_PIN) return res.status(403).json({ error: 'Incorrect PIN.' });
     const t = DIWALI_TICKET_TIERS[tier];
     if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
