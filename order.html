@@ -108,6 +108,12 @@ html,body{
   padding:5px 12px;font-size:10px;font-weight:700;letter-spacing:.08em;
   white-space:nowrap;color:var(--text);text-transform:uppercase;
   transition:background .25s,border-color .25s,color .25s;
+  /* A long status like "Partially Delivered" must shrink and truncate
+     instead of overflowing the fixed-height header and pushing the
+     hamburger button off-screen — min-width:0 overrides flex's default
+     content-based floor, which is what let this happen. */
+  flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  margin:0 8px;
 }
 .confirm-sheet{
   flex:1;padding:6px 20px 200px;display:flex;flex-direction:column;gap:20px;
@@ -545,11 +551,11 @@ html,body{
 .site-header.clear{
   background:transparent;border-bottom:1px solid transparent;
 }
-.header-logo{height:22px;display:block;transition:filter .25s}
+.header-logo{height:22px;display:block;transition:filter .25s;flex-shrink:0}
 .site-header.clear .header-logo{filter:none}
 .site-header.clear .menu-btn{transition:background .2s,border-color .2s,color .2s}
 .menu-btn{
-  width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;
   border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,border-color .15s;
 }
 .site-header.solid .menu-btn{background:var(--bg);border:1px solid var(--border);color:var(--body)}
