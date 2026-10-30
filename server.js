@@ -16694,6 +16694,34 @@ function diwaliTicketId() {
   return 'DS2-' + Math.random().toString(36).slice(2, 7).toUpperCase() + Date.now().toString().slice(-4);
 }
 
+// Sends the entry-pass email (QR + event details) — called from both the
+// Razorpay flow and manual/door-sale ticket creation, so every ticket
+// gets the same confirmation regardless of how it was issued. No-ops
+// silently if the ticket has no email on file (phone-only guests still
+// get their QR from the dashboard/WA alert, just not by mail).
+async function sendDiwaliTicketEmail(ticket) {
+  if (!ticket.email) return;
+  const qrUrl = `${SERVER_URL}/event/diwali-soiree/ticket-qr/${encodeURIComponent(ticket.ticket_id)}`;
+  const html = `
+  <div style="font-family:Georgia,serif;background:#140607;color:#f3ebdd;padding:40px 24px;text-align:center;max-width:480px;margin:0 auto">
+    <div style="font-size:10px;letter-spacing:.3em;color:#b08a4b;text-transform:uppercase;margin-bottom:18px">Creates Presents</div>
+    <div style="font-size:28px;font-style:italic;margin-bottom:6px">Diwali Soiree 2.0</div>
+    <div style="font-size:13px;color:#c2b7a6;margin-bottom:30px">Tirupati White — Hotel &amp; Restaurant, Ajmer Road, Kekri<br>Saturday, 7 November — 7 PM Onwards</div>
+    <img src="${qrUrl}" width="200" height="200" alt="Entry QR" style="border:1px solid #b08a4b44;padding:10px;background:#f3ebdd;margin-bottom:18px">
+    <div style="font-size:11px;letter-spacing:.14em;color:#796e5f;text-transform:uppercase">Ticket ID</div>
+    <div style="font-size:20px;color:#d4b579;letter-spacing:.04em;margin-top:4px;margin-bottom:24px">${ticket.ticket_id}</div>
+    <div style="font-size:13px;color:#c2b7a6;line-height:1.8">
+      ${ticket.name || 'Guest'}<br>
+      ${ticket.tier_label} &middot; ₹${ticket.amount}
+    </div>
+    <div style="font-size:11px;color:#796e5f;margin-top:30px;line-height:1.8">
+      Show this QR code at the entrance.<br>
+      For reservations, call +91 88753 13203 &middot; Attire: Ethnic Wear
+    </div>
+  </div>`;
+  await sendEmail({ to: ticket.email, subject: 'Your Entry Pass — Diwali Soiree 2.0', html, shopifyId: null, trigger: 'diwali_ticket_qr' }).catch(e => console.error('Diwali ticket email error:', e.message));
+}
+
 app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, tier, name, phone, email } = req.body || {};
@@ -16724,6 +16752,7 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
     });
     auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: t.amount, name, phone });
     waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${t.amount})\nName: ${name || '-'}\nPhone: ${phone || '-'}`, 'event_ticket').catch(() => {});
+    sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: t.amount, name, email }).catch(() => {});
 
     res.json({ verified: true, ticket_id, payment_id: razorpay_payment_id });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -16763,6 +16792,7 @@ app.post('/admin/diwali-tickets/manual', adminAuth, async (req, res) => {
       checked_in: false, created_at: now,
     });
     auditLog('admin', 'diwali_ticket_manual_create', ticket_id, { tier, amount, name, phone, note });
+    sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount, name, email }).catch(() => {});
     res.json({ success: true, ticket_id });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

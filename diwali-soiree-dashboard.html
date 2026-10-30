@@ -51,6 +51,8 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 .filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
 .filter-chip{font-size:10.5px;letter-spacing:.06em;color:var(--muted);border:1px solid var(--border);padding:7px 13px;cursor:pointer;text-transform:uppercase;background:transparent}
 .filter-chip.active{color:var(--gold-bright);border-color:var(--gold)}
+.filter-chip span{color:var(--muted);margin-left:4px}
+.filter-chip.active span{color:var(--gold-bright)}
 
 .ticket-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 2px;border-bottom:1px solid var(--border);cursor:pointer}
 .ticket-row:hover{background:var(--card-hover)}
@@ -116,11 +118,11 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
     <div class="section-title">Guest List</div>
     <div class="section-sub" id="list-sub">Loading…</div>
     <div class="filters">
-      <button class="filter-chip active" data-f="all" onclick="setFilter('all')">All</button>
-      <button class="filter-chip" data-f="entered" onclick="setFilter('entered')">Entered</button>
-      <button class="filter-chip" data-f="pending" onclick="setFilter('pending')">Pending</button>
-      <button class="filter-chip" data-f="single" onclick="setFilter('single')">Single</button>
-      <button class="filter-chip" data-f="group" onclick="setFilter('group')">Group of 5</button>
+      <button class="filter-chip active" data-f="all" onclick="setFilter('all')">All <span id="fc-all">0</span></button>
+      <button class="filter-chip" data-f="entered" onclick="setFilter('entered')">Entered <span id="fc-entered">0</span></button>
+      <button class="filter-chip" data-f="pending" onclick="setFilter('pending')">Pending <span id="fc-pending">0</span></button>
+      <button class="filter-chip" data-f="single" onclick="setFilter('single')">Single <span id="fc-single">0</span></button>
+      <button class="filter-chip" data-f="group" onclick="setFilter('group')">Group of 5 <span id="fc-group">0</span></button>
     </div>
     <div id="ticket-list"></div>
   </div>
@@ -222,6 +224,12 @@ function renderStats() {
   document.getElementById('s-entered').textContent = entered;
   document.getElementById('s-pending').textContent = allTickets.length - entered;
   document.getElementById('list-sub').textContent = allTickets.length + ' ticket' + (allTickets.length === 1 ? '' : 's') + ' · ' + totalPax + ' total pax';
+
+  document.getElementById('fc-all').textContent = allTickets.length;
+  document.getElementById('fc-entered').textContent = entered;
+  document.getElementById('fc-pending').textContent = allTickets.length - entered;
+  document.getElementById('fc-single').textContent = allTickets.filter(function (t) { return t.tier === 'single'; }).length;
+  document.getElementById('fc-group').textContent = allTickets.filter(function (t) { return t.tier === 'group'; }).length;
 }
 
 function setFilter(f) {
