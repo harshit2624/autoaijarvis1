@@ -16649,6 +16649,83 @@ app.post("/track/razorpay-verify", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+//  DIWALI SOIREE 2.0 — event ticket booking (one-off, Nov 7 2026)
+// ══════════════════════════════════════════════════════════════════════════
+const DIWALI_TICKET_TIERS = {
+  single: { label: 'Single Entry', amount: 499 },
+  group:  { label: 'Group of 5',   amount: 1999 },
+};
+
+app.get('/diwali-soiree', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree.html'));
+});
+
+app.post('/event/diwali-soiree/razorpay-order', async (req, res) => {
+  try {
+    const { tier, name, phone, email } = req.body || {};
+    if (!process.env.RAZORPAY_KEY_ID) return res.status(400).json({ error: 'Razorpay not configured.' });
+    const t = DIWALI_TICKET_TIERS[tier];
+    if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
+    if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
+    const order = await getRzp().orders.create({
+      amount: t.amount * 100,
+      currency: 'INR',
+      receipt: `diwali_${tier}_${Date.now()}`.slice(0, 40),
+      notes: { tier, name, phone, email: email || '' },
+    });
+    res.json({ order_id: order.id, amount: t.amount, key: process.env.RAZORPAY_KEY_ID });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+function diwaliTicketId() {
+  return 'DS2-' + Math.random().toString(36).slice(2, 7).toUpperCase() + Date.now().toString().slice(-4);
+}
+
+app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, tier, name, phone, email } = req.body || {};
+    const expectedSig = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+    if (expectedSig !== razorpay_signature)
+      return res.status(400).json({ error: 'Payment verification failed.' });
+
+    const t = DIWALI_TICKET_TIERS[tier];
+    if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
+
+    // Idempotent on razorpay_payment_id — a retried verify call (flaky
+    // network right after checkout, same pattern as the order-confirmation
+    // flow's recordOrderConfirmationPayment) must not mint a second ticket
+    // for the same payment.
+    const existing = await mdb.collection('event_tickets').findOne({ razorpay_payment_id }, { projection: { ticket_id: 1, _id: 0 } });
+    if (existing) return res.json({ verified: true, ticket_id: existing.ticket_id, payment_id: razorpay_payment_id });
+
+    const ticket_id = diwaliTicketId();
+    const now = new Date().toISOString();
+    await mdb.collection('event_tickets').insertOne({
+      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount: t.amount,
+      name: name || '', phone: String(phone || '').replace(/\D/g, '').slice(-10), email: email || '',
+      razorpay_order_id, razorpay_payment_id, status: 'paid', checked_in: false,
+      created_at: now,
+    });
+    auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: t.amount, name, phone });
+    waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${t.amount})\nName: ${name || '-'}\nPhone: ${phone || '-'}`, 'event_ticket').catch(() => {});
+
+    res.json({ verified: true, ticket_id, payment_id: razorpay_payment_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /admin/diwali-tickets — list all sold tickets for the event
+app.get('/admin/diwali-tickets', adminAuth, async (req, res) => {
+  try {
+    const tickets = await mdb.collection('event_tickets').find({ event: 'diwali_soiree_2026' }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+    const totalRevenue = tickets.reduce((s, t) => s + (t.amount || 0), 0);
+    res.json({ tickets, count: tickets.length, total_revenue: totalRevenue });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 //  Order Confirmation Page — small refundable-against-bill amount collected
 //  from customers post-order to weed out mistaken/fake COD orders that
 //  otherwise get rejected at the doorstep and cost us return shipping.
