@@ -20,11 +20,11 @@
    viewport and let the page rubber-band/bounce as the address bar
    shows/hides or on any touch-scroll, which reads as the whole page
    "shaking" instead of a stable native-feeling screen. */
-html{height:100%;overflow:hidden}
-body{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:pan-y;-webkit-text-size-adjust:100%}
+html{height:100%;width:100%;overflow:hidden}
+body{height:100%;width:100%;max-width:100%;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:pan-y;-webkit-text-size-adjust:100%}
 html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 .serif{font-family:'Bodoni Moda',serif}
-.wrap{max-width:420px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;padding:24px 20px calc(24px + env(safe-area-inset-bottom,0px))}
+.wrap{max-width:420px;width:100%;margin:0 auto;min-height:100%;display:flex;flex-direction:column;padding:24px 20px calc(24px + env(safe-area-inset-bottom,0px))}
 .header{position:relative;text-align:center;padding:16px 0 28px;border-bottom:1px solid var(--border);margin-bottom:28px}
 .header b{display:block;font-size:11px;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
 .header span{display:block;font-size:13px;color:var(--muted);margin-top:8px}

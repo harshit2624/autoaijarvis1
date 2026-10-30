@@ -19,11 +19,11 @@
 /* Fixed app-like shell, see diwali-soiree-checkin.html for why — without
    this the page rubber-bands/jumps on touch-scroll instead of feeling
    like a stable native screen. */
-html{height:100%;overflow:hidden}
-body{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:pan-y;-webkit-text-size-adjust:100%}
+html{height:100%;width:100%;overflow:hidden}
+body{height:100%;width:100%;max-width:100%;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:pan-y;-webkit-text-size-adjust:100%}
 html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-weight:300;-webkit-font-smoothing:antialiased}
 .serif{font-family:'Bodoni Moda',serif}
-.wrap{max-width:720px;margin:0 auto;padding:0 20px calc(40px + env(safe-area-inset-bottom,0px))}
+.wrap{max-width:720px;width:100%;margin:0 auto;padding:0 20px calc(40px + env(safe-area-inset-bottom,0px));overflow-x:hidden}
 
 /* ── Login ─────────────────────────────────────────────────── */
 #login-screen{min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;max-width:340px;margin:0 auto}

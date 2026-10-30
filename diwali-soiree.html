@@ -27,13 +27,14 @@
   --gold-bright:#d4b579;
 }
 html,body{
-  min-height:100%;background:var(--bg);color:var(--text);
+  min-height:100%;width:100%;max-width:100%;background:var(--bg);color:var(--text);
   font-family:'Jost',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
   font-weight:300;-webkit-font-smoothing:antialiased;overscroll-behavior:none;
+  overflow-x:hidden;
 }
 .serif{font-family:'Bodoni Moda',Georgia,serif}
 img{display:block;max-width:100%}
-.wrap{max-width:560px;margin:0 auto;position:relative}
+.wrap{max-width:560px;width:100%;margin:0 auto;position:relative;overflow-x:hidden}
 .hairline{height:1px;background:linear-gradient(90deg,transparent,var(--border-strong) 50%,transparent)}
 
 /* ── Header ────────────────────────────────────────────────── */
