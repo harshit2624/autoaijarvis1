@@ -143,7 +143,18 @@ img{display:block;max-width:100%}
 .scratch-wrap{margin-top:10px;width:100%;max-width:280px}
 .scratch-label{font-size:10px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase;margin-bottom:12px}
 .scratch-card{position:relative;border:1px solid var(--border-strong);aspect-ratio:1.5;background:var(--card)}
-.scratch-reveal{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:18px;text-align:center}
+.scratch-reveal{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:18px;text-align:center;
+  opacity:0;transform:scale(.8);
+  transition:opacity .5s ease, transform .6s cubic-bezier(.34,1.56,.64,1);
+}
+.scratch-reveal.revealed{opacity:1;transform:scale(1)}
+.scratch-reveal.revealed .sr-code{animation:sr-glow 1.4s ease-out .15s}
+@keyframes sr-glow{
+  0%{text-shadow:0 0 0 rgba(212,181,121,0)}
+  35%{text-shadow:0 0 22px rgba(212,181,121,.8)}
+  100%{text-shadow:0 0 0 rgba(212,181,121,0)}
+}
 .scratch-reveal .sr-eyebrow{font-size:9.5px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase}
 .scratch-reveal .sr-code{font-family:'Bodoni Moda',serif;font-size:19px;color:var(--gold-bright);letter-spacing:.06em}
 .scratch-reveal .sr-text{font-size:11px;color:var(--body);line-height:1.6;max-width:220px}
@@ -308,14 +319,24 @@ function initScratchCard() {
     ctx.fill();
     checkReveal();
   }
+  var revealed = false;
   function checkReveal() {
+    if (revealed) return;
     var data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     var cleared = 0, sampled = 0;
     for (var i = 3; i < data.length; i += 4 * 15) { sampled++; if (data[i] === 0) cleared++; }
     if (sampled && cleared / sampled > 0.45) {
-      canvas.style.transition = 'opacity .4s';
+      revealed = true;
+      canvas.style.transition = 'opacity .35s ease';
       canvas.style.opacity = '0';
       canvas.style.pointerEvents = 'none';
+      // Let the foil fully fade first, then pop the reward in — reads as
+      // an unlock moment rather than content that was already sitting
+      // there underneath.
+      setTimeout(function () {
+        var reveal = canvas.parentElement.querySelector('.scratch-reveal');
+        if (reveal) reveal.classList.add('revealed');
+      }, 220);
     }
   }
   canvas.addEventListener('mousedown', function (e) { scratching = true; scratchAt(e); });
