@@ -16928,6 +16928,36 @@ async function diwaliAbandonedReminderCron() {
 }
 setInterval(diwaliAbandonedReminderCron, 2 * 60 * 1000);
 
+// ── 15-minute abandoned-checkout WA recovery ──────────────────────────────
+// Separate from the 30-min email reminder (different channel, different
+// timing, its own sent-flag so neither blocks the other). Sends the
+// approved diwali_soiree_recovery MARKETING template — a phone is
+// required (this is cold outreach, outside any 24h session window, so it
+// MUST go through an approved template, not a free-form session message).
+async function diwaliAbandonedWACron() {
+  try {
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const due = await mdb.collection('event_sessions').find({
+      event: 'diwali_soiree_2026',
+      lead_status: { $in: ['details_captured', 'payment_started'] },
+      phone: { $exists: true, $regex: /^\d{10}$/ },
+      last_seen: { $lte: cutoff },
+      wa_reminder_sent: { $ne: true },
+    }).toArray();
+    for (const lead of due) {
+      await mdb.collection('event_sessions').updateOne({ _id: lead._id }, { $set: { wa_reminder_sent: true } });
+      const result = await sendWACloudTemplate({
+        phone10: lead.phone,
+        templateName: WA_TPL.DIWALI_SOIREE_RECOVERY,
+        headerImageUrl: `${SERVER_URL}/diwali-uploads/hero.jpg`,
+        bodyParams: [lead.name || 'there'],
+      });
+      console.log(result.sent ? `📲 Diwali WA recovery sent → ${lead.phone}` : `❌ Diwali WA recovery failed → ${lead.phone}: ${result.reason}`);
+    }
+  } catch (e) { console.error('diwaliAbandonedWACron error:', e.message); }
+}
+setInterval(diwaliAbandonedWACron, 2 * 60 * 1000);
+
 // GET /admin/diwali-tickets/analytics — page views, live visitors (active
 // in the last 60s), and how many started filling the booking form
 app.get('/admin/diwali-tickets/analytics', diwaliGateAuth, async (req, res) => {
@@ -28501,6 +28531,7 @@ const WA_TPL = {
   BACK_IN_STOCK_SIGNUP: 'back_in_stock_signup_v1',
   RR_ADMIN_OVERRIDE: 'rr_admin_override_v1',
   DEMO_PITCH_CTA: 'demo_pitch_cta_v1',
+  DIWALI_SOIREE_RECOVERY: 'diwali_soiree_recovery',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
