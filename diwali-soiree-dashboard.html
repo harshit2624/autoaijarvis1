@@ -162,7 +162,8 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
       <span id="qr-status"></span>
     </div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModal('qr-overlay')">Done</button>
+      <a class="btn" id="qr-download" href="" download style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center">Download QR</a>
+      <button class="btn-cancel" onclick="closeModal('qr-overlay')">Done</button>
     </div>
   </div>
 </div>
@@ -258,7 +259,10 @@ function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, f
 function viewTicketQr(ticketId) {
   var t = allTickets.find(function (x) { return x.ticket_id === ticketId; });
   if (!t) return;
-  document.getElementById('qr-img').src = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
+  var qrUrl = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
+  document.getElementById('qr-img').src = qrUrl;
+  document.getElementById('qr-download').href = qrUrl;
+  document.getElementById('qr-download').download = ticketId + '.png';
   document.getElementById('qr-ticket-id').textContent = ticketId;
   document.getElementById('qr-sub').textContent = escapeHtml(t.name || 'Guest') + ' · ' + escapeHtml(t.tier_label || '');
   document.getElementById('qr-status').textContent = t.checked_in ? 'Already entered at ' + new Date(t.checked_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Not yet entered';
@@ -312,7 +316,10 @@ function submitManualTicket() {
 }
 
 function viewTicketQrById(ticketId, name, tier) {
-  document.getElementById('qr-img').src = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
+  var qrUrl = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(ticketId);
+  document.getElementById('qr-img').src = qrUrl;
+  document.getElementById('qr-download').href = qrUrl;
+  document.getElementById('qr-download').download = ticketId + '.png';
   document.getElementById('qr-ticket-id').textContent = ticketId;
   document.getElementById('qr-sub').textContent = escapeHtml(name) + ' · ' + (tier === 'group' ? 'Group of 5' : 'Single Entry');
   document.getElementById('qr-status').textContent = 'Not yet entered';
