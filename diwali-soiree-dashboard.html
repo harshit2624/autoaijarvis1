@@ -162,6 +162,10 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
     <div class="section-title" style="margin-top:36px">Abandoned Checkouts</div>
     <div class="section-sub" id="abandoned-sub">Filled details or started paying, never finished — reach out</div>
     <div id="abandoned-list"></div>
+
+    <div class="section-title" style="margin-top:36px">Audience</div>
+    <div class="section-sub">Everyone who gave contact info — completed or not. Export for a WA broadcast or ad audience.</div>
+    <button class="btn-add" style="width:100%" onclick="downloadAudience()">Download Audience CSV</button>
   </div>
 </div>
 
@@ -245,6 +249,19 @@ function showDashboard() {
   setInterval(loadTraffic, 15000);
   setInterval(loadTickets, 30000);
   setInterval(loadAbandoned, 30000);
+}
+
+function downloadAudience() {
+  fetch('/admin/diwali-tickets/audience/export', { headers: authHeaders() })
+    .then(function (r) { return r.blob(); })
+    .then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'diwali-soiree-audience.csv';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    })
+    .catch(function () { alert('Failed to download audience CSV'); });
 }
 
 function loadAbandoned() {

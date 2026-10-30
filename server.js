@@ -16859,6 +16859,34 @@ app.get('/admin/diwali-tickets/abandoned', diwaliGateAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /admin/diwali-tickets/audience/export — full engaged audience as
+// CSV (name/phone/email/tier/status/ticket_id), deduped by phone (or
+// email if no phone) — everyone who ever gave contact info on the
+// booking page, completed or not, so it's ready to drop straight into a
+// WhatsApp broadcast list or a Meta Ads custom audience upload.
+app.get('/admin/diwali-tickets/audience/export', diwaliGateAuth, async (req, res) => {
+  try {
+    const sessions = await mdb.collection('event_sessions').find(
+      { event: 'diwali_soiree_2026', $or: [{ phone: { $exists: true, $ne: '' } }, { email: { $exists: true, $ne: '' } }] },
+      { projection: { _id: 0 } }
+    ).sort({ last_seen: -1 }).toArray();
+    const seen = new Set();
+    const rows = [];
+    for (const s of sessions) {
+      const key = s.phone || s.email;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push([s.name || '', s.phone || '', s.email || '', s.tier || '', s.lead_status || '', s.ticket_id || '']);
+    }
+    const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+    const header = ['name', 'phone', 'email', 'tier', 'status', 'ticket_id'];
+    const csv = [header.join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="diwali-soiree-audience.csv"');
+    res.send(csv);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── 30-minute abandoned-checkout reminder email ──────────────────────────
 // Checked every 2 minutes; sends once per session (reminder_sent flag) to
 // anyone who gave an email, reached details_captured/payment_started, and
