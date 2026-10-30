@@ -16788,9 +16788,40 @@ app.get('/diwali-soiree/check-in', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree-checkin.html'));
 });
 
+// ── Lightweight gate password ────────────────────────────────────────
+// Door staff get a simple shared password ("creates"), NOT the real admin
+// password — deliberately separate and lower-privilege. Its token only
+// ever authorizes the two ticket-scan endpoints below, never the admin
+// panel, the dashboard, or anything financial.
+const DIWALI_GATE_PASSWORD = process.env.DIWALI_GATE_PASSWORD || 'creates';
+app.post('/event/diwali-soiree/gate-login', async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    if (password !== DIWALI_GATE_PASSWORD) return res.status(401).json({ error: 'Incorrect password.' });
+    const token = crypto.randomBytes(24).toString('hex');
+    await mdb.collection('event_gate_sessions').insertOne({ token, created_at: new Date().toISOString(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+    res.json({ token });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Accepts EITHER a real admin session token OR a gate-password token —
+// so the dashboard (logged in as real admin) can also look up/check in a
+// ticket if ever needed, without door staff ever seeing the real password.
+async function diwaliGateAuth(req, res, next) {
+  const token = ((req.headers.authorization || '').replace('Bearer ', '') || '').trim();
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const adminSession = await mdb.collection('admin_sessions').findOne({ token });
+    if (adminSession && Date.now() <= adminSession.expiresAt) return next();
+    const gateSession = await mdb.collection('event_gate_sessions').findOne({ token });
+    if (gateSession && Date.now() <= gateSession.expiresAt) return next();
+    return res.status(401).json({ error: 'Unauthorized' });
+  } catch (e) { res.status(500).json({ error: 'Auth error' }); }
+}
+
 // GET /admin/diwali-tickets/lookup/:ticket_id — gate lookup, used by the
 // check-in page after it authenticates
-app.get('/admin/diwali-tickets/lookup/:ticket_id', adminAuth, async (req, res) => {
+app.get('/admin/diwali-tickets/lookup/:ticket_id', diwaliGateAuth, async (req, res) => {
   try {
     const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' }, { projection: { _id: 0 } });
     if (!t) return res.status(404).json({ error: 'Ticket not found.' });
@@ -16802,7 +16833,7 @@ app.get('/admin/diwali-tickets/lookup/:ticket_id', adminAuth, async (req, res) =
 // already checked in returns already_used instead of re-marking, so
 // re-scanning the same QR (or two gates scanning the same guest) can't
 // silently overwrite the original entry time.
-app.post('/admin/diwali-tickets/:ticket_id/check-in', adminAuth, async (req, res) => {
+app.post('/admin/diwali-tickets/:ticket_id/check-in', diwaliGateAuth, async (req, res) => {
   try {
     const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' });
     if (!t) return res.status(404).json({ error: 'Ticket not found.' });

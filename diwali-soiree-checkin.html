@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,500&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -28,12 +29,23 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 .btn{width:100%;background:transparent;color:var(--gold-bright);border:1px solid var(--gold);padding:15px;font-size:12px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;cursor:pointer}
 .btn:active{background:var(--gold);color:var(--bg)}
 
-/* Scan state */
-#scan-screen{display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center}
-.scan-icon{opacity:.5}
-.scan-hint{font-size:13px;color:var(--muted);max-width:260px;line-height:1.7}
-.manual-entry{margin-top:20px;width:100%;display:flex;flex-direction:column;gap:10px}
+/* Scan state — real camera viewfinder */
+#scan-screen{display:none;flex:1;flex-direction:column;gap:16px}
+#qr-video-box{width:100%;aspect-ratio:1;border:1px solid var(--border-strong);overflow:hidden;position:relative;background:#000}
+#qr-video-box video{width:100%!important;height:100%!important;object-fit:cover}
+/* html5-qrcode injects its own canvas/region overlay; keep our border styling, strip its default UI chrome */
+#qr-reader{width:100%;height:100%}
+#qr-reader img{display:none!important}
+#qr-reader__dashboard{display:none!important}
+.scan-frame{position:absolute;inset:16%;border:1.5px solid var(--gold);pointer-events:none}
+.scan-frame::before,.scan-frame::after{content:'';position:absolute;width:18px;height:18px;border:2px solid var(--gold-bright)}
+.scan-frame::before{top:-2px;left:-2px;border-right:none;border-bottom:none}
+.scan-frame::after{bottom:-2px;right:-2px;border-left:none;border-top:none}
+.scan-hint{font-size:12.5px;color:var(--muted);text-align:center;line-height:1.6}
+.cam-err{font-size:12px;color:var(--err);text-align:center;display:none}
+.manual-entry{margin-top:4px;width:100%;display:flex;flex-direction:column;gap:10px}
 .manual-entry .inp{font-size:14px;letter-spacing:.05em}
+.divider-text{text-align:center;font-size:10px;letter-spacing:.2em;color:var(--muted);text-transform:uppercase;margin:4px 0}
 
 /* Result card */
 #result-screen{display:none;flex:1;flex-direction:column;gap:18px}
@@ -62,17 +74,22 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
   </div>
 
   <div id="login-screen">
-    <input class="inp" id="pw" type="password" placeholder="Admin Password" autocomplete="current-password">
+    <input class="inp" id="pw" type="password" placeholder="Gate Password" autocomplete="current-password">
     <button class="btn" onclick="doLogin()">Unlock Scanner</button>
     <div class="err-msg" id="login-err"></div>
   </div>
 
   <div id="scan-screen">
-    <svg class="scan-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#d4b579" stroke-width="1.3"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 18h2M18 14h3"/></svg>
-    <div class="scan-hint">Point your camera app at the guest's QR code — it opens this page automatically. Or enter their ticket ID below.</div>
+    <div id="qr-video-box">
+      <div id="qr-reader"></div>
+      <div class="scan-frame"></div>
+    </div>
+    <div class="scan-hint">Hold the guest's QR code inside the frame — it scans automatically.</div>
+    <div class="cam-err" id="cam-err"></div>
+    <div class="divider-text">— or —</div>
     <div class="manual-entry">
       <input class="inp" id="manual-id" type="text" placeholder="DS2-XXXXXXXX" autocapitalize="characters">
-      <button class="btn" onclick="lookupManual()">Look Up</button>
+      <button class="btn" onclick="lookupManual()">Look Up Ticket ID</button>
     </div>
   </div>
 
@@ -80,34 +97,80 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 </div>
 
 <script>
-var API = '';
-function getToken() { try { return localStorage.getItem('ds_gate_token') || ''; } catch (e) { return ''; } }
-function setToken(t) { try { localStorage.setItem('ds_gate_token', t); } catch (e) {} }
+function getToken() { try { return localStorage.getItem('ds_scan_token') || ''; } catch (e) { return ''; } }
+function setToken(t) { try { localStorage.setItem('ds_scan_token', t); } catch (e) {} }
+function authHeaders() { return { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' }; }
+
+var pendingIdFromQr = new URLSearchParams(location.search).get('id');
 
 function doLogin() {
   var pw = document.getElementById('pw').value;
   if (!pw) return;
-  fetch('/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+  fetch('/event/diwali-soiree/gate-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (!d.token) throw new Error(d.error || 'Login failed');
       setToken(d.token);
-      showScanScreen();
+      if (pendingIdFromQr) { showResultScreen(); lookupTicket(pendingIdFromQr); pendingIdFromQr = null; }
+      else showScanScreen();
     })
     .catch(function (e) { document.getElementById('login-err').textContent = e.message || 'Incorrect password'; });
 }
+
+var html5QrCode = null;
+var scannerRunning = false;
 
 function showScanScreen() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('result-screen').style.display = 'none';
   document.getElementById('scan-screen').style.display = 'flex';
+  startCamera();
 }
 
-function authHeaders() { return { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' }; }
+function showResultScreen() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('scan-screen').style.display = 'none';
+  document.getElementById('result-screen').style.display = 'flex';
+  stopCamera();
+}
+
+function startCamera() {
+  if (scannerRunning || typeof Html5Qrcode === 'undefined') return;
+  document.getElementById('cam-err').style.display = 'none';
+  html5QrCode = new Html5Qrcode('qr-reader', { verbose: false });
+  html5QrCode.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 220, height: 220 }, aspectRatio: 1 },
+    function (decodedText) { onScanSuccess(decodedText); },
+    function () { /* per-frame no-QR-found noise, ignore */ }
+  ).then(function () { scannerRunning = true; })
+   .catch(function (e) {
+     var el = document.getElementById('cam-err');
+     el.style.display = 'block';
+     el.textContent = 'Camera unavailable — use manual entry below (' + (e && e.message ? e.message : 'permission denied') + ')';
+   });
+}
+
+function stopCamera() {
+  if (html5QrCode && scannerRunning) {
+    html5QrCode.stop().then(function () { html5QrCode.clear(); scannerRunning = false; }).catch(function () { scannerRunning = false; });
+  }
+}
+
+function onScanSuccess(decodedText) {
+  var id = decodedText;
+  try {
+    var u = new URL(decodedText);
+    var qId = u.searchParams.get('id');
+    if (qId) id = qId;
+  } catch (e) { /* not a URL — treat raw text as the ticket id */ }
+  showResultScreen();
+  lookupTicket(id);
+}
 
 function lookupManual() {
   var id = document.getElementById('manual-id').value.trim().toUpperCase();
-  if (id) lookupTicket(id);
+  if (id) { showResultScreen(); lookupTicket(id); }
 }
 
 function lookupTicket(ticketId) {
@@ -117,16 +180,14 @@ function lookupTicket(ticketId) {
       return r.json();
     })
     .then(function (d) {
-      if (d.error) return renderResult({ err: true, title: 'Not Found', detail: 'No ticket matches ' + ticketId });
+      if (d.error) return renderResult({ title: 'Not Found', detail: 'No ticket matches ' + ticketId });
       renderTicketCard(d.ticket);
     })
     .catch(function () {});
 }
 
 function renderTicketCard(t) {
-  document.getElementById('scan-screen').style.display = 'none';
   var screen = document.getElementById('result-screen');
-  screen.style.display = 'flex';
   var isUsed = t.checked_in;
   screen.innerHTML =
     '<div class="result-card ' + (isUsed ? 'warn' : 'ok') + '">' +
@@ -144,9 +205,7 @@ function renderTicketCard(t) {
 }
 
 function renderResult(opts) {
-  document.getElementById('scan-screen').style.display = 'none';
   var screen = document.getElementById('result-screen');
-  screen.style.display = 'flex';
   screen.innerHTML =
     '<div class="result-card err">' +
       '<span class="result-status err">' + escapeHtml(opts.title) + '</span>' +
@@ -170,41 +229,19 @@ function markEntered(ticketId) {
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
 function showLoginScreen(msg) {
+  stopCamera();
   document.getElementById('scan-screen').style.display = 'none';
   document.getElementById('result-screen').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   if (msg) document.getElementById('login-err').textContent = msg;
 }
 
-// Boot: if ?id= is in the URL (QR scanned), go straight to lookup once
-// authenticated; otherwise show the scan/manual-entry screen.
 (function () {
-  var params = new URLSearchParams(location.search);
-  var idFromQr = params.get('id');
   if (getToken()) {
-    if (idFromQr) { document.getElementById('login-screen').style.display = 'none'; document.getElementById('scan-screen').style.display = 'none'; document.getElementById('result-screen').style.display = 'flex'; lookupTicket(idFromQr); }
-    else { showScanScreen(); }
+    if (pendingIdFromQr) { showResultScreen(); lookupTicket(pendingIdFromQr); pendingIdFromQr = null; }
+    else showScanScreen();
   } else {
     document.getElementById('login-screen').style.display = 'flex';
-    if (idFromQr) {
-      // Stash it so login flows straight into the lookup
-      window.__pendingId = idFromQr;
-      var origLogin = doLogin;
-      doLogin = function () {
-        var pw = document.getElementById('pw').value;
-        if (!pw) return;
-        fetch('/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
-          .then(function (r) { return r.json(); })
-          .then(function (d) {
-            if (!d.token) throw new Error(d.error || 'Login failed');
-            setToken(d.token);
-            document.getElementById('login-screen').style.display = 'none';
-            document.getElementById('result-screen').style.display = 'flex';
-            lookupTicket(window.__pendingId);
-          })
-          .catch(function (e) { document.getElementById('login-err').textContent = e.message || 'Incorrect password'; });
-      };
-    }
   }
 })();
 </script>
