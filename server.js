@@ -16701,13 +16701,19 @@ function diwaliTicketId() {
 // get their QR from the dashboard/WA alert, just not by mail).
 async function sendDiwaliTicketEmail(ticket) {
   if (!ticket.email) return;
-  const qrUrl = `${SERVER_URL}/event/diwali-soiree/ticket-qr/${encodeURIComponent(ticket.ticket_id)}`;
+  // Inline the QR as a real attachment (cid:) instead of a remote-fetched
+  // image — a remote <img src> on first open is a classic spam signal
+  // (tracking-pixel pattern); an embedded attachment reads as a normal
+  // ticket/receipt instead.
+  const checkInUrl = `${SERVER_URL}/diwali-soiree/check-in?id=${encodeURIComponent(ticket.ticket_id)}`;
+  const QRCode = require('qrcode');
+  const qrBuffer = await QRCode.toBuffer(checkInUrl, { width: 480, margin: 2, color: { dark: '#140607', light: '#f3ebdd' } });
   const html = `
   <div style="font-family:Georgia,serif;background:#140607;color:#f3ebdd;padding:40px 24px;text-align:center;max-width:480px;margin:0 auto">
     <div style="font-size:10px;letter-spacing:.3em;color:#b08a4b;text-transform:uppercase;margin-bottom:18px">Creates Presents</div>
     <div style="font-size:28px;font-style:italic;margin-bottom:6px">Diwali Soiree 2.0</div>
     <div style="font-size:13px;color:#c2b7a6;margin-bottom:30px">Tirupati White — Hotel &amp; Restaurant, Ajmer Road, Kekri<br>Saturday, 7 November — 7 PM Onwards</div>
-    <img src="${qrUrl}" width="200" height="200" alt="Entry QR" style="border:1px solid #b08a4b44;padding:10px;background:#f3ebdd;margin-bottom:18px">
+    <img src="cid:ticketqr" width="200" height="200" alt="Entry QR" style="border:1px solid #b08a4b44;padding:10px;background:#f3ebdd;margin-bottom:18px">
     <div style="font-size:11px;letter-spacing:.14em;color:#796e5f;text-transform:uppercase">Ticket ID</div>
     <div style="font-size:20px;color:#d4b579;letter-spacing:.04em;margin-top:4px;margin-bottom:24px">${ticket.ticket_id}</div>
     <div style="font-size:13px;color:#c2b7a6;line-height:1.8">
@@ -16719,6 +16725,11 @@ async function sendDiwaliTicketEmail(ticket) {
       For reservations, call +91 88753 13203 &middot; Attire: Ethnic Wear
     </div>
   </div>`;
+  const text = `Diwali Soiree 2.0 — Your Entry Pass\n\n` +
+    `${ticket.name || 'Guest'}\n${ticket.tier_label} - Rs.${ticket.amount}\nTicket ID: ${ticket.ticket_id}\n\n` +
+    `Tirupati White - Hotel & Restaurant, Ajmer Road, Kekri\nSaturday, 7 November - 7 PM Onwards\n\n` +
+    `Your QR entry pass is attached to this email - show it at the entrance.\n\n` +
+    `For reservations, call +91 88753 13203. Attire: Ethnic Wear.`;
   // Dedicated Gmail SMTP for this event, separate from the main store's
   // transactional SMTP (getSmtpConfig/sendEmail) — a leak or quota issue
   // on either never touches the other.
@@ -16727,7 +16738,11 @@ async function sendDiwaliTicketEmail(ticket) {
   if (!user || !pass) { logEmail(null, 'diwali_ticket_qr', ticket.email, 'Your Entry Pass — Diwali Soiree 2.0', 'skipped', 'DIWALI_SMTP_USER/PASS not configured'); return; }
   try {
     const transporter = createTransporter({ host: 'smtp.gmail.com', port: 587, user, pass });
-    await transporter.sendMail({ from: `"Creates" <${user}>`, to: ticket.email, subject: 'Your Entry Pass — Diwali Soiree 2.0', html });
+    await transporter.sendMail({
+      from: `"Creates" <${user}>`, to: ticket.email, replyTo: user,
+      subject: 'Your Entry Pass — Diwali Soiree 2.0', html, text,
+      attachments: [{ filename: 'diwali-soiree-ticket-qr.png', content: qrBuffer, cid: 'ticketqr' }],
+    });
     logEmail(null, 'diwali_ticket_qr', ticket.email, 'Your Entry Pass — Diwali Soiree 2.0', 'sent');
     console.log(`📧 Diwali ticket email sent → ${ticket.email}`);
   } catch (err) {
