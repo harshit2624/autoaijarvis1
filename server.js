@@ -16669,6 +16669,9 @@ app.get('/diwali-soiree/neon', (req, res) => {
 app.get('/diwali-soiree/royal', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree-royal.html'));
 });
+app.get('/diwali-soiree/premium', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree-premium.html'));
+});
 
 app.post('/event/diwali-soiree/razorpay-order', async (req, res) => {
   try {
