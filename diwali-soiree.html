@@ -215,11 +215,11 @@ img{display:block;max-width:100%}
       </div>
     </div>
 
-    <div class="form">
-      <input class="inp" id="f-name" type="text" placeholder="Full Name" autocomplete="name">
-      <input class="inp" id="f-phone" type="tel" placeholder="Phone Number" maxlength="10" autocomplete="tel" inputmode="numeric">
-      <input class="inp" id="f-email" type="email" placeholder="Email (Optional)" autocomplete="email">
-    </div>
+    <form class="form" autocomplete="on" onsubmit="return false;">
+      <input class="inp" id="f-name" name="name" type="text" placeholder="Full Name" autocomplete="name">
+      <input class="inp" id="f-phone" name="tel" type="tel" placeholder="Phone Number" maxlength="10" autocomplete="tel" inputmode="numeric">
+      <input class="inp" id="f-email" name="email" type="email" placeholder="Email (Optional)" autocomplete="email">
+    </form>
   </div>
 
   <div class="footer">
