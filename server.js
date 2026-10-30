@@ -16759,7 +16759,7 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
 });
 
 // GET /admin/diwali-tickets — list all sold tickets for the event
-app.get('/admin/diwali-tickets', adminAuth, async (req, res) => {
+app.get('/admin/diwali-tickets', diwaliGateAuth, async (req, res) => {
   try {
     const tickets = await mdb.collection('event_tickets').find({ event: 'diwali_soiree_2026' }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
     const totalRevenue = tickets.reduce((s, t) => s + (t.amount || 0), 0);
@@ -16775,7 +16775,7 @@ app.get('/diwali-soiree/admin', (req, res) => {
 // POST /admin/diwali-tickets/manual — create a ticket outside Razorpay
 // (door cash sale, comp/guest entry). amount defaults to the tier price
 // but can be overridden to 0 for a genuine comp — never silently assumed.
-app.post('/admin/diwali-tickets/manual', adminAuth, async (req, res) => {
+app.post('/admin/diwali-tickets/manual', diwaliGateAuth, async (req, res) => {
   try {
     const { tier, name, phone, email, amount_override, note } = req.body || {};
     const t = DIWALI_TICKET_TIERS[tier];

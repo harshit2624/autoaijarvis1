@@ -36,6 +36,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 .topbar b{font-size:11px;letter-spacing:.24em;color:var(--gold);text-transform:uppercase}
 .topbar span{display:block;font-size:10px;color:var(--muted);margin-top:3px;letter-spacing:.04em}
 .btn-add{background:var(--gold);color:var(--bg);border:none;padding:10px 16px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+.btn-scan{background:transparent;color:var(--gold-bright);border:1px solid var(--border-strong);padding:9px 15px;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;text-decoration:none;display:flex;align-items:center}
 
 /* ── Stats grid ────────────────────────────────────────────── */
 .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:32px}
@@ -94,7 +95,7 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 <div id="login-screen">
   <b>Diwali Soiree 2.0</b>
   <span style="font-size:13px;color:var(--muted)">Event Dashboard</span>
-  <input class="inp" id="pw" type="password" placeholder="Admin Password" autocomplete="current-password" style="margin-top:20px">
+  <input class="inp" id="pw" type="password" placeholder="Event Password" autocomplete="current-password" style="margin-top:20px">
   <button class="btn" onclick="doLogin()">Unlock Dashboard</button>
   <div class="err-msg" id="login-err"></div>
 </div>
@@ -103,7 +104,10 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
   <div class="topbar">
     <div class="topbar-inner">
       <div><b>Diwali Soiree 2.0</b><span>Event Dashboard</span></div>
-      <button class="btn-add" onclick="openAddModal()">+ Add Ticket</button>
+      <div style="display:flex;gap:8px">
+        <a class="btn-scan" href="/diwali-soiree/check-in" title="Open gate scanner">Scan Ticket</a>
+        <button class="btn-add" onclick="openAddModal()">+ Add Ticket</button>
+      </div>
     </div>
   </div>
 
@@ -174,14 +178,18 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:'Jo
 var allTickets = [];
 var currentFilter = 'all';
 
-function getToken() { try { return localStorage.getItem('ds_gate_token') || ''; } catch (e) { return ''; } }
-function setToken(t) { try { localStorage.setItem('ds_gate_token', t); } catch (e) {} }
+// Shares its token with the gate check-in page (same localStorage key,
+// same /event/diwali-soiree/gate-login password) — deliberately its own
+// event-only credential, never the real CROSCROW admin password, so
+// this dashboard stays fully separate from the main admin panel/DB.
+function getToken() { try { return localStorage.getItem('ds_scan_token') || ''; } catch (e) { return ''; } }
+function setToken(t) { try { localStorage.setItem('ds_scan_token', t); } catch (e) {} }
 function authHeaders() { return { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' }; }
 
 function doLogin() {
   var pw = document.getElementById('pw').value;
   if (!pw) return;
-  fetch('/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+  fetch('/event/diwali-soiree/gate-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (!d.token) throw new Error(d.error || 'Login failed');
