@@ -206,6 +206,7 @@ img{display:block;max-width:100%}
 .prank-result{display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;margin-top:14px;padding:16px 14px;border:1px solid var(--border-strong);background:rgba(176,138,75,.08);text-align:center}
 .prank-result.show{display:flex}
 .prank-result span{font-size:12.5px;color:var(--gold-bright);line-height:1.5}
+.prank-price-line{font-family:'Bodoni Moda',serif;font-size:20px;font-weight:700;letter-spacing:.02em}
 .prank-remove-btn{font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:transparent;border:1px solid var(--border-strong);color:var(--text);padding:9px 20px;cursor:pointer;font-family:inherit}
 @media (min-width:600px){.wrap{box-shadow:0 0 80px rgba(0,0,0,.55)}}
 </style>
@@ -265,7 +266,7 @@ img{display:block;max-width:100%}
       <div class="scratch-label">Try Your Luck</div>
       <div class="scratch-card locked" id="prank-card">
         <div class="scratch-reveal" id="prank-reveal">
-          <span class="sr-eyebrow">A special code, just for you</span>
+          <span class="sr-eyebrow">This one's for close friends only</span>
           <span class="sr-code">CHARCHIT&amp;FRIENDS</span>
           <div class="sr-actions">
             <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyPrankCode()">Apply Now</button>
@@ -276,7 +277,8 @@ img{display:block;max-width:100%}
         <div class="prank-lock" id="prank-lock">Fill your name &amp; phone above to unlock</div>
       </div>
       <div class="prank-result" id="prank-result">
-        <span id="prank-result-text">If you're this close... don't you think you should pay double 👀?</span>
+        <span id="prank-price-line" class="prank-price-line"></span>
+        <span id="prank-result-text">If you're this close... don't you think you should contribute more 👀?</span>
         <button class="prank-remove-btn" onclick="removePrankCode()">Remove</button>
       </div>
       <div class="scratch-hint" id="prank-hint">Scratch the card to reveal your code</div>
@@ -515,8 +517,11 @@ setInterval(_prankCheckUnlock, 1000);
 function applyPrankCode() {
   if (_prankApplied) return;
   _prankApplied = true;
+  var selectedCard = document.querySelector('.ticket-card.selected');
+  var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
   selectedAmount = PRANK_DOUBLED[selectedTier] || selectedAmount * 2;
   document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+  document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
   document.getElementById('prank-apply-btn').textContent = 'Applied ✓';
   document.getElementById('prank-apply-btn').disabled = true;
   document.getElementById('prank-result').classList.add('show');
