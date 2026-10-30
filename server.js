@@ -16659,6 +16659,16 @@ const DIWALI_TICKET_TIERS = {
 app.get('/diwali-soiree', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree.html'));
 });
+// Design variations for comparison — same backend, same content, different look
+app.get('/diwali-soiree/editorial', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree-editorial.html'));
+});
+app.get('/diwali-soiree/neon', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree-neon.html'));
+});
+app.get('/diwali-soiree/royal', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'diwali-soiree-royal.html'));
+});
 
 app.post('/event/diwali-soiree/razorpay-order', async (req, res) => {
   try {

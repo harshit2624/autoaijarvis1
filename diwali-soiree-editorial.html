@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Diwali Soiree 2.0 — Creates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#faf8f4;
+  --surface:#ffffff;
+  --card:#ffffff;
+  --border:#e4ded2;
+  --border-strong:#17140f;
+  --text:#17140f;
+  --body:#5c5546;
+  --muted:#938a76;
+  --accent:#8a1f1f;
+  --accent-light:#f7ece9;
+}
+html,body{
+  min-height:100%;background:var(--bg);color:var(--text);
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;overscroll-behavior:none;
+}
+.serif{font-family:'Fraunces',Georgia,serif}
+img{display:block;max-width:100%}
+.wrap{max-width:560px;margin:0 auto;position:relative}
+
+#header{
+  position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px;background:rgba(250,248,244,0);
+  transition:background .25s ease, border-color .25s ease;
+  border-bottom:1px solid transparent;
+}
+#header.scrolled{background:rgba(250,248,244,.92);backdrop-filter:blur(10px);border-color:var(--border)}
+.brand-logo{height:26px;width:auto;display:block;filter:grayscale(1) contrast(1.3) brightness(.25)}
+.header-pill{
+  font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--text);
+  background:transparent;padding:8px 0;border:none;border-bottom:1px solid var(--border-strong);
+  cursor:pointer;white-space:nowrap;text-transform:uppercase;
+}
+
+.hero{position:relative;width:100%;overflow:hidden;border-bottom:1px solid var(--border)}
+.hero img{width:100%;height:auto;display:block;filter:grayscale(.15)}
+
+.hero-meta{padding:30px 20px 10px;display:flex;flex-direction:column;gap:14px}
+.eyebrow{font-size:10.5px;font-weight:600;letter-spacing:.24em;color:var(--accent);text-transform:uppercase}
+.venue-block{font-size:13px;color:var(--body);line-height:1.6;border-top:1px solid var(--border);padding-top:14px;margin-top:4px}
+.venue-block b{color:var(--text)}
+
+.section{padding:40px 20px 0}
+.section-title{font-size:24px;font-weight:600;letter-spacing:-.01em;margin-bottom:4px}
+.section-sub{font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.5}
+
+.highlights{display:flex;gap:1px;overflow-x:auto;padding:2px 20px 6px;margin:0 -20px;scrollbar-width:none;background:var(--border)}
+.highlights::-webkit-scrollbar{display:none}
+.hl-card{
+  flex:0 0 72%;max-width:260px;overflow:hidden;position:relative;
+  aspect-ratio:4/5;background:var(--card);
+}
+.hl-card img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0;filter:grayscale(.2)}
+.hl-card-fade{position:absolute;inset:0;background:linear-gradient(to top, rgba(0,0,0,.65) 0%, transparent 55%)}
+.hl-card-label{position:absolute;left:14px;right:14px;bottom:14px}
+.hl-card-label b{display:block;font-size:15px;font-weight:600;color:#fff;font-family:'Fraunces',serif}
+.hl-card-label span{font-size:11px;color:rgba(255,255,255,.78)}
+
+.lineup{display:flex;flex-direction:column;border-top:1px solid var(--border-strong);margin-top:4px}
+.lineup-row{display:flex;align-items:baseline;gap:16px;padding:16px 2px;border-bottom:1px solid var(--border)}
+.lineup-num{font-family:'Fraunces',serif;font-style:italic;font-size:13px;color:var(--muted);width:20px;flex-shrink:0}
+.lineup-text b{display:block;font-size:14px;font-weight:600}
+.lineup-text span{font-size:12px;color:var(--muted)}
+
+.ticket-grid{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--border-strong)}
+.ticket-card{
+  border-bottom:1px solid var(--border-strong);padding:18px 2px;
+  background:transparent;cursor:pointer;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.ticket-info b{font-size:15px;font-weight:600;display:block;font-family:'Fraunces',serif}
+.ticket-info span{font-size:11.5px;color:var(--muted);display:block;margin-top:3px}
+.ticket-price{font-size:17px;font-weight:600;color:var(--text);white-space:nowrap;font-family:'Fraunces',serif}
+.ticket-radio{
+  width:15px;height:15px;border:1px solid var(--border-strong);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+}
+.ticket-radio::after{content:'';width:7px;height:7px;background:var(--accent);transform:scale(0);transition:transform .15s}
+.ticket-card.selected .ticket-radio::after{transform:scale(1)}
+.ticket-row-left{display:flex;align-items:center;gap:12px}
+
+.form{display:flex;flex-direction:column;gap:0;margin-top:28px}
+.inp{
+  width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);
+  padding:14px 2px;font-size:15px;color:var(--text);outline:none;
+  transition:border-color .15s;font-family:inherit;
+}
+.inp::placeholder{color:var(--muted)}
+.inp:focus{border-color:var(--border-strong)}
+
+#pay-bar{
+  position:sticky;bottom:0;left:0;right:0;z-index:30;
+  padding:16px 20px calc(16px + env(safe-area-inset-bottom,0px));
+  background:rgba(250,248,244,.94);backdrop-filter:blur(14px);
+  border-top:1px solid var(--border-strong);margin-top:44px;
+}
+.pay-summary{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.pay-summary-label{font-size:10.5px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.pay-summary-amt{font-size:19px;font-weight:600;color:var(--text);font-family:'Fraunces',serif}
+.btn-pay{
+  width:100%;background:var(--accent);color:#fff;border:none;
+  padding:17px;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  cursor:pointer;transition:opacity .15s;
+}
+.btn-pay:active{opacity:.8}
+.btn-pay:disabled{opacity:.35;cursor:not-allowed}
+.err-msg{font-size:12px;color:var(--accent);text-align:center;margin-top:9px;min-height:16px}
+
+.footer{padding:44px 20px 56px;text-align:center}
+.footer-note{font-size:11px;color:var(--muted);line-height:1.8}
+.footer-brand{font-size:10px;font-weight:600;letter-spacing:.24em;color:var(--text);margin-top:16px;text-transform:uppercase}
+
+#confirm-screen{
+  display:none;min-height:100svh;flex-direction:column;align-items:center;justify-content:center;
+  padding:40px 24px;text-align:center;gap:18px;background:var(--bg);
+}
+.confirm-icon{
+  width:60px;height:60px;background:var(--accent-light);
+  display:flex;align-items:center;justify-content:center;border:1px solid var(--accent);
+}
+.confirm-title{font-size:26px;font-weight:600;font-family:'Fraunces',serif}
+.confirm-sub{font-size:13px;color:var(--muted);max-width:280px;line-height:1.6}
+.ticket-id-box{border:1px dashed var(--border-strong);padding:18px 24px;margin-top:8px}
+.ticket-id-box span{font-size:10px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase}
+.ticket-id-box b{display:block;font-size:22px;font-weight:600;color:var(--text);margin-top:6px;font-family:'Fraunces',serif}
+.btn-secondary{
+  margin-top:10px;background:transparent;border:1px solid var(--border-strong);color:var(--text);
+  padding:14px 24px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;
+}
+@media (min-width:600px){.wrap{box-shadow:0 0 60px rgba(0,0,0,.08)}}
+</style>
+</head>
+<body>
+
+<div class="wrap" id="main-view">
+  <div id="header">
+    <img class="brand-logo" src="/diwali-uploads/creates-logo.png" alt="Creates">
+    <button class="header-pill" onclick="document.getElementById('tickets').scrollIntoView({behavior:'smooth'})">07 Nov — 7 PM</button>
+  </div>
+
+  <div class="hero">
+    <img src="/diwali-uploads/hero.jpg" alt="Diwali Soiree 2.0">
+  </div>
+
+  <div class="hero-meta">
+    <span class="eyebrow">Creates Presents</span>
+    <h1 class="serif" style="font-size:32px;font-weight:600;font-style:italic;letter-spacing:-.01em;line-height:1.15">Diwali Soiree 2.0</h1>
+    <div class="venue-block"><b>Tirupati White — Hotel &amp; Restaurant</b><br>Ajmer Road, Kekri</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title serif">What to expect</div>
+    <div class="section-sub">Live dhol, Bollywood beats, festive decor and a night to dress up for.</div>
+    <div class="highlights">
+      <div class="hl-card"><img src="/diwali-uploads/dhol.jpg" alt="Live Dhol"><div class="hl-card-fade"></div><div class="hl-card-label"><b>Live Dhol</b><span>To light up the dance floor</span></div></div>
+      <div class="hl-card"><img src="/diwali-uploads/music.jpg" alt="Bollywood Music"><div class="hl-card-fade"></div><div class="hl-card-label"><b>Bollywood Music</b><span>A night of non-stop hits</span></div></div>
+      <div class="hl-card"><img src="/diwali-uploads/decor.jpg" alt="Diwali Decor"><div class="hl-card-fade"></div><div class="hl-card-label"><b>Diwali Decor</b><span>Where tradition meets luxury</span></div></div>
+      <div class="hl-card"><img src="/diwali-uploads/attire.jpg" alt="Ethnic Wear"><div class="hl-card-fade"></div><div class="hl-card-label"><b>Attire</b><span>Ethnic wear — don't be underdressed</span></div></div>
+      <div class="hl-card"><img src="/diwali-uploads/expect.jpg" alt="The Night"><div class="hl-card-fade"></div><div class="hl-card-label"><b>The Night</b><span>Soiree 2.0 — what to expect</span></div></div>
+    </div>
+    <div class="lineup">
+      <div class="lineup-row"><span class="lineup-num">01</span><div class="lineup-text"><b>Doors &amp; Welcome Drinks</b><span>7:00 PM — arrival, cocktails</span></div></div>
+      <div class="lineup-row"><span class="lineup-num">02</span><div class="lineup-text"><b>Live Dhol Procession</b><span>To open the floor</span></div></div>
+      <div class="lineup-row"><span class="lineup-num">03</span><div class="lineup-text"><b>Bollywood DJ Set</b><span>Non-stop, all night</span></div></div>
+      <div class="lineup-row"><span class="lineup-num">04</span><div class="lineup-text"><b>Festive Decor &amp; Lounge</b><span>Where tradition meets luxury</span></div></div>
+    </div>
+  </div>
+
+  <div class="section" id="tickets">
+    <div class="section-title serif">Book your spot</div>
+    <div class="section-sub">Pick a ticket and reserve — spots are limited.</div>
+    <div class="ticket-grid">
+      <div class="ticket-card selected" data-tier="single" data-amount="499" onclick="selectTier(this)">
+        <div class="ticket-row-left"><div class="ticket-radio"></div><div class="ticket-info"><b>Single Entry</b><span>One guest, full access</span></div></div>
+        <div class="ticket-price">₹499</div>
+      </div>
+      <div class="ticket-card" data-tier="group" data-amount="1999" onclick="selectTier(this)">
+        <div class="ticket-row-left"><div class="ticket-radio"></div><div class="ticket-info"><b>Group of 5</b><span>Best value — save ₹496</span></div></div>
+        <div class="ticket-price">₹1,999</div>
+      </div>
+    </div>
+
+    <div class="form">
+      <input class="inp" id="f-name" type="text" placeholder="Full name" autocomplete="name">
+      <input class="inp" id="f-phone" type="tel" placeholder="Phone number" maxlength="10" autocomplete="tel" inputmode="numeric">
+      <input class="inp" id="f-email" type="email" placeholder="Email (optional)" autocomplete="email">
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-note">For reservations call +91 88753 13203<br>Attire: Ethnic wear</div>
+    <div class="footer-brand">Creates</div>
+  </div>
+
+  <div id="pay-bar">
+    <div class="pay-summary"><span class="pay-summary-label">Total</span><span class="pay-summary-amt" id="pay-amt">₹499</span></div>
+    <button class="btn-pay" id="pay-btn" onclick="startPayment()">Pay &amp; Reserve</button>
+    <div class="err-msg" id="err-msg"></div>
+  </div>
+</div>
+
+<div id="confirm-screen">
+  <div class="confirm-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#8a1f1f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></div>
+  <div class="confirm-title serif">You're in</div>
+  <div class="confirm-sub">Your spot for Diwali Soiree 2.0 is reserved. Show this ticket ID at the entrance.</div>
+  <div class="ticket-id-box"><span>Ticket ID</span><b id="confirm-ticket-id">—</b></div>
+  <div class="confirm-sub" id="confirm-detail"></div>
+  <button class="btn-secondary" onclick="location.reload()">Book Another</button>
+</div>
+
+<script>
+var selectedTier = 'single';
+var selectedAmount = 499;
+window.addEventListener('scroll', function () { document.getElementById('header').classList.toggle('scrolled', window.scrollY > 20); });
+function selectTier(el) {
+  document.querySelectorAll('.ticket-card').forEach(function (c) { c.classList.remove('selected'); });
+  el.classList.add('selected');
+  selectedTier = el.dataset.tier;
+  selectedAmount = parseInt(el.dataset.amount, 10);
+  document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+}
+function setErr(msg) { document.getElementById('err-msg').textContent = msg || ''; }
+function startPayment() {
+  var name = document.getElementById('f-name').value.trim();
+  var phone = document.getElementById('f-phone').value.trim().replace(/\D/g, '');
+  var email = document.getElementById('f-email').value.trim();
+  if (!name) return setErr('Enter your full name');
+  if (phone.length !== 10) return setErr('Enter a valid 10-digit phone number');
+  setErr('');
+  var btn = document.getElementById('pay-btn');
+  btn.disabled = true; btn.textContent = 'Please wait…';
+  fetch('/event/diwali-soiree/razorpay-order', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tier: selectedTier, name: name, phone: phone, email: email }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.error) throw new Error(data.error);
+      var rzp = new Razorpay({
+        key: data.key, order_id: data.order_id, amount: data.amount * 100, currency: 'INR',
+        name: 'Creates', description: 'Diwali Soiree 2.0 — ' + (selectedTier === 'group' ? 'Group of 5' : 'Single Entry'),
+        prefill: { name: name, contact: phone, email: email }, theme: { color: '#8a1f1f' },
+        handler: function (resp) {
+          fetch('/event/diwali-soiree/razorpay-verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ razorpay_order_id: resp.razorpay_order_id, razorpay_payment_id: resp.razorpay_payment_id, razorpay_signature: resp.razorpay_signature, tier: selectedTier, name: name, phone: phone, email: email }),
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (v) {
+              if (v.error) throw new Error(v.error);
+              document.getElementById('confirm-ticket-id').textContent = v.ticket_id;
+              document.getElementById('confirm-detail').textContent = name + ' · ' + (selectedTier === 'group' ? 'Group of 5' : 'Single Entry') + ' · ₹' + selectedAmount;
+              document.getElementById('main-view').style.display = 'none';
+              document.getElementById('confirm-screen').style.display = 'flex';
+            })
+            .catch(function () { setErr('Payment captured but confirmation failed — contact us with payment ID ' + resp.razorpay_payment_id); })
+            .finally(function () { btn.disabled = false; btn.textContent = 'Pay & Reserve'; });
+        },
+        modal: { ondismiss: function () { btn.disabled = false; btn.textContent = 'Pay & Reserve'; } },
+      });
+      rzp.on('payment.failed', function () { setErr('Payment failed — please try again'); btn.disabled = false; btn.textContent = 'Pay & Reserve'; });
+      rzp.open();
+    })
+    .catch(function (e) { setErr(e.message || 'Something went wrong — try again'); btn.disabled = false; btn.textContent = 'Pay & Reserve'; });
+}
+</script>
+</body>
+</html>

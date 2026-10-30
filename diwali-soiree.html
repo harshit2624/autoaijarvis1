@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Diwali Soiree 2.0 — CROSCROW</title>
+<title>Diwali Soiree 2.0 — Creates</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -41,13 +41,13 @@ img{display:block;max-width:100%}
   border-bottom:1px solid transparent;
 }
 #header.scrolled{background:rgba(18,4,6,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-color:var(--border)}
-.brand{font-size:11px;font-weight:800;letter-spacing:.24em;color:var(--gold);text-transform:uppercase}
-.header-cta{
-  font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--bg);
-  background:var(--gold);padding:9px 16px;border-radius:100px;border:none;cursor:pointer;
-  transition:transform .15s, background .15s;white-space:nowrap;
+.brand-logo{height:30px;width:auto;display:block}
+.header-pill{
+  font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--gold-bright);
+  background:rgba(232,185,74,.14);padding:8px 14px;border:1px solid var(--border-strong);
+  cursor:pointer;transition:background .15s;white-space:nowrap;
 }
-.header-cta:active{transform:scale(.96)}
+.header-pill:active{background:rgba(232,185,74,.24)}
 
 /* ── Hero ──────────────────────────────────────────────────── */
 .hero{position:relative;width:100%;overflow:hidden}
@@ -60,14 +60,6 @@ img{display:block;max-width:100%}
   padding:22px 20px 8px;display:flex;flex-direction:column;gap:14px;
 }
 .eyebrow{font-size:11px;font-weight:700;letter-spacing:.2em;color:var(--gold);text-transform:uppercase}
-.date-row{display:flex;gap:10px;flex-wrap:wrap}
-.date-chip{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  border:1px solid var(--border-strong);border-radius:12px;padding:10px 16px;min-width:76px;
-  background:rgba(212,175,55,.06);
-}
-.date-chip b{font-size:18px;font-weight:800;color:var(--gold-bright)}
-.date-chip span{font-size:9px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-top:2px}
 .venue-block{font-size:13px;color:var(--body);line-height:1.6}
 .venue-block b{color:var(--text)}
 
@@ -79,7 +71,7 @@ img{display:block;max-width:100%}
 .highlights{display:flex;gap:12px;overflow-x:auto;padding:2px 20px 6px;margin:0 -20px;scrollbar-width:none}
 .highlights::-webkit-scrollbar{display:none}
 .hl-card{
-  flex:0 0 72%;max-width:260px;border-radius:16px;overflow:hidden;position:relative;
+  flex:0 0 72%;max-width:260px;border-radius:0;overflow:hidden;position:relative;
   aspect-ratio:4/5;border:1px solid var(--border);background:var(--card);
 }
 .hl-card img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}
@@ -89,29 +81,29 @@ img{display:block;max-width:100%}
 .hl-card-label span{font-size:11px;color:rgba(255,255,255,.72)}
 
 /* ── Tickets ───────────────────────────────────────────────── */
-.ticket-grid{display:flex;flex-direction:column;gap:12px}
+.ticket-grid{display:flex;flex-direction:column;gap:8px}
 .ticket-card{
-  border:1.5px solid var(--border);border-radius:16px;padding:18px 18px;
+  border:1px solid var(--border);border-radius:0;padding:13px 14px;
   background:var(--card);cursor:pointer;transition:border-color .15s, background .15s;
   display:flex;align-items:center;justify-content:space-between;gap:12px;
 }
-.ticket-card.selected{border-color:var(--gold);background:rgba(232,185,74,.08)}
-.ticket-info b{font-size:16px;font-weight:700;display:block}
-.ticket-info span{font-size:12px;color:var(--muted);display:block;margin-top:3px}
-.ticket-price{font-size:20px;font-weight:800;color:var(--gold-bright);white-space:nowrap}
+.ticket-card.selected{border-color:var(--gold)}
+.ticket-info b{font-size:13.5px;font-weight:600;display:block}
+.ticket-info span{font-size:11px;color:var(--muted);display:block;margin-top:2px}
+.ticket-price{font-size:15px;font-weight:700;color:var(--gold-bright);white-space:nowrap}
 .ticket-radio{
-  width:20px;height:20px;border-radius:50%;border:1.5px solid var(--border-strong);flex-shrink:0;
+  width:14px;height:14px;border-radius:0;border:1px solid var(--border-strong);flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
 }
 .ticket-card.selected .ticket-radio{border-color:var(--gold)}
-.ticket-radio::after{content:'';width:10px;height:10px;border-radius:50%;background:var(--gold);transform:scale(0);transition:transform .15s}
+.ticket-radio::after{content:'';width:6px;height:6px;border-radius:0;background:var(--gold);transform:scale(0);transition:transform .15s}
 .ticket-card.selected .ticket-radio::after{transform:scale(1)}
-.ticket-row-left{display:flex;align-items:center;gap:12px}
+.ticket-row-left{display:flex;align-items:center;gap:10px}
 
 /* ── Form ──────────────────────────────────────────────────── */
 .form{display:flex;flex-direction:column;gap:10px;margin-top:20px}
 .inp{
-  width:100%;background:rgba(255,255,255,.03);border:1.5px solid var(--border);border-radius:10px;
+  width:100%;background:rgba(255,255,255,.03);border:1.5px solid var(--border);border-radius:0;
   padding:14px 16px;font-size:15px;color:var(--text);outline:none;
   transition:border-color .15s;-webkit-appearance:none;font-family:inherit;
 }
@@ -131,7 +123,7 @@ img{display:block;max-width:100%}
 .pay-summary-label{font-size:11px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
 .pay-summary-amt{font-size:19px;font-weight:800;color:var(--gold-bright)}
 .btn-pay{
-  width:100%;background:var(--gold);color:var(--bg);border:none;border-radius:12px;
+  width:100%;background:var(--gold);color:var(--bg);border:none;border-radius:0;
   padding:16px;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
   cursor:pointer;transition:opacity .15s,transform .1s;
 }
@@ -150,19 +142,19 @@ img{display:block;max-width:100%}
   padding:40px 24px;text-align:center;gap:18px;
 }
 .confirm-icon{
-  width:64px;height:64px;border-radius:50%;background:rgba(74,222,128,.12);
+  width:64px;height:64px;border-radius:0;background:rgba(74,222,128,.12);
   display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(74,222,128,.35);
 }
 .confirm-title{font-size:24px;font-weight:700}
 .confirm-sub{font-size:13px;color:var(--muted);max-width:280px;line-height:1.6}
 .ticket-id-box{
-  border:1.5px dashed var(--border-strong);border-radius:14px;padding:18px 24px;margin-top:8px;
+  border:1.5px dashed var(--border-strong);border-radius:0;padding:18px 24px;margin-top:8px;
 }
 .ticket-id-box span{font-size:10px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase}
 .ticket-id-box b{display:block;font-size:22px;font-weight:800;color:var(--gold-bright);margin-top:6px;letter-spacing:.03em}
 .btn-secondary{
   margin-top:10px;background:transparent;border:1.5px solid var(--border-strong);color:var(--text);
-  padding:13px 22px;border-radius:100px;font-size:12px;font-weight:700;letter-spacing:.05em;
+  padding:13px 22px;border-radius:0;font-size:12px;font-weight:700;letter-spacing:.05em;
   text-transform:uppercase;cursor:pointer;
 }
 
@@ -175,8 +167,8 @@ img{display:block;max-width:100%}
 
 <div class="wrap" id="main-view">
   <div id="header">
-    <span class="brand">CROSCROW</span>
-    <button class="header-cta" onclick="document.getElementById('tickets').scrollIntoView({behavior:'smooth'})">Get Tickets</button>
+    <img class="brand-logo" src="/diwali-uploads/creates-logo.png" alt="Creates">
+    <button class="header-pill" onclick="document.getElementById('tickets').scrollIntoView({behavior:'smooth'})">07 NOV · 7 PM</button>
   </div>
 
   <div class="hero">
@@ -187,11 +179,6 @@ img{display:block;max-width:100%}
   <div class="hero-meta">
     <span class="eyebrow">Creates Presents</span>
     <h1 class="serif" style="font-size:30px;font-weight:700;letter-spacing:-.01em;line-height:1.15">Diwali Soiree 2.0</h1>
-    <div class="date-row">
-      <div class="date-chip"><b>07</b><span>Nov</span></div>
-      <div class="date-chip"><b>7 PM</b><span>Onwards</span></div>
-      <div class="date-chip" style="min-width:auto;padding:10px 14px"><b style="font-size:13px">Kekri</b><span>Ajmer Road</span></div>
-    </div>
     <div class="venue-block"><b>Tirupati White — Hotel &amp; Restaurant</b><br>Ajmer Road, Kekri</div>
   </div>
 
@@ -258,7 +245,7 @@ img{display:block;max-width:100%}
 
   <div class="footer">
     <div class="footer-note">For reservations call +91 88753 13203<br>Attire: Ethnic wear</div>
-    <div class="footer-brand">Powered by CROSCROW</div>
+    <div class="footer-brand">Creates</div>
   </div>
 
   <div id="pay-bar">
@@ -329,7 +316,7 @@ function startPayment() {
         order_id: data.order_id,
         amount: data.amount * 100,
         currency: 'INR',
-        name: 'CROSCROW',
+        name: 'Creates',
         description: 'Diwali Soiree 2.0 — ' + (selectedTier === 'group' ? 'Group of 5' : 'Single Entry'),
         prefill: { name: name, contact: phone, email: email },
         theme: { color: '#e8b94a' },
