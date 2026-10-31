@@ -27325,6 +27325,35 @@ app.get('/admin/support/chats/by-order/:shopifyOrderId', adminAuth, async (req, 
 });
 // ── Vendor WA chats (admin) ───────────────────────────────────────────────
 // ── WA Featured Products (curated per category for support bot) ──────────────
+// POST /admin/collections/:handle/remove-products — bulk-remove products
+// from a collection by title (exact match). Only works on manual/custom
+// collections (collectionRemoveProducts); smart/rule-based collections
+// reject this with a clear error since membership isn't editable there.
+app.post('/admin/collections/:handle/remove-products', adminAuth, async (req, res) => {
+  try {
+    const { titles } = req.body || {};
+    if (!Array.isArray(titles) || !titles.length) return res.status(400).json({ error: 'titles array required.' });
+    const colData = await shopifyGQL(`{ collectionByHandle(handle: "${req.params.handle}") { id title ruleSet { rules { column } } } }`);
+    const col = colData.data?.collectionByHandle;
+    if (!col) return res.status(404).json({ error: 'Collection not found.' });
+    if (col.ruleSet) return res.status(400).json({ error: `"${col.title}" is a smart/rule-based collection — product membership can't be edited directly, only its rules.` });
+
+    const results = [];
+    for (const title of titles) {
+      const esc = title.replace(/"/g, '\\"');
+      const pData = await shopifyGQL(`{ products(first: 3, query: "title:\\"${esc}\\"") { edges { node { id title } } } }`);
+      const match = (pData.data?.products?.edges || []).find(e => e.node.title === title) || pData.data?.products?.edges?.[0];
+      if (!match) { results.push({ title, ok: false, reason: 'product not found' }); continue; }
+      const rmData = await shopifyGQL(`
+        mutation { collectionRemoveProducts(id: "${col.id}", productIds: ["${match.node.id}"]) { job { id } userErrors { field message } } }
+      `);
+      const errs = rmData.data?.collectionRemoveProducts?.userErrors || [];
+      results.push({ title, ok: errs.length === 0, reason: errs.map(e => e.message).join('; ') || undefined });
+    }
+    res.json({ collection: col.title, results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/admin/wa-featured-products', adminAuth, async (req, res) => {
   try {
     const docs = await mdb.collection('wa_featured_products').find({}).toArray();
