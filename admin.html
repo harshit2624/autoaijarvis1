@@ -4918,8 +4918,8 @@
                   </div>
                   <div className="dash-section-tag" style={{background:'rgba(251,191,36,.1)',color:'#fbbf24',border:'1px solid rgba(251,191,36,.25)'}}>{criticalTickets.length} OPEN</div>
                 </div>
-                <div className="ticket-list" style={{flex:1,minHeight:0,overflowY:'auto'}}>
-                  {criticalTickets.slice(0,10).map((t,i)=>{
+                <div className="ticket-list" style={{maxHeight:460,overflowY:'auto'}}>
+                  {criticalTickets.map((t,i)=>{
                     const overdue = t.sla_deadline && new Date(t.sla_deadline) < new Date();
                     const sev = overdue ? {label:'OVERDUE',c:'#ef4444',bg:'rgba(239,68,68,.07)',bdr:'rgba(239,68,68,.2)'} : {label:(t.issue_category||'OPEN').toUpperCase(),c:'#f59e0b',bg:'rgba(245,158,11,.07)',bdr:'rgba(245,158,11,.2)'};
                     const wa = waLink(t.customer_phone);
@@ -14506,7 +14506,7 @@
             <div style={{display:'flex',alignItems:'center',gap:10}}>
               <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>Top Products</div>
               <select value={topLimit} onChange={e=>{setTopLimit(Number(e.target.value));}} style={{fontSize:11,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',padding:'4px 8px',cursor:'pointer'}}>
-                {[10,20,30,50,100].map(n=><option key={n} value={n}>Top {n}</option>)}
+                {[10,20,30,50,100,200].map(n=><option key={n} value={n}>Top {n}</option>)}
               </select>
             </div>
             <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
@@ -14535,7 +14535,7 @@
                 {[10,50,100,500,1000].map(n=><option key={n} value={n}>Min {n} views</option>)}
               </select>
               <select value={lbLimit} onChange={e=>setLbLimit(Number(e.target.value))} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px',cursor:'pointer'}}>
-                {[20,30,50,100].map(n=><option key={n} value={n}>Top {n}</option>)}
+                {[20,30,50,100,200].map(n=><option key={n} value={n}>Top {n}</option>)}
               </select>
               <select value={rankBy} onChange={e=>setRankBy(e.target.value)} style={{fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'6px 10px'}}>
                 {RATE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}

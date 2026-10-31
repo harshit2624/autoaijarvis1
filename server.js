@@ -28178,7 +28178,7 @@ app.get('/admin/pixel-tracker/summary', adminAuth, async (req, res) => {
 app.get('/admin/pixel-tracker/top-products', adminAuth, async (req, res) => {
   try {
     const metric = PIXEL_EVENT_NAMES.includes(req.query.metric) ? req.query.metric : 'ViewContent';
-    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 30, 200);
     const match = { ...pixelDateRange(req.query.from, req.query.to), eventName: metric, productName: { $ne: 'N/A' } };
     if (req.query.vendor) match.vendor = req.query.vendor;
     if (req.query.collection) {
@@ -28198,7 +28198,7 @@ app.get('/admin/pixel-tracker/top-products', adminAuth, async (req, res) => {
 // ── Per-product funnel leaderboard — view→ATC, ATC→checkout, checkout→purchase
 app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 200);
     const minViews = parseInt(req.query.minViews) || 10;
     const match = { ...pixelDateRange(req.query.from, req.query.to), productName: { $ne: 'N/A' } };
     if (req.query.vendor) match.vendor = req.query.vendor;
