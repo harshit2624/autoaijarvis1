@@ -26399,22 +26399,47 @@ app.post('/admin/wa-ofd-test-send', adminAuth, async (req, res) => {
     const order = (ordersRes?.orders || [])[0];
     if (!order) return res.status(404).json({ error: `Order ${order_name} not found.` });
 
-    const li = order.line_items?.[0];
-    const itemLine = (order.line_items || []).map(x => x.title + (x.variant_title ? ` (${x.variant_title})` : '')).join(', ') || 'Your item';
-    let itemImageUrl = null;
-    if (li?.product_id) {
-      try {
-        const prodRes = await shopifyREST(`/products/${li.product_id}.json?fields=image`);
-        itemImageUrl = prodRes?.product?.image?.src ? `${prodRes.product.image.src}${prodRes.product.image.src.includes('?') ? '&' : '?'}width=800` : null;
-      } catch {}
+    // Distinct items by product_id — each gets its own photo. A template
+    // header only ever carries one image, so for 2+ distinct items we send
+    // the template with item 1's photo, then a plain follow-up image per
+    // remaining item (requires an open 24h session, true for admin).
+    const seen = new Set();
+    const distinctItems = [];
+    for (const x of (order.line_items || [])) {
+      const key = x.product_id || x.title;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      distinctItems.push(x);
     }
+    const itemLine = distinctItems.map(x => x.title + (x.variant_title && x.variant_title !== 'Default Title' ? ` (${x.variant_title})` : '')).join(', ') || 'Your item';
+
+    const imageUrls = [];
+    for (const x of distinctItems) {
+      if (!x.product_id) { imageUrls.push(null); continue; }
+      try {
+        const prodRes = await shopifyREST(`/products/${x.product_id}.json?fields=image`);
+        const src = prodRes?.product?.image?.src;
+        imageUrls.push(src ? `${src}${src.includes('?') ? '&' : '?'}width=800` : null);
+      } catch { imageUrls.push(null); }
+    }
+    const itemImageUrl = imageUrls[0] || null;
     const codDue = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_price || 0)) : 0;
     const codLine = codDue > 0 ? `Please keep ₹${codDue} ready (COD).` : 'Please keep your phone reachable.';
     const orderSlug = encodeURIComponent(order.name.replace(/^#/, ''));
 
     const result = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl: itemImageUrl, bodyParams: [order.name, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
     if (!result.sent) return res.status(500).json({ error: result.reason || 'Send failed' });
-    res.json({ ok: true, order_name: order.name, itemLine, codLine, itemImageUrl });
+
+    // Follow-up photo(s) for any additional distinct items in the same parcel.
+    const extraPhotosSent = [];
+    for (let i = 1; i < distinctItems.length; i++) {
+      if (!imageUrls[i]) continue;
+      const r = await waCloudSendSession(`91${digits}@s.whatsapp.net`, { image: { url: imageUrls[i] }, caption: `📦 Also in this parcel: ${distinctItems[i].title}` });
+      extraPhotosSent.push({ title: distinctItems[i].title, sent: !!r.sent, reason: r.reason });
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    res.json({ ok: true, order_name: order.name, itemLine, codLine, itemImageUrl, extraPhotosSent });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
