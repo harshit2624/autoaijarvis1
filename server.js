@@ -28587,18 +28587,22 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
 }
 
 // ── Product photo collage ────────────────────────────────────────────────
-// WA template headers only ever carry one image. For a parcel with 2-3
-// distinct products, build one composite image (side-by-side tiles) instead
-// of sending separate follow-up photo messages — works for any recipient,
-// not just ones with an open 24h session. Returns a public URL (served from
-// ./collages via the existing express.static('.')) or null on any failure,
-// so callers can always fall back to a single product's photo.
+// WA template headers only ever carry one image. For a parcel with 2+
+// distinct products, build one composite image instead of sending separate
+// follow-up photo messages — works for any recipient, not just ones with an
+// open 24h session. Shows up to 4 photos (1 row for 2-3, a 2x2 grid for
+// 4+); a 5th+ distinct product collapses into a "+N" badge over the last
+// tile rather than growing the grid further. Returns a public URL (served
+// from ./collages via the existing express.static('.')) or null on any
+// failure, so callers can always fall back to a single product's photo.
 async function buildProductCollageUrl(imageUrls) {
-  const urls = (imageUrls || []).filter(Boolean).slice(0, 3);
-  if (urls.length < 2) return null;
+  const allUrls = (imageUrls || []).filter(Boolean);
+  if (allUrls.length < 2) return null;
+  const urls = allUrls.slice(0, 4);
+  const extra = allUrls.length - urls.length; // how many more beyond the 4 shown
   try {
     const sharp = require('sharp');
-    const tile = 500, gap = 10;
+    const tile = 450, gap = 8;
     const tiles = await Promise.all(urls.map(async url => {
       const r = await fetch(url);
       if (!r.ok) return null;
@@ -28608,9 +28612,30 @@ async function buildProductCollageUrl(imageUrls) {
     const valid = tiles.filter(Boolean);
     if (valid.length < 2) return null;
 
-    const width = valid.length * tile + (valid.length - 1) * gap;
-    const composite = valid.map((buf, i) => ({ input: buf, left: i * (tile + gap), top: 0 }));
-    const jpeg = await sharp({ create: { width, height: tile, channels: 3, background: '#ffffff' } })
+    let width, height, composite;
+    if (valid.length <= 3) {
+      // Single row.
+      width = valid.length * tile + (valid.length - 1) * gap;
+      height = tile;
+      composite = valid.map((buf, i) => ({ input: buf, left: i * (tile + gap), top: 0 }));
+    } else {
+      // 2x2 grid for 4.
+      width = 2 * tile + gap;
+      height = 2 * tile + gap;
+      composite = valid.map((buf, i) => ({ input: buf, left: (i % 2) * (tile + gap), top: Math.floor(i / 2) * (tile + gap) }));
+    }
+
+    // "+N" badge over the last tile when more products exist than shown.
+    if (extra > 0) {
+      const last = composite[composite.length - 1];
+      const badgeSvg = `<svg width="${tile}" height="${tile}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${tile}" height="${tile}" fill="black" fill-opacity="0.55"/>
+        <text x="50%" y="50%" font-size="${Math.round(tile * 0.3)}" fill="white" font-family="Arial, sans-serif" font-weight="bold" text-anchor="middle" dominant-baseline="central">+${extra}</text>
+      </svg>`;
+      composite.push({ input: Buffer.from(badgeSvg), left: last.left, top: last.top });
+    }
+
+    const jpeg = await sharp({ create: { width, height, channels: 3, background: '#ffffff' } })
       .composite(composite)
       .jpeg({ quality: 88 })
       .toBuffer();
