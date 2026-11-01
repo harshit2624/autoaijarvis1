@@ -28892,6 +28892,8 @@ const WA_PARTIAL_AWAITING_ENABLED = false;
 // (weeks, not minutes) — resubmitted under _v2 names instead of waiting.
 // abandoned_cart_recovery is untouched (already approved, never deleted).
 const WA_TPL = {
+  ABANDONED_CART_TOUCH2: 'abandoned_cart_recovery_touch2',
+  ABANDONED_CART_TOUCH3: 'abandoned_cart_recovery_touch3',
   SHIPMENT_PICKUP: 'shipment_pickup_v3',
   SHIPMENT_TRANSIT: 'shipment_transit_v3',
   SHIPMENT_OFD: 'shipment_out_for_delivery_v3',
@@ -29969,6 +29971,88 @@ function waAbandonedCartDiscountUrl(url) {
   const sep = url.includes('?') ? '&' : '?';
   return `${url}${sep}utm_source=whatsapp&utm_medium=chatbot&utm_campaign=abandoned_cart_recovery`;
 }
+
+// ── Abandoned-cart 3-touch sequence — Touch 2 (24h) and Touch 3 (48h) ────
+// Touch 1 already fires immediately from the webhook above. This cron
+// picks up carts that are due for the next touch, skips anyone who
+// already placed a real order since abandoning (checked live via Shopify,
+// not a stale local flag), and never re-sends a touch already sent.
+async function abandonedCartHasRecentOrder(phone) {
+  if (!phone || phone.length !== 10) return false;
+  try {
+    const res = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=1`);
+    return (res?.orders || []).length > 0;
+  } catch { return false; }
+}
+
+async function abandonedCartTouchCron() {
+  if (!mdb) return;
+  try {
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+
+    // Touch 2 — 24h after Touch 1, carts not already recovered/dismissed
+    const touch2Due = await mdb.collection('abandoned_carts').find({
+      wa_sent: true, wa_touch2_sent: { $ne: true },
+      status: { $nin: ['recovered', 'dismissed'] },
+      wa_sent_at: { $ne: null, $lte: new Date(now - DAY).toISOString() },
+    }).limit(50).toArray();
+
+    for (const cart of touch2Due) {
+      const phone = String(cart.phone || '').replace(/\D/g, '').slice(-10);
+      if (!phone || phone.length !== 10) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch2_sent: true, wa_touch2_skipped: 'no_phone' } }); continue; }
+      if (await abandonedCartHasRecentOrder(phone)) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch2_sent: true, wa_touch2_skipped: 'already_ordered' } }); continue; }
+
+      const total = parseFloat(cart.total || 0);
+      const discountAmt = 150;
+      const afterDiscount = Math.max(0, total - discountAmt);
+      const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url || 'https://croscrow.com');
+      const result = await sendWACloudTemplate({
+        phone10: phone, templateName: WA_TPL.ABANDONED_CART_TOUCH2,
+        headerImageUrl: cart.items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
+        bodyParams: [String(Math.round(total)), String(Math.round(afterDiscount)), 'COMEBACK', String(discountAmt)],
+        urlButtonParam: waCloudUrlSuffix(buyUrl, cart.cart_id ? `?mrid=${cart.cart_id}` : ''),
+      });
+      await mdb.collection('abandoned_carts').updateOne(
+        { _id: cart._id },
+        { $set: { wa_touch2_sent: true, wa_touch2_sent_at: new Date().toISOString(), wa_touch2_ok: !!result.sent } }
+      );
+      console.log(`${result.sent ? '✅' : '❌'} Abandoned cart Touch2 → ${phone}`);
+    }
+
+    // Touch 3 — 48h after Touch 1 (24h after Touch 2). "2 hours left" is
+    // urgency framing in the copy, not a real deadline — same always-on
+    // COMEBACK code and UTM link as Touch 1/2, nothing actually expires.
+    const touch3Due = await mdb.collection('abandoned_carts').find({
+      wa_touch2_sent: true, wa_touch3_sent: { $ne: true },
+      status: { $nin: ['recovered', 'dismissed'] },
+      wa_sent_at: { $ne: null, $lte: new Date(now - 2 * DAY).toISOString() },
+    }).limit(50).toArray();
+
+    for (const cart of touch3Due) {
+      const phone = String(cart.phone || '').replace(/\D/g, '').slice(-10);
+      if (!phone || phone.length !== 10) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch3_sent: true, wa_touch3_skipped: 'no_phone' } }); continue; }
+      if (await abandonedCartHasRecentOrder(phone)) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch3_sent: true, wa_touch3_skipped: 'already_ordered' } }); continue; }
+
+      const total = parseFloat(cart.total || 0);
+      const discountAmt = 150;
+      const afterDiscount = Math.max(0, total - discountAmt);
+      const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url || 'https://croscrow.com');
+      const result = await sendWACloudTemplate({
+        phone10: phone, templateName: WA_TPL.ABANDONED_CART_TOUCH3,
+        headerImageUrl: cart.items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
+        bodyParams: [String(Math.round(total)), String(Math.round(afterDiscount)), 'COMEBACK', String(discountAmt)],
+        urlButtonParam: waCloudUrlSuffix(buyUrl, cart.cart_id ? `?mrid=${cart.cart_id}` : ''),
+      });
+      await mdb.collection('abandoned_carts').updateOne(
+        { _id: cart._id },
+        { $set: { wa_touch3_sent: true, wa_touch3_sent_at: new Date().toISOString(), wa_touch3_ok: !!result.sent } }
+      );
+      console.log(`${result.sent ? '✅' : '❌'} Abandoned cart Touch3 → ${phone}`);
+    }
+  } catch (e) { console.error('abandonedCartTouchCron error:', e.message); }
+}
+setInterval(abandonedCartTouchCron, 15 * 60 * 1000);
 
 app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
