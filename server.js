@@ -16998,6 +16998,21 @@ app.get('/admin/diwali-tickets/abandoned', diwaliGateAuth, async (req, res) => {
       },
       { projection: { _id: 0 } }
     ).sort({ last_seen: -1 }).toArray();
+
+    // Attach what each lead's scratch card actually rolled (outcome +
+    // claimed/expired status) — useful context for the callback team,
+    // e.g. "they were sitting on an unclaimed ₹100 off" is a reason to
+    // call now, not later.
+    const phones = [...new Set(leads.map(l => l.phone).filter(Boolean))];
+    if (phones.length) {
+      const rolls = await mdb.collection('diwali_scratch_rolls').find({ phone: { $in: phones } }).toArray();
+      const rollMap = Object.fromEntries(rolls.map(r => [r.phone, r]));
+      for (const l of leads) {
+        const r = l.phone && rollMap[l.phone];
+        l.scratch = r ? { outcome: r.outcome, status: r.status, expiresAt: r.expiresAt } : null;
+      }
+    }
+
     res.json({ leads, count: leads.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -17013,16 +17028,23 @@ app.get('/admin/diwali-tickets/audience/export', diwaliGateAuth, async (req, res
       { event: 'diwali_soiree_2026', $or: [{ phone: { $exists: true, $ne: '' } }, { email: { $exists: true, $ne: '' } }] },
       { projection: { _id: 0 } }
     ).sort({ last_seen: -1 }).toArray();
+    const phones = [...new Set(sessions.map(s => s.phone).filter(Boolean))];
+    const rollMap = {};
+    if (phones.length) {
+      const rolls = await mdb.collection('diwali_scratch_rolls').find({ phone: { $in: phones } }).toArray();
+      for (const r of rolls) rollMap[r.phone] = r;
+    }
     const seen = new Set();
     const rows = [];
     for (const s of sessions) {
       const key = s.phone || s.email;
       if (seen.has(key)) continue;
       seen.add(key);
-      rows.push([s.name || '', s.phone || '', s.email || '', s.tier || '', s.lead_status || '', s.ticket_id || '']);
+      const r = s.phone && rollMap[s.phone];
+      rows.push([s.name || '', s.phone || '', s.email || '', s.tier || '', s.lead_status || '', s.ticket_id || '', r ? r.outcome : '', r ? r.status : '']);
     }
     const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-    const header = ['name', 'phone', 'email', 'tier', 'status', 'ticket_id'];
+    const header = ['name', 'phone', 'email', 'tier', 'status', 'ticket_id', 'scratch_outcome', 'scratch_status'];
     const csv = [header.join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="diwali-soiree-audience.csv"');

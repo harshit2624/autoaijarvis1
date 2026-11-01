@@ -88,6 +88,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
 .ab-badge{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;white-space:nowrap}
 .ab-badge.details{background:var(--warn-bg);color:var(--warn)}
 .ab-badge.payment{background:var(--err-bg);color:var(--err)}
+.ab-scratch{font-size:10.5px;color:var(--gold-bright)}
 .ab-action{width:30px;height:30px;border:1px solid var(--border-strong);display:flex;align-items:center;justify-content:center;text-decoration:none;color:var(--gold-bright);flex-shrink:0}
 
 /* ── Modal (add ticket / view ticket) ─────────────────────── */
@@ -289,6 +290,12 @@ function renderAbandoned(leads) {
   var el = document.getElementById('abandoned-list');
   document.getElementById('abandoned-sub').textContent = leads.length + ' lead' + (leads.length === 1 ? '' : 's') + ' to follow up with';
   if (!leads.length) { el.innerHTML = '<div class="empty-state">No abandoned checkouts right now</div>'; return; }
+  var SCRATCH_LABELS = {
+    rasogulla:   'Rasogulla',
+    prank:       'CHARCHIT&FRIENDS',
+    discount100: '₹100 off',
+    buy5get6:    'Buy5→6 entry',
+  };
   el.innerHTML = leads.map(function (l) {
     var tierLabel = l.tier === 'group' ? 'Group of 5' : l.tier === 'single' ? 'Single Entry' : 'Tier not picked';
     var badge = l.lead_status === 'payment_started' ? '<span class="ab-badge payment">Clicked Pay</span>' : '<span class="ab-badge details">Filled Details</span>';
@@ -297,10 +304,17 @@ function renderAbandoned(leads) {
       ? '<a class="ab-action" href="tel:+91' + l.phone + '" title="Call">&#9742;</a>' +
         '<a class="ab-action" href="https://wa.me/91' + l.phone + '" target="_blank" title="WhatsApp">&#9993;</a>'
       : '<span class="ab-meta" style="font-style:italic">no phone</span>';
+    var scratchLine = '';
+    if (l.scratch && l.scratch.outcome) {
+      var label = SCRATCH_LABELS[l.scratch.outcome] || l.scratch.outcome;
+      var statusTag = l.scratch.status === 'claimed' ? ' (claimed)' : l.scratch.status === 'expired' ? ' (expired)' : ' (unclaimed)';
+      scratchLine = '<div class="ab-scratch">🎟️ Scratched: ' + escapeHtml(label) + statusTag + '</div>';
+    }
     return '<div class="abandoned-row">' +
       '<div class="ab-left">' +
         '<div class="ab-name">' + escapeHtml(l.name || 'No name') + '</div>' +
         '<div class="ab-meta">' + escapeHtml(l.phone || (l.email ? l.email : 'no contact given')) + ' · ' + tierLabel + ' · ' + timeAgo(l.last_seen) + '</div>' +
+        scratchLine +
       '</div>' +
       '<div class="ab-right">' +
         badge + actions +
