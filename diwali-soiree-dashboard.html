@@ -291,10 +291,11 @@ function renderAbandoned(leads) {
   document.getElementById('abandoned-sub').textContent = leads.length + ' lead' + (leads.length === 1 ? '' : 's') + ' to follow up with';
   if (!leads.length) { el.innerHTML = '<div class="empty-state">No abandoned checkouts right now</div>'; return; }
   var SCRATCH_LABELS = {
-    rasogulla:   'Rasogulla',
-    prank:       'CHARCHIT&FRIENDS',
-    discount100: '₹100 off',
-    buy5get6:    'Buy5→6 entry',
+    rasogulla:     'Rasogulla',
+    prank:         'CHARCHIT&FRIENDS',
+    discount100:   '₹100 off',
+    buy5get6:      'Buy5→6 entry',
+    freeticket499: 'CREATESXCROSCROW code',
   };
   el.innerHTML = leads.map(function (l) {
     var tierLabel = l.tier === 'group' ? 'Group of 5' : l.tier === 'single' ? 'Single Entry' : 'Tier not picked';

@@ -16679,12 +16679,13 @@ const DIWALI_TICKET_TIERS = {
 // in the pool as one possible (unlucky) outcome instead of happening to
 // everyone.
 const DIWALI_SCRATCH_WEIGHTS = [
-  { outcome: 'rasogulla',   weight: 25 }, // free physical treat, no price change
-  { outcome: 'prank',       weight: 25 }, // CHARCHIT&FRIENDS — price doubles
-  { outcome: 'discount100', weight: 25 }, // ₹100 off, 60s window to claim
-  { outcome: 'buy5get6',    weight: 25 }, // group tier gets a free 6th entry, 5min window
+  { outcome: 'rasogulla',     weight: 18 }, // free physical treat, no price change
+  { outcome: 'prank',         weight: 17 }, // CHARCHIT&FRIENDS — price doubles
+  { outcome: 'discount100',   weight: 18 }, // ₹100 off, 60s window to claim
+  { outcome: 'buy5get6',      weight: 17 }, // group tier gets a free 6th entry, 5min window
+  { outcome: 'freeticket499', weight: 30 }, // CREATESXCROSCROW shopping code, 2min window
 ];
-const DIWALI_SCRATCH_WINDOW_MS = { discount100: 60 * 1000, buy5get6: 5 * 60 * 1000 };
+const DIWALI_SCRATCH_WINDOW_MS = { discount100: 60 * 1000, buy5get6: 5 * 60 * 1000, freeticket499: 2 * 60 * 1000 };
 
 function rollDiwaliScratchOutcome() {
   const total = DIWALI_SCRATCH_WEIGHTS.reduce((s, w) => s + w.weight, 0);
@@ -16783,6 +16784,7 @@ async function applyDiwaliScratchPerk(phone, tier, baseAmount) {
   if (roll.outcome === 'discount100') return { amount: Math.max(1, baseAmount - 100), perk: 'discount100' };
   if (roll.outcome === 'buy5get6' && tier === 'group') return { amount: baseAmount, perk: 'buy5get6' };
   if (roll.outcome === 'rasogulla') return { amount: baseAmount, perk: 'rasogulla' };
+  if (roll.outcome === 'freeticket499') return { amount: baseAmount, perk: 'freeticket499' }; // ticket price unchanged — the win is the CREATESXCROSCROW shopping code
   return { amount: baseAmount, perk: null };
 }
 
@@ -16921,7 +16923,7 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
       created_at: now,
     });
     auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: finalAmount, perk, name, phone });
-    const _perkLine = perk === 'prank' ? '\nScratch: CHARCHIT&FRIENDS (doubled)' : perk === 'discount100' ? '\nScratch: ₹100 off claimed' : perk === 'buy5get6' ? '\n🎉 Scratch: BONUS — let 6 in on this ticket!' : perk === 'rasogulla' ? '\n🍬 Scratch: free magic rasogulla — hand it out' : '';
+    const _perkLine = perk === 'prank' ? '\nScratch: CHARCHIT&FRIENDS (doubled)' : perk === 'discount100' ? '\nScratch: ₹100 off claimed' : perk === 'buy5get6' ? '\n🎉 Scratch: BONUS — let 6 in on this ticket!' : perk === 'rasogulla' ? '\n🍬 Scratch: free magic rasogulla — hand it out' : perk === 'freeticket499' ? '\n🛍️ Scratch: CREATESXCROSCROW shopping code claimed' : '';
     waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${finalAmount})\nName: ${name || '-'}\nPhone: ${phone || '-'}${_perkLine}`, 'event_ticket').catch(() => {});
     sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: finalAmount, name, email }).catch(() => {});
     sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: phoneDigits }).catch(() => {});

@@ -274,6 +274,7 @@ img{display:block;max-width:100%}
           <span class="sr-text" id="sr-text"></span>
           <span class="sr-countdown" id="sr-countdown" style="display:none"></span>
           <div class="sr-actions" id="sr-actions" style="display:none">
+            <a class="btn-copy-sm" id="prank-shop-btn" href="https://croscrow.com/discount/CREATESXCROSCROW?redirect=/" target="_blank" style="flex:1;display:none;text-decoration:none">Shop Now</a>
             <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyScratchOutcome()"></button>
           </div>
         </div>
@@ -492,14 +493,16 @@ var _scratchRoll = null; // { outcome, status, expiresAt }
 var _scratchCountdownTimer = null;
 
 var SCRATCH_COPY = {
-  rasogulla:   { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
-  prank:       { eyebrow: "This one's for close friends only", code: 'CHARCHIT&FRIENDS', text: "If you're this close... don't you think you should contribute more 👀?", btn: 'Contribute' },
-  discount100: { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
-  buy5get6:    { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
+  rasogulla:     { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
+  prank:         { eyebrow: "This one's for close friends only", code: 'CHARCHIT&FRIENDS', text: "If you're this close... don't you think you should contribute more 👀?", btn: 'Contribute' },
+  discount100:   { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
+  buy5get6:      { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
+  freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2:00 to lock it in.', btn: 'Apply Now' },
 };
 var SCRATCH_EXPIRED_TEXT = {
-  discount100: "⏳ Your 1-minute window is gone. The ₹100 off is gone too — better luck for next Diwali 🪔",
-  buy5get6:    "⏳ Your 5-minute window is gone. That free 6th entry is gone — better luck for next Diwali 🪔",
+  discount100:   "⏳ Your 1-minute window is gone. The ₹100 off is gone too — better luck for next Diwali 🪔",
+  buy5get6:      "⏳ Your 5-minute window is gone. That free 6th entry is gone — better luck for next Diwali 🪔",
+  freeticket499: "⏳ Your 2-minute window is gone. The ₹499 shopping code is gone too — better luck for next Diwali 🪔",
 };
 
 function _prankCheckUnlock() {
@@ -567,11 +570,13 @@ function renderScratchOutcome() {
   var countdownEl = document.getElementById('sr-countdown');
   var actionsEl = document.getElementById('sr-actions');
   var btn = document.getElementById('prank-apply-btn');
+  var shopBtn = document.getElementById('prank-shop-btn');
 
   if (_scratchRoll.status === 'expired') {
     document.getElementById('sr-text').textContent = SCRATCH_EXPIRED_TEXT[outcome] || copy.text;
     countdownEl.style.display = 'none';
     actionsEl.style.display = 'none';
+    shopBtn.style.display = 'none';
     if (_scratchCountdownTimer) clearInterval(_scratchCountdownTimer);
     return;
   }
@@ -580,6 +585,7 @@ function renderScratchOutcome() {
   btn.textContent = copy.btn;
   btn.disabled = _scratchRoll.status === 'claimed';
   actionsEl.style.display = 'flex';
+  shopBtn.style.display = outcome === 'freeticket499' ? 'flex' : 'none';
 
   if (_scratchRoll.expiresAt && _scratchRoll.status === 'active') {
     countdownEl.style.display = 'block';
@@ -642,13 +648,16 @@ function applyScratchOutcome() {
         }
         document.getElementById('prank-price-line').textContent = 'Group of 5 → Entry for 6';
         resultText = "Bonus locked in — bring 6, pay for 5. Show this screen at the door.";
+      } else if (outcome === 'freeticket499') {
+        document.getElementById('prank-price-line').textContent = 'CREATESXCROSCROW';
+        resultText = 'Locked in! Tap Shop Now above, or use code CREATESXCROSCROW at checkout — ₹499 off your CROSCROW order.';
       } else { // rasogulla
         document.getElementById('prank-price-line').textContent = '';
         resultText = copyForRasogullaResult();
       }
 
       document.getElementById('prank-result-text').textContent = resultText;
-      document.getElementById('prank-remove-btn').style.display = (outcome === 'rasogulla' || outcome === 'buy5get6') ? 'none' : 'inline-block';
+      document.getElementById('prank-remove-btn').style.display = (outcome === 'rasogulla' || outcome === 'buy5get6' || outcome === 'freeticket499') ? 'none' : 'inline-block';
       document.getElementById('prank-result').classList.add('show');
       renderScratchOutcome();
     }).catch(function () {});
