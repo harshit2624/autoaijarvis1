@@ -16679,10 +16679,10 @@ const DIWALI_TICKET_TIERS = {
 // in the pool as one possible (unlucky) outcome instead of happening to
 // everyone.
 const DIWALI_SCRATCH_WEIGHTS = [
-  { outcome: 'rasogulla',   weight: 30 }, // free physical treat, no price change
-  { outcome: 'prank',       weight: 35 }, // CHARCHIT&FRIENDS — price doubles
-  { outcome: 'discount100', weight: 23 }, // ₹100 off, 60s window to claim
-  { outcome: 'buy5get6',    weight: 12 }, // group tier gets a free 6th entry, 5min window
+  { outcome: 'rasogulla',   weight: 25 }, // free physical treat, no price change
+  { outcome: 'prank',       weight: 25 }, // CHARCHIT&FRIENDS — price doubles
+  { outcome: 'discount100', weight: 25 }, // ₹100 off, 60s window to claim
+  { outcome: 'buy5get6',    weight: 25 }, // group tier gets a free 6th entry, 5min window
 ];
 const DIWALI_SCRATCH_WINDOW_MS = { discount100: 60 * 1000, buy5get6: 5 * 60 * 1000 };
 
