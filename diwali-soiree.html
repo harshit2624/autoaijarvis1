@@ -207,6 +207,9 @@ img{display:block;max-width:100%}
 .prank-result.show{display:flex}
 .prank-result span{font-size:12.5px;color:var(--gold-bright);line-height:1.5}
 .prank-price-line{font-family:'Bodoni Moda',serif;font-size:20px;font-weight:700;letter-spacing:.02em}
+.sr-countdown{font-family:'Bodoni Moda',serif;font-size:17px;color:#e8574a;letter-spacing:.04em}
+.sr-countdown.urgent{animation:sr-pulse 1s ease-in-out infinite}
+@keyframes sr-pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .prank-remove-btn{font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:transparent;border:1px solid var(--border-strong);color:var(--text);padding:9px 20px;cursor:pointer;font-family:inherit}
 @media (min-width:600px){.wrap{box-shadow:0 0 80px rgba(0,0,0,.55)}}
 </style>
@@ -266,10 +269,12 @@ img{display:block;max-width:100%}
       <div class="scratch-label">Try Your Luck</div>
       <div class="scratch-card locked" id="prank-card">
         <div class="scratch-reveal" id="prank-reveal">
-          <span class="sr-eyebrow">This one's for close friends only</span>
-          <span class="sr-code">CHARCHIT&amp;FRIENDS</span>
-          <div class="sr-actions">
-            <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyPrankCode()">Contribute</button>
+          <span class="sr-eyebrow" id="sr-eyebrow"></span>
+          <span class="sr-code" id="sr-code"></span>
+          <span class="sr-text" id="sr-text"></span>
+          <span class="sr-countdown" id="sr-countdown" style="display:none"></span>
+          <div class="sr-actions" id="sr-actions" style="display:none">
+            <button class="btn-shop-sm" id="prank-apply-btn" style="flex:1" onclick="applyScratchOutcome()"></button>
           </div>
         </div>
         <canvas id="prank-canvas"></canvas>
@@ -278,8 +283,8 @@ img{display:block;max-width:100%}
       </div>
       <div class="prank-result" id="prank-result">
         <span id="prank-price-line" class="prank-price-line"></span>
-        <span id="prank-result-text">If you're this close... don't you think you should contribute more 👀?</span>
-        <button class="prank-remove-btn" onclick="removePrankCode()">Remove</button>
+        <span id="prank-result-text"></span>
+        <button class="prank-remove-btn" id="prank-remove-btn" onclick="removePrankCode()">Remove</button>
       </div>
       <div class="scratch-hint" id="prank-hint">Scratch the card to reveal your code</div>
     </div>
@@ -471,15 +476,36 @@ function selectTier(el) {
   if (_prankApplied) removePrankCode();
 }
 
-// ── Prank scratch card (pre-payment) ────────────────────────────────
-// Locked until name + a valid phone are filled; "Apply Now" doubles the
-// selected tier's price as a joke, "Remove" instantly reverts it.
+// ── Scratch card — genuine random outcome (pre-payment) ─────────────
+// Locked until name + a valid phone are filled. The outcome is rolled and
+// stored server-side the moment the card unlocks (POST scratch-roll),
+// keyed by phone — so it can't be re-rolled by refreshing, and the price
+// actually charged always comes from the same server-side record at
+// checkout, never from anything shown here. Possible outcomes: a free
+// rasogulla (most common, no price change), the CHARCHIT&FRIENDS prank
+// (price doubles — now just one of several possible outcomes, not
+// guaranteed), ₹100 off (60s to claim), or a free 6th entry on a Group
+// ticket (5min to claim).
 var _prankApplied = false;
-var PRANK_DOUBLED = { single: 999, group: 3999 };
 var _prankUnlocked = false;
+var _scratchRoll = null; // { outcome, status, expiresAt }
+var _scratchCountdownTimer = null;
+
+var SCRATCH_COPY = {
+  rasogulla:   { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
+  prank:       { eyebrow: "This one's for close friends only", code: 'CHARCHIT&FRIENDS', text: "If you're this close... don't you think you should contribute more 👀?", btn: 'Contribute' },
+  discount100: { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
+  buy5get6:    { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
+};
+var SCRATCH_EXPIRED_TEXT = {
+  discount100: "⏳ Your 1-minute window is gone. The ₹100 off is gone too — better luck for next Diwali 🪔",
+  buy5get6:    "⏳ Your 5-minute window is gone. That free 6th entry is gone — better luck for next Diwali 🪔",
+};
+
 function _prankCheckUnlock() {
   var name = document.getElementById('f-name').value.trim();
-  var phoneOk = document.getElementById('f-phone').value.replace(/\D/g, '').length === 10;
+  var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  var phoneOk = phoneDigits.length === 10;
   var card = document.getElementById('prank-card');
   var wasUnlocked = _prankUnlocked;
   _prankUnlocked = !!(name && phoneOk);
@@ -494,6 +520,7 @@ function _prankCheckUnlock() {
   if (_prankUnlocked !== wasUnlocked) {
     var canvas = document.getElementById('prank-canvas');
     if (canvas && canvas._redrawFoil) canvas._redrawFoil();
+    if (_prankUnlocked && !_scratchRoll) fetchScratchRoll(phoneDigits, name);
   }
 }
 ['f-name', 'f-phone'].forEach(function (id) {
@@ -514,28 +541,138 @@ setupScratchCanvas(document.getElementById('prank-canvas'), '#prank-reveal', nul
 _prankCheckUnlock();
 setInterval(_prankCheckUnlock, 1000);
 
-function applyPrankCode() {
-  if (_prankApplied) return;
-  _prankApplied = true;
-  var selectedCard = document.querySelector('.ticket-card.selected');
-  var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
-  selectedAmount = PRANK_DOUBLED[selectedTier] || selectedAmount * 2;
-  document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
-  document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
-  document.getElementById('prank-apply-btn').textContent = 'Applied ✓';
-  document.getElementById('prank-apply-btn').disabled = true;
-  document.getElementById('prank-result').classList.add('show');
+function fetchScratchRoll(phoneDigits, name) {
+  fetch('/event/diwali-soiree/scratch-roll', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits, name: name }),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.outcome) return; // invalid phone etc. — silently leave card un-rolled
+    _scratchRoll = d;
+    renderScratchOutcome();
+  }).catch(function () {});
+}
+
+function _fmtCountdown(ms) {
+  var s = Math.max(0, Math.ceil(ms / 1000));
+  var m = Math.floor(s / 60); s = s % 60;
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function renderScratchOutcome() {
+  if (!_scratchRoll) return;
+  var outcome = _scratchRoll.outcome;
+  var copy = SCRATCH_COPY[outcome];
+  document.getElementById('sr-eyebrow').textContent = copy.eyebrow;
+  document.getElementById('sr-code').textContent = copy.code;
+  var countdownEl = document.getElementById('sr-countdown');
+  var actionsEl = document.getElementById('sr-actions');
+  var btn = document.getElementById('prank-apply-btn');
+
+  if (_scratchRoll.status === 'expired') {
+    document.getElementById('sr-text').textContent = SCRATCH_EXPIRED_TEXT[outcome] || copy.text;
+    countdownEl.style.display = 'none';
+    actionsEl.style.display = 'none';
+    if (_scratchCountdownTimer) clearInterval(_scratchCountdownTimer);
+    return;
+  }
+
+  document.getElementById('sr-text').textContent = copy.text;
+  btn.textContent = copy.btn;
+  btn.disabled = _scratchRoll.status === 'claimed';
+  actionsEl.style.display = 'flex';
+
+  if (_scratchRoll.expiresAt && _scratchRoll.status === 'active') {
+    countdownEl.style.display = 'block';
+    if (_scratchCountdownTimer) clearInterval(_scratchCountdownTimer);
+    var expiresAtMs = new Date(_scratchRoll.expiresAt).getTime();
+    var tick = function () {
+      var remaining = expiresAtMs - Date.now();
+      if (remaining <= 0) {
+        clearInterval(_scratchCountdownTimer);
+        _scratchRoll.status = 'expired';
+        renderScratchOutcome();
+        return;
+      }
+      countdownEl.textContent = 'Ends in ' + _fmtCountdown(remaining);
+      countdownEl.classList.toggle('urgent', remaining < 10000);
+    };
+    tick();
+    _scratchCountdownTimer = setInterval(tick, 1000);
+  } else {
+    countdownEl.style.display = 'none';
+  }
+}
+
+function applyScratchOutcome() {
+  if (!_scratchRoll || _prankApplied) return;
+  var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  fetch('/event/diwali-soiree/scratch-claim', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits }),
+  }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, body: d }; }); })
+    .then(function (res) {
+      if (!res.ok) {
+        // 410 = window ran out server-side between fetch and click.
+        _scratchRoll.status = 'expired';
+        renderScratchOutcome();
+        return;
+      }
+      _prankApplied = true;
+      _scratchRoll.status = 'claimed';
+      if (_scratchCountdownTimer) clearInterval(_scratchCountdownTimer);
+      var outcome = _scratchRoll.outcome;
+      var selectedCard = document.querySelector('.ticket-card.selected');
+      var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
+      var resultText = '';
+
+      if (outcome === 'prank') {
+        selectedAmount = originalAmount * 2;
+        document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+        document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
+        resultText = "If you're this close... don't you think you should contribute more 👀?";
+      } else if (outcome === 'discount100') {
+        selectedAmount = Math.max(1, originalAmount - 100);
+        document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+        document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
+        resultText = '₹100 off applied — locked in for this ticket.';
+      } else if (outcome === 'buy5get6') {
+        if (selectedTier !== 'group') {
+          var groupCard = document.querySelector('.ticket-card[data-tier="group"]');
+          if (groupCard) selectTier(groupCard);
+        }
+        document.getElementById('prank-price-line').textContent = 'Group of 5 → Entry for 6';
+        resultText = "Bonus locked in — bring 6, pay for 5. Show this screen at the door.";
+      } else { // rasogulla
+        document.getElementById('prank-price-line').textContent = '';
+        resultText = copyForRasogullaResult();
+      }
+
+      document.getElementById('prank-result-text').textContent = resultText;
+      document.getElementById('prank-remove-btn').style.display = (outcome === 'rasogulla' || outcome === 'buy5get6') ? 'none' : 'inline-block';
+      document.getElementById('prank-result').classList.add('show');
+      renderScratchOutcome();
+    }).catch(function () {});
+}
+
+function copyForRasogullaResult() {
+  return 'Hurray! You just won a free magic rasogulla 🍬✨ Show this at the counter on event day.';
 }
 
 function removePrankCode() {
-  if (!_prankApplied) return;
-  _prankApplied = false;
-  var selectedCard = document.querySelector('.ticket-card.selected');
-  selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
-  document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
-  document.getElementById('prank-apply-btn').textContent = 'Contribute';
-  document.getElementById('prank-apply-btn').disabled = false;
-  document.getElementById('prank-result').classList.remove('show');
+  if (!_prankApplied || !_scratchRoll) return;
+  if (_scratchRoll.outcome !== 'prank' && _scratchRoll.outcome !== 'discount100') return; // only price-affecting perks are removable
+  var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  fetch('/event/diwali-soiree/scratch-unclaim', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits }),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    _prankApplied = false;
+    var selectedCard = document.querySelector('.ticket-card.selected');
+    selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
+    document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+    document.getElementById('prank-result').classList.remove('show');
+    if (d.status) { _scratchRoll.status = d.status; renderScratchOutcome(); }
+  }).catch(function () {});
 }
 function setErr(msg) { document.getElementById('err-msg').textContent = msg || ''; }
 function startPayment() {

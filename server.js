@@ -16671,6 +16671,121 @@ const DIWALI_TICKET_TIERS = {
   group:  { label: 'Group of 5',   amount: 1999 },
 };
 
+// ── Scratch-card luck system ─────────────────────────────────────────────
+// Replaces the old guaranteed-prank card with a genuinely random outcome,
+// rolled and stored server-side (keyed by phone) so it can't be gamed by
+// refreshing, and so the real charged amount always comes from this
+// record rather than anything the client claims. CHARCHIT&FRIENDS stays
+// in the pool as one possible (unlucky) outcome instead of happening to
+// everyone.
+const DIWALI_SCRATCH_WEIGHTS = [
+  { outcome: 'rasogulla',   weight: 70 }, // free physical treat, no price change
+  { outcome: 'prank',       weight: 15 }, // CHARCHIT&FRIENDS — price doubles
+  { outcome: 'discount100', weight: 10 }, // ₹100 off, 60s window to claim
+  { outcome: 'buy5get6',    weight: 5 },  // group tier gets a free 6th entry, 5min window
+];
+const DIWALI_SCRATCH_WINDOW_MS = { discount100: 60 * 1000, buy5get6: 5 * 60 * 1000 };
+
+function rollDiwaliScratchOutcome() {
+  const total = DIWALI_SCRATCH_WEIGHTS.reduce((s, w) => s + w.weight, 0);
+  let r = Math.random() * total;
+  for (const w of DIWALI_SCRATCH_WEIGHTS) {
+    if (r < w.weight) return w.outcome;
+    r -= w.weight;
+  }
+  return DIWALI_SCRATCH_WEIGHTS[0].outcome;
+}
+
+// Blocks obviously fake numbers (all-same-digit, simple runs) that people
+// type to get past the "fill your phone" gate without giving a real one.
+function isFakeDiwaliPhone(phone) {
+  if (!/^[6-9]\d{9}$/.test(phone)) return true;
+  if (/^(\d)\1{9}$/.test(phone)) return true; // 9999999999 etc.
+  const asc = '0123456789', desc = '9876543210';
+  if (asc.includes(phone) || desc.includes(phone)) return true;
+  return false;
+}
+
+// Returns the current roll for a phone, creating one on first call. A
+// timed outcome (discount100/buy5get6) flips to 'expired' lazily here the
+// first time anyone checks it past its window, rather than needing a cron.
+async function getOrRollDiwaliScratch(phone, name) {
+  const existing = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
+  if (existing) {
+    if (existing.status === 'active' && existing.expiresAt && Date.now() > new Date(existing.expiresAt).getTime()) {
+      await mdb.collection('diwali_scratch_rolls').updateOne({ phone }, { $set: { status: 'expired' } });
+      existing.status = 'expired';
+    }
+    return existing;
+  }
+  const outcome = rollDiwaliScratchOutcome();
+  const windowMs = DIWALI_SCRATCH_WINDOW_MS[outcome] || null;
+  const doc = {
+    phone, name: name || '', outcome, status: 'active',
+    rolledAt: new Date().toISOString(),
+    expiresAt: windowMs ? new Date(Date.now() + windowMs).toISOString() : null,
+  };
+  await mdb.collection('diwali_scratch_rolls').insertOne(doc);
+  return doc;
+}
+
+app.post('/event/diwali-soiree/scratch-roll', async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+    if (isFakeDiwaliPhone(phone)) return res.status(400).json({ error: 'Please enter a valid mobile number.' });
+    const roll = await getOrRollDiwaliScratch(phone, req.body?.name);
+    res.json({ outcome: roll.outcome, status: roll.status, expiresAt: roll.expiresAt });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Marks a roll as claimed — called when the guest taps the reveal card's
+// action button, while the window (if any) is still open. razorpay-order
+// re-checks this same record independently, so even a skipped/failed
+// claim call can't be used to sneak a perk in — only a genuinely active,
+// unexpired claimed record affects the real charge.
+app.post('/event/diwali-soiree/scratch-claim', async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+    const roll = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
+    if (!roll) return res.status(404).json({ error: 'No scratch result found for this number.' });
+    if (roll.status === 'expired' || (roll.expiresAt && Date.now() > new Date(roll.expiresAt).getTime())) {
+      await mdb.collection('diwali_scratch_rolls').updateOne({ phone }, { $set: { status: 'expired' } });
+      return res.status(410).json({ error: 'expired', outcome: roll.outcome });
+    }
+    await mdb.collection('diwali_scratch_rolls').updateOne({ phone }, { $set: { status: 'claimed' } });
+    res.json({ ok: true, outcome: roll.outcome });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Reverts a claim back to 'active' — used when the guest hits "Remove" on
+// the card so the checkout price genuinely matches what's on screen,
+// rather than silently still applying a perk they thought they undid.
+// Still within the original window → active again. Window's gone in the
+// meantime → expired, same as any other expiry.
+app.post('/event/diwali-soiree/scratch-unclaim', async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+    const roll = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
+    if (!roll || roll.status !== 'claimed') return res.json({ ok: true });
+    const expired = roll.expiresAt && Date.now() > new Date(roll.expiresAt).getTime();
+    await mdb.collection('diwali_scratch_rolls').updateOne({ phone }, { $set: { status: expired ? 'expired' : 'active' } });
+    res.json({ ok: true, status: expired ? 'expired' : 'active' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Applies a claimed, unexpired perk to the real amount server will charge.
+// Never trusts anything the client says about price — only this record.
+async function applyDiwaliScratchPerk(phone, tier, baseAmount) {
+  const roll = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
+  if (!roll || roll.status !== 'claimed') return { amount: baseAmount, perk: null };
+  if (roll.expiresAt && Date.now() > new Date(roll.expiresAt).getTime()) return { amount: baseAmount, perk: null };
+  if (roll.outcome === 'prank') return { amount: baseAmount * 2, perk: 'prank' };
+  if (roll.outcome === 'discount100') return { amount: Math.max(1, baseAmount - 100), perk: 'discount100' };
+  if (roll.outcome === 'buy5get6' && tier === 'group') return { amount: baseAmount, perk: 'buy5get6' };
+  if (roll.outcome === 'rasogulla') return { amount: baseAmount, perk: 'rasogulla' };
+  return { amount: baseAmount, perk: null };
+}
+
 app.get('/diwali-soiree', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree.html'));
 });
@@ -16695,13 +16810,15 @@ app.post('/event/diwali-soiree/razorpay-order', async (req, res) => {
     const t = DIWALI_TICKET_TIERS[tier];
     if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
+    const phoneDigits = String(phone).replace(/\D/g, '').slice(-10);
+    const { amount: finalAmount, perk } = await applyDiwaliScratchPerk(phoneDigits, tier, t.amount);
     const order = await getRzp().orders.create({
-      amount: t.amount * 100,
+      amount: finalAmount * 100,
       currency: 'INR',
       receipt: `diwali_${tier}_${Date.now()}`.slice(0, 40),
-      notes: { tier, name, phone, email: email || '' },
+      notes: { tier, name, phone, email: email || '', perk: perk || '' },
     });
-    res.json({ order_id: order.id, amount: t.amount, key: process.env.RAZORPAY_KEY_ID });
+    res.json({ order_id: order.id, amount: finalAmount, key: process.env.RAZORPAY_KEY_ID, perk: perk || null });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -16786,18 +16903,28 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
     const existing = await mdb.collection('event_tickets').findOne({ razorpay_payment_id }, { projection: { ticket_id: 1, _id: 0 } });
     if (existing) return res.json({ verified: true, ticket_id: existing.ticket_id, payment_id: razorpay_payment_id });
 
+    const phoneDigits = String(phone || '').replace(/\D/g, '').slice(-10);
+    // Same deterministic lookup razorpay-order used to size the charge —
+    // re-reading it here (rather than trusting anything from the client)
+    // keeps the ticket's stored amount/perk true to what was actually paid.
+    const { amount: finalAmount, perk } = await applyDiwaliScratchPerk(phoneDigits, tier, t.amount);
+
     const ticket_id = diwaliTicketId();
     const now = new Date().toISOString();
     await mdb.collection('event_tickets').insertOne({
-      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount: t.amount,
-      name: name || '', phone: String(phone || '').replace(/\D/g, '').slice(-10), email: email || '',
+      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount: finalAmount,
+      name: name || '', phone: phoneDigits, email: email || '',
+      scratch_perk: perk || null,
+      bonus_entry: perk === 'buy5get6', // door staff: let 6 in on this ticket, not 5
+      rasogulla_won: perk === 'rasogulla', // door staff: hand out the treat
       razorpay_order_id, razorpay_payment_id, status: 'paid', checked_in: false,
       created_at: now,
     });
-    auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: t.amount, name, phone });
-    waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${t.amount})\nName: ${name || '-'}\nPhone: ${phone || '-'}`, 'event_ticket').catch(() => {});
-    sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: t.amount, name, email }).catch(() => {});
-    sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: String(phone || '').replace(/\D/g, '').slice(-10) }).catch(() => {});
+    auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: finalAmount, perk, name, phone });
+    const _perkLine = perk === 'prank' ? '\nScratch: CHARCHIT&FRIENDS (doubled)' : perk === 'discount100' ? '\nScratch: ₹100 off claimed' : perk === 'buy5get6' ? '\n🎉 Scratch: BONUS — let 6 in on this ticket!' : perk === 'rasogulla' ? '\n🍬 Scratch: free magic rasogulla — hand it out' : '';
+    waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${finalAmount})\nName: ${name || '-'}\nPhone: ${phone || '-'}${_perkLine}`, 'event_ticket').catch(() => {});
+    sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: finalAmount, name, email }).catch(() => {});
+    sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: phoneDigits }).catch(() => {});
 
     res.json({ verified: true, ticket_id, payment_id: razorpay_payment_id });
   } catch (err) { res.status(500).json({ error: err.message }); }
