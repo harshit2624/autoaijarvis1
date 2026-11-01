@@ -2599,6 +2599,7 @@ app.post("/webhooks/fulfillments", (req, res) => {
                 orderName: order.name, customerName: custName, customerPhone: custPhone,
                 awb, courier, deliveryStatus: null, codAmount: null, itemName: _pickupItemName,
                 itemImageUrl: vendorItems[0]?.image_url,
+                itemImageUrls: [...new Set(vendorItems.map(li => li.image_url).filter(Boolean))],
               }).catch(e => console.error('WA notif on fulfillment failed:', e.message));
             }
           }
@@ -18710,7 +18711,7 @@ async function shipsagarTrackShipment(awb) {
 
 // ── WA customer shipping notifications ───────────────────────────────────
 // Sends one WA message per stage transition. Deduplication via order_meta.wa_notif_sent.
-async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, customerPhone, awb, courier, deliveryStatus, codAmount, itemName, itemImageUrl }) {
+async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, customerPhone, awb, courier, deliveryStatus, codAmount, itemName, itemImageUrl, itemImageUrls }) {
   if (!mdb) return;
   const digits = String(customerPhone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
   if (digits.length !== 10 || !/^[6-9]/.test(digits)) return;
@@ -18755,7 +18756,14 @@ async function sendShipmentWANotif(shopifyId, stage, { orderName, customerName, 
       cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_TRANSIT, bodyParams: [orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` });
     } else if (stage === 'ofd') {
       const codLine = codAmount > 0 ? `Please keep ₹${codAmount} ready (COD).` : 'Please keep your phone reachable.';
-      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl: itemImageUrl, bodyParams: [orderName, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
+      // 2-3 distinct photos in this parcel → one collage image instead of
+      // just item 1's photo (a template header only carries a single image).
+      let ofdHeaderImage = itemImageUrl;
+      if (itemImageUrls && itemImageUrls.length >= 2) {
+        const collageUrl = await buildProductCollageUrl(itemImageUrls);
+        if (collageUrl) ofdHeaderImage = collageUrl;
+      }
+      cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl: ofdHeaderImage, bodyParams: [orderName, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
     } else if (stage === 'delivered') {
       cloudResult = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_DELIVERED, bodyParams: [orderName, itemLine] });
     }
@@ -19594,13 +19602,30 @@ async function shipsagarTrackingCron() {
                 const codAmount = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_outstanding || order.total_price || 0)) : 0;
                 const _stageVendorItems = (order.line_items || []).filter(li => li.vendor === rec.vendor_name);
                 const _stageItemName = _stageVendorItems.map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''}`).join(', ');
+                // Order line_items don't carry a usable image_url from this
+                // REST fetch — pull each distinct product's photo directly
+                // (only needed for stages that actually show an image).
+                let _stageImageUrls = [];
+                if (stagesToNotify.includes('ofd')) {
+                  const _seenPid = new Set();
+                  for (const li of _stageVendorItems) {
+                    if (!li.product_id || _seenPid.has(li.product_id)) continue;
+                    _seenPid.add(li.product_id);
+                    try {
+                      const pr = await shopifyREST(`/products/${li.product_id}.json?fields=image`);
+                      const src = pr?.product?.image?.src;
+                      if (src) _stageImageUrls.push(`${src}${src.includes('?') ? '&' : '?'}width=800`);
+                    } catch {}
+                  }
+                }
                 for (const stg of stagesToNotify) {
                   await sendShipmentWANotif(rec.shopify_id, stg, {
                     orderName: order.name || `#${rec.shopify_id}`,
                     customerName, customerPhone,
                     awb: rec.awb, courier: rec.courier,
                     deliveryStatus: desc, codAmount, itemName: _stageItemName,
-                    itemImageUrl: _stageVendorItems[0]?.image_url,
+                    itemImageUrl: _stageImageUrls[0],
+                    itemImageUrls: _stageImageUrls,
                   });
                   // Small stagger so a multi-stage catch-up doesn't land as
                   // one indistinguishable burst of WhatsApp messages.
@@ -26422,24 +26447,23 @@ app.post('/admin/wa-ofd-test-send', adminAuth, async (req, res) => {
         imageUrls.push(src ? `${src}${src.includes('?') ? '&' : '?'}width=800` : null);
       } catch { imageUrls.push(null); }
     }
-    const itemImageUrl = imageUrls[0] || null;
+    // 2-3 distinct items → one collage image; single item → that item's own
+    // photo; collage build failure falls back to item 1's photo alone.
+    let headerImageUrl = imageUrls[0] || null;
+    let collageUrl = null;
+    if (distinctItems.length >= 2) {
+      collageUrl = await buildProductCollageUrl(imageUrls);
+      if (collageUrl) headerImageUrl = collageUrl;
+    }
+
     const codDue = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_price || 0)) : 0;
     const codLine = codDue > 0 ? `Please keep ₹${codDue} ready (COD).` : 'Please keep your phone reachable.';
     const orderSlug = encodeURIComponent(order.name.replace(/^#/, ''));
 
-    const result = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl: itemImageUrl, bodyParams: [order.name, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
+    const result = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl, bodyParams: [order.name, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
     if (!result.sent) return res.status(500).json({ error: result.reason || 'Send failed' });
 
-    // Follow-up photo(s) for any additional distinct items in the same parcel.
-    const extraPhotosSent = [];
-    for (let i = 1; i < distinctItems.length; i++) {
-      if (!imageUrls[i]) continue;
-      const r = await waCloudSendSession(`91${digits}@s.whatsapp.net`, { image: { url: imageUrls[i] }, caption: `📦 Also in this parcel: ${distinctItems[i].title}` });
-      extraPhotosSent.push({ title: distinctItems[i].title, sent: !!r.sent, reason: r.reason });
-      await new Promise(r => setTimeout(r, 800));
-    }
-
-    res.json({ ok: true, order_name: order.name, itemLine, codLine, itemImageUrl, extraPhotosSent });
+    res.json({ ok: true, order_name: order.name, itemLine, codLine, headerImageUrl, usedCollage: !!collageUrl });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -28527,6 +28551,58 @@ async function sendWACloudAbandonedCart({ phone10, imageUrl, total, afterDiscoun
     console.error('❌ WA Cloud API abandoned-cart send error:', e.message);
     logWASend({ phone10, kind: 'template', name: WA_CLOUD_TEMPLATE, sent: false, reason: e.message, category: _waTemplateCategoryCache.get(WA_CLOUD_TEMPLATE) || null }).catch(() => {});
     return { sent: false, reason: e.message };
+  }
+}
+
+// ── Product photo collage ────────────────────────────────────────────────
+// WA template headers only ever carry one image. For a parcel with 2-3
+// distinct products, build one composite image (side-by-side tiles) instead
+// of sending separate follow-up photo messages — works for any recipient,
+// not just ones with an open 24h session. Returns a public URL (served from
+// ./collages via the existing express.static('.')) or null on any failure,
+// so callers can always fall back to a single product's photo.
+async function buildProductCollageUrl(imageUrls) {
+  const urls = (imageUrls || []).filter(Boolean).slice(0, 3);
+  if (urls.length < 2) return null;
+  try {
+    const sharp = require('sharp');
+    const tile = 500, gap = 10;
+    const tiles = await Promise.all(urls.map(async url => {
+      const r = await fetch(url);
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return sharp(buf).resize(tile, tile, { fit: 'cover' }).toBuffer();
+    }));
+    const valid = tiles.filter(Boolean);
+    if (valid.length < 2) return null;
+
+    const width = valid.length * tile + (valid.length - 1) * gap;
+    const composite = valid.map((buf, i) => ({ input: buf, left: i * (tile + gap), top: 0 }));
+    const jpeg = await sharp({ create: { width, height: tile, channels: 3, background: '#ffffff' } })
+      .composite(composite)
+      .jpeg({ quality: 88 })
+      .toBuffer();
+
+    const dir = path.join(__dirname, 'collages');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const fname = `${crypto.randomBytes(8).toString('hex')}.jpg`;
+    fs.writeFileSync(path.join(dir, fname), jpeg);
+
+    // Best-effort cleanup of collages older than 24h so this folder doesn't
+    // grow unbounded — each send writes a new file, nothing ever reads an
+    // old one again once the WA message carrying its URL has gone out.
+    try {
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      for (const f of fs.readdirSync(dir)) {
+        const fp = path.join(dir, f);
+        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      }
+    } catch {}
+
+    return `${SERVER_URL}/collages/${fname}`;
+  } catch (e) {
+    console.error('❌ buildProductCollageUrl:', e.message);
+    return null;
   }
 }
 
