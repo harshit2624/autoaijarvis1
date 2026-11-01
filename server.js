@@ -16946,9 +16946,6 @@ app.get('/diwali-soiree/admin', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree-dashboard.html'));
 });
 
-app.get('/admin/wa-marketing', (req, res) => {
-  res.sendFile(require('path').join(__dirname, 'wa-marketing.html'));
-});
 
 // ── Lightweight visit tracking for the public booking page ──────────────
 // One doc per browser session (a random id the page generates on load,
@@ -30108,6 +30105,128 @@ async function markRecoveredAbandonedCarts() {
   } catch (e) { console.error('markRecoveredAbandonedCarts error:', e.message); }
 }
 setInterval(markRecoveredAbandonedCarts, 15 * 60 * 1000);
+
+// ── Generic WA campaign attribution ──────────────────────────────────────
+// Covers every marketing-category WA send regardless of which flow sent it
+// (abandoned-cart touches, the FLAT500 win-back, any future campaign like
+// the carousel) — wa_send_log already logs all of them uniformly via
+// logWASend. Rather than one bespoke "did they convert" tracker per
+// campaign type, this attributes ANY marketing send to a real Shopify
+// order placed by that phone within a 7-day window afterward, caching the
+// result on the row itself so the campaigns dashboard never hits Shopify
+// live. Throttled the same way as markRecoveredAbandonedCarts.
+const WA_ATTRIBUTION_WINDOW_DAYS = 7;
+
+// Explicit allowlist, not Meta's own `category` field — Meta's MARKETING
+// category on a template is unreliable for "is this actually a promo
+// campaign a merchant would want tracked": order_awaiting_confirmation_v3,
+// shipment_delivered_v2, ops_notification and staff_notification all came
+// back tagged marketing in practice despite being purely transactional/
+// internal. Curate this list by hand whenever a new real campaign ships
+// (e.g. a new carousel template) instead of trusting Meta's tag.
+const WA_CAMPAIGN_TEMPLATE_NAMES = [
+  'abandoned_cart_recovery', 'abandoned_cart_recovery_touch2', 'abandoned_cart_recovery_touch3',
+  'win_back_flat500_v2',
+  'diwali_soiree_recovery',
+  'back_in_stock_v1',
+  'weekend_bestsellers_carousel_v1', 'weekend_bestsellers_carousel_v2',
+];
+async function markWASendConversions() {
+  if (!mdb) return;
+  try {
+    const now = Date.now();
+    const scanCutoff = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const recheckBefore = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const rows = await mdb.collection('wa_send_log').find({
+      kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, status: { $ne: 'failed' },
+      sent_at: { $gte: scanCutoff },
+      $or: [{ conversion_checked_at: { $exists: false } }, { conversion_checked_at: { $lte: recheckBefore } }],
+    }).limit(200).toArray();
+
+    for (const row of rows) {
+      const checkedAt = new Date().toISOString();
+      const phone = String(row.phone || '').replace(/\D/g, '').slice(-10);
+      // Still within the attribution window → leave unchecked this pass,
+      // re-check later rather than prematurely marking "not converted".
+      const sentAtMs = new Date(row.sent_at).getTime();
+      const windowEndMs = sentAtMs + WA_ATTRIBUTION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+      if (now < windowEndMs && row.converted !== true) {
+        // Only worth re-checking once the window is at least half elapsed —
+        // an order placed minutes after a send is rare, no need to hammer
+        // Shopify on every single pass before there's realistic time for one.
+        if (now < sentAtMs + 2 * 60 * 60 * 1000) continue;
+      }
+      if (!phone || phone.length !== 10) {
+        await mdb.collection('wa_send_log').updateOne({ _id: row._id }, { $set: { conversion_checked_at: checkedAt } });
+        continue;
+      }
+      try {
+        const res = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=5&fields=id,name,total_price,created_at`);
+        const orders = (res?.orders || []).filter(o => {
+          const t = new Date(o.created_at).getTime();
+          return t > sentAtMs && t <= windowEndMs;
+        });
+        if (orders.length) {
+          const order = orders[0];
+          await mdb.collection('wa_send_log').updateOne(
+            { _id: row._id },
+            { $set: { converted: true, converted_order_name: order.name, converted_amount: parseFloat(order.total_price || 0), converted_at: order.created_at, conversion_checked_at: checkedAt } }
+          );
+        } else if (now >= windowEndMs) {
+          // Window closed with nothing found — final answer, stop re-checking.
+          await mdb.collection('wa_send_log').updateOne({ _id: row._id }, { $set: { converted: false, conversion_checked_at: checkedAt } });
+        } else {
+          await mdb.collection('wa_send_log').updateOne({ _id: row._id }, { $set: { conversion_checked_at: checkedAt } });
+        }
+      } catch (e) {
+        await mdb.collection('wa_send_log').updateOne({ _id: row._id }, { $set: { conversion_checked_at: checkedAt } });
+      }
+    }
+  } catch (e) { console.error('markWASendConversions error:', e.message); }
+}
+setInterval(markWASendConversions, 15 * 60 * 1000);
+
+// ── GET /admin/wa-marketing/campaigns — every marketing WA template,
+// grouped, ads-manager style: sent/delivered/read/converted/revenue per
+// campaign. Pulls straight from wa_send_log (pre-attributed by the cron
+// above) — covers abandoned-cart touches, FLAT500 win-back, and any
+// future marketing template automatically, no per-campaign wiring needed.
+app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 180);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await mdb.collection('wa_send_log').find(
+      { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, sent_at: { $gte: cutoff } },
+      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, sent_at: 1 } }
+    ).toArray();
+
+    const byName = {};
+    for (const r of rows) {
+      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, last_sent_at: r.sent_at };
+      const c = byName[r.name];
+      c.sent++;
+      if (r.status === 'failed') c.failed++;
+      if (['delivered', 'read'].includes(r.delivery_status)) c.delivered++;
+      if (r.delivery_status === 'read') c.read++;
+      if (r.converted) { c.converted++; c.revenue += (r.converted_amount || 0); }
+      if (r.sent_at > c.last_sent_at) c.last_sent_at = r.sent_at;
+    }
+    const campaigns = Object.values(byName).map(c => ({
+      ...c,
+      delivered_rate: c.sent ? +(100 * c.delivered / c.sent).toFixed(1) : 0,
+      read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
+      conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
+      avg_order: c.converted ? +(c.revenue / c.converted).toFixed(0) : 0,
+    })).sort((a, b) => b.revenue - a.revenue);
+
+    const totals = campaigns.reduce((t, c) => ({
+      sent: t.sent + c.sent, delivered: t.delivered + c.delivered, read: t.read + c.read,
+      converted: t.converted + c.converted, revenue: t.revenue + c.revenue,
+    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0 });
+
+    res.json({ days, campaigns, totals });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {

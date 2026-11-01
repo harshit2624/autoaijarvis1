@@ -13487,6 +13487,375 @@
     );
   }
 
+  // ══════════════════════════════════
+  //  WA MARKETING — abandoned-cart funnel + every campaign, ads-manager style
+  // ══════════════════════════════════
+  const WA_CAMPAIGN_LABELS = {
+    abandoned_cart_recovery: 'Abandoned Cart — Touch 1',
+    abandoned_cart_recovery_touch2: 'Abandoned Cart — Touch 2 (24h)',
+    abandoned_cart_recovery_touch3: 'Abandoned Cart — Touch 3 (48h)',
+    win_back_flat500_v2: 'Win-Back — FLAT ₹500 (7d post-delivery)',
+    diwali_soiree_recovery: 'Diwali Soiree — Recovery',
+    back_in_stock_v1: 'Back In Stock Alert',
+    weekend_bestsellers_carousel_v1: 'Carousel — Weekend Bestsellers (v1)',
+    weekend_bestsellers_carousel_v2: 'Carousel — Weekend Bestsellers (v2)',
+  };
+  const WA_STATUS_DOT = {
+    not_sent: 'var(--text-muted)', sent: 'var(--gray)', delivered: 'var(--cyan)', read: 'var(--green)', failed: 'var(--red)',
+  };
+  const WA_INTENT_STYLE = {
+    '✅ Converted': { c:'var(--green)', bg:'var(--green-dim)' },
+    '🔥 Hot': { c:'var(--orange)', bg:'var(--orange-bg)' },
+    '🙂 Warm': { c:'var(--yellow)', bg:'var(--yellow-bg)' },
+    '😐 Delivered, not opened': { c:'var(--text-dim)', bg:'var(--bg-card2)' },
+    '⚠️ Undeliverable': { c:'var(--red)', bg:'var(--red-bg)' },
+    '🚫 Dismissed': { c:'var(--text-muted)', bg:'var(--bg-card2)' },
+    '⏳ Pending': { c:'var(--text-muted)', bg:'var(--bg-card2)' },
+  };
+  function waFmtMoney(n) { return '₹' + Math.round(n||0).toLocaleString('en-IN'); }
+  function waTimeAgo(iso) {
+    if (!iso) return '—';
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff/60000), h = Math.floor(diff/3600000), d = Math.floor(diff/86400000);
+    if (d > 0) return d + 'd ago';
+    if (h > 0) return h + 'h ago';
+    if (m > 0) return m + 'm ago';
+    return 'just now';
+  }
+
+  function WAFunnelMini({ title, sent, delivered, read }) {
+    const dRate = sent ? Math.round(100*delivered/sent) : 0;
+    const rRate = sent ? Math.round(100*read/sent) : 0;
+    const Bar = ({ w, color, label, count }) => (
+      <div style={{marginBottom:9}}>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-dim)',marginBottom:3}}>
+          <span>{label}</span><span style={{color:'var(--text)'}}>{count}</span>
+        </div>
+        <div style={{height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
+          <div style={{height:'100%',width:w+'%',background:color,borderRadius:3,transition:'width .4s'}}/>
+        </div>
+      </div>
+    );
+    return (
+      <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',flex:'1 1 200px'}}>
+        <div style={{fontSize:10.5,fontWeight:600,color:'var(--text)',marginBottom:10,letterSpacing:.3}}>{title}</div>
+        <Bar w={100} color="var(--indigo)" label="Sent" count={sent}/>
+        <Bar w={dRate} color="var(--cyan)" label={`Delivered (${dRate}%)`} count={delivered}/>
+        <Bar w={rRate} color="var(--green)" label={`Read (${rRate}%)`} count={read}/>
+      </div>
+    );
+  }
+
+  function WATimeseriesChart({ data }) {
+    const ref = React.useRef(null);
+    const chartRef = React.useRef(null);
+    React.useEffect(() => {
+      if (!ref.current || !window.Chart) return;
+      if (chartRef.current) chartRef.current.destroy();
+      chartRef.current = new Chart(ref.current.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: data.map(d => d.date.slice(5)),
+          datasets: [
+            { label: 'Abandoned', data: data.map(d => d.abandoned), borderColor: '#6366f1', backgroundColor: '#6366f130', fill: true, tension: .3, pointRadius: 2 },
+            { label: 'Recovered', data: data.map(d => d.recovered), borderColor: '#10b981', backgroundColor: '#10b98130', fill: true, tension: .3, pointRadius: 2 },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#7d9ab8', font: { size: 10 } } } },
+          scales: {
+            x: { ticks: { color: '#4b6a8e', font: { size: 9 } }, grid: { color: '#1a2540' } },
+            y: { ticks: { color: '#4b6a8e', font: { size: 9 } }, grid: { color: '#1a2540' }, beginAtZero: true },
+          },
+        },
+      });
+      return () => { if (chartRef.current) chartRef.current.destroy(); };
+    }, [data]);
+    return <div style={{height:200}}><canvas ref={ref}/></div>;
+  }
+
+  function WAMarketing({ token }) {
+    const API = window.API_BASE || '';
+    const [days, setDays] = React.useState(30);
+    const [data, setData] = React.useState(null);
+    const [campaignData, setCampaignData] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [search, setSearch] = React.useState('');
+    const [intentFilter, setIntentFilter] = React.useState('all');
+
+    const load = React.useCallback(() => {
+      setLoading(true);
+      Promise.all([
+        fetch(`${API}/admin/wa-marketing/overview?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
+        fetch(`${API}/admin/wa-marketing/campaigns?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
+      ]).then(([d,cd]) => { if (d && !d.error) setData(d); if (cd && !cd.error) setCampaignData(cd); }).finally(()=>setLoading(false));
+    }, [days, token]);
+    React.useEffect(load, [load]);
+
+    const filteredCustomers = React.useMemo(() => {
+      if (!data) return [];
+      let rows = data.customers;
+      if (intentFilter !== 'all') rows = rows.filter(c => c.intent === intentFilter);
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        rows = rows.filter(c => (c.name||'').toLowerCase().includes(q) || (c.phone||'').includes(q) || (c.item_title||'').toLowerCase().includes(q));
+      }
+      return rows;
+    }, [data, search, intentFilter]);
+
+    const k = data?.kpis;
+    const intents = ['all','✅ Converted','🔥 Hot','🙂 Warm','😐 Delivered, not opened','⚠️ Undeliverable','⏳ Pending'];
+    const maxRevenue = campaignData ? Math.max(1, ...campaignData.campaigns.map(c=>c.revenue)) : 1;
+
+    return (
+      <div className="page">
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,gap:8,flexWrap:'wrap'}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',letterSpacing:1}}>
+            <span style={{color:'var(--indigo)',fontWeight:700}}>WHATSAPP MARKETING</span> — auto-tracked, every campaign
+          </div>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            {[7,30,90].map(d => (
+              <button key={d} onClick={()=>setDays(d)} style={{padding:'5px 12px',borderRadius:6,border:'1px solid var(--border-hi)',background:days===d?'var(--indigo)':'var(--bg-card2)',color:days===d?'#fff':'var(--text-muted)',cursor:'pointer',fontSize:11,fontFamily:'inherit',fontWeight:600}}>{d}d</button>
+            ))}
+            <button onClick={load} style={{background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-muted)',cursor:'pointer',fontSize:11,padding:'5px 10px'}}>{loading?<span className="spin">↻</span>:'↻'}</button>
+          </div>
+        </div>
+
+        {/* ── Campaigns overview ── */}
+        {campaignData && (
+          <div className="card" style={{marginBottom:16}}>
+            <div className="card-header">
+              <span className="card-title">📣 Campaigns</span>
+              <span className="card-sub">Every WA marketing send, grouped — sent / delivered / read / converted / revenue</span>
+            </div>
+            <div style={{padding:16}}>
+              <div className="stats-grid" style={{marginBottom:16}}>
+                <StatCard color="indigo" icon="→" label="Total Sent" value={campaignData.totals.sent.toLocaleString()}/>
+                <StatCard color="cyan" icon="👁" label="Total Read" value={campaignData.totals.read.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.read/campaignData.totals.sent)}% read rate`:''}/>
+                <StatCard color="green" icon="✓" label="Converted" value={campaignData.totals.converted.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.converted/campaignData.totals.sent)}% conversion`:''}/>
+                <StatCard color="purple" icon="₹" label="Revenue Attributed" value={waFmtMoney(campaignData.totals.revenue)} sub="within 7-day window per send"/>
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
+                  <thead>
+                    <tr style={{color:'var(--text-muted)',textAlign:'left',borderBottom:'1px solid var(--border)'}}>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Campaign</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Sent</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Delivered</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Read</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Converted</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Conv. Rate</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Avg Order</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Last Sent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaignData.campaigns.map((c,i) => (
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:600}}>{WA_CAMPAIGN_LABELS[c.name] || c.name}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.sent}</td>
+                        <td style={{padding:'9px 8px',color:'var(--cyan)'}}>{c.delivered} <span style={{color:'var(--text-muted)',fontSize:10}}>({c.delivered_rate}%)</span></td>
+                        <td style={{padding:'9px 8px',color:'var(--green)'}}>{c.read} <span style={{color:'var(--text-muted)',fontSize:10}}>({c.read_rate}%)</span></td>
+                        <td style={{padding:'9px 8px',color:'var(--text)'}}>{c.converted}</td>
+                        <td style={{padding:'9px 8px'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:6}}>
+                            <div style={{width:50,height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:c.conversion_rate+'%',background:c.conversion_rate>10?'var(--green)':c.conversion_rate>3?'var(--yellow)':'var(--red)',borderRadius:3}}/>
+                            </div>
+                            <span style={{color:'var(--text-dim)',fontSize:10.5}}>{c.conversion_rate}%</span>
+                          </div>
+                        </td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.converted ? waFmtMoney(c.avg_order) : '—'}</td>
+                        <td style={{padding:'9px 8px'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <div style={{width:60,height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:(100*c.revenue/maxRevenue)+'%',background:'var(--indigo)',borderRadius:3}}/>
+                            </div>
+                            <span style={{color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue)}</span>
+                          </div>
+                        </td>
+                        <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{waTimeAgo(c.last_sent_at)}</td>
+                      </tr>
+                    ))}
+                    {!campaignData.campaigns.length && <tr><td colSpan="9" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!data ? <div style={{color:'var(--text-muted)',padding:40,textAlign:'center'}}>Loading…</div> : (
+        <>
+          {/* ── Abandoned cart deep-dive ── */}
+          <div className="card" style={{marginBottom:16}}>
+            <div className="card-header">
+              <span className="card-title">🛒 Abandoned Cart — Deep Dive</span>
+              <span className="card-sub">3-touch sequence performance, product-wise breakdown, full customer list</span>
+            </div>
+            <div style={{padding:16}}>
+              <div className="stats-grid" style={{marginBottom:16}}>
+                <StatCard color="indigo" icon="🛒" label="Abandoned Carts" value={k.total_abandoned} sub={`last ${days} days`}/>
+                <StatCard color="green" icon="✓" label="Recovered" value={k.recovered_count} sub={`${k.conversion_rate}% conversion`}/>
+                <StatCard color="green" icon="₹" label="Revenue Recovered" value={waFmtMoney(k.recovered_revenue)} sub={`avg ${waFmtMoney(k.avg_recovered_order)}/order`}/>
+                <StatCard color="cyan" icon="👁" label="Touch 1 Read" value={`${k.touch1_read_rate}%`} sub={`${k.touch1_read} of ${k.touch1_sent}`}/>
+                <StatCard color="cyan" icon="👁" label="Touch 2 Read" value={`${k.touch2_read_rate}%`} sub={`${k.touch2_read} of ${k.touch2_sent}`}/>
+                <StatCard color="cyan" icon="👁" label="Touch 3 Read" value={`${k.touch3_read_rate}%`} sub={`${k.touch3_read} of ${k.touch3_sent}`}/>
+              </div>
+
+              <div style={{display:'flex',gap:12,flexWrap:'wrap',marginBottom:16}}>
+                <WAFunnelMini title="Touch 1 — Immediate" sent={k.touch1_sent} delivered={k.touch1_delivered} read={k.touch1_read}/>
+                <WAFunnelMini title="Touch 2 — 24h" sent={k.touch2_sent} delivered={k.touch2_delivered} read={k.touch2_read}/>
+                <WAFunnelMini title="Touch 3 — 48h" sent={k.touch3_sent} delivered={k.touch3_delivered} read={k.touch3_read}/>
+                <div style={{background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'12px 14px',flex:'1 1 200px'}}>
+                  <div style={{fontSize:10.5,fontWeight:600,color:'var(--text)',marginBottom:10,letterSpacing:.3}}>Engagement Depth</div>
+                  {['3','2','1','0'].map(key => {
+                    const labels = {'3':'Read all 3','2':'Read 2 of 3','1':'Read 1 of 3','0':'Never opened'};
+                    const colors = {'3':'var(--green)','2':'var(--cyan)','1':'var(--yellow)','0':'var(--text-muted)'};
+                    const total = Object.values(k.opened_distribution).reduce((a,b)=>a+b,0) || 1;
+                    const v = k.opened_distribution[key] || 0;
+                    const pct = Math.round(100*v/total);
+                    return (
+                      <div key={key} style={{marginBottom:9}}>
+                        <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-dim)',marginBottom:3}}>
+                          <span>{labels[key]}</span><span style={{color:'var(--text)'}}>{v} ({pct}%)</span>
+                        </div>
+                        <div style={{height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:pct+'%',background:colors[key],borderRadius:3}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:10.5,fontWeight:600,color:'var(--text)',marginBottom:10,letterSpacing:.3}}>Abandoned vs Recovered — Daily Trend</div>
+                <WATimeseriesChart data={data.timeseries}/>
+              </div>
+
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:10.5,fontWeight:600,color:'var(--text)',marginBottom:10,letterSpacing:.3}}>Product-Wise Performance</div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
+                    <thead>
+                      <tr style={{color:'var(--text-muted)',textAlign:'left',borderBottom:'1px solid var(--border)'}}>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Product</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Abandoned</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Recovered</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Recovery Rate</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Revenue Recovered</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.products.map((p,i) => {
+                        const rate = p.abandoned ? Math.round(100*p.recovered/p.abandoned) : 0;
+                        return (
+                          <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                            <td style={{padding:'8px'}}>
+                              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                                {p.image_url ? <img src={p.image_url} style={{width:30,height:30,objectFit:'cover',borderRadius:4,border:'1px solid var(--border)'}}/> : <div style={{width:30,height:30,borderRadius:4,background:'var(--bg-hover)'}}/>}
+                                <span style={{color:'var(--text)',maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.title}</span>
+                              </div>
+                            </td>
+                            <td style={{padding:'8px',color:'var(--text-dim)'}}>{p.abandoned}</td>
+                            <td style={{padding:'8px',color:'var(--green)'}}>{p.recovered}</td>
+                            <td style={{padding:'8px'}}>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <div style={{width:50,height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
+                                  <div style={{height:'100%',width:rate+'%',background:rate>30?'var(--green)':rate>10?'var(--yellow)':'var(--red)',borderRadius:3}}/>
+                                </div>
+                                <span style={{color:'var(--text-dim)',fontSize:10.5}}>{rate}%</span>
+                              </div>
+                            </td>
+                            <td style={{padding:'8px',color:'var(--text)',fontWeight:600}}>{waFmtMoney(p.revenue)}</td>
+                          </tr>
+                        );
+                      })}
+                      {!data.products.length && <tr><td colSpan="5" style={{padding:20,textAlign:'center',color:'var(--text-muted)'}}>No data in this range</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,flexWrap:'wrap',gap:10}}>
+                  <div style={{fontSize:10.5,fontWeight:600,color:'var(--text)',letterSpacing:.3}}>Customer List ({filteredCustomers.length})</div>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <select value={intentFilter} onChange={e=>setIntentFilter(e.target.value)} className="form-select" style={{fontSize:11,padding:'6px 10px'}}>
+                      {intents.map(i => <option key={i} value={i}>{i==='all'?'All intents':i}</option>)}
+                    </select>
+                    <input placeholder="Search name, phone, product…" value={search} onChange={e=>setSearch(e.target.value)} className="form-input" style={{fontSize:11,padding:'6px 10px',width:200}}/>
+                  </div>
+                </div>
+                <div style={{overflowX:'auto',maxHeight:500,overflowY:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
+                    <thead>
+                      <tr style={{color:'var(--text-muted)',textAlign:'left',borderBottom:'1px solid var(--border)',position:'sticky',top:0,background:'var(--bg-card)'}}>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Customer</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Product</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Cart Value</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>T1 · T2 · T3</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Intent</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Outcome</th>
+                        <th style={{padding:'6px 8px',fontWeight:500}}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredCustomers.slice(0,300).map((c,i) => {
+                        const style = WA_INTENT_STYLE[c.intent] || WA_INTENT_STYLE['⏳ Pending'];
+                        return (
+                          <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                            <td style={{padding:'9px 8px'}}>
+                              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                                {c.item_image ? <img src={c.item_image} style={{width:32,height:32,objectFit:'cover',borderRadius:4,border:'1px solid var(--border)',flexShrink:0}}/> : <div style={{width:32,height:32,borderRadius:4,background:'var(--bg-hover)',flexShrink:0}}/>}
+                                <div style={{minWidth:0}}>
+                                  <div style={{color:'var(--text)',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:160}}>{c.name || 'No name'}</div>
+                                  <div style={{color:'var(--text-muted)',fontSize:10}}>{c.phone || 'no phone'} · {waTimeAgo(c.received_at)}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{padding:'9px 8px',color:'var(--text-dim)',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.item_title || '—'}</td>
+                            <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:600}}>{waFmtMoney(c.total)}</td>
+                            <td style={{padding:'9px 8px'}}>
+                              <div style={{display:'flex',gap:6}}>
+                                {[c.touch1,c.touch2,c.touch3].map((s,j)=>(
+                                  <span key={j} title={s} style={{display:'inline-block',width:9,height:9,borderRadius:'50%',background:WA_STATUS_DOT[s]||WA_STATUS_DOT.not_sent,boxShadow:s!=='not_sent'?`0 0 6px ${WA_STATUS_DOT[s]}`:'none'}}/>
+                                ))}
+                              </div>
+                            </td>
+                            <td style={{padding:'9px 8px'}}>
+                              <span style={{fontSize:10,padding:'3px 8px',borderRadius:12,background:style.bg,color:style.c,whiteSpace:'nowrap'}}>{c.intent}</span>
+                            </td>
+                            <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>
+                              {c.status === 'recovered' ? <span style={{color:'var(--green)'}}>{waFmtMoney(c.recovered_amount)} · {c.recovered_order_name}</span> : '—'}
+                            </td>
+                            <td style={{padding:'9px 8px'}}>
+                              {c.phone && c.phone.length===10 && (
+                                <div style={{display:'flex',gap:6}}>
+                                  <a href={`tel:+91${c.phone}`} style={{width:24,height:24,display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid var(--border-hi)',borderRadius:5,textDecoration:'none',color:'var(--cyan)'}}>☎</a>
+                                  <a href={`https://wa.me/91${c.phone}`} target="_blank" style={{width:24,height:24,display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid var(--border-hi)',borderRadius:5,textDecoration:'none',color:'var(--green)'}}>✆</a>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!filteredCustomers.length && <tr><td colSpan="7" style={{padding:30,textAlign:'center',color:'var(--text-muted)'}}>No customers match</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+        )}
+      </div>
+    );
+  }
+
   const STAFF_PERMISSIONS = [
     { id:'dashboard',    label:'Dashboard',        icon:'◈', desc:'Overview, stage counts, revenue summary' },
     { id:'orders',       label:'Orders',           icon:'◎', desc:'View, update stages, fulfillment, notes, tags' },
@@ -18356,6 +18725,7 @@
       { id:'announcements',    icon:'📢', label:'Announcements',       section:'finance', external:'/announce.html' },
       { id:'staffaccounts',    icon:'🔐', label:'Staff Accounts',      section:'finance', adminOnly:true },
       { id:'marketing',        icon:'🎯', label:'Marketing',           section:'main' },
+      { id:'wamarketing',      icon:'📲', label:'WA Marketing',        section:'main' },
       { id:'metafieldaudit',   icon:'🔍', label:'Product Health',       section:'finance' },
       { id:'metaads',          icon:'📊', label:'Meta Ads',             section:'main' },
       { id:'vendorscores',     icon:'🏆', label:'Vendor Scores',        section:'vendors' },
@@ -18468,6 +18838,7 @@
           {view==='theme'          && <ThemeSettings token={token} theme={theme} setTheme={setTheme} brand={brand} setBrand={setBrand} THEME_OPTIONS={THEME_OPTIONS} ICON_STYLE_OPTIONS={ICON_STYLE_OPTIONS} FONT_OPTIONS={FONT_OPTIONS}/>}
           {view==='staffaccounts'  && <StaffAccounts token={token}/>}
           {view==='marketing'      && <Marketing token={token}/>}
+          {view==='wamarketing'    && <WAMarketing token={token}/>}
           {view==='metafieldaudit' && <MetafieldAudit token={token}/>}
           {view==='metaads'       && <MetaAds token={token}/>}
           {view==='vendorscores'  && <VendorScores token={token}/>}
