@@ -2245,10 +2245,34 @@
                           ) : (
                             <div style={{marginLeft:108,marginBottom:10,display:'flex',flexDirection:'column',gap:4}}>
                               <div style={{display:'flex',gap:4}}>
-                                <input className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px'}} placeholder="Courier (Delhivery…)"
-                                  value={(fulfillVS[v]||{}).courier||''} onChange={e=>setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),courier:e.target.value}}))}/>
+                                <select className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px',cursor:'pointer'}}
+                                  value={(fulfillVS[v]||{}).courier||''}
+                                  onChange={e=>{
+                                    const val = e.target.value;
+                                    const awbNow = (fulfillVS[v]||{}).awb||'';
+                                    const c = COURIERS.find(x=>x.name===val);
+                                    setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),courier:val, tracking_url: (c && awbNow) ? c.url(awbNow) : (p[v]||{}).tracking_url}}));
+                                  }}>
+                                  <option value="">— Select courier —</option>
+                                  <optgroup label="Common">
+                                    {COURIERS.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
+                                  </optgroup>
+                                  {ssCouriers.length > 0 && (
+                                    <optgroup label="ShipSagar (all couriers)">
+                                      {ssCouriers
+                                        .filter(c => (c.CourierName||c.CourierCode) && !COURIERS.some(k => k.name.toLowerCase() === (c.CourierName||'').toLowerCase()))
+                                        .map(c=><option key={c.CourierCode||c.CourierName} value={c.CourierName||c.CourierCode}>{c.CourierName||c.CourierCode}</option>)
+                                      }
+                                    </optgroup>
+                                  )}
+                                </select>
                                 <input className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px'}} placeholder="AWB / Tracking No"
-                                  value={(fulfillVS[v]||{}).awb||''} onChange={e=>setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),awb:e.target.value}}))}/>
+                                  value={(fulfillVS[v]||{}).awb||''} onChange={e=>{
+                                    const val = e.target.value;
+                                    const cName = (fulfillVS[v]||{}).courier||'';
+                                    const c = COURIERS.find(x=>x.name===cName);
+                                    setFulfillVS(p=>({...p,[v]:{...(p[v]||{}),awb:val, tracking_url: (c && val) ? c.url(val) : (p[v]||{}).tracking_url}}));
+                                  }}/>
                               </div>
                               <div style={{display:'flex',gap:4}}>
                                 <input className="form-input" style={{flex:1,fontSize:10,padding:'3px 7px'}} placeholder="Tracking URL (optional)"
@@ -2295,8 +2319,8 @@
                     {ssCouriers.length > 0 && (
                       <optgroup label="ShipSagar (all couriers)">
                         {ssCouriers
-                          .filter(c => !COURIERS.some(k => k.name.toLowerCase() === c.courierName.toLowerCase()))
-                          .map(c=><option key={c.courierCode} value={c.courierName}>{c.courierName}</option>)
+                          .filter(c => (c.CourierName||c.CourierCode) && !COURIERS.some(k => k.name.toLowerCase() === (c.CourierName||'').toLowerCase()))
+                          .map(c=><option key={c.CourierCode||c.CourierName} value={c.CourierName||c.CourierCode}>{c.CourierName||c.CourierCode}</option>)
                         }
                       </optgroup>
                     )}
