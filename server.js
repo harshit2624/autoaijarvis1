@@ -2142,7 +2142,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _enrichedPP = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
               const _itemsListPP = (payload.line_items || []).map(li =>
                 `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
-              ).join('\n') || '—';
+              ).join(', ') || '—';
               const _addrPP = payload.shipping_address || {};
               const _addressLinePP = [_addrPP.address1, _addrPP.city, _addrPP.zip].filter(Boolean).join(', ') || 'address on file';
               const _totalPP = parseFloat(payload.total_price || 0);
@@ -2150,7 +2150,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _Fpp2 = '```';
               const _trackUrlPP = `${SERVER_URL}/o/${_orderSlugPP}`;
               const _msgPP = `${_Fpp2}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_totalPP.toFixed(0)}\n\nSTATE  Order confirmed. No payment at delivery.\n\nTRACK  ${_trackUrlPP}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fpp2}`;
-              const _cloudTplPP = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: _enrichedPP?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE, bodyParams: [payload.name, _itemsListPP, _addressLinePP, _totalPP.toFixed(0)], urlButtonParam: `${_orderSlugPP}&contact=na` };
+              const _cloudTplPP = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: await confirmationHeaderImage(_enrichedPP, WA_CLOUD_FALLBACK_IMAGE), bodyParams: [payload.name, _itemsListPP, _addressLinePP, _totalPP.toFixed(0)], urlButtonParam: `${_orderSlugPP}&contact=na` };
               await waSendToCustomer(_ppPhone, _msgPP, _cloudTplPP).catch(e => console.error('WA prepaid-confirmed (create) error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
               console.log(`📲 Prepaid confirmed card sent immediately for ${payload.name}`);
@@ -2175,7 +2175,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _enrichedAdv = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
               const _itemsListAdv = (payload.line_items || []).map(li =>
                 `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
-              ).join('\n') || '—';
+              ).join(', ') || '—';
               const _addrAdv = payload.shipping_address || {};
               const _addressLineAdv = [_addrAdv.address1, _addrAdv.city, _addrAdv.zip].filter(Boolean).join(', ') || 'address on file';
               const _totalAdv = parseFloat(payload.total_price || 0);
@@ -2183,7 +2183,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _Fadv2 = '```';
               const _trackUrlAdv = `${SERVER_URL}/o/${_orderSlugAdv}`;
               const _msgAdv = `${_Fadv2}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _totalAdv - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrlAdv}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fadv2}`;
-              const _cloudTplAdv = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _enrichedAdv?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE, bodyParams: [payload.name, _itemsListAdv, _addressLineAdv, '99', Math.max(0, _totalAdv - 99).toFixed(0)], urlButtonParam: `${_orderSlugAdv}&contact=na` };
+              const _cloudTplAdv = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: await confirmationHeaderImage(_enrichedAdv, WA_CLOUD_FALLBACK_IMAGE), bodyParams: [payload.name, _itemsListAdv, _addressLineAdv, '99', Math.max(0, _totalAdv - 99).toFixed(0)], urlButtonParam: `${_orderSlugAdv}&contact=na` };
               await waSendToCustomer(_advPhone, _msgAdv, _cloudTplAdv).catch(e => console.error('WA advance-confirmed (create) error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
               console.log(`📲 Advance confirmed card sent immediately for ${payload.name}`);
@@ -2204,7 +2204,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _enrichedForWA = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
               const _itemsList = (payload.line_items || []).map(li =>
                 `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
-              ).join('\n') || '—';
+              ).join(', ') || '—';
               const _addr = payload.shipping_address || {};
               const _addressLine = [_addr.address1, _addr.city, _addr.zip].filter(Boolean).join(', ') || 'address on file';
               const _total2 = parseFloat(payload.total_price || 0);
@@ -2421,11 +2421,11 @@ app.post("/webhooks/orders", (req, res) => {
               const _orderSlug = encodeURIComponent(String(payload.name).replace(/^#/, ''));
               const _itemsList2 = (payload.line_items || []).map(li =>
                 `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
-              ).join('\n') || '—';
+              ).join(', ') || '—';
               const _addr2 = payload.shipping_address || {};
               const _addressLine2 = [_addr2.address1, _addr2.city, _addr2.zip].filter(Boolean).join(', ') || 'address on file';
               const _enrichedForConf = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
-              const _confImage = _enrichedForConf?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE;
+              const _confImage = await confirmationHeaderImage(_enrichedForConf, WA_CLOUD_FALLBACK_IMAGE);
               let _cloudTpl, _waConfirm, _dedupKey;
               if (_isPrepaid) {
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed. No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
@@ -4298,6 +4298,20 @@ async function enrichOrderImages(order) {
     }));
   } catch {}
   return order;
+}
+
+// Picks the header image for an order-confirmation WA template: a collage
+// of up to 3 distinct product photos when the order has 2+, else that one
+// product's photo, else the fallback. Call after enrichOrderImages() has
+// attached .image_url to each line item. buildProductCollageUrl itself
+// falls back to null on any failure, so this always resolves to something.
+async function confirmationHeaderImage(enrichedOrder, fallback) {
+  const urls = [...new Set((enrichedOrder?.line_items || []).map(li => li.image_url).filter(Boolean))];
+  if (urls.length >= 2) {
+    const collageUrl = await buildProductCollageUrl(urls);
+    if (collageUrl) return collageUrl;
+  }
+  return urls[0] || fallback;
 }
 
 // ── Fire emails on stage change ───────────────────────────────────────────
@@ -17390,11 +17404,11 @@ async function recordOrderConfirmationPayment({ shopify_order_id, razorpay_payme
         const items = (order2.line_items || []).map(li => `• ${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} × ${li.quantity}`).join('\n');
         const itemsList14 = (order2.line_items || []).map(li =>
           `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`
-        ).join('\n') || '—';
+        ).join(', ') || '—';
         const addr14 = order2.shipping_address || {};
         const addressLine14 = [addr14.address1, addr14.city, addr14.zip].filter(Boolean).join(', ') || 'address on file';
         const enriched14 = await enrichOrderImages({ line_items: order2.line_items }).catch(() => null);
-        const confImage14 = enriched14?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE;
+        const confImage14 = await confirmationHeaderImage(enriched14, WA_CLOUD_FALLBACK_IMAGE);
 
         if (customerPhone) {
           if (isPrepaidConvert) {
@@ -26412,6 +26426,24 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 // than placeholder text — for demoing/testing the live template as it
 // actually renders for a customer. Does NOT touch wa_notif_sent dedup, so
 // it can be re-sent freely without affecting the order's real notif state.
+// Sends the real order-confirmation Cloud API template (prepaid or
+// COD-advance, whichever the order's actual state picks) using a real
+// Shopify order — exercises the same confirmationHeaderImage() collage
+// logic as the live path. Defined after adminResendOrderConfirmation so
+// placing it earlier in the file is fine (function declaration hoisting).
+app.post('/admin/wa-confirm-test-send', adminAuth, async (req, res) => {
+  try {
+    const { phone, order_name } = req.body || {};
+    if (!order_name) return res.status(400).json({ error: 'order_name required (e.g. "3149" or "#3149").' });
+    const slug = String(order_name).replace(/^#/, '').trim();
+    const ordersRes = await shopifyREST(`/orders.json?name=${encodeURIComponent(slug)}&status=any&fields=id,name,line_items,total_price,financial_status,shipping_address,billing_address,phone`);
+    const order = (ordersRes?.orders || [])[0];
+    if (!order) return res.status(404).json({ error: `Order ${order_name} not found.` });
+    const result = await adminResendOrderConfirmation(order, phone);
+    res.json({ ok: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/admin/wa-ofd-test-send', adminAuth, async (req, res) => {
   try {
     const { phone, order_name } = req.body || {};
@@ -29118,11 +29150,11 @@ async function adminResendOrderConfirmation(order, phoneOverride) {
   const meta = await mdb.collection('order_meta').findOne({ shopify_id: String(order.id) }, { projection: { _id: 0 } }) || {};
   const isPrepaid = (meta.payment_type || paymentTypeFromFinancial(order.financial_status)) === 'prepaid' || !!meta.converted_to_prepaid;
   const total = parseFloat(order.total_price || 0);
-  const itemsList = (order.line_items || []).map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`).join('\n') || '—';
+  const itemsList = (order.line_items || []).map(li => `${li.title}${li.variant_title && li.variant_title !== 'Default Title' ? ` (${li.variant_title})` : ''} x ${li.quantity}`).join(', ') || '—';
   const addr = order.shipping_address || {};
   const addressLine = [addr.address1, addr.city, addr.zip].filter(Boolean).join(', ') || 'address on file';
   const enriched = await enrichOrderImages({ line_items: order.line_items }).catch(() => null);
-  const confImage = enriched?.line_items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE;
+  const confImage = await confirmationHeaderImage(enriched, WA_CLOUD_FALLBACK_IMAGE);
   const orderSlug = encodeURIComponent(String(order.name).replace(/^#/, ''));
 
   if (isPrepaid) {
