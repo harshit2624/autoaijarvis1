@@ -16946,6 +16946,10 @@ app.get('/diwali-soiree/admin', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree-dashboard.html'));
 });
 
+app.get('/admin/wa-marketing', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'wa-marketing.html'));
+});
+
 // ── Lightweight visit tracking for the public booking page ──────────────
 // One doc per browser session (a random id the page generates on load,
 // kept in a JS var — not persisted across reloads, so a refresh counts as
@@ -30054,6 +30058,57 @@ async function abandonedCartTouchCron() {
 }
 setInterval(abandonedCartTouchCron, 15 * 60 * 1000);
 
+// ── Auto-detects a recovered cart ────────────────────────────────────────
+// Separate from the touch cron's own skip-check (which only ever looks at
+// carts currently due for a touch) — this sweeps every still-open cart so
+// "recovered" status/amount gets populated even for a cart that converted
+// right after Touch 1, long before Touch 2/3 would ever fire. Throttled
+// per-cart via conversion_checked_at so a cart that hasn't converted yet
+// doesn't get re-hit against Shopify on every single 15-min pass.
+async function markRecoveredAbandonedCarts() {
+  if (!mdb) return;
+  try {
+    const now = Date.now();
+    const cutoff = new Date(now - 21 * 24 * 60 * 60 * 1000).toISOString();
+    const recheckBefore = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const carts = await mdb.collection('abandoned_carts').find({
+      wa_sent: true, status: 'open',
+      received_at: { $gte: cutoff },
+      $or: [{ conversion_checked_at: { $exists: false } }, { conversion_checked_at: { $lte: recheckBefore } }],
+    }).limit(150).toArray();
+
+    for (const cart of carts) {
+      const phone = String(cart.phone || '').replace(/\D/g, '').slice(-10);
+      const checkedAt = new Date().toISOString();
+      if (!phone || phone.length !== 10) {
+        await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { conversion_checked_at: checkedAt } });
+        continue;
+      }
+      try {
+        const res = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=5&fields=id,name,total_price,created_at`);
+        const orders = (res?.orders || []).filter(o => new Date(o.created_at).getTime() > new Date(cart.received_at || cart.first_seen || 0).getTime());
+        if (orders.length) {
+          const order = orders[0];
+          await mdb.collection('abandoned_carts').updateOne(
+            { _id: cart._id },
+            { $set: {
+              status: 'recovered', conversion_checked_at: checkedAt,
+              recovered_order_name: order.name, recovered_amount: parseFloat(order.total_price || 0),
+              recovered_at: order.created_at,
+            } }
+          );
+          console.log(`🎯 Abandoned cart auto-recovered: ${phone} → ${order.name}`);
+        } else {
+          await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { conversion_checked_at: checkedAt } });
+        }
+      } catch (e) {
+        await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { conversion_checked_at: checkedAt } });
+      }
+    }
+  } catch (e) { console.error('markRecoveredAbandonedCarts error:', e.message); }
+}
+setInterval(markRecoveredAbandonedCarts, 15 * 60 * 1000);
+
 app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' }), async (req, res) => {
   try {
     // Three middlewares can touch req.body before this handler ever runs:
@@ -30446,6 +30501,127 @@ app.post('/admin/abandoned-carts/:id/status', adminAuth, async (req, res) => {
       { $set: { status, updated_at: new Date().toISOString() } }
     );
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /admin/wa-marketing/overview — the full WA marketing dashboard ───
+// One aggregation pass over abandoned_carts (scoped to ?days=, default 30)
+// joined against wa_send_log (for per-touch sent/delivered/read status) —
+// deliberately reads only what the touch cron + markRecoveredAbandonedCarts
+// already computed/cached, never hits Shopify live, so this stays fast
+// regardless of how many carts are in scope.
+app.get('/admin/wa-marketing/overview', adminAuth, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 180);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const carts = await mdb.collection('abandoned_carts')
+      .find({ received_at: { $gte: cutoff } }, { projection: { raw: 0 } })
+      .sort({ received_at: -1 }).limit(2000).toArray();
+
+    const TPL = {
+      1: 'abandoned_cart_recovery',
+      2: 'abandoned_cart_recovery_touch2',
+      3: 'abandoned_cart_recovery_touch3',
+    };
+    const phones = [...new Set(carts.map(c => String(c.phone || '').replace(/\D/g, '').slice(-10)).filter(p => p.length === 10))];
+    const sendLogRows = phones.length
+      ? await mdb.collection('wa_send_log').find(
+          { phone: { $in: phones }, name: { $in: Object.values(TPL) }, sent_at: { $gte: cutoff } },
+          { projection: { phone: 1, name: 1, status: 1, delivery_status: 1, sent_at: 1 } }
+        ).sort({ sent_at: 1 }).toArray()
+      : [];
+    // Latest log row per phone+template — good enough resolution; a phone
+    // getting multiple distinct carts in the scope window is rare enough
+    // not to need per-cart wamid linking for v1.
+    const logMap = {}; // `${phone}|${name}` -> row
+    for (const r of sendLogRows) logMap[`${r.phone}|${r.name}`] = r;
+
+    function touchStatus(phone, touchNum) {
+      const row = logMap[`${phone}|${TPL[touchNum]}`];
+      if (!row) return 'not_sent';
+      if (row.status === 'failed') return 'failed';
+      return row.delivery_status || 'sent'; // sent -> delivered -> read, whichever Meta last reported
+    }
+
+    const kpis = {
+      total_abandoned: carts.length,
+      touch1_sent: 0, touch2_sent: 0, touch3_sent: 0,
+      touch1_read: 0, touch2_read: 0, touch3_read: 0,
+      touch1_delivered: 0, touch2_delivered: 0, touch3_delivered: 0,
+      recovered_count: 0, recovered_revenue: 0,
+      dismissed_count: 0, open_count: 0,
+      opened_distribution: { 0: 0, 1: 0, 2: 0, 3: 0 },
+    };
+
+    const productMap = {}; // title -> { title, image_url, abandoned: n, recovered: n, revenue: n }
+    const dayMap = {}; // YYYY-MM-DD -> { abandoned: n, recovered: n }
+    const customers = [];
+
+    for (const c of carts) {
+      const phone = String(c.phone || '').replace(/\D/g, '').slice(-10);
+      const t1 = touchStatus(phone, 1), t2 = touchStatus(phone, 2), t3 = touchStatus(phone, 3);
+      const sentFlags = [c.wa_sent, c.wa_touch2_sent, c.wa_touch3_sent];
+      const statuses = [t1, t2, t3];
+      if (c.wa_sent) kpis.touch1_sent++;
+      if (c.wa_touch2_sent) kpis.touch2_sent++;
+      if (c.wa_touch3_sent) kpis.touch3_sent++;
+      if (['delivered', 'read'].includes(t1)) kpis.touch1_delivered++;
+      if (['delivered', 'read'].includes(t2)) kpis.touch2_delivered++;
+      if (['delivered', 'read'].includes(t3)) kpis.touch3_delivered++;
+      if (t1 === 'read') kpis.touch1_read++;
+      if (t2 === 'read') kpis.touch2_read++;
+      if (t3 === 'read') kpis.touch3_read++;
+
+      const readCount = statuses.filter((s, i) => sentFlags[i] && s === 'read').length;
+      if (sentFlags[0]) kpis.opened_distribution[readCount] = (kpis.opened_distribution[readCount] || 0) + 1;
+
+      if (c.status === 'recovered') { kpis.recovered_count++; kpis.recovered_revenue += (c.recovered_amount || 0); }
+      else if (c.status === 'dismissed') kpis.dismissed_count++;
+      else kpis.open_count++;
+
+      // Product-wise — first item in the cart represents "the product" for this abandon event
+      const item = (c.items || [])[0];
+      if (item?.title) {
+        if (!productMap[item.title]) productMap[item.title] = { title: item.title, image_url: item.image_url || '', abandoned: 0, recovered: 0, revenue: 0 };
+        productMap[item.title].abandoned++;
+        if (c.status === 'recovered') { productMap[item.title].recovered++; productMap[item.title].revenue += (c.recovered_amount || 0); }
+      }
+
+      const day = (c.received_at || '').slice(0, 10);
+      if (day) {
+        if (!dayMap[day]) dayMap[day] = { date: day, abandoned: 0, recovered: 0 };
+        dayMap[day].abandoned++;
+        if (c.status === 'recovered') dayMap[day].recovered++;
+      }
+
+      let intent = '⏳ Pending';
+      if (c.status === 'recovered') intent = '✅ Converted';
+      else if (c.status === 'dismissed') intent = '🚫 Dismissed';
+      else if (t3 === 'read') intent = '🔥 Hot';
+      else if (t1 === 'read' || t2 === 'read') intent = '🙂 Warm';
+      else if (['delivered', 'read'].includes(t1) || ['delivered', 'read'].includes(t2) || ['delivered', 'read'].includes(t3)) intent = '😐 Delivered, not opened';
+      else if (t1 === 'failed' && t2 === 'failed' && t3 === 'failed') intent = '⚠️ Undeliverable';
+
+      customers.push({
+        name: c.name || '', phone, total: c.total || 0,
+        item_title: item?.title || '', item_image: item?.image_url || '',
+        status: c.status, intent,
+        touch1: t1, touch2: t2, touch3: t3,
+        recovered_amount: c.recovered_amount || null, recovered_order_name: c.recovered_order_name || null,
+        received_at: c.received_at,
+      });
+    }
+
+    const products = Object.values(productMap).sort((a, b) => b.abandoned - a.abandoned).slice(0, 30);
+    const timeseries = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
+
+    kpis.touch1_read_rate = kpis.touch1_sent ? +(100 * kpis.touch1_read / kpis.touch1_sent).toFixed(1) : 0;
+    kpis.touch2_read_rate = kpis.touch2_sent ? +(100 * kpis.touch2_read / kpis.touch2_sent).toFixed(1) : 0;
+    kpis.touch3_read_rate = kpis.touch3_sent ? +(100 * kpis.touch3_read / kpis.touch3_sent).toFixed(1) : 0;
+    kpis.conversion_rate = kpis.total_abandoned ? +(100 * kpis.recovered_count / kpis.total_abandoned).toFixed(1) : 0;
+    kpis.avg_recovered_order = kpis.recovered_count ? +(kpis.recovered_revenue / kpis.recovered_count).toFixed(0) : 0;
+
+    res.json({ days, kpis, products, timeseries, customers: customers.sort((a, b) => (b.received_at || '').localeCompare(a.received_at || '')) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
