@@ -26382,6 +26382,42 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
   res.json({ connected: waConnected, qrDataUrl });
 });
 
+// Sends the real "Out for Delivery" Cloud API template to any phone, using
+// a real Shopify order's own data (name, item, image, COD amount) rather
+// than placeholder text — for demoing/testing the live template as it
+// actually renders for a customer. Does NOT touch wa_notif_sent dedup, so
+// it can be re-sent freely without affecting the order's real notif state.
+app.post('/admin/wa-ofd-test-send', adminAuth, async (req, res) => {
+  try {
+    const { phone, order_name } = req.body || {};
+    const digits = String(phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (digits.length !== 10) return res.status(400).json({ error: 'Valid 10-digit phone required.' });
+    if (!order_name) return res.status(400).json({ error: 'order_name required (e.g. "3149" or "#3149").' });
+
+    const slug = String(order_name).replace(/^#/, '').trim();
+    const ordersRes = await shopifyREST(`/orders.json?name=${encodeURIComponent(slug)}&status=any&fields=id,name,line_items,total_price,financial_status`);
+    const order = (ordersRes?.orders || [])[0];
+    if (!order) return res.status(404).json({ error: `Order ${order_name} not found.` });
+
+    const li = order.line_items?.[0];
+    const itemLine = (order.line_items || []).map(x => x.title + (x.variant_title ? ` (${x.variant_title})` : '')).join(', ') || 'Your item';
+    let itemImageUrl = null;
+    if (li?.product_id) {
+      try {
+        const prodRes = await shopifyREST(`/products/${li.product_id}.json?fields=image`);
+        itemImageUrl = prodRes?.product?.image?.src ? `${prodRes.product.image.src}${prodRes.product.image.src.includes('?') ? '&' : '?'}width=800` : null;
+      } catch {}
+    }
+    const codDue = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_price || 0)) : 0;
+    const codLine = codDue > 0 ? `Please keep ₹${codDue} ready (COD).` : 'Please keep your phone reachable.';
+    const orderSlug = encodeURIComponent(order.name.replace(/^#/, ''));
+
+    const result = await sendWACloudTemplate({ phone10: digits, templateName: WA_TPL.SHIPMENT_OFD, headerImageUrl: itemImageUrl, bodyParams: [order.name, itemLine, codLine], urlButtonParam: `${orderSlug}&contact=na` });
+    if (!result.sent) return res.status(500).json({ error: result.reason || 'Send failed' });
+    res.json({ ok: true, order_name: order.name, itemLine, codLine, itemImageUrl });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Generic admin preview sender — sends arbitrary text (+ optional button)
 // to any phone via Baileys, for previewing a new message style before it
 // goes to real customers. Not customer-facing, admin-only.
@@ -27379,16 +27415,21 @@ app.get('/admin/shopify-product-search', adminAuth, async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     if (!q) return res.json({ products: [] });
-    const data = await shopifyGQL(`{ products(first: 12, query: "status:active AND title:*${q.replace(/"/g, '')}*") {
-      edges { node { title handle featuredImage { url }
+    const includeDrafts = req.query.includeDrafts === '1';
+    const statusClause = includeDrafts ? '' : 'status:active AND ';
+    const data = await shopifyGQL(`{ products(first: 12, query: "${statusClause}title:*${q.replace(/"/g, '')}*") {
+      edges { node { title handle vendor status featuredImage { url }
         variants(first: 5) { edges { node { price availableForSale } } } } } } }`);
     const edges = data.data?.products?.edges || [];
-    const products = edges.map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale)).map(p => ({
+    const filtered = includeDrafts ? edges.map(e => e.node) : edges.map(e => e.node).filter(p => p.variants.edges.some(v => v.node.availableForSale));
+    const products = filtered.map(p => ({
       handle: p.handle,
       title: p.title,
+      vendor: p.vendor,
+      status: p.status,
       url: `${STOREFRONT_URL}/products/${p.handle}`,
       image: p.featuredImage?.url || null,
-      price_from: Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)),
+      price_from: p.variants.edges.length ? Math.min(...p.variants.edges.map(v => parseFloat(v.node.price) || Infinity)) : null,
     }));
     res.json({ products });
   } catch (e) { res.status(500).json({ error: e.message }); }
