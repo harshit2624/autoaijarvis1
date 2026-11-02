@@ -833,6 +833,8 @@ function applyScratchOutcome() {
     }).catch(function () {});
     document.getElementById('prank-card').style.display = 'none';
     document.getElementById('roulette-widget').classList.add('show');
+    _scrollToRouletteIfNeeded();
+    checkExistingRouletteSpin(phoneDigits);
     return;
   }
 
@@ -997,6 +999,33 @@ function _polarXY(cx, cy, r, angleDeg) {
   grid.innerHTML = html;
 })();
 
+function _scrollToRouletteIfNeeded() {
+  var el = document.getElementById('roulette-widget');
+  if (!el) return;
+  var rect = el.getBoundingClientRect();
+  var fullyVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+  if (!fullyVisible) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// A repeat visit (same phone, already spun) must never look like a fresh
+// game — no board, no wheel animation, straight to the real stored result
+// (win/claimed/expired/lost), clearly labelled as a replay, not a new round.
+var _rouletteAlreadyPlayed = false;
+function checkExistingRouletteSpin(phoneDigits) {
+  fetch('/event/diwali-soiree/roulette-status?phone=' + encodeURIComponent(phoneDigits))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.exists) return; // fresh — normal betting board stays up
+      _rouletteRoll = d;
+      _rouletteAlreadyPlayed = true;
+      document.getElementById('roulette-board').style.display = 'none';
+      document.getElementById('roulette-spinning-note').style.display = 'none';
+      document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
+      document.getElementById('roulette-bet-label').style.display = 'inline-block';
+      renderRouletteResult();
+    }).catch(function () {});
+}
+
 var _rouletteBetChoice = null;
 function _setRouletteBoardDisabled(disabled) {
   document.querySelectorAll('#roulette-board button').forEach(function (b) { b.disabled = disabled; });
@@ -1042,6 +1071,11 @@ function placeRouletteBet(bet) {
   }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.landed) { document.getElementById('roulette-spinning-note').style.display = 'none'; _setRouletteBoardDisabled(false); return; }
     _rouletteRoll = d;
+    // Server is the source of truth for which bet actually counted — in the
+    // rare case it returns an existing roll (e.g. a double-click race)
+    // instead of the one just clicked, correct the badge to match it so it
+    // can never contradict the result text below it.
+    document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
     var wheel = document.getElementById('roulette-wheel');
     wheel.style.transform = 'rotate(' + _rouletteTargetRotation(d.landed) + 'deg)';
 
@@ -1075,50 +1109,70 @@ function renderRouletteResult() {
   var claimBtn = document.getElementById('rl-claim-btn');
 
   var betDisplay = _rouletteBetDisplay(_rouletteRoll.bet);
+  var replayPrefix = _rouletteAlreadyPlayed ? "You've already played! " : '';
 
   if (!_rouletteRoll.win) {
-    document.getElementById('rl-eyebrow').textContent = 'So close!';
+    document.getElementById('rl-eyebrow').textContent = _rouletteAlreadyPlayed ? "You've already played" : 'So close!';
     document.getElementById('rl-code').textContent = 'NO WIN THIS TIME';
-    document.getElementById('rl-text').textContent = 'Your bet on ' + betDisplay + ' didn\'t hit this round — your ticket price stays as is. Better luck for next Diwali 🪔';
+    document.getElementById('rl-text').textContent = replayPrefix + 'Your bet on ' + betDisplay + ' didn\'t hit — your ticket price stays as is. Better luck for next Diwali 🪔';
     countdownEl.style.display = 'none';
     actionsEl.style.display = 'none';
     return;
   }
 
   var isColor = _rouletteRoll.reward === 'roulette_color100';
-  document.getElementById('rl-eyebrow').textContent = 'You won!';
+
+  // Already claimed — nothing left to do, show it as locked in, not a
+  // clickable "Claim" button that does nothing. Wording differs for a
+  // fresh claim just now vs. revisiting after claiming earlier.
+  if (_rouletteRoll.status === 'claimed') {
+    document.getElementById('rl-eyebrow').textContent = _rouletteAlreadyPlayed ? "You've already played" : 'Claimed!';
+    document.getElementById('rl-code').textContent = isColor ? '₹100 OFF' : 'FREE TICKET';
+    document.getElementById('rl-text').textContent = _rouletteAlreadyPlayed
+      ? 'Your bet on ' + betDisplay + ' hit, and you already claimed it — it\'s locked in for this ticket.'
+      : 'Locked in! Your bet on ' + betDisplay + ' hit — it\'s applied for this ticket.';
+    countdownEl.style.display = 'none';
+    claimBtn.textContent = '✅ Already Claimed';
+    claimBtn.disabled = true;
+    actionsEl.style.display = 'flex';
+    return;
+  }
+
+  // Won, never claimed, and the window already closed — short and final.
+  if (_rouletteRoll.expiresAt && Date.now() > new Date(_rouletteRoll.expiresAt).getTime()) {
+    document.getElementById('rl-eyebrow').textContent = "You've already played";
+    document.getElementById('rl-code').textContent = 'TIME\'S UP';
+    document.getElementById('rl-text').textContent = 'Sorry, you ran out of time — missed the deal. Try again next Diwali! 🪔';
+    countdownEl.style.display = 'none';
+    actionsEl.style.display = 'none';
+    return;
+  }
+
+  // Won, unclaimed, still within the window — show the real remaining time.
+  document.getElementById('rl-eyebrow').textContent = _rouletteAlreadyPlayed ? "You've already played" : 'You won!';
   document.getElementById('rl-code').textContent = isColor ? '₹100 OFF' : 'FREE TICKET';
   document.getElementById('rl-text').textContent = isColor
-    ? 'Your bet on ' + betDisplay + ' hit! Claim your ₹100 off before the timer runs out.'
-    : 'Jackpot — your bet on ' + betDisplay + ' hit the green! Claim your FREE ticket before the timer runs out.';
+    ? replayPrefix + 'Your bet on ' + betDisplay + ' hit! Claim your ₹100 off before the timer runs out.'
+    : replayPrefix + 'Jackpot — your bet on ' + betDisplay + ' hit the green! Claim your FREE ticket before the timer runs out.';
   claimBtn.textContent = isColor ? 'Claim ₹100 Off' : 'Claim Free Ticket';
-  claimBtn.disabled = _rouletteRoll.status === 'claimed';
+  claimBtn.disabled = false;
   actionsEl.style.display = 'flex';
 
-  if (_rouletteRoll.expiresAt && _rouletteRoll.status === 'active') {
-    countdownEl.style.display = 'block';
-    if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
-    var expiresAtMs = new Date(_rouletteRoll.expiresAt).getTime();
-    var tick = function () {
-      var remaining = expiresAtMs - Date.now();
-      if (remaining <= 0) {
-        clearInterval(_rouletteCountdownTimer);
-        _rouletteRoll.status = 'expired';
-        renderRouletteResult();
-        return;
-      }
-      countdownEl.textContent = 'Ends in ' + _fmtRouletteCountdown(remaining);
-      countdownEl.classList.toggle('urgent', remaining < 10000);
-    };
-    tick();
-    _rouletteCountdownTimer = setInterval(tick, 1000);
-  } else {
-    countdownEl.style.display = 'none';
-    if (_rouletteRoll.status === 'expired') {
-      document.getElementById('rl-text').textContent = "⏳ Your 2-hour window is gone. That win is gone too — better luck for next Diwali 🪔";
-      actionsEl.style.display = 'none';
+  countdownEl.style.display = 'block';
+  if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
+  var expiresAtMs = new Date(_rouletteRoll.expiresAt).getTime();
+  var tick = function () {
+    var remaining = expiresAtMs - Date.now();
+    if (remaining <= 0) {
+      clearInterval(_rouletteCountdownTimer);
+      renderRouletteResult();
+      return;
     }
-  }
+    countdownEl.textContent = 'Ends in ' + _fmtRouletteCountdown(remaining);
+    countdownEl.classList.toggle('urgent', remaining < 10000);
+  };
+  tick();
+  _rouletteCountdownTimer = setInterval(tick, 1000);
 }
 
 function claimRouletteWin() {

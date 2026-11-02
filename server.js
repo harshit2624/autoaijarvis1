@@ -16825,6 +16825,23 @@ async function applyDiwaliScratchPerk(phone, tier, baseAmount) {
 // Rolls a roulette spin for a phone that has unlocked it via the scratch
 // card. One spin per phone — re-fetching just returns the stored result,
 // so refreshing can't be used to re-roll for better odds.
+// Read-only check — used right after unlock to tell a repeat visitor "you
+// already played" instantly instead of letting them pick a new bet and
+// then silently replaying their old result under a bet they didn't make.
+app.get('/event/diwali-soiree/roulette-status', async (req, res) => {
+  try {
+    const phone = String(req.query?.phone || '').replace(/\D/g, '').slice(-10);
+    if (phone.length !== 10) return res.json({ exists: false });
+    const spin = await mdb.collection('diwali_roulette_rolls').findOne({ phone });
+    if (!spin) return res.json({ exists: false });
+    if (spin.win && spin.status === 'active' && spin.expiresAt && Date.now() > new Date(spin.expiresAt).getTime()) {
+      await mdb.collection('diwali_roulette_rolls').updateOne({ phone }, { $set: { status: 'expired' } });
+      spin.status = 'expired';
+    }
+    res.json({ exists: true, win: spin.win, reward: spin.reward, bet: spin.bet, landed: spin.landed, status: spin.status, expiresAt: spin.expiresAt });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/event/diwali-soiree/roulette-spin', async (req, res) => {
   try {
     const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
