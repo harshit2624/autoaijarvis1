@@ -16721,10 +16721,10 @@ function rollDiwaliScratchOutcome() {
   return 'roulette';
 }
 
-// Roulette mini-game. Two bets: a color (red/black, 60% win → ₹100 off) or
+// Roulette mini-game. Two bets: a color (red/black, 70% win → ₹100 off) or
 // the lucky number (5% win → free ticket). Odds are enforced here,
 // server-side, never on the client.
-const DIWALI_ROULETTE_WIN_PROB = { red: 0.60, black: 0.60, number: 0.05 };
+const DIWALI_ROULETTE_WIN_PROB = { red: 0.70, black: 0.70, number: 0.05 };
 const DIWALI_ROULETTE_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 // Blocks obviously fake numbers (all-same-digit, simple runs) that people
