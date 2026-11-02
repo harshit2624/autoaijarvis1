@@ -28030,7 +28030,7 @@ const PRODUCT_INQUIRY_DISCOUNT_PCT = 10;
 // Informational only — no separate code/button, just surfaces the two
 // site-wide offers under the SPECIALQUERY price so a customer buying more
 // than one item knows a bigger discount exists before they check out.
-const PRODUCT_INQUIRY_EXTRA_OFFERS = '🔥 More ways to save:\n• Any 2 items → FLAT ₹300 OFF\n• Orders ₹4999+ → FLAT ₹1000 OFF';
+const PRODUCT_INQUIRY_EXTRA_OFFERS = '🔥 Save more:\n• 2 items: FLAT ₹300 off\n• ₹4999+: FLAT ₹1000 off';
 // GoKwik UTM auto-discount rule for SPECIALQUERY (Marketing → Discounts →
 // SPECIALQUERY → UTM rule): exact match, source=whatsapp / medium=chatbot
 // / campaign=product_query, Auto-apply on Checkout ON. Deliberately a
@@ -28063,7 +28063,7 @@ app.post('/admin/wa-product-query-demo', adminAuth, async (req, res) => {
     const discountUrl = waProductInquiryDiscountUrl(product.url);
     // Optional override so admin can preview copy variants without a redeploy per variant.
     const offersBlock = req.body?.offers_override || PRODUCT_INQUIRY_EXTRA_OFFERS;
-    const text = `Current price: Rs. ${currentPrice}\nSpecial price for you: Rs. ${specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${offersBlock}\n\nUse the button below to avail the discount.`;
+    const text = `Price: Rs. ${currentPrice}\nYour price: Rs. ${specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${offersBlock}\n\nUse the button below to avail the discount.`;
 
     await waProxySock.sendMessage(`91${digits}@s.whatsapp.net`, {
       text,
@@ -34260,12 +34260,16 @@ async function startBaileysBot() {
                 if (_pqProducts.length) {
                   await waSendProductImages(sock, sender, _pqProducts, { descriptionOnly: true });
                   const _ctaProduct = _pqProducts.find(p => p.handle);
-                  if (_ctaProduct && _ctaProduct.price_from) {
+                  // Skip the discount push for anyone who already has an
+                  // order — sending SPECIALQUERY to them risks them
+                  // cancelling that order and re-placing it with the code.
+                  const _alreadyOrdered = await abandonedCartHasRecentOrder(phone);
+                  if (_ctaProduct && _ctaProduct.price_from && !_alreadyOrdered) {
                     const _currentPrice = Math.round(_ctaProduct.price_from);
                     const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
                     const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
                     await sock.sendMessage(sender, {
-                      text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
+                      text: `Price: Rs. ${_currentPrice}\nYour price: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
                       ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
                     }).catch(() => {});
                   }
@@ -34327,12 +34331,16 @@ async function startBaileysBot() {
             // down. Only on products (not a bare curated-collection link,
             // which has no single product handle to redirect to).
             const _ctaProduct = products.find(p => p.handle);
-            if (_ctaProduct && _ctaProduct.price_from) {
+            // Skip the discount push for anyone who already has an order —
+            // sending SPECIALQUERY to them risks them cancelling that order
+            // and re-placing it with the code.
+            const _alreadyOrdered = await abandonedCartHasRecentOrder(phone);
+            if (_ctaProduct && _ctaProduct.price_from && !_alreadyOrdered) {
               const _currentPrice = Math.round(_ctaProduct.price_from);
               const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
               const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
               await sock.sendMessage(sender, {
-                text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
+                text: `Price: Rs. ${_currentPrice}\nYour price: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
                 ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
               }).catch(() => {});
             }
