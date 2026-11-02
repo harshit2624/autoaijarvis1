@@ -1007,9 +1007,10 @@ function _scrollToRouletteIfNeeded() {
   if (!fullyVisible) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-// A repeat visit (same phone, already spun) must never look like a fresh
-// game — no board, no wheel animation, straight to the real stored result
-// (win/claimed/expired/lost), clearly labelled as a replay, not a new round.
+// A repeat visit (same phone, already spun) can't place a new bet, but
+// still gets the full wheel+ball spin replayed to their own original
+// result — not an instant flat reveal — then lands on the real stored
+// outcome (win/claimed/expired/lost), clearly labelled as a replay.
 var _rouletteAlreadyPlayed = false;
 function checkExistingRouletteSpin(phoneDigits) {
   fetch('/event/diwali-soiree/roulette-status?phone=' + encodeURIComponent(phoneDigits))
@@ -1019,11 +1020,40 @@ function checkExistingRouletteSpin(phoneDigits) {
       _rouletteRoll = d;
       _rouletteAlreadyPlayed = true;
       document.getElementById('roulette-board').style.display = 'none';
-      document.getElementById('roulette-spinning-note').style.display = 'none';
       document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
       document.getElementById('roulette-bet-label').style.display = 'inline-block';
-      renderRouletteResult();
+      document.getElementById('roulette-spinning-note').style.display = 'block';
+      _animateRouletteTo(d.landed);
+      setTimeout(function () {
+        renderRouletteResult();
+        _reapplyClaimedRoulettePrice();
+      }, 7700);
     }).catch(function () {});
+}
+
+// If this phone's win was already claimed earlier, the discount IS locked
+// in server-side — but on a replay reveal nothing had told the pay bar
+// that, so it kept showing full price. Reapplies the same price/pay-bar
+// effects a fresh claim would, without hitting the claim endpoint again.
+function _reapplyClaimedRoulettePrice() {
+  if (!_rouletteRoll || !_rouletteRoll.win || _rouletteRoll.status !== 'claimed') return;
+  if (_rouletteRoll.expiresAt && Date.now() > new Date(_rouletteRoll.expiresAt).getTime()) return; // window's gone — don't imply a price that checkout won't honor
+  var isColor = _rouletteRoll.reward === 'roulette_color100';
+  var selectedCard = document.querySelector('.ticket-card.selected');
+  var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
+  selectedAmount = isColor ? Math.max(1, originalAmount - 100) : 1;
+  document.getElementById('pay-amt').textContent = isColor ? ('₹' + selectedAmount.toLocaleString('en-IN')) : 'FREE';
+  _rouletteApplied = true;
+  _setPayBarDeal(originalAmount, _rouletteRoll.expiresAt);
+  document.getElementById('prank-price-line').textContent = isColor
+    ? ('₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN'))
+    : ('₹' + originalAmount.toLocaleString('en-IN') + ' → FREE');
+  document.getElementById('prank-result-text').textContent = isColor
+    ? '₹100 off applied — locked in for this ticket.'
+    : 'Your ticket is FREE — locked in. See you at the Soiree!';
+  document.getElementById('prank-remove-btn').style.display = 'inline-block';
+  document.getElementById('prank-remove-btn').onclick = removeRouletteWin;
+  document.getElementById('prank-result').classList.add('show');
 }
 
 var _rouletteBetChoice = null;
@@ -1053,6 +1083,21 @@ function _clearNumberPrompt() {
   if (pickBtn) pickBtn.classList.remove('active');
 }
 
+// Shared by a real bet and a "replay my own result" reveal — spins the
+// wheel + ball to the given landing spot. Ball orbits opposite the wheel,
+// several extra fast laps, always ending back at the same angle it started
+// (top) — which is exactly where the winning pocket lands too, since the
+// wheel rotation always brings the target pocket to the top. Falls from the
+// rim track onto the number ring only in the final ~1.4s (CSS transition-delay).
+function _animateRouletteTo(landed) {
+  var wheel = document.getElementById('roulette-wheel');
+  wheel.style.transform = 'rotate(' + _rouletteTargetRotation(landed) + 'deg)';
+  var ballTrack = document.getElementById('roulette-ball-track');
+  var ballLaps = 13 + Math.floor(Math.random() * 3);
+  ballTrack.style.transform = 'rotate(' + (-ballLaps * 360) + 'deg)';
+  document.getElementById('roulette-ball').style.transform = 'translateY(-100px)';
+}
+
 function placeRouletteBet(bet) {
   var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
   _rouletteBetChoice = bet;
@@ -1076,19 +1121,7 @@ function placeRouletteBet(bet) {
     // instead of the one just clicked, correct the badge to match it so it
     // can never contradict the result text below it.
     document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
-    var wheel = document.getElementById('roulette-wheel');
-    wheel.style.transform = 'rotate(' + _rouletteTargetRotation(d.landed) + 'deg)';
-
-    // Ball orbits opposite the wheel, several extra fast laps, always ending
-    // back at the same angle it started (top) — which is exactly where the
-    // winning pocket lands too, since the wheel rotation always brings the
-    // target pocket to the top. Falls from the rim track onto the number
-    // ring only in the final ~1.4s (see the CSS transition-delay).
-    var ballTrack = document.getElementById('roulette-ball-track');
-    var ballLaps = 13 + Math.floor(Math.random() * 3);
-    ballTrack.style.transform = 'rotate(' + (-ballLaps * 360) + 'deg)';
-    document.getElementById('roulette-ball').style.transform = 'translateY(-100px)';
-
+    _animateRouletteTo(d.landed);
     setTimeout(renderRouletteResult, 7700);
   }).catch(function () {
     document.getElementById('roulette-spinning-note').style.display = 'none';
