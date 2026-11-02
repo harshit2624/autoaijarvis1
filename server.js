@@ -14212,19 +14212,34 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       logVendorSync(conn.vendor_name, shop, 'products-update', 'synced', { vendor_variant_id: vVariant.id, croscrow_variant_id: mapping.croscrow_variant_id, qty, price: vVariant.price });
     }
 
-    // Sync images to CC product (if any variant is mapped and sync_images not disabled)
+    // Sync images to CC product (if any variant is mapped and sync_images not disabled).
+    // This webhook fires on ANY vendor product edit (price, stock, title —
+    // not just photos), so a full images-array PUT on every single fire was
+    // needlessly replacing every CC image with brand-new uploads each time
+    // (images without an `id` are created fresh and anything not in the
+    // list gets deleted — including any extra photo CROSCROW added on its
+    // own side, like a size chart). Only do this when the vendor's photo
+    // set has actually changed since the last time we synced it.
     const anyMapping = await mdb.collection('vendor_product_mappings').findOne({
       vendor_name: conn.vendor_name,
       vendor_product_id: String(product.id),
     });
     if (anyMapping?.croscrow_product_id && anyMapping.sync_images !== false && (product.images || []).length > 0) {
-      const images = (product.images || []).map(img => ({ src: img.src, alt: img.alt || '' }));
-      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${anyMapping.croscrow_product_id}.json`, {
-        method: 'PUT',
-        headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product: { id: anyMapping.croscrow_product_id, images } }),
-      });
-      console.log(`🖼️  Images synced: ${conn.vendor_name} → CC product ${anyMapping.croscrow_product_id} (${images.length} images)`);
+      const srcList = (product.images || []).map(img => img.src).sort();
+      const fingerprint = srcList.join('|');
+      if (fingerprint !== anyMapping.vendor_image_set_fingerprint) {
+        const images = (product.images || []).map(img => ({ src: img.src, alt: img.alt || '' }));
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${anyMapping.croscrow_product_id}.json`, {
+          method: 'PUT',
+          headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product: { id: anyMapping.croscrow_product_id, images } }),
+        });
+        await mdb.collection('vendor_product_mappings').updateMany(
+          { vendor_name: conn.vendor_name, vendor_product_id: String(product.id) },
+          { $set: { vendor_image_set_fingerprint: fingerprint } }
+        );
+        console.log(`🖼️  Images synced: ${conn.vendor_name} → CC product ${anyMapping.croscrow_product_id} (${images.length} images, photo set changed)`);
+      }
     }
     // Send out-of-stock alert email only when a mapped variant hits 0
     if (anyMapping) {
