@@ -606,6 +606,7 @@ function selectTier(el) {
   // wrong amount locked in for the new tier — just drop it, keep the card scratched.
   if (_prankApplied) removePrankCode();
   if (_rouletteApplied) removeRouletteWin();
+  if (typeof _updateRouletteBetLabels === 'function') _updateRouletteBetLabels();
 }
 
 // ── Scratch card — genuine random outcome (pre-payment) ─────────────
@@ -627,7 +628,7 @@ var _rouletteCountdownTimer = null;
 
 var SCRATCH_COPY = {
   rasogulla:     { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
-  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for ₹100 off, or go for the lucky number for a free ticket.', btn: 'Play Roulette' },
+  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for cash off, or go for the lucky number for a free ticket.', btn: 'Play Roulette' },
   discount100:   { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
   buy5get6:      { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
   freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2 hours to lock it in.', btn: 'Apply Now' },
@@ -1039,9 +1040,10 @@ function _reapplyClaimedRoulettePrice() {
   if (!_rouletteRoll || !_rouletteRoll.win || _rouletteRoll.status !== 'claimed') return;
   if (_rouletteRoll.expiresAt && Date.now() > new Date(_rouletteRoll.expiresAt).getTime()) return; // window's gone — don't imply a price that checkout won't honor
   var isColor = _rouletteRoll.reward === 'roulette_color100';
+  var colorOff = _rouletteColorOffAmount();
   var selectedCard = document.querySelector('.ticket-card.selected');
   var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
-  selectedAmount = isColor ? Math.max(1, originalAmount - 100) : 1;
+  selectedAmount = isColor ? Math.max(1, originalAmount - colorOff) : 1;
   document.getElementById('pay-amt').textContent = isColor ? ('₹' + selectedAmount.toLocaleString('en-IN')) : 'FREE';
   _rouletteApplied = true;
   _setPayBarDeal(originalAmount, _rouletteRoll.expiresAt);
@@ -1049,7 +1051,7 @@ function _reapplyClaimedRoulettePrice() {
     ? ('₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN'))
     : ('₹' + originalAmount.toLocaleString('en-IN') + ' → FREE');
   document.getElementById('prank-result-text').textContent = isColor
-    ? '₹100 off applied — locked in for this ticket.'
+    ? ('₹' + colorOff + ' off applied — locked in for this ticket.')
     : 'Your ticket is FREE — locked in. See you at the Soiree!';
   document.getElementById('prank-remove-btn').style.display = 'inline-block';
   document.getElementById('prank-remove-btn').onclick = removeRouletteWin;
@@ -1065,6 +1067,13 @@ function _rouletteBetDisplay(bet) {
   if (bet === 'red') return '● RED';
   if (bet === 'black') return '● BLACK';
   return 'Number ' + bet;
+}
+
+// Color-bet win is ₹300 off on a Group (Party of Five) ticket, ₹100 off on Single.
+function _rouletteColorOffAmount() { return selectedTier === 'group' ? 300 : 100; }
+function _updateRouletteBetLabels() {
+  var off = _rouletteColorOffAmount();
+  document.querySelectorAll('.bet-red span, .bet-black span').forEach(function (el) { el.textContent = '₹' + off + ' off'; });
 }
 
 // "🎯 Pick a No." doesn't bet by itself — it highlights every number tile
@@ -1154,13 +1163,14 @@ function renderRouletteResult() {
   }
 
   var isColor = _rouletteRoll.reward === 'roulette_color100';
+  var colorOff = _rouletteColorOffAmount();
 
   // Already claimed — nothing left to do, show it as locked in, not a
   // clickable "Claim" button that does nothing. Wording differs for a
   // fresh claim just now vs. revisiting after claiming earlier.
   if (_rouletteRoll.status === 'claimed') {
     document.getElementById('rl-eyebrow').textContent = _rouletteAlreadyPlayed ? "You've already played" : 'Claimed!';
-    document.getElementById('rl-code').textContent = isColor ? '₹100 OFF' : 'FREE TICKET';
+    document.getElementById('rl-code').textContent = isColor ? ('₹' + colorOff + ' OFF') : 'FREE TICKET';
     document.getElementById('rl-text').textContent = _rouletteAlreadyPlayed
       ? 'Your bet on ' + betDisplay + ' hit, and you already claimed it — it\'s locked in for this ticket.'
       : 'Locked in! Your bet on ' + betDisplay + ' hit — it\'s applied for this ticket.';
@@ -1183,11 +1193,11 @@ function renderRouletteResult() {
 
   // Won, unclaimed, still within the window — show the real remaining time.
   document.getElementById('rl-eyebrow').textContent = _rouletteAlreadyPlayed ? "You've already played" : 'You won!';
-  document.getElementById('rl-code').textContent = isColor ? '₹100 OFF' : 'FREE TICKET';
+  document.getElementById('rl-code').textContent = isColor ? ('₹' + colorOff + ' OFF') : 'FREE TICKET';
   document.getElementById('rl-text').textContent = isColor
-    ? replayPrefix + 'Your bet on ' + betDisplay + ' hit! Claim your ₹100 off before the timer runs out.'
+    ? replayPrefix + 'Your bet on ' + betDisplay + ' hit! Claim your ₹' + colorOff + ' off before the timer runs out.'
     : replayPrefix + 'Jackpot — your bet on ' + betDisplay + ' hit the green! Claim your FREE ticket before the timer runs out.';
-  claimBtn.textContent = isColor ? 'Claim ₹100 Off' : 'Claim Free Ticket';
+  claimBtn.textContent = isColor ? ('Claim ₹' + colorOff + ' Off') : 'Claim Free Ticket';
   claimBtn.disabled = false;
   actionsEl.style.display = 'flex';
 
@@ -1226,15 +1236,16 @@ function claimRouletteWin() {
       _rouletteRoll.status = 'claimed';
       if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
       var isColor = _rouletteRoll.reward === 'roulette_color100';
+      var colorOff = _rouletteColorOffAmount();
       var selectedCard = document.querySelector('.ticket-card.selected');
       var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
-      selectedAmount = isColor ? Math.max(1, originalAmount - 100) : 1;
+      selectedAmount = isColor ? Math.max(1, originalAmount - colorOff) : 1;
       document.getElementById('pay-amt').textContent = isColor ? ('₹' + selectedAmount.toLocaleString('en-IN')) : 'FREE';
       document.getElementById('prank-price-line').textContent = isColor
         ? ('₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN'))
         : ('₹' + originalAmount.toLocaleString('en-IN') + ' → FREE');
       document.getElementById('prank-result-text').textContent = isColor
-        ? '₹100 off applied — locked in for this ticket.'
+        ? ('₹' + colorOff + ' off applied — locked in for this ticket.')
         : 'Your ticket is FREE — locked in. See you at the Soiree!';
       document.getElementById('prank-remove-btn').style.display = 'inline-block';
       document.getElementById('prank-remove-btn').onclick = removeRouletteWin;

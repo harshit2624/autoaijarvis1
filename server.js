@@ -16823,7 +16823,7 @@ async function applyDiwaliScratchPerk(phone, tier, baseAmount) {
     const spin = await mdb.collection('diwali_roulette_rolls').findOne({ phone });
     if (!spin || spin.status !== 'claimed' || !spin.win) return { amount: baseAmount, perk: null };
     if (spin.expiresAt && Date.now() > new Date(spin.expiresAt).getTime()) return { amount: baseAmount, perk: null };
-    if (spin.reward === 'roulette_color100') return { amount: Math.max(1, baseAmount - 100), perk: 'roulette_color100' };
+    if (spin.reward === 'roulette_color100') { const off = tier === 'group' ? 300 : 100; return { amount: Math.max(1, baseAmount - off), perk: 'roulette_color100' }; }
     if (spin.reward === 'roulette_number_free') return { amount: 1, perk: 'roulette_number_free' }; // free ticket — ₹1 is Razorpay's minimum chargeable amount
     return { amount: baseAmount, perk: null };
   }
