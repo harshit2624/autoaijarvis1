@@ -14792,6 +14792,64 @@ app.get("/admin/vendor-sync/mappings", adminAuth, async (req, res) => {
   res.json({ mappings: await VPM.all(vendor_name) });
 });
 
+// ── Vendor image sync: dedupe by Shopify's own image id, not filename ────
+// Shopify silently renames an uploaded file (appends a random UUID) whenever a
+// file with that same name already exists anywhere in the CROSCROW Files
+// library. A basename-only duplicate check breaks the moment that happens,
+// since the live filename on the product no longer matches the vendor's
+// source filename — so every later sync thinks the photo was never uploaded
+// and re-uploads it, which Shopify renames again, piling up duplicates.
+// Fix: remember the id Shopify actually gave the image we created, and only
+// touch it again if the vendor's source image URL itself has changed.
+async function syncVendorImageToCCProduct({ ccToken, croscrow_product_id, vendor_image, mapping }) {
+  if (!vendor_image || !croscrow_product_id) return { changed: false };
+  const existingImageId = mapping.croscrow_image_id ? String(mapping.croscrow_image_id) : null;
+  const sameSource = mapping.vendor_image_synced_from === vendor_image;
+
+  if (existingImageId && sameSource) {
+    // We've already synced this exact vendor photo — confirm it's still there
+    // (skip re-adding if an admin deliberately deleted it; don't fight them).
+    try {
+      const check = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images/${existingImageId}.json?fields=id`, { headers: { 'X-Shopify-Access-Token': ccToken } });
+      if (check.ok) return { changed: false, imageId: existingImageId };
+    } catch {}
+    return { changed: false, skippedDeleted: true };
+  }
+
+  // First sync for this mapping, or the vendor swapped their photo — upload once.
+  try {
+    const posRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images.json?fields=id,position`, { headers: { 'X-Shopify-Access-Token': ccToken } });
+    const posData = await posRes.json().catch(() => ({ images: [] }));
+    const existingCount = (posData.images || []).length;
+
+    const uploadRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: { src: vendor_image, ...(existingImageId ? {} : { position: existingCount + 1 }) } }),
+    });
+    const uploadData = await uploadRes.json().catch(() => ({}));
+    const newImage = uploadData.image;
+    if (!newImage?.id) return { changed: false, error: JSON.stringify(uploadData.errors || uploadData) };
+
+    // Replace the stale vendor-sourced image (if the vendor swapped photos) so
+    // we don't leave an orphaned duplicate behind.
+    if (existingImageId) {
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images/${existingImageId}.json`, {
+        method: 'DELETE', headers: { 'X-Shopify-Access-Token': ccToken },
+      }).catch(() => {});
+    }
+
+    await mdb.collection('vendor_product_mappings').updateMany(
+      { vendor_name: mapping.vendor_name, vendor_product_id: mapping.vendor_product_id },
+      { $set: { croscrow_image_id: String(newImage.id), croscrow_image_src: newImage.src, vendor_image_synced_from: vendor_image, image_synced_at: Date.now() } }
+    );
+    console.log(`🖼️ Image synced for CC product ${croscrow_product_id} (vendor ${mapping.vendor_name}) → image id ${newImage.id}`);
+    return { changed: true, imageId: String(newImage.id), imageSrc: newImage.src };
+  } catch (e) {
+    return { changed: false, error: e.message };
+  }
+}
+
 // ── Admin: sync inventory for all mapped variants ─────────────────────────
 app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id } = req.body || {};
@@ -14866,21 +14924,7 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
           // Sync vendor image to CC product (once per product, if sync_images not disabled and vendor has an image)
           if (m.sync_images !== false && m.vendor_image && m.croscrow_product_id && !ccImageSyncedProducts.has(String(m.croscrow_product_id))) {
             try {
-              // Check existing CC product images to avoid duplicates
-              const ccImagesRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${m.croscrow_product_id}/images.json?fields=id,src`, { headers: { 'X-Shopify-Access-Token': ccToken } });
-              const ccImagesData = await ccImagesRes.json();
-              const existingImages = ccImagesData.images || [];
-              // Compare by src basename to detect duplicates even if query params differ
-              const vendorImgBase = m.vendor_image.split('?')[0].split('/').pop();
-              const alreadyExists = existingImages.some(img => img.src.split('?')[0].split('/').pop() === vendorImgBase);
-              if (!alreadyExists) {
-                await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${m.croscrow_product_id}/images.json`, {
-                  method: 'POST',
-                  headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ image: { src: m.vendor_image, position: (existingImages.length || 0) + 1 } }),
-                });
-                console.log(`🖼️ Synced image for CC product ${m.croscrow_product_id} from ${vName}`);
-              }
+              await syncVendorImageToCCProduct({ ccToken, croscrow_product_id: m.croscrow_product_id, vendor_image: m.vendor_image, mapping: m });
               ccImageSyncedProducts.add(String(m.croscrow_product_id));
             } catch (imgErr) { console.warn(`⚠️ Image sync failed for CC product ${m.croscrow_product_id}: ${imgErr.message}`); }
           }
@@ -15016,17 +15060,8 @@ app.post("/admin/vendor-sync/smart-map", adminAuth, async (req, res) => {
       // Image sync — once per CC product
       if (vendorImage && croscrow_product_id) {
         try {
-          const ccImagesData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images.json?fields=id,src`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r => r.json()).catch(() => ({ images: [] }));
-          const existingImages = ccImagesData.images || [];
-          const vendorImgBase = vendorImage.split('?')[0].split('/').pop();
-          const alreadyExists = existingImages.some(img => img.src.split('?')[0].split('/').pop() === vendorImgBase);
-          if (!alreadyExists) {
-            await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/products/${croscrow_product_id}/images.json`, {
-              method: 'POST', headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image: { src: vendorImage, position: (existingImages.length || 0) + 1 } }),
-            }).catch(() => {});
-            console.log(`🖼️ Post-map image sync for CC product ${croscrow_product_id} from ${vendor_name}`);
-          }
+          const imgMapping = await mdb.collection('vendor_product_mappings').findOne({ vendor_name, vendor_product_id: String(vendor_product_id) }) || { vendor_name, vendor_product_id: String(vendor_product_id) };
+          await syncVendorImageToCCProduct({ ccToken, croscrow_product_id, vendor_image: vendorImage, mapping: imgMapping });
         } catch {}
       }
     } catch (syncErr) { console.warn(`⚠️ Post-map auto-sync failed for ${vendor_name}: ${syncErr.message}`); }
