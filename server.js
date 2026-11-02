@@ -28030,7 +28030,7 @@ const PRODUCT_INQUIRY_DISCOUNT_PCT = 10;
 // Informational only — no separate code/button, just surfaces the two
 // site-wide offers under the SPECIALQUERY price so a customer buying more
 // than one item knows a bigger discount exists before they check out.
-const PRODUCT_INQUIRY_EXTRA_OFFERS = '🔥 More ways to save:\n• Buy any 2 products → FLAT ₹300 OFF\n• Order above ₹4999 → FLAT ₹1000 OFF';
+const PRODUCT_INQUIRY_EXTRA_OFFERS = '🔥 Save more:\n• 2 items: FLAT ₹300 off\n• ₹4999+: FLAT ₹1000 off';
 // GoKwik UTM auto-discount rule for SPECIALQUERY (Marketing → Discounts →
 // SPECIALQUERY → UTM rule): exact match, source=whatsapp / medium=chatbot
 // / campaign=product_query, Auto-apply on Checkout ON. Deliberately a
