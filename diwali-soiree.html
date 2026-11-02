@@ -113,15 +113,24 @@ img{display:block;max-width:100%}
 }
 .inp::placeholder{color:var(--muted);letter-spacing:.1em;font-size:11px;text-transform:uppercase}
 .inp:focus{border-color:var(--gold)}
+.inp.inp-error{border-color:#e0536a}
+.inp.inp-shake{animation:inp-shake .4s ease}
+@keyframes inp-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-7px)}40%{transform:translateX(7px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+.form-hint-error{display:none;color:#e0536a;font-size:10.5px;letter-spacing:.06em;text-align:center;margin-top:8px}
+.form-hint-error.show{display:block}
 
 /* ── Sticky pay bar ────────────────────────────────────────── */
 #pay-bar{
   position:sticky;bottom:0;left:0;right:0;z-index:30;padding:18px 28px calc(18px + env(safe-area-inset-bottom,0px));
   background:rgba(20,6,7,.95);backdrop-filter:blur(18px);border-top:1px solid var(--border);margin-top:52px;
 }
-.pay-summary{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px}
+.pay-summary{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
 .pay-summary-label{font-size:10px;color:var(--muted);letter-spacing:.18em;text-transform:uppercase}
+.pay-summary-amts{display:flex;align-items:baseline;gap:9px}
+.pay-summary-orig{display:none;font-family:'Bodoni Moda',serif;font-size:14px;color:var(--muted);text-decoration:line-through;opacity:.75}
 .pay-summary-amt{font-family:'Bodoni Moda',serif;font-size:22px;font-weight:400;color:var(--gold-bright)}
+.pay-deal-countdown{display:none;align-items:center;justify-content:flex-end;gap:5px;font-size:10px;color:#e0536a;letter-spacing:.08em;text-transform:uppercase;margin:0 0 14px}
+.pay-deal-countdown.urgent{animation:sr-pulse 1s ease-in-out infinite}
 .btn-pay{
   width:100%;background:transparent;color:var(--gold-bright);border:1px solid var(--gold);border-radius:0;
   padding:16px;font-size:11px;font-weight:400;letter-spacing:.3em;text-transform:uppercase;cursor:pointer;
@@ -180,7 +189,7 @@ img{display:block;max-width:100%}
 .prank-lock{
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
   padding:0 20px;font-size:13px;color:#f3ebdd;letter-spacing:.03em;white-space:nowrap;
-  background:rgba(20,6,7,.5);backdrop-filter:blur(2px);transition:opacity .3s ease;z-index:5;
+  background:rgba(20,6,7,.5);backdrop-filter:blur(2px);transition:opacity .3s ease;z-index:5;cursor:pointer;
 }
 #prank-card.unlocked .prank-lock{opacity:0;pointer-events:none}
 #prank-card.locked #prank-canvas{pointer-events:none}
@@ -212,35 +221,81 @@ img{display:block;max-width:100%}
 @keyframes sr-pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .prank-remove-btn{font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:transparent;border:1px solid var(--border-strong);color:var(--text);padding:9px 20px;cursor:pointer;font-family:inherit}
 
-/* ── Roulette mini-game — takes the scratch card's place once unlocked ── */
-.roulette-widget{display:none;flex-direction:column;align-items:center;gap:18px;padding:22px 16px 20px;border:1px solid var(--border-strong);background:radial-gradient(ellipse at center,#0f2b1d 0%,#0a1f14 100%);}
+/* ── Roulette mini-game — takes the scratch card's place once unlocked ──
+   Top ~70%: the wheel, on a dark wood/felt casino table. Bottom ~30%: the
+   betting board — single 0 + numbers 1-36 in real red/black order, plus
+   the two color bets, same layout language as a real roulette table. */
+.roulette-widget{display:none;flex-direction:column;align-items:center;gap:0;max-width:360px;width:100%;margin:0 auto;border:1px solid var(--border-strong);border-radius:4px;overflow:hidden;background:linear-gradient(180deg,#0a2918 0%,#071d10 100%);box-shadow:0 10px 34px rgba(0,0,0,.45)}
 .roulette-widget.show{display:flex}
-.roulette-eyebrow{font-size:9.5px;letter-spacing:.16em;color:#d4b579;text-transform:uppercase;opacity:.85}
-.roulette-wheel-wrap{position:relative;width:148px;height:148px}
-.roulette-wheel{
-  width:100%;height:100%;border-radius:50%;
-  background:conic-gradient(#d4b579 0deg 45deg,#8a1424 45deg 90deg,#111 90deg 135deg,#8a1424 135deg 180deg,#111 180deg 225deg,#8a1424 225deg 270deg,#111 270deg 315deg,#8a1424 315deg 360deg);
-  border:3px solid #d4b579;box-shadow:0 0 0 1px rgba(212,181,121,.3),inset 0 0 18px rgba(0,0,0,.5);
-  transition:transform 3s cubic-bezier(.15,.75,.15,1);
+.roulette-felt{width:100%;display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 16px 18px;background:
+    radial-gradient(ellipse at 50% 30%,rgba(255,255,255,.05) 0%,transparent 60%),
+    repeating-linear-gradient(45deg,rgba(255,255,255,.015) 0 2px,transparent 2px 4px),
+    radial-gradient(ellipse at center,#0f3d24 0%,#0a2416 100%);
+  position:relative}
+.roulette-eyebrow{font-size:9.5px;letter-spacing:.16em;color:#d4b579;text-transform:uppercase;opacity:.9}
+.roulette-wheel-wrap{position:relative;width:240px;height:240px;max-width:86vw;max-height:86vw}
+.roulette-wheel-base{
+  position:absolute;inset:-12px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#8a6a35 0%,#5c3a1e 45%,#2a1810 100%);
+  box-shadow:0 10px 26px rgba(0,0,0,.6),inset 0 2px 8px rgba(255,255,255,.12),inset 0 -6px 14px rgba(0,0,0,.5);
 }
-.roulette-wheel::after{content:'';position:absolute;inset:38%;border-radius:50%;background:#0a1f14;border:2px solid #d4b579;box-shadow:0 0 10px rgba(0,0,0,.6)}
-.roulette-pointer{position:absolute;top:-9px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:12px solid #d4b579;z-index:3;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
-.roulette-bets{display:flex;gap:8px;width:100%;max-width:280px}
-.bet-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:11px 6px;border:1px solid rgba(212,181,121,.4);background:rgba(0,0,0,.25);color:#f3ebdd;cursor:pointer;font-family:inherit;transition:border-color .2s ease,background .2s ease}
+.roulette-wheel{
+  position:absolute;inset:0;border-radius:50%;
+  /* Real wheels spin hard for the first second or two, then decelerate for
+     several more seconds before settling — most of the rotation happens
+     early, the tail is a long, visibly-slowing creep into the final pocket. */
+  transition:transform 7.5s cubic-bezier(.06,.82,.1,1);
+  filter:drop-shadow(0 4px 10px rgba(0,0,0,.5));
+}
+.roulette-wheel svg{display:block;width:100%;height:100%}
+.roulette-ball-track{position:absolute;inset:0;transition:transform 7.5s cubic-bezier(.07,.75,.12,1);z-index:4}
+.roulette-ball{position:absolute;top:50%;left:50%;width:7px;height:7px;margin:-3.5px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#fff 0%,#d8d8d8 60%,#999 100%);box-shadow:0 1px 4px rgba(0,0,0,.65);
+  transform:translateY(-118px);
+  transition:transform 1.4s cubic-bezier(.3,0,.6,1) 6.1s; /* drops from the rim track onto the number ring only at the very end */
+}
+.roulette-pointer{position:absolute;top:-12px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:15px solid #d4b579;z-index:3;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+.roulette-spinning-note{font-size:10px;color:#9fb3a5;letter-spacing:.08em;text-transform:uppercase}
+.roulette-bet-label{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#dce8e0;background:rgba(212,181,121,.12);border:1px solid rgba(212,181,121,.4);padding:6px 16px;border-radius:20px}
+.roulette-bet-label b{color:var(--gold-bright);font-weight:700;letter-spacing:.04em;text-transform:none}
+
+/* Betting board — bottom section of the table */
+.roulette-board{width:100%;padding:12px 14px 16px;background:linear-gradient(180deg,#0a2918 0%,#082013 100%);border-top:1px solid rgba(212,181,121,.25)}
+.roulette-table{display:flex;gap:4px;margin-bottom:8px}
+.rt-zero{width:26px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#1a7a3c;color:#fff;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.15);border-radius:3px;cursor:pointer;font-family:inherit}
+.rt-zero:hover{filter:brightness(1.2)}
+.rt-zero:disabled{opacity:.4;pointer-events:none}
+.rt-grid{flex:1;display:grid;grid-template-columns:repeat(12,1fr);gap:2px}
+.rt-num{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:8.5px;font-weight:700;color:#fff;border:1px solid rgba(255,255,255,.12);border-radius:2px;cursor:pointer;font-family:inherit;padding:0}
+.rt-num:hover{filter:brightness(1.25)}
+.rt-num:disabled{opacity:.4;pointer-events:none}
+.rt-num.red{background:#8a1424}
+.rt-num.black{background:#141414}
+@keyframes rt-glow{0%,100%{box-shadow:0 0 0 rgba(212,181,121,0);transform:scale(1)}50%{box-shadow:0 0 9px 3px rgba(212,181,121,.85);transform:scale(1.12)}}
+.rt-num.glow,.rt-zero.glow{animation:rt-glow 1s ease-in-out infinite;position:relative;z-index:1}
+.roulette-pick-prompt{display:none;text-align:center;font-size:10.5px;letter-spacing:.06em;color:var(--gold-bright);margin-bottom:8px;animation:sr-pulse 1.1s ease-in-out infinite}
+.roulette-pick-prompt.show{display:block}
+.roulette-colorbets{display:flex;gap:7px;width:100%}
+.bet-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:10px 4px;border:1px solid rgba(212,181,121,.4);background:rgba(0,0,0,.25);color:#f3ebdd;cursor:pointer;font-family:inherit;transition:border-color .2s ease,background .2s ease;border-radius:3px}
 .bet-btn:hover{border-color:#d4b579;background:rgba(212,181,121,.08)}
 .bet-btn:disabled{opacity:.4;cursor:default;pointer-events:none}
-.bet-btn b{font-size:12px;letter-spacing:.04em}
+.bet-btn b{font-size:11px;letter-spacing:.02em;white-space:nowrap}
 .bet-btn span{font-size:8.5px;color:#9fb3a5;letter-spacing:.03em}
 .bet-red b{color:#e0536a}
 .bet-black b{color:#eee}
-.bet-seven b{color:#d4b579}
-.roulette-spinning-note{font-size:10px;color:#9fb3a5;letter-spacing:.08em;text-transform:uppercase}
-.roulette-result{display:none;flex-direction:column;align-items:center;gap:9px;text-align:center}
+.bet-pick b{color:var(--gold-bright)}
+.bet-pick.active{border-color:#d4b579;background:rgba(212,181,121,.14)}
+
+.roulette-result{display:none;flex-direction:column;align-items:center;gap:9px;text-align:center;padding:16px 16px 20px}
 .roulette-result.show{display:flex}
 .roulette-result .sr-eyebrow{font-size:9.5px;letter-spacing:.16em;color:#d4b579;text-transform:uppercase}
 .roulette-result .sr-code{font-family:'Bodoni Moda',serif;font-size:19px;color:var(--gold-bright);letter-spacing:.06em}
-.roulette-result .sr-text{font-size:11px;color:#dce8e0;line-height:1.6;max-width:230px}
+.roulette-result .sr-text{font-size:11px;color:#dce8e0;line-height:1.6;max-width:260px}
 @media (min-width:600px){.wrap{box-shadow:0 0 80px rgba(0,0,0,.55)}}
+/* No scratch card — the roulette table is the "Try Your Luck" game, shown
+   directly once name & phone are filled. */
+#prank-card{display:none}
+#roulette-lock{z-index:5}
 </style>
 </head>
 <body>
@@ -293,6 +348,7 @@ img{display:block;max-width:100%}
       <input class="inp" id="f-phone" name="tel" type="tel" placeholder="Phone Number" maxlength="10" autocomplete="tel" inputmode="numeric">
       <input class="inp" id="f-email" name="email" type="email" placeholder="Email (Optional)" autocomplete="email">
     </form>
+    <div class="form-hint-error" id="form-hint-error">Enter your name &amp; phone number first to play 🎰</div>
 
     <div class="scratch-wrap" id="prank-wrap">
       <div class="scratch-label">Try Your Luck</div>
@@ -312,18 +368,33 @@ img{display:block;max-width:100%}
         <div class="prank-lock" id="prank-lock">Fill your name &amp; phone above to unlock</div>
       </div>
 
-      <div class="roulette-widget" id="roulette-widget">
-        <span class="roulette-eyebrow">🎰 Croscrow Roulette</span>
-        <div class="roulette-wheel-wrap">
-          <div class="roulette-pointer"></div>
-          <div class="roulette-wheel" id="roulette-wheel"></div>
+      <div class="roulette-widget show" id="roulette-widget" style="position:relative">
+        <div class="prank-lock" id="roulette-lock">Fill your name &amp; phone above to unlock</div>
+        <div class="roulette-felt">
+          <span class="roulette-eyebrow">🎰 Creates Roulette</span>
+          <div class="roulette-wheel-wrap">
+            <div class="roulette-wheel-base"></div>
+            <div class="roulette-pointer"></div>
+            <div class="roulette-wheel" id="roulette-wheel"></div>
+            <div class="roulette-ball-track" id="roulette-ball-track"><div class="roulette-ball" id="roulette-ball"></div></div>
+          </div>
+          <span class="roulette-bet-label" id="roulette-bet-label" style="display:none">Your bet: <b id="roulette-bet-value"></b></span>
+          <span class="roulette-spinning-note" id="roulette-spinning-note" style="display:none">Spinning…</span>
         </div>
-        <div class="roulette-bets" id="roulette-bets">
-          <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● Red</b><span>60% win · ₹100 off</span></button>
-          <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● Black</b><span>60% win · ₹100 off</span></button>
-          <button class="bet-btn bet-seven" onclick="placeRouletteBet('number')"><b>7</b><span>5% win · FREE ticket</span></button>
+
+        <div class="roulette-board" id="roulette-board">
+          <div class="roulette-pick-prompt" id="roulette-pick-prompt">👆 Tap any number below to spin</div>
+          <div class="roulette-table">
+            <button class="rt-zero" id="rt-zero" onclick="placeRouletteBet('0')">0</button>
+            <div class="rt-grid" id="rt-grid"></div>
+          </div>
+          <div class="roulette-colorbets" id="roulette-bets">
+            <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● RED</b><span>₹100 off</span></button>
+            <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● BLACK</b><span>₹100 off</span></button>
+            <button class="bet-btn bet-pick" onclick="promptNumberBet()"><b>🎯 Pick a No.</b><span>FREE ticket</span></button>
+          </div>
         </div>
-        <span class="roulette-spinning-note" id="roulette-spinning-note" style="display:none">Spinning…</span>
+
         <div class="roulette-result" id="roulette-result">
           <span class="sr-eyebrow" id="rl-eyebrow"></span>
           <span class="sr-code" id="rl-code"></span>
@@ -340,7 +411,6 @@ img{display:block;max-width:100%}
         <span id="prank-result-text"></span>
         <button class="prank-remove-btn" id="prank-remove-btn" onclick="removePrankCode()">Remove</button>
       </div>
-      <div class="scratch-hint" id="prank-hint">Scratch the card to reveal your code</div>
     </div>
   </div>
 
@@ -351,7 +421,14 @@ img{display:block;max-width:100%}
   </div>
 
   <div id="pay-bar">
-    <div class="pay-summary"><span class="pay-summary-label">Total</span><span class="pay-summary-amt" id="pay-amt">₹499</span></div>
+    <div class="pay-summary">
+      <span class="pay-summary-label">Total</span>
+      <span class="pay-summary-amts">
+        <span class="pay-summary-orig" id="pay-amt-orig"></span>
+        <span class="pay-summary-amt" id="pay-amt">₹499</span>
+      </span>
+    </div>
+    <div class="pay-deal-countdown" id="pay-deal-countdown"></div>
     <button class="btn-pay" id="pay-btn" onclick="startPayment()">Reserve Your Place</button>
     <div class="err-msg" id="err-msg"></div>
   </div>
@@ -538,8 +615,8 @@ function selectTier(el) {
 // actually charged always comes from the same server-side record at
 // checkout, never from anything shown here. Possible outcomes: a free
 // rasogulla (most common, no price change), the roulette mini-game (bet
-// on a color or the lucky number for a bigger prize), ₹100 off (60s to
-// claim), or a free 6th entry on a Group ticket (5min to claim).
+// on a color or the lucky number for a bigger prize), ₹100 off (2hr to
+// claim), or a free 6th entry on a Group ticket (2hr to claim).
 var _prankApplied = false;
 var _rouletteApplied = false;
 var _prankUnlocked = false;
@@ -553,12 +630,12 @@ var SCRATCH_COPY = {
   roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for ₹100 off, or go for the lucky number for a free ticket.', btn: 'Play Roulette' },
   discount100:   { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
   buy5get6:      { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
-  freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2:00 to lock it in.', btn: 'Apply Now' },
+  freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2 hours to lock it in.', btn: 'Apply Now' },
 };
 var SCRATCH_EXPIRED_TEXT = {
-  discount100:   "⏳ Your 1-minute window is gone. The ₹100 off is gone too — better luck for next Diwali 🪔",
-  buy5get6:      "⏳ Your 5-minute window is gone. That free 6th entry is gone — better luck for next Diwali 🪔",
-  freeticket499: "⏳ Your 2-minute window is gone. The ₹499 shopping code is gone too — better luck for next Diwali 🪔",
+  discount100:   "⏳ Your 2-hour window is gone. The ₹100 off is gone too — better luck for next Diwali 🪔",
+  buy5get6:      "⏳ Your 2-hour window is gone. That free 6th entry is gone — better luck for next Diwali 🪔",
+  freeticket499: "⏳ Your 2-hour window is gone. The ₹499 shopping code is gone too — better luck for next Diwali 🪔",
 };
 
 function _prankCheckUnlock() {
@@ -580,8 +657,41 @@ function _prankCheckUnlock() {
     var canvas = document.getElementById('prank-canvas');
     if (canvas && canvas._redrawFoil) canvas._redrawFoil();
     if (_prankUnlocked && !_scratchRoll) fetchScratchRoll(phoneDigits, name);
+    if (_prankUnlocked) {
+      document.getElementById('form-hint-error').classList.remove('show');
+      document.getElementById('f-name').classList.remove('inp-error');
+      document.getElementById('f-phone').classList.remove('inp-error');
+    }
   }
+  // The roulette table's own lock overlay follows the same unlock state.
+  var rLock = document.getElementById('roulette-lock');
+  if (rLock) rLock.style.display = _prankUnlocked ? 'none' : 'flex';
 }
+
+// Clicking the locked game area (card or lock overlay) before name+phone are
+// filled scrolls the guest up to those fields, flashes them red, and shakes
+// them — makes it obvious what's blocking them instead of nothing happening.
+function _promptFillDetails() {
+  if (_prankUnlocked) return;
+  var nameEl = document.getElementById('f-name');
+  var phoneEl = document.getElementById('f-phone');
+  var hint = document.getElementById('form-hint-error');
+  nameEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  hint.classList.add('show');
+  [nameEl, phoneEl].forEach(function (el) {
+    el.classList.add('inp-error');
+    el.classList.remove('inp-shake');
+    void el.offsetWidth; // restart the shake animation on repeated clicks
+    el.classList.add('inp-shake');
+  });
+  setTimeout(function () {
+    [nameEl, phoneEl].forEach(function (el) { el.classList.remove('inp-shake'); });
+  }, 450);
+}
+document.getElementById('prank-lock').addEventListener('click', _promptFillDetails);
+var _rouletteLockEl = document.getElementById('roulette-lock');
+if (_rouletteLockEl) _rouletteLockEl.addEventListener('click', _promptFillDetails);
+
 ['f-name', 'f-phone'].forEach(function (id) {
   // input + change + blur: covers typing, autofill (some browsers only
   // fire 'change', not 'input', for an autofilled value), and a value
@@ -608,13 +718,58 @@ function fetchScratchRoll(phoneDigits, name) {
     if (!d.outcome) return; // invalid phone etc. — silently leave card un-rolled
     _scratchRoll = d;
     renderScratchOutcome();
+    // No scratch card — the roulette table unlocks immediately once the
+    // outcome comes back (always 'roulette').
+    if (d.outcome === 'roulette') applyScratchOutcome();
   }).catch(function () {});
 }
 
 function _fmtCountdown(ms) {
   var s = Math.max(0, Math.ceil(ms / 1000));
+  var h = Math.floor(s / 3600); s = s % 3600;
   var m = Math.floor(s / 60); s = s % 60;
+  if (h > 0) return h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
   return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+// ── Pay-bar deal display — original price struck through, discounted
+// price live, and its own "deal ends in" countdown right above the
+// checkout button, so the offer stays visible exactly where the guest
+// is about to pay, not just buried in the scratch/roulette result card.
+var _payDealTimer = null;
+function _setPayBarDeal(originalAmount, expiresAtISO) {
+  var origEl = document.getElementById('pay-amt-orig');
+  origEl.textContent = '₹' + originalAmount.toLocaleString('en-IN');
+  origEl.style.display = 'inline';
+  _startPayDealCountdown(expiresAtISO);
+}
+function _startPayDealCountdown(expiresAtISO) {
+  var countdownEl = document.getElementById('pay-deal-countdown');
+  if (_payDealTimer) clearInterval(_payDealTimer);
+  if (!expiresAtISO) { countdownEl.style.display = 'none'; return; }
+  var expiresAtMs = new Date(expiresAtISO).getTime();
+  countdownEl.style.display = 'flex';
+  var tick = function () {
+    var remaining = expiresAtMs - Date.now();
+    if (remaining <= 0) {
+      clearInterval(_payDealTimer); _payDealTimer = null;
+      _clearPayBarDeal();
+      // The server won't honor this perk past its window either — drop it
+      // here too so the price shown always matches what checkout will charge.
+      if (_prankApplied) removePrankCode();
+      if (_rouletteApplied) removeRouletteWin();
+      return;
+    }
+    countdownEl.textContent = '⏳ Deal ends in ' + _fmtCountdown(remaining);
+    countdownEl.classList.toggle('urgent', remaining < 60000);
+  };
+  tick();
+  _payDealTimer = setInterval(tick, 1000);
+}
+function _clearPayBarDeal() {
+  if (_payDealTimer) { clearInterval(_payDealTimer); _payDealTimer = null; }
+  document.getElementById('pay-amt-orig').style.display = 'none';
+  document.getElementById('pay-deal-countdown').style.display = 'none';
 }
 
 function renderScratchOutcome() {
@@ -705,6 +860,7 @@ function applyScratchOutcome() {
         document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
         document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
         resultText = '₹100 off applied — locked in for this ticket.';
+        _setPayBarDeal(originalAmount, _scratchRoll.expiresAt);
       } else if (outcome === 'buy5get6') {
         if (selectedTier !== 'group') {
           var groupCard = document.querySelector('.ticket-card[data-tier="group"]');
@@ -744,6 +900,7 @@ function removePrankCode() {
     selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
     document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
     document.getElementById('prank-result').classList.remove('show');
+    _clearPayBarDeal();
     if (d.status) { _scratchRoll.status = d.status; renderScratchOutcome(); }
   }).catch(function () {});
 }
@@ -752,31 +909,156 @@ function removePrankCode() {
 // Server rolls the real outcome (odds are enforced there, never here) —
 // this only animates the wheel to land somewhere consistent with it, then
 // reveals the win/lose result.
-var ROULETTE_LANDED_ANGLE = { seven: 22.5, red: [67.5, 157.5, 247.5, 337.5], black: [112.5, 202.5, 292.5] };
+
+// Standard roulette red-number set — everything else 1-36 is black, 0 is green.
+var ROULETTE_RED_NUMBERS = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36];
+// Real European wheel pocket order (not 0-36 sequential) — the order the
+// numbers actually sit around a physical wheel.
+var ROULETTE_WHEEL_ORDER = [0,32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26];
+function _rouletteNumColor(n) { return n === 0 ? 'green' : (ROULETTE_RED_NUMBERS.indexOf(n) !== -1 ? 'red' : 'black'); }
+
+// Center angle (clockwise from 12 o'clock, matching CSS rotate()'s own
+// convention) of each wheel index, plus a reverse lookup grouped by color —
+// computed once so the drawing and the spin-targeting always agree exactly.
+var ROULETTE_SLICE_DEG = 360 / ROULETTE_WHEEL_ORDER.length;
+var ROULETTE_ANGLE_BY_COLOR = { green: [], red: [], black: [] };
+ROULETTE_WHEEL_ORDER.forEach(function (n, i) {
+  var centerAngle = i * ROULETTE_SLICE_DEG + ROULETTE_SLICE_DEG / 2;
+  ROULETTE_ANGLE_BY_COLOR[_rouletteNumColor(n)].push(centerAngle);
+});
+
 function _rouletteTargetRotation(landed) {
-  var base = ROULETTE_LANDED_ANGLE[landed];
-  var angle = Array.isArray(base) ? base[Math.floor(Math.random() * base.length)] : base;
-  var spins = 4 + Math.floor(Math.random() * 2); // a few full spins for flair
+  var options = ROULETTE_ANGLE_BY_COLOR[landed];
+  var angle = options[Math.floor(Math.random() * options.length)];
+  var spins = 9 + Math.floor(Math.random() * 3); // long, fast-then-slow wind-down over the full 7.5s
   return spins * 360 + (360 - angle);
+}
+
+function _polarXY(cx, cy, r, angleDeg) {
+  var rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
+}
+
+// Builds the realistic wheel face: a numbered red/black/green pocket ring
+// (in real wheel order, not 0-36 sequential) around a raised 3D gold hub
+// with a cross spindle, styled after an actual casino roulette wheel.
+(function buildRouletteWheel() {
+  var mount = document.getElementById('roulette-wheel');
+  if (!mount) return;
+  var cx = 120, cy = 120, rOuter = 116, rInner = 66, rHub = 64, rTextMid = (rOuter + rInner) / 2 + 6;
+  var colorFill = { green: '#1a7a3c', red: '#8a1424', black: '#141414' };
+
+  var wedges = '', numbers = '';
+  ROULETTE_WHEEL_ORDER.forEach(function (n, i) {
+    var start = i * ROULETTE_SLICE_DEG, end = start + ROULETTE_SLICE_DEG, center = start + ROULETTE_SLICE_DEG / 2;
+    var p1 = _polarXY(cx, cy, rOuter, start), p2 = _polarXY(cx, cy, rOuter, end);
+    var p3 = _polarXY(cx, cy, rInner, end), p4 = _polarXY(cx, cy, rInner, start);
+    var d = 'M ' + p1.x + ' ' + p1.y + ' A ' + rOuter + ' ' + rOuter + ' 0 0 1 ' + p2.x + ' ' + p2.y +
+            ' L ' + p3.x + ' ' + p3.y + ' A ' + rInner + ' ' + rInner + ' 0 0 0 ' + p4.x + ' ' + p4.y + ' Z';
+    wedges += '<path d="' + d + '" fill="' + colorFill[_rouletteNumColor(n)] + '" stroke="#d4b579" stroke-width="0.6"/>';
+    var tp = _polarXY(cx, cy, rTextMid, center);
+    numbers += '<text x="' + tp.x + '" y="' + tp.y + '" transform="rotate(' + center + ' ' + tp.x + ' ' + tp.y + ')" ' +
+      'text-anchor="middle" dominant-baseline="middle" font-size="9" font-weight="700" fill="#f3ebdd" font-family="Arial, sans-serif">' + n + '</text>';
+  });
+
+  mount.innerHTML =
+    '<svg viewBox="0 0 240 240">' +
+      '<defs>' +
+        '<radialGradient id="rlHub" cx="38%" cy="30%" r="75%">' +
+          '<stop offset="0%" stop-color="#fdf0c8"/><stop offset="35%" stop-color="#d4b579"/><stop offset="75%" stop-color="#9a7a3f"/><stop offset="100%" stop-color="#5e4722"/>' +
+        '</radialGradient>' +
+        '<radialGradient id="rlKnob" cx="35%" cy="30%" r="70%">' +
+          '<stop offset="0%" stop-color="#fff8e4"/><stop offset="45%" stop-color="#e8cd8f"/><stop offset="100%" stop-color="#8a6a35"/>' +
+        '</radialGradient>' +
+        '<linearGradient id="rlBar" x1="0%" y1="0%" x2="100%" y2="100%">' +
+          '<stop offset="0%" stop-color="#fdf0c8"/><stop offset="50%" stop-color="#c7a765"/><stop offset="100%" stop-color="#7a5e2f"/>' +
+        '</linearGradient>' +
+      '</defs>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + (rOuter + 2) + '" fill="none" stroke="#d4b579" stroke-width="4"/>' +
+      wedges + numbers +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + rHub + '" fill="url(#rlHub)" stroke="#5e4722" stroke-width="1.5"/>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + rHub + '" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="1" transform="translate(-2,-2)"/>' +
+      '<g>' +
+        '<rect x="' + (cx - 4) + '" y="' + (cy - rHub + 6) + '" width="8" height="' + (rHub * 2 - 12) + '" rx="4" fill="url(#rlBar)" stroke="#4a3a1c" stroke-width="0.5"/>' +
+        '<rect x="' + (cx - rHub + 6) + '" y="' + (cy - 4) + '" width="' + (rHub * 2 - 12) + '" height="8" rx="4" fill="url(#rlBar)" stroke="#4a3a1c" stroke-width="0.5"/>' +
+      '</g>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="15" fill="url(#rlKnob)" stroke="#4a3a1c" stroke-width="1"/>' +
+      '<ellipse cx="' + (cx - 4) + '" cy="' + (cy - 5) + '" rx="5" ry="3" fill="rgba(255,255,255,.55)"/>' +
+    '</svg>';
+})();
+
+(function buildRouletteGrid() {
+  var grid = document.getElementById('rt-grid');
+  if (!grid) return;
+  var html = '';
+  for (var n = 1; n <= 36; n++) {
+    html += '<button class="rt-num ' + _rouletteNumColor(n) + '" onclick="placeRouletteBet(\'' + n + '\')">' + n + '</button>';
+  }
+  grid.innerHTML = html;
+})();
+
+var _rouletteBetChoice = null;
+function _setRouletteBoardDisabled(disabled) {
+  document.querySelectorAll('#roulette-board button').forEach(function (b) { b.disabled = disabled; });
+}
+
+function _rouletteBetDisplay(bet) {
+  if (bet === 'red') return '● RED';
+  if (bet === 'black') return '● BLACK';
+  return 'Number ' + bet;
+}
+
+// "🎯 Pick a No." doesn't bet by itself — it highlights every number tile
+// with a pulsing glow and prompts the guest to tap one, so the single-number
+// bet (FREE ticket) is as discoverable as the one-tap Red/Black buttons.
+function promptNumberBet() {
+  document.querySelectorAll('.rt-num, #rt-zero').forEach(function (el) { el.classList.add('glow'); });
+  document.getElementById('roulette-pick-prompt').classList.add('show');
+  document.querySelector('.bet-pick').classList.add('active');
+  document.querySelector('.roulette-table').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function _clearNumberPrompt() {
+  document.querySelectorAll('.rt-num, #rt-zero').forEach(function (el) { el.classList.remove('glow'); });
+  document.getElementById('roulette-pick-prompt').classList.remove('show');
+  var pickBtn = document.querySelector('.bet-pick');
+  if (pickBtn) pickBtn.classList.remove('active');
 }
 
 function placeRouletteBet(bet) {
   var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
-  document.querySelectorAll('#roulette-bets .bet-btn').forEach(function (b) { b.disabled = true; });
+  _rouletteBetChoice = bet;
+  _clearNumberPrompt();
+  _setRouletteBoardDisabled(true);
   document.getElementById('roulette-spinning-note').style.display = 'block';
+  // Shown the instant a bet is placed — number bets had no visible
+  // confirmation of what was wagered before this, unlike the Red/Black
+  // buttons which already carried their own label.
+  document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(bet);
+  document.getElementById('roulette-bet-label').style.display = 'inline-block';
 
   fetch('/event/diwali-soiree/roulette-spin', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone: phoneDigits, bet: bet }),
   }).then(function (r) { return r.json(); }).then(function (d) {
-    if (!d.landed) { document.getElementById('roulette-spinning-note').style.display = 'none'; return; }
+    if (!d.landed) { document.getElementById('roulette-spinning-note').style.display = 'none'; _setRouletteBoardDisabled(false); return; }
     _rouletteRoll = d;
     var wheel = document.getElementById('roulette-wheel');
     wheel.style.transform = 'rotate(' + _rouletteTargetRotation(d.landed) + 'deg)';
-    setTimeout(renderRouletteResult, 3100);
+
+    // Ball orbits opposite the wheel, several extra fast laps, always ending
+    // back at the same angle it started (top) — which is exactly where the
+    // winning pocket lands too, since the wheel rotation always brings the
+    // target pocket to the top. Falls from the rim track onto the number
+    // ring only in the final ~1.4s (see the CSS transition-delay).
+    var ballTrack = document.getElementById('roulette-ball-track');
+    var ballLaps = 13 + Math.floor(Math.random() * 3);
+    ballTrack.style.transform = 'rotate(' + (-ballLaps * 360) + 'deg)';
+    document.getElementById('roulette-ball').style.transform = 'translateY(-100px)';
+
+    setTimeout(renderRouletteResult, 7700);
   }).catch(function () {
     document.getElementById('roulette-spinning-note').style.display = 'none';
-    document.querySelectorAll('#roulette-bets .bet-btn').forEach(function (b) { b.disabled = false; });
+    _setRouletteBoardDisabled(false);
   });
 }
 
@@ -785,17 +1067,19 @@ function _fmtRouletteCountdown(ms) { return _fmtCountdown(ms); }
 function renderRouletteResult() {
   if (!_rouletteRoll) return;
   document.getElementById('roulette-spinning-note').style.display = 'none';
-  document.getElementById('roulette-bets').style.display = 'none';
+  document.getElementById('roulette-board').style.display = 'none';
   var resultEl = document.getElementById('roulette-result');
   resultEl.classList.add('show');
   var countdownEl = document.getElementById('rl-countdown');
   var actionsEl = document.getElementById('rl-actions');
   var claimBtn = document.getElementById('rl-claim-btn');
 
+  var betDisplay = _rouletteBetDisplay(_rouletteRoll.bet);
+
   if (!_rouletteRoll.win) {
     document.getElementById('rl-eyebrow').textContent = 'So close!';
     document.getElementById('rl-code').textContent = 'NO WIN THIS TIME';
-    document.getElementById('rl-text').textContent = 'The wheel wasn\'t with you this round — your ticket price stays as is. Better luck for next Diwali 🪔';
+    document.getElementById('rl-text').textContent = 'Your bet on ' + betDisplay + ' didn\'t hit this round — your ticket price stays as is. Better luck for next Diwali 🪔';
     countdownEl.style.display = 'none';
     actionsEl.style.display = 'none';
     return;
@@ -805,8 +1089,8 @@ function renderRouletteResult() {
   document.getElementById('rl-eyebrow').textContent = 'You won!';
   document.getElementById('rl-code').textContent = isColor ? '₹100 OFF' : 'FREE TICKET';
   document.getElementById('rl-text').textContent = isColor
-    ? 'The wheel landed on your color! Claim your ₹100 off before the timer runs out.'
-    : 'Jackpot — the wheel landed on 7! Claim your FREE ticket before the timer runs out.';
+    ? 'Your bet on ' + betDisplay + ' hit! Claim your ₹100 off before the timer runs out.'
+    : 'Jackpot — your bet on ' + betDisplay + ' hit the green! Claim your FREE ticket before the timer runs out.';
   claimBtn.textContent = isColor ? 'Claim ₹100 Off' : 'Claim Free Ticket';
   claimBtn.disabled = _rouletteRoll.status === 'claimed';
   actionsEl.style.display = 'flex';
@@ -831,7 +1115,7 @@ function renderRouletteResult() {
   } else {
     countdownEl.style.display = 'none';
     if (_rouletteRoll.status === 'expired') {
-      document.getElementById('rl-text').textContent = "⏳ Your 1-minute window is gone. That win is gone too — better luck for next Diwali 🪔";
+      document.getElementById('rl-text').textContent = "⏳ Your 2-hour window is gone. That win is gone too — better luck for next Diwali 🪔";
       actionsEl.style.display = 'none';
     }
   }
@@ -868,6 +1152,7 @@ function claimRouletteWin() {
       document.getElementById('prank-remove-btn').style.display = 'inline-block';
       document.getElementById('prank-remove-btn').onclick = removeRouletteWin;
       document.getElementById('prank-result').classList.add('show');
+      _setPayBarDeal(originalAmount, _rouletteRoll.expiresAt);
       renderRouletteResult();
     }).catch(function () {});
 }
@@ -885,6 +1170,7 @@ function removeRouletteWin() {
     document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
     document.getElementById('prank-result').classList.remove('show');
     document.getElementById('prank-remove-btn').onclick = removePrankCode;
+    _clearPayBarDeal();
     if (d.status) { _rouletteRoll.status = d.status; renderRouletteResult(); }
   }).catch(function () {});
 }

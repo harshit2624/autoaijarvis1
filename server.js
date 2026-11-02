@@ -16713,30 +16713,19 @@ const DIWALI_TICKET_TIERS = {
 // record rather than anything the client claims. CHARCHIT&FRIENDS stays
 // in the pool as one possible (unlucky) outcome instead of happening to
 // everyone.
-const DIWALI_SCRATCH_WEIGHTS = [
-  { outcome: 'rasogulla',     weight: 18 }, // free physical treat, no price change
-  { outcome: 'roulette',      weight: 17 }, // unlocks the roulette mini-game
-  { outcome: 'discount100',   weight: 18 }, // ₹100 off, 60s window to claim
-  { outcome: 'buy5get6',      weight: 17 }, // group tier gets a free 6th entry, 5min window
-  { outcome: 'freeticket499', weight: 30 }, // CREATESXCROSCROW shopping code, 2min window
-];
-const DIWALI_SCRATCH_WINDOW_MS = { discount100: 60 * 1000, buy5get6: 5 * 60 * 1000, freeticket499: 2 * 60 * 1000 };
-
-// Roulette mini-game — unlocked by the 'roulette' scratch outcome. Two bets:
-// a color (red/black, 60% win → ₹100 off) or the lucky number (5% win → free
-// ticket). Odds are enforced here, server-side, never on the client.
-const DIWALI_ROULETTE_WIN_PROB = { red: 0.60, black: 0.60, number: 0.05 };
-const DIWALI_ROULETTE_WINDOW_MS = 60 * 1000;
-
+// Every guest unlocks the roulette mini-game directly — no scratch card, no
+// other outcomes. Kept as a function (rather than a bare constant) so the
+// 'outcome' field threading through scratch-roll/claim/applyDiwaliScratchPerk
+// still makes sense unchanged.
 function rollDiwaliScratchOutcome() {
-  const total = DIWALI_SCRATCH_WEIGHTS.reduce((s, w) => s + w.weight, 0);
-  let r = Math.random() * total;
-  for (const w of DIWALI_SCRATCH_WEIGHTS) {
-    if (r < w.weight) return w.outcome;
-    r -= w.weight;
-  }
-  return DIWALI_SCRATCH_WEIGHTS[0].outcome;
+  return 'roulette';
 }
+
+// Roulette mini-game. Two bets: a color (red/black, 60% win → ₹100 off) or
+// the lucky number (5% win → free ticket). Odds are enforced here,
+// server-side, never on the client.
+const DIWALI_ROULETTE_WIN_PROB = { red: 0.60, black: 0.60, number: 0.05 };
+const DIWALI_ROULETTE_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 // Blocks obviously fake numbers (all-same-digit, simple runs) that people
 // type to get past the "fill your phone" gate without giving a real one.
@@ -16748,24 +16737,16 @@ function isFakeDiwaliPhone(phone) {
   return false;
 }
 
-// Returns the current roll for a phone, creating one on first call. A
-// timed outcome (discount100/buy5get6) flips to 'expired' lazily here the
-// first time anyone checks it past its window, rather than needing a cron.
+// Returns the current roll for a phone, creating one on first call. Reusing
+// the same phone always returns its original roll — one spin opportunity
+// per guest, not re-rollable by refreshing or re-entering the same number.
 async function getOrRollDiwaliScratch(phone, name) {
   const existing = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
-  if (existing) {
-    if (existing.status === 'active' && existing.expiresAt && Date.now() > new Date(existing.expiresAt).getTime()) {
-      await mdb.collection('diwali_scratch_rolls').updateOne({ phone }, { $set: { status: 'expired' } });
-      existing.status = 'expired';
-    }
-    return existing;
-  }
-  const outcome = rollDiwaliScratchOutcome();
-  const windowMs = DIWALI_SCRATCH_WINDOW_MS[outcome] || null;
+  if (existing) return existing;
   const doc = {
-    phone, name: name || '', outcome, status: 'active',
+    phone, name: name || '', outcome: rollDiwaliScratchOutcome(), status: 'active',
     rolledAt: new Date().toISOString(),
-    expiresAt: windowMs ? new Date(Date.now() + windowMs).toISOString() : null,
+    expiresAt: null,
   };
   await mdb.collection('diwali_scratch_rolls').insertOne(doc);
   return doc;
@@ -16847,8 +16828,12 @@ async function applyDiwaliScratchPerk(phone, tier, baseAmount) {
 app.post('/event/diwali-soiree/roulette-spin', async (req, res) => {
   try {
     const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
-    const bet = req.body?.bet;
-    if (!['red', 'black', 'number'].includes(bet)) return res.status(400).json({ error: 'Invalid bet.' });
+    const rawBet = req.body?.bet;
+    const bet = String(rawBet);
+    const isColor = bet === 'red' || bet === 'black';
+    const betNum = Number(bet);
+    const isNumber = /^\d+$/.test(bet) && Number.isInteger(betNum) && betNum >= 0 && betNum <= 36;
+    if (!isColor && !isNumber) return res.status(400).json({ error: 'Invalid bet.' });
 
     const scratch = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
     if (!scratch || scratch.outcome !== 'roulette') return res.status(403).json({ error: 'Roulette is not unlocked for this number.' });
@@ -16858,12 +16843,16 @@ app.post('/event/diwali-soiree/roulette-spin', async (req, res) => {
       return res.json({ win: existing.win, reward: existing.reward, bet: existing.bet, landed: existing.landed, status: existing.status, expiresAt: existing.expiresAt });
     }
 
-    const win = Math.random() < DIWALI_ROULETTE_WIN_PROB[bet];
-    const reward = !win ? null : (bet === 'number' ? 'roulette_number_free' : 'roulette_color100');
+    // Any single-number bet (0-36) carries the same 5% odds regardless of
+    // which number was picked — the board lets guests pick any number for
+    // the "casino table" feel, but the number itself doesn't change the odds.
+    const winProb = isColor ? DIWALI_ROULETTE_WIN_PROB[bet] : DIWALI_ROULETTE_WIN_PROB.number;
+    const win = Math.random() < winProb;
+    const reward = !win ? null : (isColor ? 'roulette_color100' : 'roulette_number_free');
     // Cosmetic landing spot for the wheel animation — made consistent with
     // the real win/lose outcome so the spin never visually contradicts it.
     let landed;
-    if (bet === 'number') landed = win ? 'seven' : (Math.random() < 0.5 ? 'red' : 'black');
+    if (isNumber) landed = win ? 'green' : (Math.random() < 0.5 ? 'red' : 'black');
     else landed = win ? bet : (bet === 'red' ? 'black' : 'red');
 
     const doc = {
