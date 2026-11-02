@@ -16715,12 +16715,18 @@ const DIWALI_TICKET_TIERS = {
 // everyone.
 const DIWALI_SCRATCH_WEIGHTS = [
   { outcome: 'rasogulla',     weight: 18 }, // free physical treat, no price change
-  { outcome: 'prank',         weight: 17 }, // CHARCHIT&FRIENDS — price doubles
+  { outcome: 'roulette',      weight: 17 }, // unlocks the roulette mini-game
   { outcome: 'discount100',   weight: 18 }, // ₹100 off, 60s window to claim
   { outcome: 'buy5get6',      weight: 17 }, // group tier gets a free 6th entry, 5min window
   { outcome: 'freeticket499', weight: 30 }, // CREATESXCROSCROW shopping code, 2min window
 ];
 const DIWALI_SCRATCH_WINDOW_MS = { discount100: 60 * 1000, buy5get6: 5 * 60 * 1000, freeticket499: 2 * 60 * 1000 };
+
+// Roulette mini-game — unlocked by the 'roulette' scratch outcome. Two bets:
+// a color (red/black, 60% win → ₹100 off) or the lucky number (5% win → free
+// ticket). Odds are enforced here, server-side, never on the client.
+const DIWALI_ROULETTE_WIN_PROB = { red: 0.60, black: 0.60, number: 0.05 };
+const DIWALI_ROULETTE_WINDOW_MS = 60 * 1000;
 
 function rollDiwaliScratchOutcome() {
   const total = DIWALI_SCRATCH_WEIGHTS.reduce((s, w) => s + w.weight, 0);
@@ -16813,15 +16819,87 @@ app.post('/event/diwali-soiree/scratch-unclaim', async (req, res) => {
 // Never trusts anything the client says about price — only this record.
 async function applyDiwaliScratchPerk(phone, tier, baseAmount) {
   const roll = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
-  if (!roll || roll.status !== 'claimed') return { amount: baseAmount, perk: null };
+  if (!roll) return { amount: baseAmount, perk: null };
+
+  // 'roulette' doesn't carry its own perk — the real result lives in the
+  // roulette spin record, rolled and claimed via the endpoints below.
+  if (roll.outcome === 'roulette') {
+    const spin = await mdb.collection('diwali_roulette_rolls').findOne({ phone });
+    if (!spin || spin.status !== 'claimed' || !spin.win) return { amount: baseAmount, perk: null };
+    if (spin.expiresAt && Date.now() > new Date(spin.expiresAt).getTime()) return { amount: baseAmount, perk: null };
+    if (spin.reward === 'roulette_color100') return { amount: Math.max(1, baseAmount - 100), perk: 'roulette_color100' };
+    if (spin.reward === 'roulette_number_free') return { amount: 1, perk: 'roulette_number_free' }; // free ticket — ₹1 is Razorpay's minimum chargeable amount
+    return { amount: baseAmount, perk: null };
+  }
+
+  if (roll.status !== 'claimed') return { amount: baseAmount, perk: null };
   if (roll.expiresAt && Date.now() > new Date(roll.expiresAt).getTime()) return { amount: baseAmount, perk: null };
-  if (roll.outcome === 'prank') return { amount: baseAmount * 2, perk: 'prank' };
   if (roll.outcome === 'discount100') return { amount: Math.max(1, baseAmount - 100), perk: 'discount100' };
   if (roll.outcome === 'buy5get6' && tier === 'group') return { amount: baseAmount, perk: 'buy5get6' };
   if (roll.outcome === 'rasogulla') return { amount: baseAmount, perk: 'rasogulla' };
   if (roll.outcome === 'freeticket499') return { amount: baseAmount, perk: 'freeticket499' }; // ticket price unchanged — the win is the CREATESXCROSCROW shopping code
   return { amount: baseAmount, perk: null };
 }
+
+// Rolls a roulette spin for a phone that has unlocked it via the scratch
+// card. One spin per phone — re-fetching just returns the stored result,
+// so refreshing can't be used to re-roll for better odds.
+app.post('/event/diwali-soiree/roulette-spin', async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+    const bet = req.body?.bet;
+    if (!['red', 'black', 'number'].includes(bet)) return res.status(400).json({ error: 'Invalid bet.' });
+
+    const scratch = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
+    if (!scratch || scratch.outcome !== 'roulette') return res.status(403).json({ error: 'Roulette is not unlocked for this number.' });
+
+    const existing = await mdb.collection('diwali_roulette_rolls').findOne({ phone });
+    if (existing) {
+      return res.json({ win: existing.win, reward: existing.reward, bet: existing.bet, landed: existing.landed, status: existing.status, expiresAt: existing.expiresAt });
+    }
+
+    const win = Math.random() < DIWALI_ROULETTE_WIN_PROB[bet];
+    const reward = !win ? null : (bet === 'number' ? 'roulette_number_free' : 'roulette_color100');
+    // Cosmetic landing spot for the wheel animation — made consistent with
+    // the real win/lose outcome so the spin never visually contradicts it.
+    let landed;
+    if (bet === 'number') landed = win ? 'seven' : (Math.random() < 0.5 ? 'red' : 'black');
+    else landed = win ? bet : (bet === 'red' ? 'black' : 'red');
+
+    const doc = {
+      phone, bet, win, reward, landed, status: 'active',
+      spunAt: new Date().toISOString(),
+      expiresAt: win ? new Date(Date.now() + DIWALI_ROULETTE_WINDOW_MS).toISOString() : null,
+    };
+    await mdb.collection('diwali_roulette_rolls').insertOne(doc);
+    res.json({ win, reward, bet, landed, status: 'active', expiresAt: doc.expiresAt });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/event/diwali-soiree/roulette-claim', async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+    const spin = await mdb.collection('diwali_roulette_rolls').findOne({ phone });
+    if (!spin || !spin.win) return res.status(404).json({ error: 'No roulette win found for this number.' });
+    if (spin.status === 'expired' || (spin.expiresAt && Date.now() > new Date(spin.expiresAt).getTime())) {
+      await mdb.collection('diwali_roulette_rolls').updateOne({ phone }, { $set: { status: 'expired' } });
+      return res.status(410).json({ error: 'expired' });
+    }
+    await mdb.collection('diwali_roulette_rolls').updateOne({ phone }, { $set: { status: 'claimed' } });
+    res.json({ ok: true, win: spin.win, reward: spin.reward });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/event/diwali-soiree/roulette-unclaim', async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || '').replace(/\D/g, '').slice(-10);
+    const spin = await mdb.collection('diwali_roulette_rolls').findOne({ phone });
+    if (!spin || spin.status !== 'claimed') return res.json({ ok: true });
+    const expired = spin.expiresAt && Date.now() > new Date(spin.expiresAt).getTime();
+    await mdb.collection('diwali_roulette_rolls').updateOne({ phone }, { $set: { status: expired ? 'expired' : 'active' } });
+    res.json({ ok: true, status: expired ? 'expired' : 'active' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.get('/diwali-soiree', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'diwali-soiree.html'));
@@ -16958,7 +17036,7 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
       created_at: now,
     });
     auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: finalAmount, perk, name, phone });
-    const _perkLine = perk === 'prank' ? '\nScratch: CHARCHIT&FRIENDS (doubled)' : perk === 'discount100' ? '\nScratch: ₹100 off claimed' : perk === 'buy5get6' ? '\n🎉 Scratch: BONUS — let 6 in on this ticket!' : perk === 'rasogulla' ? '\n🍬 Scratch: free magic rasogulla — hand it out' : perk === 'freeticket499' ? '\n🛍️ Scratch: CREATESXCROSCROW shopping code claimed' : '';
+    const _perkLine = perk === 'discount100' ? '\nScratch: ₹100 off claimed' : perk === 'buy5get6' ? '\n🎉 Scratch: BONUS — let 6 in on this ticket!' : perk === 'rasogulla' ? '\n🍬 Scratch: free magic rasogulla — hand it out' : perk === 'freeticket499' ? '\n🛍️ Scratch: CREATESXCROSCROW shopping code claimed' : perk === 'roulette_color100' ? '\n🎰 Roulette: color bet won — ₹100 off claimed' : perk === 'roulette_number_free' ? '\n🎰 Roulette: lucky number won — FREE ticket' : '';
     waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${finalAmount})\nName: ${name || '-'}\nPhone: ${phone || '-'}${_perkLine}`, 'event_ticket').catch(() => {});
     sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: finalAmount, name, email }).catch(() => {});
     sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: phoneDigits }).catch(() => {});

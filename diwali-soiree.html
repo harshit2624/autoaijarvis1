@@ -211,6 +211,35 @@ img{display:block;max-width:100%}
 .sr-countdown.urgent{animation:sr-pulse 1s ease-in-out infinite}
 @keyframes sr-pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .prank-remove-btn{font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:transparent;border:1px solid var(--border-strong);color:var(--text);padding:9px 20px;cursor:pointer;font-family:inherit}
+
+/* ── Roulette mini-game — takes the scratch card's place once unlocked ── */
+.roulette-widget{display:none;flex-direction:column;align-items:center;gap:18px;padding:22px 16px 20px;border:1px solid var(--border-strong);background:radial-gradient(ellipse at center,#0f2b1d 0%,#0a1f14 100%);}
+.roulette-widget.show{display:flex}
+.roulette-eyebrow{font-size:9.5px;letter-spacing:.16em;color:#d4b579;text-transform:uppercase;opacity:.85}
+.roulette-wheel-wrap{position:relative;width:148px;height:148px}
+.roulette-wheel{
+  width:100%;height:100%;border-radius:50%;
+  background:conic-gradient(#d4b579 0deg 45deg,#8a1424 45deg 90deg,#111 90deg 135deg,#8a1424 135deg 180deg,#111 180deg 225deg,#8a1424 225deg 270deg,#111 270deg 315deg,#8a1424 315deg 360deg);
+  border:3px solid #d4b579;box-shadow:0 0 0 1px rgba(212,181,121,.3),inset 0 0 18px rgba(0,0,0,.5);
+  transition:transform 3s cubic-bezier(.15,.75,.15,1);
+}
+.roulette-wheel::after{content:'';position:absolute;inset:38%;border-radius:50%;background:#0a1f14;border:2px solid #d4b579;box-shadow:0 0 10px rgba(0,0,0,.6)}
+.roulette-pointer{position:absolute;top:-9px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:12px solid #d4b579;z-index:3;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+.roulette-bets{display:flex;gap:8px;width:100%;max-width:280px}
+.bet-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:11px 6px;border:1px solid rgba(212,181,121,.4);background:rgba(0,0,0,.25);color:#f3ebdd;cursor:pointer;font-family:inherit;transition:border-color .2s ease,background .2s ease}
+.bet-btn:hover{border-color:#d4b579;background:rgba(212,181,121,.08)}
+.bet-btn:disabled{opacity:.4;cursor:default;pointer-events:none}
+.bet-btn b{font-size:12px;letter-spacing:.04em}
+.bet-btn span{font-size:8.5px;color:#9fb3a5;letter-spacing:.03em}
+.bet-red b{color:#e0536a}
+.bet-black b{color:#eee}
+.bet-seven b{color:#d4b579}
+.roulette-spinning-note{font-size:10px;color:#9fb3a5;letter-spacing:.08em;text-transform:uppercase}
+.roulette-result{display:none;flex-direction:column;align-items:center;gap:9px;text-align:center}
+.roulette-result.show{display:flex}
+.roulette-result .sr-eyebrow{font-size:9.5px;letter-spacing:.16em;color:#d4b579;text-transform:uppercase}
+.roulette-result .sr-code{font-family:'Bodoni Moda',serif;font-size:19px;color:var(--gold-bright);letter-spacing:.06em}
+.roulette-result .sr-text{font-size:11px;color:#dce8e0;line-height:1.6;max-width:230px}
 @media (min-width:600px){.wrap{box-shadow:0 0 80px rgba(0,0,0,.55)}}
 </style>
 </head>
@@ -282,6 +311,30 @@ img{display:block;max-width:100%}
         <div class="prank-shine" id="prank-shine"></div>
         <div class="prank-lock" id="prank-lock">Fill your name &amp; phone above to unlock</div>
       </div>
+
+      <div class="roulette-widget" id="roulette-widget">
+        <span class="roulette-eyebrow">🎰 Croscrow Roulette</span>
+        <div class="roulette-wheel-wrap">
+          <div class="roulette-pointer"></div>
+          <div class="roulette-wheel" id="roulette-wheel"></div>
+        </div>
+        <div class="roulette-bets" id="roulette-bets">
+          <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● Red</b><span>60% win · ₹100 off</span></button>
+          <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● Black</b><span>60% win · ₹100 off</span></button>
+          <button class="bet-btn bet-seven" onclick="placeRouletteBet('number')"><b>7</b><span>5% win · FREE ticket</span></button>
+        </div>
+        <span class="roulette-spinning-note" id="roulette-spinning-note" style="display:none">Spinning…</span>
+        <div class="roulette-result" id="roulette-result">
+          <span class="sr-eyebrow" id="rl-eyebrow"></span>
+          <span class="sr-code" id="rl-code"></span>
+          <span class="sr-text" id="rl-text"></span>
+          <span class="sr-countdown" id="rl-countdown" style="display:none"></span>
+          <div class="sr-actions" id="rl-actions" style="display:none">
+            <button class="btn-shop-sm" id="rl-claim-btn" style="flex:1" onclick="claimRouletteWin()"></button>
+          </div>
+        </div>
+      </div>
+
       <div class="prank-result" id="prank-result">
         <span id="prank-price-line" class="prank-price-line"></span>
         <span id="prank-result-text"></span>
@@ -472,9 +525,10 @@ function selectTier(el) {
   selectedTier = el.dataset.tier;
   selectedAmount = parseInt(el.dataset.amount, 10);
   document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
-  // Switching tiers after applying the prank code would leave a doubled
-  // amount for the wrong tier — just drop it, keep the card scratched.
+  // Switching tiers after applying a price-affecting perk would leave the
+  // wrong amount locked in for the new tier — just drop it, keep the card scratched.
   if (_prankApplied) removePrankCode();
+  if (_rouletteApplied) removeRouletteWin();
 }
 
 // ── Scratch card — genuine random outcome (pre-payment) ─────────────
@@ -483,18 +537,20 @@ function selectTier(el) {
 // keyed by phone — so it can't be re-rolled by refreshing, and the price
 // actually charged always comes from the same server-side record at
 // checkout, never from anything shown here. Possible outcomes: a free
-// rasogulla (most common, no price change), the CHARCHIT&FRIENDS prank
-// (price doubles — now just one of several possible outcomes, not
-// guaranteed), ₹100 off (60s to claim), or a free 6th entry on a Group
-// ticket (5min to claim).
+// rasogulla (most common, no price change), the roulette mini-game (bet
+// on a color or the lucky number for a bigger prize), ₹100 off (60s to
+// claim), or a free 6th entry on a Group ticket (5min to claim).
 var _prankApplied = false;
+var _rouletteApplied = false;
 var _prankUnlocked = false;
 var _scratchRoll = null; // { outcome, status, expiresAt }
 var _scratchCountdownTimer = null;
+var _rouletteRoll = null; // { bet, win, reward, landed, status, expiresAt }
+var _rouletteCountdownTimer = null;
 
 var SCRATCH_COPY = {
   rasogulla:     { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
-  prank:         { eyebrow: "This one's for close friends only", code: 'CHARCHIT&FRIENDS', text: "If you're this close... don't you think you should contribute more 👀?", btn: 'Contribute' },
+  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for ₹100 off, or go for the lucky number for a free ticket.', btn: 'Play Roulette' },
   discount100:   { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
   buy5get6:      { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
   freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2:00 to lock it in.', btn: 'Apply Now' },
@@ -612,6 +668,19 @@ function renderScratchOutcome() {
 function applyScratchOutcome() {
   if (!_scratchRoll || _prankApplied) return;
   var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+
+  // Roulette doesn't apply a perk directly — it just unlocks the mini-game,
+  // which takes over the scratch card's spot.
+  if (_scratchRoll.outcome === 'roulette') {
+    fetch('/event/diwali-soiree/scratch-claim', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: phoneDigits }),
+    }).catch(function () {});
+    document.getElementById('prank-card').style.display = 'none';
+    document.getElementById('roulette-widget').classList.add('show');
+    return;
+  }
+
   fetch('/event/diwali-soiree/scratch-claim', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone: phoneDigits }),
@@ -631,12 +700,7 @@ function applyScratchOutcome() {
       var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
       var resultText = '';
 
-      if (outcome === 'prank') {
-        selectedAmount = originalAmount * 2;
-        document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
-        document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
-        resultText = "If you're this close... don't you think you should contribute more 👀?";
-      } else if (outcome === 'discount100') {
+      if (outcome === 'discount100') {
         selectedAmount = Math.max(1, originalAmount - 100);
         document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
         document.getElementById('prank-price-line').textContent = '₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN');
@@ -669,7 +733,7 @@ function copyForRasogullaResult() {
 
 function removePrankCode() {
   if (!_prankApplied || !_scratchRoll) return;
-  if (_scratchRoll.outcome !== 'prank' && _scratchRoll.outcome !== 'discount100') return; // only price-affecting perks are removable
+  if (_scratchRoll.outcome !== 'discount100') return; // only price-affecting scratch perks are removable
   var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
   fetch('/event/diwali-soiree/scratch-unclaim', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -681,6 +745,147 @@ function removePrankCode() {
     document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
     document.getElementById('prank-result').classList.remove('show');
     if (d.status) { _scratchRoll.status = d.status; renderScratchOutcome(); }
+  }).catch(function () {});
+}
+
+// ── Roulette mini-game ───────────────────────────────────────────────
+// Server rolls the real outcome (odds are enforced there, never here) —
+// this only animates the wheel to land somewhere consistent with it, then
+// reveals the win/lose result.
+var ROULETTE_LANDED_ANGLE = { seven: 22.5, red: [67.5, 157.5, 247.5, 337.5], black: [112.5, 202.5, 292.5] };
+function _rouletteTargetRotation(landed) {
+  var base = ROULETTE_LANDED_ANGLE[landed];
+  var angle = Array.isArray(base) ? base[Math.floor(Math.random() * base.length)] : base;
+  var spins = 4 + Math.floor(Math.random() * 2); // a few full spins for flair
+  return spins * 360 + (360 - angle);
+}
+
+function placeRouletteBet(bet) {
+  var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  document.querySelectorAll('#roulette-bets .bet-btn').forEach(function (b) { b.disabled = true; });
+  document.getElementById('roulette-spinning-note').style.display = 'block';
+
+  fetch('/event/diwali-soiree/roulette-spin', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits, bet: bet }),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.landed) { document.getElementById('roulette-spinning-note').style.display = 'none'; return; }
+    _rouletteRoll = d;
+    var wheel = document.getElementById('roulette-wheel');
+    wheel.style.transform = 'rotate(' + _rouletteTargetRotation(d.landed) + 'deg)';
+    setTimeout(renderRouletteResult, 3100);
+  }).catch(function () {
+    document.getElementById('roulette-spinning-note').style.display = 'none';
+    document.querySelectorAll('#roulette-bets .bet-btn').forEach(function (b) { b.disabled = false; });
+  });
+}
+
+function _fmtRouletteCountdown(ms) { return _fmtCountdown(ms); }
+
+function renderRouletteResult() {
+  if (!_rouletteRoll) return;
+  document.getElementById('roulette-spinning-note').style.display = 'none';
+  document.getElementById('roulette-bets').style.display = 'none';
+  var resultEl = document.getElementById('roulette-result');
+  resultEl.classList.add('show');
+  var countdownEl = document.getElementById('rl-countdown');
+  var actionsEl = document.getElementById('rl-actions');
+  var claimBtn = document.getElementById('rl-claim-btn');
+
+  if (!_rouletteRoll.win) {
+    document.getElementById('rl-eyebrow').textContent = 'So close!';
+    document.getElementById('rl-code').textContent = 'NO WIN THIS TIME';
+    document.getElementById('rl-text').textContent = 'The wheel wasn\'t with you this round — your ticket price stays as is. Better luck for next Diwali 🪔';
+    countdownEl.style.display = 'none';
+    actionsEl.style.display = 'none';
+    return;
+  }
+
+  var isColor = _rouletteRoll.reward === 'roulette_color100';
+  document.getElementById('rl-eyebrow').textContent = 'You won!';
+  document.getElementById('rl-code').textContent = isColor ? '₹100 OFF' : 'FREE TICKET';
+  document.getElementById('rl-text').textContent = isColor
+    ? 'The wheel landed on your color! Claim your ₹100 off before the timer runs out.'
+    : 'Jackpot — the wheel landed on 7! Claim your FREE ticket before the timer runs out.';
+  claimBtn.textContent = isColor ? 'Claim ₹100 Off' : 'Claim Free Ticket';
+  claimBtn.disabled = _rouletteRoll.status === 'claimed';
+  actionsEl.style.display = 'flex';
+
+  if (_rouletteRoll.expiresAt && _rouletteRoll.status === 'active') {
+    countdownEl.style.display = 'block';
+    if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
+    var expiresAtMs = new Date(_rouletteRoll.expiresAt).getTime();
+    var tick = function () {
+      var remaining = expiresAtMs - Date.now();
+      if (remaining <= 0) {
+        clearInterval(_rouletteCountdownTimer);
+        _rouletteRoll.status = 'expired';
+        renderRouletteResult();
+        return;
+      }
+      countdownEl.textContent = 'Ends in ' + _fmtRouletteCountdown(remaining);
+      countdownEl.classList.toggle('urgent', remaining < 10000);
+    };
+    tick();
+    _rouletteCountdownTimer = setInterval(tick, 1000);
+  } else {
+    countdownEl.style.display = 'none';
+    if (_rouletteRoll.status === 'expired') {
+      document.getElementById('rl-text').textContent = "⏳ Your 1-minute window is gone. That win is gone too — better luck for next Diwali 🪔";
+      actionsEl.style.display = 'none';
+    }
+  }
+}
+
+function claimRouletteWin() {
+  if (!_rouletteRoll || !_rouletteRoll.win || _rouletteApplied) return;
+  var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  fetch('/event/diwali-soiree/roulette-claim', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits }),
+  }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, body: d }; }); })
+    .then(function (res) {
+      if (!res.ok) {
+        _rouletteRoll.status = 'expired';
+        if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
+        renderRouletteResult();
+        return;
+      }
+      _rouletteApplied = true;
+      _rouletteRoll.status = 'claimed';
+      if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
+      var isColor = _rouletteRoll.reward === 'roulette_color100';
+      var selectedCard = document.querySelector('.ticket-card.selected');
+      var originalAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
+      selectedAmount = isColor ? Math.max(1, originalAmount - 100) : 1;
+      document.getElementById('pay-amt').textContent = isColor ? ('₹' + selectedAmount.toLocaleString('en-IN')) : 'FREE';
+      document.getElementById('prank-price-line').textContent = isColor
+        ? ('₹' + originalAmount.toLocaleString('en-IN') + ' → ₹' + selectedAmount.toLocaleString('en-IN'))
+        : ('₹' + originalAmount.toLocaleString('en-IN') + ' → FREE');
+      document.getElementById('prank-result-text').textContent = isColor
+        ? '₹100 off applied — locked in for this ticket.'
+        : 'Your ticket is FREE — locked in. See you at the Soiree!';
+      document.getElementById('prank-remove-btn').style.display = 'inline-block';
+      document.getElementById('prank-remove-btn').onclick = removeRouletteWin;
+      document.getElementById('prank-result').classList.add('show');
+      renderRouletteResult();
+    }).catch(function () {});
+}
+
+function removeRouletteWin() {
+  if (!_rouletteApplied || !_rouletteRoll) return;
+  var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
+  fetch('/event/diwali-soiree/roulette-unclaim', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: phoneDigits }),
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    _rouletteApplied = false;
+    var selectedCard = document.querySelector('.ticket-card.selected');
+    selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
+    document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+    document.getElementById('prank-result').classList.remove('show');
+    document.getElementById('prank-remove-btn').onclick = removePrankCode;
+    if (d.status) { _rouletteRoll.status = d.status; renderRouletteResult(); }
   }).catch(function () {});
 }
 function setErr(msg) { document.getElementById('err-msg').textContent = msg || ''; }
