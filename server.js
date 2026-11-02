@@ -28061,7 +28061,9 @@ app.post('/admin/wa-product-query-demo', adminAuth, async (req, res) => {
     const currentPrice = Math.round(product.price_from);
     const specialPrice = Math.round(currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
     const discountUrl = waProductInquiryDiscountUrl(product.url);
-    const text = `Current price: Rs. ${currentPrice}\nSpecial price for you: Rs. ${specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`;
+    // Optional override so admin can preview copy variants without a redeploy per variant.
+    const offersBlock = req.body?.offers_override || PRODUCT_INQUIRY_EXTRA_OFFERS;
+    const text = `Current price: Rs. ${currentPrice}\nSpecial price for you: Rs. ${specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${offersBlock}\n\nUse the button below to avail the discount.`;
 
     await waProxySock.sendMessage(`91${digits}@s.whatsapp.net`, {
       text,
