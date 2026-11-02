@@ -28027,6 +28027,10 @@ app.get('/mine-game.js', (req, res) => {
 // doesn't recognize even if they're valid on Shopify's side.
 const PRODUCT_INQUIRY_DISCOUNT_CODE = 'SPECIALQUERY';
 const PRODUCT_INQUIRY_DISCOUNT_PCT = 10;
+// Informational only — no separate code/button, just surfaces the two
+// site-wide offers under the SPECIALQUERY price so a customer buying more
+// than one item knows a bigger discount exists before they check out.
+const PRODUCT_INQUIRY_EXTRA_OFFERS = '🔥 More ways to save:\n• Buy any 2 products → FLAT ₹300 OFF\n• Order above ₹4999 → FLAT ₹1000 OFF';
 // GoKwik UTM auto-discount rule for SPECIALQUERY (Marketing → Discounts →
 // SPECIALQUERY → UTM rule): exact match, source=whatsapp / medium=chatbot
 // / campaign=product_query, Auto-apply on Checkout ON. Deliberately a
@@ -28040,6 +28044,33 @@ function waProductInquiryDiscountUrl(productUrl) {
   const sep = productUrl.includes('?') ? '&' : '?';
   return `${productUrl}${sep}utm_source=whatsapp&utm_medium=chatbot&utm_campaign=product_query`;
 }
+
+// Demo send — exact same message/button a customer gets from a PDP "tell
+// me more" query or a product search, against a real product, to admin.
+app.post('/admin/wa-product-query-demo', adminAuth, async (req, res) => {
+  try {
+    const phoneRaw = req.body?.phone || WA_ADMIN_NO;
+    const digits = String(phoneRaw).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (digits.length !== 10) return res.status(400).json({ error: 'Valid 10-digit phone required.' });
+
+    const query = (req.body?.query || '').trim();
+    const products = query ? await scSearchProductByExactTitle(query) : [];
+    const product = products.find(p => p.handle) || (await scSearchProductByExactTitle('shirt'))[0];
+    if (!product) return res.status(404).json({ error: 'No matching product found to demo with.' });
+
+    const currentPrice = Math.round(product.price_from);
+    const specialPrice = Math.round(currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
+    const discountUrl = waProductInquiryDiscountUrl(product.url);
+    const text = `Current price: Rs. ${currentPrice}\nSpecial price for you: Rs. ${specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`;
+
+    await waProxySock.sendMessage(`91${digits}@s.whatsapp.net`, {
+      text,
+      ctaUrl: { displayText: 'Get Special Discount', url: discountUrl },
+    });
+
+    res.json({ ok: true, product: product.title, currentPrice, specialPrice, text, discountUrl });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // Generate a real Shopify discount code for the mine game winner
 // Fixed GoKwik discount codes — create these EXACTLY on GoKwik with the min order shown
@@ -34232,7 +34263,7 @@ async function startBaileysBot() {
                     const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
                     const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
                     await sock.sendMessage(sender, {
-                      text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nUse the button below to avail the discount.`,
+                      text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
                       ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
                     }).catch(() => {});
                   }
@@ -34299,7 +34330,7 @@ async function startBaileysBot() {
               const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
               const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
               await sock.sendMessage(sender, {
-                text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nUse the button below to avail the discount.`,
+                text: `Current price: Rs. ${_currentPrice}\nSpecial price for you: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
                 ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
               }).catch(() => {});
             }
