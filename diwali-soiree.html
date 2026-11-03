@@ -596,6 +596,31 @@ if (new URLSearchParams(location.search).get('preview') === '1') {
   document.getElementById('confirm-screen').style.display = 'flex';
   initScratchCard();
 }
+
+// ── Reminder-link auto-fill — a WA reminder to a roulette winner links
+// here with ?n=<name>&p=<phone>. Prefilling + firing input events puts
+// the guest straight through the existing unlock flow (fetchScratchRoll →
+// roulette widget → checkExistingRouletteSpin), which already replays
+// their win, reapplies the discounted price, and restarts their real
+// countdown — no separate code path needed for the "coming from WA" case.
+setTimeout(function () {
+  var qs = new URLSearchParams(location.search);
+  var qName = qs.get('n');
+  var qPhone = (qs.get('p') || '').replace(/\D/g, '');
+  if (!qName && qPhone.length !== 10) return;
+  var nameEl = document.getElementById('f-name');
+  var phoneEl = document.getElementById('f-phone');
+  if (qName) nameEl.value = qName;
+  if (qPhone.length === 10) phoneEl.value = qPhone;
+  ['input', 'change'].forEach(function (evt) {
+    nameEl.dispatchEvent(new Event(evt, { bubbles: true }));
+    phoneEl.dispatchEvent(new Event(evt, { bubbles: true }));
+  });
+  setTimeout(function () {
+    var target = document.getElementById('roulette-widget') || document.getElementById('prank-wrap');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 600);
+}, 0);
 function selectTier(el) {
   document.querySelectorAll('.ticket-card').forEach(function (c) { c.classList.remove('selected'); });
   el.classList.add('selected');

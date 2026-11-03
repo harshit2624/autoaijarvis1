@@ -16739,7 +16739,7 @@ function rollDiwaliScratchOutcome() {
 // Roulette mini-game. Two bets: a color (red/black, 70% win → ₹100 off) or
 // the lucky number (5% win → free ticket). Odds are enforced here,
 // server-side, never on the client.
-const DIWALI_ROULETTE_WIN_PROB = { red: 0.70, black: 0.70, number: 0.05 };
+const DIWALI_ROULETTE_WIN_PROB = { red: 0.70, black: 0.70, number: 0 };
 const DIWALI_ROULETTE_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 // Blocks obviously fake numbers (all-same-digit, simple runs) that people
@@ -17259,6 +17259,66 @@ async function diwaliAbandonedWACron() {
   } catch (e) { console.error('diwaliAbandonedWACron error:', e.message); }
 }
 setInterval(diwaliAbandonedWACron, 2 * 60 * 1000);
+
+// ── Roulette "₹ off expiring" WA nudge ────────────────────────────────────
+// A guest who won a color-bet discount (₹100/₹300 off) but hasn't finished
+// checkout with ~1hr left on their claim window gets one WA ping with a
+// deep link back into the page — the link carries ?n=&p= so the page
+// auto-fills their details and replays their exact win (see the
+// diwali-soiree.html auto-fill block), landing them straight at the
+// discounted price with the live countdown already running instead of a
+// generic homepage. reminder_sent guards against re-sending on every cron
+// tick; a real ticket purchase (event_tickets has their phone) also skips
+// it since there's nothing left to remind them about.
+async function diwaliRouletteExpiryReminderCron() {
+  try {
+    if (!(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_ID)) return;
+    const now = Date.now();
+    const windowStart = new Date(now + 55 * 60 * 1000).toISOString(); // ~55-60min left
+    const windowEnd = new Date(now + 60 * 60 * 1000).toISOString();
+    const due = await mdb.collection('diwali_roulette_rolls').find({
+      win: true,
+      reward: 'roulette_color100',
+      status: { $in: ['active', 'claimed'] },
+      expiresAt: { $gt: windowStart, $lte: windowEnd },
+      reminder_sent: { $ne: true },
+    }).toArray();
+    for (const roll of due) {
+      await mdb.collection('diwali_roulette_rolls').updateOne({ _id: roll._id }, { $set: { reminder_sent: true } });
+      const alreadyTicketed = await mdb.collection('event_tickets').findOne({ phone: roll.phone, event: 'diwali_soiree_2026' });
+      if (alreadyTicketed) continue;
+      const scratch = await mdb.collection('diwali_scratch_rolls').findOne({ phone: roll.phone });
+      const name = (scratch && scratch.name) || 'there';
+      // The ₹ amount depends on the tier picked at checkout (₹100 Single,
+      // ₹300 Group) — not known yet at this point, so the copy stays
+      // accurate without naming a figure; the page itself shows the real one.
+      const link = `${SERVER_URL}/diwali-soiree?n=${encodeURIComponent(name)}&p=${roll.phone}`;
+      const text = `Hey *${name}*! 🎰\n\n`
+        + `You won a *cash discount* on your Diwali Soiree bet!\n\n`
+        + `⏰ Expires in *1 hour*\n\n`
+        + `Grab your ticket before it's gone 👇`;
+      try {
+        const r = await fetch(`https://graph.facebook.com/v21.0/${WA_CLOUD_PHONE_ID}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WA_CLOUD_TOKEN}` },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: `91${roll.phone}`,
+            type: 'interactive',
+            interactive: {
+              type: 'cta_url',
+              body: { text },
+              action: { name: 'cta_url', parameters: { display_text: 'Book Now', url: link } },
+            },
+          }),
+        });
+        const data = await r.json();
+        console.log(data.messages ? `📲 Roulette expiry reminder sent → ${roll.phone}` : `❌ Roulette expiry reminder failed → ${roll.phone}: ${JSON.stringify(data.error || data)}`);
+      } catch (err) { console.error('diwaliRouletteExpiryReminderCron send error:', err.message); }
+    }
+  } catch (e) { console.error('diwaliRouletteExpiryReminderCron error:', e.message); }
+}
+setInterval(diwaliRouletteExpiryReminderCron, 2 * 60 * 1000);
 
 // GET /admin/diwali-tickets/analytics — page views, live visitors (active
 // in the last 60s), and how many started filling the booking form
