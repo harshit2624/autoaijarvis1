@@ -17144,9 +17144,18 @@ app.get('/admin/diwali-tickets/abandoned', diwaliGateAuth, async (req, res) => {
     if (phones.length) {
       const rolls = await mdb.collection('diwali_scratch_rolls').find({ phone: { $in: phones } }).toArray();
       const rollMap = Object.fromEntries(rolls.map(r => [r.phone, r]));
+      // For anyone whose scratch outcome was 'roulette', the scratch record
+      // alone doesn't say whether they actually won or lost the spin — pull
+      // that from diwali_roulette_rolls so the callback team can see the
+      // real result (won ₹ off / won free ticket / lost) instead of just
+      // "unlocked", which looked identical for a winner and a loser.
+      const rouletteRolls = await mdb.collection('diwali_roulette_rolls').find({ phone: { $in: phones } }).toArray();
+      const rouletteMap = Object.fromEntries(rouletteRolls.map(r => [r.phone, r]));
       for (const l of leads) {
         const r = l.phone && rollMap[l.phone];
         l.scratch = r ? { outcome: r.outcome, status: r.status, expiresAt: r.expiresAt } : null;
+        const rr = l.phone && rouletteMap[l.phone];
+        l.roulette = rr ? { bet: rr.bet, win: rr.win, reward: rr.reward, status: rr.status, expiresAt: rr.expiresAt } : null;
       }
     }
 

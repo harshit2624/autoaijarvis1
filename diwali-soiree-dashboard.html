@@ -345,7 +345,25 @@ function renderAbandoned(leads) {
     if (l.scratch && l.scratch.outcome) {
       var label = SCRATCH_LABELS[l.scratch.outcome] || l.scratch.outcome;
       var statusTag = l.scratch.status === 'claimed' ? ' (claimed)' : l.scratch.status === 'expired' ? ' (expired)' : ' (unclaimed)';
-      scratchLine = '<div class="ab-scratch">🎟️ Scratched: ' + escapeHtml(label) + statusTag + '</div>';
+      // "Roulette unlocked" on its own just means the game became playable —
+      // it says nothing about whether they actually won. Swap it for the
+      // real spin result whenever we have one.
+      if (l.scratch.outcome === 'roulette' && l.roulette) {
+        var rr = l.roulette;
+        var betLabel = (rr.bet === 'red' || rr.bet === 'black') ? ('on ' + rr.bet) : ('on No. ' + rr.bet);
+        if (rr.win) {
+          var rewardLabel = rr.reward === 'roulette_number_free' ? 'FREE TICKET' : '₹ off';
+          label = 'Roulette — WON ' + betLabel + ' → ' + rewardLabel;
+          statusTag = rr.status === 'claimed' ? ' (claimed)' : rr.status === 'expired' ? ' (expired, unclaimed)' : ' (not yet claimed)';
+        } else {
+          label = 'Roulette — LOST ' + betLabel;
+          statusTag = '';
+        }
+      } else if (l.scratch.outcome === 'roulette' && !l.roulette) {
+        label = 'Roulette unlocked — hasn\'t spun yet';
+        statusTag = '';
+      }
+      scratchLine = '<div class="ab-scratch">🎟️ ' + escapeHtml(label) + statusTag + '</div>';
     }
     return '<div class="abandoned-row">' +
       '<div class="ab-left">' +
