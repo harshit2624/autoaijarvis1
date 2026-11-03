@@ -149,6 +149,12 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <div class="stat"><div class="stat-label">Yet to Enter</div><div class="stat-val" id="s-pending" style="color:var(--warn)">0</div></div>
     </div>
 
+    <div class="stats" id="discount-stats">
+      <div class="stat"><div class="stat-label">Discounts Given</div><div class="stat-val" id="d-count" style="color:var(--gold-bright)">0</div></div>
+      <div class="stat"><div class="stat-label">Total Discounted</div><div class="stat-val" id="d-amount">₹0</div></div>
+      <div class="stat"><div class="stat-label">Roulette Winners</div><div class="stat-val" id="d-winners" style="color:var(--ok)">0</div></div>
+    </div>
+
     <div class="section-title">Guest List</div>
     <div class="section-sub" id="list-sub">Loading…</div>
     <div class="filters">
@@ -243,6 +249,35 @@ function doLogin() {
     .catch(function (e) { document.getElementById('login-err').textContent = e.message || 'Incorrect password'; });
 }
 
+// ── TEMP: demo-data override for a hype screen recording ──────────────
+// Visit with ?demo=1. Purely cosmetic — overwrites only what's on screen
+// after the real fetches resolve; never touches the database or the real
+// numbers anyone else sees. Remove this block once the recording's done.
+var DEMO_MODE = new URLSearchParams(location.search).get('demo') === '1';
+function applyDemoOverride() {
+  if (!DEMO_MODE) return;
+  document.getElementById('t-live').textContent = '14';
+  document.getElementById('t-views').textContent = '612';
+  document.getElementById('t-started').textContent = '188';
+  document.getElementById('t-conv').textContent = '31% converted';
+
+  document.getElementById('s-revenue').textContent = '₹38,451';
+  document.getElementById('s-tickets').textContent = '49';
+  document.getElementById('s-pax').textContent = '112 pax';
+  document.getElementById('s-entered').textContent = '0';
+  document.getElementById('s-pending').textContent = '49';
+  document.getElementById('list-sub').textContent = '49 tickets · 112 total pax';
+  document.getElementById('fc-all').textContent = '49';
+  document.getElementById('fc-entered').textContent = '0';
+  document.getElementById('fc-pending').textContent = '49';
+  document.getElementById('fc-single').textContent = '31';
+  document.getElementById('fc-group').textContent = '18';
+
+  document.getElementById('d-count').textContent = '16';
+  document.getElementById('d-amount').textContent = '₹2,900';
+  document.getElementById('d-winners').textContent = '11';
+}
+
 function showDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('dash-screen').style.display = 'block';
@@ -252,6 +287,7 @@ function showDashboard() {
   setInterval(loadTraffic, 15000);
   setInterval(loadTickets, 30000);
   setInterval(loadAbandoned, 30000);
+  if (DEMO_MODE) setInterval(applyDemoOverride, 800); // keeps re-stamping over the real polling loads above
 }
 
 function downloadAudience() {
