@@ -177,7 +177,10 @@
     const [err,     setErr]     = useState('');
     const [gstFile, setGstFile] = useState(null);
     const [drag,    setDrag]    = useState(false);
+    const [logoFile, setLogoFile] = useState(null);
+    const [logoDrag, setLogoDrag] = useState(false);
     const fileRef = useRef();
+    const logoRef = useRef();
 
     const [form, setForm] = useState({
       contact_name:'', brand_name:'', email:'', phone:'',
@@ -194,6 +197,14 @@
       setGstFile(f); setErr('');
     };
 
+    const handleLogo = f => {
+      if (!f) return;
+      if (!['image/png','image/jpeg'].includes(f.type))
+        return setErr('Logo must be PNG or JPG.');
+      if (f.size > 8 * 1024 * 1024) return setErr('File too large. Max 8MB.');
+      setLogoFile(f); setErr('');
+    };
+
     const submit = async () => {
       setErr('');
       if (!form.contact_name.trim()) return setErr('Contact name is required.');
@@ -207,6 +218,7 @@
         const fd = new FormData();
         Object.entries(form).forEach(([k,v]) => fd.append(k, v));
         if (gstFile) fd.append('gst_document', gstFile);
+        if (logoFile) fd.append('logo', logoFile);
         const r = await fetch(`${API}/onboard/submit`, { method:'POST', body: fd });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Submission failed');
@@ -257,11 +269,40 @@
         {/* About your brand */}
         <div className="card">
           <div className="section-label">What's your brand about?</div>
-          <Field label="Tell us your story — what do you make, who is it for, what makes it special?" optional hint="The more you share, the faster we can set you up.">
+          <Field label="Your brand in a line or two (this intro will be used as your brand description on your collection page)" optional hint={`${form.about.length}/250 characters`}>
             <textarea
-              placeholder={"e.g. We make handcrafted leather bags for working professionals who want quality that lasts a lifetime. Every piece is made-to-order in our Mumbai workshop with full-grain leather..."}
-              value={form.about} onChange={e=>set('about',e.target.value)} rows={4}
+              placeholder={"e.g. Handcrafted leather bags for professionals who want quality that lasts a lifetime. Made-to-order in our Mumbai workshop with full-grain leather."}
+              value={form.about} onChange={e=>set('about', e.target.value.slice(0,250))} rows={3} maxLength={250}
             />
+          </Field>
+        </div>
+
+        {/* Logo */}
+        <div className="card">
+          <div className="section-label">Brand Logo</div>
+          <Field label="Upload your logo" optional hint="PNG or JPG · square works best (will be used as your collection image)">
+            <div
+              className={`upload-zone${logoDrag?' drag':''}`}
+              onClick={()=>logoRef.current.click()}
+              onDragOver={e=>{e.preventDefault();setLogoDrag(true);}}
+              onDragLeave={()=>setLogoDrag(false)}
+              onDrop={e=>{e.preventDefault();setLogoDrag(false);handleLogo(e.dataTransfer.files[0]);}}
+            >
+              <input ref={logoRef} type="file" accept=".png,.jpg,.jpeg" onChange={e=>handleLogo(e.target.files[0])}/>
+              {!logoFile ? (
+                <>
+                  <div className="upload-icon">🖼️</div>
+                  <div className="upload-text"><strong>Click to upload</strong> or drag &amp; drop</div>
+                  <div className="upload-text" style={{fontSize:10,marginTop:2}}>PNG · JPG</div>
+                </>
+              ) : (
+                <div className="file-preview">
+                  <span>✓</span>
+                  <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{logoFile.name}</span>
+                  <button onClick={e=>{e.stopPropagation();setLogoFile(null);}} style={{background:'none',border:'none',cursor:'pointer',color:'#065f46',fontSize:14,flexShrink:0}}>✕</button>
+                </div>
+              )}
+            </div>
           </Field>
         </div>
 

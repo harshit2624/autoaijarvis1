@@ -23713,7 +23713,7 @@ app.put("/admin/return-requests/:id/awb", adminAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 
 // POST /onboard/submit — public, anyone can submit an application
-app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, res) => {
+app.post('/onboard/submit', onboardUpload.fields([{ name: 'gst_document', maxCount: 1 }, { name: 'logo', maxCount: 1 }]), async (req, res) => {
   try {
     const { contact_name, brand_name, email, phone, website, address, city, state, pincode, gst_no, about } = req.body || {};
     if (!contact_name?.trim() || !brand_name?.trim() || !email?.trim() || !phone?.trim() || !website?.trim())
@@ -23724,8 +23724,15 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
     const existingVendor = await mdb.collection('vendor_profiles').findOne({ email: email.toLowerCase().trim() }, { projection: { vendor_name: 1, _id: 0 } });
     if (existingVendor) return res.status(409).json({ error: `This email is already linked to an active vendor account (${existingVendor.vendor_name}). Please use a different email or contact support.` });
 
-    const gstDocUrl = req.file
-      ? `/uploads/${await storeFileInDb(req.file.buffer, req.file.originalname, req.file.mimetype, { category: 'onboard-gst' })}`
+    const gstFile = req.files?.gst_document?.[0];
+    const gstDocUrl = gstFile
+      ? `/uploads/${await storeFileInDb(gstFile.buffer, gstFile.originalname, gstFile.mimetype, { category: 'onboard-gst' })}`
+      : null;
+    // Optional brand logo — used as the collection image when the vendor's
+    // smart collection gets created on approval (see /admin/onboards/:email/approve).
+    const logoFile = req.files?.logo?.[0];
+    const logoUrl = (logoFile && logoFile.mimetype !== 'application/pdf')
+      ? `/uploads/${await storeFileInDb(logoFile.buffer, logoFile.originalname, logoFile.mimetype, { category: 'onboard-logo' })}`
       : null;
 
     const doc = {
@@ -23739,8 +23746,9 @@ app.post('/onboard/submit', onboardUpload.single('gst_document'), async (req, re
       state:        state?.trim() || '',
       pincode:      pincode?.trim() || '',
       gst_no:       gst_no?.trim().toUpperCase() || '',
-      about:        about?.trim() || '',
+      about:        (about?.trim() || '').slice(0, 250),
       gst_document: gstDocUrl,
+      logo_url:     logoUrl,
       status:       'pending',
       submitted_at: new Date().toISOString(),
     };
@@ -23871,6 +23879,37 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
       }
     } catch(e) { console.error('Placeholder product creation failed:', e.message); }
 
+    // Create a smart collection for this vendor — auto-includes any product
+    // tagged with their vendor name, description comes from their onboarding
+    // "about" story, image comes from their optional logo upload. Both are
+    // exactly what the vendor already gave us, so no extra step for them.
+    let collectionId = null;
+    try {
+      const token = await getAccessToken();
+      const collectionBody = {
+        smart_collection: {
+          title: vendorName,
+          body_html: ob.about || '',
+          rules: [{ column: 'vendor', relation: 'equals', condition: vendorName }],
+          disjunctive: false,
+          published: true,
+        }
+      };
+      if (ob.logo_url) collectionBody.smart_collection.image = { src: `${SERVER_URL}${ob.logo_url}` };
+      const colRes = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/smart_collections.json`, {
+        method: 'POST',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(collectionBody),
+      });
+      if (colRes.ok) {
+        const cd = await colRes.json();
+        collectionId = cd.smart_collection?.id || null;
+        console.log(`🗂️  Created smart collection for vendor "${vendorName}" (ID: ${collectionId})`);
+      } else {
+        console.error('Smart collection creation failed:', await colRes.text());
+      }
+    } catch (e) { console.error('Smart collection creation failed:', e.message); }
+
     // Email vendor their credentials using the branded welcome template
     const cfg = await getSmtpConfig();
     if (cfg) {
@@ -23883,11 +23922,14 @@ app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
       });
     }
 
-    if (placeholderProductId) {
-      await mdb.collection('vendor_onboards').updateOne({ email }, { $set: { placeholder_product_id: String(placeholderProductId) } });
+    if (placeholderProductId || collectionId) {
+      const setFields = {};
+      if (placeholderProductId) setFields.placeholder_product_id = String(placeholderProductId);
+      if (collectionId) setFields.collection_id = String(collectionId);
+      await mdb.collection('vendor_onboards').updateOne({ email }, { $set: setFields });
     }
 
-    res.json({ success: true, username, vendor_name: vendorName, placeholder_product_id: placeholderProductId });
+    res.json({ success: true, username, vendor_name: vendorName, placeholder_product_id: placeholderProductId, collection_id: collectionId });
   } catch (err) {
     console.error('❌ approve onboard:', err.message);
     res.status(500).json({ error: err.message });
