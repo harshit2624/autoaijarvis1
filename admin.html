@@ -10340,6 +10340,8 @@
     const [importing,   setImporting]   = useState({}); // productId -> bool
     const [selectedProds, setSelectedProds] = useState(new Set()); // multi-select
     const [mapSelState,  setMapSelState]   = useState(new Set()); // mapping multi-select
+    const [expandedMapProducts, setExpandedMapProducts] = useState(new Set()); // which product cards are open
+    const [mapSelProducts, setMapSelProducts] = useState(new Set()); // product-level multi-select (vendor_product_id)
     const [bulkImporting, setBulkImporting] = useState(false);
     const [syncing,     setSyncing]     = useState(false);
     const [msg,         setMsg]         = useState('');
@@ -10964,19 +10966,34 @@
                 mappings.length===0 ? <div style={{color:'var(--text-muted)',fontSize:12,padding:20}}>No variant mappings yet. Import or map products from the Products tab.</div> :
                 (() => {
                   const [selMaps, setSelMaps] = [mapSelState, setMapSelState];
+                  const [expanded, setExpanded] = [expandedMapProducts, setExpandedMapProducts];
                   const allIds = mappings.map(m=>m.id);
                   const allSelected = allIds.length > 0 && allIds.every(id=>selMaps.has(id));
-                  const seenProducts = new Set();
+
+                  // Group variant-level mappings into one card per vendor product.
+                  const productMap = new Map();
+                  mappings.forEach(m=>{
+                    if (!productMap.has(m.vendor_product_id)) productMap.set(m.vendor_product_id, { key:m.vendor_product_id, variants:[] });
+                    productMap.get(m.vendor_product_id).variants.push(m);
+                  });
+                  const products = [...productMap.values()];
+
+                  const toggleIds = (ids, on) => setSelMaps(s=>{
+                    const n = new Set(s);
+                    ids.forEach(id => on ? n.add(id) : n.delete(id));
+                    return n;
+                  });
+
                   return (
                   <div>
-                    {/* Bulk toolbar */}
+                    {/* Bulk toolbar — acts on every selected variant regardless of which product card it's in */}
                     <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderBottom:'1px solid var(--border)',background:'var(--bg-card2)'}}>
                       <input type="checkbox" checked={allSelected} onChange={()=>{
                         if (allSelected) setSelMaps(new Set());
                         else setSelMaps(new Set(allIds));
                       }} style={{cursor:'pointer'}}/>
                       <span style={{fontSize:11,color:'var(--text-muted)'}}>
-                        {selMaps.size>0 ? `${selMaps.size} selected` : `${mappings.length} variant${mappings.length!==1?'s':''}`}
+                        {selMaps.size>0 ? `${selMaps.size} variant${selMaps.size!==1?'s':''} selected` : `${products.length} product${products.length!==1?'s':''} · ${mappings.length} variant${mappings.length!==1?'s':''}`}
                       </span>
                       {selMaps.size>0 && (<>
                         <div style={{marginLeft:'auto',display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -11002,69 +11019,106 @@
                         </div>
                       </>)}
                     </div>
+
                     <div style={{display:'flex',flexDirection:'column',gap:8,padding:8}}>
-                    {mappings.map(m=>{
-                      const isFirstVariant = !seenProducts.has(m.vendor_product_id);
-                      if (isFirstVariant) seenProducts.add(m.vendor_product_id);
-                      const checked = selMaps.has(m.id);
+                    {products.map(p=>{
+                      const head = p.variants[0];
+                      const variantIds = p.variants.map(v=>v.id);
+                      const isOpen = expanded.has(p.key);
+                      const allVariantsSelected = variantIds.every(id=>selMaps.has(id));
+                      const someVariantsSelected = !allVariantsSelected && variantIds.some(id=>selMaps.has(id));
+                      const imgSyncOn = head.sync_images !== false;
+                      const priceSyncOn = p.variants.every(v=>v.sync_price !== false);
                       return (
-                      <div key={m.id} style={{background:'var(--bg-card)',border:`1px solid ${checked?'var(--indigo)':'var(--border)'}`,borderRadius:10,padding:12,display:'flex',gap:10,alignItems:'center',transition:'border-color 0.15s'}}>
-                        {/* Checkbox */}
-                        <input type="checkbox" checked={checked} onChange={()=>{
-                          setSelMaps(s=>{ const n=new Set(s); n.has(m.id)?n.delete(m.id):n.add(m.id); return n; });
-                        }} style={{cursor:'pointer',flexShrink:0}}/>
-                        {/* Vendor side */}
-                        <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
-                          {m.vendor_image
-                            ? <img src={m.vendor_image} style={{width:40,height:40,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
-                            : <div style={{width:40,height:40,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>📦</div>}
-                          <div style={{minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.vendor_product_title||m.vendor_variant_id}</div>
-                            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.vendor_variant_title&&m.vendor_variant_title!=='Default Title'?m.vendor_variant_title:''}</div>
-                            <div style={{fontSize:9,fontFamily:'monospace',color:'var(--indigo)',marginTop:1}}>ID: {m.vendor_variant_id}</div>
+                      <div key={p.key} style={{background:'var(--bg-card)',border:`1px solid ${someVariantsSelected||allVariantsSelected?'var(--indigo)':'var(--border)'}`,borderRadius:10,overflow:'hidden',transition:'border-color 0.15s'}}>
+                        {/* Product header — one card per product, click to expand its variants */}
+                        <div style={{padding:12,display:'flex',gap:10,alignItems:'center'}}>
+                          <input type="checkbox" checked={allVariantsSelected} ref={el=>{ if(el) el.indeterminate = someVariantsSelected; }}
+                            onChange={()=>toggleIds(variantIds, !allVariantsSelected)}
+                            style={{cursor:'pointer',flexShrink:0}}/>
+                          <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0,cursor:'pointer'}}
+                            onClick={()=>setExpanded(s=>{ const n=new Set(s); n.has(p.key)?n.delete(p.key):n.add(p.key); return n; })}>
+                            {head.vendor_image
+                              ? <img src={head.vendor_image} style={{width:44,height:44,objectFit:'cover',borderRadius:7,flexShrink:0}} alt=""/>
+                              : <div style={{width:44,height:44,borderRadius:7,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>📦</div>}
+                            <div style={{minWidth:0,flex:1}}>
+                              <div style={{fontSize:13,fontWeight:700,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{head.vendor_product_title||head.vendor_product_id}</div>
+                              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>→ {head.croscrow_product_title||head.croscrow_product_id}</div>
+                            </div>
+                            <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:'var(--bg-card2)',color:'var(--text-muted)',border:'1px solid var(--border)',flexShrink:0}}>
+                              {p.variants.length} variant{p.variants.length!==1?'s':''}
+                            </span>
+                            <span style={{fontSize:14,color:'var(--text-muted)',flexShrink:0,transform:isOpen?'rotate(90deg)':'none',transition:'transform 0.15s',display:'inline-block'}}>▶</span>
                           </div>
                         </div>
-                        <div style={{fontSize:16,color:'var(--text-muted)',flexShrink:0}}>→</div>
-                        {/* CROSCROW side */}
-                        <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
-                          {m.croscrow_image
-                            ? <img src={m.croscrow_image} style={{width:40,height:40,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
-                            : <div style={{width:40,height:40,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>🛍</div>}
-                          <div style={{minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.croscrow_product_title||m.croscrow_product_id}</div>
-                            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{m.croscrow_variant_title&&m.croscrow_variant_title!=='Default Title'?m.croscrow_variant_title:''}</div>
-                            <div style={{fontSize:9,fontFamily:'monospace',color:'var(--text-muted)',marginTop:1}}>ID: {m.croscrow_variant_id}</div>
-                          </div>
+
+                        {/* Product-wide controls */}
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap',padding:'0 12px 12px 66px'}}>
+                          <button onClick={async()=>{
+                            await fetch(`/admin/vendor-sync/map/${head.id}/image-sync`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify({sync_images:!imgSyncOn}) });
+                            loadMappings();
+                          }} style={{fontSize:9,padding:'2px 8px',borderRadius:10,cursor:'pointer',border:`1px solid ${imgSyncOn?'rgba(99,102,241,0.4)':'var(--border)'}`,background:imgSyncOn?'rgba(99,102,241,0.1)':'var(--bg-card2)',color:imgSyncOn?'#a5b4fc':'var(--text-muted)'}}>
+                            {imgSyncOn?'🖼 Img sync on':'🖼 Img sync off'}
+                          </button>
+                          <button onClick={async()=>{
+                            await fetch('/admin/vendor-sync/map-bulk/price-sync',{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({ids:variantIds,sync_price:!priceSyncOn})});
+                            loadMappings();
+                          }} style={{fontSize:9,padding:'2px 8px',borderRadius:10,cursor:'pointer',border:`1px solid ${priceSyncOn?'rgba(16,185,129,0.4)':'var(--border)'}`,background:priceSyncOn?'var(--green-dim)':'var(--bg-card2)',color:priceSyncOn?'var(--green)':'var(--text-muted)'}}>
+                            {priceSyncOn?'💰 Price sync on':'💰 Price sync off'}
+                          </button>
+                          <button className="btn btn-danger btn-sm" style={{fontSize:9,whiteSpace:'nowrap'}}
+                            onClick={async()=>{
+                              if (!window.confirm(`Unmap ALL variants of "${head.vendor_product_title||head.vendor_product_id}"?`)) return;
+                              await fetch(`/admin/vendor-sync/map-product/${head.id}`, { method:'DELETE', headers:{Authorization:`Bearer ${token}`} });
+                              setSelMaps(s=>{ const n=new Set(s); variantIds.forEach(id=>n.delete(id)); return n; });
+                              loadMappings(); loadVendorProducts(selected);
+                            }}>
+                            🗑 Unmap Product
+                          </button>
                         </div>
-                        {/* Sync status + actions */}
-                        <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:5,flexShrink:0}}>
-                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
-                            {m.sync_inventory?'↻ Inv sync':'No inv sync'}
-                          </span>
-                          <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:m.sync_price===false?'var(--bg-card2)':'rgba(16,185,129,0.1)',color:m.sync_price===false?'var(--text-muted)':'var(--green)',border:`1px solid ${m.sync_price===false?'var(--border)':'rgba(16,185,129,0.4)'}`}}>
-                            {m.sync_price===false?'💰 Price off':'💰 Price sync'}
-                          </span>
-                          {isFirstVariant && (<>
-                            <button onClick={async()=>{
-                              const newVal = m.sync_images === false ? true : false;
-                              await fetch(`/admin/vendor-sync/map/${m.id}/image-sync`, { method:'PUT', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body:JSON.stringify({sync_images:newVal}) });
-                              loadMappings();
-                            }} style={{fontSize:9,padding:'2px 8px',borderRadius:10,cursor:'pointer',border:`1px solid ${m.sync_images===false?'var(--border)':'rgba(99,102,241,0.4)'}`,background:m.sync_images===false?'var(--bg-card2)':'rgba(99,102,241,0.1)',color:m.sync_images===false?'var(--text-muted)':'#a5b4fc'}}>
-                              {m.sync_images===false?'🖼 Img sync off':'🖼 Img sync on'}
-                            </button>
-                            <button className="btn btn-danger btn-sm" style={{fontSize:9,whiteSpace:'nowrap'}}
-                              onClick={async()=>{
-                                if (!window.confirm(`Unmap ALL variants of "${m.vendor_product_title||m.vendor_product_id}"?`)) return;
-                                await fetch(`/admin/vendor-sync/map-product/${m.id}`, { method:'DELETE', headers:{Authorization:`Bearer ${token}`} });
-                                setSelMaps(s=>{ const n=new Set(s); mappings.filter(x=>x.vendor_product_id===m.vendor_product_id).forEach(x=>n.delete(x.id)); return n; });
-                                loadMappings(); loadVendorProducts(selected);
-                              }}>
-                              🗑 Unmap Product
-                            </button>
-                          </>)}
-                          <div style={{fontSize:10,color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never synced'}</div>
-                          <button className="btn btn-danger btn-sm" style={{fontSize:9}} onClick={()=>unmapVariant(m.id)}>Unmap Variant</button>
+
+                        {/* Variants — collapsed by default */}
+                        {isOpen && (
+                        <div style={{borderTop:'1px solid var(--border)',background:'var(--bg)',padding:8,display:'flex',flexDirection:'column',gap:6}}>
+                          {p.variants.map(m=>{
+                            const checked = selMaps.has(m.id);
+                            return (
+                            <div key={m.id} style={{background:'var(--bg-card)',border:`1px solid ${checked?'var(--indigo)':'var(--border)'}`,borderRadius:8,padding:10,display:'flex',gap:10,alignItems:'center'}}>
+                              <input type="checkbox" checked={checked} onChange={()=>toggleIds([m.id], !checked)} style={{cursor:'pointer',flexShrink:0}}/>
+                              <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
+                                {m.vendor_image
+                                  ? <img src={m.vendor_image} style={{width:34,height:34,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
+                                  : <div style={{width:34,height:34,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>📦</div>}
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:'var(--text)'}}>{m.vendor_variant_title&&m.vendor_variant_title!=='Default Title'?m.vendor_variant_title:'Default'}</div>
+                                  <div style={{fontSize:9,fontFamily:'monospace',color:'var(--indigo)'}}>ID: {m.vendor_variant_id}</div>
+                                </div>
+                              </div>
+                              <div style={{fontSize:14,color:'var(--text-muted)',flexShrink:0}}>→</div>
+                              <div style={{display:'flex',gap:8,alignItems:'center',flex:1,minWidth:0}}>
+                                {m.croscrow_image
+                                  ? <img src={m.croscrow_image} style={{width:34,height:34,objectFit:'cover',borderRadius:6,flexShrink:0}} alt=""/>
+                                  : <div style={{width:34,height:34,borderRadius:6,background:'var(--bg-card2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>🛍</div>}
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:'var(--text)'}}>{m.croscrow_variant_title&&m.croscrow_variant_title!=='Default Title'?m.croscrow_variant_title:'Default'}</div>
+                                  <div style={{fontSize:9,fontFamily:'monospace',color:'var(--text-muted)'}}>ID: {m.croscrow_variant_id}</div>
+                                </div>
+                              </div>
+                              <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,flexShrink:0}}>
+                                <span style={{fontSize:9,padding:'2px 7px',borderRadius:10,background:m.sync_inventory?'var(--green-dim)':'var(--bg-card2)',color:m.sync_inventory?'var(--green)':'var(--text-muted)',border:`1px solid ${m.sync_inventory?'var(--green)':'var(--border)'}`}}>
+                                  {m.sync_inventory?'↻ Inv sync':'No inv sync'}
+                                </span>
+                                <span style={{fontSize:9,padding:'2px 7px',borderRadius:10,background:m.sync_price===false?'var(--bg-card2)':'rgba(16,185,129,0.1)',color:m.sync_price===false?'var(--text-muted)':'var(--green)',border:`1px solid ${m.sync_price===false?'var(--border)':'rgba(16,185,129,0.4)'}`}}>
+                                  {m.sync_price===false?'💰 Price off':'💰 Price sync'}
+                                </span>
+                                <div style={{fontSize:9,color:'var(--text-muted)'}}>{m.last_synced_at?fmtDate(m.last_synced_at):'Never synced'}</div>
+                                <button className="btn btn-danger btn-sm" style={{fontSize:9}} onClick={()=>unmapVariant(m.id)}>Unmap Variant</button>
+                              </div>
+                            </div>
+                            );
+                          })}
                         </div>
+                        )}
                       </div>
                       );
                     })}
