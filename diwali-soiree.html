@@ -1095,7 +1095,7 @@ function _rouletteBetDisplay(bet) {
 }
 
 // Color-bet win is ₹300 off on a Group (Party of Five) ticket, ₹100 off on Single.
-function _rouletteColorOffAmount() { return selectedTier === 'group' ? 300 : 100; }
+function _rouletteColorOffAmount() { return 100; }
 function _updateRouletteBetLabels() {
   var off = _rouletteColorOffAmount();
   document.querySelectorAll('.bet-red span, .bet-black span').forEach(function (el) { el.textContent = '₹' + off + ' off'; });
