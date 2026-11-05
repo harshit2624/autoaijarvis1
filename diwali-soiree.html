@@ -405,8 +405,8 @@ img{display:block;max-width:100%}
 
         <div class="roulette-board" id="roulette-board">
           <div class="roulette-colorbets" id="roulette-bets">
-            <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● RED</b><span>₹100 off</span></button>
-            <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● BLACK</b><span>₹100 off</span></button>
+            <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● RED</b><span>₹50 off</span></button>
+            <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● BLACK</b><span>₹50 off</span></button>
           </div>
         </div>
 
@@ -1129,8 +1129,8 @@ function _rouletteBetDisplay(bet) {
   return 'Number ' + bet;
 }
 
-// Color-bet win is ₹300 off on a Group (Party of Five) ticket, ₹100 off on Single.
-function _rouletteColorOffAmount() { return 100; }
+// Color-bet win is ₹50 off, flat across tiers.
+function _rouletteColorOffAmount() { return 50; }
 function _updateRouletteBetLabels() {
   var off = _rouletteColorOffAmount();
   document.querySelectorAll('.bet-red span, .bet-black span').forEach(function (el) { el.textContent = '₹' + off + ' off'; });
