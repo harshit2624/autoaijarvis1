@@ -104,6 +104,18 @@ img{display:block;max-width:100%}
 .ticket-info span{font-size:11px;color:var(--muted);display:block;margin-top:4px;letter-spacing:.04em}
 .ticket-price{font-family:'Bodoni Moda',serif;font-size:20px;font-weight:400;color:var(--gold-bright);white-space:nowrap}
 
+.qty-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 4px;border-bottom:1px solid var(--border)}
+.qty-label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.qty-stepper{display:flex;align-items:center;gap:14px}
+.qty-btn{
+  width:30px;height:30px;border-radius:50%;border:1px solid var(--border-strong);background:transparent;
+  color:var(--text);font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-family:inherit;transition:border-color .15s,opacity .15s;
+}
+.qty-btn:hover{border-color:var(--gold)}
+.qty-btn:disabled{opacity:.35;pointer-events:none}
+.qty-val{font-family:'Bodoni Moda',serif;font-size:18px;min-width:18px;text-align:center}
+
 /* ── Form ──────────────────────────────────────────────────── */
 .form{display:flex;flex-direction:column;gap:0;margin-top:30px}
 .inp{
@@ -343,6 +355,15 @@ img{display:block;max-width:100%}
       </div>
     </div>
 
+    <div class="qty-row" id="qty-row">
+      <span class="qty-label" id="qty-label">No. of tickets</span>
+      <div class="qty-stepper">
+        <button type="button" class="qty-btn" id="qty-minus" onclick="changeTicketQty(-1)" aria-label="Decrease quantity">−</button>
+        <span class="qty-val" id="qty-val">1</span>
+        <button type="button" class="qty-btn" id="qty-plus" onclick="changeTicketQty(1)" aria-label="Increase quantity">+</button>
+      </div>
+    </div>
+
     <form class="form" autocomplete="on" onsubmit="return false;">
       <input class="inp" id="f-name" name="name" type="text" placeholder="Full Name" autocomplete="name">
       <input class="inp" id="f-phone" name="tel" type="tel" placeholder="Phone Number" maxlength="10" autocomplete="tel" inputmode="numeric">
@@ -383,15 +404,9 @@ img{display:block;max-width:100%}
         </div>
 
         <div class="roulette-board" id="roulette-board">
-          <div class="roulette-pick-prompt" id="roulette-pick-prompt">👆 Tap any number below to spin</div>
-          <div class="roulette-table">
-            <button class="rt-zero" id="rt-zero" onclick="placeRouletteBet('0')">0</button>
-            <div class="rt-grid" id="rt-grid"></div>
-          </div>
           <div class="roulette-colorbets" id="roulette-bets">
             <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● RED</b><span>₹100 off</span></button>
             <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● BLACK</b><span>₹100 off</span></button>
-            <button class="bet-btn bet-pick" onclick="promptNumberBet()"><b>🎯 Pick a No.</b><span>FREE ticket</span></button>
           </div>
         </div>
 
@@ -621,10 +636,37 @@ setTimeout(function () {
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, 600);
 }, 0);
+var ticketQty = 1;
+// A roulette/scratch perk is a one-time discount or freebie on a single
+// ticket — it doesn't extend to a bulk purchase, so the stepper is only
+// usable while no perk is locked in (and resets to 1 the moment one is).
+function changeTicketQty(delta) {
+  if (_prankApplied || _rouletteApplied) return;
+  ticketQty = Math.min(10, Math.max(1, ticketQty + delta));
+  document.getElementById('qty-val').textContent = ticketQty;
+  document.getElementById('qty-minus').disabled = ticketQty <= 1;
+  document.getElementById('qty-plus').disabled = ticketQty >= 10;
+  selectedAmount = parseInt(document.querySelector('.ticket-card.selected').dataset.amount, 10) * ticketQty;
+  document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
+}
+function _resetTicketQty() {
+  ticketQty = 1;
+  document.getElementById('qty-val').textContent = 1;
+  document.getElementById('qty-minus').disabled = true;
+  document.getElementById('qty-plus').disabled = false;
+}
+function _setQtyRowLocked(locked) {
+  var row = document.getElementById('qty-row');
+  if (!row) return;
+  row.style.opacity = locked ? '.4' : '1';
+  document.getElementById('qty-minus').disabled = locked || ticketQty <= 1;
+  document.getElementById('qty-plus').disabled = locked || ticketQty >= 10;
+}
 function selectTier(el) {
   document.querySelectorAll('.ticket-card').forEach(function (c) { c.classList.remove('selected'); });
   el.classList.add('selected');
   selectedTier = el.dataset.tier;
+  _resetTicketQty();
   selectedAmount = parseInt(el.dataset.amount, 10);
   document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
   // Switching tiers after applying a price-affecting perk would leave the
@@ -641,7 +683,7 @@ function selectTier(el) {
 // actually charged always comes from the same server-side record at
 // checkout, never from anything shown here. Possible outcomes: a free
 // rasogulla (most common, no price change), the roulette mini-game (bet
-// on a color or the lucky number for a bigger prize), ₹100 off (2hr to
+// red or black for cash off), ₹100 off (2hr to
 // claim), or a free 6th entry on a Group ticket (2hr to claim).
 var _prankApplied = false;
 var _rouletteApplied = false;
@@ -653,7 +695,7 @@ var _rouletteCountdownTimer = null;
 
 var SCRATCH_COPY = {
   rasogulla:     { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
-  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for cash off, or go for the lucky number for a free ticket.', btn: 'Play Roulette' },
+  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for cash off.', btn: 'Play Roulette' },
   discount100:   { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
   buy5get6:      { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
   freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2 hours to lock it in.', btn: 'Apply Now' },
@@ -876,6 +918,8 @@ function applyScratchOutcome() {
         return;
       }
       _prankApplied = true;
+      _resetTicketQty();
+      _setQtyRowLocked(true);
       _scratchRoll.status = 'claimed';
       if (_scratchCountdownTimer) clearInterval(_scratchCountdownTimer);
       var outcome = _scratchRoll.outcome;
@@ -924,6 +968,7 @@ function removePrankCode() {
     body: JSON.stringify({ phone: phoneDigits }),
   }).then(function (r) { return r.json(); }).then(function (d) {
     _prankApplied = false;
+    _setQtyRowLocked(false);
     var selectedCard = document.querySelector('.ticket-card.selected');
     selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
     document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
@@ -1015,16 +1060,6 @@ function _polarXY(cx, cy, r, angleDeg) {
     '</svg>';
 })();
 
-(function buildRouletteGrid() {
-  var grid = document.getElementById('rt-grid');
-  if (!grid) return;
-  var html = '';
-  for (var n = 1; n <= 36; n++) {
-    html += '<button class="rt-num ' + _rouletteNumColor(n) + '" onclick="placeRouletteBet(\'' + n + '\')">' + n + '</button>';
-  }
-  grid.innerHTML = html;
-})();
-
 function _scrollToRouletteIfNeeded() {
   var el = document.getElementById('roulette-widget');
   if (!el) return;
@@ -1099,22 +1134,6 @@ function _rouletteColorOffAmount() { return 100; }
 function _updateRouletteBetLabels() {
   var off = _rouletteColorOffAmount();
   document.querySelectorAll('.bet-red span, .bet-black span').forEach(function (el) { el.textContent = '₹' + off + ' off'; });
-}
-
-// "🎯 Pick a No." doesn't bet by itself — it highlights every number tile
-// with a pulsing glow and prompts the guest to tap one, so the single-number
-// bet (FREE ticket) is as discoverable as the one-tap Red/Black buttons.
-function promptNumberBet() {
-  document.querySelectorAll('.rt-num, #rt-zero').forEach(function (el) { el.classList.add('glow'); });
-  document.getElementById('roulette-pick-prompt').classList.add('show');
-  document.querySelector('.bet-pick').classList.add('active');
-  document.querySelector('.roulette-table').scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-function _clearNumberPrompt() {
-  document.querySelectorAll('.rt-num, #rt-zero').forEach(function (el) { el.classList.remove('glow'); });
-  document.getElementById('roulette-pick-prompt').classList.remove('show');
-  var pickBtn = document.querySelector('.bet-pick');
-  if (pickBtn) pickBtn.classList.remove('active');
 }
 
 // Shared by a real bet and a "replay my own result" reveal — spins the
@@ -1258,6 +1277,8 @@ function claimRouletteWin() {
         return;
       }
       _rouletteApplied = true;
+      _resetTicketQty();
+      _setQtyRowLocked(true);
       _rouletteRoll.status = 'claimed';
       if (_rouletteCountdownTimer) clearInterval(_rouletteCountdownTimer);
       var isColor = _rouletteRoll.reward === 'roulette_color100';
@@ -1288,6 +1309,7 @@ function removeRouletteWin() {
     body: JSON.stringify({ phone: phoneDigits }),
   }).then(function (r) { return r.json(); }).then(function (d) {
     _rouletteApplied = false;
+    _setQtyRowLocked(false);
     var selectedCard = document.querySelector('.ticket-card.selected');
     selectedAmount = selectedCard ? parseInt(selectedCard.dataset.amount, 10) : selectedAmount;
     document.getElementById('pay-amt').textContent = '₹' + selectedAmount.toLocaleString('en-IN');
@@ -1310,26 +1332,26 @@ function startPayment() {
   btn.disabled = true; btn.textContent = 'Please Wait…';
   fetch('/event/diwali-soiree/razorpay-order', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tier: selectedTier, name: name, phone: phone, email: email }),
+    body: JSON.stringify({ tier: selectedTier, name: name, phone: phone, email: email, qty: ticketQty }),
   })
     .then(function (r) { return r.json(); })
     .then(function (data) {
       if (data.error) throw new Error(data.error);
       var rzp = new Razorpay({
         key: data.key, order_id: data.order_id, amount: data.amount * 100, currency: 'INR',
-        name: 'Creates', description: 'Diwali Soiree 2.0 — ' + (selectedTier === 'group' ? 'Party of Five' : 'Single Entry'),
+        name: 'Creates', description: 'Diwali Soiree 2.0 — ' + (selectedTier === 'group' ? 'Party of Five' : 'Single Entry') + (ticketQty > 1 ? ' × ' + ticketQty : ''),
         prefill: { name: name, contact: phone, email: email }, theme: { color: '#b08a4b' },
         handler: function (resp) {
           fetch('/event/diwali-soiree/razorpay-verify', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ razorpay_order_id: resp.razorpay_order_id, razorpay_payment_id: resp.razorpay_payment_id, razorpay_signature: resp.razorpay_signature, tier: selectedTier, name: name, phone: phone, email: email }),
+            body: JSON.stringify({ razorpay_order_id: resp.razorpay_order_id, razorpay_payment_id: resp.razorpay_payment_id, razorpay_signature: resp.razorpay_signature, tier: selectedTier, name: name, phone: phone, email: email, qty: ticketQty }),
           })
             .then(function (r) { return r.json(); })
             .then(function (v) {
               if (v.error) throw new Error(v.error);
               document.getElementById('confirm-ticket-id').textContent = v.ticket_id;
               document.getElementById('confirm-qr').src = '/event/diwali-soiree/ticket-qr/' + encodeURIComponent(v.ticket_id);
-              document.getElementById('confirm-detail').textContent = name + ' · ' + (selectedTier === 'group' ? 'Party of Five' : 'Single Entry') + ' · ₹' + selectedAmount;
+              document.getElementById('confirm-detail').textContent = name + ' · ' + (selectedTier === 'group' ? 'Party of Five' : 'Single Entry') + (ticketQty > 1 ? ' × ' + ticketQty : '') + ' · ₹' + selectedAmount;
               document.getElementById('main-view').style.display = 'none';
               document.getElementById('confirm-screen').style.display = 'flex';
               initScratchCard();

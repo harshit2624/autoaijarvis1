@@ -16863,9 +16863,7 @@ app.post('/event/diwali-soiree/roulette-spin', async (req, res) => {
     const rawBet = req.body?.bet;
     const bet = String(rawBet);
     const isColor = bet === 'red' || bet === 'black';
-    const betNum = Number(bet);
-    const isNumber = /^\d+$/.test(bet) && Number.isInteger(betNum) && betNum >= 0 && betNum <= 36;
-    if (!isColor && !isNumber) return res.status(400).json({ error: 'Invalid bet.' });
+    if (!isColor) return res.status(400).json({ error: 'Invalid bet.' });
 
     const scratch = await mdb.collection('diwali_scratch_rolls').findOne({ phone });
     if (!scratch || scratch.outcome !== 'roulette') return res.status(403).json({ error: 'Roulette is not unlocked for this number.' });
@@ -16875,17 +16873,12 @@ app.post('/event/diwali-soiree/roulette-spin', async (req, res) => {
       return res.json({ win: existing.win, reward: existing.reward, bet: existing.bet, landed: existing.landed, status: existing.status, expiresAt: existing.expiresAt });
     }
 
-    // Any single-number bet (0-36) carries the same 5% odds regardless of
-    // which number was picked — the board lets guests pick any number for
-    // the "casino table" feel, but the number itself doesn't change the odds.
-    const winProb = isColor ? DIWALI_ROULETTE_WIN_PROB[bet] : DIWALI_ROULETTE_WIN_PROB.number;
+    const winProb = DIWALI_ROULETTE_WIN_PROB[bet];
     const win = Math.random() < winProb;
-    const reward = !win ? null : (isColor ? 'roulette_color100' : 'roulette_number_free');
+    const reward = !win ? null : 'roulette_color100';
     // Cosmetic landing spot for the wheel animation — made consistent with
     // the real win/lose outcome so the spin never visually contradicts it.
-    let landed;
-    if (isNumber) landed = win ? 'green' : (Math.random() < 0.5 ? 'red' : 'black');
-    else landed = win ? bet : (bet === 'red' ? 'black' : 'red');
+    const landed = win ? bet : (bet === 'red' ? 'black' : 'red');
 
     const doc = {
       phone, bet, win, reward, landed, status: 'active',
@@ -16942,19 +16935,24 @@ app.get('/diwali-soiree/premium', (req, res) => {
 app.post('/event/diwali-soiree/razorpay-order', async (req, res) => {
   try {
     const { tier, name, phone, email } = req.body || {};
+    const qty = Math.min(10, Math.max(1, parseInt(req.body?.qty, 10) || 1));
     if (!process.env.RAZORPAY_KEY_ID) return res.status(400).json({ error: 'Razorpay not configured.' });
     const t = DIWALI_TICKET_TIERS[tier];
     if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
     const phoneDigits = String(phone).replace(/\D/g, '').slice(-10);
-    const { amount: finalAmount, perk } = await applyDiwaliScratchPerk(phoneDigits, tier, t.amount);
+    // A scratch/roulette perk is a one-time win per guest — it discounts (or
+    // frees) only the first unit; any extra tickets bought alongside it are
+    // charged at the normal tier price.
+    const { amount: firstUnitAmount, perk } = await applyDiwaliScratchPerk(phoneDigits, tier, t.amount);
+    const finalAmount = firstUnitAmount + t.amount * (qty - 1);
     const order = await getRzp().orders.create({
       amount: finalAmount * 100,
       currency: 'INR',
       receipt: `diwali_${tier}_${Date.now()}`.slice(0, 40),
-      notes: { tier, name, phone, email: email || '', perk: perk || '' },
+      notes: { tier, name, phone, email: email || '', perk: perk || '', qty },
     });
-    res.json({ order_id: order.id, amount: finalAmount, key: process.env.RAZORPAY_KEY_ID, perk: perk || null });
+    res.json({ order_id: order.id, amount: finalAmount, key: process.env.RAZORPAY_KEY_ID, perk: perk || null, qty });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -17022,6 +17020,7 @@ async function sendDiwaliTicketEmail(ticket) {
 app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, tier, name, phone, email } = req.body || {};
+    const qty = Math.min(10, Math.max(1, parseInt(req.body?.qty, 10) || 1));
     const expectedSig = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -17043,12 +17042,14 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
     // Same deterministic lookup razorpay-order used to size the charge —
     // re-reading it here (rather than trusting anything from the client)
     // keeps the ticket's stored amount/perk true to what was actually paid.
-    const { amount: finalAmount, perk } = await applyDiwaliScratchPerk(phoneDigits, tier, t.amount);
+    const { amount: firstUnitAmount, perk } = await applyDiwaliScratchPerk(phoneDigits, tier, t.amount);
+    const finalAmount = firstUnitAmount + t.amount * (qty - 1);
+    const pax = (tier === 'group' ? 5 : 1) * qty;
 
     const ticket_id = diwaliTicketId();
     const now = new Date().toISOString();
     await mdb.collection('event_tickets').insertOne({
-      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount: finalAmount,
+      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount: finalAmount, qty, pax,
       name: name || '', phone: phoneDigits, email: email || '',
       scratch_perk: perk || null,
       bonus_entry: perk === 'buy5get6', // door staff: let 6 in on this ticket, not 5
@@ -17056,11 +17057,11 @@ app.post('/event/diwali-soiree/razorpay-verify', async (req, res) => {
       razorpay_order_id, razorpay_payment_id, status: 'paid', checked_in: false,
       created_at: now,
     });
-    auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: finalAmount, perk, name, phone });
+    auditLog('customer', 'diwali_ticket_purchased', ticket_id, { tier, amount: finalAmount, qty, perk, name, phone });
     const _perkLine = perk === 'discount100' ? '\nScratch: ₹100 off claimed' : perk === 'buy5get6' ? '\n🎉 Scratch: BONUS — let 6 in on this ticket!' : perk === 'rasogulla' ? '\n🍬 Scratch: free magic rasogulla — hand it out' : perk === 'freeticket499' ? '\n🛍️ Scratch: CREATESXCROSCROW shopping code claimed' : perk === 'roulette_color100' ? '\n🎰 Roulette: color bet won — ₹100 off claimed' : perk === 'roulette_number_free' ? '\n🎰 Roulette: lucky number won — FREE ticket' : '';
-    waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label} (₹${finalAmount})\nName: ${name || '-'}\nPhone: ${phone || '-'}${_perkLine}`, 'event_ticket').catch(() => {});
+    waAdminAlert(`🪔 *Diwali Soiree 2.0 — Ticket Sold*\n\nTicket: *${ticket_id}*\nTier: ${t.label}${qty > 1 ? ` × ${qty}` : ''} (₹${finalAmount})\nName: ${name || '-'}\nPhone: ${phone || '-'}${_perkLine}`, 'event_ticket').catch(() => {});
     sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount: finalAmount, name, email }).catch(() => {});
-    sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: phoneDigits }).catch(() => {});
+    sendDiwaliTicketWA({ ticket_id, tier_label: t.label, name, phone: phoneDigits, pax }).catch(() => {});
 
     res.json({ verified: true, ticket_id, payment_id: razorpay_payment_id });
   } catch (err) { res.status(500).json({ error: err.message }); }
