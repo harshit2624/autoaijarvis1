@@ -14825,7 +14825,7 @@
     const loadLogs = () => {
       const vq = brand?`&vendor=${encodeURIComponent(brand)}`:'';
       const cq = collection?`&collection=${encodeURIComponent(collection)}`:'';
-      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=50${vq}${cq}`, { headers:{ Authorization:'Bearer '+token } })
+      fetch(`${API}/admin/pixel-tracker/recent-logs?limit=200${vq}${cq}`, { headers:{ Authorization:'Bearer '+token } })
         .then(r=>r.json()).then(d=>{ setLogs(d.logs||[]); setLogsLoading(false); }).catch(()=>setLogsLoading(false));
     };
     const runSearch = () => {

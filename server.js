@@ -28841,7 +28841,7 @@ app.get('/admin/pixel-tracker/leaderboard', adminAuth, async (req, res) => {
 // ── Recent raw events — the live "what's happening right now" log feed ─────
 app.get('/admin/pixel-tracker/recent-logs', adminAuth, async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 400);
     const match = req.query.vendor ? { vendor: req.query.vendor } : {};
     if (req.query.collection) Object.assign(match, await pixelCollectionMatch(req.query.collection));
     const logs = await mdb.collection('pixel_events').find(match, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(limit).toArray();
