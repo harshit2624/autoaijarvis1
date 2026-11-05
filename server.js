@@ -17352,22 +17352,30 @@ app.get('/admin/diwali-tickets/analytics', diwaliGateAuth, async (req, res) => {
 const DIWALI_MANUAL_PIN = process.env.DIWALI_MANUAL_PIN || '6050';
 app.post('/admin/diwali-tickets/manual', diwaliGateAuth, async (req, res) => {
   try {
-    const { tier, name, phone, email, amount_override, note, pin } = req.body || {};
+    const { tier, name, phone, email, amount_override, pax_override, note, pin, collected_by_charchit } = req.body || {};
     if (String(pin || '') !== DIWALI_MANUAL_PIN) return res.status(403).json({ error: 'Incorrect PIN.' });
     const t = DIWALI_TICKET_TIERS[tier];
     if (!t) return res.status(400).json({ error: 'Invalid ticket tier.' });
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required.' });
+    // pax defaults off the tier (1 for single, 5 for group) but a door sale
+    // for an odd-sized group — 3 people, 7 people — needs a real custom
+    // count instead of forcing them into the nearest tier. The price still
+    // prefills off that pax (see client), but amount_override always wins
+    // since comps/discounts are common at the door.
+    const defaultPax = tier === 'group' ? 5 : 1;
+    const pax = (pax_override === 0 || pax_override) ? Math.max(1, parseInt(pax_override, 10)) : defaultPax;
     const amount = (amount_override === 0 || amount_override) ? Number(amount_override) : t.amount;
     const ticket_id = diwaliTicketId();
     const now = new Date().toISOString();
     await mdb.collection('event_tickets').insertOne({
-      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount,
+      ticket_id, event: 'diwali_soiree_2026', tier, tier_label: t.label, amount, pax,
       name, phone: String(phone).replace(/\D/g, '').slice(-10), email: email || '',
       razorpay_order_id: null, razorpay_payment_id: `manual_${ticket_id}`, status: 'paid',
       source: 'manual', note: note || '', created_by: req.staffUsername || 'admin',
+      collected_by_charchit: !!collected_by_charchit,
       checked_in: false, created_at: now,
     });
-    auditLog('admin', 'diwali_ticket_manual_create', ticket_id, { tier, amount, name, phone, note });
+    auditLog('admin', 'diwali_ticket_manual_create', ticket_id, { tier, amount, pax, name, phone, note, collected_by_charchit: !!collected_by_charchit });
     sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount, name, email }).catch(() => {});
     res.json({ success: true, ticket_id });
   } catch (err) { res.status(500).json({ error: err.message }); }

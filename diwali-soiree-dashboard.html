@@ -155,6 +155,11 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <div class="stat"><div class="stat-label">Roulette Winners</div><div class="stat-val" id="d-winners" style="color:var(--ok)">0</div></div>
     </div>
 
+    <div class="stats" id="charchit-stats">
+      <div class="stat"><div class="stat-label">Collected by Charchit</div><div class="stat-val" id="c-count" style="color:var(--gold-bright)">0</div><div class="stat-sub">ticket<span id="c-count-s"></span></div></div>
+      <div class="stat"><div class="stat-label">Amount to Settle</div><div class="stat-val" id="c-amount">₹0</div></div>
+    </div>
+
     <div class="section-title">Guest List</div>
     <div class="section-sub" id="list-sub">Loading…</div>
     <div class="filters">
@@ -163,6 +168,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <button class="filter-chip" data-f="pending" onclick="setFilter('pending')">Pending <span id="fc-pending">0</span></button>
       <button class="filter-chip" data-f="single" onclick="setFilter('single')">Single <span id="fc-single">0</span></button>
       <button class="filter-chip" data-f="group" onclick="setFilter('group')">Group of 5 <span id="fc-group">0</span></button>
+      <button class="filter-chip" data-f="charchit" onclick="setFilter('charchit')">Collected by Charchit <span id="fc-charchit">0</span></button>
     </div>
     <div id="ticket-list"></div>
 
@@ -188,11 +194,22 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
         <div class="tier-opt" data-tier="group" onclick="selectModalTier(this)">Group of 5 · ₹1,999</div>
       </div>
     </div>
+    <div class="form-group">
+      <span class="form-label">No. of Pax</span>
+      <input class="inp" id="m-pax" type="number" min="1" value="1" oninput="onPaxChange()" style="border:1px solid var(--border);padding:13px 14px">
+    </div>
     <div class="form-group"><input class="inp" id="m-name" placeholder="Guest Name" style="border:1px solid var(--border);padding:13px 14px"></div>
     <div class="form-group"><input class="inp" id="m-phone" placeholder="Phone Number" maxlength="10" inputmode="numeric" style="border:1px solid var(--border);padding:13px 14px"></div>
     <div class="form-group"><input class="inp" id="m-email" placeholder="Email (optional)" style="border:1px solid var(--border);padding:13px 14px"></div>
-    <div class="form-group"><input class="inp" id="m-amount" placeholder="Amount override (optional, e.g. 0 for comp)" type="number" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group">
+      <span class="form-label">Amount (prefilled from pax — edit for a discount/comp)</span>
+      <input class="inp" id="m-amount" type="number" style="border:1px solid var(--border);padding:13px 14px">
+    </div>
     <div class="form-group"><input class="inp" id="m-note" placeholder="Note (optional — e.g. 'cash at door')" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="m-charchit" style="cursor:pointer;width:16px;height:16px">
+      <label for="m-charchit" style="cursor:pointer;font-size:12.5px;color:var(--text)">Money collected by Charchit</label>
+    </div>
     <div class="form-group">
       <span class="form-label">PIN to Confirm</span>
       <input class="inp" id="m-pin" placeholder="PIN" type="password" inputmode="numeric" maxlength="4" style="border:1px solid var(--border);padding:13px 14px">
@@ -392,7 +409,7 @@ function loadTraffic() {
     .catch(function () {});
 }
 
-function pax(t) { return t.tier === 'group' ? 5 : 1; }
+function pax(t) { return (t.pax != null) ? t.pax : (t.tier === 'group' ? 5 : 1); }
 
 function loadTickets() {
   fetch('/admin/diwali-tickets', { headers: authHeaders() })
@@ -425,6 +442,13 @@ function renderStats() {
   document.getElementById('fc-pending').textContent = allTickets.length - entered;
   document.getElementById('fc-single').textContent = allTickets.filter(function (t) { return t.tier === 'single'; }).length;
   document.getElementById('fc-group').textContent = allTickets.filter(function (t) { return t.tier === 'group'; }).length;
+
+  var charchitTix = allTickets.filter(function (t) { return t.collected_by_charchit; });
+  var charchitAmount = charchitTix.reduce(function (s, t) { return s + (t.amount || 0); }, 0);
+  document.getElementById('fc-charchit').textContent = charchitTix.length;
+  document.getElementById('c-count').textContent = charchitTix.length;
+  document.getElementById('c-count-s').textContent = charchitTix.length === 1 ? '' : 's';
+  document.getElementById('c-amount').textContent = '₹' + charchitAmount.toLocaleString('en-IN');
 }
 
 function setFilter(f) {
@@ -438,6 +462,7 @@ function renderList() {
   if (currentFilter === 'entered') list = list.filter(function (t) { return t.checked_in; });
   else if (currentFilter === 'pending') list = list.filter(function (t) { return !t.checked_in; });
   else if (currentFilter === 'single' || currentFilter === 'group') list = list.filter(function (t) { return t.tier === currentFilter; });
+  else if (currentFilter === 'charchit') list = list.filter(function (t) { return t.collected_by_charchit; });
 
   var el = document.getElementById('ticket-list');
   if (!list.length) { el.innerHTML = '<div class="empty-state">No tickets yet</div>'; return; }
@@ -446,8 +471,8 @@ function renderList() {
     var time = new Date(t.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
     return '<div class="ticket-row" onclick="viewTicketQr(\'' + t.ticket_id + '\')">' +
       '<div class="tr-left">' +
-        '<div class="tr-name">' + escapeHtml(t.name || 'Guest') + (t.source === 'manual' ? ' · manual' : '') + '</div>' +
-        '<div class="tr-meta">' + escapeHtml(t.tier_label || '') + ' · ' + escapeHtml(t.phone || '-') + ' · ' + time + '</div>' +
+        '<div class="tr-name">' + escapeHtml(t.name || 'Guest') + (t.source === 'manual' ? ' · manual' : '') + (t.collected_by_charchit ? ' · <span style="color:var(--gold-bright)">collected by Charchit</span>' : '') + '</div>' +
+        '<div class="tr-meta">' + escapeHtml(t.tier_label || '') + ' · ' + pax(t) + ' pax · ' + escapeHtml(t.phone || '-') + ' · ' + time + '</div>' +
       '</div>' +
       '<div class="tr-right">' +
         '<span class="badge ' + (t.checked_in ? 'entered' : 'pending') + '">' + (t.checked_in ? 'Entered' : 'Pending') + '</span>' +
@@ -497,29 +522,51 @@ function sendTicketWA() {
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
 var modalTier = 'single';
+var PAX_RATE = 499; // single-entry per-head rate, used to prefill price for any custom pax count
+function suggestedAmount(pax, tier) {
+  // The bundled Group-of-5 price (₹1,999) only applies at exactly 5 pax —
+  // any other count (3, 7, whatever the door sale actually is) prices per
+  // head off the single rate instead of guessing at a bundle discount.
+  if (tier === 'group' && pax === 5) return 1999;
+  return pax * PAX_RATE;
+}
+function onPaxChange() {
+  var pax = Math.max(1, parseInt(document.getElementById('m-pax').value, 10) || 1);
+  document.getElementById('m-amount').value = suggestedAmount(pax, modalTier);
+}
 function openAddModal() {
   document.getElementById('m-name').value = '';
   document.getElementById('m-phone').value = '';
   document.getElementById('m-email').value = '';
-  document.getElementById('m-amount').value = '';
   document.getElementById('m-note').value = '';
   document.getElementById('m-pin').value = '';
+  document.getElementById('m-charchit').checked = false;
   document.getElementById('add-err').textContent = '';
+  document.querySelectorAll('.tier-opt').forEach(function (c) { c.classList.remove('selected'); });
+  document.querySelector('.tier-opt[data-tier="single"]').classList.add('selected');
+  modalTier = 'single';
+  document.getElementById('m-pax').value = 1;
+  document.getElementById('m-amount').value = suggestedAmount(1, 'single');
   document.getElementById('add-overlay').style.display = 'flex';
 }
 function selectModalTier(el) {
   document.querySelectorAll('.tier-opt').forEach(function (c) { c.classList.remove('selected'); });
   el.classList.add('selected');
   modalTier = el.dataset.tier;
+  var defaultPax = modalTier === 'group' ? 5 : 1;
+  document.getElementById('m-pax').value = defaultPax;
+  document.getElementById('m-amount').value = suggestedAmount(defaultPax, modalTier);
 }
 
 function submitManualTicket() {
   var name = document.getElementById('m-name').value.trim();
   var phone = document.getElementById('m-phone').value.trim().replace(/\D/g, '');
   var email = document.getElementById('m-email').value.trim();
+  var paxRaw = document.getElementById('m-pax').value.trim();
   var amountRaw = document.getElementById('m-amount').value.trim();
   var note = document.getElementById('m-note').value.trim();
   var pin = document.getElementById('m-pin').value.trim();
+  var charchit = document.getElementById('m-charchit').checked;
   if (!name) return document.getElementById('add-err').textContent = 'Enter guest name';
   if (phone.length !== 10) return document.getElementById('add-err').textContent = 'Enter a valid 10-digit phone number';
   if (!pin) return document.getElementById('add-err').textContent = 'Enter the PIN to confirm';
@@ -528,7 +575,8 @@ function submitManualTicket() {
   var btn = document.getElementById('add-submit-btn');
   btn.disabled = true; btn.textContent = 'Creating…';
 
-  var body = { tier: modalTier, name: name, phone: phone, email: email, note: note, pin: pin };
+  var body = { tier: modalTier, name: name, phone: phone, email: email, note: note, pin: pin, collected_by_charchit: charchit };
+  if (paxRaw !== '') body.pax_override = Number(paxRaw);
   if (amountRaw !== '') body.amount_override = Number(amountRaw);
 
   fetch('/admin/diwali-tickets/manual', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) })
