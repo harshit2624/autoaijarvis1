@@ -16718,7 +16718,7 @@ app.post("/track/razorpay-verify", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 const DIWALI_TICKET_TIERS = {
   single: { label: 'Single Entry', amount: 499 },
-  group:  { label: 'Group of 5',   amount: 1999 },
+  group:  { label: 'Group of 5',   amount: 2199 },
 };
 
 // ── Scratch-card luck system ─────────────────────────────────────────────
