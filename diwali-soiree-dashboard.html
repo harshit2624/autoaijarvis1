@@ -199,7 +199,10 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <input class="inp" id="m-pax" type="number" min="1" value="1" oninput="onPaxChange()" style="border:1px solid var(--border);padding:13px 14px">
     </div>
     <div class="form-group"><input class="inp" id="m-name" placeholder="Guest Name" style="border:1px solid var(--border);padding:13px 14px"></div>
-    <div class="form-group"><input class="inp" id="m-phone" placeholder="Phone Number" maxlength="10" inputmode="numeric" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group">
+      <input class="inp" id="m-phone" placeholder="Phone — any format: 8209544626, +91 82095 44626, 082095-44626…" inputmode="tel" oninput="onPhoneInput()" style="border:1px solid var(--border);padding:13px 14px">
+      <div id="m-phone-hint" style="font-size:10.5px;color:var(--muted);margin-top:4px"></div>
+    </div>
     <div class="form-group"><input class="inp" id="m-email" placeholder="Email (optional)" style="border:1px solid var(--border);padding:13px 14px"></div>
     <div class="form-group">
       <span class="form-label">Amount (prefilled from pax — edit for a discount/comp)</span>
@@ -521,6 +524,23 @@ function sendTicketWA() {
 
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
+// Accepts any format a guest might type/paste — with or without +91, with
+// spaces/dashes/brackets — and normalizes to the bare last-10-digit Indian
+// mobile number WhatsApp/the backend actually use, same way the backend
+// itself normalizes (strip non-digits, take the last 10).
+function normalizePhone10(raw) {
+  var digits = String(raw || '').replace(/\D/g, '');
+  return digits.slice(-10);
+}
+function onPhoneInput() {
+  var raw = document.getElementById('m-phone').value;
+  var normalized = normalizePhone10(raw);
+  var hint = document.getElementById('m-phone-hint');
+  if (!raw.trim()) { hint.textContent = ''; return; }
+  hint.textContent = normalized.length === 10 ? ('✓ Will send to +91 ' + normalized) : 'Enter a valid 10-digit mobile number';
+  hint.style.color = normalized.length === 10 ? 'var(--ok)' : 'var(--warn)';
+}
+
 var modalTier = 'single';
 var PAX_RATE = 499; // single-entry per-head rate, used to prefill price for any custom pax count
 function suggestedAmount(pax, tier) {
@@ -537,6 +557,7 @@ function onPaxChange() {
 function openAddModal() {
   document.getElementById('m-name').value = '';
   document.getElementById('m-phone').value = '';
+  document.getElementById('m-phone-hint').textContent = '';
   document.getElementById('m-email').value = '';
   document.getElementById('m-note').value = '';
   document.getElementById('m-pin').value = '';
@@ -560,7 +581,7 @@ function selectModalTier(el) {
 
 function submitManualTicket() {
   var name = document.getElementById('m-name').value.trim();
-  var phone = document.getElementById('m-phone').value.trim().replace(/\D/g, '');
+  var phone = normalizePhone10(document.getElementById('m-phone').value);
   var email = document.getElementById('m-email').value.trim();
   var paxRaw = document.getElementById('m-pax').value.trim();
   var amountRaw = document.getElementById('m-amount').value.trim();

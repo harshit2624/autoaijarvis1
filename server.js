@@ -17377,6 +17377,11 @@ app.post('/admin/diwali-tickets/manual', diwaliGateAuth, async (req, res) => {
     });
     auditLog('admin', 'diwali_ticket_manual_create', ticket_id, { tier, amount, pax, name, phone, note, collected_by_charchit: !!collected_by_charchit });
     sendDiwaliTicketEmail({ ticket_id, tier_label: t.label, amount, name, email }).catch(() => {});
+    // Manual tickets (door cash sales, comps) skipped the WA send that
+    // Razorpay purchases get automatically — guests walked away with no
+    // digital copy of their entry pass. Now sent by default here too.
+    const normalizedPhone = String(phone).replace(/\D/g, '').slice(-10);
+    sendDiwaliTicketWA({ ticket_id, tier_label: t.label, tier, pax, name, phone: normalizedPhone }).catch(() => {});
     res.json({ success: true, ticket_id });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -17467,11 +17472,17 @@ app.post('/admin/diwali-tickets/:ticket_id/check-in', diwaliGateAuth, async (req
 // header via the approved diwali_ticket_confirmation template.
 async function sendDiwaliTicketWA(ticket) {
   if (!ticket.phone || ticket.phone.length !== 10) return { sent: false, reason: 'no_phone' };
+  // The approved WA template has a fixed param slot for the tier — no slot
+  // of its own for pax count, and editing a live template means a weeks-long
+  // Meta re-approval. Folding "· N Pax" into that same param gets the pax
+  // count to the guest without touching the template at all.
+  const paxCount = ticket.pax != null ? ticket.pax : (ticket.tier === 'group' ? 5 : 1);
+  const tierWithPax = `${ticket.tier_label || ''} · ${paxCount} Pax`;
   const result = await sendWACloudTemplate({
     phone10: ticket.phone,
     templateName: WA_TPL.DIWALI_TICKET_CONFIRMATION,
     headerImageUrl: `${SERVER_URL}/event/diwali-soiree/ticket-qr/${encodeURIComponent(ticket.ticket_id)}`,
-    bodyParams: [ticket.name || 'Guest', ticket.tier_label || '', ticket.ticket_id],
+    bodyParams: [ticket.name || 'Guest', tierWithPax, ticket.ticket_id],
   });
   if (result.sent) auditLog('system', 'diwali_ticket_wa_sent', ticket.ticket_id, { phone: ticket.phone });
   return result;
