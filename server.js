@@ -297,10 +297,32 @@ async function isHiddenFromVendor(shopifyId, vendor) {
 // e.g. "120249608458200410"), and utm_campaign matches Meta's campaign_name
 // verbatim when the ad's UTM campaign parameter is set to the campaign name
 // (standard practice) — that's the join key back to /admin/meta-ads/insights.
+// The raw note_attributes value is whatever string the ad platform's own
+// dynamic URL-parameter substitution produced — sometimes that's a
+// query-string-encoded form (literal '+' instead of a space) that never
+// gets decoded, because this never goes through URLSearchParams the way
+// a real query string does. Left as-is, "New Sales campaign - CAT
+// WINTERS 003" and "New+Sales+campaign+-+CAT+WINTERS+003" silently split
+// into two different buckets everywhere this value is grouped/joined
+// (order_meta.ad_campaign, the WA campaign-funnel table, Meta-ads-insights
+// matching) — same real campaign, fragmented revenue. Found 2026-11-07
+// while auditing the WA attribution pipeline.
+function normalizeUtmValue(v) {
+  if (v == null) return v;
+  const s = String(v).replace(/\+/g, ' ').trim().replace(/\s+/g, ' ');
+  // Meta substitutes {{campaign.name}}/{{placement}} etc. into the URL per-ad
+  // — when that substitution fails on a given ad/placement (a Meta Ads
+  // config issue on their end, not something this app controls), the raw
+  // unsubstituted token leaks straight into note_attributes and pollutes
+  // attribution with a literal "{{campaign.name}}" bucket. Treat as no
+  // value rather than a real campaign name.
+  if (!s || /\{\{.*\}\}/.test(s)) return null;
+  return s;
+}
 function extractCampaignAttribution(payload) {
   const attrs = {};
   (payload.note_attributes || []).forEach(a => { if (a?.name) attrs[a.name] = a.value; });
-  let source = attrs.utm_source, campaign = attrs.utm_campaign, medium = attrs.utm_medium, adId = attrs.utm_term;
+  let source = normalizeUtmValue(attrs.utm_source), campaign = normalizeUtmValue(attrs.utm_campaign), medium = normalizeUtmValue(attrs.utm_medium), adId = attrs.utm_term;
   if (!campaign && payload.landing_site) {
     try {
       const qIdx = payload.landing_site.indexOf('?');
